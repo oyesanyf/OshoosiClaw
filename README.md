@@ -49,38 +49,51 @@ Rust delivers all three. No compromises.
 
 ---
 
+### 🧠 Multi-Tiered AI Architecture
+
+OshoosiClaw does not rely on a single ML model. It uses a **cascading AI pipeline** for defense-in-depth:
+
+| Model Tier | Engine | Purpose |
+|:-----------|:-------|:--------|
+| **File Identification** | [**Google Magika**](https://github.com/google/magika) | Deep learning-based pre-filtering. Identifies PE/ELF/Scripts before heavy analysis. |
+| **Static Malware Detection** | [**EMBER ML**](https://github.com/elastic/ember) | Gradient-boosted tree model trained on 54 PE features (sections, imports, entropy). |
+| **Behavioral NLP** | [**SecureBERT**](https://huggingface.co/ehsanaghaei/SecureBERT) | Security-domain BERT model that classifies PowerShell, CLI commands, and log sentences. |
+| **Reasoning & Context** | [**Gemma 3 4B** / **Llama 3.1 8B**](https://ollama.com/) | Local LLMs (via Ollama) that reason about complex detection chains and decide on autonomous response. |
+
+---
+
 ## 🤖 Agentic Architecture — True Autonomous Security
 
 OshoosiClaw is not just a telemetry collector that sends logs to a cloud console for humans to review. It is a **true autonomous agent** with a real **Observe → Think → Act** loop:
 
 ```mermaid
 graph LR
-    A["🔍 Observe"] --> B["🧠 Think"]
-    B --> C["⚡ Act"]
-    C --> D["📚 Learn"]
+    A[Observe] --> B[Think]
+    B --> C[Act]
+    C --> D[Learn]
     D --> A
     
-    A -.- A1["Sysmon ETW Events"]
-    A -.- A2["File System Changes"]
-    A -.- A3["DNS / Network Traffic"]
-    A -.- A4["Registry Modifications"]
-    A -.- A5["Process Memory State"]
+    A -.- A1[Sysmon ETW Events]
+    A -.- A2[File System Changes]
+    A -.- A3[DNS / Network Traffic]
+    A -.- A4[Registry Modifications]
+    A -.- A5[Process Memory State]
     
-    B -.- B1["NSRL Known-Good Check"]
-    B -.- B2["Sigma Rule Matching"]
-    B -.- B3["EMBER ML Classification"]
-    B -.- B4["SecureBERT / Gemma 3 AI"]
-    B -.- B5["CAPA + FLOSS Analysis"]
+    B -.- B1[NSRL Check]
+    B -.- B2[Sigma Rules]
+    B -.- B3[EMBER ML]
+    B -.- B4[SecureBERT AI]
+    B -.- B5[CAPA Analysis]
     
-    C -.- C1["Quarantine Malware"]
-    C -.- C2["Tarpit Connections"]
-    C -.- C3["Deploy Ghost Traps"]
-    C -.- C4["Patch Vulnerabilities"]
-    C -.- C5["Broadcast to Mesh"]
+    C -.- C1[Quarantine]
+    C -.- C2[Tarpitting]
+    C -.- C3[Ghost Traps]
+    C -.- C4[Auto Patch]
+    C -.- C5[Mesh Broadcast]
     
-    D -.- D1["Behavioral Feedback"]
-    D -.- D2["ML Model Retraining"]
-    D -.- D3["Peer Reputation Update"]
+    D -.- D1[Feedback Loop]
+    D -.- D2[ML Training]
+    D -.- D3[Peer Reputation]
 ```
 
 ### What Makes It Agentic?
@@ -93,28 +106,28 @@ graph LR
 | **Healing** | IT admin applies patches manually | Repair Engine discovers + applies patches transactionally |
 | **Collaboration** | Central server aggregates data | P2P mesh shares intelligence with differential privacy |
 | **Deception** | Static honeypots (if any) | Dynamic Ghost Traps + Tarpitting + Holographic Sharding |
-| **Reasoning** | Rule-based matching only | LLM agent (Llama 3.1 8B) reasons about context and acts |
+| **Reasoning** | Rule-based matching only | LLM agent reasons about context and acts |
 | **Provisioning** | Admin installs tools manually | `grant-access` auto-deployments |
 
 ### The Autonomous Decision Matrix
 
 ```mermaid
 graph TD
-    E["Sysmon Event Received"] --> F{"NSRL Known Good?"}
-    F -->|Yes| G["✅ Skip - Trusted Binary"]
-    F -->|No| H{"Policy Engine Match?"}
-    H -->|No Match| I{"ML Threat Score > 0.5?"}
-    H -->|Match| J["Threat Detected"]
-    I -->|No| K{"CAPA Capabilities?"}
+    E[Sysmon Event] --> F{NSRL Trust?}
+    F -->|Yes| G[Skip - Trusted]
+    F -->|No| H{Policy Match?}
+    H -->|No| I{ML Score > 0.5?}
+    H -->|Match| J[Threat Detected]
+    I -->|No| K{CAPA Capabilities?}
     I -->|Yes| J
-    K -->|None| L["✅ Clean"]
+    K -->|None| L[Clean]
     K -->|Suspicious| J
-    J --> M{"Confidence Level?"}
-    M -->|" < 0.4 "| N["📋 Log Only"]
-    M -->|" 0.4 - 0.6 "| O["🔔 Alert"]
-    M -->|" 0.6 - 0.8 "| P["🕸️ Ghost Tarpit"]
-    M -->|" 0.8 - 0.95 "| Q["🔒 Isolate + Mesh Broadcast"]
-    M -->|" > 0.95 "| R["☠️ Quarantine + Process Kill"]
+    J --> M{Confidence?}
+    M -->|Low| N[Log Only]
+    M -->|Medium| O[Alert]
+    M -->|High| P[Ghost Tarpit]
+    M -->|Very High| Q[Isolate]
+    M -->|Critical| R[Quarantine]
 ```
 
 ### Sysmon -> HollowsHunter Reactive Chain
@@ -123,18 +136,18 @@ When Sysmon's **kernel driver** reports a suspicious event, OshoosiClaw automati
 
 ```mermaid
 sequenceDiagram
-    participant K as Sysmon Kernel Driver
-    participant O as OshoosiClaw Agent
+    participant K as Sysmon
+    participant O as Agent
     participant H as HollowsHunter
-    participant M as P2P Mesh
+    participant M as Mesh
     
-    K->>O: "Event ID 10: ProcessAccess on lsass.exe"
-    O->>O: "Warning: Credential dumping indicator"
-    O->>H: "Scan PID memory (/json /shellc /iat)"
-    H->>O: "JSON: 3 implants found (hollowed PE + shellcode)"
-    O->>O: "Alert: Confidence 0.95 -> ISOLATE"
-    O->>M: "Broadcast threat (differential privacy)"
-    O->>O: "Quarantine source process"
+    K->>O: Event 10 (lsass Access)
+    O->>O: Trigger Confidence
+    O->>H: Scan PID memory
+    H->>O: Found implants
+    O->>O: Confidence 0.95 -> ISOLATE
+    O->>M: Broadcast Threat
+    O->>O: Kill Process
 ```
 
 ---

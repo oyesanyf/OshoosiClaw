@@ -62,7 +62,19 @@ impl OpenShellManager {
 
     /// Check if OpenShell CLI is available on this system.
     pub fn is_available(&self) -> bool {
-        self.cli_path.exists() || Self::which_openshell().is_some()
+        if self.cli_path.exists() && self.cli_path.is_file() { return true; }
+        if Self::which_openshell().is_some() { return true; }
+        // Fallback: check if it's available as a python module
+        Self::check_python_module()
+    }
+
+    /// Check if OpenShell is available via python -m openshell.
+    fn check_python_module() -> bool {
+        Command::new("python")
+            .args(["-m", "openshell", "--version"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
     }
 
     /// Get the full status of OpenShell (installation, gateway, sandboxes).
