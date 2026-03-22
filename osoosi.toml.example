@@ -1,0 +1,72 @@
+# OpenỌ̀ṣọ́ọ̀sì — Agentic EDR Configuration
+# Copy to ~/.osoosi/config.toml or use --config path
+
+[agent]
+# Unique asset identifier (or use TPM-bound identity when available)
+asset_id = "asset-001"
+node_name = "workstation-alpha"
+
+[telemetry]
+# Sysmon event sources (Windows Event Log channel or file path)
+# On Windows: use "Microsoft-Windows-Sysmon/Operational"
+event_channel = "Microsoft-Windows-Sysmon/Operational"
+# Poll interval in seconds
+poll_interval_secs = 1
+
+[policy]
+# Paths to Sigma rules (YAML)
+sigma_rules_paths = ["./rules/sigma"]
+# Paths to YARA rules
+yara_rules_paths = ["./rules/yara"]
+# Decision chain: allow | block | alert
+default_action = "alert"
+
+[audit]
+# Persist Merkle chain to SQLite
+db_path = "~/.osoosi/audit.db"
+# Optional: TPM-bound signing (when tpm_signing = true)
+tpm_signing = false
+
+[runtime]
+# WASM Action Vault: fuel limit per response script
+action_fuel_limit = 500_000
+# Max memory for response scripts (bytes)
+action_max_memory = 8_388_608
+# SQLite database path (env: OSOOSI_DB_PATH)
+db_path = "./osoosi.db"
+# Path for deception ghost files / HDS traps (env: OSOOSI_TRAPS_PATH)
+traps_path = "./traps"
+
+[exporter]
+# SIEM / Webhook endpoints
+[[exporter.webhooks]]
+url = "https://splunk.example.com/webhook"
+headers = { "X-API-Key" = "${OSOOSI_SPLUNK_KEY}" }
+
+[[exporter.webhooks]]
+url = "https://elk.example.com/osoosi/events"
+headers = { "Authorization" = "Bearer ${OSOOSI_ELK_TOKEN}" }
+
+[sandbox]
+# WASM sandbox security. Best: allowlist mode + hash verification.
+# allowed_wasm_hashes = ["<blake3-hex-of-trusted-module>"]
+# wasm_hash_required = false
+# url_allowlist = ["api.trusted.com", "*.example.org"]
+# url_allowlist_mode = false
+# command_whitelist = ["clamscan", "whoami"]
+# command_whitelist_mode = false
+# query_allowed_tables = ["threats", "kev"]
+# query_restrict_tables = false
+# max_host_calls_per_session = 256
+
+[repair]
+# Patching requires Administrator/root. Run: osoosi-cli start (as Admin).
+# Optional: temporarily add user to admin before patch, revoke after (agent must already be admin)
+# patch_temporary_admin_user = "current"
+
+[wire]
+# Mesh Defense: peer-to-peer for agent isolation
+listen_addr = "0.0.0.0:9876"
+shared_secret = "${OSOOSI_WIRE_SECRET}"
+# Known peers for mesh defense
+peers = ["192.168.1.10:9876", "192.168.1.11:9876"]

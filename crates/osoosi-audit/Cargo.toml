@@ -1,0 +1,16 @@
+[package]
+name = "osoosi-audit"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Cryptographic Audit Trail (Merkle Chain) for OpenỌ̀ṣọ́ọ̀sì"
+
+[dependencies]
+osoosi-types = { path = "../osoosi-types" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }

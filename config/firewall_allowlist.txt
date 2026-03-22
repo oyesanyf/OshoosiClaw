@@ -1,0 +1,12 @@
+# Firewall allowlist: programs that will NOT be blocked even when autoblock is enabled.
+# One basename per line. Auto-updated from OSOOSI_FIREWALL_ALLOWLIST_URL if set.
+# Add your trusted dev tools here to avoid blocking Docker, Git, browsers, etc.
+
+git.exe
+com.docker.cli.exe
+docker.exe
+chrome.exe
+msedge.exe
+firefox.exe
+code.exe
+devenv.exe

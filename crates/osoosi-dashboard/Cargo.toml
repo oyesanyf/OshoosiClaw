@@ -1,0 +1,17 @@
+[package]
+name = "osoosi-dashboard"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+osoosi-types = { path = "../osoosi-types" }
+osoosi-core = { path = "../osoosi-core" }
+osoosi-wire = { path = "../osoosi-wire" }
+osoosi-behavioral = { path = "../osoosi-behavioral" }
+axum.workspace = true
+tower-http.workspace = true
+tokio.workspace = true
+serde.workspace = true
+serde_json.workspace = true
+tracing.workspace = true
+anyhow.workspace = true

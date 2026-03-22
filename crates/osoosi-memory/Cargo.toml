@@ -1,0 +1,20 @@
+[package]
+name = "osoosi-memory"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Local persistence and threat intelligence memory for OpenỌ̀ṣọ́ọ̀sì"
+
+[dependencies]
+osoosi-types = { path = "../osoosi-types" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+rusqlite = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+uuid = { workspace = true }
+hex = { workspace = true }
+sha2 = { workspace = true }
+hostname = { workspace = true }
+dirs = { workspace = true }

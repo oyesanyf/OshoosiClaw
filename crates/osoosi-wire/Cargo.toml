@@ -1,0 +1,26 @@
+[package]
+name = "osoosi-wire"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "P2P Knowledge Sharing (Gossip Protocol) for OpenỌ̀ṣọ́ọ̀sì Agentic EDR"
+
+[dependencies]
+osoosi-types = { path = "../osoosi-types" }
+osoosi-dp = { path = "../osoosi-dp" }
+osoosi-memory = { path = "../osoosi-memory" }
+chrono = { workspace = true }
+dashmap = { workspace = true }
+hex = { workspace = true }
+ed25519-dalek = { workspace = true }
+libp2p = { workspace = true, features = ["gossipsub", "mdns", "kad", "identify", "tcp", "noise", "yamux", "tokio", "macros", "dns", "quic"] }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+sha2 = { workspace = true }
+rand = { workspace = true }
+subtle = { workspace = true }

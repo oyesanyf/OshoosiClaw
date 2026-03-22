@@ -1,0 +1,10 @@
+[package]
+name = "osoosi"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Metapackage for OpenỌ̀ṣọ́ọ̀sì Security Agent"
+
+[dependencies]
+osoosi-core = { path = "./crates/osoosi-core" }
+osoosi-cli = { path = "./crates/osoosi-cli" }

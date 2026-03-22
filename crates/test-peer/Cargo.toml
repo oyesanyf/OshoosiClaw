@@ -1,0 +1,20 @@
+[package]
+name = "test-peer"
+version = "0.1.0"
+edition = "2021"
+description = "Test peer for simulating mesh join in OpenỌ̀ṣọ́ọ̀sì"
+
+[[bin]]
+name = "test-peer"
+path = "src/main.rs"
+
+[dependencies]
+libp2p = { workspace = true, features = ["gossipsub", "mdns", "kad", "identify", "tcp", "noise", "yamux", "tokio", "macros", "dns", "quic"] }
+tokio = { workspace = true }
+futures = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+chrono = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }

@@ -1,0 +1,50 @@
+[package]
+name = "osoosi-core"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Core Agentic EDR Orchestration for OpenỌ̀ṣọ́ọ̀sì"
+
+[dependencies]
+osoosi-types = { path = "../osoosi-types" }
+osoosi-telemetry = { path = "../osoosi-telemetry" }
+osoosi-policy = { path = "../osoosi-policy" }
+osoosi-memory = { path = "../osoosi-memory" }
+osoosi-wire = { path = "../osoosi-wire" }
+osoosi-runtime = { path = "../osoosi-runtime" }
+osoosi-audit = { path = "../osoosi-audit" }
+osoosi-trust = { path = "../osoosi-trust" }
+osoosi-repair = { path = "../osoosi-repair" }
+osoosi-model = { path = "../osoosi-model" }
+osoosi-sandbox = { path = "../osoosi-sandbox" }
+osoosi-behavioral = { path = "../osoosi-behavioral" }
+osoosi-dp = { path = "../osoosi-dp" }
+ed25519-dalek = { workspace = true }
+sysinfo = { workspace = true }
+tfhe = { workspace = true }
+blake3 = { workspace = true }
+walkdir = { workspace = true }
+regex = { workspace = true }
+magika = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+rand = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+dashmap = { workspace = true }
+chrono = { workspace = true }
+reqwest = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+hmac = { workspace = true }
+hostname = { workspace = true }
+
+uuid = { workspace = true, features = ["v4", "serde"] }
+
+[target.'cfg(windows)'.dependencies]
+winreg = { workspace = true }
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

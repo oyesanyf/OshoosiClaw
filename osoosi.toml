@@ -1,0 +1,57 @@
+# OpenỌ̀ṣọ́ọ̀sì Agent Configuration
+# Config path: OSOOSI_CONFIG env, ./osoosi.toml, or ~/.config/osoosi/osoosi.toml
+
+[telemetry]
+# Paths to watch for file changes. Use "all" to monitor all physical drives (C:\, D:\, etc. on Windows).
+watch_paths = ["all"]
+# Paths to exclude from monitoring (e.g. C:\Temp, D:\NoBackup)
+exclude_paths = ["C:\\Temp", "D:\\NoBackup"]
+
+[backup]
+# Run backup when agent starts. Set enabled = true and target path to activate.
+enabled = false
+backup_type = "file_sync"   # file_sync | restore_point (Win) | full_image (Win, needs admin)
+target = ""                 # e.g. E:\ or /mnt/backup
+# include_paths = ["C:\\Users\\YourName\\Documents"]  # optional; defaults to Documents, Desktop, Pictures
+
+[quarantine_admin]
+# Dedicated admin host(s) allowed to remove quarantine remotely.
+hosts = ["192.168.1.3"]
+# Required header key for remote release:
+# x-osoosi-quarantine-key: <key>
+key = "osoosi-qadmin-7f5d1e2c-8a3b-4c55-a2f9"
+
+[repair]
+# Temporarily grant user admin before patching, then revoke after. Requires agent to run as Administrator/root.
+# Windows: net localgroup administrators <user> /add, /delete
+# Linux: gpasswd -a <user> <group> (group: sudo or wheel, default auto-detect)
+# macOS: dseditgroup -o edit -a <user> -t user admin
+# Env: OSOOSI_PATCH_TEMPORARY_ADMIN_USER, OSOOSI_PATCH_TEMPORARY_ADMIN_GROUP (Linux)
+patch_temporary_admin_user = "current"   # "current" = grant current user, or specify username
+# patch_temporary_admin_group = "sudo"     # Linux only: sudo or wheel
+
+[hex_patch]
+# Auto-patch binaries when rules match. Runs as agent loop.
+enabled = false
+interval_secs = 3600
+# Path-based rules (periodic loop)
+# rules = [
+#   { path = "C:/path/to/target.exe", script = "config/patch_logic.lua" },
+# ]
+# CVE-triggered rules: when CVE is detected for a process (e.g. git.exe), patch it immediately
+# Use find_hex + replace_hex for dynamic patching (no script file), or script for a patch file
+# cve_rules = [
+#   { cve_id = "CVE-2024-1234", basename = "git.exe", find_hex = "74 0E", replace_hex = "EB 0E" },
+#   { cve_id = "CVE-2024-5678", basename = "ssh.exe", script = "config/patches/ssh_cve.rhai" },
+# ]
+
+[autonomy]
+# Reputation threshold (0.0–1.0). Peers with score >= this are auto-approved. 0.4 = auto-approve unknown peers (0.5).
+auto_approve_reputation_threshold = 0.4
+# Move detected malware to quarantine folder (only when confidence meets threshold)
+auto_quarantine_malware = true
+quarantine_path = "./quarantine"
+# Min confidence to quarantine (below = alert only). EICAR/ClamAV always quarantined.
+quarantine_confidence_threshold = 0.95
+# Min confidence for active response (Tarpit, Deception, etc.). Below = Alert only.
+action_confidence_threshold = 0.80

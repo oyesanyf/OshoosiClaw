@@ -1,0 +1,16 @@
+[package]
+name = "hex-patch"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Autonomous cross-OS hex patching with script logic"
+
+[[bin]]
+name = "hex-patch"
+path = "src/main.rs"
+
+[dependencies]
+osoosi-hexpatch = { path = "../osoosi-hexpatch" }
+osoosi-types = { path = "../osoosi-types" }
+clap = { workspace = true }
+anyhow = { workspace = true }

@@ -1,0 +1,7 @@
+# Software replacement: when malware is detected, search for vuln-free version and replace.
+# Format: basename|source (no hardcoded URLs - resolved at runtime)
+# Sources: github:owner/repo (searches GitHub releases), github:owner/repo:asset_filter, url:https://...
+# Auto-updated from OSOOSI_SOFTWARE_REPLACEMENT_URL if set.
+
+# git.exe|github:git-for-windows/git:64-bit
+# com.docker.cli.exe|github:docker/cli

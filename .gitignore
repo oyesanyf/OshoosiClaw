@@ -1,0 +1,110 @@
+# ============================================
+# OpenỌ̀ṣọ́ọ̀sì (OshoosiClaw) — .gitignore
+# ============================================
+
+# ---------- Rust / Cargo ----------
+/target/
+/target_alt/
+**/*.rs.bk
+*.pdb
+Cargo.lock
+# Keep Cargo.lock for binaries, uncomment if library only:
+# !Cargo.lock
+
+# ---------- Build Artifacts ----------
+*.exe
+*.dll
+*.dylib
+*.so
+*.d
+*.o
+*.obj
+*.rlib
+*.rmeta
+
+# ---------- IDE ----------
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+
+# ---------- Databases (runtime) ----------
+*.db
+*.db-shm
+*.db-wal
+*.db-journal
+odidere.db*
+osoosi.db*
+
+# ---------- Logs ----------
+logs/
+*.log
+error.log
+error_core.log
+
+# ---------- Secrets & Certificates ----------
+certs/
+*.pem
+*.key
+*.crt
+*.p12
+*.pfx
+osoosi.toml.sig
+osoosi.toml.sign
+
+# ---------- Provisioned Tools ----------
+Sysmon.exe
+Sysmon64.exe
+Sysmon64a.exe
+sysmonconfig-export.xml
+Eula.txt
+
+# ---------- Runtime Data ----------
+data/
+models/
+quarantine/
+traps/
+malware/
+dist/
+
+# ---------- Build Check Artifacts ----------
+build_check_*.txt
+build_error*.txt
+build_errors*.txt
+build_output*.txt
+check_*.txt
+core_err.txt
+behavioral_err.txt
+errors.txt
+output.txt
+test_output.txt
+test_peer_build.txt
+release_build_output.txt
+package_output_bat.txt
+
+# ---------- Deployment Packages ----------
+*.zip
+osoosi_deploy/
+
+# ---------- Temp / Misc ----------
+/tmp/
+.cargo/
+.crates.toml
+.crates2.json
+cargo
+str
+query
+
+# ---------- Python (LLM Agent) ----------
+agent/__pycache__/
+agent/.venv/
+agent/*.pyc
+*.egg-info/
+
+# ---------- Node (Dashboard) ----------
+node_modules/
+dashboard/node_modules/
+dashboard/dist/

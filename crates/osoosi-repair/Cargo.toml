@@ -1,0 +1,21 @@
+[package]
+name = "osoosi-repair"
+version.workspace = true
+edition.workspace = true
+
+[dependencies]
+osoosi-types = { path = "../osoosi-types" }
+osoosi-audit = { path = "../osoosi-audit" }
+anyhow.workspace = true
+chrono.workspace = true
+serde.workspace = true
+tracing.workspace = true
+uuid.workspace = true
+tokio = { workspace = true }
+async-trait.workspace = true
+hex.workspace = true
+sha2.workspace = true
+serde_json.workspace = true
+reqwest = { workspace = true }
+bytes = { workspace = true }
+libc.workspace = true

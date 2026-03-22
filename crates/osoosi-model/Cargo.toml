@@ -1,0 +1,28 @@
+[package]
+name = "osoosi-model"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Local ML model trained on self + peer threat data"
+
+[dependencies]
+osoosi-types = { path = "../osoosi-types" }
+osoosi-dp = { path = "../osoosi-dp" }
+osoosi-memory = { path = "../osoosi-memory" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+chrono = { workspace = true }
+goblin = { workspace = true }
+sha2 = { workspace = true }
+hex = { workspace = true }
+regex = { workspace = true }
+magika = { workspace = true }
+ort = { workspace = true }
+yara-x = "1"
+walkdir = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+pe-sign = "0.1"
+rusqlite = { workspace = true }
+git2 = { workspace = true }

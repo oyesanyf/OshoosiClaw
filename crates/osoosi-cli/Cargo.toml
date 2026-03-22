@@ -1,0 +1,25 @@
+[package]
+name = "osoosi-cli"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "CLI for OpenỌ̀ṣọ́ọ̀sì Agentic EDR"
+
+[[bin]]
+name = "osoosi"
+path = "src/main.rs"
+
+[dependencies]
+osoosi-core = { path = "../osoosi-core" }
+osoosi-dashboard = { path = "../osoosi-dashboard" }
+osoosi-types = { path = "../osoosi-types" }
+clap = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+tracing-appender = { workspace = true }
+osoosi-telemetry = { path = "../osoosi-telemetry" }
+uuid = { workspace = true }
+anyhow = { workspace = true }
+ort = { workspace = true }
+osoosi-policy = { path = "../osoosi-policy" }

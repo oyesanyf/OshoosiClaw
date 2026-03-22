@@ -1,0 +1,27 @@
+[package]
+name = "osoosi-sandbox"
+version = "0.1.0"
+edition = "2021"
+
+[dependencies]
+wasmtime = { workspace = true }
+tokio = { workspace = true }
+serde = { workspace = true, features = ["derive"] }
+serde_json = { workspace = true }
+anyhow = { workspace = true }
+thiserror = { workspace = true }
+tracing = { workspace = true }
+osoosi-types = { path = "../osoosi-types" }
+osoosi-audit = { path = "../osoosi-audit" }
+osoosi-memory = { path = "../osoosi-memory" }
+osoosi-model = { path = "../osoosi-model" }
+chrono = { workspace = true }
+uuid = { workspace = true }
+walkdir = { workspace = true }
+wasmtime-wasi = { workspace = true }
+cap-std = "3"
+blake3 = { workspace = true }
+hex = { workspace = true }
+
+[dev-dependencies]
+wat = "1.0"

@@ -1,0 +1,7 @@
+# OpenỌ̀ṣọ́ọ̀sì LLM Agent: LangChain + Ollama (Llama 3.1 8B)
+langchain>=0.3.0
+langchain-ollama>=0.2.0
+langchain-core>=0.3.0
+requests>=2.31.0
+transformers>=4.41.0
+torch

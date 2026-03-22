@@ -1,0 +1,21 @@
+[package]
+name = "osoosi-exporter"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+description = "Telemetry Exporter (SIEM/Webhook/OpenTelemetry) for OpenỌ̀ṣọ́ọ̀sì"
+
+[dependencies]
+chrono = { workspace = true }
+osoosi-types = { path = "../osoosi-types" }
+osoosi-dp = { path = "../osoosi-dp" }
+serde = { workspace = true }
+serde_json = { workspace = true }
+reqwest = { workspace = true }
+tokio = { workspace = true }
+tracing = { workspace = true }
+tracing-subscriber = { workspace = true }
+anyhow = { workspace = true }
+opentelemetry = { workspace = true }
+opentelemetry_sdk = { workspace = true }
+tracing-opentelemetry = { workspace = true }

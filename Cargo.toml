@@ -1,0 +1,94 @@
+[workspace]
+resolver = "2"
+members = [
+    "crates/osoosi-types",
+    "crates/osoosi-audit",
+    "crates/osoosi-memory",
+    "crates/osoosi-telemetry",
+    "crates/osoosi-policy",
+    "crates/osoosi-model",
+    "crates/osoosi-runtime",
+    "crates/osoosi-wire",
+    "crates/osoosi-exporter",
+    "crates/osoosi-core",
+    "crates/osoosi-cli",
+    "crates/osoosi-trust",
+    "crates/osoosi-repair",
+    "crates/osoosi-dashboard",
+    "crates/osoosi-sandbox",
+    "crates/osoosi-behavioral", "crates/osoosi-dp",
+    "crates/test-peer",
+]
+
+[workspace.package]
+version = "0.1.0"
+edition = "2021"
+license = "Apache-2.0 OR MIT"
+rust-version = "1.75"
+
+[workspace.dependencies]
+tokio = { version = "1", features = ["full"] }
+tokio-stream = "0.1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+toml = "0.8"
+thiserror = "2"
+anyhow = "1"
+dashmap = "6"
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-appender = "0.2"
+hostname = "0.4"
+chrono = { version = "0.4", features = ["serde"] }
+uuid = { version = "1", features = ["v4", "serde"] }
+rusqlite = { version = "0.31", features = ["bundled", "serde_json"] }
+clap = { version = "4", features = ["derive"] }
+sha2 = "0.10"
+hmac = "0.12"
+hex = "0.4"
+subtle = "2"
+ed25519-dalek = { version = "2", features = ["rand_core"] }
+rand = "0.8"
+zeroize = { version = "1", features = ["derive"] }
+wasmtime = "41"
+wasmtime-wasi = "41"
+async-trait = "0.1"
+reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
+bytes = "1"
+base64 = "0.22"
+dirs = "6"
+serde_yaml = "0.9"
+regex = "1"
+walkdir = "2"
+socket2 = "0.5"
+blake3 = "1.5"
+notify = "6"
+libp2p = "0.54"
+futures = "0.3"
+quick-xml = { version = "0.31", features = ["serialize"] }
+sysinfo = "0.30"
+goblin = "0.9"
+magika = "1"
+ort = { version = "2.0.0-rc.10", features = ["download-binaries", "load-dynamic"] }
+axum = { version = "0.7", features = ["macros"] }
+tower-http = { version = "0.5", features = ["fs", "cors"] }
+libc = "0.2"
+opentelemetry = { version = "0.31", features = ["trace"] }
+opentelemetry_sdk = { version = "0.31", features = ["trace"] }
+tracing-opentelemetry = "0.32"
+rayon = "1.10"
+tfhe = { version = "0.6", features = ["integer", "boolean", "shortint"] }
+bincode = "1"
+zip = "2"
+candle-core = "0.9.1"
+candle-nn = "0.9.1"
+candle-transformers = "0.9.1"
+hf-hub = "0.4"
+git2 = "0.19"
+winreg = "0.52"
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = true
+opt-level = 3

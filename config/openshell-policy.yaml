@@ -1,0 +1,185 @@
+# OpenỌ̀ṣọ́ọ̀sì Agent — NVIDIA OpenShell Sandbox Policy
+# This policy defines the isolation envelope when running the agent inside
+# an OpenShell sandbox for defense-in-depth protection.
+#
+# HARDENED POLICY — Egress Pinning (Move 2)
+# All network access is pinned to specific hosts, ports, AND IP ranges.
+# If the agent only needs specific endpoints, everything else is blocked
+# at the kernel level via Landlock + OpenShell proxy.
+#
+# Usage:
+#   openshell sandbox create --policy config/openshell-policy.yaml -- ./osoosi start
+#   openshell policy set osoosi --policy config/openshell-policy.yaml
+
+version: 1
+
+# Filesystem isolation — restrict what the sandboxed agent can access
+filesystem_policy:
+  include_workdir: true
+  read_only:
+    - /usr
+    - /lib
+    - /proc
+    - /dev/urandom
+    - /app
+    - /etc
+    - /var/log
+    - /opt/osoosi/yara            # YARA rules (read-only, prevent rule poisoning)
+    - /opt/osoosi/models          # ML models (read-only, prevent model tampering)
+    - /opt/osoosi/config          # Agent config (read-only, prevent config hijack)
+    - /opt/osoosi/dashboard       # Dashboard static assets (read-only)
+  read_write:
+    - /sandbox
+    - /tmp
+    - /dev/null
+    - /opt/osoosi/logs            # Agent logs
+    - /opt/osoosi/quarantine      # Quarantined malware files
+    - /opt/osoosi/data            # Agent runtime data (DB, state)
+    - /opt/osoosi/certs           # TLS certificates
+
+# Kernel-level filesystem access control (Linux Landlock)
+landlock:
+  compatibility: best_effort
+
+# Process isolation — run as unprivileged sandbox user
+process:
+  run_as_user: sandbox
+  run_as_group: sandbox
+
+# Network policies — EGRESS PINNED to specific hosts + ports + IP ranges
+# Move 2: Every endpoint is pinned to specific ports. No wildcard ports.
+# If your deployment uses Splunk/SIEM, add its IP range here and block everything else.
+network_policies:
+  # GitHub — threat intelligence feeds, YARA rules, CVE advisories
+  # Pinned to GitHub's published IP ranges (Actions/API)
+  github_threat_feeds:
+    name: osoosi-github-feeds
+    endpoints:
+      - host: "api.github.com"
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: read-only
+        allowed_ips:
+          - "140.82.112.0/20"     # GitHub primary
+          - "192.30.252.0/22"     # GitHub secondary
+          - "185.199.108.0/22"    # GitHub Pages/CDN
+      - host: "raw.githubusercontent.com"
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: read-only
+        allowed_ips:
+          - "185.199.108.0/22"    # GitHub CDN
+    binaries:
+      - { path: /opt/osoosi/osoosi }
+
+  # NIST NSRL — Known Good hash database
+  nist_nsrl:
+    name: osoosi-nist-nsrl
+    endpoints:
+      - host: "www.nist.gov"
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: read-only
+      - host: "s3.amazonaws.com"
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: read-only
+        allowed_ips:
+          - "52.216.0.0/15"       # AWS S3 US-East
+          - "54.231.0.0/16"       # AWS S3 global
+    binaries:
+      - { path: /opt/osoosi/osoosi }
+
+  # ClamAV signature updates — port 443 only
+  clamav_updates:
+    name: osoosi-clamav-updates
+    endpoints:
+      - host: "database.clamav.net"
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: read-only
+    binaries:
+      - { path: /usr/bin/freshclam }
+      - { path: /opt/osoosi/osoosi }
+
+  # AlienVault OTX — domain threat intelligence
+  alienvault_otx:
+    name: osoosi-otx
+    endpoints:
+      - host: "otx.alienvault.com"
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: read-only
+    binaries:
+      - { path: /opt/osoosi/osoosi }
+
+  # Mesh peer-to-peer — libp2p on specific ports only
+  # IMPORTANT: Customize allowed_ips to your LAN subnet
+  mesh_p2p:
+    name: osoosi-mesh-peers
+    endpoints:
+      - host: "0.0.0.0"
+        ports: [4001, 4002]
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: read-write
+        allowed_ips:
+          - "10.0.0.0/8"         # RFC1918 private
+          - "172.16.0.0/12"      # RFC1918 private
+          - "192.168.0.0/16"     # RFC1918 private
+    binaries:
+      - { path: /opt/osoosi/osoosi }
+
+  # Dashboard — localhost only, specific ports
+  dashboard_local:
+    name: osoosi-dashboard
+    endpoints:
+      - host: "127.0.0.1"
+        ports: [3030, 3031, 3032, 3033, 3034, 3035]
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+        allowed_ips:
+          - "127.0.0.0/8"        # Loopback only
+    binaries:
+      - { path: /opt/osoosi/osoosi }
+
+  # Ollama local inference — localhost:11434 only
+  ollama_local:
+    name: osoosi-ollama
+    endpoints:
+      - host: "127.0.0.1"
+        port: 11434
+        protocol: rest
+        enforcement: enforce
+        access: read-write
+        allowed_ips:
+          - "127.0.0.0/8"        # Loopback only
+    binaries:
+      - { path: /opt/osoosi/osoosi }
+
+  # RDAP domain age lookups
+  rdap_lookups:
+    name: osoosi-rdap
+    endpoints:
+      - host: "rdap.org"
+        port: 443
+        protocol: rest
+        tls: terminate
+        enforcement: enforce
+        access: read-only
+    binaries:
+      - { path: /opt/osoosi/osoosi }
