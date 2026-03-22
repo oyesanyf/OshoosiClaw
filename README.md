@@ -55,32 +55,32 @@ OshoosiClaw is not just a telemetry collector that sends logs to a cloud console
 
 ```mermaid
 graph LR
-    A[🔍 Observe] --> B[🧠 Think]
-    B --> C[⚡ Act]
-    C --> D[📚 Learn]
+    A["🔍 Observe"] --> B["🧠 Think"]
+    B --> C["⚡ Act"]
+    C --> D["📚 Learn"]
     D --> A
     
-    A -.- A1[Sysmon ETW Events]
-    A -.- A2[File System Changes]
-    A -.- A3[DNS / Network Traffic]
-    A -.- A4[Registry Modifications]
-    A -.- A5[Process Memory State]
+    A -.- A1["Sysmon ETW Events"]
+    A -.- A2["File System Changes"]
+    A -.- A3["DNS / Network Traffic"]
+    A -.- A4["Registry Modifications"]
+    A -.- A5["Process Memory State"]
     
-    B -.- B1[NSRL Known-Good Check]
-    B -.- B2[Sigma Rule Matching]
-    B -.- B3[EMBER ML Classification]
-    B -.- B4[SecureBERT / Gemma 3 AI]
-    B -.- B5[CAPA + FLOSS Analysis]
+    B -.- B1["NSRL Known-Good Check"]
+    B -.- B2["Sigma Rule Matching"]
+    B -.- B3["EMBER ML Classification"]
+    B -.- B4["SecureBERT / Gemma 3 AI"]
+    B -.- B5["CAPA + FLOSS Analysis"]
     
-    C -.- C1[Quarantine Malware]
-    C -.- C2[Tarpit Connections]
-    C -.- C3[Deploy Ghost Traps]
-    C -.- C4[Patch Vulnerabilities]
-    C -.- C5[Broadcast to Mesh]
+    C -.- C1["Quarantine Malware"]
+    C -.- C2["Tarpit Connections"]
+    C -.- C3["Deploy Ghost Traps"]
+    C -.- C4["Patch Vulnerabilities"]
+    C -.- C5["Broadcast to Mesh"]
     
-    D -.- D1[Behavioral Feedback]
-    D -.- D2[ML Model Retraining]
-    D -.- D3[Peer Reputation Update]
+    D -.- D1["Behavioral Feedback"]
+    D -.- D2["ML Model Retraining"]
+    D -.- D3["Peer Reputation Update"]
 ```
 
 ### What Makes It Agentic?
@@ -94,30 +94,30 @@ graph LR
 | **Collaboration** | Central server aggregates data | P2P mesh shares intelligence with differential privacy |
 | **Deception** | Static honeypots (if any) | Dynamic Ghost Traps + Tarpitting + Holographic Sharding |
 | **Reasoning** | Rule-based matching only | LLM agent (Llama 3.1 8B) reasons about context and acts |
-| **Provisioning** | Admin installs tools manually | `grant-access` auto-deploys FLOSS, HollowsHunter, ClamAV |
+| **Provisioning** | Admin installs tools manually | `grant-access` auto-deployments |
 
 ### The Autonomous Decision Matrix
 
 ```mermaid
 graph TD
-    E[Sysmon Event Received] --> F{NSRL Known Good?}
-    F -->|Yes| G[✅ Skip - Trusted Binary]
-    F -->|No| H{Policy Engine Match?}
-    H -->|No Match| I{ML Threat Score > 0.5?}
-    H -->|Match| J[Threat Detected]
-    I -->|No| K{CAPA Capabilities?}
+    E["Sysmon Event Received"] --> F{"NSRL Known Good?"}
+    F -->|Yes| G["✅ Skip - Trusted Binary"]
+    F -->|No| H{"Policy Engine Match?"}
+    H -->|No Match| I{"ML Threat Score > 0.5?"}
+    H -->|Match| J["Threat Detected"]
+    I -->|No| K{"CAPA Capabilities?"}
     I -->|Yes| J
-    K -->|None| L[✅ Clean]
+    K -->|None| L["✅ Clean"]
     K -->|Suspicious| J
-    J --> M{Confidence Level?}
-    M -->|< 0.4| N[📋 Log Only]
-    M -->|0.4 - 0.6| O[🔔 Alert]
-    M -->|0.6 - 0.8| P[🕸️ Ghost Tarpit]
-    M -->|0.8 - 0.95| Q[🔒 Isolate + Mesh Broadcast]
-    M -->|> 0.95| R[☠️ Quarantine + Process Kill]
+    J --> M{"Confidence Level?"}
+    M -->|" < 0.4 "| N["📋 Log Only"]
+    M -->|" 0.4 - 0.6 "| O["🔔 Alert"]
+    M -->|" 0.6 - 0.8 "| P["🕸️ Ghost Tarpit"]
+    M -->|" 0.8 - 0.95 "| Q["🔒 Isolate + Mesh Broadcast"]
+    M -->|" > 0.95 "| R["☠️ Quarantine + Process Kill"]
 ```
 
-### Sysmon → HollowsHunter Reactive Chain
+### Sysmon -> HollowsHunter Reactive Chain
 
 When Sysmon's **kernel driver** reports a suspicious event, OshoosiClaw automatically escalates to **memory forensics**:
 
@@ -128,13 +128,13 @@ sequenceDiagram
     participant H as HollowsHunter
     participant M as P2P Mesh
     
-    K->>O: Event ID 10: ProcessAccess on lsass.exe
-    O->>O: ⚠️ Credential dumping indicator
-    O->>H: Scan PID memory (/json /shellc /iat)
-    H->>O: JSON: 3 implants found (hollowed PE + shellcode)
-    O->>O: 🚨 Confidence 0.95 → ISOLATE
-    O->>M: Broadcast threat (differential privacy)
-    O->>O: Quarantine source process
+    K->>O: "Event ID 10: ProcessAccess on lsass.exe"
+    O->>O: "Warning: Credential dumping indicator"
+    O->>H: "Scan PID memory (/json /shellc /iat)"
+    H->>O: "JSON: 3 implants found (hollowed PE + shellcode)"
+    O->>O: "Alert: Confidence 0.95 -> ISOLATE"
+    O->>M: "Broadcast threat (differential privacy)"
+    O->>O: "Quarantine source process"
 ```
 
 ---
