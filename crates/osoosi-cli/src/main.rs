@@ -217,11 +217,8 @@ fn init_ort() {
         info!("Found ONNX Runtime at {:?} ({}MB). Attempting to load...", dylib, size_mb);
         std::env::set_var("ORT_DYLIB_PATH", &dylib);
         match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
-            match ort::init_from(&dylib) {
-                Ok(builder) => {
-                    builder.commit();
-                    Ok(())
-                }
+            match ort::init_from(dylib.to_string_lossy().to_string()).commit() {
+                Ok(_) => Ok(()),
                 Err(e) => Err(format!("{}", e)),
             }
         })) {
@@ -328,6 +325,22 @@ async fn wait_for_shutdown() {
     }
 }
 
+fn set_panic_hook() {
+    std::panic::set_hook(Box::new(|panic_info| {
+        let payload = panic_info.payload();
+        let message = if let Some(s) = payload.downcast_ref::<&str>() {
+            *s
+        } else if let Some(s) = payload.downcast_ref::<String>() {
+            s.as_str()
+        } else {
+            "unknown panic"
+        };
+        
+        let location = panic_info.location().map(|l| format!("{}:{}:{}", l.file(), l.line(), l.column())).unwrap_or_else(|| "unknown location".to_string());
+        error!("PANIC at {}: {}", location, message);
+    }));
+}
+
 fn main() -> anyhow::Result<()> {
     let rt = tokio::runtime::Builder::new_multi_thread()
         .enable_all()
@@ -342,7 +355,8 @@ async fn async_main() -> anyhow::Result<()> {
     osoosi_core::privilege::bootstrap_security_rules();
 
     let _log_guard = init_logging()?;
-    println!("OpenỌ̀ṣọ́ọ̀sì Orchestrator starting up...");
+    set_panic_hook();
+    info!("OpenỌ̀ṣọ́ọ̀sì Orchestrator starting up...");
 
     // Initialize ONNX Runtime (load-dynamic) before any ort usage (magika, behavioral)
     init_ort();

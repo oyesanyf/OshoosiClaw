@@ -1172,7 +1172,7 @@ impl EdrOrchestrator {
             };
 
             if should_memory_scan {
-                let hh_path = std::path::PathBuf::from("D:\\harfile\\hollows_hunter\\hollows_hunter.exe");
+                let hh_path = osoosi_types::resolve_tool_path("hollows_hunter", "hollows_hunter.exe");
                 if hh_path.exists() {
                     // Get the target PID for focused scanning
                     let target_pid = event.data.get("TargetProcessId")

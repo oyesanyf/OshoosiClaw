@@ -774,13 +774,15 @@ impl AgentProvisioner {
         
         #[cfg(target_os = "windows")]
         {
-            if self.command_exists_win("floss") || Path::new("D:\\harfile\\floss\\floss.exe").exists() {
+            let floss_exe = osoosi_types::resolve_tool_path("floss", "floss.exe");
+            if self.command_exists_win("floss") || floss_exe.exists() {
                 info!("FLOSS already available on Windows.");
                 return Ok(());
             }
 
             let url = format!("https://github.com/mandiant/flare-floss/releases/download/v{}/floss-v{}-windows.zip", version, version);
-            let target_dir = "D:\\harfile\\floss";
+            let target_dir = osoosi_types::resolve_tools_dir().join("floss");
+            let target_dir_str = target_dir.to_string_lossy();
             let zip_path = "floss.zip";
 
             info!("FLOSS not found. Downloading v{} for Windows...", version);
@@ -790,7 +792,7 @@ impl AgentProvisioner {
                  Invoke-WebRequest -Uri '{}' -OutFile '{}'; \
                  Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
                  Remove-Item '{}'",
-                target_dir, url, zip_path, zip_path, target_dir, zip_path
+                target_dir_str, url, zip_path, zip_path, target_dir_str, zip_path
             );
 
             let status = Command::new("powershell")
@@ -798,7 +800,7 @@ impl AgentProvisioner {
                 .status()?;
 
             if status.success() {
-                info!("FLOSS v{} installed successfully to {}.", version, target_dir);
+                info!("FLOSS v{} installed successfully to {}.", version, target_dir_str);
                 Ok(())
             } else {
                 Err(anyhow::anyhow!("Failed to download and extract FLOSS for Windows."))
@@ -864,11 +866,12 @@ impl AgentProvisioner {
 
         #[cfg(target_os = "windows")]
         {
-            let target_dir = "D:\\harfile\\hollows_hunter";
-            let exe_path = format!("{}\\hollows_hunter.exe", target_dir);
+            let target_dir = osoosi_types::resolve_tools_dir().join("hollows_hunter");
+            let target_dir_str = target_dir.to_string_lossy();
+            let exe_path = target_dir.join("hollows_hunter.exe");
             
-            if Path::new(&exe_path).exists() {
-                info!("HollowsHunter already available at {}.", exe_path);
+            if exe_path.exists() {
+                info!("HollowsHunter already available at {}.", exe_path.display());
                 return Ok(());
             }
 
@@ -884,7 +887,7 @@ impl AgentProvisioner {
                  Invoke-WebRequest -Uri '{}' -OutFile '{}\\hh.zip'; \
                  Expand-Archive -Path '{}\\hh.zip' -DestinationPath '{}' -Force; \
                  Remove-Item '{}\\hh.zip'",
-                target_dir, url, target_dir, target_dir, target_dir, target_dir
+                target_dir_str, url, target_dir_str, target_dir_str, target_dir_str, target_dir_str
             );
 
             let status = Command::new("powershell")
@@ -892,7 +895,7 @@ impl AgentProvisioner {
                 .status()?;
 
             if status.success() {
-                info!("HollowsHunter v{} installed to {}.", version, target_dir);
+                info!("HollowsHunter v{} installed to {}.", version, target_dir_str);
                 Ok(())
             } else {
                 Err(anyhow::anyhow!("Failed to download HollowsHunter for Windows."))

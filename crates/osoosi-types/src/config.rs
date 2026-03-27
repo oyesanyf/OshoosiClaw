@@ -388,6 +388,48 @@ pub fn resolve_bin_dir() -> PathBuf {
         .join("bin")
 }
 
+/// Resolve the tools directory (floss, capa, hollows_hunter).
+/// Env override: OSOOSI_TOOLS_ROOT or OSOOSI_HARFILE (legacy).
+/// Defaults to current_dir/harfile or project_root/harfile if found.
+pub fn resolve_tools_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("OSOOSI_TOOLS_ROOT") {
+        return PathBuf::from(p.trim());
+    }
+    if let Ok(p) = std::env::var("OSOOSI_HARFILE") {
+        return PathBuf::from(p.trim());
+    }
+    
+    // Check if harfile exists in project root or current dir
+    if let Some(root) = resolve_project_root() {
+        let h = root.join("harfile");
+        if h.is_dir() {
+            return h;
+        }
+    }
+    
+    // Fallback to searching upward for 'harfile' directory
+    let mut dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    loop {
+        let h = dir.join("harfile");
+        if h.is_dir() {
+            return h;
+        }
+        if let Some(parent) = dir.parent() {
+            dir = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+    
+    // Ultimate fallback: current_dir/harfile
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("harfile")
+}
+
+/// Resolve a specific tool path dynamically.
+pub fn resolve_tool_path(tool_name: &str, executable_name: &str) -> PathBuf {
+    resolve_tools_dir().join(tool_name).join(executable_name)
+}
+
 /// Walk up from current_dir to find project/workspace root (osoosi.toml or Cargo.toml with [workspace]).
 fn resolve_project_root() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;

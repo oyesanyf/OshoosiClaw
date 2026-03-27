@@ -69,7 +69,7 @@ quick-xml = { version = "0.31", features = ["serialize"] }
 sysinfo = "0.30"
 goblin = "0.9"
 magika = "1"
-ort = { version = "2.0.0-rc.10", features = ["download-binaries", "load-dynamic"] }
+ort = { version = "=2.0.0-rc.10", features = ["download-binaries", "load-dynamic"] }
 axum = { version = "0.7", features = ["macros"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 libc = "0.2"
