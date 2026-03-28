@@ -135,6 +135,10 @@ impl EdrOrchestrator {
         self.behavioral_analyzer.clone()
     }
 
+    pub fn adaptive(&self) -> Arc<crate::adaptive::TelemetryController> {
+        self.adaptive.clone()
+    }
+
     /// Generate an AI forensic narrative of the current session's events.
     pub async fn generate_story(&self) -> String {
         self.storyteller.summarize_ai(&self.audit).await
@@ -1494,11 +1498,6 @@ impl EdrOrchestrator {
         Ok(())
     }
 
-    /// Generate an attack narrative from the audit log.
-    pub async fn generate_story(&self) -> String {
-        let storyteller = ForensicStoryteller::new();
-        storyteller.summarize_ai(&self.audit).await
-    }
 
     /// Broadcast a tarpit signal to the mesh for a suspected attacker IP.
     pub async fn broadcast_tarpit_signal(&self, target_ip: String, confidence: f32, attack_type: String) -> anyhow::Result<()> {
@@ -1507,7 +1506,10 @@ impl EdrOrchestrator {
             confidence,
             attack_type,
         };
-        self.broadcast_command(osoosi_wire::MeshCommand::BroadcastTarpit(signal)).await
+        if let Some(ref tx) = *self.mesh_command_tx.lock().await {
+            let _ = tx.send(osoosi_wire::MeshCommand::BroadcastTarpit(signal)).await;
+        }
+        Ok(())
     }
 
     /// Access the trust manager to bootstrap mesh identity.
@@ -1860,7 +1862,7 @@ impl EdrOrchestrator {
         let ghost_tx = ghost_shard_tx.clone();
         let intel_tx = peer_intel_tx.clone();
         let sample_tx = malware_sample_tx.clone();
-        let autonomy_conf = self.autonomy.clone();
+        let autonomy_conf = autonomy.clone();
         let mesh_future = Box::pin(async move {
             mesh.run_loop(
                 join_gate_clone,
@@ -1878,6 +1880,9 @@ impl EdrOrchestrator {
                              let _ = osoosi_wire::apply_socket_tarpit(addr);
                          }
                     }
+                },
+                move |c| {
+                    info!("MESH: Received confidential message from peer: {:?}", c);
                 },
             )
             .await;

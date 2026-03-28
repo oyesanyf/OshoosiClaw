@@ -33,7 +33,7 @@ impl MitigationEngine {
         let wasm_policy = include_bytes!("../../../wasm/mitigation_policy.wasm");
         
         let mut labels = HashSet::new();
-        labels.insert(TaintLabel::InternalEvent);
+        labels.insert(TaintLabel::UntrustedScript);
 
         let result = self.sandbox.run_script(wasm_policy, self.config.clone(), labels).await;
         

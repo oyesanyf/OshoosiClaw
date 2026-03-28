@@ -3,6 +3,7 @@
 //! Provides capabilities to neutralize threats: network isolation, process termination, and rollback.
 
 use std::process::Command;
+use tracing::{info, warn};
 
 pub struct RemediationController;
 

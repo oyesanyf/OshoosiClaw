@@ -2,7 +2,7 @@
 //!
 //! Dynamically scales telemetry fidelity based on system resources and detection activity.
 
-use sysinfo::{System, SystemExt, CpuExt};
+use sysinfo::System;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use tracing::{info, warn};

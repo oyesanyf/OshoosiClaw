@@ -200,7 +200,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             orchestrator.start_maintenance_loop();
             orchestrator.start_cybershield_monitor();
             orchestrator.start_behavioral_detector();
-            orchestrator.clone().adaptive.start_adaptive_loop(); // Active resource-aware scaling
+            orchestrator.clone().adaptive().start_adaptive_loop(); // Active resource-aware scaling
             orchestrator.start_repair_loop(3600, true).await;
             orchestrator.start_fetcher_loop().await;
             orchestrator.start_model_training_loop(60).await;

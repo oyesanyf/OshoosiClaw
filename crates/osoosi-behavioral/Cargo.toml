@@ -24,4 +24,5 @@ reqwest = { workspace = true, features = ["json"] }
 candle-core = { workspace = true }
 candle-nn = { workspace = true }
 candle-transformers = { workspace = true }
+rand = { workspace = true }
 

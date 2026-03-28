@@ -71,7 +71,9 @@ malware/
 dist/
 
 # ---------- Build Check Artifacts ----------
+*.txt
 build_check_*.txt
+...
 build_error*.txt
 build_errors*.txt
 build_output*.txt
@@ -108,3 +110,7 @@ agent/*.pyc
 node_modules/
 dashboard/node_modules/
 dashboard/dist/
+
+# ---------- System / Gemini ----------
+.gemini/
+.antigravity/

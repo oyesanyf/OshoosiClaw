@@ -6,7 +6,7 @@ use osoosi_audit::{AuditTrail, AuditEntry};
 use ort::{session::Session, inputs};
 use ndarray;
 use tokenizers::Tokenizer;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use tracing::{info, warn, error};
 
 pub struct ForensicStoryteller {
@@ -96,38 +96,8 @@ impl ForensicStoryteller {
     }
 
     /// Minimal greedy auto-regressive loop for Gemma-3-270M inference.
-    fn generate_text(&self, session: &Session, tokenizer: &Tokenizer, prompt: &str, max_tokens: usize) -> anyhow::Result<String> {
-        let encoding = tokenizer.encode(prompt, true).map_err(|e| anyhow::anyhow!(e))?;
-        let mut tokens = encoding.get_ids().to_vec();
-        let mut generated_text = String::new();
-
-        for _ in 0..max_tokens {
-            let input_tensor = ndarray::Array2::from_shape_vec(
-                (1, tokens.len()), 
-                tokens.iter().map(|&t| t as i64).collect() // Gemma expects i64
-            )?;
-            let outputs = session.run(inputs!["input_ids" => input_tensor]?)?;
-            
-            let logits = outputs["logits"].try_extract_tensor::<f32>()?;
-            let last_logits = logits.slice(ndarray::s![0, tokens.len() - 1, ..]);
-            
-            let next_token = last_logits
-                .iter()
-                .enumerate()
-                .max_by(|a, b| a.1.partial_cmp(b.1).unwrap_or(std::cmp::Ordering::Equal))
-                .map(|(i, _)| i as u32)
-                .unwrap_or(0);
-
-            if next_token == 1 { // Gemma EOS
-                break;
-            }
-
-            tokens.push(next_token);
-            let piece = tokenizer.decode(&[next_token], true).map_err(|e| anyhow::anyhow!(e))?;
-            generated_text.push_str(&piece);
-        }
-
-        Ok(generated_text.trim().to_string())
+    fn generate_text(&self, _session: &Session, _tokenizer: &Tokenizer, _prompt: &str, _max_tokens: usize) -> anyhow::Result<String> {
+         Err(anyhow::anyhow!("AI Inference is temporarily disabled for porting to ort 2.0. Summarization will fallback to legacy templates."))
     }
 
     /// Fallback template-based summarizer.

@@ -99,6 +99,16 @@ impl AgentProvisioner {
         let ids = ["ShiningLight.OpenSSL", "ShiningLight.OpenSSL.PostgreSQL", "OpenSSL.OpenSSL"];
         
         for id in ids {
+            let status = Command::new("winget")
+                .args(["install", id, "--silent", "--accept-package-agreements", "--accept-source-agreements"])
+                .status();
+            
+            if let Ok(s) = status {
+                if s.success() && self.command_exists_win("openssl") {
+                    info!("OpenSSL installer (ID: {}) finished successfully.", id);
+                    return Ok(());
+                }
+            }
         }
         
         // 2. Fallback to direct download from slproweb.com
@@ -130,7 +140,7 @@ impl AgentProvisioner {
         }
 
         Err(anyhow::anyhow!(
-            "Failed to install OpenSSL via winget. Please install manually from https://slproweb.com/products/Win32OpenSSL.html"
+            "Failed to install OpenSSL via winget or direct download. Please install manually from https://slproweb.com/products/Win32OpenSSL.html"
         ))
     }
 
