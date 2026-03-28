@@ -1126,4 +1126,97 @@ impl AgentProvisioner {
              Err(anyhow::anyhow!("sniffglue provisioning not supported on this platform."))
         }
     }
+
+    /// Provision a base set of YARA rules for threat detection.
+    pub fn provision_yara_rules(&self) -> anyhow::Result<()> {
+        let yara_dir = std::path::Path::new("yara").join("community");
+        if !yara_dir.exists() {
+            std::fs::create_dir_all(&yara_dir)?;
+        }
+
+        // Only download if the community folder is empty/non-existent
+        if let Ok(mut entries) = std::fs::read_dir(&yara_dir) {
+            if entries.next().is_some() {
+                info!("YARA community rules already present at {}.", yara_dir.display());
+                return Ok(());
+            }
+        }
+
+        info!("YARA community rules missing. Downloading latest from Yara-Rules/rules repository...");
+        
+        let url = "https://github.com/Yara-Rules/rules/archive/refs/heads/master.zip";
+        let zip_path = "yara_temp.zip";
+
+        #[cfg(target_os = "windows")]
+        {
+            let ps_cmd = format!(
+                "$ProgressPreference='SilentlyContinue'; \
+                 Invoke-WebRequest -Uri '{}' -OutFile '{}'; \
+                 Expand-Archive -Path '{}' -DestinationPath 'yara-tmp' -Force; \
+                 if (Test-Path 'yara-tmp\\rules-master') {{ \
+                    Copy-Item -Path 'yara-tmp\\rules-master\\*' -Destination '{}' -Recurse -Force; \
+                 }} else {{ \
+                    Copy-Item -Path 'yara-tmp\\*' -Destination '{}' -Recurse -Force; \
+                 }} \
+                 Remove-Item '{}'; \
+                 Remove-Item -Recurse -Force 'yara-tmp'",
+                 url, zip_path, zip_path, yara_dir.to_string_lossy(), yara_dir.to_string_lossy(), zip_path
+            );
+            
+            let status = Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
+                .status()?;
+            
+            if status.success() {
+                info!("YARA community rules provisioned successfully.");
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Failed to download YARA rules via PowerShell."))
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+             let sh_cmd = format!(
+                "curl -L -o {} {} && unzip -o {} -d yara-tmp && cp -r yara-tmp/* {}/ && rm {} && rm -rf yara-tmp",
+                zip_path, url, zip_path, yara_dir.to_string_lossy(), zip_path
+            );
+            let status = Command::new("sh").args(["-c", &sh_cmd]).status()?;
+            if status.success() {
+                info!("YARA community rules provisioned successfully.");
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Failed to download YARA rules via curl/unzip."))
+            }
+        }
+    }
+
+    /// Add a Windows Defender exclusion for a specific path.
+    pub fn add_defender_exclusion(&self, path: &std::path::Path) -> anyhow::Result<()> {
+        #[cfg(target_os = "windows")]
+        {
+            // Resolve to absolute path for exclusion
+            let full_path = std::env::current_dir()?.join(path);
+            let path_str = full_path.to_string_lossy();
+            
+            info!("Adding Windows Defender exclusion for: {}...", path_str);
+            let ps_cmd = format!("Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue", path_str);
+            
+            let status = Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
+                .status()?;
+            
+            if status.success() {
+                info!("Windows Defender exclusion added successfully.");
+                Ok(())
+            } else {
+                warn!("Failed to add Defender exclusion. This typically requires Administrator privileges.");
+                Err(anyhow::anyhow!("Defender exclusion failed (check privileges)."))
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = path;
+            Ok(())
+        }
+    }
 }

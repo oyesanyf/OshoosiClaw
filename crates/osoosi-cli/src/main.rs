@@ -407,6 +407,17 @@ async fn handle_grant_access() -> anyhow::Result<()> {
         if let Err(e) = provisioner.provision_sniffglue() {
              warn!("Warning: Failed to provision sniffglue: {}", e);
         }
+
+        info!("GrantAccess pre-step: ensuring YARA rules are provisioned...");
+        if let Err(e) = provisioner.provision_yara_rules() {
+             warn!("Warning: Failed to provision YARA rules: {}", e);
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            info!("GrantAccess pre-step: adding Antivirus exclusions for the YARA folder...");
+            let _ = provisioner.add_defender_exclusion(Path::new("yara"));
+        }
     }
     
     match setup_firewall().await {
