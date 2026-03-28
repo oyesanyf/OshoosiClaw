@@ -7,6 +7,7 @@ description = "Active Response Runtime (Deception & Tarpit) for OpenỌ̀ṣọ�
 
 [dependencies]
 osoosi-types = { path = "../osoosi-types" }
+osoosi-sandbox = { path = "../osoosi-sandbox" }
 osoosi-telemetry = { path = "../osoosi-telemetry" }
 tokio = { workspace = true, features = ["full"] }
 serde = { workspace = true }

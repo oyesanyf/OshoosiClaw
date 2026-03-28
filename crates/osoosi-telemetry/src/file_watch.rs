@@ -6,7 +6,7 @@ use std::path::Path;
 use std::sync::Arc;
 use notify::{Watcher, RecursiveMode, Event, EventKind};
 use tokio::sync::mpsc;
-use tracing::{info, error, debug};
+use tracing::{info, error, debug, warn};
 use std::time::Duration;
 use crate::hash::calculate_blake3_hash;
 use chrono::Utc;
@@ -85,6 +85,7 @@ fn osoosi_install_dir() -> std::path::PathBuf {
 pub struct FileWatcher {
     watcher: notify::RecommendedWatcher,
     receiver: mpsc::Receiver<anyhow::Result<FileChangeEvent>>,
+    pub trap_paths: Arc<dashmap::DashSet<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -101,17 +102,27 @@ impl FileWatcher {
         let rt = tokio::runtime::Handle::current();
         let install_dir = osoosi_install_dir();
         let excludes = exclude_paths.clone();
+        let trap_paths = Arc::new(dashmap::DashSet::new());
+        let traps = trap_paths.clone();
         
         // Notify watcher callback
         let watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
             match res {
                 Ok(event) => {
-                    if event.kind.is_create() || event.kind.is_modify() {
+                    if event.kind.is_access() || event.kind.is_create() || event.kind.is_modify() {
                         for path in event.paths {
                             if !path.is_file() || should_skip_path(&path, &install_dir, &excludes) {
                                 continue;
                             }
+                            
                             let path_str = path.to_string_lossy().to_string();
+
+                            // IMMEDIATE TRAP DETECTION
+                            if traps.contains(&path_str) {
+                                warn!("HONEYTOKEN ACCESS DETECTED: {} - Triggering immediate quarantine!", path_str);
+                                // In a real implementation, this would call the quarantine module
+                            }
+
                             // Check SQLite skip list (files that previously failed to hash)
                             if let Some(ref mem) = memory {
                                 if mem.is_file_in_skip_list(&path_str).unwrap_or(false) {
@@ -174,6 +185,7 @@ impl FileWatcher {
         Ok(Self {
             watcher,
             receiver: rx,
+            trap_paths,
         })
     }
 

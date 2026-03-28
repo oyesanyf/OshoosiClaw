@@ -26,6 +26,10 @@ blake3 = { workspace = true }
 walkdir = { workspace = true }
 regex = { workspace = true }
 magika = { workspace = true }
+ort = { version = "=2.0.0-rc.10", features = ["load-dynamic"] }
+ndarray = "0.15"
+tokenizers = "0.19.1"
+hf-hub = "0.3.2"
 tokio = { workspace = true, features = ["full"] }
 rand = { workspace = true }
 serde = { workspace = true }

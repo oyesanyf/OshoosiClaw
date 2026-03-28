@@ -430,6 +430,39 @@ pub fn resolve_tool_path(tool_name: &str, executable_name: &str) -> PathBuf {
     resolve_tools_dir().join(tool_name).join(executable_name)
 }
 
+/// Resolve the models directory for ML/LLM models (Malware, Gemma, etc.).
+/// Env override: OSOOSI_MODELS_DIR.
+/// Defaults to current_dir/models or project_root/models if found.
+pub fn resolve_models_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("OSOOSI_MODELS_DIR") {
+        return PathBuf::from(p.trim());
+    }
+    
+    if let Some(root) = resolve_project_root() {
+        let m = root.join("models");
+        if m.is_dir() {
+            return m;
+        }
+    }
+    
+    // Fallback to searching upward for 'models' directory
+    let mut dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    loop {
+        let m = dir.join("models");
+        if m.is_dir() {
+            return m;
+        }
+        if let Some(parent) = dir.parent() {
+            dir = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+    
+    // Ultimate fallback: current_dir/models
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("models")
+}
+
 /// Walk up from current_dir to find project/workspace root (osoosi.toml or Cargo.toml with [workspace]).
 fn resolve_project_root() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;

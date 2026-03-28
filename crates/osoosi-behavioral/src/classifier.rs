@@ -97,14 +97,15 @@ impl BehavioralClassifier {
             .unwrap_or_default();
 
         let gemma = if model.is_none() {
-            // Attempt to load native Gemma 3 4B
-            match GemmaAnalyzer::new() {
+            // Attempt to load native Gemma 3 4B from models/gemma/
+            let gemma_dir = Path::new(&models_dir).join("gemma");
+            match GemmaAnalyzer::new(&gemma_dir) {
                 Ok(g) => {
                     info!("Native Gemma 3 4B initialization successful.");
                     Some(Arc::new(g))
                 }
                 Err(e) => {
-                    warn!("Failed to initialize native Gemma: {}. Falling back to Rule-based + OpenAI.", e);
+                    warn!("Failed to initialize native Gemma from {:?}: {}. Falling back to Rule-based + OpenAI.", gemma_dir, e);
                     None
                 }
             }

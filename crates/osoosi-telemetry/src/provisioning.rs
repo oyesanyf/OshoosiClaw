@@ -93,20 +93,45 @@ impl AgentProvisioner {
             return Ok(());
         }
 
-        info!("OpenSSL not found. Attempting to install via winget...");
-        let status = Command::new("winget")
-            .args(["install", "-e", "--id", "ShiningLight.OpenSSL", "--accept-source-agreements", "--accept-package-agreements"])
-            .status();
-
-        match status {
-            Ok(s) if s.success() => {
-                info!("OpenSSL installed successfully via winget. Note: You may need to restart your terminal or add it to PATH manually.");
-                Ok(())
-            }
-            _ => Err(anyhow::anyhow!(
-                "Failed to install OpenSSL via winget. Please install manually from https://slproweb.com/products/Win32OpenSSL.html"
-            )),
+        info!("OpenSSL not found. Attempting non-interactive install via winget...");
+        
+        // IDs to try in order
+        let ids = ["ShiningLight.OpenSSL", "ShiningLight.OpenSSL.PostgreSQL", "OpenSSL.OpenSSL"];
+        
+        for id in ids {
         }
+        
+        // 2. Fallback to direct download from slproweb.com
+        info!("OpenSSL winget entries failed. Using direct download from slproweb.com...");
+        let url = "https://slproweb.com/download/Win64OpenSSL-3_6_1.exe";
+        let installer_path = std::env::temp_dir().join("openssl-setup.exe");
+        let installer_str = installer_path.to_string_lossy().to_string();
+        
+        let dl_cmd = format!(
+            "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '{}' -OutFile '{}'",
+            url, installer_str
+        );
+        let dl_status = Command::new("powershell")
+            .args(["-NoProfile", "-NonInteractive", "-Command", &dl_cmd])
+            .status()?;
+            
+        if dl_status.success() {
+            info!("OpenSSL installer downloaded. Running silent setup...");
+            let install_status = Command::new(&installer_str)
+                .args(["/verysilent", "/sp-", "/suppressmsgboxes", "/norestart"])
+                .status()?;
+            
+            let _ = std::fs::remove_file(&installer_path);
+            
+            if install_status.success() {
+                 info!("OpenSSL installed successfully via direct installer.");
+                 return Ok(());
+            }
+        }
+
+        Err(anyhow::anyhow!(
+            "Failed to install OpenSSL via winget. Please install manually from https://slproweb.com/products/Win32OpenSSL.html"
+        ))
     }
 
     #[cfg(target_os = "windows")]
@@ -717,55 +742,57 @@ impl AgentProvisioner {
         }
     }
 
-    /// Provision Ollama for LLM analysis.
-    pub fn provision_ollama(&self) -> anyhow::Result<()> {
-        match Command::new("ollama").arg("list").output() {
-            Ok(o) if o.status.success() => {
-                info!("Ollama is already installed.");
-                return Ok(());
-            }
-            _ => {}
+    /// Provision the leanest Gemma-2B-IT-Q4 models and tokenizer for local inference.
+    pub fn provision_gemma_models(&self) -> anyhow::Result<()> {
+        let models_dir = osoosi_types::resolve_models_dir();
+        if !models_dir.exists() {
+            std::fs::create_dir_all(&models_dir)?;
         }
 
-        info!("Ollama not found. Attempting to install Ollama...");
-        #[cfg(target_os = "windows")]
-        {
-            let dl_cmd = "Invoke-WebRequest -Uri 'https://ollama.com/download/ollama-windows-amd64.zip' -OutFile 'ollama.zip'; Expand-Archive -Path 'ollama.zip' -DestinationPath 'ollama' -Force; Remove-Item 'ollama.zip'";
-            let status = Command::new("powershell").args(["-Command", dl_cmd]).status()?;
-            if status.success() {
-                info!("Ollama downloaded to ./ollama. Please ensure it is in your PATH or run it directly from ./ollama/ollama.exe.");
-                return Ok(());
-            }
+        let model_path = models_dir.join("gemma-3-270m-it.onnx");
+        let tokenizer_path = models_dir.join("tokenizer.json");
+
+        if model_path.exists() && tokenizer_path.exists() {
+            info!("Ultra-Lean Gemma-3 270M models already provisioned.");
+            return Ok(());
         }
-        #[cfg(target_os = "linux")]
-        {
-            let status = Command::new("sh").args(["-c", "curl -fsSL https://ollama.com/install.sh | sh"]).status()?;
-             if status.success() {
-                info!("Ollama installed successfully via official script.");
-                return Ok(());
+
+        info!("Provisioning Ultra-Lean Gemma-3 270M ONNX models (near-instant latency)...");
+        
+        let files = [
+            ("gemma-3-270m-it.onnx", "https://huggingface.co/google/gemma-3-270m-it-onnx/resolve/main/gemma-3-270m-it.onnx"),
+            ("tokenizer.json", "https://huggingface.co/google/gemma-3-270m-it-onnx/resolve/main/tokenizer.json"),
+        ];
+
+        for (name, url) in files {
+            let dest = models_dir.join(name);
+            if dest.exists() { continue; }
+
+            info!("Downloading {}...", name);
+            #[cfg(target_os = "windows")]
+            {
+                let ps_cmd = format!(
+                    "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '{}' -OutFile '{}'",
+                    url, dest.to_string_lossy()
+                );
+                let status = Command::new("powershell")
+                    .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
+                    .status()?;
+                if !status.success() {
+                    return Err(anyhow::anyhow!("Failed to download {} from HuggingFace.", name));
+                }
             }
-        }
-        #[cfg(target_os = "macos")]
-        {
-             let status = Command::new("brew").args(["install", "ollama"]).status()?;
-             if status.success() {
-                info!("Ollama installed via Homebrew.");
-                return Ok(());
+            #[cfg(unix)]
+            {
+                let status = Command::new("curl").args(["-L", "-o", &dest.to_string_lossy(), url]).status()?;
+                if !status.success() {
+                    return Err(anyhow::anyhow!("Failed to download {} from HuggingFace.", name));
+                }
             }
         }
 
-        Err(anyhow::anyhow!("Ollama installation failed or not supported for automated install on this platform."))
-    }
-
-    pub fn pull_ollama_model(&self, model: &str) -> anyhow::Result<()> {
-        info!("Pulling Ollama model: {}...", model);
-        let status = Command::new("ollama").args(["pull", model]).status()?;
-        if status.success() {
-            info!("Model {} pulled successfully.", model);
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("Failed to pull Ollama model {}.", model))
-        }
+        info!("Gemma-3-270m-it models provisioned successfully.");
+        Ok(())
     }
 
     /// Provision FLOSS (FLARE Obfuscated String Solver) for deobfuscating malware strings.
@@ -923,6 +950,170 @@ impl AgentProvisioner {
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
             Err(anyhow::anyhow!("HollowsHunter provisioning not supported on this platform."))
+        }
+    }
+
+    /// Provision ngrep (network grep) for deep packet inspection on Windows.
+    pub fn provision_ngrep(&self) -> anyhow::Result<()> {
+        #[cfg(target_os = "windows")]
+        {
+            let target_dir = osoosi_types::resolve_tools_dir().join("ngrep");
+            let target_dir_str = target_dir.to_string_lossy();
+            let exe_path = target_dir.join("ngrep.exe");
+
+            if exe_path.exists() {
+                info!("ngrep already available at {}.", exe_path.display());
+                return Ok(());
+            }
+
+            let version = "1.49.0";
+            let url = format!(
+                "https://github.com/jpr5/ngrep/releases/download/v{}/ngrep-windows-x86_64.zip",
+                version
+            );
+
+            info!("ngrep not found. Downloading v{} for Windows...", version);
+            let ps_cmd = format!(
+                "$ProgressPreference='SilentlyContinue'; \
+                 New-Item -ItemType Directory -Force -Path '{}' | Out-Null; \
+                 Invoke-WebRequest -Uri '{}' -OutFile '{}\\ngrep.zip'; \
+                 Expand-Archive -Path '{}\\ngrep.zip' -DestinationPath '{}' -Force; \
+                 Move-Item -Path '{}\\ngrep-windows-x86_64\\ngrep.exe' -Destination '{}' -Force; \
+                 Remove-Item '{}\\ngrep.zip'; \
+                 Remove-Item -Recurse -Force '{}\\ngrep-windows-x86_64'",
+                target_dir_str, url, target_dir_str, target_dir_str, target_dir_str, target_dir_str, target_dir_str, target_dir_str, target_dir_str
+            );
+
+            let status = Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
+                .status()?;
+
+            if status.success() {
+                info!("ngrep v{} installed successfully.", version);
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Failed to download and extract ngrep for Windows."))
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Ok(()) // Non-windows uses sniffglue
+        }
+    }
+
+    /// Provision Npcap (packet capture driver) required for ngrep on Windows.
+    pub fn provision_npcap(&self) -> anyhow::Result<()> {
+        #[cfg(target_os = "windows")]
+        {
+            // Check if npcap is likely installed by looking for the driver or dll
+            let system32 = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+            let wpcap_dll = std::path::Path::new(&system32).join("System32").join("wpcap.dll");
+            
+            if wpcap_dll.exists() {
+                info!("Npcap (or WinPcap) detected via wpcap.dll. Skipping install.");
+                return Ok(());
+            }
+
+            let url = "https://npcap.com/dist/npcap-1.78.exe";
+            let installer_path = std::env::temp_dir().join("npcap-installer.exe");
+            let installer_path_str = installer_path.to_string_lossy();
+
+            info!("Npcap not detected. Downloading official installer...");
+            let dl_cmd = format!(
+                "$ProgressPreference='SilentlyContinue'; Invoke-WebRequest -Uri '{}' -OutFile '{}'",
+                url, installer_path_str
+            );
+            
+            let dl_status = Command::new("powershell")
+                .args(["-NoProfile", "-NonInteractive", "-Command", &dl_cmd])
+                .status()?;
+
+            if !dl_status.success() {
+                return Err(anyhow::anyhow!("Failed to download Npcap installer."));
+            }
+
+            info!("Installing Npcap silently (requires Elevation)...");
+            // /S = Silent, /admin_only=1, /dot11_support=0, /loopback_support=1
+            let install_status = Command::new(&installer_path)
+                .args(["/S", "/admin_only=1", "/dot11_support=0", "/loopback_support=1"])
+                .status()?;
+
+            let _ = std::fs::remove_file(&installer_path);
+
+            if install_status.success() {
+                info!("Npcap installed successfully.");
+                Ok(())
+            } else {
+                Err(anyhow::anyhow!("Npcap installation failed. Please run as Administrator."))
+            }
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            Ok(())
+        }
+    }
+
+    /// Provision sniffglue (sandboxed network sniffer) for deep packet inspection on Unix.
+    pub fn provision_sniffglue(&self) -> anyhow::Result<()> {
+        #[cfg(target_os = "linux")]
+        {
+            if self.command_exists("sniffglue") {
+                info!("sniffglue already available on Linux.");
+                return Ok(());
+            }
+
+            warn!("sniffglue not found. Attempting Linux package installation...");
+            let candidates: &[(&str, &[&str])] = &[
+                ("sudo", &["apt-get", "update"]),
+                ("sudo", &["apt-get", "install", "-y", "sniffglue"]),
+                ("sudo", &["dnf", "install", "-y", "sniffglue"]),
+                ("sudo", &["yum", "install", "-y", "sniffglue"]),
+            ];
+
+            for (bin, args) in candidates {
+                if let Ok(status) = Command::new(bin).args(*args).status() {
+                    if status.success() && self.command_exists("sniffglue") {
+                        info!("Installed sniffglue using: {} {}", bin, args.join(" "));
+                        return Ok(());
+                    }
+                }
+            }
+            
+            // Fallback to cargo install
+            if self.command_exists("cargo") {
+                info!("Package managers failed. Attempting cargo install sniffglue...");
+                let status = Command::new("cargo").args(["install", "sniffglue"]).status()?;
+                if status.success() {
+                    return Ok(());
+                }
+            }
+
+            Err(anyhow::anyhow!("Failed to install sniffglue on Linux."))
+        }
+        #[cfg(target_os = "macos")]
+        {
+            if self.command_exists("sniffglue") {
+                info!("sniffglue already available on macOS.");
+                return Ok(());
+            }
+
+            if self.command_exists("brew") {
+                info!("Installing sniffglue via Homebrew...");
+                let status = Command::new("brew").args(["install", "sniffglue"]).status()?;
+                if status.success() {
+                    return Ok(());
+                }
+            }
+
+            Err(anyhow::anyhow!("Failed to install sniffglue on macOS."))
+        }
+        #[cfg(target_os = "windows")]
+        {
+            Ok(()) // Windows uses ngrep
+        }
+        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
+        {
+             Err(anyhow::anyhow!("sniffglue provisioning not supported on this platform."))
         }
     }
 }

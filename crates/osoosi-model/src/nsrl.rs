@@ -154,8 +154,7 @@ mod tests {
 
     #[test]
     fn test_nsrl_create_and_lookup() {
-        let db_path = PathBuf::from(":memory:");
-        // Use a temp file since :memory: doesn't work with rusqlite::Connection::open for in-mem
+        // Use a temp file for testing
         let tmp = std::env::temp_dir().join("test_nsrl.db");
         let ingester = NsrlIngester::new(&tmp).expect("create nsrl db");
 

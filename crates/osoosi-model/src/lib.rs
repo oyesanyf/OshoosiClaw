@@ -8,6 +8,8 @@
 mod train;
 pub mod malware;
 pub mod nsrl;
+pub mod malconv;
 
 pub use train::{ThreatModel, ModelConfig};
 pub use malware::{MalwareScanner, MalwareScanResult, MalwareScannerStats};
+pub use malconv::{MalConv, preprocess_binary, preprocess_bytes};

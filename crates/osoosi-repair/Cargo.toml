@@ -19,3 +19,4 @@ serde_json.workspace = true
 reqwest = { workspace = true }
 bytes = { workspace = true }
 libc.workspace = true
+winapi = { workspace = true }

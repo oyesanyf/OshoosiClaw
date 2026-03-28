@@ -2,10 +2,10 @@ use anyhow::Result;
 use candle_core::{Device, Tensor};
 use candle_transformers::models::gemma::{Config, Model};
 use candle_transformers::generation::LogitsProcessor;
-use hf_hub::{api::sync::Api, Repo};
 use tokenizers::Tokenizer;
 use std::sync::Mutex;
-use tracing::info;
+use std::path::Path;
+use tracing::{info, warn};
 
 pub struct GemmaAnalyzer {
     model: Mutex<Model>,
@@ -14,33 +14,26 @@ pub struct GemmaAnalyzer {
 }
 
 impl GemmaAnalyzer {
-    pub fn new() -> Result<Self> {
-        info!("Initializing native Gemma analyzer (Google Gemma 3 4B)...");
+    pub fn new(model_dir: &Path) -> Result<Self> {
+        info!("Initializing native Gemma analyzer from local files in {:?}...", model_dir);
         let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
 
-        // 1. Fetch Model from Hugging Face
-        let api = Api::new()?;
-        let repo = api.repo(Repo::model("google/gemma-3-4b-it".to_string()));
-        
-        info!("Checking for local Gemma 3 4B config and weights...");
-        
-        let tokenizer_filename = match repo.get("tokenizer.json") {
-            Ok(f) => f,
-            Err(e) if e.to_string().contains("401") => {
-                anyhow::bail!("Hugging Face API returned 401 Unauthorized for 'google/gemma-3-4b-it'. This is a gated model; please set HF_TOKEN environment variable and accept terms at huggingface.co.");
-            }
-            Err(e) => return Err(e.into()),
-        };
-        let config_filename = repo.get("config.json")?;
-        let weights_filename = repo.get("model.safetensors")?;
+        let tokenizer_filename = model_dir.join("tokenizer.json");
+        let config_filename = model_dir.join("config.json");
+        let weights_filename = model_dir.join("model.safetensors");
+
+        if !tokenizer_filename.exists() || !config_filename.exists() || !weights_filename.exists() {
+            warn!("Gemma model files (tokenizer.json, config.json, model.safetensors) not found in {:?}. Run bootstrap command or place files manually.", model_dir);
+            anyhow::bail!("Missing Gemma model files in {:?}", model_dir);
+        }
 
         // 2. Load Tokenizer & Config
-        let tokenizer = Tokenizer::from_file(tokenizer_filename).map_err(anyhow::Error::msg)?;
-        let config: Config = serde_json::from_reader(std::fs::File::open(config_filename)?)?;
+        let tokenizer = Tokenizer::from_file(&tokenizer_filename).map_err(anyhow::Error::msg)?;
+        let config: Config = serde_json::from_reader(std::fs::File::open(&config_filename)?)?;
 
         // 3. Initialize Model
         let vb = unsafe { 
-            candle_nn::VarBuilder::from_mmaped_safetensors(&[weights_filename], candle_core::DType::F32, &device)? 
+            candle_nn::VarBuilder::from_mmaped_safetensors(&[&weights_filename], candle_core::DType::F32, &device)? 
         };
         let model = Model::new(false, &config, vb)?;
 

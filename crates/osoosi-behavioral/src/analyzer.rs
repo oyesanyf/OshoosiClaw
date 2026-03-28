@@ -59,6 +59,7 @@ pub struct BehavioralAnalyzer {
     colog: Mutex<CoLogFilter>,
     reasoning: ReasoningEngine,
     gemma: Arc<tokio::sync::RwLock<Option<Arc<GemmaAnalyzer>>>>,
+    embedder: Arc<Mutex<crate::process_tree::ProcessTreeEmbedder>>,
 }
 
 impl BehavioralAnalyzer {
@@ -71,6 +72,7 @@ impl BehavioralAnalyzer {
         
         let reasoning = ReasoningEngine::new();
         let gemma = Arc::new(tokio::sync::RwLock::new(None));
+        let embedder = Arc::new(Mutex::new(crate::process_tree::ProcessTreeEmbedder::new().expect("Failed to init ProcessTreeEmbedder")));
 
         let analyzer = Self { 
             api_key, 
@@ -79,6 +81,7 @@ impl BehavioralAnalyzer {
             colog: Mutex::new(CoLogFilter::new(100)),
             reasoning,
             gemma,
+            embedder,
         };
 
         // Initialize Gemma in the background to avoid stalling the app
@@ -94,14 +97,16 @@ impl BehavioralAnalyzer {
     pub fn init_native_gemma(&self) {
         let gemma_lock = self.gemma.clone();
         tokio::task::spawn_blocking(move || {
-            match GemmaAnalyzer::new() {
+            let models_dir = std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
+            let gemma_dir = std::path::Path::new(&models_dir).join("gemma");
+            match GemmaAnalyzer::new(&gemma_dir) {
                 Ok(g) => {
                     let mut lock = gemma_lock.blocking_write();
                     *lock = Some(Arc::new(g));
                     info!("Native Gemma analyzer initialization complete (background).");
                 }
                 Err(e) => {
-                    info!("Failed to load native Gemma: {}. Falling back to default remote API.", e);
+                    info!("Failed to load native Gemma from {:?}: {}. Falling back to default remote API.", gemma_dir, e);
                 }
             }
         });
@@ -165,13 +170,38 @@ impl BehavioralAnalyzer {
         self.call_llm(&user_message, false).await
     }
 
-    /// Autonomous Tier 1 Check: Run CoLog anomaly detection on incoming stream.
+    /// Autonomous Tier 1 Check: Run CoLog anomaly detection and Process Tree ML analysis on incoming stream.
     pub fn autonomous_check(&self, event: &LogEvent) -> f32 {
-        if let Ok(mut colog) = self.colog.lock() {
+        let mut base_score = if let Ok(mut colog) = self.colog.lock() {
             colog.process(event)
         } else {
             0.0
+        };
+
+        // ML Layer: Process Tree Embedding (Candle)
+        if event.source == "Microsoft-Windows-Sysmon" {
+            let event_id = event.data.get("EventId").and_then(|v| v.as_i64()).unwrap_or(0);
+            if event_id == 1 { // Process Creation
+                let parent = event.data.get("ParentImage").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let child = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let rel = crate::process_tree::ProcessRelationship {
+                    parent_name: parent.to_string(),
+                    child_name: child.to_string(),
+                    arguments: vec![],
+                    confidence: 1.0,
+                };
+                
+                if let Ok(embedder) = self.embedder.lock() {
+                    if let Ok(emb) = embedder.embed(&rel) {
+                        let ml_score = embedder.calculate_anomaly_score(&emb, "default_asset");
+                        // Weight the scores: higher ML score boosts the overall anomaly verdict
+                        base_score = (base_score * 0.5) + (ml_score * 0.5);
+                    }
+                }
+            }
         }
+
+        base_score
     }
 
     fn format_events_for_llm(&self, events: &[LogEvent]) -> String {

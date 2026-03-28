@@ -3,6 +3,7 @@
 pub mod discovery;
 pub mod remediator;
 pub mod patch_hash_store;
+pub mod jit;
 
 use discovery::PatchDiscoverer;
 use remediator::StandaloneRemediator;

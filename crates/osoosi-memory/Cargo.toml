@@ -18,3 +18,7 @@ hex = { workspace = true }
 sha2 = { workspace = true }
 hostname = { workspace = true }
 dirs = { workspace = true }
+magika = { workspace = true }
+goblin = { workspace = true }
+tokio = { workspace = true, features = ["full"] }
+winapi = { workspace = true, features = ["memoryapi", "processthreadsapi", "winnt", "handleapi"] }

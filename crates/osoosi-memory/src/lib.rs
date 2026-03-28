@@ -8,6 +8,10 @@ use tracing::debug;
 use std::sync::Mutex;
 
 pub mod encryption;
+pub mod scanner;
+pub mod memory_scanner;
+
+pub use memory_scanner::*;
 
 pub struct MemoryStore {
     conn: Mutex<Connection>,

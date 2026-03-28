@@ -25,6 +25,8 @@ pub mod watchdog;
 pub mod canary;
 pub mod browser_guard;
 pub mod capa_analyzer;
+pub mod remediation;
+pub mod adaptive;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -106,6 +108,12 @@ pub struct EdrOrchestrator {
     capa_analyzer: Arc<crate::capa_analyzer::CapaAnalyzer>,
     /// NSRL "Known Good" Cache (SHA1 -> IsValid) to avoid SQLite hits for every process spawn.
     nsrl_cache: Arc<dashmap::DashMap<String, bool>>,
+    /// Remediation: Autonomous response actions (Isolate/Kill)
+    remediation: Arc<crate::remediation::RemediationController>,
+    /// Adaptive Telemetry: Scaling fidelity based on CPU/Detections
+    adaptive: Arc<crate::adaptive::TelemetryController>,
+    /// Forensic Storyteller: AI-driven attack narratives
+    storyteller: Arc<crate::forensics::ForensicStoryteller>,
     /// Runtime paths (db_path, traps_path) from config
     runtime_config: osoosi_types::RuntimeConfig,
 }
@@ -125,6 +133,11 @@ impl EdrOrchestrator {
 
     pub fn analyzer(&self) -> Arc<osoosi_behavioral::BehavioralAnalyzer> {
         self.behavioral_analyzer.clone()
+    }
+
+    /// Generate an AI forensic narrative of the current session's events.
+    pub async fn generate_story(&self) -> String {
+        self.storyteller.summarize_ai(&self.audit).await
     }
 
     /// Explicitly trigger a patch discovery cycle.
@@ -307,7 +320,12 @@ impl EdrOrchestrator {
         let telemetry = Arc::new(SysmonParser::new());
         let policy = Arc::new(PolicyEngine::new(memory.clone()));
         let sigma_dir = std::env::var("OSOOSI_SIGMA_DIR").unwrap_or_else(|_| "sigma".to_string());
-        policy.load_sigma_rules(std::path::Path::new(&sigma_dir));
+        let policy_init = policy.clone();
+        tokio::task::spawn_blocking(move || {
+            let start = std::time::Instant::now();
+            policy_init.load_sigma_rules(std::path::Path::new(&sigma_dir));
+            debug!("Sigma rule loading took {:?}", start.elapsed());
+        });
         let mesh = Arc::new(tokio::sync::Mutex::new(Some(MeshNode::new().await?)));
         let mesh_command_tx = Arc::new(tokio::sync::Mutex::new(None));
         let response = Arc::new(DeceptionManager::new());
@@ -345,6 +363,9 @@ impl EdrOrchestrator {
         let browser_guard = Arc::new(crate::browser_guard::BrowserGuard::new(memory.clone(), audit.clone()));
         let capa_analyzer = Arc::new(crate::capa_analyzer::CapaAnalyzer::new(memory.clone()));
         let nsrl_cache = Arc::new(dashmap::DashMap::new());
+        let remediation = Arc::new(crate::remediation::RemediationController::new());
+        let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
+        let storyteller = Arc::new(crate::forensics::ForensicStoryteller::new());
 
         Ok(Self {
             memory,
@@ -375,6 +396,9 @@ impl EdrOrchestrator {
             browser_guard,
             capa_analyzer,
             nsrl_cache,
+            remediation,
+            adaptive,
+            storyteller,
             runtime_config,
         })
     }
@@ -918,6 +942,21 @@ impl EdrOrchestrator {
                     }
                 }
             }
+
+            // Optional NVD feed (enabled when NVD_API_KEY is provided).
+            let nvd_key = std::env::var("NVD_API_KEY").ok();
+            match fetcher.fetch_nvd_cves(nvd_key.as_deref()).await {
+                Ok(cves) => {
+                    if !cves.is_empty() {
+                        info!("Successfully loaded {} NVD vulnerability records.", cves.len());
+                        if let Err(e) = self.memory.insert_kevs_batch(&cves) {
+                            error!("Failed to persist NVD records: {}", e);
+                        }
+                    }
+                }
+                Err(e) => error!("Failed to fetch NVD records: {}", e),
+            }
+
             // Update cycle: Every 24 hours.
             tokio::time::sleep(tokio::time::Duration::from_secs(86400)).await;
         }
@@ -1456,9 +1495,19 @@ impl EdrOrchestrator {
     }
 
     /// Generate an attack narrative from the audit log.
-    pub fn generate_story(&self) -> String {
+    pub async fn generate_story(&self) -> String {
         let storyteller = ForensicStoryteller::new();
-        storyteller.summarize(&self.audit)
+        storyteller.summarize_ai(&self.audit).await
+    }
+
+    /// Broadcast a tarpit signal to the mesh for a suspected attacker IP.
+    pub async fn broadcast_tarpit_signal(&self, target_ip: String, confidence: f32, attack_type: String) -> anyhow::Result<()> {
+        let signal = osoosi_wire::TarpitSignal {
+            target_ip,
+            confidence,
+            attack_type,
+        };
+        self.broadcast_command(osoosi_wire::MeshCommand::BroadcastTarpit(signal)).await
     }
 
     /// Access the trust manager to bootstrap mesh identity.
@@ -1811,7 +1860,7 @@ impl EdrOrchestrator {
         let ghost_tx = ghost_shard_tx.clone();
         let intel_tx = peer_intel_tx.clone();
         let sample_tx = malware_sample_tx.clone();
-        // Box the future to avoid stack overflow: libp2p Swarm + run_loop is large.
+        let autonomy_conf = self.autonomy.clone();
         let mesh_future = Box::pin(async move {
             mesh.run_loop(
                 join_gate_clone,
@@ -1823,6 +1872,13 @@ impl EdrOrchestrator {
                 move |s| { let _ = ghost_tx.try_send(s); },
                 move |i| { let _ = intel_tx.try_send(i); },
                 move |s| { let _ = sample_tx.try_send(s); },
+                move |t| {
+                    if t.confidence >= autonomy_conf.action_confidence_threshold {
+                         if let Ok(addr) = t.target_ip.parse() {
+                             let _ = osoosi_wire::apply_socket_tarpit(addr);
+                         }
+                    }
+                },
             )
             .await;
         });

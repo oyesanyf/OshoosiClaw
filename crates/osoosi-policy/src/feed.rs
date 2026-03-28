@@ -5,11 +5,12 @@ use serde_json::Value;
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use std::io::Write;
-use tracing::{info, error};
+use tracing::{info, warn, error};
 use sysinfo::Disks;
 
 pub const CISA_KEV_FEED_URL: &str = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
 pub const OTX_PULSES_SUBSCRIBED_URL: &str = "https://otx.alienvault.com/api/v1/pulses/subscribed";
+pub const NVD_CVE_API_URL: &str = "https://services.nvd.nist.gov/rest/json/cves/2.0";
 
 #[derive(Debug, Clone, Default)]
 pub struct OtxIndicators {
@@ -248,6 +249,76 @@ impl ThreatFeedFetcher {
         Ok(out)
     }
 
+    /// Fetch latest NVD CVEs (Vulnerability metadata).
+    ///
+    /// NVD API 2.0 recommends an API key for higher rate limits.
+    /// Returns a list of CVE results (structured like KEV for now).
+    pub async fn fetch_nvd_cves(&self, api_key: Option<&str>) -> anyhow::Result<Vec<osoosi_types::Kev>> {
+        if offline_mode() {
+            return Err(anyhow::anyhow!("Offline mode: skipping NVD fetch"));
+        }
+
+        let mut url = format!("{}?resultsPerPage=50", NVD_CVE_API_URL);
+        
+        // Add since-date to only get recent updates (optimization)
+        // Standard NVD 2.0 uses lastModStartDate
+        let since_dt = Utc::now() - chrono::Duration::days(3);
+        let since = since_dt.format("%Y-%m-%dT%H:%M:%S").to_string();
+        url.push_str(&format!("&lastModStartDate={}", since));
+
+        info!("[NVD] Fetching recent CVEs (since {})...", since);
+
+        let mut req = self.client.get(&url);
+        if let Some(key) = api_key {
+            req = req.header("apiKey", key);
+        }
+
+        let response = match req.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                info!("[NVD] Could not reach NVD API ({}).", e);
+                return Ok(Vec::new());
+            }
+        };
+
+        if !response.status().is_success() {
+            info!("[NVD] API returned HTTP {}. Check NVD_API_KEY.", response.status());
+            return Ok(Vec::new());
+        }
+
+        let json_val: Value = match response.json().await {
+            Ok(v) => v,
+            Err(e) => {
+                info!("[NVD] Failed to parse NVD response: {}", e);
+                return Ok(Vec::new());
+            }
+        };
+
+        let mut out = Vec::new();
+        if let Some(vulnerabilities) = json_val.get("vulnerabilities").and_then(|v| v.as_array()) {
+            for v in vulnerabilities {
+                if let Some(cve) = v.get("cve") {
+                    let id = cve.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                    let kev = osoosi_types::Kev {
+                        cve_id: id,
+                        vendor_project: "NVD-Sync".to_string(),
+                        product: "NVD".to_string(),
+                        vulnerability_name: "Imported from NVD".to_string(),
+                        date_added: Utc::now(),
+                        required_action: "None (Intelligence only)".to_string(),
+                        due_date: Utc::now(),
+                        known_exploited: false,
+                    };
+                    out.push(kev);
+                }
+            }
+        }
+
+        info!("[NVD] Loaded {} vulnerability records.", out.len());
+        Ok(out)
+    }
+
+
     /// Validate that there is enough disk space for a download.
     fn check_disk_space(&self, dest_dir: &std::path::Path, required_gb: u64) -> anyhow::Result<()> {
         let disks = Disks::new_with_refreshed_list();
@@ -392,12 +463,10 @@ impl ThreatFeedFetcher {
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("All NSRL download URLs failed")))
     }
 
-    /// Download NSRL database using streaming (chunked) download.
-    /// This avoids loading the entire ZIP into RAM and supports progress logging.
-    /// Uses the `current` URL which always points to the latest release.
     /// Designed to be called from a background tokio::spawn task.
     pub async fn download_nsrl_streaming(&self, dest_dir: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
         use futures::StreamExt;
+        use tokio::io::AsyncWriteExt;
 
         let urls = [
             "https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/current/rds_modernm.zip",
@@ -415,13 +484,7 @@ impl ThreatFeedFetcher {
         }
 
         let zip_path = dest_dir.join("nsrl_modern_stream.zip");
-        let current_size = if zip_path.exists() {
-            std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0)
-        } else {
-            0
-        };
-
-        // Longer timeout for large file streaming
+        
         let download_client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(7200)) // 2 hours for very large files
             .connect_timeout(std::time::Duration::from_secs(60))
@@ -431,134 +494,171 @@ impl ThreatFeedFetcher {
         let mut last_error: Option<anyhow::Error> = None;
 
         for url in &urls {
-            let mut request = download_client.get(*url);
-            if current_size > 0 {
-                request = request.header("Range", format!("bytes={}-", current_size));
-                info!("[NSRL Background] Resuming download from {} (current size: {:.1} MB)...", url, current_size as f64 / 1_048_576.0);
-            } else {
-                info!("[NSRL Background] Starting streaming download from {}...", url);
-            }
+            let mut retry_count = 0;
+            let mut stalled_count = 0;
+            let mut last_processed_size = 0;
+            let mut download_finished = false;
 
-            let response = match request.send().await {
-                Ok(r) => r,
-                Err(e) => {
-                    info!("[NSRL Background] Request failed for {}: {}", url, e);
-                    last_error = Some(e.into());
-                    continue;
-                }
-            };
-
-            let status = response.status();
-            let is_partial = status == reqwest::StatusCode::PARTIAL_CONTENT;
-            if !status.is_success() {
-                info!("[NSRL Background] HTTP {} for {}", status, url);
-                last_error = Some(anyhow::anyhow!("NSRL download returned HTTP {} for {}", status, url));
-                continue;
-            }
-
-            let content_len = response.content_length().unwrap_or(0);
-            let total_size = if is_partial { content_len + current_size } else { content_len };
-            
-            if total_size > 0 {
-                if is_partial {
-                     info!("[NSRL Background] Resuming download. Remaining: {:.1} MB (Total: {:.1} MB)", content_len as f64 / 1_048_576.0, total_size as f64 / 1_048_576.0);
-                } else {
-                     info!("[NSRL Background] File size: {:.1} MB", total_size as f64 / 1_048_576.0);
-                }
-            }
-
-            // Max size to download (default 200GB to allow the 118GB full RDS).
-            // Configuration via environment variable OSOOSI_MAX_NSRL_GB.
-            let max_gb: u64 = std::env::var("OSOOSI_MAX_NSRL_GB")
-                .ok()
-                .and_then(|s| s.parse().ok())
-                .unwrap_or(200);
-            let max_nsrl_size = max_gb * 1024 * 1024 * 1024;
-
-            if total_size > max_nsrl_size {
-                info!(
-                    "[NSRL Background] File too large ({:.1} GB > {} GB limit). Skipping. \
-                     Set OSOOSI_MAX_NSRL_GB to increase the limit.",
-                    total_size as f64 / (1024.0 * 1024.0 * 1024.0),
-                    max_gb
-                );
-                last_error = Some(anyhow::anyhow!(
-                    "NSRL file too large ({:.1} GB). Download manually or increase OSOOSI_MAX_NSRL_GB.",
-                    total_size as f64 / (1024.0 * 1024.0 * 1024.0)
-                ));
-                continue;
-            }
-
-            // Stream to file in chunks (Async I/O to avoid blocking executor)
-            use tokio::io::AsyncWriteExt;
-            let mut file = match tokio::fs::OpenOptions::new()
-                .create(true)
-                .append(true)
-                .open(&zip_path).await {
-                Ok(f) => {
-                    let mut writer = tokio::io::BufWriter::new(f);
-                    // If we are NOT resuming, truncate the file manually because append won't do it
-                    if !is_partial && current_size > 0 {
-                        let _ = writer.get_mut().set_len(0).await;
+            while !download_finished {
+                if retry_count > 0 {
+                    let mut backoff_secs = (15 * retry_count as u64).min(300); // Max 5 mins
+                    // Progressive stall backoff
+                    if stalled_count > 2 {
+                         backoff_secs = (backoff_secs * 2).min(600);
+                         warn!("[NSRL Background] Persistent stall detected at same byte offset. Stretching backoff to {}s...", backoff_secs);
                     }
-                    writer
-                },
-                Err(e) => {
-                    last_error = Some(e.into());
-                    continue;
+                    info!("[NSRL Background] Retrying download in {}s (Attempt {})...", backoff_secs, retry_count);
+                    tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
                 }
-            };
 
-            let mut downloaded: u64 = if is_partial { current_size } else { 0 };
-            let mut last_log_pct: u64 = (downloaded * 100) / total_size.max(1);
-            let mut stream = response.bytes_stream();
+                let current_size = if zip_path.exists() {
+                    std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0)
+                } else {
+                    0
+                };
 
-            while let Some(item) = stream.next().await {
-                let chunk = match item {
-                    Ok(c) => c,
+                let mut request = download_client.get(*url);
+                if current_size > 0 {
+                    request = request.header("Range", format!("bytes={}-", current_size));
+                    info!("[NSRL Background] Resuming download from {} (current size: {:.1} MB)...", url, current_size as f64 / 1_048_576.0);
+                } else {
+                    info!("[NSRL Background] Starting streaming download from {}...", url);
+                }
+
+                let response = match request.send().await {
+                    Ok(r) => r,
                     Err(e) => {
-                        info!("[NSRL Background] Stream error during chunk: {}", e);
+                        error!("[NSRL Background] Request failed for {}: {}", url, e);
                         last_error = Some(e.into());
-                        break;
+                        retry_count += 1;
+                        stalled_count += 1;
+                        continue;
                     }
                 };
-                if file.write_all(&chunk).await.is_err() {
-                    last_error = Some(anyhow::anyhow!("Failed to write chunk to disk"));
-                    break;
-                }
-                downloaded += chunk.len() as u64;
 
-                // Log progress every 10%
+                let status = response.status();
+                if !status.is_success() {
+                    error!("[NSRL Background] HTTP {} (Non-success) for {}.", status, url);
+                    last_error = Some(anyhow::anyhow!("NSRL download returned HTTP {} for {}", status, url));
+                    if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::NOT_FOUND {
+                        break; // Permanent failure
+                    }
+                    retry_count += 1;
+                    stalled_count += 1;
+                    continue;
+                }
+
+                let is_partial = status == reqwest::StatusCode::PARTIAL_CONTENT;
+                let content_len = response.content_length().unwrap_or(0);
+                let total_size = if is_partial { content_len + current_size } else { content_len };
+                
                 if total_size > 0 {
-                    let pct = (downloaded * 100) / total_size;
-                    if pct >= last_log_pct + 10 {
-                        last_log_pct = pct;
-                        info!("[NSRL Background] Download progress: {}% ({:.1} MB / {:.1} MB)",
-                            pct, downloaded as f64 / 1_048_576.0, total_size as f64 / 1_048_576.0);
+                    let left_gb = (total_size - current_size) as f64 / 1_073_741_824.0;
+                    if is_partial {
+                         info!("[NSRL Background] Resuming. Dynamic Status: {:.2} GB remaining (Total: {:.1} GB)", 
+                            left_gb, total_size as f64 / 1_073_741_824.0);
+                    } else {
+                         info!("[NSRL Background] Target Payload: {:.1} GB", total_size as f64 / 1_073_741_824.0);
                     }
                 }
-                // Yield to keep the executor responsive
-                tokio::task::yield_now().await;
-            }
-            let _ = file.flush().await;
-            drop(file);
 
-            if last_error.is_some() {
-                continue;
+                // Size limit check
+                let max_gb: u64 = std::env::var("OSOOSI_MAX_NSRL_GB")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(200);
+                let max_nsrl_size = max_gb * 1024 * 1024 * 1024;
+
+                if total_size > max_nsrl_size {
+                    info!("[NSRL Background] File too large ({:.1} GB > {} GB limit). Skipping.", total_size as f64 / 1_073_741_824.0, max_gb);
+                    last_error = Some(anyhow::anyhow!("File too large"));
+                    break; 
+                }
+
+                let mut file = match tokio::fs::OpenOptions::new()
+                    .create(true)
+                    .append(true)
+                    .open(&zip_path).await {
+                    Ok(f) => {
+                        let mut writer = tokio::io::BufWriter::new(f);
+                        if !is_partial && current_size > 0 {
+                            let _ = writer.get_mut().set_len(0).await;
+                        }
+                        writer
+                    },
+                    Err(e) => {
+                        last_error = Some(e.into());
+                        retry_count += 1;
+                        continue;
+                    }
+                };
+
+                let mut downloaded: u64 = if is_partial { current_size } else { 0 };
+                let mut last_log_pct: u64 = (downloaded * 100) / total_size.max(1);
+                let mut stream = response.bytes_stream();
+                let mut stream_error = false;
+
+                while let Some(item) = stream.next().await {
+                    let chunk = match item {
+                        Ok(c) => c,
+                        Err(e) => {
+                            info!("[NSRL Background] Stream error during chunk: {}", e);
+                            last_error = Some(e.into());
+                            stream_error = true;
+                            break;
+                        }
+                    };
+                    if let Err(e) = file.write_all(&chunk).await {
+                        info!("[NSRL Background] Disk write error: {}", e);
+                        last_error = Some(e.into());
+                        stream_error = true;
+                        break;
+                    }
+                    downloaded += chunk.len() as u64;
+
+                    if total_size > 0 {
+                        let pct = (downloaded * 100) / total_size;
+                        if pct >= last_log_pct + 10 {
+                            last_log_pct = pct;
+                            info!("[NSRL Background] Download progress: {}% ({:.1} MB / {:.1} MB)",
+                                pct, downloaded as f64 / 1_048_576.0, total_size as f64 / 1_048_576.0);
+                        }
+                    }
+                    tokio::task::yield_now().await;
+                }
+                let _ = file.flush().await;
+                drop(file);
+
+                if !stream_error {
+                    download_finished = true;
+                    last_error = None;
+                } else {
+                    retry_count += 1;
+                    // Check if we actually made progress this time
+                    if downloaded > last_processed_size {
+                        stalled_count = 0;
+                        last_processed_size = downloaded;
+                    } else {
+                        stalled_count += 1;
+                    }
+                }
+            }
+
+            if !download_finished {
+                continue; // Try next URL if all retries failed
             }
 
             // Verify ZIP magic bytes
             let header = tokio::fs::read(&zip_path).await.ok().and_then(|b| if b.len() >= 4 { Some((b[0], b[1])) } else { None });
             if header != Some((0x50, 0x4B)) {
-                info!("[NSRL Background] Downloaded file is not a valid ZIP");
+                info!("[NSRL Background] Downloaded file from {} is not a valid ZIP", url);
                 let _ = tokio::fs::remove_file(&zip_path).await;
-                last_error = Some(anyhow::anyhow!("Downloaded file from {} is not a valid ZIP", url));
+                last_error = Some(anyhow::anyhow!("Invalid ZIP header"));
                 continue;
             }
 
-            info!("[NSRL Background] Download complete ({:.1} MB). Extracting in background...", downloaded as f64 / 1_048_576.0);
+            info!("[NSRL Background] Download complete. Extracting in background...");
 
-            // Extract using spawn_blocking as zip extraction is CPU/IO intensive synchronously.
             let dest_dir_clone = dest_dir.to_path_buf();
             let zip_path_clone = zip_path.clone();
             

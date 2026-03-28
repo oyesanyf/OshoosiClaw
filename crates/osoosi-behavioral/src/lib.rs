@@ -12,9 +12,13 @@ mod colog;
 mod reasoning;
 mod analyzer;
 mod gemma;
+mod process_tree;
+pub mod forensics;
 
 pub use log_reader::{BehavioralLogReader, LogEvent};
 pub use sentence::event_to_behavioral_sentence;
 pub use classifier::{BehavioralClassifier, BehavioralResult};
 pub use feedback::{FeedbackStore, LabeledSample};
 pub use analyzer::{BehavioralAnalyzer, AnalysisMode, InvestigativePrompt};
+pub use process_tree::{ProcessTreeEmbedder, ProcessRelationship};
+pub use forensics::{PacketForensics, TriageResult};

@@ -94,4 +94,27 @@ impl GossipSleuth {
         let _ = self.mesh_tx.send(osoosi_wire::MeshCommand::BroadcastGlobalIntel(mock_intel)).await;
         Ok(())
     }
+
+    /// Broadcast a specific Indicator of Compromise (IOC) detected locally.
+    pub async fn broadcast_ioc(&self, type_id: &str, value: &str, severity: f32) -> anyhow::Result<()> {
+        let intel = GlobalIntelligence {
+            source_url: format!("local://{}", self.node_id),
+            summary: format!("IOC ALERT: Detected malicious {} ({}) on node {}.", type_id, value, self.node_id),
+            defense: Some(ZeroDayDefense {
+                cve_id: format!("IOC-{}-{}", type_id, value.chars().take(8).collect::<String>()),
+                title: format!("Mesh Block: {}", value),
+                description: format!("Automatically generated block rule for {} {}", type_id, value),
+                severity,
+                learned_rule: format!("rule mesh_block_{} {{ condition: hash == \"{}\" }}", type_id, value),
+                software_target: "system".to_string(),
+                date_learned: Utc::now(),
+            }),
+            timestamp: Utc::now(),
+            source_node: self.node_id.clone(),
+        };
+
+        info!("Gossip Sleuth: Broadcasting signed IOC for {} to mesh.", value);
+        let _ = self.mesh_tx.send(osoosi_wire::MeshCommand::BroadcastGlobalIntel(intel)).await;
+        Ok(())
+    }
 }

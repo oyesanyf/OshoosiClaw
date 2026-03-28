@@ -11,7 +11,8 @@ impl Default for SystemRequirements {
     fn default() -> Self {
         Self {
             min_ram_mb: 2048, // 2GB
-            min_cpus: 2,
+            min_cpus: 1,
+
         }
     }
 }

@@ -20,6 +20,8 @@ hex = { workspace = true }
 regex = { workspace = true }
 magika = { workspace = true }
 ort = { workspace = true }
+candle-core = { workspace = true }
+candle-nn = { workspace = true }
 yara-x = "1"
 walkdir = { workspace = true }
 tokio = { workspace = true, features = ["full"] }

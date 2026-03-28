@@ -9,6 +9,8 @@ description = "Threat Detection Policy Engine for OpenỌ̀ṣọ́ọ̀sì Agen
 osoosi-types = { path = "../osoosi-types" }
 osoosi-telemetry = { path = "../osoosi-telemetry" }
 osoosi-memory = { path = "../osoosi-memory" }
+osoosi-audit = { path = "../osoosi-audit" }
+uuid = { workspace = true, features = ["v4"] }
 chrono = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

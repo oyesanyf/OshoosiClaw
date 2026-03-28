@@ -6,9 +6,19 @@ pub mod join_gate;
 pub mod mesh;
 pub mod holograph;
 pub mod pqc;
+pub mod tarpit;
+pub mod confidential;
 
 pub use join_gate::JoinGate;
 pub use mesh::*;
+pub use tarpit::*;
+pub use confidential::*;
+
+/// Gossipsub topic for mesh-wide tarpitting signals.
+pub const TARPIT_TOPIC: &str = "osoosi-tarpit-v1";
+
+/// Gossipsub topic for FHE-encrypted IOCs and voting.
+pub const CONFIDENTIAL_TOPIC: &str = "osoosi-confidential-v1";
 
 /// Commands sent to the mesh task.
 #[derive(Debug)]
@@ -29,4 +39,16 @@ pub enum MeshCommand {
     BroadcastAuditProof(String),
     /// Active dial a discovered peer to bootstrap connection.
     DialPeer(libp2p::PeerId, String),
+    /// Broadcast a Tarpit signal for collaborative attacker throttling.
+    BroadcastTarpit(TarpitSignal),
+    /// Broadcast an FHE-encrypted vote or IOC.
+    BroadcastConfidential(ConfidentialMessage),
+}
+
+/// Collaborative attacker throttling signal for the Gossip mesh.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub struct TarpitSignal {
+    pub target_ip: String,
+    pub confidence: f32,
+    pub attack_type: String, // e.g. "T1021.001 - Remote Desktop Protocol"
 }

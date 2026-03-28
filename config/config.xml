@@ -1,0 +1,130 @@
+<Sysmon schemaversion="4.90">
+  <!-- 
+    OpenỌ̀ṣọ́ọ̀sì - HYBRID MAX Strategy 
+    Merging SwiftOnSecurity "High-Signal" (Exclusions) with Oshoosi "Forensic-Max" (Aggressive Includes).
+  -->
+  <HashAlgorithms>MD5,SHA256,IMPHASH</HashAlgorithms>
+  <CheckRevocation/>
+
+  <EventFiltering>
+    <!-- 
+      EVENT ID 1: PROCESS CREATION (SwiftOnSecurity Base + Exclusions)
+    -->
+    <RuleGroup name="Process Creation" groupRelation="or">
+      <ProcessCreate onmatch="exclude">
+        <!-- Baseline exclusions from SwiftOnSecurity -->
+        <CommandLine condition="begin with"> "C:\Windows\system32\wermgr.exe" "-queuereporting_svc" </CommandLine>
+        <CommandLine condition="begin with">C:\Windows\system32\DllHost.exe /Processid</CommandLine>
+        <CommandLine condition="begin with">C:\Windows\system32\wbem\wmiprvse.exe -Embedding</CommandLine>
+        <Image condition="is">C:\Windows\system32\conhost.exe</Image>
+        <Image condition="is">C:\Windows\system32\audiodg.exe</Image>
+        <Image condition="is">C:\Windows\system32\wbem\WmiApSrv.exe</Image>
+        <CommandLine condition="contains">C:\Windows\system32\svchost.exe</CommandLine>
+      </ProcessCreate>
+    </RuleGroup>
+
+    <!-- 
+      EVENT ID 3: NETWORK CONNECTION (SwiftOnSecurity Base + Exclusions)
+    -->
+    <RuleGroup name="Network Connectivity" groupRelation="or">
+      <NetworkConnect onmatch="exclude">
+        <DestinationHostname condition="end with">.microsoft.com</DestinationHostname>
+        <DestinationHostname condition="end with">microsoft.com.akadns.net</DestinationHostname>
+        <DestinationIp condition="is">127.0.0.1</DestinationIp>
+      </NetworkConnect>
+      <NetworkConnect onmatch="include">
+        <Image condition="begin with">C:\Users</Image>
+        <Image condition="begin with">C:\ProgramData</Image>
+        <Image condition="image">powershell.exe</Image>
+        <Image condition="image">cmd.exe</Image>
+      </NetworkConnect>
+    </RuleGroup>
+
+    <!-- 
+      EVENT ID 7: IMAGE LOAD (Oshoosi MAX - Aggressive Monitoring)
+      SwiftOnSecurity normally disables this. We enable it for EVERYTHING.
+    -->
+    <RuleGroup name="DLL Visibility (Aggressive)" groupRelation="or">
+      <ImageLoad onmatch="include">
+        <Image condition="is not">?</Image>
+      </ImageLoad>
+    </RuleGroup>
+
+    <!-- 
+      EVENT ID 10: PROCESS ACCESS (Oshoosi MAX - Memory Access Monitoring)
+      Captures credential dumping (Mimikatz) and process hacking.
+    -->
+    <RuleGroup name="Memory Access (Aggressive)" groupRelation="or">
+      <ProcessAccess onmatch="include">
+        <TargetImage condition="is">C:\Windows\System32\lsass.exe</TargetImage>
+        <SourceImage condition="is not">?</SourceImage>
+      </ProcessAccess>
+    </RuleGroup>
+
+    <!-- 
+      EVENT ID 11: FILE CREATE
+    -->
+    <RuleGroup name="File Creation" groupRelation="or">
+      <FileCreate onmatch="include">
+        <TargetFilename condition="end with">.exe</TargetFilename>
+        <TargetFilename condition="end with">.dll</TargetFilename>
+        <TargetFilename condition="end with">.ps1</TargetFilename>
+        <TargetFilename condition="begin with">C:\Windows\System32\Tasks</TargetFilename>
+      </FileCreate>
+    </RuleGroup>
+
+    <!-- 
+      EVENT ID 12, 13, 14: REGISTRY MODIFICATION
+    -->
+    <RuleGroup name="Registry Hijack" groupRelation="or">
+      <RegistryEvent onmatch="include">
+        <TargetObject condition="contains">CurrentVersion\Run</TargetObject>
+        <TargetObject condition="contains">Services\PortProxy</TargetObject>
+        <TargetObject condition="contains">Winlogon\Shell</TargetObject>
+        <TargetObject condition="contains">InprocServer32</TargetObject>
+      </RegistryEvent>
+    </RuleGroup>
+
+    <!-- 
+      EVENT ID 22: DNS QUERY (SwiftOnSecurity Base)
+    -->
+    <RuleGroup name="DNS Communication" groupRelation="or">
+      <DnsQuery onmatch="exclude">
+        <QueryName condition="end with">.microsoft.com</QueryName>
+        <QueryName condition="end with">.bing.com</QueryName>
+        <QueryName condition="end with">.windows.com</QueryName>
+      </DnsQuery>
+      <DnsQuery onmatch="include">
+        <QueryName condition="is not">?</QueryName>
+      </DnsQuery>
+    </RuleGroup>
+
+    <!-- 
+      EVENT ID 23: FILE DELETE (Oshoosi MAX - Aggressive Archive)
+    -->
+    <RuleGroup name="File Protection (Aggressive)" groupRelation="or">
+      <FileDelete onmatch="include">
+        <Image condition="is not">?</Image>
+      </FileDelete>
+    </RuleGroup>
+
+    <!-- 
+      EVENT ID 24: CLIPBOARD MONITORING (Oshoosi MAX)
+    -->
+    <RuleGroup name="Information Stealing (Aggressive)" groupRelation="or">
+      <ClipboardChange onmatch="include">
+        <Image condition="is not">C:\Windows\System32\svchost.exe</Image>
+      </ClipboardChange>
+    </RuleGroup>
+
+    <!-- 
+      EVENT ID 25: PROCESS TAMPERING (Oshoosi MAX)
+    -->
+    <RuleGroup name="Stealth detection (Aggressive)" groupRelation="or">
+      <ProcessTampering onmatch="include">
+        <Image condition="is not">?</Image>
+      </ProcessTampering>
+    </RuleGroup>
+
+  </EventFiltering>
+</Sysmon>

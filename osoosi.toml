@@ -55,3 +55,9 @@ quarantine_path = "./quarantine"
 quarantine_confidence_threshold = 0.95
 # Min confidence for active response (Tarpit, Deception, etc.). Below = Alert only.
 action_confidence_threshold = 0.80
+
+[external_api]
+# AlienVault OTX API Key
+otx_api_key = "987d0d3d315c91609489874c4a59cfac3fffae973b25bf68568c63dbb8eb5f60"
+# NVD API Key
+nvd_api_key = "84c5283c-79bc-42c2-ac1c-71e57fee597a"

@@ -23,3 +23,8 @@ uuid = { workspace = true }
 anyhow = { workspace = true }
 ort = { workspace = true }
 osoosi-policy = { path = "../osoosi-policy" }
+reqwest = { workspace = true, features = ["json"] }
+zip = { workspace = true }
+flate2 = "1.0"
+tar = "0.4"
+webbrowser = "1"

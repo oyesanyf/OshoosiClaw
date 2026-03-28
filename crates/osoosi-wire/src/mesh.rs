@@ -36,8 +36,11 @@ pub struct MeshNode {
     pub peer_announce_topic: gossipsub::IdentTopic,
     pub ghost_shard_topic: gossipsub::IdentTopic,
     pub intel_topic: gossipsub::IdentTopic,
+    pub name: String,
     pub malware_sample_topic: gossipsub::IdentTopic,
     pub audit_proof_topic: gossipsub::IdentTopic,
+    pub tarpit_topic: gossipsub::IdentTopic,
+    pub confidential_topic: gossipsub::IdentTopic,
 }
 
 impl MeshNode {
@@ -93,6 +96,8 @@ impl MeshNode {
         let intel_topic = gossipsub::IdentTopic::new("osoosi-intel");
         let malware_sample_topic = gossipsub::IdentTopic::new("osoosi-malware-samples");
         let audit_proof_topic = gossipsub::IdentTopic::new("osoosi-audit-proofs");
+        let tarpit_topic = gossipsub::IdentTopic::new(super::TARPIT_TOPIC);
+        let confidential_topic = gossipsub::IdentTopic::new(super::CONFIDENTIAL_TOPIC);
 
         swarm.behaviour_mut().gossipsub.subscribe(&threat_topic)?;
         swarm.behaviour_mut().gossipsub.subscribe(&consensus_topic)?;
@@ -101,6 +106,8 @@ impl MeshNode {
         swarm.behaviour_mut().gossipsub.subscribe(&intel_topic)?;
         swarm.behaviour_mut().gossipsub.subscribe(&malware_sample_topic)?;
         swarm.behaviour_mut().gossipsub.subscribe(&audit_proof_topic)?;
+        swarm.behaviour_mut().gossipsub.subscribe(&tarpit_topic)?;
+        swarm.behaviour_mut().gossipsub.subscribe(&confidential_topic)?;
 
         let mesh_config = osoosi_types::load_mesh_listen_config();
 
@@ -127,11 +134,23 @@ impl MeshNode {
         // Start bootstrapping the DHT
         let _ = swarm.behaviour_mut().kademlia.bootstrap();
 
-        Ok(MeshNode { swarm, threat_topic, consensus_topic, peer_announce_topic, ghost_shard_topic, intel_topic, malware_sample_topic, audit_proof_topic })
+        Ok(MeshNode { 
+            swarm, 
+            threat_topic, 
+            consensus_topic, 
+            peer_announce_topic, 
+            ghost_shard_topic, 
+            intel_topic, 
+            malware_sample_topic,
+            audit_proof_topic,
+            tarpit_topic,
+            confidential_topic,
+            name: String::new(), // placeholder
+        })
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn run_loop<F, G, H, I, J>(
+    pub async fn run_loop<F, G, H, I, J, K, L>(
         mut self,
         join_gate: Arc<JoinGate>,
         mut command_rx: mpsc::Receiver<MeshCommand>,
@@ -142,12 +161,16 @@ impl MeshNode {
         mut on_ghost_shard: H,
         mut on_intel: I,
         mut on_malware_sample: J,
+        mut on_tarpit: K,
+        mut on_confidential: L,
     ) where
         F: FnMut(ThreatSignature) + Send + 'static,
         G: FnMut(osoosi_types::PolicyConsensusMessage) + Send + 'static,
         H: FnMut(osoosi_types::GhostShardData) + Send + 'static,
         I: FnMut(osoosi_types::GlobalIntelligence) + Send + 'static,
         J: FnMut(MalwareSample) + Send + 'static,
+        K: FnMut(super::TarpitSignal) + Send + 'static,
+        L: FnMut(super::ConfidentialMessage) + Send + 'static,
     {
         let mut quarantined: HashSet<PeerId> = HashSet::new();
         let mut approved: HashSet<PeerId> = HashSet::new();
@@ -217,6 +240,16 @@ impl MeshNode {
                             self.swarm.behaviour_mut().kademlia.add_address(&pid, maddr);
                         }
                     }
+                    MeshCommand::BroadcastTarpit(signal) => {
+                        if let Ok(j) = serde_json::to_string(&signal) {
+                            let _ = self.swarm.behaviour_mut().gossipsub.publish(self.tarpit_topic.clone(), j.as_bytes());
+                        }
+                    }
+                    MeshCommand::BroadcastConfidential(msg) => {
+                        if let Ok(j) = serde_json::to_string(&msg) {
+                            let _ = self.swarm.behaviour_mut().gossipsub.publish(self.confidential_topic.clone(), j.as_bytes());
+                        }
+                    }
                 },
                 event = self.swarm.select_next_some() => match event {
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Mdns(mdns::Event::Discovered(list))) => {
@@ -252,6 +285,14 @@ impl MeshNode {
                         } else if message.topic == self.malware_sample_topic.hash() {
                             if let Ok(s) = serde_json::from_slice::<MalwareSample>(&message.data) {
                                 on_malware_sample(s);
+                            }
+                        } else if message.topic == self.tarpit_topic.hash() {
+                            if let Ok(s) = serde_json::from_slice::<super::TarpitSignal>(&message.data) {
+                                on_tarpit(s);
+                            }
+                        } else if message.topic == self.confidential_topic.hash() {
+                            if let Ok(msg) = serde_json::from_slice::<super::ConfidentialMessage>(&message.data) {
+                                on_confidential(msg);
                             }
                         }
                     }

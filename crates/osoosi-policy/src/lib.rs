@@ -12,9 +12,12 @@ pub mod predictive;
 pub mod sigma;
 pub mod verified;
 
+pub mod admin;
+
 pub use engine::*;
 pub use feed::*;
 pub use semantic::*;
 pub use graph::*;
 pub use traffic_adapter::*;
 pub use sigma::*;
+pub use crate::admin::*;

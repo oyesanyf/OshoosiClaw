@@ -8,9 +8,11 @@ pub mod file_watch;
 pub mod hash;
 pub mod host_events;
 pub mod provisioning;
+pub mod discovery;
 
 pub use sysmon::*;
 pub use file_watch::*;
 pub use hash::*;
 pub use host_events::*;
 pub use provisioning::*;
+pub use discovery::*;

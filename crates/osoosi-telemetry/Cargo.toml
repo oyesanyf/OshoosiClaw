@@ -21,3 +21,4 @@ walkdir = { workspace = true }
 quick-xml = { workspace = true }
 hostname = { workspace = true }
 sysinfo = { workspace = true }
+dashmap = { workspace = true }

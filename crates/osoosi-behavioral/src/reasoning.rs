@@ -67,14 +67,16 @@ impl ReasoningEngine {
     fn init_native_gemma(&self) {
         let gemma_lock = self.gemma.clone();
         tokio::task::spawn_blocking(move || {
-            match GemmaAnalyzer::new() {
+            let models_dir = std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
+            let gemma_dir = std::path::Path::new(&models_dir).join("gemma");
+            match GemmaAnalyzer::new(&gemma_dir) {
                 Ok(g) => {
                     let mut lock = gemma_lock.blocking_write();
                     *lock = Some(Arc::new(g));
                     info!("Expert Reasoning Gemma analyzer initialized (background).");
                 }
                 Err(e) => {
-                    warn!("Expert Reasoning failed to load native Gemma: {}. Will use fallback if available.", e);
+                    warn!("Expert Reasoning failed to load native Gemma from {:?}: {}. Will use fallback if available.", gemma_dir, e);
                 }
             }
         });
