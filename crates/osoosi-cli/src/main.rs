@@ -413,6 +413,11 @@ async fn handle_grant_access() -> anyhow::Result<()> {
              warn!("Warning: Failed to provision YARA rules: {}", e);
         }
 
+        info!("GrantAccess pre-step: ensuring ONNX Runtime (ML Engine) is provisioned...");
+        if let Err(e) = provisioner.provision_onnx_runtime() {
+             warn!("Critical Warning: Failed to provision ONNX Runtime. ML features will be disabled: {}", e);
+        }
+
         #[cfg(target_os = "windows")]
         {
             info!("GrantAccess pre-step: adding Antivirus exclusions for the YARA folder...");

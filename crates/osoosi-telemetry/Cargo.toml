@@ -22,3 +22,6 @@ quick-xml = { workspace = true }
 hostname = { workspace = true }
 sysinfo = { workspace = true }
 dashmap = { workspace = true }
+reqwest = { workspace = true }
+futures = { workspace = true }
+bytes = { workspace = true }
