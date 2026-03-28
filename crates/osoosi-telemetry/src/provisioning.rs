@@ -1127,67 +1127,72 @@ impl AgentProvisioner {
         }
     }
 
-    /// Provision a base set of YARA rules for threat detection.
+    /// Provision a base set of YARA rules from multiple reputable GitHub sources.
     pub fn provision_yara_rules(&self) -> anyhow::Result<()> {
-        let yara_dir = std::path::Path::new("yara").join("community");
-        if !yara_dir.exists() {
-            std::fs::create_dir_all(&yara_dir)?;
+        let yara_base_dir = std::path::Path::new("yara");
+        if !yara_base_dir.exists() {
+            std::fs::create_dir_all(&yara_base_dir)?;
         }
 
-        // Only download if the community folder is empty/non-existent
-        if let Ok(mut entries) = std::fs::read_dir(&yara_dir) {
-            if entries.next().is_some() {
-                info!("YARA community rules already present at {}.", yara_dir.display());
-                return Ok(());
-            }
-        }
+        let sources = [
+            ("community", "https://github.com/Yara-Rules/rules/archive/refs/heads/master.zip"),
+            ("reversinglabs", "https://github.com/reversinglabs/yara-rules/archive/refs/heads/master.zip"),
+            ("bartblaze", "https://github.com/bartblaze/Yara-rules/archive/refs/heads/master.zip"),
+            ("chronicle", "https://github.com/chronicle/GCTI/archive/refs/heads/main.zip"), // Google/Chronicle GCTI
+        ];
 
-        info!("YARA community rules missing. Downloading latest from Yara-Rules/rules repository...");
-        
-        let url = "https://github.com/Yara-Rules/rules/archive/refs/heads/master.zip";
-        let zip_path = "yara_temp.zip";
+        for (name, url) in sources {
+            let target_sub_dir = yara_base_dir.join(name);
+            if !target_sub_dir.exists() {
+                let _ = std::fs::create_dir_all(&target_sub_dir);
+            }
 
-        #[cfg(target_os = "windows")]
-        {
-            let ps_cmd = format!(
-                "$ProgressPreference='SilentlyContinue'; \
-                 Invoke-WebRequest -Uri '{}' -OutFile '{}'; \
-                 Expand-Archive -Path '{}' -DestinationPath 'yara-tmp' -Force; \
-                 if (Test-Path 'yara-tmp\\rules-master') {{ \
-                    Copy-Item -Path 'yara-tmp\\rules-master\\*' -Destination '{}' -Recurse -Force; \
-                 }} else {{ \
-                    Copy-Item -Path 'yara-tmp\\*' -Destination '{}' -Recurse -Force; \
-                 }} \
-                 Remove-Item '{}'; \
-                 Remove-Item -Recurse -Force 'yara-tmp'",
-                 url, zip_path, zip_path, yara_dir.to_string_lossy(), yara_dir.to_string_lossy(), zip_path
-            );
-            
-            let status = Command::new("powershell")
-                .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
-                .status()?;
-            
-            if status.success() {
-                info!("YARA community rules provisioned successfully.");
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Failed to download YARA rules via PowerShell."))
+            // Only download if the subfolder is empty
+            if let Ok(mut entries) = std::fs::read_dir(&target_sub_dir) {
+                if entries.next().is_some() {
+                    info!("YARA rules for '{}' already present at {}.", name, target_sub_dir.display());
+                    continue;
+                }
+            }
+
+            info!("YARA rules for '{}' missing. Downloading from {}...", name, url);
+            let zip_path = format!("{}_temp.zip", name);
+            let tmp_extract = format!("{}_tmp_extract", name);
+
+            #[cfg(target_os = "windows")]
+            {
+                let ps_cmd = format!(
+                    "$ProgressPreference='SilentlyContinue'; \
+                     Invoke-WebRequest -Uri '{}' -OutFile '{}' -ErrorAction Stop; \
+                     Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
+                     Get-ChildItem -Path '{}' -Directory | ForEach-Object {{ \
+                        Copy-Item -Path \"$($_.FullName)\\*\" -Destination '{}' -Recurse -Force; \
+                     }}; \
+                     Remove-Item '{}'; \
+                     Remove-Item -Recurse -Force '{}'",
+                     url, zip_path, zip_path, tmp_extract, tmp_extract, target_sub_dir.to_string_lossy(), zip_path, tmp_extract
+                );
+                
+                match Command::new("powershell")
+                    .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
+                    .status() {
+                    Ok(status) if status.success() => {
+                        info!("YARA '{}' rules provisioned successfully.", name);
+                    }
+                    Ok(_) => warn!("Failed to provision YARA '{}' rules from {}.", name, url),
+                    Err(e) => warn!("Execution error for YARA '{}': {}", name, e),
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                 let sh_cmd = format!(
+                    "curl -L -o {} {} && unzip -o {} -d {} && cp -r {}/*/* {}/ && rm {} && rm -rf {}",
+                    zip_path, url, zip_path, tmp_extract, tmp_extract, target_sub_dir.to_string_lossy(), zip_path, tmp_extract
+                );
+                let _ = Command::new("sh").args(["-c", &sh_cmd]).status();
             }
         }
-        #[cfg(not(target_os = "windows"))]
-        {
-             let sh_cmd = format!(
-                "curl -L -o {} {} && unzip -o {} -d yara-tmp && cp -r yara-tmp/* {}/ && rm {} && rm -rf yara-tmp",
-                zip_path, url, zip_path, yara_dir.to_string_lossy(), zip_path
-            );
-            let status = Command::new("sh").args(["-c", &sh_cmd]).status()?;
-            if status.success() {
-                info!("YARA community rules provisioned successfully.");
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Failed to download YARA rules via curl/unzip."))
-            }
-        }
+        Ok(())
     }
 
     /// Add a Windows Defender exclusion for a specific path.
