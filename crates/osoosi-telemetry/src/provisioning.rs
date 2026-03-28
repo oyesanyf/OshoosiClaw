@@ -1138,7 +1138,12 @@ impl AgentProvisioner {
             ("community", "https://github.com/Yara-Rules/rules/archive/refs/heads/master.zip"),
             ("reversinglabs", "https://github.com/reversinglabs/yara-rules/archive/refs/heads/master.zip"),
             ("bartblaze", "https://github.com/bartblaze/Yara-rules/archive/refs/heads/master.zip"),
-            ("chronicle", "https://github.com/chronicle/GCTI/archive/refs/heads/main.zip"), // Google/Chronicle GCTI
+            ("inquest", "https://github.com/InQuest/yara-rules/archive/refs/heads/master.zip"),
+            ("elastic", "https://github.com/elastic/protections-artifacts/archive/refs/heads/main.zip"),
+            ("signature_base", "https://github.com/Neo23x0/signature-base/archive/refs/heads/master.zip"),
+            ("mikesxrs", "https://github.com/mikesxrs/Open-Source-YARA-rules/archive/refs/heads/master.zip"),
+            ("talos", "https://github.com/Cisco-Talos/vulnerability_rules/archive/refs/heads/master.zip"),
+            ("chronicle", "https://github.com/chronicle/GCTI/archive/refs/heads/main.zip"),
         ];
 
         for (name, url) in sources {
@@ -1148,8 +1153,8 @@ impl AgentProvisioner {
             }
 
             // Only download if the subfolder is empty
-            if let Ok(mut entries) = std::fs::read_dir(&target_sub_dir) {
-                if entries.next().is_some() {
+            if let Ok(entries) = std::fs::read_dir(&target_sub_dir) {
+                if entries.filter_map(|e| e.ok()).count() > 1 {
                     info!("YARA rules for '{}' already present at {}.", name, target_sub_dir.display());
                     continue;
                 }
@@ -1165,9 +1170,10 @@ impl AgentProvisioner {
                     "$ProgressPreference='SilentlyContinue'; \
                      Invoke-WebRequest -Uri '{}' -OutFile '{}' -ErrorAction Stop; \
                      Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
-                     Get-ChildItem -Path '{}' -Directory | ForEach-Object {{ \
-                        Copy-Item -Path \"$($_.FullName)\\*\" -Destination '{}' -Recurse -Force; \
-                     }}; \
+                     $root = Get-ChildItem -Path '{}' -Directory | Select-Object -First 1; \
+                     if ($root) {{ \
+                        Copy-Item -Path \"$($root.FullName)\\*\" -Destination '{}' -Recurse -Force; \
+                     }} \
                      Remove-Item '{}'; \
                      Remove-Item -Recurse -Force '{}'",
                      url, zip_path, zip_path, tmp_extract, tmp_extract, target_sub_dir.to_string_lossy(), zip_path, tmp_extract
