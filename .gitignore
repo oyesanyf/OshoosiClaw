@@ -65,6 +65,7 @@ Eula.txt
 # ---------- Runtime Data ----------
 data/
 models/
+yara/
 quarantine/
 traps/
 malware/
