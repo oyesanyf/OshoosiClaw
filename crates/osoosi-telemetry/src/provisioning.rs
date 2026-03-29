@@ -815,6 +815,7 @@ impl AgentProvisioner {
             let mut cmd = Command::new("powershell");
             cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd]);
             self.exec_with_retry(cmd, "FLOSS Extraction", 2)?;
+            Ok(())
         }
 
         #[cfg(target_os = "linux")]
@@ -905,6 +906,7 @@ impl AgentProvisioner {
             let mut cmd = Command::new("powershell");
             cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd]);
             self.exec_with_retry(cmd, "HollowsHunter Extraction", 2)?;
+            Ok(())
         }
 
         #[cfg(target_os = "linux")]
@@ -967,6 +969,7 @@ impl AgentProvisioner {
             let mut cmd = Command::new("powershell");
             cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd]);
             self.exec_with_retry(cmd, "ngrep Extraction", 2)?;
+            Ok(())
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -989,7 +992,6 @@ impl AgentProvisioner {
 
             let url = "https://npcap.com/dist/npcap-1.78.exe";
             let installer_path = std::env::temp_dir().join("npcap-installer.exe");
-            let installer_path_str = installer_path.to_string_lossy();
 
             info!("Npcap not detected. Downloading official installer...");
             self.download_with_resume(url, &installer_path)?;
@@ -1000,21 +1002,10 @@ impl AgentProvisioner {
             install_cmd.args(["/S", "/admin_only=1", "/dot11_support=0", "/loopback_support=1"]);
             
             self.exec_with_retry(install_cmd, "Npcap Installation", 2)?;
-
-            info!("Installing Npcap silently (requires Elevation)...");
-            // /S = Silent, /admin_only=1, /dot11_support=0, /loopback_support=1
-            let install_status = Command::new(&installer_path)
-                .args(["/S", "/admin_only=1", "/dot11_support=0", "/loopback_support=1"])
-                .status()?;
-
             let _ = std::fs::remove_file(&installer_path);
-
-            if install_status.success() {
-                info!("Npcap installed successfully.");
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Npcap installation failed. Please run as Administrator."))
-            }
+            
+            info!("Npcap installed successfully.");
+            Ok(())
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -1264,6 +1255,9 @@ impl AgentProvisioner {
         {
             let _ = path;
             Ok(())
+        }
+    }
+
     /// Provision ONNX Runtime shared library (required for ML inference).
     pub fn provision_onnx_runtime(&self) -> anyhow::Result<()> {
         let version = "1.18.1";

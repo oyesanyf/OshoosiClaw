@@ -79,6 +79,8 @@ enum Commands {
     SecurityStatus,
     /// Re-sign all critical configuration files (run after intentional edits)
     SignConfigs,
+    /// Network Route Scraping and Discovery (Sherpa)
+    Discovery,
 }
 
 #[derive(Subcommand, Clone)]
@@ -136,10 +138,7 @@ async fn main() -> anyhow::Result<()> {
     
     let cli = Cli::parse();
     
-    // Suppress ML warnings if we are running provisioning commands
-    let suppress_ml_warning = cli.grant_access || matches!(cli.command, Some(Commands::GrantAccess) | Some(Commands::BootstrapModels));
-    init_ort(suppress_ml_warning);
-    
+    // Lazy init ORT after potential provisioning in async_main
     if let Err(e) = async_main(cli).await {
         error!("Fatal execution error: {}", e);
         std::process::exit(1);
@@ -153,6 +152,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     if cli.grant_access {
         handle_grant_access().await?;
     }
+    
+    // Now that provisioning is potentially done, initialize ORT
+    let suppress_ml_warning = cli.grant_access || matches!(cli.command, Some(Commands::GrantAccess) | Some(Commands::BootstrapModels));
+    init_ort(suppress_ml_warning);
 
     // 2. Handle subcommands
     match cli.command {
@@ -348,6 +351,21 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Some(Commands::SignConfigs) => {
             osoosi_core::config_integrity::sign_all_critical_configs();
             println!("✓ Configs re-signed.");
+        }
+        Some(Commands::Discovery) => {
+            println!("Oshoosi Sherpa Discovery (Route Scraping)...");
+            let scraper = osoosi_telemetry::discovery::RouteScraper::new();
+            let hosts = scraper.scrape_arp();
+            
+            if hosts.is_empty() {
+                println!("No adjacent hosts discovered in ARP cache.");
+            } else {
+                println!("{:<15} {:<20} {:<15}", "IP Address", "MAC Address", "Interface");
+                println!("{:-<50}", "");
+                for host in hosts {
+                    println!("{:<15} {:<20} {:<15}", host.ip, host.mac.clone().unwrap_or_else(|| "unknown".to_owned()), host.interface);
+                }
+            }
         }
         None => {
             if !cli.grant_access {
@@ -559,12 +577,7 @@ fn find_onnxruntime_dylib() -> Option<PathBuf> {
         if path.exists() { return Some(path); }
     }
 
-    // 4. Platform-specific system paths
-    #[cfg(target_os = "windows")]
-    {
-        let sys32 = PathBuf::from("C:\\Windows\\System32").join(filename);
-        if sys32.exists() { return Some(sys32); }
-    }
+    // No system search to avoid version conflicts (e.g. ancient Windows\System32\onnxruntime.dll v1.7.1)
     #[cfg(target_os = "linux")]
     {
         for p in &["/usr/lib", "/usr/local/lib", "/lib/x86_64-linux-gnu"] {
