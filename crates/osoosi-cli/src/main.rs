@@ -148,13 +148,20 @@ async fn main() -> anyhow::Result<()> {
 }
 
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
-    // 1. Handle global --grant-access flag
-    if cli.grant_access {
+    // 1. Handle autonomous provisioning for critical modes
+    let is_starting = matches!(cli.command, Some(Commands::Start));
+    let is_granting = cli.grant_access || matches!(cli.command, Some(Commands::GrantAccess));
+    let is_bootstrapping = matches!(cli.command, Some(Commands::BootstrapModels));
+
+    if is_granting {
         handle_grant_access().await?;
+    } else if is_starting || is_bootstrapping {
+        // Just ensure the essentials (ONNX) if we are starting but haven't run grant-access
+        let _ = ensure_onnx_runtime().await;
     }
     
     // Now that provisioning is potentially done, initialize ORT
-    let suppress_ml_warning = cli.grant_access || matches!(cli.command, Some(Commands::GrantAccess) | Some(Commands::BootstrapModels));
+    let suppress_ml_warning = is_granting || is_bootstrapping;
     init_ort(suppress_ml_warning);
 
     // 2. Handle subcommands
@@ -557,17 +564,21 @@ fn init_ort(suppress_warning: bool) {
 fn find_onnxruntime_dylib() -> Option<PathBuf> {
     let filename = if cfg!(windows) { "onnxruntime.dll" } else if cfg!(target_os = "macos") { "libonnxruntime.dylib" } else { "libonnxruntime.so" };
     
-    // 1. Check ORT_DYLIB_PATH environment variable
+    // 1. Check ORT_DYLIB_PATH environment variable (Highest Priority)
     if let Ok(env_path) = std::env::var("ORT_DYLIB_PATH") {
         let path = PathBuf::from(env_path);
         if path.exists() { return Some(path); }
     }
 
-    // 2. Check executable directory
+    // 2. Check executable directory (Mandatory for production release)
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
             let path = exe_dir.join(filename);
             if path.exists() { return Some(path); }
+            
+            // Also check 'target/debug' or 'target/release' if running via cargo
+            let path_debug = exe_dir.join("../../target/debug").join(filename);
+            if path_debug.exists() { return Some(path_debug); }
         }
     }
 
@@ -577,22 +588,8 @@ fn find_onnxruntime_dylib() -> Option<PathBuf> {
         if path.exists() { return Some(path); }
     }
 
-    // No system search to avoid version conflicts (e.g. ancient Windows\System32\onnxruntime.dll v1.7.1)
-    #[cfg(target_os = "linux")]
-    {
-        for p in &["/usr/lib", "/usr/local/lib", "/lib/x86_64-linux-gnu"] {
-            let path = PathBuf::from(p).join(filename);
-            if path.exists() { return Some(path); }
-        }
-    }
-    #[cfg(target_os = "macos")]
-    {
-        for p in &["/usr/local/lib", "/opt/homebrew/lib", "/usr/lib"] {
-            let path = PathBuf::from(p).join(filename);
-            if path.exists() { return Some(path); }
-        }
-    }
-
+    // DO NOT check C:\Windows\System32 or other system paths. 
+    // They often contain ancient versions (e.g. v1.7.1) that cause panics with ort 2.0.
     None
 }
 
