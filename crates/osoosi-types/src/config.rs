@@ -430,7 +430,7 @@ pub fn resolve_tool_path(tool_name: &str, executable_name: &str) -> PathBuf {
     resolve_tools_dir().join(tool_name).join(executable_name)
 }
 
-/// Resolve the models directory for ML/LLM models (Malware, Gemma, etc.).
+/// Resolve the models directory for ML/LLM models (Malware, SmolLM, etc.).
 /// Env override: OSOOSI_MODELS_DIR.
 /// Defaults to current_dir/models or project_root/models if found.
 pub fn resolve_models_dir() -> PathBuf {

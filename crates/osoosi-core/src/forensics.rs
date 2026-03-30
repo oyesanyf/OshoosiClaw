@@ -1,17 +1,10 @@
-//! Forensic Storytelling Module.
-//!
-//! Reconstructs the timeline of an attack into a human-readable narrative using a native, lean Gemma-2B model.
-
 use osoosi_audit::{AuditTrail, AuditEntry};
-use ort::{session::Session, inputs};
-use ndarray;
-use tokenizers::Tokenizer;
+use osoosi_behavioral::SmolLMAnalyzer;
 use std::path::Path;
 use tracing::{info, warn, error};
 
 pub struct ForensicStoryteller {
-    session: Option<Session>,
-    tokenizer: Option<Tokenizer>,
+    analyzer: Option<SmolLMAnalyzer>,
 }
 
 impl Default for ForensicStoryteller {
@@ -23,35 +16,20 @@ impl Default for ForensicStoryteller {
 impl ForensicStoryteller {
     pub fn new() -> Self {
         let models_dir = std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
-        let model_path = Path::new(&models_dir).join("gemma-3-270m-it.onnx");
-        let tokenizer_path = Path::new(&models_dir).join("tokenizer.json");
+        let model_dir = Path::new(&models_dir);
 
-        let mut session = None;
-        let mut tokenizer = None;
-
-        if model_path.exists() && tokenizer_path.exists() {
-            match (|| -> anyhow::Result<(Session, Tokenizer)> {
-                let s = Session::builder()?.commit_from_file(&model_path)?;
-                let t = Tokenizer::from_file(&tokenizer_path).map_err(|e| anyhow::anyhow!("Tokenizer error: {}", e))?;
-                Ok((s, t))
-            })() {
-                Ok((s, t)) => {
-                    session = Some(s);
-                    tokenizer = Some(t);
-                    info!("Native Gemma-2B Storyteller initialized successfully.");
-                }
-                Err(e) => {
-                    error!("Failed to initialize native Gemma engine: {}. Falling back to template.", e);
-                }
+        let analyzer = match SmolLMAnalyzer::new(model_dir) {
+            Ok(a) => Some(a),
+            Err(e) => {
+                warn!("AI Storytelling analyzer NOT initialized: {}. Fallback to legacy templates.", e);
+                None
             }
-        } else {
-            warn!("Gemma models not found at {:?}. AI Storytelling will use legacy templates. Run 'osoosi bootstrap' to install local models.", model_path);
-        }
+        };
 
-        Self { session, tokenizer }
+        Self { analyzer }
     }
 
-    /// Summarize an attack chain using the local, lean Gemma-2B model.
+    /// Summarize an attack chain using the local, lean SmolLM3-135M model.
     pub async fn summarize_ai(&self, audit: &AuditTrail) -> String {
         let entries = audit.entries();
         if entries.is_empty() {
@@ -76,17 +54,16 @@ impl ForensicStoryteller {
             ));
         }
 
-        if let (Some(ref session), Some(ref tokenizer)) = (&self.session, &self.tokenizer) {
+        if let Some(ref analyzer) = self.analyzer {
             let prompt = format!(
-                "<start_of_turn>user\nYou are a forensic security analyst. Summarize this attack timeline into a dramatic and professional narrative:\n{}\n<end_of_turn>\n<start_of_turn>model\n",
+                "<|user|>\nYou are a forensic security analyst. Summarize this attack timeline into a professional and clear security report narrative. Timeline:\n{}\n<|end|>\n<|assistant|>\n",
                 timeline_data
             );
 
-            // Simple greedy generation (Oshoosi Lite Inference)
-            match self.generate_text(session, tokenizer, &prompt, 150) {
+            match analyzer.generate_text(&prompt, 200) {
                 Ok(story) => story,
                 Err(e) => {
-                    error!("Gemma inference failed: {}. Using legacy summary.", e);
+                    error!("SmolLM3 Storyteller inference failed: {}. Using legacy summary.", e);
                     self.summarize_legacy(audit)
                 }
             }
@@ -95,10 +72,7 @@ impl ForensicStoryteller {
         }
     }
 
-    /// Minimal greedy auto-regressive loop for Gemma-3-270M inference.
-    fn generate_text(&self, _session: &Session, _tokenizer: &Tokenizer, _prompt: &str, _max_tokens: usize) -> anyhow::Result<String> {
-         Err(anyhow::anyhow!("AI Inference is temporarily disabled for porting to ort 2.0. Summarization will fallback to legacy templates."))
-    }
+
 
     /// Fallback template-based summarizer.
     pub fn summarize_legacy(&self, audit: &AuditTrail) -> String {

@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow};
 use crate::log_reader::LogEvent;
 use crate::colog::CoLogFilter;
 use crate::reasoning::ReasoningEngine;
-use crate::gemma::GemmaAnalyzer;
+use crate::smollm::SmolLMAnalyzer;
 use std::sync::{Mutex, Arc};
 use tracing::info;
 
@@ -58,7 +58,7 @@ pub struct BehavioralAnalyzer {
     model: String,
     colog: Mutex<CoLogFilter>,
     reasoning: ReasoningEngine,
-    gemma: Arc<tokio::sync::RwLock<Option<Arc<GemmaAnalyzer>>>>,
+    smollm: Arc<tokio::sync::RwLock<Option<Arc<SmolLMAnalyzer>>>>,
     embedder: Arc<Mutex<crate::process_tree::ProcessTreeEmbedder>>,
 }
 
@@ -71,7 +71,7 @@ impl BehavioralAnalyzer {
         let model = std::env::var("OSOOSI_OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
         
         let reasoning = ReasoningEngine::new();
-        let gemma = Arc::new(tokio::sync::RwLock::new(None));
+        let smollm = Arc::new(tokio::sync::RwLock::new(None));
         let embedder = Arc::new(Mutex::new(crate::process_tree::ProcessTreeEmbedder::new().expect("Failed to init ProcessTreeEmbedder")));
 
         let analyzer = Self { 
@@ -80,33 +80,33 @@ impl BehavioralAnalyzer {
             model,
             colog: Mutex::new(CoLogFilter::new(100)),
             reasoning,
-            gemma,
+            smollm,
             embedder,
         };
 
-        // Initialize Gemma in the background to avoid stalling the app
-        analyzer.init_native_gemma();
+        // Initialize SmolLM in the background to avoid stalling the app
+        analyzer.init_native_smollm();
         analyzer
     }
 
     pub fn is_configured(&self) -> bool {
-        !self.api_key.is_empty() || self.gemma.blocking_read().is_some()
+        !self.api_key.is_empty() || self.smollm.blocking_read().is_some()
     }
 
-    /// Initialize Gemma in a background blocking thread.
-    pub fn init_native_gemma(&self) {
-        let gemma_lock = self.gemma.clone();
+    /// Initialize SmolLM in a background blocking thread.
+    pub fn init_native_smollm(&self) {
+        let smollm_lock = self.smollm.clone();
         tokio::task::spawn_blocking(move || {
             let models_dir = std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
-            let gemma_dir = std::path::Path::new(&models_dir).join("gemma");
-            match GemmaAnalyzer::new(&gemma_dir) {
-                Ok(g) => {
-                    let mut lock = gemma_lock.blocking_write();
-                    *lock = Some(Arc::new(g));
-                    info!("Native Gemma analyzer initialization complete (background).");
+            let smollm_dir = std::path::Path::new(&models_dir).join("smollm");
+            match SmolLMAnalyzer::new(&smollm_dir) {
+                Ok(s) => {
+                    let mut lock = smollm_lock.blocking_write();
+                    *lock = Some(Arc::new(s));
+                    info!("Native SmolLM analyzer initialization complete (background).");
                 }
                 Err(e) => {
-                    info!("Failed to load native Gemma from {:?}: {}. Falling back to default remote API.", gemma_dir, e);
+                    info!("Failed to load native SmolLM from {:?}: {}. Falling back to default remote API.", smollm_dir, e);
                 }
             }
         });
@@ -115,7 +115,7 @@ impl BehavioralAnalyzer {
     /// Step 1: Generate investigative prompts based on mode and log data.
     pub async fn generate_investigative_prompts(&self, mode: AnalysisMode, events: &[LogEvent]) -> Result<Vec<InvestigativePrompt>> {
         if !self.is_configured() {
-            return Err(anyhow!("AI Analyzer not configured. Set OSOOSI_OPENAI_API_KEY or allow native Gemma 3 4B to initialize."));
+            return Err(anyhow!("AI Analyzer not configured. Set OSOOSI_OPENAI_API_KEY or allow native SmolLM2 to initialize."));
         }
 
         let system_prompt = self.get_system_prompt_for_mode(mode);
@@ -215,19 +215,19 @@ impl BehavioralAnalyzer {
     }
 
     async fn call_llm(&self, prompt: &str, require_json: bool) -> Result<String> {
-        // Prioritize native Gemma if available
+        // Prioritize native SmolLM if available
         {
-            let gemma_guard = self.gemma.read().await;
-            if let Some(ref gemma) = *gemma_guard {
-                info!("Using native Gemma 3 4B for analytical response...");
-                let result = gemma.generate_text(prompt, 500)?;
+            let smollm_guard = self.smollm.read().await;
+            if let Some(ref smollm) = *smollm_guard {
+                info!("Using native SmolLM2 for analytical response...");
+                let result = smollm.generate_text(prompt, 500)?;
                 return Ok(result);
             }
         }
 
-        // Only fall back to OpenAI/Remote if Gemma is not loaded and a key is available
+        // Only fall back to OpenAI/Remote if SmolLM is not loaded and a key is available
         if self.api_key.is_empty() {
-             return Err(anyhow!("No OpenAI API key and native Gemma is not yet ready. Wait for initialization or set OSOOSI_OPENAI_API_KEY."));
+             return Err(anyhow!("No OpenAI API key and native SmolLM is not yet ready. Wait for initialization or set OSOOSI_OPENAI_API_KEY."));
         }
 
         let client = reqwest::Client::new();

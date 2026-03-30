@@ -236,7 +236,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             use osoosi_telemetry::AgentProvisioner;
             info!("Provisioning Oshoosi dependencies...");
             let provisioner = AgentProvisioner::new();
-            match provisioner.provision_telemetry() {
+            match provisioner.provision_telemetry().await {
                 Ok(_) => info!("Automated provisioning complete."),
                 Err(e) => error!("Automated provisioning failed: {}", e),
             }
@@ -351,9 +351,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Some(Commands::BootstrapModels) => {
             let _ = ensure_onnx_runtime().await;
-            info!("Bootstrapping ML models (MalwareScanner + Gemma Storyteller)...");
+            info!("Bootstrapping ML models (MalwareScanner + SmolLM3 Storyteller)...");
             let provisioner = osoosi_telemetry::AgentProvisioner::new();
-            let _ = provisioner.provision_gemma_models();
+            let _ = provisioner.provision_smollm_models().await;
         }
         Some(Commands::SignConfigs) => {
             osoosi_core::config_integrity::sign_all_critical_configs();
@@ -395,58 +395,58 @@ async fn handle_grant_access() -> anyhow::Result<()> {
         }
         
         info!("GrantAccess pre-step: ensuring Sysmon telemetry is provisioned...");
-        if let Err(e) = provisioner.provision_telemetry() {
+        if let Err(e) = provisioner.provision_telemetry().await {
              warn!("Warning: Failed to provision telemetry: {}", e);
         }
 
-        info!("GrantAccess pre-step: ensuring Local Gemma-2B ONNX is provisioned...");
-        if let Err(e) = provisioner.provision_gemma_models() {
-             warn!("Warning: Failed to provision Gemma models: {}", e);
+        info!("GrantAccess pre-step: ensuring Public SmolLM3-135M ONNX is provisioned...");
+        if let Err(e) = provisioner.provision_smollm_models().await {
+             warn!("Warning: Failed to provision SmolLM models: {}", e);
         }
 
         info!("GrantAccess pre-step: ensuring ClamAV is provisioned...");
-        if let Err(e) = provisioner.provision_clamav() {
+        if let Err(e) = provisioner.provision_clamav().await {
              warn!("Warning: Failed to provision ClamAV: {}", e);
         }
 
         info!("GrantAccess pre-step: ensuring OpenSSL is provisioned...");
-        if let Err(e) = provisioner.provision_openssl() {
+        if let Err(e) = provisioner.provision_openssl().await {
              warn!("Warning: Failed to provision OpenSSL: {}", e);
         }
 
         info!("GrantAccess pre-step: ensuring FLOSS is provisioned...");
-        if let Err(e) = provisioner.provision_floss() {
+        if let Err(e) = provisioner.provision_floss().await {
              warn!("Warning: Failed to provision FLOSS: {}", e);
         }
 
         info!("GrantAccess pre-step: ensuring HollowsHunter is provisioned...");
-        if let Err(e) = provisioner.provision_hollows_hunter() {
+        if let Err(e) = provisioner.provision_hollows_hunter().await {
              warn!("Warning: Failed to provision HollowsHunter: {}", e);
         }
 
         info!("GrantAccess pre-step: ensuring Network Tooling (ngrep/sniffglue) is provisioned...");
-        let _ = provisioner.provision_npcap(); // Driver first
-        if let Err(e) = provisioner.provision_ngrep() {
+        let _ = provisioner.provision_npcap().await; // Driver first
+        if let Err(e) = provisioner.provision_ngrep().await {
              warn!("Warning: Failed to provision ngrep: {}", e);
         }
-        if let Err(e) = provisioner.provision_sniffglue() {
+        if let Err(e) = provisioner.provision_sniffglue().await {
              warn!("Warning: Failed to provision sniffglue: {}", e);
         }
 
         info!("GrantAccess pre-step: ensuring YARA rules are provisioned...");
-        if let Err(e) = provisioner.provision_yara_rules() {
+        if let Err(e) = provisioner.provision_yara_rules().await {
              warn!("Warning: Failed to provision YARA rules: {}", e);
         }
 
         info!("GrantAccess pre-step: ensuring ONNX Runtime (ML Engine) is provisioned...");
-        if let Err(e) = provisioner.provision_onnx_runtime() {
+        if let Err(e) = provisioner.provision_onnx_runtime().await {
              warn!("Critical Warning: Failed to provision ONNX Runtime. ML features will be disabled: {}", e);
         }
 
         #[cfg(target_os = "windows")]
         {
             info!("GrantAccess pre-step: adding Antivirus exclusions for the YARA folder...");
-            let _ = provisioner.add_defender_exclusion(Path::new("yara"));
+            let _ = provisioner.add_defender_exclusion(Path::new("yara")).await;
         }
     }
     

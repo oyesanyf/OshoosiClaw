@@ -9,7 +9,9 @@ use std::path::Path;
 use std::process::Command;
 use tracing::{info, warn};
 
-pub struct AgentProvisioner;
+pub struct AgentProvisioner {
+    client: reqwest::Client,
+}
 
 impl Default for AgentProvisioner {
     fn default() -> Self {
@@ -19,22 +21,27 @@ impl Default for AgentProvisioner {
 
 impl AgentProvisioner {
     pub fn new() -> Self {
-        Self
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(600))
+            .no_proxy() // Crucial: avoid Windows system proxy resolution which triggers nested tokio runtime
+            .build()
+            .unwrap_or_else(|_| reqwest::Client::new());
+        Self { client }
     }
 
     /// Provision the agent's telemetry dependencies based on the host OS.
-    pub fn provision_telemetry(&self) -> anyhow::Result<()> {
+    pub async fn provision_telemetry(&self) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         {
-            self.provision_windows()
+            self.provision_windows().await
         }
         #[cfg(target_os = "linux")]
         {
-            self.provision_linux()
+            self.provision_linux().await
         }
         #[cfg(target_os = "macos")]
         {
-            self.provision_macos()
+            self.provision_macos().await
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
@@ -43,18 +50,18 @@ impl AgentProvisioner {
     }
 
     /// Provision ClamAV validator (best-effort install per OS).
-    pub fn provision_clamav(&self) -> anyhow::Result<()> {
+    pub async fn provision_clamav(&self) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         {
-            self.provision_windows_clamav()
+            self.provision_windows_clamav().await
         }
         #[cfg(target_os = "linux")]
         {
-            self.provision_linux_clamav()
+            self.provision_linux_clamav().await
         }
         #[cfg(target_os = "macos")]
         {
-            self.provision_macos_clamav()
+            self.provision_macos_clamav().await
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
@@ -65,18 +72,18 @@ impl AgentProvisioner {
     }
 
     /// Provision OpenSSL (needed for X.509 / CSR generation).
-    pub fn provision_openssl(&self) -> anyhow::Result<()> {
+    pub async fn provision_openssl(&self) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         {
-            self.provision_windows_openssl()
+            self.provision_windows_openssl().await
         }
         #[cfg(target_os = "linux")]
         {
-            self.provision_linux_openssl()
+            self.provision_linux_openssl().await
         }
         #[cfg(target_os = "macos")]
         {
-            self.provision_macos_openssl()
+            self.provision_macos_openssl().await
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
@@ -87,7 +94,7 @@ impl AgentProvisioner {
     }
 
     #[cfg(target_os = "windows")]
-    fn provision_windows_openssl(&self) -> anyhow::Result<()> {
+    async fn provision_windows_openssl(&self) -> anyhow::Result<()> {
         if self.command_exists_win("openssl") {
             info!("OpenSSL already available on Windows.");
             return Ok(());
@@ -115,7 +122,7 @@ impl AgentProvisioner {
         let url = "https://slproweb.com/download/Win64OpenSSL-3_6_1.exe";
         let installer_path = std::env::temp_dir().join("openssl-setup.exe");
         
-        self.download_with_resume(url, &installer_path)?;
+        self.download_with_resume(url, &installer_path).await?;
             
         info!("OpenSSL installer downloaded. Running silent setup...");
         let mut install_cmd = Command::new(&installer_path);
@@ -214,7 +221,7 @@ impl AgentProvisioner {
 
     /// Windows: Install Sysmon
     #[cfg(target_os = "windows")]
-    fn provision_windows(&self) -> anyhow::Result<()> {
+    async fn provision_windows(&self) -> anyhow::Result<()> {
         info!("Provisioning Windows telemetry (Sysmon)...");
         let config_dir = Path::new("config");
         let cfg_primary = config_dir.join("config.xml");
@@ -226,12 +233,12 @@ impl AgentProvisioner {
         } else {
             None
         };
-        self.ensure_windows_sysmon(config)
+        self.ensure_windows_sysmon(config).await
     }
 
     #[cfg(target_os = "windows")]
-    fn ensure_windows_sysmon(&self, config_path: Option<&Path>) -> anyhow::Result<()> {
-        let binary = self.ensure_sysmon_binary()?;
+    async fn ensure_windows_sysmon(&self, config_path: Option<&Path>) -> anyhow::Result<()> {
+        let binary = self.ensure_sysmon_binary().await?;
         self.fix_wrong_arch_sysmon(&binary);
         let is_installed = self.sysmon_service_active();
 
@@ -373,7 +380,7 @@ impl AgentProvisioner {
     }
 
     #[cfg(target_os = "windows")]
-    fn ensure_sysmon_binary(&self) -> anyhow::Result<std::path::PathBuf> {
+    async fn ensure_sysmon_binary(&self) -> anyhow::Result<std::path::PathBuf> {
         let is_64 = Self::is_64bit_os();
         let (required, alt) = if is_64 {
             ("Sysmon64.exe", "Sysmon.exe")
@@ -399,7 +406,7 @@ impl AgentProvisioner {
         );
 
         let zip_path = Path::new("Sysmon.zip");
-        self.download_with_resume("https://download.sysinternals.com/files/Sysmon.zip", zip_path)?;
+        self.download_with_resume("https://download.sysinternals.com/files/Sysmon.zip", zip_path).await?;
 
         info!("Extracting Sysmon...");
         let ps_script = format!("Expand-Archive -Path 'Sysmon.zip' -DestinationPath '.' -Force; Remove-Item 'Sysmon.zip'");
@@ -422,7 +429,7 @@ impl AgentProvisioner {
     }
 
     #[cfg(target_os = "windows")]
-    fn provision_windows_clamav(&self) -> anyhow::Result<()> {
+    async fn provision_windows_clamav(&self) -> anyhow::Result<()> {
         if self.windows_clam_available() {
             info!("ClamAV already available on Windows.");
             return Ok(());
@@ -445,7 +452,7 @@ impl AgentProvisioner {
         let installer_path_str = installer_path.to_string_lossy().to_string();
 
         info!("ClamAV not found. Downloading installer from official ClamAV downloads...");
-        self.download_with_resume(&download_url, &installer_path)?;
+        self.download_with_resume(&download_url, &installer_path).await?;
 
         info!("Installing ClamAV silently...");
         let mut install_cmd = Command::new("msiexec");
@@ -499,7 +506,7 @@ impl AgentProvisioner {
 
     /// Linux: Install Auditd
     #[cfg(target_os = "linux")]
-    fn provision_linux(&self) -> anyhow::Result<()> {
+    async fn provision_linux(&self) -> anyhow::Result<()> {
         info!("Provisioning Linux telemetry (Sysmon for Linux)...");
         let default_cfg = Path::new("config").join("sysmonconfig-export.xml");
         let config = default_cfg.as_path().is_file().then_some(default_cfg.as_path());
@@ -658,7 +665,7 @@ impl AgentProvisioner {
     }
 
     #[cfg(target_os = "linux")]
-    fn provision_linux_clamav(&self) -> anyhow::Result<()> {
+    async fn provision_linux_clamav(&self) -> anyhow::Result<()> {
         if self.command_exists("clamscan") {
             info!("ClamAV already available on Linux.");
             return Ok(());
@@ -690,7 +697,7 @@ impl AgentProvisioner {
 
     /// macOS: Check for Endpoint Security
     #[cfg(target_os = "macos")]
-    fn provision_macos(&self) -> anyhow::Result<()> {
+    async fn provision_macos(&self) -> anyhow::Result<()> {
         info!("Provisioning macOS telemetry (Endpoint Security Framework)...");
         info!("macOS uses native ESF. Ensure the binary is granted Full Disk Access.");
         // No explicit install needed for ESF, it's a kernel feature
@@ -698,7 +705,7 @@ impl AgentProvisioner {
     }
 
     #[cfg(target_os = "macos")]
-    fn provision_macos_clamav(&self) -> anyhow::Result<()> {
+    async fn provision_macos_clamav(&self) -> anyhow::Result<()> {
         let has_clam = Command::new("sh")
             .args(["-c", "command -v clamscan >/dev/null 2>&1"])
             .status()
@@ -728,7 +735,7 @@ impl AgentProvisioner {
     }
 
     /// Legacy support for explicit Sysmon installation (Windows only)
-    pub fn install<P: AsRef<Path>>(&self, binary_path: P, config_path: Option<P>) -> anyhow::Result<()> {
+    pub async fn install<P: AsRef<Path>>(&self, binary_path: P, config_path: Option<P>) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         {
             let binary = binary_path.as_ref();
@@ -750,26 +757,28 @@ impl AgentProvisioner {
         }
     }
 
-    /// Provision the leanest Gemma-2B-IT-Q4 models and tokenizer for local inference.
-    pub fn provision_gemma_models(&self) -> anyhow::Result<()> {
+    /// Provision the public SmolLM3-135M-Instruct models for local native inference.
+    pub async fn provision_smollm_models(&self) -> anyhow::Result<()> {
         let models_dir = osoosi_types::resolve_models_dir();
         if !models_dir.exists() {
             std::fs::create_dir_all(&models_dir)?;
         }
 
-        let model_path = models_dir.join("gemma-3-270m-it.onnx");
+        let model_path = models_dir.join("model.safetensors");
         let tokenizer_path = models_dir.join("tokenizer.json");
+        let config_path = models_dir.join("config.json");
 
-        if model_path.exists() && tokenizer_path.exists() {
-            info!("Ultra-Lean Gemma-3 270M models already provisioned.");
+        if model_path.exists() && tokenizer_path.exists() && config_path.exists() {
+            info!("Public SmolLM3-135M-Instruct models already provisioned.");
             return Ok(());
         }
 
-        info!("Provisioning Ultra-Lean Gemma-3 270M ONNX models (near-instant latency)...");
+        info!("Provisioning Public SmolLM3-135M-Instruct models (non-gated, ultra-lean)...");
         
         let files = [
-            ("gemma-3-270m-it.onnx", "https://huggingface.co/google/gemma-3-270m-it-onnx/resolve/main/gemma-3-270m-it.onnx"),
-            ("tokenizer.json", "https://huggingface.co/google/gemma-3-270m-it-onnx/resolve/main/tokenizer.json"),
+            ("model.safetensors", "https://huggingface.co/HuggingFaceTB/SmolLM3-135M-Instruct/resolve/main/model.safetensors"),
+            ("tokenizer.json", "https://huggingface.co/HuggingFaceTB/SmolLM3-135M-Instruct/resolve/main/tokenizer.json"),
+            ("config.json", "https://huggingface.co/HuggingFaceTB/SmolLM3-135M-Instruct/resolve/main/config.json"),
         ];
 
         for (name, url) in files {
@@ -777,15 +786,15 @@ impl AgentProvisioner {
             if dest.exists() { continue; }
 
             info!("Downloading {}...", name);
-            self.download_with_resume(url, &dest)?;
+            self.download_with_resume(url, &dest).await?;
         }
 
-        info!("Gemma-3-270m-it models provisioned successfully.");
+        info!("SmolLM3-135M-Instruct models provisioned successfully.");
         Ok(())
     }
 
     /// Provision FLOSS (FLARE Obfuscated String Solver) for deobfuscating malware strings.
-    pub fn provision_floss(&self) -> anyhow::Result<()> {
+    pub async fn provision_floss(&self) -> anyhow::Result<()> {
         let version = "3.1.1";
         
         #[cfg(target_os = "windows")]
@@ -802,7 +811,7 @@ impl AgentProvisioner {
             let zip_path = "floss.zip";
 
             info!("FLOSS not found. Downloading v{} for Windows...", version);
-            self.download_with_resume(&url, Path::new(zip_path))?;
+            self.download_with_resume(&url, Path::new(zip_path)).await?;
 
             info!("Extracting FLOSS...");
             let ps_cmd = format!(
@@ -872,7 +881,7 @@ impl AgentProvisioner {
 
     /// Provision HollowsHunter (memory forensics scanner) for detecting in-memory implants.
     /// Detects: process hollowing, DLL injection, reflective PE loading, shellcode, API hooks.
-    pub fn provision_hollows_hunter(&self) -> anyhow::Result<()> {
+    pub async fn provision_hollows_hunter(&self) -> anyhow::Result<()> {
         let version = "0.4.1.1";
 
         #[cfg(target_os = "windows")]
@@ -893,7 +902,7 @@ impl AgentProvisioner {
 
             info!("HollowsHunter not found. Downloading v{} for Windows (64-bit)...", version);
             let zip_path = target_dir.join("hh.zip");
-            self.download_with_resume(&url, &zip_path)?;
+            self.download_with_resume(&url, &zip_path).await?;
 
             info!("Extracting HollowsHunter...");
             let ps_cmd = format!(
@@ -934,7 +943,7 @@ impl AgentProvisioner {
     }
 
     /// Provision ngrep (network grep) for deep packet inspection on Windows.
-    pub fn provision_ngrep(&self) -> anyhow::Result<()> {
+    pub async fn provision_ngrep(&self) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         {
             let target_dir = osoosi_types::resolve_tools_dir().join("ngrep");
@@ -954,7 +963,7 @@ impl AgentProvisioner {
 
             info!("ngrep not found. Downloading v{} for Windows...", version);
             let zip_path = target_dir.join("ngrep.zip");
-            self.download_with_resume(&url, &zip_path)?;
+            self.download_with_resume(&url, &zip_path).await?;
 
             info!("Extracting ngrep...");
             let ps_cmd = format!(
@@ -978,7 +987,7 @@ impl AgentProvisioner {
     }
 
     /// Provision Npcap (packet capture driver) required for ngrep on Windows.
-    pub fn provision_npcap(&self) -> anyhow::Result<()> {
+    pub async fn provision_npcap(&self) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         {
             // Check if npcap is likely installed by looking for the driver or dll
@@ -994,7 +1003,7 @@ impl AgentProvisioner {
             let installer_path = std::env::temp_dir().join("npcap-installer.exe");
 
             info!("Npcap not detected. Downloading official installer...");
-            self.download_with_resume(url, &installer_path)?;
+            self.download_with_resume(url, &installer_path).await?;
 
             info!("Installing Npcap silently (requires Elevation)...");
             // /S = Silent, /admin_only=1, /dot11_support=0, /loopback_support=1
@@ -1014,7 +1023,7 @@ impl AgentProvisioner {
     }
 
     /// Provision sniffglue (sandboxed network sniffer) for deep packet inspection on Unix.
-    pub fn provision_sniffglue(&self) -> anyhow::Result<()> {
+    pub async fn provision_sniffglue(&self) -> anyhow::Result<()> {
         #[cfg(target_os = "linux")]
         {
             if self.command_exists("sniffglue") {
@@ -1078,7 +1087,7 @@ impl AgentProvisioner {
     }
 
     /// Provision a base set of YARA rules from multiple reputable GitHub sources.
-    pub fn provision_yara_rules(&self) -> anyhow::Result<()> {
+    pub async fn provision_yara_rules(&self) -> anyhow::Result<()> {
         let yara_base_dir = std::path::Path::new("yara");
         if !yara_base_dir.exists() {
             std::fs::create_dir_all(&yara_base_dir)?;
@@ -1115,10 +1124,7 @@ impl AgentProvisioner {
             let zip_path = target_sub_dir.join(format!("{}_temp.zip", name));
             
             // Use resumable downloader
-            if let Err(e) = self.download_with_resume(url, &zip_path) {
-                 warn!("Failed to download YARA '{}' rules: {}. Skipping source.", name, e);
-                 continue;
-            }
+            self.download_with_resume(url, &zip_path).await?;
 
             info!("Extracting YARA '{}' rules...", name);
             let tmp_extract = target_sub_dir.join(format!("{}_tmp_extract", name));
@@ -1127,7 +1133,9 @@ impl AgentProvisioner {
             {
                 let ps_cmd = format!(
                     "$ProgressPreference='SilentlyContinue'; \
-                     Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
+                     Add-Type -AssemblyName 'System.IO.Compression.FileSystem'; \
+                     if (Test-Path '{}') {{ Remove-Item -Recurse -Force '{}' }} \
+                     [System.IO.Compression.ZipFile]::ExtractToDirectory('{}', '{}'); \
                      $subdirs = Get-ChildItem -Path '{}' -Directory; \
                      if ($subdirs.Count -eq 1) {{ \
                         Copy-Item -Path \"$($subdirs[0].FullName)\\*\" -Destination '{}' -Recurse -Force; \
@@ -1135,7 +1143,7 @@ impl AgentProvisioner {
                         Copy-Item -Path '{}' -Destination '{}' -Recurse -Force; \
                      }} \
                      Remove-Item -Recurse -Force '{}'",
-                     zip_path.to_string_lossy(), tmp_extract.to_string_lossy(), tmp_extract.to_string_lossy(), target_sub_dir.to_string_lossy(), tmp_extract.to_string_lossy(), target_sub_dir.to_string_lossy(), tmp_extract.to_string_lossy()
+                     tmp_extract.to_string_lossy(), tmp_extract.to_string_lossy(), zip_path.to_string_lossy(), tmp_extract.to_string_lossy(), tmp_extract.to_string_lossy(), target_sub_dir.to_string_lossy(), tmp_extract.to_string_lossy(), target_sub_dir.to_string_lossy(), tmp_extract.to_string_lossy()
                 );
                 
                 let mut cmd = Command::new("powershell");
@@ -1157,79 +1165,80 @@ impl AgentProvisioner {
     }
 
     /// Download a file with support for resuming partial downloads (HTTP Range).
-    pub fn download_with_resume(&self, url: &str, dest: &std::path::Path) -> anyhow::Result<()> {
+    pub async fn download_with_resume(&self, url: &str, dest: &std::path::Path) -> anyhow::Result<()> {
         use tokio::io::AsyncWriteExt;
         use futures::StreamExt;
 
-        let rt = tokio::runtime::Runtime::new()?;
-        rt.block_on(async {
-            let mut retries = 5;
-            let mut last_error = None;
+        let mut retries = 5;
+        let mut last_error = None;
 
-            while retries > 0 {
-                let current_size = if dest.exists() {
-                    std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0)
-                } else {
-                    0
-                };
+        while retries > 0 {
+            let current_size = if dest.exists() {
+                std::fs::metadata(dest).map(|m| m.len()).unwrap_or(0)
+            } else {
+                0
+            };
 
-                let client = reqwest::Client::builder()
-                    .timeout(std::time::Duration::from_secs(300))
-                    .build()?;
-
-                let mut request = client.get(url);
-                if current_size > 0 {
-                    request = request.header("Range", format!("bytes={}-", current_size));
-                    info!("Resuming download from {} (current size: {:.1} MB)...", url, current_size as f64 / 1_048_576.0);
-                }
-
-                match request.send().await {
-                    Ok(resp) => {
-                        let status = resp.status();
-                        if status.is_success() || status == reqwest::StatusCode::PARTIAL_CONTENT {
-                            let mut file = tokio::fs::OpenOptions::new()
-                                .create(true)
-                                .append(true)
-                                .open(dest)
-                                .await?;
-                            
-                            // If it's a 200 OK but we had a partial file, it means server doesn't support Range,
-                            // or we're starting over. Truncate if it's 200 and we have existing data.
-                            if status == reqwest::StatusCode::OK && current_size > 0 {
-                                file.set_len(0).await?;
-                            }
-
-                            let mut stream = resp.bytes_stream();
-                            while let Some(item) = stream.next().await {
-                                let chunk = item?;
-                                file.write_all(&chunk).await?;
-                            }
-                            file.flush().await?;
-                            return Ok(());
-                        } else if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
-                            // Already finished or range error
-                            return Ok(());
-                        } else {
-                            last_error = Some(anyhow::anyhow!("HTTP error: {}", status));
-                        }
-                    }
-                    Err(e) => {
-                        last_error = Some(e.into());
-                    }
-                }
-
-                retries -= 1;
-                if retries > 0 {
-                    warn!("Download failed: {:?}. Retrying ({} left)...", last_error, retries);
-                    tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            let mut request = self.client.get(url);
+            
+            // Add Hugging Face authentication if token is present
+            if url.contains("huggingface.co") {
+                if let Ok(token) = std::env::var("HF_TOKEN") {
+                    request = request.header("Authorization", format!("Bearer {}", token));
                 }
             }
-            Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Download failed from {}", url)))
-        })
+
+            if current_size > 0 {
+                request = request.header("Range", format!("bytes={}-", current_size));
+                info!("Resuming download from {} (current size: {:.1} MB)...", url, current_size as f64 / 1_048_576.0);
+            }
+
+            match request.send().await {
+                Ok(resp) => {
+                    let status = resp.status();
+                    if status.is_success() || status == reqwest::StatusCode::PARTIAL_CONTENT {
+                        let mut file = tokio::fs::OpenOptions::new()
+                            .create(true)
+                            .append(true)
+                            .open(dest)
+                            .await?;
+                        
+                        // If it's a 200 OK but we had a partial file, it means server doesn't support Range,
+                        // or we're starting over. Truncate if it's 200 and we have existing data.
+                        if status == reqwest::StatusCode::OK && current_size > 0 {
+                            file.set_len(0).await?;
+                        }
+
+                        let mut stream = resp.bytes_stream();
+                        while let Some(item) = stream.next().await {
+                            let chunk = item?;
+                            file.write_all(&chunk).await?;
+                        }
+                        file.flush().await?;
+                        return Ok(());
+                    } else if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+                        // Already finished or range error
+                        return Ok(());
+                    } else {
+                        last_error = Some(anyhow::anyhow!("HTTP error: {}", status));
+                    }
+                }
+                Err(e) => {
+                    last_error = Some(e.into());
+                }
+            }
+
+            retries -= 1;
+            if retries > 0 {
+                warn!("Download failed: {:?}. Retrying ({} left)...", last_error, retries);
+                tokio::time::sleep(std::time::Duration::from_secs(5)).await;
+            }
+        }
+        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Download failed from {}", url)))
     }
 
     /// Add a Windows Defender exclusion for a specific path.
-    pub fn add_defender_exclusion(&self, path: &std::path::Path) -> anyhow::Result<()> {
+    pub async fn add_defender_exclusion(&self, path: &std::path::Path) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         {
             // Resolve to absolute path for exclusion
@@ -1259,7 +1268,7 @@ impl AgentProvisioner {
     }
 
     /// Provision ONNX Runtime shared library (required for ML inference).
-    pub fn provision_onnx_runtime(&self) -> anyhow::Result<()> {
+    pub async fn provision_onnx_runtime(&self) -> anyhow::Result<()> {
         let version = "1.18.1";
         
         #[cfg(target_os = "windows")]
@@ -1275,7 +1284,7 @@ impl AgentProvisioner {
             let zip_path = "ort_win.zip";
             let tmp_extract = "ort_tmp_extract";
 
-            self.download_with_resume(&url, std::path::Path::new(zip_path))?;
+            self.download_with_resume(&url, std::path::Path::new(zip_path)).await?;
 
             info!("Extracting ONNX Runtime...");
             let ps_cmd = format!(

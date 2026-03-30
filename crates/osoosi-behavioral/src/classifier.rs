@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use tokenizers::Tokenizer;
 use tracing::{debug, info, warn};
 use std::sync::Arc;
-use crate::gemma::GemmaAnalyzer;
+use crate::smollm::SmolLMAnalyzer;
 
 /// Result of behavioral classification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -33,7 +33,7 @@ pub struct BehavioralClassifier {
     model: Option<Mutex<Session>>,
     tokenizer: Option<Tokenizer>,
     feedback: Option<FeedbackStore>,
-    gemma: Option<Arc<GemmaAnalyzer>>,
+    smollm: Option<Arc<SmolLMAnalyzer>>,
     openai_key: String,
     client: reqwest::Client,
 }
@@ -57,12 +57,12 @@ impl BehavioralClassifier {
             }
         };
 
-        let model_path = behavioral_dir.join("model.onnx");
-        let tokenizer_path = behavioral_dir.join("tokenizer.json");
+        let model_path = Path::new(&models_dir).join("smollm2-135m-it.onnx");
+        let tokenizer_path = Path::new(&models_dir).join("tokenizer.json");
 
         let no_ort = std::env::var("OSOOSI_NO_ORT").map(|v| v == "1").unwrap_or(false);
         let (model, tokenizer) = if !no_ort && model_path.exists() && tokenizer_path.exists() {
-            info!("Loading SecureBERT model from {:?}", model_path);
+            info!("Loading SmolLM2-135M-Instruct model from {:?}", model_path);
             let session_res = (|| -> anyhow::Result<Session> {
                 let builder = SessionBuilder::new()?;
                 let session = builder.commit_from_file(&model_path)?;
@@ -83,7 +83,7 @@ impl BehavioralClassifier {
                 }
             }
         } else {
-            info!("Behavioral classifier: ONNX engine disabled (missing model.onnx or tokenizer.json). Falling back to native Gemma 3 4B.");
+            info!("Behavioral classifier: ONNX engine disabled (missing smollm2-135m-it.onnx or tokenizer.json). Falling back to native SmolLM LLM.");
             (None, None)
         };
 
@@ -96,16 +96,16 @@ impl BehavioralClassifier {
             .build()
             .unwrap_or_default();
 
-        let gemma = if model.is_none() {
-            // Attempt to load native Gemma 3 4B from models/gemma/
-            let gemma_dir = Path::new(&models_dir).join("gemma");
-            match GemmaAnalyzer::new(&gemma_dir) {
-                Ok(g) => {
-                    info!("Native Gemma 3 4B initialization successful.");
-                    Some(Arc::new(g))
+        let smollm = if model.is_none() {
+            // Attempt to load native SmolLM2 if available (fallback)
+            let smollm_dir = Path::new(&models_dir).join("smollm");
+            match SmolLMAnalyzer::new(&smollm_dir) {
+                Ok(s) => {
+                    info!("Native SmolLM2 fallback initialization successful.");
+                    Some(Arc::new(s))
                 }
                 Err(e) => {
-                    warn!("Failed to initialize native Gemma from {:?}: {}. Falling back to Rule-based + OpenAI.", gemma_dir, e);
+                    warn!("Native SmolLM fallback unavailable: {}. Using Rule-based + OpenAI.", e);
                     None
                 }
             }
@@ -118,7 +118,7 @@ impl BehavioralClassifier {
             model,
             tokenizer,
             feedback,
-            gemma,
+            smollm,
             openai_key,
             client,
         }
@@ -245,17 +245,17 @@ impl BehavioralClassifier {
                 }
             }
         } else {
-            // 4. Native Gemma Fallback (Deep Security Reasoning)
-            if let Some(ref gemma) = self.gemma {
-                match gemma.analyze_log(sentence) {
-                    Ok(gemma_score) => {
-                        max_score = max_score.max(gemma_score);
-                        if gemma_score >= 0.7 {
-                            reasons.push(format!("Native Gemma 3 4B analysis: {:.2}", gemma_score));
+            // 4. SmolLM Fallback (Deep Security Reasoning)
+            if let Some(ref smollm) = self.smollm {
+                match smollm.analyze_log(sentence) {
+                    Ok(score) => {
+                        max_score = max_score.max(score);
+                        if score >= 0.7 {
+                            reasons.push(format!("Native SmolLM analysis: {:.2}", score));
                         }
                     }
                     Err(e) => {
-                        debug!("Gemma inference failed, trying OpenAI: {}", e);
+                        debug!("SmolLM inference failed, trying OpenAI: {}", e);
                         self.openai_fallback(sentence, &mut max_score, &mut reasons).await;
                     }
                 }
@@ -268,7 +268,7 @@ impl BehavioralClassifier {
         let is_suspicious = max_score >= 0.7;
         if is_suspicious {
             info!("Behavioral alert: {} (score={:.2}, reasons={:?})", 
-                sentence.chars().take(80).collect::<String>(), max_score, reasons);
+                sentence.chars().take(120).collect::<String>(), max_score, reasons);
         }
 
         (
@@ -298,23 +298,27 @@ impl BehavioralClassifier {
             "attention_mask" => val_attention_mask,
         ])?;
 
-        // SecureBERT classification output is usually a logit.
+        // SmolLM/SecureBERT classification output is usually a logit.
         let logits = outputs.get("logits")
             .or_else(|| outputs.get("output_0"))
+            .or_else(|| outputs.get("last_hidden_state")) // Fallback for some ONNX exports
             .ok_or_else(|| anyhow::anyhow!("Failed to find logits in model output"))?;
         
         // Use Type-safe extraction
         let logits_extracted = logits.try_extract_tensor::<f32>()?;
-        let (_shape, logits_data) = (logits_extracted.0, logits_extracted.1);
+        let (shape, logits_data) = (logits_extracted.0, logits_extracted.1);
         
-        // Softmax or sigmoid for score. Assuming binary classification for behavioral suspiciousness.
-        let score = if logits_data.len() >= 2 {
-            // Binary classification [benign, malicious]
+        // Softmax or sigmoid for score. 
+        // 135M Instruct model might return full logits or hidden states. 
+        // If it's a hidden state [1, seq, 768], we take the mean or first token.
+        // If it's logits [1, seq, vocab], we might need more logic.
+        // But for a simple classifier, we assume binary or single logit.
+        let score = if logits_data.len() >= 2 && shape.len() == 2 {
             let exp0 = logits_data[0].exp();
             let exp1 = logits_data[1].exp();
             exp1 / (exp0 + exp1)
         } else {
-            // Regression or single output sigmoid
+            // Simple sigmoid fallback
             1.0 / (1.0 + (-logits_data[0]).exp())
         };
 

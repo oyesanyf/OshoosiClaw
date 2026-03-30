@@ -3,7 +3,7 @@ use crate::LogEvent;
 use tracing::{info, warn, error, debug};
 use std::time::Duration;
 use std::sync::Arc;
-use crate::gemma::GemmaAnalyzer;
+use crate::smollm::SmolLMAnalyzer;
 
 /// Tier 2: Expert investigation results from Foundation-Sec.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -17,8 +17,8 @@ pub struct ReasoningResult {
 pub enum ReasoningBackend {
     /// Local Python bridge as suggested by the user
     PythonBridge { script_path: String },
-    /// Native Gemma 3 4B (Recommended)
-    Gemma,
+    /// Native SmolLM2-135M (Recommended)
+    SmolLM,
     /// Remote API (e.g., vLLM or OpenAI-compatible)
     RemoteApi { url: String, api_key: String },
 }
@@ -27,14 +27,13 @@ pub enum ReasoningBackend {
 pub struct ReasoningEngine {
     backend: ReasoningBackend,
     client: reqwest::Client,
-    gemma: Arc<tokio::sync::RwLock<Option<Arc<GemmaAnalyzer>>>>,
+    smollm: Arc<tokio::sync::RwLock<Option<Arc<SmolLMAnalyzer>>>>,
 }
 
 impl ReasoningEngine {
     pub fn new() -> Self {
-        let backend_type = std::env::var("OSOOSI_REASONING_BACKEND").unwrap_or_else(|_| "gemma".to_string());
-        
-        let gemma = Arc::new(tokio::sync::RwLock::new(None));
+        let smollm = Arc::new(tokio::sync::RwLock::new(None));
+        let backend_type = std::env::var("OSOOSI_REASONING_BACKEND").unwrap_or_else(|_| "smollm".to_string());
         let backend = if backend_type == "python" {
             ReasoningBackend::PythonBridge { 
                 script_path: std::env::var("OSOOSI_REASONING_SCRIPT").unwrap_or_else(|_| "scripts/reason.py".to_string())
@@ -45,38 +44,38 @@ impl ReasoningEngine {
                 api_key: std::env::var("OSOOSI_REASONING_KEY").unwrap_or_default(),
             }
         } else {
-            ReasoningBackend::Gemma
+            ReasoningBackend::SmolLM
         };
 
         let engine = Self {
             backend,
-            gemma,
+            smollm,
             client: reqwest::Client::builder()
                 .timeout(Duration::from_secs(60))
                 .build()
                 .unwrap_or_default(),
         };
 
-        // Initialize Gemma in the background if selected
-        if matches!(engine.backend, ReasoningBackend::Gemma) {
-            engine.init_native_gemma();
+        // Initialize SmolLM in the background if selected
+        if matches!(engine.backend, ReasoningBackend::SmolLM) {
+            engine.init_native_smollm();
         }
         engine
     }
-    /// Initialize Gemma in a background blocking thread.
-    fn init_native_gemma(&self) {
-        let gemma_lock = self.gemma.clone();
+    /// Initialize SmolLM in a background blocking thread.
+    fn init_native_smollm(&self) {
+        let smollm_lock = self.smollm.clone();
         tokio::task::spawn_blocking(move || {
             let models_dir = std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
-            let gemma_dir = std::path::Path::new(&models_dir).join("gemma");
-            match GemmaAnalyzer::new(&gemma_dir) {
-                Ok(g) => {
-                    let mut lock = gemma_lock.blocking_write();
-                    *lock = Some(Arc::new(g));
-                    info!("Expert Reasoning Gemma analyzer initialized (background).");
+            let smollm_dir = std::path::Path::new(&models_dir).join("smollm");
+            match SmolLMAnalyzer::new(&smollm_dir) {
+                Ok(s) => {
+                    let mut lock = smollm_lock.blocking_write();
+                    *lock = Some(Arc::new(s));
+                    info!("Expert Reasoning SmolLM analyzer initialized (background).");
                 }
                 Err(e) => {
-                    warn!("Expert Reasoning failed to load native Gemma from {:?}: {}. Will use fallback if available.", gemma_dir, e);
+                    warn!("Expert Reasoning failed to load native SmolLM from {:?}: {}. Will use fallback if available.", smollm_dir, e);
                 }
             }
         });
@@ -95,7 +94,7 @@ impl ReasoningEngine {
         );
 
         match &self.backend {
-            ReasoningBackend::Gemma => self.call_gemma(&prompt).await,
+            ReasoningBackend::SmolLM => self.call_smollm(&prompt).await,
             ReasoningBackend::RemoteApi { url, api_key } => self.call_remote_api(url, api_key, &prompt).await,
             ReasoningBackend::PythonBridge { script_path } => self.call_python_bridge(script_path, &prompt).await,
         }
@@ -112,22 +111,15 @@ impl ReasoningEngine {
             .join("\n")
     }
 
-    async fn call_gemma(&self, prompt: &str) -> anyhow::Result<ReasoningResult> {
-        let gemma_guard = self.gemma.read().await;
-        let gemma = gemma_guard.as_ref().ok_or_else(|| anyhow::anyhow!("Gemma analyzer not yet initialized (still loading in background)"))?;
+    async fn call_smollm(&self, prompt: &str) -> anyhow::Result<ReasoningResult> {
+        let smollm_guard = self.smollm.read().await;
+        let smollm = smollm_guard.as_ref().ok_or_else(|| anyhow::anyhow!("SmolLM analyzer not yet initialized (still loading in background)"))?;
         
-        // GemmaAnalyzer's analyze_log returns a score, but for reasoning we need structured output.
-        // We'll reuse the underlying model to generate text.
-        // For now, we'll implement a simple text generation here or update GemmaAnalyzer.
-        
-        // Actually, let's just use the score for now and provide a generic message,
-        // or better, implement analyze_structured in GemmaAnalyzer.
-        
-        let score = gemma.analyze_log(prompt)?;
+        let score = smollm.analyze_log(prompt)?;
         
         Ok(ReasoningResult {
             verdict: if score > 0.7 { "Malicious".to_string() } else { "Benign".to_string() },
-            explanation: format!("Native Gemma 3 4B analysis identified high suspicion score: {:.2}", score),
+            explanation: format!("Native SmolLM2-135M analysis identified high suspicion score: {:.2}", score),
             confidence: score,
             recommended_yara_l: None,
         })

@@ -11,7 +11,7 @@ pub mod feedback;
 mod colog;
 mod reasoning;
 mod analyzer;
-mod gemma;
+pub mod smollm;
 mod process_tree;
 pub mod forensics;
 
@@ -21,4 +21,5 @@ pub use classifier::{BehavioralClassifier, BehavioralResult};
 pub use feedback::{FeedbackStore, LabeledSample};
 pub use analyzer::{BehavioralAnalyzer, AnalysisMode, InvestigativePrompt};
 pub use process_tree::{ProcessTreeEmbedder, ProcessRelationship};
+pub use smollm::SmolLMAnalyzer;
 pub use forensics::{PacketForensics, TriageResult};
