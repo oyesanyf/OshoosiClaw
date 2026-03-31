@@ -54,7 +54,7 @@ pub struct SmolLMAnalyzer {
 
 impl SmolLMAnalyzer {
     pub fn new(model_dir: &Path) -> Result<Self> {
-        info!("Initializing native SmolLM3-135M-Instruct analyzer from local files in {:?}...", model_dir);
+        info!("Initializing native SmolLM2-135M-Instruct analyzer from local files in {:?}...", model_dir);
         let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
 
         let tokenizer_filename = model_dir.join("tokenizer.json");
@@ -78,7 +78,7 @@ impl SmolLMAnalyzer {
         let model = Model::load(vb, &config)?;
         let cache = Cache::new(true, candle_core::DType::F32, &config, &device)?;
 
-        info!("SmolLM3-135M-Instruct loaded successfully on {:?}", device);
+        info!("SmolLM2-135M-Instruct loaded successfully on {:?}", device);
 
         Ok(Self {
             model: Mutex::new(model),

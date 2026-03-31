@@ -761,31 +761,37 @@ impl AgentProvisioner {
         }
     }
 
-    /// Provision the public SmolLM3-135M-Instruct models for local native inference.
+    /// Provision SmolLM2-135M-Instruct models for local native inference.
+    /// SmolLM3 only exists as a 3B model — SmolLM2-135M-Instruct is the
+    /// correct 135M ultra-lean model (940k downloads, public, no token needed).
     pub async fn provision_smollm_models(&self) -> anyhow::Result<()> {
         let models_dir = osoosi_types::resolve_models_dir();
         if !models_dir.exists() {
             std::fs::create_dir_all(&models_dir)?;
         }
 
-        let model_path = models_dir.join("model.safetensors");
+        let model_path     = models_dir.join("model.safetensors");
         let tokenizer_path = models_dir.join("tokenizer.json");
-        let config_path = models_dir.join("config.json");
+        let config_path    = models_dir.join("config.json");
 
         if model_path.exists() && tokenizer_path.exists() && config_path.exists() {
-            info!("Public SmolLM3-135M-Instruct models already provisioned.");
+            info!("SmolLM2-135M-Instruct models already provisioned.");
             return Ok(());
         }
 
-        info!("Provisioning Public SmolLM3-135M-Instruct models (non-gated, ultra-lean)...");
-        
+        info!("Provisioning SmolLM2-135M-Instruct models (public, ultra-lean, 135M params)...");
+
+        // SmolLM3-135M-Instruct does not exist on HuggingFace.
+        // SmolLM3 was only released as a 3B model (HuggingFaceTB/SmolLM3-3B).
+        // SmolLM2-135M-Instruct is the correct 135M instruct model.
+        const MODEL_REPO: &str = "HuggingFaceTB/SmolLM2-135M-Instruct";
         let files = [
-            ("model.safetensors", "https://huggingface.co/HuggingFaceTB/SmolLM3-135M-Instruct/resolve/main/model.safetensors"),
-            ("tokenizer.json", "https://huggingface.co/HuggingFaceTB/SmolLM3-135M-Instruct/resolve/main/tokenizer.json"),
-            ("config.json", "https://huggingface.co/HuggingFaceTB/SmolLM3-135M-Instruct/resolve/main/config.json"),
+            ("model.safetensors", format!("https://huggingface.co/{}/resolve/main/model.safetensors", MODEL_REPO)),
+            ("tokenizer.json",    format!("https://huggingface.co/{}/resolve/main/tokenizer.json",    MODEL_REPO)),
+            ("config.json",       format!("https://huggingface.co/{}/resolve/main/config.json",       MODEL_REPO)),
         ];
 
-        for (name, url) in files {
+        for (name, url) in &files {
             let dest = models_dir.join(name);
             if dest.exists() { continue; }
 
@@ -793,7 +799,7 @@ impl AgentProvisioner {
             self.download_with_resume(url, &dest).await?;
         }
 
-        info!("SmolLM3-135M-Instruct models provisioned successfully.");
+        info!("SmolLM2-135M-Instruct models provisioned successfully.");
         Ok(())
     }
 

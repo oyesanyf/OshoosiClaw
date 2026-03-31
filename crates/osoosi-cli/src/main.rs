@@ -399,7 +399,7 @@ async fn handle_grant_access() -> anyhow::Result<()> {
              warn!("Warning: Failed to provision telemetry: {}", e);
         }
 
-        info!("GrantAccess pre-step: ensuring Public SmolLM3-135M ONNX is provisioned...");
+        info!("GrantAccess pre-step: ensuring SmolLM2-135M-Instruct models are provisioned...");
         if let Err(e) = provisioner.provision_smollm_models().await {
              warn!("Warning: Failed to provision SmolLM models: {}", e);
         }
