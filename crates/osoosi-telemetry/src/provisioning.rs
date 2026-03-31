@@ -7,7 +7,7 @@
 
 use std::path::Path;
 use std::process::Command;
-use tracing::{info, warn};
+use tracing::{info, warn, error};
 
 pub struct AgentProvisioner {
     client: reqwest::Client,
@@ -106,13 +106,17 @@ impl AgentProvisioner {
         let ids = ["ShiningLight.OpenSSL", "ShiningLight.OpenSSL.PostgreSQL", "OpenSSL.OpenSSL"];
         
         for id in ids {
+            info!("Attempting winget install: {}...", id);
             let mut cmd = Command::new("winget");
-            cmd.args(["install", id, "--silent", "--accept-package-agreements", "--accept-source-agreements"]);
+            cmd.args(["install", "--id", id, "--silent", "--accept-package-agreements", "--accept-source-agreements"]);
             
-            if self.exec_with_retry(cmd, &format!("winget install {}", id), 2).is_ok() {
-                if self.command_exists_win("openssl") {
-                    info!("OpenSSL installer (ID: {}) finished successfully.", id);
-                    return Ok(());
+            // We use status().ok() here because winget might not exist or ID might not be found
+            if let Ok(status) = cmd.status() {
+                if status.success() {
+                    if self.command_exists_win("openssl") {
+                        info!("OpenSSL installer (ID: {}) finished successfully.", id);
+                        return Ok(());
+                    }
                 }
             }
         }
@@ -1220,6 +1224,9 @@ impl AgentProvisioner {
                         // Already finished or range error
                         return Ok(());
                     } else {
+                        if status == reqwest::StatusCode::UNAUTHORIZED && url.contains("huggingface.co") {
+                            error!("CRITICAL: 401 Unauthorized for Hugging Face download. If you just added the HF_TOKEN environment variable to your OS, you MUST RESTART YOUR TERMINAL for the changes to take effect.");
+                        }
                         last_error = Some(anyhow::anyhow!("HTTP error: {}", status));
                     }
                 }
