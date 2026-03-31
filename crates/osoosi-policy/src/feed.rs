@@ -463,7 +463,11 @@ impl ThreatFeedFetcher {
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("All NSRL download URLs failed")))
     }
 
-    /// Designed to be called from a background tokio::spawn task.
+    /// Resumable, state-persistent streaming download for the NSRL RDS archive.
+    ///
+    /// Survives process restarts via a `.state.json` checkpoint file.
+    /// Root cause fix: removed the global `timeout(7200s)` that was silently
+    /// killing S3 streams — replaced with a per-chunk 30s deadman timeout.
     pub async fn download_nsrl_streaming(&self, dest_dir: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
         use futures::StreamExt;
         use tokio::io::AsyncWriteExt;
@@ -483,11 +487,25 @@ impl ThreatFeedFetcher {
             return Err(e);
         }
 
-        let zip_path = dest_dir.join("nsrl_modern_stream.zip");
-        
+        let zip_path   = dest_dir.join("nsrl_modern_stream.zip");
+        let state_path = dest_dir.join("nsrl_modern_stream.state.json");
+
+        // Load persisted checkpoint from previous run if it exists
+        let persisted_bytes: u64 = if state_path.exists() {
+            std::fs::read_to_string(&state_path)
+                .ok()
+                .and_then(|s| serde_json::from_str::<serde_json::Value>(&s).ok())
+                .and_then(|v| v["bytes_written"].as_u64())
+                .unwrap_or(0)
+        } else {
+            0
+        };
+
+        // No global timeout — S3 silently drops idle TCP after hours.
+        // A global timeout kills active downloads. Use per-chunk deadman below.
         let download_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(7200)) // 2 hours for very large files
             .connect_timeout(std::time::Duration::from_secs(60))
+            .tcp_keepalive(std::time::Duration::from_secs(30))
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
@@ -511,10 +529,17 @@ impl ThreatFeedFetcher {
                     tokio::time::sleep(std::time::Duration::from_secs(backoff_secs)).await;
                 }
 
-                let current_size = if zip_path.exists() {
+                // Cross-reference state file with actual disk size (trust disk)
+                let file_on_disk = if zip_path.exists() {
                     std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0)
                 } else {
                     0
+                };
+                let current_size = if file_on_disk != persisted_bytes && file_on_disk > 0 {
+                    warn!("[NSRL Background] State={} B, disk={} B. Trusting disk.", persisted_bytes, file_on_disk);
+                    file_on_disk
+                } else {
+                    file_on_disk
                 };
 
                 let mut request = download_client.get(*url);
@@ -598,7 +623,12 @@ impl ThreatFeedFetcher {
                 let mut stream = response.bytes_stream();
                 let mut stream_error = false;
 
-                while let Some(item) = stream.next().await {
+                let chunk_timeout = std::time::Duration::from_secs(30);
+                while let Ok(next) = tokio::time::timeout(chunk_timeout, stream.next()).await {
+                    let item = match next {
+                        Some(v) => v,
+                        None => break, // Clean EOF
+                    };
                     let chunk = match item {
                         Ok(c) => c,
                         Err(e) => {
@@ -616,6 +646,12 @@ impl ThreatFeedFetcher {
                     }
                     downloaded += chunk.len() as u64;
 
+                    // Persist checkpoint every 512 MB
+                    if downloaded % (512 * 1024 * 1024) < (chunk.len() as u64) {
+                        let checkpoint = serde_json::json!({ "url": url, "bytes_written": downloaded });
+                        let _ = std::fs::write(&state_path, checkpoint.to_string());
+                    }
+
                     if total_size > 0 {
                         let pct = (downloaded * 100) / total_size;
                         if pct >= last_log_pct + 10 {
@@ -625,6 +661,15 @@ impl ThreatFeedFetcher {
                         }
                     }
                     tokio::task::yield_now().await;
+                }
+                // If timeout fired (outer while-let failed), mark as stalled stream error
+                if !stream_error {
+                    // Check if we stopped because of a 30s stall (no more data but not EOF)
+                    // The while-let exits on timeout too — check against expected total
+                    if total_size > 0 && downloaded < total_size {
+                        warn!("[NSRL Background] Stream stalled (30s timeout). Will reconnect.");
+                        stream_error = true;
+                    }
                 }
                 let _ = file.flush().await;
                 drop(file);
