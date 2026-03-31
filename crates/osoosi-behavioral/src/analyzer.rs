@@ -188,12 +188,13 @@ impl BehavioralAnalyzer {
                     parent_name: parent.to_string(),
                     child_name: child.to_string(),
                     arguments: vec![],
+                    mitre_technique: None,
                     confidence: 1.0,
                 };
                 
                 if let Ok(embedder) = self.embedder.lock() {
                     if let Ok(emb) = embedder.embed(&rel) {
-                        let ml_score = embedder.calculate_anomaly_score(&emb, "default_asset");
+                        let ml_score = embedder.calculate_anomaly_score(&rel, &emb);
                         // Weight the scores: higher ML score boosts the overall anomaly verdict
                         base_score = (base_score * 0.5) + (ml_score * 0.5);
                     }

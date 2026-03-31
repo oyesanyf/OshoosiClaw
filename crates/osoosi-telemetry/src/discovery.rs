@@ -7,11 +7,11 @@
 //!   4. Active "Sherpa" Probing (checks discovered IPs for OshoosiClaw peers)
 
 use std::collections::HashMap;
-use std::net::{IpAddr, SocketAddr, TcpStream};
+use std::net::{SocketAddr, TcpStream};
 use std::process::Command;
 use std::time::Duration;
 use sysinfo::Networks;
-use tracing::{info, warn, debug};
+use tracing::{info, debug};
 
 /// A host discovered through any discovery method.
 #[derive(Debug, Clone)]

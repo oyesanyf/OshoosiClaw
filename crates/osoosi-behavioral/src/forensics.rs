@@ -4,7 +4,7 @@
 //! analyze high-fidelity network telemetry during an active incident.
 
 use std::process::Command;
-use tracing::{info, warn, error};
+use tracing::info;
 use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Serialize, Deserialize)]
