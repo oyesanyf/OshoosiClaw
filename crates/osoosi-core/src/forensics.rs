@@ -1,7 +1,7 @@
 use osoosi_audit::{AuditTrail, AuditEntry};
 use osoosi_behavioral::SmolLMAnalyzer;
 use std::path::Path;
-use tracing::{info, warn, error};
+use tracing::{warn, error};
 
 pub struct ForensicStoryteller {
     analyzer: Option<SmolLMAnalyzer>,

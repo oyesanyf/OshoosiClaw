@@ -42,7 +42,7 @@ impl BehavioralClassifier {
     pub async fn new() -> Self {
         let suspicious_patterns = Self::build_suspicious_patterns();
         let models_dir = std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
-        let behavioral_dir = Path::new(&models_dir).join("behavioral");
+        let _behavioral_dir = Path::new(&models_dir).join("behavioral");
         
         let feedback_path = std::env::var("OSOOSI_DATA_DIR")
             .unwrap_or_else(|_| "data".to_string());
@@ -57,24 +57,34 @@ impl BehavioralClassifier {
             }
         };
 
-        let model_path = Path::new(&models_dir).join("smollm2-135m-it.onnx");
-        let tokenizer_path = Path::new(&models_dir).join("tokenizer.json");
+        let smollm_dir = Path::new(&models_dir).join("smollm");
+        let model_path = smollm_dir.join("smollm2-135m-it.onnx");
+        let tokenizer_path = smollm_dir.join("tokenizer.json");
 
         let no_ort = std::env::var("OSOOSI_NO_ORT").map(|v| v == "1").unwrap_or(false);
         let (model, tokenizer) = if !no_ort && model_path.exists() && tokenizer_path.exists() {
             info!("Loading SmolLM2-135M-Instruct model from {:?}", model_path);
-            let session_res = (|| -> anyhow::Result<Session> {
-                let builder = SessionBuilder::new()?;
-                let session = builder.commit_from_file(&model_path)?;
-                Ok(session)
-            })();
+            
+            // Second layer of protection: catch panics during session creation
+            let model_path_thread = model_path.clone();
+            let session_res = std::panic::catch_unwind(move || {
+                (|| -> anyhow::Result<Session> {
+                    let builder = SessionBuilder::new()?;
+                    let session = builder.commit_from_file(&model_path_thread)?;
+                    Ok(session)
+                })()
+            });
             
             let tok = Tokenizer::from_file(&tokenizer_path);
             
             match (session_res, tok) {
-                (Ok(s), Ok(t)) => (Some(Mutex::new(s)), Some(t)),
-                (Err(e), _) => {
+                (Ok(Ok(s)), Ok(t)) => (Some(Mutex::new(s)), Some(t)),
+                (Ok(Err(e)), _) => {
                     warn!("Failed to load ONNX session: {}", e);
+                    (None, None)
+                }
+                (Err(_), _) => {
+                    warn!("ONNX Runtime session creation panicked internally.");
                     (None, None)
                 }
                 (_, Err(e)) => {

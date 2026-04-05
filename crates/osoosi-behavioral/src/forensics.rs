@@ -36,7 +36,7 @@ impl PacketForensics {
             }
             
             // ngrep -d any -q -W byline host <ip>
-            let output = Command::new(&ngrep_path)
+            let _output = Command::new(&ngrep_path)
                 .args(["-d", "any", "-q", "-W", "byline", "host", target_ip])
                 .spawn()?;
             

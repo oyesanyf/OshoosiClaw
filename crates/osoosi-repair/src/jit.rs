@@ -3,7 +3,9 @@
 //! Hot-patches vulnerable functions in running processes to prevent 
 //! exploitation without requiring a service restart.
 
-use tracing::{info, warn};
+use tracing::info;
+#[cfg(not(any(target_os = "windows", target_os = "linux")))]
+use tracing::warn;
 
 #[cfg(target_os = "windows")]
 use winapi::um::processthreadsapi::OpenProcess;

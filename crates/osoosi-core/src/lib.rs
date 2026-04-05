@@ -42,7 +42,6 @@ use osoosi_audit::AuditTrail;
 use osoosi_repair::PatchEngine;
 use osoosi_trust::TrustManager;
 use osoosi_model::{ThreatModel, ModelConfig, MalwareScanner};
-use crate::forensics::ForensicStoryteller;
 use tracing::{debug, info, warn, error};
 
 /// Repair status tuple: (last_cve, last_state, last_sig, last_at, pending_count, last_error).
@@ -109,6 +108,7 @@ pub struct EdrOrchestrator {
     /// NSRL "Known Good" Cache (SHA1 -> IsValid) to avoid SQLite hits for every process spawn.
     nsrl_cache: Arc<dashmap::DashMap<String, bool>>,
     /// Remediation: Autonomous response actions (Isolate/Kill)
+    #[allow(dead_code)]
     remediation: Arc<crate::remediation::RemediationController>,
     /// Adaptive Telemetry: Scaling fidelity based on CPU/Detections
     adaptive: Arc<crate::adaptive::TelemetryController>,

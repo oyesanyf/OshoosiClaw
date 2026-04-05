@@ -157,12 +157,15 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         handle_grant_access().await?;
     } else if is_starting || is_bootstrapping {
         // Just ensure the essentials (ONNX) if we are starting but haven't run grant-access
-        let _ = ensure_onnx_runtime().await;
+       // Now that provisioning is potentially done, initialize ORT
     }
     
-    // Now that provisioning is potentially done, initialize ORT
     let suppress_ml_warning = is_granting || is_bootstrapping;
-    init_ort(suppress_ml_warning);
+    if let Err(e) = init_ort(suppress_ml_warning) {
+        error!("Failed to initialize ONNX Runtime: {}. AI features will be disabled.", e);
+        // CRITICAL: Disable ORT globally for this process to prevent downstream panics
+        std::env::set_var("OSOOSI_NO_ORT", "1");
+    }
 
     // 2. Handle subcommands
     match cli.command {
@@ -551,13 +554,41 @@ async fn setup_firewall() -> anyhow::Result<()> {
     Ok(())
 }
 
-fn init_ort(suppress_warning: bool) {
+fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
     if let Some(dylib) = find_onnxruntime_dylib() {
         info!("Dynamic Discovery: Using ONNX Runtime at {:?}", dylib);
+        
+        // Critical: Set the environment variable BEFORE calling init_from
         std::env::set_var("ORT_DYLIB_PATH", &dylib);
-        let _ = ort::init_from(dylib.to_string_lossy().to_string()).commit();
-    } else if !suppress_warning {
-        warn!("ONNX Runtime dylib not found. Disabling ML features. To enable: set ORT_DYLIB_PATH or place onnxruntime.dll next to the executable.");
+        
+        // Use catch_unwind to prevent internal crate panics from crashing the entire daemon.
+        // The 'ort' crate can occasionally panic during dynamic symbol resolution if the DLL is incompatible.
+        let dylib_str = dylib.to_string_lossy().to_string();
+        let result = std::panic::catch_unwind(move || {
+            ort::init_from(dylib_str).commit()
+        });
+
+        match result {
+            Ok(Ok(_)) => {
+                info!("Successfully initialized ONNX Runtime API.");
+                Ok(())
+            },
+            Ok(Err(e)) => {
+                let msg = format!("Failed to commit ONNX Runtime: {}", e);
+                if !suppress_warning { error!("{}", msg); }
+                anyhow::bail!(msg)
+            },
+            Err(_) => {
+                let msg = "ONNX Runtime initialization panicked internally. Incompatible DLL or missing dependencies (VC++ Redistributable).";
+                if !suppress_warning { error!("{}", msg); }
+                anyhow::bail!(msg)
+            }
+        }
+    } else {
+        if !suppress_warning {
+            warn!("ONNX Runtime dylib not found. Disabling ML features. To enable: set ORT_DYLIB_PATH or place onnxruntime.dll next to the executable.");
+        }
+        Ok(())
     }
 }
 

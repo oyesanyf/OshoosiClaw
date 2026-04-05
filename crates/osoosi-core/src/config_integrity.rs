@@ -5,7 +5,7 @@
 //! the signature and refuses to start if the file has been tampered with.
 
 use sha2::{Sha256, Digest};
-use ed25519_dalek::{VerifyingKey, Signature, Verifier};
+
 use std::path::Path;
 use tracing::{info, error, warn};
 
@@ -14,6 +14,7 @@ const SIG_EXTENSION: &str = ".sign";
 
 /// EMBEDDED MASTER PUBLIC KEY (OpenOdidere Default)
 /// This key must sign all critical .toml and .yar files.
+#[allow(dead_code)]
 const MASTER_PUBLIC_KEY_HEX: &str = "7297e682662c5bda2e3c08922cfb8098c2578a0678d781b499882269c9973273";
 
 /// Compute the SHA-256 digest of a file's contents.

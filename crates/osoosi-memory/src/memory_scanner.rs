@@ -50,8 +50,6 @@ impl MemoryScanner {
         use winapi::um::processthreadsapi::OpenProcess;
         use winapi::um::winnt::{PROCESS_QUERY_INFORMATION, PROCESS_VM_READ, MEM_COMMIT, PAGE_NOACCESS, PAGE_GUARD};
         use winapi::um::handleapi::CloseHandle;
-        use std::ffi::c_void;
-
         let mut results = Vec::new();
         let handle = unsafe { OpenProcess(PROCESS_QUERY_INFORMATION | PROCESS_VM_READ, 0, pid) };
         if handle.is_null() {

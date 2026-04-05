@@ -16,6 +16,7 @@ pub struct AdminElevationPolicy {
 }
 
 pub struct AdminHardener {
+    #[allow(dead_code)]
     audit: Arc<AuditTrail>,
     policy: AdminElevationPolicy,
 }

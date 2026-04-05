@@ -4,7 +4,7 @@
 //! Any access to these files triggers a high-confidence autonomy flag.
 
 use std::path::{Path, PathBuf};
-use tracing::{info, warn};
+use tracing::info;
 use std::fs;
 
 pub struct HoneytokenManager {

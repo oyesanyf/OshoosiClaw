@@ -123,26 +123,36 @@ impl AgentProvisioner {
         
         // 2. Fallback to direct download from slproweb.com
         info!("OpenSSL winget entries failed. Using direct download from slproweb.com...");
-        let url = "https://slproweb.com/download/Win64OpenSSL-3_6_1.exe";
-        let installer_path = std::env::temp_dir().join("openssl-setup.exe");
         
-        self.download_with_resume(url, &installer_path).await?;
+        let urls = [
+            ("Full", "https://slproweb.com/download/Win64OpenSSL-3_6_1.exe"),
+            ("Minimal (Light)", "https://slproweb.com/download/Win64OpenSSL_Light-3_6_1.exe"),
+        ];
+
+        for (name, url) in urls {
+            info!("Attempting direct download of {} OpenSSL: {}...", name, url);
+            let installer_path = std::env::temp_dir().join("openssl-setup.exe");
             
-        info!("OpenSSL installer downloaded. Running silent setup...");
-        let mut install_cmd = Command::new(&installer_path);
-        install_cmd.args(["/verysilent", "/sp-", "/suppressmsgboxes", "/norestart"]);
-        
-        self.exec_with_retry(install_cmd, "OpenSSL Installation", 2)?;
-        
-        let _ = std::fs::remove_file(&installer_path);
-        
-        if self.command_exists_win("openssl") {
-             info!("OpenSSL installed successfully via direct installer.");
-             return Ok(());
+            if self.download_with_resume(url, &installer_path).await.is_ok() {
+                info!("OpenSSL {} installer downloaded. Running silent setup...", name);
+                let mut install_cmd = Command::new(&installer_path);
+                install_cmd.args(["/verysilent", "/sp-", "/suppressmsgboxes", "/norestart"]);
+                
+                if self.exec_with_retry(install_cmd, &format!("OpenSSL {} Installation", name), 2).is_ok() {
+                    let _ = std::fs::remove_file(&installer_path);
+                    if self.command_exists_win("openssl") {
+                        info!("OpenSSL {} installed successfully via direct installer.", name);
+                        return Ok(());
+                    }
+                }
+                let _ = std::fs::remove_file(&installer_path);
+            } else {
+                warn!("Failed to download {} OpenSSL from {}.", name, url);
+            }
         }
 
         Err(anyhow::anyhow!(
-            "Failed to install OpenSSL via winget or direct download. Please install manually from https://slproweb.com/products/Win32OpenSSL.html"
+            "Failed to install OpenSSL via winget or direct download variants. Please install manually from https://slproweb.com/products/Win32OpenSSL.html"
         ))
     }
 
@@ -762,41 +772,47 @@ impl AgentProvisioner {
     }
 
     /// Provision SmolLM2-135M-Instruct models for local native inference.
-    /// SmolLM3 only exists as a 3B model — SmolLM2-135M-Instruct is the
-    /// correct 135M ultra-lean model (940k downloads, public, no token needed).
+    /// SmolLM2-135M-Instruct is the correct 135M ultra-lean model.
     pub async fn provision_smollm_models(&self) -> anyhow::Result<()> {
-        let models_dir = osoosi_types::resolve_models_dir();
-        if !models_dir.exists() {
-            std::fs::create_dir_all(&models_dir)?;
+        let base_models_dir = osoosi_types::resolve_models_dir();
+        let smollm_dir = base_models_dir.join("smollm");
+        
+        if !smollm_dir.exists() {
+            std::fs::create_dir_all(&smollm_dir)?;
         }
 
-        let model_path     = models_dir.join("model.safetensors");
-        let tokenizer_path = models_dir.join("tokenizer.json");
-        let config_path    = models_dir.join("config.json");
+        let model_path     = smollm_dir.join("model.safetensors");
+        let tokenizer_path = smollm_dir.join("tokenizer.json");
+        let config_path    = smollm_dir.join("config.json");
+        let onnx_path      = smollm_dir.join("smollm2-135m-it.onnx");
 
-        if model_path.exists() && tokenizer_path.exists() && config_path.exists() {
+        if model_path.exists() && tokenizer_path.exists() && config_path.exists() && onnx_path.exists() {
             info!("SmolLM2-135M-Instruct models already provisioned.");
             return Ok(());
         }
 
         info!("Provisioning SmolLM2-135M-Instruct models (public, ultra-lean, 135M params)...");
 
-        // SmolLM3-135M-Instruct does not exist on HuggingFace.
-        // SmolLM3 was only released as a 3B model (HuggingFaceTB/SmolLM3-3B).
-        // SmolLM2-135M-Instruct is the correct 135M instruct model.
         const MODEL_REPO: &str = "HuggingFaceTB/SmolLM2-135M-Instruct";
         let files = [
             ("model.safetensors", format!("https://huggingface.co/{}/resolve/main/model.safetensors", MODEL_REPO)),
             ("tokenizer.json",    format!("https://huggingface.co/{}/resolve/main/tokenizer.json",    MODEL_REPO)),
             ("config.json",       format!("https://huggingface.co/{}/resolve/main/config.json",       MODEL_REPO)),
+            ("smollm2-135m-it.onnx", format!("https://huggingface.co/{}/resolve/main/onnx/model.onnx", MODEL_REPO)),
         ];
 
         for (name, url) in &files {
-            let dest = models_dir.join(name);
+            let dest = smollm_dir.join(name);
             if dest.exists() { continue; }
 
             info!("Downloading {}...", name);
             self.download_with_resume(url, &dest).await?;
+        }
+
+        // Copy tokenizer to parent models dir for ONNX-only mode if needed
+        let parent_tok = base_models_dir.join("tokenizer.json");
+        if !parent_tok.exists() {
+            let _ = std::fs::copy(&tokenizer_path, &parent_tok);
         }
 
         info!("SmolLM2-135M-Instruct models provisioned successfully.");
@@ -818,17 +834,19 @@ impl AgentProvisioner {
             let url = format!("https://github.com/mandiant/flare-floss/releases/download/v{}/floss-v{}-windows.zip", version, version);
             let target_dir = osoosi_types::resolve_tools_dir().join("floss");
             let target_dir_str = target_dir.to_string_lossy();
-            let zip_path = "floss.zip";
 
-            info!("FLOSS not found. Downloading v{} for Windows...", version);
-            self.download_with_resume(&url, Path::new(zip_path)).await?;
+             info!("FLOSS not found. Downloading v{} for Windows...", version);
+             let zip_path = target_dir.join("floss.zip");
+             
+             tokio::fs::create_dir_all(&target_dir).await?;
+             self.download_with_resume(&url, &zip_path).await?;
 
             info!("Extracting FLOSS...");
             let ps_cmd = format!(
-                "New-Item -ItemType Directory -Force -Path '{}' | Out-Null; \
-                 Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
-                 Remove-Item '{}'",
-                target_dir_str, zip_path, target_dir_str, zip_path
+                 "New-Item -ItemType Directory -Force -Path '{}' | Out-Null; \
+                  Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
+                  Remove-Item '{}'",
+                 target_dir_str, zip_path.to_string_lossy(), target_dir_str, zip_path.to_string_lossy()
             );
 
             let mut cmd = Command::new("powershell");
@@ -910,9 +928,11 @@ impl AgentProvisioner {
                 version
             );
 
-            info!("HollowsHunter not found. Downloading v{} for Windows (64-bit)...", version);
-            let zip_path = target_dir.join("hh.zip");
-            self.download_with_resume(&url, &zip_path).await?;
+             info!("HollowsHunter not found. Downloading v{} for Windows (64-bit)...", version);
+             let zip_path = target_dir.join("hh.zip");
+             
+             tokio::fs::create_dir_all(&target_dir).await?;
+             self.download_with_resume(&url, &zip_path).await?;
 
             info!("Extracting HollowsHunter...");
             let ps_cmd = format!(
@@ -971,18 +991,21 @@ impl AgentProvisioner {
                 version
             );
 
-            info!("ngrep not found. Downloading v{} for Windows...", version);
-            let zip_path = target_dir.join("ngrep.zip");
-            self.download_with_resume(&url, &zip_path).await?;
+             info!("ngrep not found. Downloading v{} for Windows...", version);
+             let zip_path = target_dir.join("ngrep.zip");
+             
+             tokio::fs::create_dir_all(&target_dir).await?;
+             self.download_with_resume(&url, &zip_path).await?;
 
             info!("Extracting ngrep...");
             let ps_cmd = format!(
                 "New-Item -ItemType Directory -Force -Path '{}' | Out-Null; \
                  Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
-                 Move-Item -Path '{}\\ngrep-windows-x86_64\\ngrep.exe' -Destination '{}' -Force; \
+                 if (Test-Path '{}\\ngrep.exe') {{ Move-Item -Path '{}\\ngrep.exe' -Destination '{}' -Force; }} \
+                 elseif (Test-Path '{}\\ngrep-windows-x86_64\\ngrep.exe') {{ Move-Item -Path '{}\\ngrep-windows-x86_64\\ngrep.exe' -Destination '{}' -Force; }} \
                  Remove-Item '{}'; \
-                 Remove-Item -Recurse -Force '{}\\ngrep-windows-x86_64'",
-                target_dir_str, zip_path.to_string_lossy(), target_dir_str, target_dir_str, target_dir_str, zip_path.to_string_lossy(), target_dir_str
+                 if (Test-Path '{}\\ngrep-windows-x86_64') {{ Remove-Item -Recurse -Force '{}\\ngrep-windows-x86_64' }}",
+                target_dir_str, zip_path.to_string_lossy(), target_dir_str, target_dir_str, target_dir_str, target_dir_str, target_dir_str, target_dir_str, target_dir_str, zip_path.to_string_lossy(), target_dir_str, target_dir_str
             );
 
             let mut cmd = Command::new("powershell");
@@ -1096,7 +1119,6 @@ impl AgentProvisioner {
         }
     }
 
-    /// Provision a base set of YARA rules from multiple reputable GitHub sources.
     pub async fn provision_yara_rules(&self) -> anyhow::Result<()> {
         let yara_base_dir = std::path::Path::new("yara");
         if !yara_base_dir.exists() {
@@ -1105,14 +1127,16 @@ impl AgentProvisioner {
 
         let sources = [
             ("yara_forge", "https://github.com/YARAHQ/yara-forge/releases/latest/download/yara-forge-rules-extended.zip"),
-            ("community", "https://github.com/Yara-Rules/rules/archive/refs/heads/master.zip"),
-            ("reversinglabs", "https://github.com/reversinglabs/yara-rules/archive/refs/heads/master.zip"),
-            ("bartblaze", "https://github.com/bartblaze/Yara-rules/archive/refs/heads/master.zip"),
-            ("inquest", "https://github.com/InQuest/yara-rules/archive/refs/heads/master.zip"),
-            ("elastic", "https://github.com/elastic/protections-artifacts/archive/refs/heads/main.zip"),
             ("signature_base", "https://github.com/Neo23x0/signature-base/archive/refs/heads/master.zip"),
+            ("community", "https://github.com/Yara-Rules/rules/archive/refs/heads/master.zip"),
+            ("reversinglabs", "https://github.com/reversinglabs/reversinglabs-yara-rules/archive/refs/heads/master.zip"),
+            ("elastic", "https://github.com/elastic/protections-artifacts/archive/refs/heads/main.zip"),
+            ("mandiant", "https://github.com/mandiant/red_team_tool_countermeasures/archive/refs/heads/master.zip"),
+            ("inquest", "https://github.com/InQuest/yara-rules/archive/refs/heads/master.zip"),
+            ("bartblaze", "https://github.com/bartblaze/Yara-rules/archive/refs/heads/master.zip"),
+            ("tenable", "https://github.com/tenable/yara-rules/archive/refs/heads/master.zip"),
             ("mikesxrs", "https://github.com/mikesxrs/Open-Source-YARA-rules/archive/refs/heads/master.zip"),
-            ("talos", "https://github.com/Cisco-Talos/vulnerability_rules/archive/refs/heads/master.zip"),
+            ("100daysofyara", "https://github.com/100DaysofYARA/2026/archive/refs/heads/main.zip"),
             ("chronicle", "https://github.com/chronicle/GCTI/archive/refs/heads/main.zip"),
         ];
 
@@ -1143,14 +1167,13 @@ impl AgentProvisioner {
             {
                 let ps_cmd = format!(
                     "$ProgressPreference='SilentlyContinue'; \
-                     Add-Type -AssemblyName 'System.IO.Compression.FileSystem'; \
-                     if (Test-Path '{}') {{ Remove-Item -Recurse -Force '{}' }} \
-                     [System.IO.Compression.ZipFile]::ExtractToDirectory('{}', '{}'); \
+                     if (Test-Path '{}') {{ Remove-Item -Recurse -Force '{}' -ErrorAction SilentlyContinue }} \
+                     Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
                      $subdirs = Get-ChildItem -Path '{}' -Directory; \
                      if ($subdirs.Count -eq 1) {{ \
                         Copy-Item -Path \"$($subdirs[0].FullName)\\*\" -Destination '{}' -Recurse -Force; \
                      }} else {{ \
-                        Copy-Item -Path '{}' -Destination '{}' -Recurse -Force; \
+                        Copy-Item -Path \"{}/*\" -Destination '{}' -Recurse -Force; \
                      }} \
                      Remove-Item -Recurse -Force '{}'",
                      tmp_extract.to_string_lossy(), tmp_extract.to_string_lossy(), zip_path.to_string_lossy(), tmp_extract.to_string_lossy(), tmp_extract.to_string_lossy(), target_sub_dir.to_string_lossy(), tmp_extract.to_string_lossy(), target_sub_dir.to_string_lossy(), tmp_extract.to_string_lossy()
@@ -1159,7 +1182,6 @@ impl AgentProvisioner {
                 let mut cmd = Command::new("powershell");
                 cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd]);
                 let _ = self.exec_with_retry(cmd, &format!("Extract YARA {}", name), 2);
-                let _ = std::fs::remove_file(&zip_path);
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -1168,9 +1190,16 @@ impl AgentProvisioner {
                     zip_path.to_string_lossy(), tmp_extract.to_string_lossy(), tmp_extract.to_string_lossy(), target_sub_dir.to_string_lossy(), tmp_extract.to_string_lossy()
                 );
                 let _ = Command::new("sh").args(["-c", &sh_cmd]).status();
-                let _ = std::fs::remove_file(&zip_path);
             }
+            let _ = std::fs::remove_file(&zip_path);
+            
+            // Sanitize rules after extraction to remove incompatibilities
+            let _ = self.sanitize_yara_rules(&target_sub_dir);
         }
+        
+        info!("Finalizing YARA rules (sanitizing for compatibility)...");
+        let _ = self.sanitize_yara_rules(yara_base_dir);
+        
         Ok(())
     }
 
@@ -1216,7 +1245,7 @@ impl AgentProvisioner {
                         // If it's a 200 OK but we had a partial file, it means server doesn't support Range,
                         // or we're starting over. Truncate if it's 200 and we have existing data.
                         if status == reqwest::StatusCode::OK && current_size > 0 {
-                            file.set_len(0).await?;
+                            let _ = file.set_len(0).await;
                         }
 
                         let mut stream = resp.bytes_stream();
@@ -1351,5 +1380,72 @@ impl AgentProvisioner {
         {
             Err(anyhow::anyhow!("ONNX Runtime provisioning not supported on this platform."))
         }
+    }
+
+    /// Sanitize YARA rules to prevent compilation errors (androguard imports, type mismatches, missing includes).
+    pub fn sanitize_yara_rules(&self, dir: &std::path::Path) -> anyhow::Result<()> {
+        use std::path::Path;
+        if !dir.exists() { return Ok(()); }
+
+        for entry in std::fs::read_dir(dir)? {
+            let entry = entry?;
+            let path = entry.path();
+            if path.is_dir() {
+                let _ = self.sanitize_yara_rules(&path);
+            } else if path.extension().map_or(false, |e| e == "yar" || e == "yara") {
+                // Use lossy reading to handle potential encoding issues in malware rules
+                if let Ok(bytes) = std::fs::read(&path) {
+                    let content = String::from_utf8_lossy(&bytes);
+                    
+                    // Check for known problematic patterns
+                    let has_andro = content.to_lowercase().contains("import \"androguard\"") || content.to_lowercase().contains("import 'androguard'");
+                    let has_crash = content.contains("pe.exports(\"Crash\") & pe.characteristics");
+                    let has_include = content.contains("include \"") || content.contains("include '");
+
+                    if has_andro || has_crash || has_include {
+                        let mut lines = Vec::new();
+                        let mut changed = false;
+                        let parent = path.parent().unwrap_or(Path::new("."));
+
+                        for line in content.lines() {
+                            let mut new_line = line.to_string();
+                            let trimmed = line.trim();
+
+                            // 1. Disable androguard imports (Android-specific, often missing)
+                            if (trimmed.starts_with("import") || trimmed.starts_with("//import")) && trimmed.contains("androguard") && !trimmed.starts_with("//") {
+                                new_line = format!("// {}", line);
+                                changed = true;
+                            }
+                            // 2. Fix APT_CrashOverride.yar type mismatch (boolean & int)
+                            else if line.contains("pe.exports(\"Crash\") & pe.characteristics") {
+                                new_line = line.replace("pe.exports(\"Crash\")", "(pe.exports(\"Crash\") ? 1 : 0)");
+                                changed = true;
+                            }
+                            // 3. Fix missing includes by commenting them out
+                            else if (trimmed.starts_with("include") || trimmed.starts_with("//include")) && !trimmed.starts_with("//") {
+                                // Extract the path between quotes
+                                let q = if trimmed.contains('\"') { '\"' } else { '\'' };
+                                let parts: Vec<&str> = trimmed.split(q).collect();
+                                if parts.len() >= 2 {
+                                    let inc_path_str = parts[1];
+                                    let inc_path = parent.join(inc_path_str);
+                                    if !inc_path.exists() {
+                                        new_line = format!("// {}", line);
+                                        changed = true;
+                                    }
+                                }
+                            }
+                            lines.push(new_line);
+                        }
+                        
+                        if changed {
+                            info!("Sanitized YARA rule: {}", path.display());
+                            let _ = std::fs::write(&path, lines.join("\n"));
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
     }
 }

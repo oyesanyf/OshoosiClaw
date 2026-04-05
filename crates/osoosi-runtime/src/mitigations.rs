@@ -26,7 +26,7 @@ impl MitigationEngine {
 
     /// Perform a 'pre-flight' check on a system call.
     /// Returns true if the call is allowed, false if it should be blocked.
-    pub async fn check_syscall(&self, pid: u32, syscall_name: &str, args: &[String]) -> bool {
+    pub async fn check_syscall(&self, pid: u32, syscall_name: &str, _args: &[String]) -> bool {
         info!("Mitigation: Checking syscall {} for PID {}", syscall_name, pid);
 
         // Load the mitigation policy WASM (this would come from a signed policy file)
