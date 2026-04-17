@@ -11,9 +11,9 @@ rule win_remcos_rat_unpacked
 		$r0 = " ______                              " ascii
 		$r1 = "(_____ \\                             " ascii
 		$r2 = " _____) )_____ ____   ____ ___   ___ " ascii 
-		$r3 = "|  __  /| ___ |    \\ / ___) _ \\ /___)" ascii
+		$r3 = "|  __  / ___ |    \\ / ___) _ \\ /___)" ascii
 		$r4 = "| |  \\ \\| ____| | | ( (__| |_| |___ |" ascii
-		$r5 = "|_|   |_|_____)_|_|_|\\____)___/(___/ " ascii
+		$r5 = "|_|   |_|_____)_|_|_|\\\\\\____)___/(___/ " ascii
 		
 		$s1 = "Watchdog module activated" ascii
 		$s2 = "Remcos restarted by watchdog!" ascii

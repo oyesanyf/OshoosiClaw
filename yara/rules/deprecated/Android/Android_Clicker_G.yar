@@ -3,7 +3,7 @@
 
 */
 
-import "androguard"
+// // import "androguard"
 
 rule Android_Clicker_G
 {
@@ -15,5 +15,6 @@ rule Android_Clicker_G
 	strings:
 		$a = "upd.php?text="
 	condition:
-		androguard.receiver(/MyBroadCastReceiver/i) and $a
+		$a
+// 		androguard.receiver(/MyBroadCastReceiver/i) and $a (Disabled by Oshoosi Hardener)
 }

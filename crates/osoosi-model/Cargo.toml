@@ -23,6 +23,7 @@ ort = { workspace = true }
 candle-core = { workspace = true }
 candle-nn = { workspace = true }
 yara-x = "1"
+yara-x-fmt = "1"
 walkdir = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 pe-sign = "0.1"

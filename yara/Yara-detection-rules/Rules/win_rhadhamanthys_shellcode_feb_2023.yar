@@ -12,7 +12,7 @@ rule win_rhadhamanthys_shellcode_feb_2023
 		$shellcode = {E8 ?? 00 [2-10] 90 90 90 }
 
 		//Change to this for broader search, but hits on other malware families
-		//$hashing_with_wildcard = {8b f0 c1 e6 ?? c1 e8 ?? 0b f0 0f be c1 8a 4a 01 03 c6 42}
+		//$hashing_with_wildcard = \{8b f0 c1 e6 ?? c1 e8 ?? 0b f0 0f be c1 8a 4a 01 03 c6 42\}
 
 		/*
 		Hashing Routine from Unpacked Rhadamanthys Malware

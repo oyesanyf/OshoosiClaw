@@ -8,7 +8,7 @@
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
 
-import "androguard"
+// // import "androguard"
 
 rule batterybotpro : ClickFraud AdFraud SMS Downloader_Trojan android
 {
@@ -19,7 +19,7 @@ rule batterybotpro : ClickFraud AdFraud SMS Downloader_Trojan android
 
 	condition:
 
-		androguard.activity(/com\.polaris\.BatteryIndicatorPro\.BatteryInfoActivity/i) and
-		androguard.permission(/android\.permission\.SEND_SMS/)
+// 		androguard.activity(/com\.polaris\.BatteryIndicatorPro\.BatteryInfoActivity/i) and (Disabled by Oshoosi Hardener)
+// 		androguard.permission(/android\.permission\.SEND_SMS/) (Disabled by Oshoosi Hardener)
 		
 }

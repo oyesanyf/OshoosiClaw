@@ -7,7 +7,7 @@
 
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
-import "androguard"
+// // import "androguard"
 
 
 rule koodous : official
@@ -20,6 +20,6 @@ rule koodous : official
 		$str_1 = "cnlybnq.qrk" // encrypted string "payload.dex"
 
 	condition:
-		$str_1 and 
-		androguard.receiver(/\.AppBoot$/)		
+		$str_1
+// 		androguard.receiver(/\.AppBoot$/)		 (Disabled by Oshoosi Hardener)
 }

@@ -1,4 +1,4 @@
-import "androguard"
+// // import "androguard"
 
 rule Android_Copy9
 {
@@ -9,6 +9,6 @@ rule Android_Copy9
 		source = "http://copy9.com/"
 
 	condition:
-		androguard.service(/com.ispyoo/i) and
-        androguard.receiver(/com.ispyoo/i)
+// 		androguard.service(/com.ispyoo/i) and (Disabled by Oshoosi Hardener)
+//         androguard.receiver(/com.ispyoo/i) (Disabled by Oshoosi Hardener)
 }

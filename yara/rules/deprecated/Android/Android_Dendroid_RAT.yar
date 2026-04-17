@@ -47,7 +47,7 @@ rule Dendroid_3 : android
 
 }
 
-import "androguard"
+// // import "androguard"
 rule Android_Dendroid
 {
 	meta:
@@ -57,6 +57,6 @@ rule Android_Dendroid
 		source = "https://blog.lookout.com/blog/2014/03/06/dendroid/"
 
 	condition:
-		androguard.service(/com.connect/i) and
-        androguard.permission(/android.permission.RECEIVE_BOOT_COMPLETED/i)
+// 		androguard.service(/com.connect/i) and (Disabled by Oshoosi Hardener)
+//         androguard.permission(/android.permission.RECEIVE_BOOT_COMPLETED/i) (Disabled by Oshoosi Hardener)
 }

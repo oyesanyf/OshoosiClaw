@@ -13,10 +13,7 @@ rule malicious_author : PDF raw
 	strings:
 		$magic = { 25 50 44 46 }
 		
-		$reg0 = /Creator.?\(yen vaw\)/
-		$reg1 = /Title.?\(who cis\)/
-		$reg2 = /Author.?\(ser pes\)/
-	condition:
+		$reg0 = /Creator.?\(yen vaw\)\//		$reg1 = /Title.?\(who cis\)\//		$reg2 = /Author.?\(ser pes\)\//	condition:
 		$magic in (0..1024) and all of ($reg*)
 }
 
@@ -29,8 +26,7 @@ rule suspicious_version : PDF raw
 		
 	strings:
 		$magic = { 25 50 44 46 }
-		$ver = /%PDF-1.\d{1}/
-	condition:
+		$ver = /%PDF-1.\d{1}\//	condition:
 		$magic in (0..1024) and not $ver
 }
 
@@ -43,11 +39,7 @@ rule suspicious_creation : PDF raw
 		
 	strings:
 		$magic = { 25 50 44 46 }
-		$header = /%PDF-1\.(3|4|6)/
-		
-		$create0 = /CreationDate \(D:20101015142358\)/
-		$create1 = /CreationDate \(2008312053854\)/
-	condition:
+		$header = /%PDF-1\.(3|4|6)\//		$create0 = /CreationDate \(D:20101015142358\)\//		$create1 = /CreationDate \(2008312053854\)\//	condition:
 		$magic in (0..1024) and $header and 1 of ($create*)
 }
 
@@ -60,8 +52,7 @@ weight = 3
 
     strings:
             $magic = { 25 50 44 46 }
-            $attrib = /\/Filter.*(\/ASCIIHexDecode\W+|\/LZWDecode\W+|\/ASCII85Decode\W+|\/FlateDecode\W+|\/RunLengthDecode){2}/ 
-            // left out: /CCITTFaxDecode, JBIG2Decode, DCTDecode, JPXDecode, Crypt
+            $attrib = /\/Filter.*(\/ASCIIHexDecode\W+|\/LZWDecode\W+|\/ASCII85Decode\W+|\/FlateDecode\W+|\/RunLengthDecode){2}\//            // left out: /CCITTFaxDecode, JBIG2Decode, DCTDecode, JPXDecode, Crypt
 
     condition: 
             $magic in (0..1024) and $attrib
@@ -76,9 +67,7 @@ rule suspicious_title : PDF raw
 		
 	strings:
 		$magic = { 25 50 44 46 }
-		$header = /%PDF-1\.(3|4|6)/
-		
-		$title0 = "who cis"
+		$header = /%PDF-1\.(3|4|6)\//		$title0 = "who cis"
 		$title1 = "P66N7FF"
 		$title2 = "Fohcirya"
 	condition:
@@ -94,9 +83,7 @@ rule suspicious_author : PDF raw
 		
 	strings:
 		$magic = { 25 50 44 46 }
-		$header = /%PDF-1\.(3|4|6)/
-
-		$author0 = "Ubzg1QUbzuzgUbRjvcUb14RjUb1"
+		$header = /%PDF-1\.(3|4|6)\//		$author0 = "Ubzg1QUbzuzgUbRjvcUb14RjUb1"
 		$author1 = "ser pes"
 		$author2 = "Miekiemoes"
 		$author3 = "Nsarkolke"
@@ -113,10 +100,7 @@ rule suspicious_producer : PDF raw
 		
 	strings:
 		$magic = { 25 50 44 46 }
-		$header = /%PDF-1\.(3|4|6)/
-		
-		$producer0 = /Producer \(Scribus PDF Library/
-		$producer1 = "Notepad"
+		$header = /%PDF-1\.(3|4|6)\//		$producer0 = /Producer \(Scribus PDF Library\//		$producer1 = "Notepad"
 	condition:
 		$magic in (0..1024) and $header and 1 of ($producer*)
 }
@@ -130,9 +114,7 @@ rule suspicious_creator : PDF raw
 		
 	strings:
 		$magic = { 25 50 44 46 }
-		$header = /%PDF-1\.(3|4|6)/
-		
-		$creator0 = "yen vaw"
+		$header = /%PDF-1\.(3|4|6)\//		$creator0 = "yen vaw"
 		$creator1 = "Scribus"
 		$creator2 = "Viraciregavi"
 	condition:
@@ -149,12 +131,7 @@ rule possible_exploit : PDF raw
 	strings:
 		$magic = { 25 50 44 46 }
 		
-		$attrib0 = /\/JavaScript /
-		$attrib3 = /\/ASCIIHexDecode/
-		$attrib4 = /\/ASCII85Decode/
-
-		$action0 = /\/Action/
-		$action1 = "Array"
+		$attrib0 = /\/JavaScript \//		$attrib3 = /\/ASCIIHexDecode\//		$attrib4 = /\/ASCII85Decode\//		$action0 = /\/Action\//		$action1 = "Array"
 		$shell = "A"
 		$cond0 = "unescape"
 		$cond1 = "String.fromCharCode"
@@ -175,13 +152,7 @@ rule shellcode_blob_metadata : PDF raw
                 $magic = { 25 50 44 46 }
 
                 $reg_keyword = /\/Keywords.?\(([a-zA-Z0-9]{200,})/ //~6k was observed in BHEHv2 PDF exploits holding the shellcode
-                $reg_author = /\/Author.?\(([a-zA-Z0-9]{200,})/
-                $reg_title = /\/Title.?\(([a-zA-Z0-9]{200,})/
-                $reg_producer = /\/Producer.?\(([a-zA-Z0-9]{200,})/
-                $reg_creator = /\/Creator.?\(([a-zA-Z0-9]{300,})/
-                $reg_create = /\/CreationDate.?\(([a-zA-Z0-9]{200,})/
-
-        condition:
+                $reg_author = /\/Author.?\(([a-zA-Z0-9]{200,})\//                $reg_title = /\/Title.?\(([a-zA-Z0-9]{200,})\//                $reg_producer = /\/Producer.?\(([a-zA-Z0-9]{200,})\//                $reg_creator = /\/Creator.?\(([a-zA-Z0-9]{300,})\//                $reg_create = /\/CreationDate.?\(([a-zA-Z0-9]{200,})\//        condition:
                 $magic in (0..1024) and 1 of ($reg*)
 }
 
@@ -195,10 +166,7 @@ rule suspicious_js : PDF raw
 	strings:
 		$magic = { 25 50 44 46 }
 		
-		$attrib0 = /\/OpenAction /
-		$attrib1 = /\/JavaScript /
-
-		$js0 = "eval"
+		$attrib0 = /\/OpenAction \//		$attrib1 = /\/JavaScript \//		$js0 = "eval"
 		$js1 = "Array"
 		$js2 = "String.fromCharCode"
 		
@@ -216,13 +184,7 @@ rule suspicious_launch_action : PDF raw
 	strings:
 		$magic = { 25 50 44 46 }
 		
-		$attrib0 = /\/Launch/
-		$attrib1 = /\/URL /
-		$attrib2 = /\/Action/
-		$attrib3 = /\/OpenAction/
-		$attrib4 = /\/F /
-
-	condition:
+		$attrib0 = /\/Launch\//		$attrib1 = /\/URL \//		$attrib2 = /\/Action\//		$attrib3 = /\/OpenAction\//		$attrib4 = /\/F \//	condition:
 		$magic in (0..1024) and 3 of ($attrib*)
 }
 
@@ -237,12 +199,8 @@ rule suspicious_embed : PDF raw
 	strings:
 		$magic = { 25 50 44 46 }
 		
-		$meth0 = /\/Launch/
-		$meth1 = /\/GoTo(E|R)/ //means go to embedded or remote
-		$attrib0 = /\/URL /
-		$attrib1 = /\/Action/
-		$attrib2 = /\/Filespec/
-		
+		$meth0 = /\/Launch\//		$meth1 = /\/GoTo(E|R)/ //means go to embedded or remote
+		$attrib0 = /\/URL \//		$attrib1 = /\/Action\//		$attrib2 = /\/Filespec\//		
 	condition:
 		$magic in (0..1024) and 1 of ($meth*) and 2 of ($attrib*)
 }
@@ -256,8 +214,7 @@ rule suspicious_obfuscation : PDF raw
 		
 	strings:
 		$magic = { 25 50 44 46 }
-		$reg = /\/\w#[a-zA-Z0-9]{2}#[a-zA-Z0-9]{2}/
-		
+		$reg = /\/\w#[a-zA-Z0-9]{2}#[a-zA-Z0-9]{2}\//		
 	condition:
 		$magic in (0..1024) and #reg > 5
 }
@@ -273,11 +230,7 @@ rule invalid_XObject_js : PDF raw
 		
 	strings:
 		$magic = { 25 50 44 46 }
-		$ver = /%PDF-1\.[4-9]/
-		
-		$attrib0 = /\/XObject/
-		$attrib1 = /\/JavaScript/
-		
+		$ver = /%PDF-1\.[4-9]\//		$attrib0 = /\/XObject\//		$attrib1 = /\/JavaScript\//		
 	condition:
 		$magic in (0..1024) and not $ver and all of ($attrib*)
 }
@@ -292,10 +245,7 @@ rule invalid_trailer_structure : PDF raw
         strings:
                 $magic = { 25 50 44 46 }
 				// Required for a valid PDF
-                $reg0 = /trailer\r?\n?.*\/Size.*\r?\n?\.*/
-                $reg1 = /\/Root.*\r?\n?.*startxref\r?\n?.*\r?\n?%%EOF/
-
-        condition:
+                $reg0 = /trailer\r?\n?.*\/Size.*\r?\n?\.*\//                $reg1 = /\/Root.*\r?\n?.*startxref\r?\n?.*\r?\n?%%EOF\//        condition:
                 $magic in (0..1024) and not $reg0 and not $reg1
 }
 
@@ -327,10 +277,7 @@ rule js_wrong_version : PDF raw
 		
         strings:
                 $magic = { 25 50 44 46 }
-				$js = /\/JavaScript/
-				$ver = /%PDF-1\.[3-9]/
-
-        condition:
+				$js = /\/JavaScript\//				$ver = /%PDF-1\.[3-9]\//        condition:
                 $magic in (0..1024) and $js and not $ver
 }
 
@@ -345,10 +292,7 @@ rule JBIG2_wrong_version : PDF raw
 		
         strings:
                 $magic = { 25 50 44 46 }
-				$js = /\/JBIG2Decode/
-				$ver = /%PDF-1\.[4-9]/
-
-        condition:
+				$js = /\/JBIG2Decode\//				$ver = /%PDF-1\.[4-9]\//        condition:
                 $magic in (0..1024) and $js and not $ver
 }
 
@@ -363,10 +307,7 @@ rule FlateDecode_wrong_version : PDF raw
 		
         strings:
                 $magic = { 25 50 44 46 }
-				$js = /\/FlateDecode/
-				$ver = /%PDF-1\.[2-9]/
-
-        condition:
+				$js = /\/FlateDecode\//				$ver = /%PDF-1\.[2-9]\//        condition:
                 $magic in (0..1024) and $js and not $ver
 }
 
@@ -381,10 +322,7 @@ rule embed_wrong_version : PDF raw
 		
         strings:
                 $magic = { 25 50 44 46 }
-				$embed = /\/EmbeddedFiles/
-				$ver = /%PDF-1\.[3-9]/
-
-        condition:
+				$embed = /\/EmbeddedFiles\//				$ver = /%PDF-1\.[3-9]\//        condition:
                 $magic in (0..1024) and $embed and not $ver
 }
 
@@ -399,9 +337,7 @@ rule invalid_xref_numbers : PDF raw
 		
         strings:
                 $magic = { 25 50 44 46 }
-                $reg0 = /xref\r?\n?.*\r?\n?.*65535\sf/
-                $reg1 = /endstream.*\r?\n?endobj.*\r?\n?startxref/
-        condition:
+                $reg0 = /xref\r?\n?.*\r?\n?.*65535\sf\//                $reg1 = /endstream.*\r?\n?endobj.*\r?\n?startxref\//        condition:
                 $magic in (0..1024) and not $reg0 and not $reg1
 }
 
@@ -415,8 +351,7 @@ rule js_splitting : PDF raw
                 
         strings:
                 $magic = { 25 50 44 46 }
-				$js = /\/JavaScript/
-                $s0 = "getAnnots"
+				$js = /\/JavaScript\//                $s0 = "getAnnots"
                 $s1 = "getPageNumWords"
                 $s2 = "getPageNthWord"
                 $s3 = "this.info"

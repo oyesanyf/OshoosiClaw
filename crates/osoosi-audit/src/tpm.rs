@@ -41,13 +41,23 @@ pub fn extend_audit_to_tpm(event_type: &str, data_hash: &str) -> AttestationResu
     let hash_bytes = compute_attestation_hash(event_type, data_hash);
     let hash_hex = hex::encode(&hash_bytes);
 
-    // Try hardware TPM first
-    if let Some(result) = try_tpm_extend(&hash_hex) {
-        return result;
+    // Skip TPM if requested or if we're on Windows and not in forced mode (avoiding slow process spawns)
+    let skip_tpm = std::env::var("OSOOSI_NO_TPM").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+    
+    // On Windows, the current PS-based approach is too slow for high-throughput audit logs.
+    // We skip it by default unless OSOOSI_FORCE_TPM is set.
+    #[cfg(target_os = "windows")]
+    let skip_tpm = skip_tpm || !std::env::var("OSOOSI_FORCE_TPM").map(|v| v == "1").unwrap_or(false);
+
+    if !skip_tpm {
+        // Try hardware TPM first
+        if let Some(result) = try_tpm_extend(&hash_hex) {
+            return result;
+        }
     }
 
     // Fallback: software attestation
-    debug!("TPM not available, using software attestation for {}", event_type);
+    debug!("Using software attestation for {}", event_type);
     AttestationResult {
         hardware_backed: false,
         pcr_index: None,

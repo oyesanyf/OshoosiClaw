@@ -49,10 +49,7 @@ rule Email_Generic_PHP_Mailer_Script
         $eml2 = "To:"
         $eml3 = "Subject:"
    
-        $mailer1 = /X-PHP-Originating-Script: ([\w\.]+(.*\.php))?/
-        $mailer2 = /X-PHP-Script: ([\w\.\/]+\/(.*\.php))?/
-        $mailer3 = /X-PHP-Filename: (\/[\w]+\/(.*\.php))?/
-        // $mailer4 = /X-Source-Args: (\/[\w]+\/(.*\.php))?/  // may lead to false positive and unwanted, up to you.
+        $mailer1 = /X-PHP-Originating-Script: ([\w\.]+(.*\.php))?\//        $mailer2 = /X-PHP-Script: ([\w\.\/]+\/(.*\.php))?\//        $mailer3 = /X-PHP-Filename: (\/[\w]+\/(.*\.php))?\//        // $mailer4 = /X-Source-Args: (\/[\w]+\/(.*\.php))?/  // may lead to false positive and unwanted, up to you.
  
     condition:
         not  any of ($donotwant*) and not any of ($legit*)

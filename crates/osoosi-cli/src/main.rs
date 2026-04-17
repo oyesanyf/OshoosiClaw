@@ -2,7 +2,9 @@ use clap::{Parser, Subcommand};
 use osoosi_core::EdrOrchestrator;
 use osoosi_policy::ThreatFeedFetcher;
 
+use std::fs;
 use std::path::{Path, PathBuf};
+use std::sync::Arc;
 use tracing::{info, error, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
@@ -26,7 +28,11 @@ struct Cli {
 #[derive(Subcommand, Clone)]
 enum Commands {
     /// Start the OpenỌ̀ṣọ́ọ̀sì security agent daemon
-    Start,
+    Start {
+        /// Also start and open the web dashboard
+        #[arg(long, default_value_t = true)]
+        dashboard: bool,
+    },
     /// View the local threat intelligence status
     Status,
     /// Provisions dependencies (Sysmon on Windows/Linux)
@@ -81,6 +87,15 @@ enum Commands {
     SignConfigs,
     /// Network Route Scraping and Discovery (Sherpa)
     Discovery,
+    /// View the tamper-evident Merkle Trail (Audit Log)
+    Merkle {
+        /// Verify the integrity of the entire audit chain
+        #[arg(long)]
+        verify: bool,
+        /// Limit the number of entries displayed
+        #[arg(short, long)]
+        limit: Option<usize>,
+    },
 }
 
 #[derive(Subcommand, Clone)]
@@ -149,7 +164,7 @@ async fn main() -> anyhow::Result<()> {
 
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
     // 1. Handle autonomous provisioning for critical modes
-    let is_starting = matches!(cli.command, Some(Commands::Start));
+    let is_starting = matches!(cli.command, Some(Commands::Start { .. }));
     let is_granting = cli.grant_access || matches!(cli.command, Some(Commands::GrantAccess));
     let is_bootstrapping = matches!(cli.command, Some(Commands::BootstrapModels));
 
@@ -169,9 +184,50 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
     // 2. Handle subcommands
     match cli.command {
-        Some(Commands::Start) => {
+        Some(Commands::Start { dashboard }) => {
+            run_yara_sanitizer();
             let start_instant = std::time::Instant::now();
             let orchestrator = EdrOrchestrator::new().await?;
+
+            // Bind dashboard as soon as the orchestrator exists so the UI can load while loops start.
+            if dashboard {
+                info!("Auto-launching dashboard UI...");
+                let dash_orch = Arc::new(orchestrator.clone());
+                tokio::spawn(async move {
+                    let mut current_port = 3030u16;
+                    let mut opened_port: Option<u16> = None;
+                    while current_port <= 3040 {
+                        match osoosi_dashboard::spawn_dashboard_with_backend(
+                            current_port,
+                            None,
+                            Some(dash_orch.clone()),
+                        )
+                        .await
+                        {
+                            Ok(port) => {
+                                opened_port = Some(port);
+                                break;
+                            }
+                            Err(_) => {
+                                warn!("Port {} in use, trying next...", current_port);
+                                current_port += 1;
+                            }
+                        }
+                    }
+                    if let Some(port) = opened_port {
+                        info!("Dashboard started successfully!");
+                        info!("----------------------------------------");
+                        info!("Oshoosi Dashboard URL: http://127.0.0.1:{}/", port);
+                        info!("----------------------------------------");
+                        tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
+                        let _ = webbrowser::open(&format!("http://127.0.0.1:{}/", port));
+                    } else {
+                        error!("FAILED to start Dashboard UI after trying ports 3030-3040.");
+                        error!("Check if another instance of Oshoosi is already running.");
+                    }
+                });
+            }
+
             let nsrl_orch = orchestrator.clone();
             
             // Background thread to download/populate NSRL if empty
@@ -251,12 +307,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Some(Commands::Dashboard { port }) => {
             info!("Starting Oshoosi Dashboard (base port {})...", port);
             let mut current_port = port;
-            let mut success = false;
+            let mut bound: Option<u16> = None;
             while current_port <= port + 10 {
-                match osoosi_dashboard::start_dashboard_with_backend(current_port, None, None).await {
-                    Ok(_) => {
-                        info!("Dashboard started on port {}", current_port);
-                        success = true;
+                match osoosi_dashboard::spawn_dashboard_with_backend(current_port, None, None).await {
+                    Ok(p) => {
+                        info!("Dashboard started on port {}", p);
+                        bound = Some(p);
                         break;
                     }
                     Err(_) => {
@@ -265,9 +321,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                     }
                 }
             }
-            if success {
-                tokio::time::sleep(tokio::time::Duration::from_millis(800)).await;
-                open_browser(&format!("http://127.0.0.1:{}", current_port));
+            if let Some(p) = bound {
+                tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
+                open_browser(&format!("http://127.0.0.1:{}/", p));
                 tokio::signal::ctrl_c().await?;
             } else {
                 error!("Dashboard could not be started.");
@@ -377,6 +433,44 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 }
             }
         }
+        Some(Commands::Merkle { verify, limit }) => {
+            let orchestrator = EdrOrchestrator::new().await?;
+            if verify {
+                let ok = orchestrator.verify_merkle_trail();
+                if ok {
+                    println!("✓ Merkle Trail integrity verified. Root Hash: {}", orchestrator.audit().root());
+                } else {
+                    println!("✗ Merkle Trail COMPROMISED! Integrity check failed.");
+                    std::process::exit(1);
+                }
+            } else {
+                let mut entries = orchestrator.list_merkle_trail();
+                entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)); // Latest first
+                
+                let display_limit = limit.unwrap_or(20);
+                println!("{:<20} {:<20} {:<50}", "Timestamp", "Event Type", "Summary");
+                println!("{:-<90}", "");
+                
+                for entry in entries.iter().take(display_limit) {
+                    let summary = match entry.event_type.as_str() {
+                        "THREAT_DETECTED" => {
+                            let proc = entry.data.get("process_name").and_then(|v| v.as_str()).unwrap_or("?");
+                            format!("Threat: {}", proc)
+                        }
+                        "repair" => {
+                            let event = entry.data.get("event").and_then(|v| v.as_str()).unwrap_or("patch");
+                            format!("Repair: {}", event)
+                        }
+                        _ => entry.event_type.clone(),
+                    };
+                    println!("{:<20} {:<20} {:<50}", 
+                        entry.timestamp.format("%H:%M:%S").to_string(),
+                        entry.event_type,
+                        summary.chars().take(50).collect::<String>()
+                    );
+                }
+            }
+        }
         None => {
             if !cli.grant_access {
                 println!("No command specified. Use --help for usage.");
@@ -437,8 +531,25 @@ async fn handle_grant_access() -> anyhow::Result<()> {
         }
 
         info!("GrantAccess pre-step: ensuring YARA rules are provisioned...");
-        if let Err(e) = provisioner.provision_yara_rules().await {
-             warn!("Warning: Failed to provision YARA rules: {}", e);
+        {
+            let osh = osoosi_core::openshell::OpenShellManager::new();
+            if osh.is_available() {
+                info!("OpenShell detected — downloading & validating YARA rules in sandbox...");
+                let result = osh.provision_yara_in_sandbox("yara");
+                if result.success {
+                    info!("YARA rules provisioned via OpenShell: {}", result.message);
+                    let _ = provisioner.provision_yara_rules_with_sandbox(true).await;
+                } else {
+                    warn!("OpenShell YARA provisioning failed: {}. Falling back to direct.", result.message);
+                    if let Err(e) = provisioner.provision_yara_rules().await {
+                        warn!("Warning: Failed to provision YARA rules: {}", e);
+                    }
+                }
+            } else {
+                if let Err(e) = provisioner.provision_yara_rules().await {
+                    warn!("Warning: Failed to provision YARA rules: {}", e);
+                }
+            }
         }
 
         info!("GrantAccess pre-step: ensuring ONNX Runtime (ML Engine) is provisioned...");
@@ -624,14 +735,89 @@ fn find_onnxruntime_dylib() -> Option<PathBuf> {
     None
 }
 
+/// Stable log directory: `OSOOSI_LOG_DIR`, else repo root `logs/` (walk up from exe for `Cargo.toml`/`.git`),
+/// else `logs/` next to the binary, else cwd `logs/`, else `%TEMP%/osoosi/logs`.
+fn resolve_log_directory() -> PathBuf {
+    if let Ok(p) = std::env::var("OSOOSI_LOG_DIR") {
+        let pb = PathBuf::from(p.trim());
+        if !pb.as_os_str().is_empty() {
+            return pb;
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(mut dir) = exe.parent().map(|p| p.to_path_buf()) {
+            for _ in 0..24 {
+                if dir.join(".git").is_dir() || dir.join("Cargo.toml").is_file() {
+                    return dir.join("logs");
+                }
+                match dir.parent() {
+                    Some(p) => dir = p.to_path_buf(),
+                    None => break,
+                }
+            }
+        }
+        if let Some(exe_dir) = exe.parent() {
+            return exe_dir.join("logs");
+        }
+    }
+    std::env::current_dir()
+        .map(|c| c.join("logs"))
+        .unwrap_or_else(|_| std::env::temp_dir().join("osoosi").join("logs"))
+}
+
 fn init_logging() -> anyhow::Result<tracing_appender::non_blocking::WorkerGuard> {
-    let file_appender = tracing_appender::rolling::daily("logs", "osoosi.log");
+    let log_dir = resolve_log_directory();
+    fs::create_dir_all(&log_dir).map_err(|e| {
+        anyhow::anyhow!(
+            "Cannot create log directory {}: {}",
+            log_dir.display(),
+            e
+        )
+    })?;
+    let file_appender = tracing_appender::rolling::daily(&log_dir, "osoosi.log");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
     let filter = EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into());
     let console_layer = fmt::Layer::default().with_writer(std::io::stdout);
     let file_layer = fmt::Layer::default().with_writer(non_blocking).with_ansi(false);
     tracing_subscriber::registry().with(filter).with(console_layer).with(file_layer).init();
+    info!(
+        path = %log_dir.display(),
+        "File logs (override with OSOOSI_LOG_DIR)"
+    );
     Ok(guard)
+}
+
+fn run_yara_sanitizer() {
+    info!("Running automated YARA rule sanitization (pre-scan cleanup)...");
+    let script_name = "sanitize_yara.py";
+    
+    // Search in CWD and EXE dir
+    let mut script_path = PathBuf::from(script_name);
+    if !script_path.exists() {
+        if let Ok(exe_path) = std::env::current_exe() {
+            if let Some(parent) = exe_path.parent() {
+                let candidate = parent.join(script_name);
+                if candidate.exists() {
+                    script_path = candidate;
+                }
+            }
+        }
+    }
+
+    if script_path.exists() {
+        match std::process::Command::new("python")
+            .arg(&script_path)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null())
+            .status() 
+        {
+            Ok(status) if status.success() => info!("YARA sanitization completed successfully."),
+            Ok(status) => warn!("YARA sanitization script exited with status: {}", status),
+            Err(e) => warn!("Failed to execute YARA sanitization script (is Python installed?): {}", e),
+        }
+    } else {
+        warn!("YARA sanitization script not found. Skipping automated cleanup.");
+    }
 }
 
 fn open_browser(url: &str) { let _ = webbrowser::open(url); }

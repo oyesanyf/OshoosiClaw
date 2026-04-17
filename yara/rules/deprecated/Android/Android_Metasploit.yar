@@ -13,8 +13,7 @@ rule android_meterpreter : android
     strings:
 	$checkPK = "META-INF/PK"
 	$checkHp = "[Hp^"
-	$checkSdeEncode = /;.Sk/
-	$stopEval = "eval"
+	$checkSdeEncode = /;.Sk\//	$stopEval = "eval"
 	$stopBase64 = "base64_decode"
 	
     condition:

@@ -1,4 +1,4 @@
-import "androguard"
+// // import "androguard"
 
 rule Metasploit_Payload
 {
@@ -14,5 +14,6 @@ $s5 = "Lcom/metasploit/stage/a;"
 $s6 = "Lcom/metasploit/stage/c;"
 $s7 = "Lcom/metasploit/stage/b;"
 condition:
-androguard.package_name("com.metasploit.stage") or any of them
+	any of ($s*)
+// androguard.package_name("com.metasploit.stage") or any of them (Disabled by Oshoosi Hardener)
 }

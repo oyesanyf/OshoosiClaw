@@ -14,8 +14,7 @@ rule finspy : cdshide android
 		sample = "c2ce202e6e08c41e8f7a0b15e7d0781704e17f8ed52d1b2ad7212ac29926436e"
 	
 	strings:
-		$re = /\x50\x4B\x01\x02[\x00-\xff]{32}[A-Za-z0-9+\/]{6}/
-	
+		$re = /\x50\x4B\x01\x02[\x00-\xff]{32}[A-Za-z0-9+\/]{6}\//	
 	condition:
 		$re and (#re > 50)
 }

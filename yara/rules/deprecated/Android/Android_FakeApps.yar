@@ -8,7 +8,7 @@
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
 
-import "androguard"
+// // import "androguard"
 
 rule fake_facebook: fake android
 {
@@ -16,8 +16,8 @@ rule fake_facebook: fake android
 		  author = "https://twitter.com/Diviei"
 		  reference = "https://koodous.com/"
 	condition:
-		androguard.app_name("Facebook")
-		and not androguard.certificate.sha1("A0E980408030C669BCEB38FEFEC9527BE6C3DDD0")
+// 		androguard.app_name("Facebook") (Disabled by Oshoosi Hardener)
+// 		and not androguard.certificate.sha1("A0E980408030C669BCEB38FEFEC9527BE6C3DDD0") (Disabled by Oshoosi Hardener)
 }
 
 
@@ -37,9 +37,9 @@ rule fake_facebook_2 : fake android
 		hash_7 = "7345c3124891b34607a07e93c8ab6dcbbf513e24e936c3710434b085981b815a"
 		
 	condition:
-		androguard.app_name("Facebook") and
-		not androguard.package_name(/com.facebook.katana/) and 
-		not androguard.certificate.issuer(/O=Facebook Mobile/)	
+// 		androguard.app_name("Facebook") and (Disabled by Oshoosi Hardener)
+// 		not androguard.package_name(/com.facebook.katana/) and  (Disabled by Oshoosi Hardener)
+// 		not androguard.certificate.issuer(/O=Facebook Mobile/)	 (Disabled by Oshoosi Hardener)
 }
 
 rule fake_instagram: fake android
@@ -48,26 +48,26 @@ rule fake_instagram: fake android
 		  author = "https://twitter.com/Diviei"
 		  reference = "https://koodous.com/"
 	condition:
-		androguard.app_name("Instagram")
-		and not androguard.certificate.sha1("76D72C35164513A4A7EBA098ACCB2B22D2229CBE")
+// 		androguard.app_name("Instagram") (Disabled by Oshoosi Hardener)
+// 		and not androguard.certificate.sha1("76D72C35164513A4A7EBA098ACCB2B22D2229CBE") (Disabled by Oshoosi Hardener)
 }
 
 rule fake_king_games: fake android
 {
 	condition:
-		(androguard.app_name("AlphaBetty Saga")
-		or androguard.app_name("Candy Crush Soda Saga")
-		or androguard.app_name("Candy Crush Saga")
-		or androguard.app_name("Farm Heroes Saga")
-		or androguard.app_name("Pet Rescue Saga")
-		or androguard.app_name("Bubble Witch 2 Saga")
-		or androguard.app_name("Scrubby Dubby Saga")
-		or androguard.app_name("Diamond Digger Saga")
-		or androguard.app_name("Papa Pear Saga")
-		or androguard.app_name("Pyramid Solitaire Saga")
-		or androguard.app_name("Bubble Witch Saga")
-		or androguard.app_name("King Challenge"))
-		and not androguard.certificate.sha1("9E93B3336C767C3ABA6FCC4DEADA9F179EE4A05B")
+// 		(androguard.app_name("AlphaBetty Saga") (Disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Candy Crush Soda Saga") (Disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Candy Crush Saga") (Disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Farm Heroes Saga") (Disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Pet Rescue Saga") (Disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Bubble Witch 2 Saga") (Disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Scrubby Dubby Saga") (Disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Diamond Digger Saga") (Disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Papa Pear Saga") (Disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Pyramid Solitaire Saga") (Disabled by Oshoosi Hardener)
+// 		or androguard.app_name("Bubble Witch Saga") (Disabled by Oshoosi Hardener)
+// 		or androguard.app_name("King Challenge")) (Disabled by Oshoosi Hardener)
+// 		and not androguard.certificate.sha1("9E93B3336C767C3ABA6FCC4DEADA9F179EE4A05B") (Disabled by Oshoosi Hardener)
 }
 
 rule fake_market: fake android
@@ -77,7 +77,7 @@ rule fake_market: fake android
 		reference = "https://koodous.com/"
 
 	condition:
-		androguard.package_name("com.minitorrent.kimill") 
+// 		androguard.package_name("com.minitorrent.kimill")  (Disabled by Oshoosi Hardener)
 }
 
 
@@ -87,9 +87,9 @@ rule fake_minecraft: fake android
 		author = "https://twitter.com/plutec_net"
 		reference = "https://koodous.com/"
 	condition:
-		( androguard.app_name("Minecraft: Pocket Edition") or 
-			androguard.app_name("Minecraft - Pocket Edition") )
-		and not androguard.package_name("com.mojang.minecraftpe")
+// 		( androguard.app_name("Minecraft: Pocket Edition") or  (Disabled by Oshoosi Hardener)
+// 			androguard.app_name("Minecraft - Pocket Edition") ) (Disabled by Oshoosi Hardener)
+// 		and not androguard.package_name("com.mojang.minecraftpe") (Disabled by Oshoosi Hardener)
 }
 
 rule fake_whatsapp: fake android
@@ -98,6 +98,6 @@ rule fake_whatsapp: fake android
 		  author = "https://twitter.com/Diviei"
 		  reference = "https://koodous.com/"
 	condition:
-		androguard.app_name("WhatsApp") and
-		not androguard.certificate.sha1("38A0F7D505FE18FEC64FBF343ECAAAF310DBD799")
+// 		androguard.app_name("WhatsApp") and (Disabled by Oshoosi Hardener)
+// 		not androguard.certificate.sha1("38A0F7D505FE18FEC64FBF343ECAAAF310DBD799") (Disabled by Oshoosi Hardener)
 }

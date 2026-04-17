@@ -18,8 +18,7 @@ rule win_vidar_strings_jun_2023
 		$s8 = "Martian Wallet"
 		$s9 = "Exodus Web3 Wallet"
 		
-		$base64 = /[a-zA-Z0-9\=\+]{15,30}=/
-		
+		$base64 = /[a-zA-Z0-9\\\\\=\+]{15,30}=\//		
 	condition:
 		uint16(0) == 0x5a4d and
 		filesize < 3000KB and

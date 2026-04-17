@@ -163,9 +163,9 @@ rule mwi_document: exploitdoc maldoc
         source = "http://blog.0x3a.com/post/117760824504/analysis-of-a-microsoft-word-intruder-sample"
 
       strings:
-        $field_creation_tag = "{\\field{\\*\\fldinst { INCLUDEPICTURE"
+        $field_creation_tag = "{\\\field{\\*\\\fldinst { INCLUDEPICTURE"
         $mwistat_url = ".php?id="
-        $field_closing_tag = "\\\\* MERGEFORMAT \\\\d}}{\\fldrslt}}"
+        $field_closing_tag = "\\\\* MERGEFORMAT \\\\d}}{\\\fldrslt}}"
 
     condition:
         all of them
@@ -273,11 +273,7 @@ rule RTF_Shellcode : maldoc
             filetype = "RTF"
 
     strings:
-        $rtfmagic={7B 5C 72 74 66}
-        /* $scregex=/[39 30]{2,20}/ */
-        $scregex=/(90){2,20}/
-
-    condition:
-
-        ($rtfmagic at 0) and ($scregex)
+        $rtfmagic = { 7B 5C 72 74 66 }
+        $scregex1 = /[39 30]{2,20}\//        $scregex2 = /(90){2,20}\//    condition:
+        ($rtfmagic at 0) and ($scregex1 or $scregex2)
 }

@@ -3,7 +3,7 @@
 
 */
 
-import "androguard"
+// // import "androguard"
 
 rule Android_FakeBank_Fanta
 {
@@ -14,9 +14,9 @@ rule Android_FakeBank_Fanta
 		source = "https://blog.trendmicro.com/trendlabs-security-intelligence/fake-bank-app-phishes-credentials-locks-users-out/"
 
 	condition:
-		androguard.service(/SocketService/i) and 
-		androguard.receiver(/MyAdmin/i) and 
-		androguard.receiver(/Receiver/i) and 
-		androguard.receiver(/NetworkChangeReceiver/i)
+// 		androguard.service(/SocketService/i) and  (Disabled by Oshoosi Hardener)
+// 		androguard.receiver(/MyAdmin/i) and  (Disabled by Oshoosi Hardener)
+// 		androguard.receiver(/Receiver/i) and  (Disabled by Oshoosi Hardener)
+// 		androguard.receiver(/NetworkChangeReceiver/i) (Disabled by Oshoosi Hardener)
 		
 }

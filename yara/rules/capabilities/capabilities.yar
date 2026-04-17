@@ -46,23 +46,23 @@ rule persistence {
         description = "Install itself for autorun at Windows startup"
 	version = "0.1"
     strings:
-        $p1 = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Run" nocase
-        $p2 = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunOnce" nocase
-        $p3 = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunServices" nocase
-        $p4 = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\RunServicesOnce" nocase
-        $p5 = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Winlogon" nocase
-        $p6 = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\\Run" nocase
-        $p7 = "SOFTWARE\\Microsoft\\Active Setup\\Installed Components\\" nocase
-        $p8 = "SOFTWARE\\Microsoft\\WindowsNT\\CurrentVersion\\Windows" nocase
-        $p9 = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Explorer\\SharedTaskScheduler" nocase
-        $p10 = "comfile\\shell\\open\\command" nocase
-        $p11 = "piffile\\shell\\open\\command" nocase
-        $p12 = "exefile\\shell\\open\\command" nocase
-        $p13 = "txtfile\\shell\\open\\command" nocase
-	$p14 = "\\Microsoft\\Windows NT\\CurrentVersion\\Image File Execution Options"
+        $p1 = "SOFTWARE\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\Run" nocase
+        $p2 = "SOFTWARE\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\RunOnce" nocase
+        $p3 = "SOFTWARE\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\RunServices" nocase
+        $p4 = "SOFTWARE\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\RunServicesOnce" nocase
+        $p5 = "SOFTWARE\\\\\\Microsoft\\Windows NT\\\\\\CurrentVersion\\Winlogon" nocase
+        $p6 = "SOFTWARE\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\Policies\\\\\\Explorer\\\\\\Run" nocase
+        $p7 = "SOFTWARE\\\\\\Microsoft\\\\\\Active Setup\\\\\\Installed Components\\" nocase
+        $p8 = "SOFTWARE\\\\\\Microsoft\\WindowsNT\\\\\\CurrentVersion\\Windows" nocase
+        $p9 = "SOFTWARE\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\Explorer\\SharedTaskScheduler" nocase
+        $p10 = "comfile\\shell\\\\\\open\\\\\\command" nocase
+        $p11 = "piffile\\shell\\\\\\open\\\\\\command" nocase
+        $p12 = "exefile\\shell\\\\\\open\\\\\\command" nocase
+        $p13 = "txtfile\\shell\\\\\\open\\\\\\command" nocase
+	$p14 = "\\\\\\Microsoft\\Windows NT\\\\\\CurrentVersion\\\\\\Image File Execution Options"
         $f1 = "win.ini" nocase
         $f2 = "system.ini" nocase
-        $f3 = "Start Menu\\Programs\\Startup" nocase
+        $f3 = "Start Menu\\\\\\Programs\\Startup" nocase
     condition:
         any of them
 }
@@ -74,11 +74,11 @@ rule hijack_network {
         description = "Hijack network configuration"
 	version = "0.1"
     strings:
-        $p1 = "SOFTWARE\\Classes\\PROTOCOLS\\Handler" nocase
-        $p2 = "SOFTWARE\\Classes\\PROTOCOLS\\Filter" nocase
-        $p3 = "Microsoft\\Windows\\CurrentVersion\\Internet Settings\\ProxyServer" nocase
-        $p4 = "software\\microsoft\\windows\\currentversion\\internet settings\\proxyenable" nocase
-        $f1 = "drivers\\etc\\hosts" nocase
+        $p1 = "SOFTWARE\\\\\\Classes\\\\\\PROTOCOLS\\\\\\Handler" nocase
+        $p2 = "SOFTWARE\\\\\\Classes\\\\\\PROTOCOLS\\\\\\Filter" nocase
+        $p3 = "Microsoft\\Windows\\\\\\CurrentVersion\\\\\\Internet Settings\\\\\\ProxyServer" nocase
+        $p4 = "software\\\\\\microsoft\\windows\\\\\\currentversion\\\\\\internet settings\\\\\\proxyenable" nocase
+        $f1 = "drivers\\\\\\\\\etc\\\\\\\\\hosts" nocase
     condition:
         any of them
 }
@@ -206,7 +206,7 @@ rule network_toredo {
 	version = "0.1"
     strings:
 	$f1 = "FirewallAPI.dll" nocase
-        $p1 = "\\CurrentControlSet\\Services\\Tcpip6\\Parameters\\Interfaces\\" nocase
+        $p1 = "\\\\\\CurrentControlSet\\Services\\\\\\Tcpip6\\\\\\Parameters\\\\\\Interfaces\\" nocase
     condition:
         all of them
 }
@@ -286,9 +286,9 @@ rule network_tor {
         description = "Communications over TOR network"
 	version = "0.1"
     strings:
-        $p1 = "tor\\hidden_service\\private_key" nocase
-        $p2 = "tor\\hidden_service\\hostname" nocase
-        $p3 = "tor\\lock" nocase
+        $p1 = "tor\\\\\\hidden_service\\\\\\private_key" nocase
+        $p2 = "tor\\\\\\hidden_service\\\\\\hostname" nocase
+        $p3 = "tor\\\\\\lock" nocase
         $p4 = "tor\\state" nocase
     condition:
         any of them
@@ -469,7 +469,7 @@ rule certificate {
 	version = "0.1"
     strings:
         $f1 = "Crypt32.dll" nocase
-        $r1 = "software\\microsoft\\systemcertificates\\spc\\certificates" nocase
+        $r1 = "software\\\\\\microsoft\\systemcertificates\\spc\\\\\\certificates" nocase
         $c1 = "CertOpenSystemStore"
     condition:
 	all of them
@@ -523,7 +523,7 @@ rule dyndns {
         description = "Dynamic DNS"
 	version = "0.1"
     strings:
-        $s1 = "SOFTWARE\\Vitalwerks\\DUC" nocase
+        $s1 = "SOFTWARE\\\\\\Vitalwerks\\DUC" nocase
     condition:
         any of them
 }
@@ -566,9 +566,9 @@ rule cred_local {
         $c4 = "SamQueryInformationUse"
         $c5 = "CredEnumerateA"
         $c6 = "CredEnumerateW"
-        $r1 = "software\\microsoft\\internet account manager" nocase
-        $r2 = "software\\microsoft\\identitycrl\\creds" nocase
-        $r3 = "Security\\Policy\\Secrets"
+        $r1 = "software\\\\\\microsoft\\\\\\internet account manager" nocase
+        $r2 = "software\\\\\\microsoft\\\\\\identitycrl\\\\\\creds" nocase
+        $r3 = "Security\\\\\\Policy\\Secrets"
     condition:
         any of them
 }
@@ -700,9 +700,9 @@ rule rat_rdp {
         description = "Remote Administration toolkit enable RDP"
 	version = "0.1"
     strings:
-        $p1 = "SYSTEM\\CurrentControlSet\\Control\\Terminal Server" nocase
-        $p2 = "software\\microsoft\\windows nt\\currentversion\\terminal server" nocase
-        $p3 = "SYSTEM\\CurrentControlSet\\Control\\Terminal Server\\WinStations\\RDP-Tcp" nocase
+        $p1 = "SYSTEM\\\\\\CurrentControlSet\\\\\\Control\\\\\\Terminal Server" nocase
+        $p2 = "software\\\\\\microsoft\\windows nt\\\\\\currentversion\\terminal server" nocase
+        $p3 = "SYSTEM\\\\\\CurrentControlSet\\\\\\Control\\\\\\Terminal Server\\WinStations\\\\\\RDP-Tcp" nocase
         $r1 = "EnableAdminTSRemote"
         $c1 = "net start termservice"
         $c2 = "sc config termservice start"
@@ -716,7 +716,7 @@ rule rat_telnet {
         description = "Remote Administration toolkit enable Telnet"
         version = "0.1"
     strings:
-        $r1 = "software\\microsoft\\telnetserver" nocase
+        $r1 = "software\\\\\\microsoft\\telnetserver" nocase
     condition:
         any of them
 }

@@ -7,7 +7,7 @@
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
 
-import "androguard"
+// // import "androguard"
 
 rule Android_pinkLocker : android
 {
@@ -25,10 +25,10 @@ rule Android_pinkLocker : android
 		$str_4 = "res/xml/device_admin_sample.xmlPK" 
 
 	condition:
-		androguard.url(/lineout\.pw/) or 
-		androguard.certificate.sha1("D88B53449F6CAC93E65CA5E224A5EAD3E990921E") or
-		androguard.permission(/android.permission.INTERNET/) and
-		androguard.permission(/android.permission.DISABLE_KEYGUARD/) and
+// 		androguard.url(/lineout\.pw/) or  (Disabled by Oshoosi Hardener)
+// 		androguard.certificate.sha1("D88B53449F6CAC93E65CA5E224A5EAD3E990921E") or (Disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.INTERNET/) and (Disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.DISABLE_KEYGUARD/) and (Disabled by Oshoosi Hardener)
 		all of ($str_*)
 		
 }

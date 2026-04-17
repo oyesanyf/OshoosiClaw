@@ -8,7 +8,7 @@
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
 
-import "androguard"
+// // import "androguard"
 
 rule backdoor: dropper
 {
@@ -19,9 +19,9 @@ rule backdoor: dropper
 		source = "https://koodous.com/rulesets/1765"
 
 	condition:
-		androguard.url("http://sys.wksnkys7.com") 
-		or androguard.url("http://sys.hdyfhpoi.com") 
-		or androguard.url("http://sys.syllyq1n.com") 
-		or androguard.url("http://sys.aedxdrcb.com")
-		or androguard.url("http://sys.aedxdrcb.com")
+// 		androguard.url("http://sys.wksnkys7.com")  (Disabled by Oshoosi Hardener)
+// 		or androguard.url("http://sys.hdyfhpoi.com")  (Disabled by Oshoosi Hardener)
+// 		or androguard.url("http://sys.syllyq1n.com")  (Disabled by Oshoosi Hardener)
+// 		or androguard.url("http://sys.aedxdrcb.com") (Disabled by Oshoosi Hardener)
+// 		or androguard.url("http://sys.aedxdrcb.com") (Disabled by Oshoosi Hardener)
 }

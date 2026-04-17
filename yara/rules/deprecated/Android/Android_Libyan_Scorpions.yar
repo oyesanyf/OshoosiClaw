@@ -8,8 +8,7 @@
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
 
-import "androguard"
-import "cuckoo"
+// // import "androguard"
 
 
 rule libyan_scorpions
@@ -27,13 +26,13 @@ rule libyan_scorpions
 		$domain_5 = "sara2011.no-ip.biz" ascii wide nocase
 
 	condition:
-		androguard.url(/41\.208\.110\.46/) or cuckoo.network.http_request(/41\.208\.110\.46/) or
-		androguard.url(/winmeif.myq-see.com/i) or cuckoo.network.dns_lookup(/winmeif.myq-see.com/i) or
-		androguard.url(/wininit.myq-see.com/i) or cuckoo.network.dns_lookup(/wininit.myq-see.com/i) or
-		androguard.url(/samsung.ddns.me/i) or cuckoo.network.dns_lookup(/samsung.ddns.me/i) or
-		androguard.url(/collge.myq-see.com/i) or cuckoo.network.dns_lookup(/collge.myq-see.com/i) or
-		androguard.url(/sara2011.no-ip.biz/i) or cuckoo.network.dns_lookup(/sara2011.no-ip.biz/i) or
-		any of ($domain_*) or any of ($ip_*) or
-		androguard.certificate.sha1("DFFDD3C42FA06BCEA9D65B8A2E980851383BD1E3")
+// 		androguard.url(/41\.208\.110\.46/) or cuckoo.network.http_request(/41\.208\.110\.46/) or (Disabled by Oshoosi Hardener)
+// 		androguard.url(/winmeif.myq-see.com/i) or cuckoo.network.dns_lookup(/winmeif.myq-see.com/i) or (Disabled by Oshoosi Hardener)
+// 		androguard.url(/wininit.myq-see.com/i) or cuckoo.network.dns_lookup(/wininit.myq-see.com/i) or (Disabled by Oshoosi Hardener)
+// 		androguard.url(/samsung.ddns.me/i) or cuckoo.network.dns_lookup(/samsung.ddns.me/i) or (Disabled by Oshoosi Hardener)
+// 		androguard.url(/collge.myq-see.com/i) or cuckoo.network.dns_lookup(/collge.myq-see.com/i) or (Disabled by Oshoosi Hardener)
+// 		androguard.url(/sara2011.no-ip.biz/i) or cuckoo.network.dns_lookup(/sara2011.no-ip.biz/i) or (Disabled by Oshoosi Hardener)
+		$ip_1 or any of ($domain_*)
+// 		androguard.certificate.sha1("DFFDD3C42FA06BCEA9D65B8A2E980851383BD1E3") (Disabled by Oshoosi Hardener)
 		
 }

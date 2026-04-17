@@ -2,7 +2,7 @@
     This Yara ruleset is under the GNU-GPLv2 license (http://www.gnu.org/licenses/gpl-2.0.html) and open to any user or organization, as    long as you use it under this license.
 */
 
-import "androguard"
+// // import "androguard"
 
 rule Android_RuMMS
 {
@@ -14,11 +14,11 @@ rule Android_RuMMS
 		source = "https://www.fireeye.com/blog/threat-research/2016/04/rumms-android-malware.html"
 
 	condition:
-		androguard.package_name("org.starsizew") or
-		androguard.package_name("com.tvone.untoenynh") or
-		androguard.package_name("org.zxformat") and
-		androguard.permission(/android.permission.RECEIVE_SMS/) and
-		androguard.permission(/android.permission.RECEIVE_BOOT_COMPLETED/)
+// 		androguard.package_name("org.starsizew") or (Disabled by Oshoosi Hardener)
+// 		androguard.package_name("com.tvone.untoenynh") or (Disabled by Oshoosi Hardener)
+// 		androguard.package_name("org.zxformat") and (Disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.RECEIVE_SMS/) and (Disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.RECEIVE_BOOT_COMPLETED/) (Disabled by Oshoosi Hardener)
 		
 }
 
@@ -31,11 +31,11 @@ rule Android_RuMMS_0
 		source = "https://www.fireeye.com/blog/threat-research/2016/04/rumms-android-malware.html"
 
 	condition:
-		(androguard.service(/\.Tb/) and 
-		 androguard.service(/\.Ad/) and 
-		 androguard.receiver(/\.Ac/) and 
-		 androguard.receiver(/\.Ma/)) or
-        (androguard.url(/http\:\/\/37\.1\.207/) and 
-		 androguard.url(/\/api\/\?id\=7/))
+// 		(androguard.service(/\.Tb/) and  (Disabled by Oshoosi Hardener)
+// 		 androguard.service(/\.Ad/) and  (Disabled by Oshoosi Hardener)
+// 		 androguard.receiver(/\.Ac/) and  (Disabled by Oshoosi Hardener)
+// 		 androguard.receiver(/\.Ma/)) or (Disabled by Oshoosi Hardener)
+//         (androguard.url(/http\\\\\:\/\/37\.1\.207/) and  (Disabled by Oshoosi Hardener)
+// 		 androguard.url(/\/api\/\?id\\\\\=7/)) (Disabled by Oshoosi Hardener)
 		
 }

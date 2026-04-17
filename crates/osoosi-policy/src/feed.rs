@@ -471,7 +471,7 @@ impl ThreatFeedFetcher {
         use tokio::io::AsyncWriteExt;
 
         let urls = [
-            "https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/current/rds_modernm.zip",
+            "https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/2025.03.1/RDS_2025.03.1_modern.zip",
             "https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/current/rds_modern.zip",
         ];
 

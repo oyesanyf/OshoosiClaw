@@ -15,7 +15,7 @@ rule malrtf_ole2link : exploit
 		$rtf_format_01 = "{\\rt"
 
 		//having objdata structure
-		$rtf_olelink_01 = "\\objdata" nocase
+		$rtf_olelink_01 = "\\\\\\objdata" nocase
 
 		//hex encoded OLE2Link
 		$rtf_olelink_02 = "4f4c45324c696e6b" nocase

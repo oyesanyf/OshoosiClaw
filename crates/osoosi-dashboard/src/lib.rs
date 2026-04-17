@@ -8,7 +8,7 @@ use axum::{
 use std::net::SocketAddr;
 use std::sync::Arc;
 use std::time::Duration;
-use tower_http::services::ServeDir;
+use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
 use serde::Deserialize;
 use serde_json::{json, Value};
@@ -68,17 +68,10 @@ pub async fn start_dashboard_with_join_gate(
     start_dashboard_with_backend(port, join_gate, None).await
 }
 
-pub async fn start_dashboard_with_backend(
-    port: u16,
-    join_gate: Option<Arc<osoosi_wire::JoinGate>>,
-    backend: Option<Arc<osoosi_core::EdrOrchestrator>>,
-) -> anyhow::Result<()> {
-    let state = DashboardState { join_gate, backend };
-
-    // Resolve dashboard/dist path — search aggressively
+/// Resolve `dashboard/dist` (or `OSOOSI_DASHBOARD_DIR`) for static assets.
+pub fn resolve_dashboard_asset_dir() -> PathBuf {
     let mut asset_path = PathBuf::from("dashboard/dist");
 
-    // Allow explicit override via env
     if let Ok(custom) = std::env::var("OSOOSI_DASHBOARD_DIR") {
         let p = PathBuf::from(&custom);
         if p.exists() {
@@ -87,10 +80,9 @@ pub async fn start_dashboard_with_backend(
     }
 
     if !asset_path.exists() {
-        // Search from exe location (up to 5 levels: handles target/release/osoosi.exe -> project root)
         if let Ok(exe) = std::env::current_exe() {
             let mut dir = exe.parent().map(|p| p.to_path_buf());
-            for _ in 0..5 {
+            for _ in 0..10 {
                 if let Some(ref d) = dir {
                     let candidate = d.join("dashboard").join("dist");
                     if candidate.exists() {
@@ -106,10 +98,9 @@ pub async fn start_dashboard_with_backend(
     }
 
     if !asset_path.exists() {
-        // Search from CWD (up to 3 levels)
         if let Ok(cwd) = std::env::current_dir() {
             let mut dir = Some(cwd);
-            for _ in 0..3 {
+            for _ in 0..8 {
                 if let Some(ref d) = dir {
                     let candidate = d.join("dashboard").join("dist");
                     if candidate.exists() {
@@ -124,13 +115,17 @@ pub async fn start_dashboard_with_backend(
         }
     }
 
-    if asset_path.exists() {
-        info!("Dashboard assets found at: {}", asset_path.display());
-    } else {
-        info!("Dashboard assets NOT found. API endpoints will work but no UI. Set OSOOSI_DASHBOARD_DIR or place files in dashboard/dist/");
-    }
+    asset_path
+}
 
-    let app = Router::new()
+async fn dashboard_health() -> Json<Value> {
+    Json(json!({"ok": true, "service": "osoosi-dashboard"}))
+}
+
+fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
+    let index_html = asset_path.join("index.html");
+    let api = Router::new()
+        .route("/health", get(dashboard_health))
         .route("/api/status", get(get_status))
         .route("/api/threats", get(get_threats))
         .route("/api/mesh-stats", get(get_mesh_stats))
@@ -161,9 +156,76 @@ pub async fn start_dashboard_with_backend(
         .route("/api/behavioral/deep-dive", post(post_behavioral_deep_dive))
         .route("/api/consensus", get(get_consensus))
         .route("/api/mesh/broadcast", post(post_mesh_broadcast))
-        .with_state(state)
-        .fallback_service(ServeDir::new(asset_path));
+        .with_state(state);
 
+    if index_html.is_file() {
+        Router::new()
+            .merge(api)
+            .route_service("/", ServeFile::new(index_html))
+            .fallback_service(ServeDir::new(asset_path))
+    } else {
+        Router::new()
+            .merge(api)
+            .fallback_service(ServeDir::new(asset_path))
+    }
+}
+
+/// Bind port, spawn `axum::serve` in the background, return bound port.
+/// Use this from `osoosi start --dashboard` so the caller can open the browser
+/// immediately; [`start_dashboard_with_backend`] blocks until the server stops.
+pub async fn spawn_dashboard_with_backend(
+    port: u16,
+    join_gate: Option<Arc<osoosi_wire::JoinGate>>,
+    backend: Option<Arc<osoosi_core::EdrOrchestrator>>,
+) -> anyhow::Result<u16> {
+    let state = DashboardState { join_gate, backend };
+    let asset_path = resolve_dashboard_asset_dir();
+
+    if asset_path.exists() {
+        info!("Dashboard assets found at: {}", asset_path.display());
+    } else {
+        info!("Dashboard assets NOT found. API endpoints will work but no UI. Set OSOOSI_DASHBOARD_DIR or place files in dashboard/dist/");
+    }
+
+    let app = dashboard_router(state, asset_path);
+    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let listener = tokio::net::TcpListener::bind(addr).await?;
+    let bound_port = listener.local_addr()?.port();
+    info!("OpenỌ̀ṣọ́ọ̀sì Dashboard listening on {} (local access: http://127.0.0.1:{})", addr, bound_port);
+
+    tokio::spawn(async move {
+        if let Err(e) = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await {
+            tracing::error!("Dashboard server stopped: {}", e);
+        }
+    });
+
+    // Let the accept loop start so the browser does not hit a refused connection.
+    let local = SocketAddr::from(([127, 0, 0, 1], bound_port));
+    for _ in 0..50 {
+        tokio::time::sleep(Duration::from_millis(50)).await;
+        if tokio::net::TcpStream::connect(local).await.is_ok() {
+            break;
+        }
+    }
+
+    Ok(bound_port)
+}
+
+pub async fn start_dashboard_with_backend(
+    port: u16,
+    join_gate: Option<Arc<osoosi_wire::JoinGate>>,
+    backend: Option<Arc<osoosi_core::EdrOrchestrator>>,
+) -> anyhow::Result<()> {
+    let state = DashboardState { join_gate, backend };
+    let asset_path = resolve_dashboard_asset_dir();
+
+    if asset_path.exists() {
+        info!("Dashboard assets found at: {}", asset_path.display());
+    } else {
+        info!("Dashboard assets NOT found. API endpoints will work but no UI. Set OSOOSI_DASHBOARD_DIR or place files in dashboard/dist/");
+    }
+
+    let app = dashboard_router(state, asset_path);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     info!("OpenỌ̀ṣọ́ọ̀sì Dashboard listening on {} (local access: http://127.0.0.1:{})", addr, port);
 

@@ -83,6 +83,10 @@ pub struct PolicyHealthVote {
     pub status: PolicyHealthStatus,
     pub uptime_seconds: u64,
     pub timestamp: DateTime<Utc>,
+    /// Optional proof-of-work (Sybil / cheap-VM resistance): hex string `nonce` such that
+    /// SHA256(`voter_id`|`policy_id`|`nonce`) has at least `OSOOSI_POW_VOTE_BITS` leading zero bits (when that env > 0).
+    #[serde(default)]
+    pub work_nonce: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

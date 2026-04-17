@@ -3,7 +3,7 @@
 
 */
 
-import "androguard"
+// // import "androguard"
 
 
 
@@ -22,5 +22,6 @@ rule trojan: pornClicker
 		$api = "http://mayis24.4tubetv.xyz/dmr/ya"
 		
 	condition:
-		($a and $b and $c and $api) or androguard.url(/mayis24\.4tubetv\.xyz/)
+		$a and $b and $c and $api
+// 		or androguard.url(/mayis24\.4tubetv\.xyz/) (Disabled by Oshoosi Hardener)
 }

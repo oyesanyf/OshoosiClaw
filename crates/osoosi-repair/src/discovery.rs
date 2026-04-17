@@ -95,6 +95,7 @@ $Result.Updates | ForEach-Object {
             return Ok(vec![]);
         };
 
+        let mut skipped_non_kb: usize = 0;
         for item in items {
             let obj = item.as_object().ok_or_else(|| anyhow!("Expected object"))?;
             let title = obj.get("Title").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string();
@@ -107,9 +108,10 @@ $Result.Updates | ForEach-Object {
             // Only keep real KB updates for transactional auto-apply on Windows.
             // Placeholder/non-KB updates are skipped to avoid invalid apply/rollback cycles.
             if !kb.to_ascii_uppercase().starts_with("KB") || kb.len() <= 2 {
-                warn!(
-                    "Skipping non-KB Windows update for auto-apply: title='{}'",
-                    title
+                skipped_non_kb += 1;
+                tracing::debug!(
+                    title = %title,
+                    "Skipping non-KB Windows update for auto-apply"
                 );
                 continue;
             }
@@ -123,6 +125,12 @@ $Result.Updates | ForEach-Object {
                 download_url: None,
                 expected_sha256: None,
             });
+        }
+        if skipped_non_kb > 0 {
+            tracing::debug!(
+                count = skipped_non_kb,
+                "Windows discovery: skipped non-KB updates (not eligible for auto-apply)"
+            );
         }
         Ok(patches)
     }

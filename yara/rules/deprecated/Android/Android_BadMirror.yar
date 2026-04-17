@@ -3,7 +3,7 @@
 
 */
 
-import "androguard"
+// // import "androguard"
 
 rule Android_BadMirror
 {
@@ -14,6 +14,6 @@ rule Android_BadMirror
 		source = "https://blog.fortinet.com/post/badmirror-new-android-malware-family-spotted-by-sherlockdroid"
 
 	condition:
-		androguard.service(/SimInsService/i) and
-        androguard.permission(/android.permission.READ_PHONE_STATE/i)
+// 		androguard.service(/SimInsService/i) and (Disabled by Oshoosi Hardener)
+//         androguard.permission(/android.permission.READ_PHONE_STATE/i) (Disabled by Oshoosi Hardener)
 }

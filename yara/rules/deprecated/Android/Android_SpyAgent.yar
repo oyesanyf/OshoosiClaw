@@ -3,7 +3,7 @@
 
 */
 
-import "androguard"
+// // import "androguard"
 
 
 rule spyAgent
@@ -27,6 +27,6 @@ rule spyAgent
 		$cc_alt7 = "http://ksa-sef.com/Hack%20Mobaile/addInconingLogs.php"
 
 	condition:
-		androguard.url(/ksa-sef\.com/) or ($phone and $caption) or ($cc and $cc_alt and $cc_alt2 and $cc_alt3 and $cc_alt4 and $cc_alt5 and $cc_alt6 and $cc_alt7)
-		
+		$phone and ( $caption or ( $cc and $cc_alt and $cc_alt2 and $cc_alt3 and $cc_alt4 and $cc_alt5 and $cc_alt6 and $cc_alt7 ) )
+// 		androguard.url(/ksa-sef\.com/) or ($phone and $caption) or ($cc and $cc_alt and $cc_alt2 and $cc_alt3 and $cc_alt4 and $cc_alt5 and $cc_alt6 and $cc_alt7) (Disabled by Oshoosi Hardener)
 }

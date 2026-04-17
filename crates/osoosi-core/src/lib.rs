@@ -27,6 +27,7 @@ pub mod browser_guard;
 pub mod capa_analyzer;
 pub mod remediation;
 pub mod adaptive;
+pub mod byzantine;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -824,6 +825,7 @@ impl EdrOrchestrator {
                                                     status: osoosi_types::PolicyHealthStatus::Optimal,
                                                     uptime_seconds: 0, // Placeholder
                                                     timestamp: chrono::Utc::now(),
+                                                    work_nonce: None,
                                                 });
                                                 let tx_guard = mesh_tx.lock().await;
                                                 if let Some(ref tx_chan) = *tx_guard {
@@ -846,9 +848,17 @@ impl EdrOrchestrator {
                                             let _ = memory.set_repair_status("last_error", "");
                                         }
                                         Err(e) => {
-                                            error!("Repair Engine apply failed: {}", e);
+                                            let es = e.to_string();
+                                            if es.contains("Insufficient privilege") {
+                                                warn!(
+                                                    "Repair Engine auto-apply skipped (not elevated): {}",
+                                                    es
+                                                );
+                                            } else {
+                                                error!("Repair Engine apply failed: {}", e);
+                                            }
                                             let _ = memory.set_repair_status("last_state", "ApplyFailed");
-                                            let _ = memory.set_repair_status("last_error", &e.to_string());
+                                            let _ = memory.set_repair_status("last_error", &es);
                                         }
                                     }
                                 }
@@ -887,6 +897,7 @@ impl EdrOrchestrator {
                                 status: osoosi_types::PolicyHealthStatus::Optimal,
                                 uptime_seconds: 0,
                                 timestamp: chrono::Utc::now(),
+                                work_nonce: None,
                             });
                             let tx_guard = self.mesh_command_tx.lock().await;
                             if let Some(ref tx_chan) = *tx_guard {
@@ -1523,6 +1534,16 @@ impl EdrOrchestrator {
         self.audit.clone()
     }
 
+    /// Returns the full list of Merkle Trail entries.
+    pub fn list_merkle_trail(&self) -> Vec<osoosi_audit::AuditEntry> {
+        self.audit.entries()
+    }
+
+    /// Verifies the Merkle Trail integrity.
+    pub fn verify_merkle_trail(&self) -> bool {
+        self.audit.verify()
+    }
+
     /// Access the malware scanner for dashboard queries.
     pub fn malware_scanner(&self) -> Arc<MalwareScanner> {
         self.malware_scanner.clone()
@@ -1937,27 +1958,73 @@ impl EdrOrchestrator {
         ));
         tokio::spawn(sleuth.start_sleuthing_loop());
 
-        // Process peer consensus: validate mesh-driven policy health
+        // Process peer consensus: Byzantine-aware BFT + reputation gate (mesh “immune system”).
         let history = self.policy_consensus.clone();
+        let memory_consensus = self.memory.clone();
+        let join_gate_consensus = join_gate.clone();
+        let mesh_peer_count_bft = self.mesh_peer_count.clone();
         tokio::spawn(async move {
+            use crate::byzantine::{analyze_policy_consensus, BftConsensusParams};
+            let mut bft_validated_once: HashSet<String> = HashSet::new();
             while let Some(msg) = peer_consensus_rx.recv().await {
                 let policy_id = match &msg {
                     osoosi_types::PolicyConsensusMessage::Announcement(a) => a.policy_id.clone(),
                     osoosi_types::PolicyConsensusMessage::Vote(v) => v.policy_id.clone(),
                 };
-                let mut guard = history.lock().await;
-                let entry = guard.entry(policy_id.clone()).or_insert_with(Vec::new);
-                entry.push(msg.clone());
-                
-                // Heuristic: If we have 3 independent nodes vouching for a policy, mark as Mesh-Validated.
-                let votes = entry.iter().filter_map(|m| {
-                    if let osoosi_types::PolicyConsensusMessage::Vote(v) = m {
-                        if v.status == osoosi_types::PolicyHealthStatus::Optimal { Some(v.voter_id.clone()) } else { None }
-                    } else { None }
-                }).collect::<HashSet<String>>();
-                
-                if votes.len() >= 3 {
-                    info!("Policy/Patch {} has reached mesh CONSENSUS. Marked as Stable/Mesh-Validated.", policy_id);
+                let snapshot = {
+                    let mut guard = history.lock().await;
+                    let entry = guard.entry(policy_id.clone()).or_insert_with(Vec::new);
+                    entry.push(msg.clone());
+                    entry.clone()
+                };
+
+                let rep_fn = |vid: &str| {
+                    memory_consensus
+                        .get_reputation(vid)
+                        .ok()
+                        .flatten()
+                        .map(|r| r.score)
+                        .unwrap_or(0.5)
+                };
+                let mut params = BftConsensusParams::default();
+                params.mesh_peer_hint = Some(mesh_peer_count_bft.load(Ordering::Relaxed).max(1));
+                let outcome = analyze_policy_consensus(&snapshot, rep_fn, &params);
+
+                if outcome.mesh_validated {
+                    if !bft_validated_once.contains(&policy_id) {
+                        bft_validated_once.insert(policy_id.clone());
+                        info!(
+                            "Policy {} mesh-validated (BFT/PoS-weighted): optimal={}/{} voters, critical={}, weighted_opt={:.2}, high_trust={}, pbft_f_max={:?}",
+                            policy_id,
+                            outcome.optimal_count,
+                            outcome.participating_voters,
+                            outcome.critical_count,
+                            outcome.weighted_optimal_share,
+                            outcome.high_trust_endorsement,
+                            outcome.pbft_max_faults
+                        );
+                        let _ = memory_consensus.set_repair_status(
+                            &format!("mesh_bft_{}", policy_id),
+                            "validated",
+                        );
+                        for vid in &outcome.penalize_critical_voters {
+                            if let Err(e) = join_gate_consensus.penalize_peer(
+                                vid,
+                                "BFT mesh-optimal quorum: dissenting CriticalFailure vote",
+                                0.12,
+                            ) {
+                                warn!("BFT penalize {}: {}", vid, e);
+                            }
+                        }
+                    }
+                } else if outcome.stalemate_conflict {
+                    warn!(
+                        "Policy {} mesh vote STALEMATE (possible Byzantine split): optimal={} critical={} participants={}",
+                        policy_id,
+                        outcome.optimal_count,
+                        outcome.critical_count,
+                        outcome.participating_voters
+                    );
                 }
             }
         });

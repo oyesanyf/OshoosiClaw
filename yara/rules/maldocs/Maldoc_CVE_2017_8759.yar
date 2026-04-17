@@ -17,8 +17,7 @@ private rule RTFFILE {
       uint32be(0) == 0x7B5C7274
 }
 
-/* Rule Set ----------------------------------------------------------------- */
-
+/* Rule Set ----------------------------------------------------------------- *\//
 rule CVE_2017_8759_Mal_HTA {
    meta:
       description = "Detects malicious files related to CVE-2017-8759 - file cmd.hta"
@@ -82,8 +81,8 @@ rule CVE_2017_8759_SOAP_txt {
       date = "2017-09-14"
       hash1 = "840ad14e29144be06722aff4cc04b377364eeed0a82b49cc30712823838e2444"
    strings:
-      $s1 = /<soap:address location="http[s]?:\/\/[^"]{8,140}.hta"/ ascii wide
-      $s2 = /<soap:address location="http[s]?:\/\/[^"]{8,140}mshta.exe"/ ascii wide
+      $s1 = /<soap:address location="http[s]?:\/\/[^"]{8,140}.hta"\/ asci/ wide
+      $s2 = /<soap:address location="http[s]?:\/\/[^"]{8,140}mshta.exe"\/ asci/ wide
    condition:
       ( filesize < 200KB and 1 of them )
 }
@@ -96,7 +95,7 @@ rule CVE_2017_8759_WSDL_in_RTF {
       date = "2017-09-15"
    strings:
       $doc = "d0cf11e0a1b11ae1"
-      $obj = "\\objupdate"
+      $obj = "\\\\\\objupdate"
       $wsdl = "7700730064006c003d00" nocase
       $http1 = "68007400740070003a002f002f00" nocase
       $http2 = "680074007400700073003a002f002f00" nocase

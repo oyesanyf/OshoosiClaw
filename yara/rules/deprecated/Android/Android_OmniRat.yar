@@ -3,7 +3,7 @@
 
 */
 
-import "androguard"
+// // import "androguard"
 
 rule Android_OmniRat
 {
@@ -16,7 +16,8 @@ rule Android_OmniRat
 	strings:
 		$a = "android.engine.apk"
 	condition:
-		(androguard.activity(/com.app.MainActivity/i) and 
-		 androguard.permission(/android.permission.WRITE_EXTERNAL_STORAGE/i) and 
-		 androguard.package_name(/com.app/i)) and $a
+		$a
+// 		(androguard.activity(/com.app.MainActivity/i) and  (Disabled by Oshoosi Hardener)
+// 		 androguard.permission(/android.permission.WRITE_EXTERNAL_STORAGE/i) and  (Disabled by Oshoosi Hardener)
+// 		 androguard.package_name(/com.app/i)) and $a (Disabled by Oshoosi Hardener)
 }

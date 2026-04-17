@@ -24,9 +24,7 @@ rule System_Tools
         $a0 = "wireshark.exe" nocase wide ascii
         $a1 = "ethereal.exe" nocase wide ascii
         $a2 = "netstat.exe" nocase wide ascii
-        $a3 = /taskm(an|gr|on).exe/ nocase wide ascii
-        $a4 = /regedit(32)?.exe/ nocase wide ascii
-        $a5 = "sc.exe" nocase wide ascii
+        $a3 = /taskm(an|gr|on).exe\/ nocas\/ wid\/ asci\//        $a4 = /regedit(32)?.exe\/ nocas\/ wid\/ asci\//        $a5 = "sc.exe" nocase wide ascii
         $a6 = "procexp.exe" nocase wide ascii
         $a7 = "procmon.exe" nocase wide ascii
         $a8 = "netmon.exe" nocase wide ascii
@@ -68,8 +66,7 @@ rule RE_Tools
         description = "Contains references to debugging or reversing tools"
         author = "Ivan Kwiatkowski (@JusticeRage)"
     strings:
-        $a0 = /ida(q)?(64)?.exe/ nocase wide ascii
-        $a1 = "ImmunityDebugger.exe" nocase wide ascii
+        $a0 = /ida(q)?(64)?.exe\/ nocas\/ wid\/ asci\//        $a1 = "ImmunityDebugger.exe" nocase wide ascii
         $a2 = "ollydbg.exe" nocase wide ascii
         $a3 = "lordpe.exe" nocase wide ascii
         $a4 = "peid.exe" nocase wide ascii
@@ -128,8 +125,7 @@ rule Antivirus
         $a40 = "avgrsx.exe" nocase wide ascii
         $a41 = "avgserv.exe" nocase wide ascii
         $a42 = "avgserv9.exe" nocase wide ascii
-        $a43 = /av(gui|guard|center|gtray|gidsagent|gwdsvc|grsa|gcsrva|gcsrvx).exe/ nocase wide ascii
-        $a44 = "avgw.exe" nocase wide ascii
+        $a43 = /av(gui|guard|center|gtray|gidsagent|gwdsvc|grsa|gcsrva|gcsrvx).exe\/ nocas\/ wid\/ asci\//        $a44 = "avgw.exe" nocase wide ascii
         $a45 = "avkpop.exe" nocase wide ascii
         $a46 = "avkserv.exe" nocase wide ascii
         $a47 = "avkservice.exe" nocase wide ascii
@@ -523,20 +519,13 @@ rule Antivirus
 		$a580 = "QQPCRTP.exe" nocase wide ascii
 		$a581 = "QQPCTray.exe" nocase wide ascii
 		$a582 = "ZhuDongFangYu.exe" nocase wide ascii
-		$a583 = /360(tray|sd|rp).exe/ nocase wide ascii
-		$a584 = /qh(safetray|watchdog|activedefense).exe/ nocase wide ascii
-		$a585 = "McNASvc.exe" nocase wide ascii
+		$a583 = /360(tray|sd|rp).exe\/ nocas\/ wid\/ asci\//		$a584 = /qh(safetray|watchdog|activedefense).exe\/ nocas\/ wid\/ asci\//		$a585 = "McNASvc.exe" nocase wide ascii
 		$a586 = "MpfSrv.exe" nocase wide ascii
 		$a587 = "McProxy.exe" nocase wide ascii
 		$a588 = "mcmscsvc.exe" nocase wide ascii
 		$a589 = "McUICnt.exe" nocase wide ascii
-		$a590 = /ui(WatchDog|seagnt|winmgr).exe/ nocase wide ascii
-		$a591 = "ufseagnt.exe" nocase wide ascii
-		$a592 = /core(serviceshell|frameworkhost).exe/ nocase wide ascii
-		$a593 = /ay(agent|rtsrv|updsrv).aye/ nocase wide ascii
-		$a594 = /avast(ui|svc).exe/ nocase wide ascii
-		$a595 = /ms(seces|mpeng).exe/ nocase wide ascii
-		$a596 = "afwserv.exe" nocase wide ascii
+		$a590 = /ui(WatchDog|seagnt|winmgr).exe\/ nocas\/ wid\/ asci\//		$a591 = "ufseagnt.exe" nocase wide ascii
+		$a592 = /core(serviceshell|frameworkhost).exe\/ nocas\/ wid\/ asci\//		$a593 = /ay(agent|rtsrv|updsrv).aye\/ nocas\/ wid\/ asci\//		$a594 = /avast(ui|svc).exe\/ nocas\/ wid\/ asci\//		$a595 = /ms(seces|mpeng).exe\/ nocas\/ wid\/ asci\//		$a596 = "afwserv.exe" nocase wide ascii
 		$a597 = "FiddlerUser"
 		
     condition:
@@ -548,10 +537,10 @@ rule VM_Generic_Detection : AntiVM
     meta:
         description = "Tries to detect virtualized environments"
     strings:
-        $a0 = "HARDWARE\\DEVICEMAP\\Scsi\\Scsi Port 0\\Scsi Bus 0\\Target Id 0\\Logical Unit Id 0" nocase wide ascii
+        $a0 = "HARDWARE\\DEVICEMAP\\Scsi\\Scsi Port 0\\Scsi Bus 0\\\\\\Target Id 0\\\\\\Logical Unit Id 0" nocase wide ascii
         $a1 = "HARDWARE\\Description\\System" nocase wide ascii
-        $a2 = "SYSTEM\\CurrentControlSet\\Control\\SystemInformation" nocase wide ascii
-        $a3 = "SYSTEM\\CurrentControlSet\\Enum\\IDE" nocase wide ascii
+        $a2 = "SYSTEM\\\\\\CurrentControlSet\\\\\\Control\\SystemInformation" nocase wide ascii
+        $a3 = "SYSTEM\\\\\\CurrentControlSet\\\\\\Enum\\\\\\IDE" nocase wide ascii
         $redpill = { 0F 01 0D 00 00 00 00 C3 } // Copied from the Cuckoo project
         
         // CLSIDs used to detect if speakers are present. Hoping this will not cause false positives.
@@ -621,8 +610,7 @@ rule Sandboxie_Detection : AntiVM
 
     strings:
         $sbie = "SbieDll.dll" nocase wide ascii
-        $buster = /LOG_API(_VERBOSE)?.DLL/ nocase wide ascii
-        $sbie_process_1 = "SbieSvc.exe" nocase wide ascii
+        $buster = /LOG_API(_VERBOSE)?.DLL\/ nocas\/ wid\/ asci\//        $sbie_process_1 = "SbieSvc.exe" nocase wide ascii
         $sbie_process_2 = "SbieCtrl.exe" nocase wide ascii
         $sbie_process_3 = "SandboxieRpcSs.exe" nocase wide ascii
         $sbie_process_4 = "SandboxieDcomLaunch.exe" nocase wide ascii
@@ -677,15 +665,11 @@ rule VirtualBox_Detection : AntiVM
         $virtualbox_vid_1 = "VEN_80EE" nocase wide ascii
         
         // Registry keys
-        $virtualbox_reg_1 = "SOFTWARE\\Oracle\\VirtualBox Guest Additions" nocase wide ascii
-        $virtualbox_reg_2 = /HARDWARE\\ACPI\\(DSDT|FADT|RSDT)\\VBOX__/ nocase wide ascii
-        
+        $virtualbox_reg_1 = "SOFTWARE\\\\\\Oracle\\\\\\VirtualBox Guest Additions" nocase wide ascii
+        $virtualbox_reg_2 = /HARDWARE\\\\\\ACPI\\(DSDT|FADT|RSDT)\\\\\\VBOX__\/ nocas\/ wid\/ asci\//        
         // Other
-        $virtualbox_files = /C:\\Windows\\System32\\drivers\\vbox.{15}\.(sys|dll)/ nocase wide ascii
-        $virtualbox_services = "System\\ControlSet001\\Services\\VBox[A-Za-z]+" nocase wide ascii
-        $virtualbox_pipe = /\\\\.\\pipe\\(VBoxTrayIPC|VBoxMiniRdDN)/ nocase wide ascii
-        $virtualbox_window = /VBoxTrayToolWnd(Class)?/ nocase wide ascii
-    condition:
+        $virtualbox_files = /C:\\Windows\\System32\\drivers\\\\\\vbox.{15}\.(sys|dll)\/ nocas\/ wid\/ asci\//        $virtualbox_services = "System\\\\\\ControlSet001\\Services\\\\\\VBox[A-Za-z]+" nocase wide ascii
+        $virtualbox_pipe = /\\\\.\\\\\\pipe\\(VBoxTrayIPC|VBoxMiniRdDN)\/ nocas\/ wid\/ asci\//        $virtualbox_window = /VBoxTrayToolWnd(Class)?\/ nocas\/ wid\/ asci\//    condition:
         any of them
 }
 
@@ -720,7 +704,7 @@ rule Dropper_Strings
         description = "May have dropper capabilities"
         author = "Ivan Kwiatkowski (@JusticeRage)"
     strings:
-        $a0 = "CurrentVersion\\Run" nocase wide ascii
+        $a0 = "CurrentVersion\\\\\\Run" nocase wide ascii
         $a1 = "CurrentControlSet\\Services" nocase wide ascii
         $a2 = "Programs\\Startup" nocase wide ascii
         $a3 = "%temp%" nocase wide ascii
@@ -748,8 +732,7 @@ rule WMI_strings
         author = "Ivan Kwiatkowski (@JusticeRage)"
     strings:
         // WMI namespaces which may be referenced in the ConnectServer call. All in the form of "ROOT\something"
-        $a0 = /ROOT\\(CIMV2|AccessLogging|ADFS|aspnet|Cli|Hardware|interop|InventoryLogging|Microsoft.{10}|Policy|RSOP|SECURITY|ServiceModel|snmpStandardCimv2|subscription|virtualization|WebAdministration|WMI)/ nocase ascii wide
-    condition:
+        $a0 = /ROOT\\(CIMV2|AccessLogging|ADFS|aspnet|Cli|Hardware|interop|InventoryLogging|Microsoft.{10}|Policy|RSOP|SECURITY|ServiceModel|snmpStandardCimv2|subscription|virtualization|WebAdministration|WMI)\/ nocas\/ asci\/ wid\//    condition:
         any of them
 }
 
@@ -1298,7 +1281,7 @@ rule Misc_Suspicious_Strings
         $a3 = "exploit" nocase ascii wide
         $a4 = "cmd.exe" nocase ascii wide
         $a5 = "CWSandbox" nocase wide ascii // Found in some Zeus/Citadel samples
-        $a6 = "System32\\drivers\\etc\\hosts" nocase wide ascii
+        $a6 = "System32\\\\drivers\\\\\\\\\etc\\\\\\\\\hosts" nocase wide ascii
     condition:
         any of them
 }
@@ -1333,8 +1316,6 @@ rule HexEncodedTextPE
         reference = "https://blog.reversinglabs.com/blog/rats-in-the-library"
         description = "Text string with hexadecimal encoded MZ/PE and comma+ separation"
     strings:
-        $mz = /4D,.{0,6}5A/ nocase
-        $pe = /50,.{0,6}45/
-    condition:
+        $mz = /4D,.{0,6}5A\/ nocas\//        $pe = /50,.{0,6}45\//    condition:
         all of them
 }

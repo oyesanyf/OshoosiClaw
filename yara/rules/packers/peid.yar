@@ -7567,7 +7567,7 @@ rule PseudoSigner_01_Microsoft_Visual_Cpp_70_DLL_Anorganix: PEiD
 
 }
 
-rule WinRAR_SFX: PEiD
+rule WinRAR_SFX_Duplicate_1: PEiD
 {
     strings:
         $a = { E8 E3 FE FF FF 33 C0 50 50 50 50 E8 BE 2B 00 00 }
@@ -7885,7 +7885,7 @@ rule FSG_120_Eng_dulekxt_Borland_Cpp: PEiD
 
 }
 
-rule Exe_Locker_V10_IonIce: PEiD
+rule Exe_Locker_V10_IonIce_Duplicate_1: PEiD
 {
     strings:
         $a = { E8 00 00 00 00 60 8B 6C 24 20 81 ED 05 00 00 00 }
@@ -15493,7 +15493,7 @@ rule COMPACK_v51_Hint_DOS_EP: PEiD
 
 }
 
-rule Upack_v032_Beta_Dwing: PEiD
+rule Upack_v032_Beta_Dwing_Duplicate_1: PEiD
 {
     strings:
         $a = { BE 88 01 ?? ?? AD 50 ?? ?? AD 91 F3 A5 }
@@ -19265,7 +19265,7 @@ rule PESpin_13beta_Cyberbob_h: PEiD
 
 }
 
-rule Packman_v0001: PEiD
+rule Packman_v0001_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 E8 00 00 00 00 58 8D A8 ?? ?? FF FF 8D 98 ?? ?? ?? FF 8D ?? ?? 01 00 00 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 00 00 }
@@ -19664,7 +19664,7 @@ rule Armadillo_v260b1_additional: PEiD
 
 }
 
-rule DShield: PEiD
+rule DShield_Duplicate_1: PEiD
 {
     strings:
         $a = { 06 E8 ?? ?? 5E 83 EE ?? 16 17 9C 58 B9 ?? ?? 25 ?? ?? 2E }
@@ -20059,7 +20059,7 @@ rule FSG_v110_Eng_dulekxt_Borland_Cue: PEiD
 
 }
 
-rule PeCompact_2xx_BitSum_Technologies: PEiD
+rule PeCompact_2xx_BitSum_Technologies_Duplicate_1: PEiD
 {
     strings:
         $a = { B8 ?? ?? ?? ?? 50 64 FF 35 00 00 00 00 64 89 25 00 00 00 00 33 C0 89 08 50 45 43 6F 6D 70 61 63 74 32 00 }
@@ -20298,7 +20298,7 @@ rule IProtect_10_FxSubdll_mode_by_FuXdas: PEiD
 
 }
 
-rule Nullsoft_PIMP_Install_System_v1x_additional: PEiD
+rule Nullsoft_PIMP_Install_System_v1x_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { 83 EC 5C 53 55 56 57 FF 15 ?? ?? ?? 00 }
@@ -20534,7 +20534,7 @@ rule _PseudoSigner_01_PENightMare_2_Beta_Anorganix: PEiD
 
 }
 
-rule SC_Obfuscator_SuperCRacker_additional: PEiD
+rule SC_Obfuscator_SuperCRacker_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 33 C9 8B 1D 00 ?? ?? ?? 03 1D 08 ?? ?? ?? 8A 04 19 84 C0 74 09 3C ?? 74 05 34 ?? 88 04 19 41 3B 0D 04 ?? ?? ?? 75 E7 A1 08 ?? ?? ?? 01 05 0C ?? ?? ?? 61 FF 25 0C }
@@ -21209,7 +21209,7 @@ rule DIET_v102b_v110a_v120_additional: PEiD
 
 }
 
-rule Borland_Delphi: PEiD
+rule Borland_Delphi_Duplicate_1: PEiD
 {
     strings:
         $a = { C3 E9 FF 8D }
@@ -23747,7 +23747,7 @@ rule Alias_PIXVivid_IMG_Graphics_format_additional: PEiD
 
 }
 
-rule MASM32_TASM32: PEiD
+rule MASM32_TASM32_Duplicate_1: PEiD
 {
     strings:
         $a = { 2B C0 50 E8 }
@@ -24940,7 +24940,7 @@ rule NTKrnlPacker_Ashkbiz_Danehkar: PEiD
 
 }
 
-rule SVK_Protector_V13X_Pavol_Cerven: PEiD
+rule SVK_Protector_V13X_Pavol_Cerven_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 E8 00 00 00 00 5D 81 ED 06 00 00 00 EB 05 B8 ?? ?? 42 00 64 A0 23 00 00 00 EB 03 C7 84 E8 84 C0 EB 03 C7 84 E9 75 67 B9 49 00 00 00 8D B5 C5 02 00 00 56 80 06 44 46 E2 FA 8B 8D C1 02 00 00 5E 55 51 6A 00 56 FF 95 0C 61 00 00 59 5D 40 85 C0 75 3C 80 3E 00 74 03 46 EB F8 46 E2 E3 8B C5 8B 4C 24 20 2B 85 BD 02 00 00 89 85 B9 02 00 00 80 BD B4 02 00 00 01 75 06 8B 8D 0C 61 00 00 89 8D B5 02 00 00 8D 85 0E 03 00 00 8B DD FF E0 55 68 10 10 00 00 8D 85 B4 00 00 00 50 8D 85 B4 01 00 00 50 6A 00 FF 95 18 61 00 00 5D 6A FF FF 95 10 61 00 00 44 65 62 75 67 67 65 72 20 6F 72 20 74 6F 6F 6C 20 66 6F 72 20 6D 6F 6E 69 74 6F 72 69 6E 67 20 64 65 74 65 63 74 65 64 21 21 21 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 }
@@ -25125,7 +25125,7 @@ rule NET_DLL_Microsoft_additional: PEiD
 
 }
 
-rule eXPressor_V13_CGSoftLabs_additional: PEiD
+rule eXPressor_V13_CGSoftLabs_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { 55 8B EC 83 EC ?? 53 56 57 E9 B0 06 }
@@ -25437,7 +25437,7 @@ rule PECompact_v099_additional: PEiD
 
 }
 
-rule Mew_10_v10_Eng_Northfox: PEiD
+rule Mew_10_v10_Eng_Northfox_Duplicate_1: PEiD
 {
     strings:
         $a = { 33 C0 E9 ?? ?? ?? FF }
@@ -25627,7 +25627,7 @@ rule ThinstallVS_v3x_Jitit_Software: PEiD
 
 }
 
-rule CRYPToCRACks_PE_Protector_V092_Lukas_Fleischer: PEiD
+rule CRYPToCRACks_PE_Protector_V092_Lukas_Fleischer_Duplicate_1: PEiD
 {
     strings:
         $a = { E8 01 00 00 00 E8 58 5B 81 E3 00 FF FF FF 66 81 3B 4D 5A 75 37 84 DB 75 33 8B F3 03 ?? ?? 81 3E 50 45 00 00 75 26 }
@@ -26636,7 +26636,7 @@ rule Upack_v035_alpha_Dwing: PEiD
 
 }
 
-rule SoftDefender_V11x_Randy_Li: PEiD
+rule SoftDefender_V11x_Randy_Li_Duplicate_1: PEiD
 {
     strings:
         $a = { 74 07 75 05 19 32 67 E8 E8 74 1F 75 1D E8 68 39 44 }
@@ -26838,7 +26838,7 @@ rule FSG_v110_Eng_dulekxt_Microsoft_Visual_Cpp_60_ASM: PEiD
 
 }
 
-rule PE_PROTECT_09: PEiD
+rule PE_PROTECT_09_Duplicate_1: PEiD
 {
     strings:
         $a = { E9 CF 00 00 00 0D 0A 0D 0A C4 C4 C4 C4 C4 C4 C4 C4 C4 C4 C4 }
@@ -27002,7 +27002,7 @@ rule Shrinker_34_additional: PEiD
 
 }
 
-rule Enigma_protector_112_Vladimir_Sukhov: PEiD
+rule Enigma_protector_112_Vladimir_Sukhov_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 E8 00 00 00 00 5D 83 ED 06 81 ED ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? E8 01 00 00 00 9A 83 C4 04 EB 02 FF 35 60 E8 24 00 00 00 00 00 FF EB 02 CD 20 8B 44 24 0C 83 80 B8 00 00 00 03 31 C0 C3 83 C0 08 EB 02 FF 15 89 C4 61 EB 2E EA EB 2B 83 04 24 03 EB 01 00 31 C0 EB 01 85 64 FF 30 EB 01 83 64 89 20 EB 02 CD 20 89 00 9A 64 8F 05 00 00 00 00 EB 02 C1 90 58 61 EB 01 3E EB 04 ?? ?? ?? ?? B8 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? E8 01 00 00 00 9A 83 C4 04 01 E8 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? E8 01 00 00 00 9A 83 C4 04 05 F6 01 00 00 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? E8 01 00 00 00 9A 83 C4 04 B9 44 1A }
@@ -30534,7 +30534,7 @@ rule eXPressor_v1451_CGSoftLabs: PEiD
 
 }
 
-rule PESpin_V03_cyberbob: PEiD
+rule PESpin_V03_cyberbob_Duplicate_1: PEiD
 {
     strings:
         $a = { EB 01 68 60 E8 00 00 00 00 8B 1C 24 83 C3 12 81 2B E8 B1 06 00 FE 4B FD 82 2C 24 B7 CD 46 00 0B E4 74 9E 75 01 C7 81 73 04 D7 7A F7 2F 81 73 19 77 00 43 B7 F6 C3 6B B7 00 00 F9 FF E3 C9 C2 08 00 A3 68 72 01 FF 5D 33 C9 41 E2 17 EB 07 EA EB 01 EB EB 0D FF E8 01 00 00 00 EA 5A 83 EA 0B FF E2 8B 95 CB 2C 40 00 8B 42 3C 03 C2 89 85 D5 2C 40 00 41 C1 E1 07 8B 0C 01 03 CA 8B 59 10 03 DA 8B 1B 89 9D E9 2C 40 00 53 8F 85 B6 2B 40 00 BB ?? 00 00 00 B9 75 0A 00 00 8D BD 7E 2D 40 00 4F 30 1C 39 FE CB E2 F9 68 3C 01 00 00 59 8D BD B6 36 40 00 C0 0C 39 02 E2 FA E8 02 00 00 00 FF 15 5A 8D 85 1F 53 56 00 BB 54 13 0B 00 D1 E3 2B C3 FF E0 E8 01 00 00 00 68 E8 1A 00 00 00 8D 34 28 B9 08 00 00 00 B8 ?? ?? ?? ?? 2B C9 83 C9 15 0F A3 C8 0F 83 81 00 00 00 8D B4 0D DC 2C 40 00 }
@@ -30561,7 +30561,7 @@ rule PEBundle_v310_additional: PEiD
 
 }
 
-rule PIRIT_v15_Hint_DOS_EP: PEiD
+rule PIRIT_v15_Hint_DOS_EP_Duplicate_1: PEiD
 {
     strings:
         $a = { B4 4D CD 21 E8 ?? ?? FD E8 ?? ?? B4 51 CD 21 }
@@ -31631,7 +31631,7 @@ rule Solidshield_Protector_V1X_Solidshield_Technologies: PEiD
 
 }
 
-rule yodas_Protector_v101_Ashkbiz_Danehkar: PEiD
+rule yodas_Protector_v101_Ashkbiz_Danehkar_Duplicate_1: PEiD
 {
     strings:
         $a = { 55 8B EC 53 56 57 E8 03 00 00 00 EB 01 ?? E8 86 00 00 00 E8 03 00 00 00 EB 01 ?? E8 79 00 00 00 E8 03 00 00 00 EB 01 ?? E8 A4 00 00 00 E8 03 00 00 00 EB 01 ?? E8 97 00 00 00 E8 03 00 00 00 EB 01 ?? E8 2D 00 00 00 E8 03 00 00 00 EB 01 ?? 60 E8 00 00 00 00 }
@@ -31704,7 +31704,7 @@ rule Borland_Cpp_1994_Hint_DOS_EP: PEiD
 
 }
 
-rule WATCOM_CCpp_additional: PEiD
+rule WATCOM_CCpp_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { E9 ?? ?? ?? ?? ?? ?? ?? ?? 57 41 }
@@ -32057,7 +32057,7 @@ rule Stony_Brook_Pascalp_v70: PEiD
 
 }
 
-rule NsPack_V11_LiuXingPing: PEiD
+rule NsPack_V11_LiuXingPing_Duplicate_1: PEiD
 {
     strings:
         $a = { 9C 60 E8 00 00 00 00 5D B8 57 84 40 00 2D 50 84 40 00 }
@@ -32757,7 +32757,7 @@ rule SCRAMB_v120_Hint_DOS_EP: PEiD
 
 }
 
-rule Obsidium_V1304_Obsidium_Software_additional: PEiD
+rule Obsidium_V1304_Obsidium_Software_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { EB 02 ?? ?? E8 ?? 00 00 00 }
@@ -33370,7 +33370,7 @@ rule FSG_v120_Eng_dulekxt_Microsoft_Visual_Cpp_60_70_additional: PEiD
 
 }
 
-rule XPack_167_COM: PEiD
+rule XPack_167_COM_Duplicate_1: PEiD
 {
     strings:
         $a = { E9 53 00 FF FD FF FB FF F9 FF BC 03 00 8B E5 4C 4C C3 }
@@ -33624,7 +33624,7 @@ rule MSLRH_v032a_fake_WWPack32_1x_emadicius_h: PEiD
 
 }
 
-rule Private_Personal_Packer_PPP_V102_ConquestOfTroycom: PEiD
+rule Private_Personal_Packer_PPP_V102_ConquestOfTroycom_Duplicate_1: PEiD
 {
     strings:
         $a = { E8 17 00 00 00 E8 68 00 00 00 FF 35 2C 37 00 10 E8 ED 01 00 00 6A 00 E8 2E 04 00 00 E8 41 04 00 00 A3 74 37 00 10 6A 64 E8 5F 04 00 00 E8 30 04 00 00 A3 78 37 00 10 6A 64 E8 4E 04 00 00 E8 1F 04 00 00 A3 7C 37 00 10 A1 74 37 00 10 8B 1D 78 37 00 10 2B D8 8B 0D 7C 37 00 10 2B C8 83 FB 64 73 0F 81 F9 C8 00 00 00 73 07 6A 00 E8 D9 03 00 00 C3 6A 0A 6A 07 6A 00 E8 D3 03 00 00 A3 20 37 00 10 50 6A 00 E8 DE 03 00 00 A3 24 37 00 10 FF 35 20 37 00 10 6A 00 E8 EA 03 00 00 A3 30 37 00 10 FF 35 24 37 00 10 E8 C2 03 00 00 A3 28 37 00 10 8B 0D 30 37 00 10 8B 3D 28 37 00 10 EB 09 49 C0 04 39 55 80 34 39 24 0B C9 }
@@ -33725,7 +33725,7 @@ rule eXPressor_10_beta_CGSoftLabs: PEiD
 
 }
 
-rule AHPack_01_FEUERRADER: PEiD
+rule AHPack_01_FEUERRADER_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 68 54 ?? ?? 00 B8 48 ?? ?? 00 FF 10 68 B3 ?? ?? 00 50 B8 44 ?? ?? 00 FF 10 68 00 }
@@ -33998,7 +33998,7 @@ rule CopyMinder_MicrocosmLtd_Sign_by_fly: PEiD
 
 }
 
-rule nSpack_V31_LiuXingPing: PEiD
+rule nSpack_V31_LiuXingPing_Duplicate_1: PEiD
 {
     strings:
         $a = { 9C 60 E8 00 00 00 00 5D 83 ED 07 8D 9D ?? ?? ?? ?? 8A 03 3C 00 74 }
@@ -34034,7 +34034,7 @@ rule HackStop_119_build_197_EXE: PEiD
 
 }
 
-rule PeCompact_2xx_Slim_Loader_BitSum_Technologies: PEiD
+rule PeCompact_2xx_Slim_Loader_BitSum_Technologies_Duplicate_1: PEiD
 {
     strings:
         $a = { B8 ?? ?? ?? ?? 50 64 FF 35 00 00 00 00 64 89 25 00 00 00 00 33 C0 89 08 50 45 43 32 00 }
@@ -34052,7 +34052,7 @@ rule _PseudoSigner_01_CrunchPE_Heuristic: PEiD
 
 }
 
-rule Watcom_CCpp: PEiD
+rule Watcom_CCpp_Duplicate_1: PEiD
 {
     strings:
         $a = { E9 ?? ?? ?? ?? ?? ?? ?? ?? 57 41 }
@@ -34098,7 +34098,7 @@ rule NsPack_V2X_LiuXingPing_additional: PEiD
 
 }
 
-rule eXpressor_v12_CGSoftLabs: PEiD
+rule eXpressor_v12_CGSoftLabs_Duplicate_1: PEiD
 {
     strings:
         $a = { 55 8B EC 81 EC D4 01 00 00 53 56 57 EB 0C 45 78 50 72 2D 76 }
@@ -36988,7 +36988,7 @@ rule ENcryptCOM_v306_Hint_DOS_EP: PEiD
 
 }
 
-rule PeStubOEP_v1x: PEiD
+rule PeStubOEP_v1x_Duplicate_1: PEiD
 {
     strings:
         $a = { 90 33 C9 33 D2 B8 ?? ?? ?? 00 B9 FF }
@@ -37217,7 +37217,7 @@ rule NFO_v1x_modified_additional: PEiD
 
 }
 
-rule BamBam_v001_Bedrock: PEiD
+rule BamBam_v001_Bedrock_Duplicate_1: PEiD
 {
     strings:
         $a = { 6A 14 E8 9A 05 00 00 8B D8 53 68 FB ?? ?? 00 E8 6C FD FF FF B9 05 00 00 00 8B F3 BF FB ?? ?? 00 53 F3 A5 E8 8D 05 00 00 8B 3D 03 ?? ?? 00 A1 2B ?? ?? 00 66 8B 15 2F ?? ?? 00 B9 80 ?? ?? 00 2B CF 89 45 E8 89 0D 6B ?? ?? 00 66 89 55 EC 8B 41 3C 33 D2 03 C1 }
@@ -37526,7 +37526,7 @@ rule _PseudoSigner_02_Macromedia_Flash_Projector_60: PEiD
 
 }
 
-rule Neolite_v20: PEiD
+rule Neolite_v20_Duplicate_1: PEiD
 {
     strings:
         $a = { 9E 37 ?? ?? 48 6F 4C }
@@ -37599,7 +37599,7 @@ rule ASPack_v100b_Alexey_Solodovnikov: PEiD
 
 }
 
-rule nSpack_V2x_LiuXingPing_additional: PEiD
+rule nSpack_V2x_LiuXingPing_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { 9C 60 E8 00 00 00 00 5D B8 07 00 00 00 2B E8 8D B5 }
@@ -37772,7 +37772,7 @@ rule SGI_Image_Graphics_format_Hint_FILE_START: PEiD
 
 }
 
-rule eXPressor_V1451_CGSoftLabs: PEiD
+rule eXPressor_V1451_CGSoftLabs_Duplicate_1: PEiD
 {
     strings:
         $a = { 55 8B EC 83 EC 58 53 56 57 83 65 DC 00 F3 EB 0C 65 58 50 72 2D 76 2E 31 2E 34 2E 00 A1 00 ?? ?? 00 05 00 ?? ?? 00 A3 08 ?? ?? 00 A1 08 ?? ?? 00 B9 81 ?? ?? 00 2B 48 18 89 0D 0C ?? ?? 00 83 3D }
@@ -38604,7 +38604,7 @@ rule Upack_v031_beta_Dwing_additional: PEiD
 
 }
 
-rule AHPack_01_FEUERRADER_additional: PEiD
+rule AHPack_01_FEUERRADER_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 66 9C BB ?? ?? ?? ?? 80 B3 00 10 40 00 90 4B 83 FB FF 75 F3 66 9D 61 }
@@ -38858,7 +38858,7 @@ rule EPExE_Pack_V14_lite_final_6aHguT_g_l_u_k_additional: PEiD
 
 }
 
-rule PESpin_V11_cyberbob: PEiD
+rule PESpin_V11_cyberbob_Duplicate_1: PEiD
 {
     strings:
         $a = { EB 01 68 60 E8 00 00 00 00 8B 1C 24 83 C3 12 81 2B E8 B1 06 00 FE 4B FD 82 2C 24 7D DE 46 00 0B E4 74 9E }
@@ -39994,7 +39994,7 @@ rule hmimys_Protect_v10_additional: PEiD
 
 }
 
-rule PE_Diminisher_V01_Teraphy_additional: PEiD
+rule PE_Diminisher_V01_Teraphy_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { 53 51 52 56 57 55 E8 00 00 00 00 }
@@ -40624,7 +40624,7 @@ rule _PseudoSigner_01_Neolite_20: PEiD
 
 }
 
-rule Obsidium_V1300_Obsidium_Software: PEiD
+rule Obsidium_V1300_Obsidium_Software_Duplicate_1: PEiD
 {
     strings:
         $a = { EB 04 ?? ?? ?? ?? E8 29 00 00 00 }
@@ -40833,7 +40833,7 @@ rule GameGuard_nProtect: PEiD
 
 }
 
-rule pirit_v15: PEiD
+rule pirit_v15_Duplicate_1: PEiD
 {
     strings:
         $a = { ?? ?? ?? 5B 24 55 50 44 FB 32 2E 31 5D }
@@ -42204,7 +42204,7 @@ rule Obsidium_v13037_Obsidium_Software: PEiD
 
 }
 
-rule Upack_V01X_V02X_Dwing_additional: PEiD
+rule Upack_V01X_V02X_Dwing_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { 1E B8 CD 7B CD 21 81 FB CD 7B 75 03 E9 87 00 33 DB 0E 1F 8C }
@@ -43152,7 +43152,7 @@ rule AntiDote_V1x_SIS_Team_additional: PEiD
 
 }
 
-rule Software_Compress_v12_BG_Software_Protect_Technologies: PEiD
+rule Software_Compress_v12_BG_Software_Protect_Technologies_Duplicate_1: PEiD
 {
     strings:
         $a = { E9 BE 00 00 00 60 8B 74 24 24 8B 7C 24 28 FC B2 80 33 DB A4 B3 02 E8 6D 00 00 00 73 F6 33 C9 E8 64 00 00 00 73 1C 33 C0 E8 5B 00 00 00 73 23 B3 02 41 B0 10 E8 4F 00 00 00 12 C0 73 F7 75 3F AA EB D4 E8 4D 00 00 00 2B CB 75 10 E8 42 00 00 00 EB 28 AC D1 E8 74 4D 13 C9 EB 1C 91 48 C1 E0 08 AC E8 2C 00 00 00 3D 00 7D 00 00 73 0A 80 FC 05 73 06 83 F8 7F 77 02 41 41 95 8B C5 B3 01 56 8B F7 2B F0 F3 A4 5E EB 8E 02 D2 75 05 8A 16 46 12 D2 C3 33 C9 41 E8 EE FF FF FF 13 C9 E8 E7 FF FF FF 72 F2 C3 2B 7C 24 28 89 7C 24 1C 61 C3 60 FF 74 24 24 6A 40 FF 95 1A 0F 41 00 89 44 24 1C 61 C2 04 00 E8 00 00 00 00 81 2C 24 3A 10 41 00 5D E8 00 00 00 00 81 2C 24 31 01 00 00 8B 85 2A 0F 41 00 29 04 24 }
@@ -43444,7 +43444,7 @@ rule Turbo_Pascal_v30_1985: PEiD
 
 }
 
-rule eXPressor_v1451_CGSoftLabs_additional: PEiD
+rule eXPressor_v1451_CGSoftLabs_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { 55 8B EC 83 EC 58 53 56 57 83 65 DC 00 F3 EB 0C 65 58 50 72 2D 76 2E 31 2E 34 2E 00 A1 00 ?? ?? 00 05 00 ?? ?? 00 A3 08 ?? ?? 00 A1 08 ?? ?? 00 B9 81 ?? ?? 00 2B 48 18 89 0D 0C ?? ?? 00 83 3D }
@@ -44244,7 +44244,7 @@ rule RLPack_FullEdition_V120_aPlib_043_ap0x_SignByfly_additional: PEiD
 
 }
 
-rule PEiD_Bundle_V100_BoB_BobSoft: PEiD
+rule PEiD_Bundle_V100_BoB_BobSoft_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 E8 21 02 00 00 8B 44 24 04 52 48 66 31 C0 66 81 38 4D 5A 75 F5 8B 50 3C 81 3C 02 50 45 00 00 75 E9 5A C2 04 00 60 89 DD 89 C3 8B 45 3C 8B 54 28 78 01 EA 52 8B 52 20 01 EA 31 C9 41 8B 34 8A }
@@ -44372,7 +44372,7 @@ rule UPX_Scrambler_RC_v1x_additional: PEiD
 
 }
 
-rule PE_Diminisher_v01_Teraphy: PEiD
+rule PE_Diminisher_v01_Teraphy_Duplicate_1: PEiD
 {
     strings:
         $a = { 53 51 52 56 57 55 E8 00 00 00 00 5D 8B D5 81 ED A2 30 40 00 2B 95 91 33 40 00 81 EA 0B 00 00 00 89 95 9A 33 40 00 80 BD 99 33 40 00 00 74 50 E8 02 01 00 00 8B FD 8D 9D 9A 33 40 00 8B 1B 8D 87 }
@@ -45309,7 +45309,7 @@ rule AVI_movie_file_additional: PEiD
 
 }
 
-rule RCryptor_V16d_Vaska: PEiD
+rule RCryptor_V16d_Vaska_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 90 61 61 80 7F F0 45 90 60 0F 85 1B 8B 1F FF 68 ?? ?? ?? ?? B8 ?? ?? ?? ?? 90 3D ?? ?? ?? ?? 74 06 80 30 ?? 40 EB F3 B8 ?? ?? ?? ?? 90 3D ?? ?? ?? ?? 74 06 80 30 ?? 40 EB F3 }
@@ -45589,7 +45589,7 @@ rule MSLRH_v032a_fake_MSVCpp_DLL_Method_4_emadicius: PEiD
 
 }
 
-rule Packman_V10_Brandon_LaCombe_additional: PEiD
+rule Packman_V10_Brandon_LaCombe_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 E8 00 00 00 00 5B 8D 5B C6 01 1B 8B 13 8D 73 14 6A 08 59 01 16 AD 49 75 FA }
@@ -45697,7 +45697,7 @@ rule _PseudoSigner_02_PENightMare_2_Beta_Anorganix: PEiD
 
 }
 
-rule Vpacker_ttui: PEiD
+rule Vpacker_ttui_Duplicate_1: PEiD
 {
     strings:
         $a = { 89 C6 C7 45 E0 01 00 00 00 F7 03 00 00 FF FF 75 18 0F B7 03 50 8B 45 D8 50 FF 55 F8 89 07 8B C3 E8 ?? FE FF FF 8B D8 EB 13 53 8B 45 D8 50 FF 55 F8 89 07 8B C3 E8 ?? FE FF FF 8B D8 83 C7 04 FF 45 E0 4E 75 C4 8B F3 83 3E 00 75 88 8B 45 E4 8B 40 10 03 45 DC 8B 55 14 83 C2 20 89 02 68 00 80 00 00 6A 00 8B 45 D4 50 FF 55 EC 8B 55 DC 8B 42 3C 03 45 DC 83 C0 04 8B D8 83 C3 14 8D 45 E0 50 6A 40 68 00 10 00 00 52 FF 55 E8 8D 43 60 }
@@ -45983,7 +45983,7 @@ rule _PseudoSigner_01_CodeSafe_20: PEiD
 
 }
 
-rule EXECryptor_V21X_softcompletecom: PEiD
+rule EXECryptor_V21X_softcompletecom_Duplicate_1: PEiD
 {
     strings:
         $a = { 83 C6 14 8B 55 FC E9 ?? FF FF FF }
@@ -46150,7 +46150,7 @@ rule Thinstall_Embedded_2717_2719_Jitit: PEiD
 
 }
 
-rule NsPack_V2X_LiuXingPing: PEiD
+rule NsPack_V2X_LiuXingPing_Duplicate_1: PEiD
 {
     strings:
         $a = { 6E 73 70 61 63 6B 24 40 }
@@ -46240,7 +46240,7 @@ rule Microsoft_Visual_Cpp_v4x_additional: PEiD
 
 }
 
-rule NsPack_3x_Liu_Xing_Ping: PEiD
+rule NsPack_3x_Liu_Xing_Ping_Duplicate_1: PEiD
 {
     strings:
         $a = { 9C 60 E8 00 00 00 00 5D 83 ED 07 8D }
@@ -46286,7 +46286,7 @@ rule MEW_11_SE_v12_Northfox: PEiD
 
 }
 
-rule PEiD_Bundle_V102_BoB_BobSoft: PEiD
+rule PEiD_Bundle_V102_BoB_BobSoft_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 E8 9C 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 36 ?? ?? ?? 2E ?? ?? ?? 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 01 00 00 80 00 00 00 00 4B 65 72 6E 65 6C 33 32 2E 44 }
@@ -46618,7 +46618,7 @@ rule PluginToExe_v101_BoB_BobSoft: PEiD
 
 }
 
-rule Packman_V10_Brandon_LaCombe: PEiD
+rule Packman_V10_Brandon_LaCombe_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 E8 00 00 00 00 5B 8D 5B C6 01 1B 8B 13 8D 73 14 6A 08 59 01 16 AD 49 75 FA }
@@ -46871,7 +46871,7 @@ rule Vx_Modification_of_Hi924_Hint_DOS_EP: PEiD
 
 }
 
-rule Crypto_Lock_v202_Eng_Ryan_Thian: PEiD
+rule Crypto_Lock_v202_Eng_Ryan_Thian_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 BE 15 90 40 00 8D BE EB 7F FF FF 57 83 CD FF EB 10 90 90 90 90 90 90 8A 06 46 88 07 47 }
@@ -47614,7 +47614,7 @@ rule CreateInstall_Stub_v2003xx_Gentee: PEiD
 
 }
 
-rule Borland_Cpp: PEiD
+rule Borland_Cpp_Duplicate_1: PEiD
 {
     strings:
         $a = { A1 C1 E0 02 }
@@ -47888,7 +47888,7 @@ rule XorCopy_v10_Hint_DOS_EP: PEiD
 
 }
 
-rule PIRIT_v15_additional: PEiD
+rule PIRIT_v15_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { B4 4D CD 21 E8 ?? ?? FD E8 ?? ?? B4 51 CD 21 }
@@ -48488,7 +48488,7 @@ rule _022_beta_shoooo: PEiD
 
 }
 
-rule aPack_v098b_COM: PEiD
+rule aPack_v098b_COM_Duplicate_1: PEiD
 {
     strings:
         $a = { BE ?? ?? BF ?? ?? 8B CF FC 57 F3 A4 C3 BF ?? ?? 57 57 BE ?? ?? B2 ?? BD ?? ?? 50 A4 }
@@ -48787,7 +48787,7 @@ rule PassEXE_v20: PEiD
 
 }
 
-rule NsPacK_V30_LiuXingPing: PEiD
+rule NsPacK_V30_LiuXingPing_Duplicate_1: PEiD
 {
     strings:
         $a = { 9C 60 E8 00 00 00 00 5D B8 07 00 00 00 2B E8 8D B5 ?? ?? ?? ?? 66 8B 06 66 83 F8 00 74 }
@@ -49823,7 +49823,7 @@ rule ABC_Cryptor_10_by_ZloY: PEiD
 
 }
 
-rule Nullsoft_PiMP_Install_System_v1x: PEiD
+rule Nullsoft_PiMP_Install_System_v1x_Duplicate_1: PEiD
 {
     strings:
         $a = { 83 EC 0C 53 56 57 FF 15 ?? ?? 40 00 05 E8 03 00 00 BE ?? ?? ?? 00 89 44 24 10 B3 20 FF 15 28 ?? 40 00 68 00 04 00 00 FF 15 ?? ?? 40 00 50 56 FF 15 ?? ?? 40 00 80 3D ?? ?? ?? 00 22 75 08 80 C3 02 BE ?? ?? ?? 00 8A 06 8B 3D ?? ?? 40 00 84 C0 74 ?? 3A C3 74 }
@@ -50299,7 +50299,7 @@ rule eXPressor_10_beta_CGSoftLabs_additional: PEiD
 
 }
 
-rule Petite_v22_wwwun4seencompetite: PEiD
+rule Petite_v22_wwwun4seencompetite_Duplicate_1: PEiD
 {
     strings:
         $a = { B8 00 ?? ?? 00 ?? 00 ?? ?? ?? ?? ?? ?? ?? ?? 00 00 }
@@ -50535,7 +50535,7 @@ rule PoPa_001_Packer_on_Pascal_bagie_additional: PEiD
 
 }
 
-rule PeStubOEP_v1x_additional: PEiD
+rule PeStubOEP_v1x_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { B8 ?? ?? ?? 00 FF E0 }
@@ -50975,7 +50975,7 @@ rule PseudoSigner_02_JDPack_1x_JDProtect_09: PEiD
 
 }
 
-rule RCryptor_v15_Vaska: PEiD
+rule RCryptor_v15_Vaska_Duplicate_1: PEiD
 {
     strings:
         $a = { 83 2C 24 4F 68 ?? ?? ?? ?? FF 54 24 04 83 44 24 04 4F }
@@ -51713,7 +51713,7 @@ rule MPRESS_V071a_V075b_MATCODE_Software_20080310: PEiD
 
 }
 
-rule PEtite_v14: PEiD
+rule PEtite_v14_Duplicate_1: PEiD
 {
     strings:
         $a = { 66 9C 60 50 8B D8 03 ?? 68 54 BC ?? ?? 6A ?? FF 50 14 8B CC }
@@ -53722,7 +53722,7 @@ rule JAM_v211: PEiD
 
 }
 
-rule Can2Exe_v001_additional: PEiD
+rule Can2Exe_v001_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { 0E 1F 0E 07 E8 ?? ?? E8 ?? ?? 3A C6 73 }
@@ -53891,7 +53891,7 @@ rule Packman_0001_bubba_: PEiD
 
 }
 
-rule PEtite_v14_additional: PEiD
+rule PEtite_v14_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { 59 F3 A5 83 C8 FF 8B DF AB 40 AB 40 }
@@ -53963,7 +53963,7 @@ rule WWPACK_v302_v302a_v304_Relocations_pack_Hint_DOS_EP: PEiD
 
 }
 
-rule eXPressor_V12_CGSoftLabs: PEiD
+rule eXPressor_V12_CGSoftLabs_Duplicate_2: PEiD
 {
     strings:
         $a = { 55 8B EC 81 EC D4 01 00 00 53 56 57 EB 0C 45 78 50 72 2D 76 2E 31 2E 32 2E 2E }
@@ -54192,7 +54192,7 @@ rule RCryptor_v13_v14_Vaska: PEiD
 
 }
 
-rule Borland_Component: PEiD
+rule Borland_Component_Duplicate_1: PEiD
 {
     strings:
         $a = { E9 ?? ?? FE FF 8D 40 00 }
@@ -54612,7 +54612,7 @@ rule Hyings_PE_Armor_076_Hying_CCG_additional: PEiD
 
 }
 
-rule UPXHiT_001_dj_siba: PEiD
+rule UPXHiT_001_dj_siba_Duplicate_1: PEiD
 {
     strings:
         $a = { 94 BC ?? ?? 43 00 B9 ?? 00 00 00 80 34 0C ?? E2 FA 94 FF E0 61 00 00 00 00 00 00 }
@@ -55695,7 +55695,7 @@ rule PseudoSigner_02_ASProtect_Anorganix: PEiD
 
 }
 
-rule Special_EXE_Pasword_Protector_v101_Eng_Pavol_Cerven: PEiD
+rule Special_EXE_Pasword_Protector_v101_Eng_Pavol_Cerven_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 E8 00 00 00 00 5D 81 ED 06 00 00 00 89 AD 8C 01 00 00 8B C5 2B 85 FE 75 00 00 89 85 3E 77 00 00 8D 95 C6 77 00 00 8D 8D FF 77 00 00 55 68 00 20 00 00 51 52 6A 00 FF 95 04 7A 00 00 5D 6A 00 FF 95 FC 79 00 00 8D 8D 60 78 00 00 8D 95 85 01 00 00 55 68 00 }
@@ -55896,7 +55896,7 @@ rule Cracked_by_AutoHack_1_additional: PEiD
 
 }
 
-rule eXPressor_v12_CGSoftLabs_additional: PEiD
+rule eXPressor_v12_CGSoftLabs_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { 45 78 50 72 2D 76 2E 31 2E 32 2E }
@@ -56701,7 +56701,7 @@ rule PKLITE_v112_v115_v120_2_Hint_DOS_EP: PEiD
 
 }
 
-rule Upack_V01X_V02X_Dwing: PEiD
+rule Upack_V01X_V02X_Dwing_Duplicate_1: PEiD
 {
     strings:
         $a = { 1E B8 CD 7B CD 21 81 FB CD 7B 75 03 E9 87 00 33 DB 0E 1F 8C }
@@ -56947,7 +56947,7 @@ rule EXE2COM_Method_4_Hint_DOS_EP: PEiD
 
 }
 
-rule nSpack_V13_LiuXingPing: PEiD
+rule nSpack_V13_LiuXingPing_Duplicate_1: PEiD
 {
     strings:
         $a = { 9C 60 E8 00 00 00 00 5D B8 B3 85 40 00 2D AC 85 40 00 }
@@ -56984,7 +56984,7 @@ rule TaiShanXiangYu_LockSoft_DLL_V10_zlocksoft: PEiD
 
 }
 
-rule CAN2EXE_v001: PEiD
+rule CAN2EXE_v001_Duplicate_1: PEiD
 {
     strings:
         $a = { 26 8E 06 ?? ?? B9 ?? ?? 33 C0 8B F8 F2 AE E3 ?? 26 38 05 75 ?? EB ?? E9 }
@@ -58088,7 +58088,7 @@ rule Trap_113_EXE: PEiD
 
 }
 
-rule Morphine_v27_Holy_Father_Ratter29A: PEiD
+rule Morphine_v27_Holy_Father_Ratter29A_Duplicate_1: PEiD
 {
     strings:
         $a = { 00 00 00 00 6B 65 72 6E 65 6C 33 32 2E 64 6C 6C 00 00 47 65 74 50 72 6F 63 41 64 64 72 65 73 73 00 00 4C 6F 61 64 4C 69 62 72 61 72 79 41 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 00 }
@@ -58784,7 +58784,7 @@ rule Phonebook_configuration_file: PEiD
 
 }
 
-rule Sc_Obfuscator_SuperCRacker: PEiD
+rule Sc_Obfuscator_SuperCRacker_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 33 C9 8B 1D ?? ?? ?? ?? 03 1D ?? ?? ?? ?? 8A 04 19 84 C0 74 09 3C ?? 74 05 34 ?? 88 04 19 41 3B 0D ?? ?? ?? ?? 75 E7 A1 ?? ?? ?? ?? 01 05 ?? ?? ?? ?? 61 FF 25 ?? ?? ?? ?? 00 00 }
@@ -60089,7 +60089,7 @@ rule Prepared_by_SLR_OPTLINK_Hint_DOS_EP: PEiD
 
 }
 
-rule iLUCRYPT_v4018_EXE: PEiD
+rule iLUCRYPT_v4018_EXE_Duplicate_1: PEiD
 {
     strings:
         $a = { 8B EC FA C7 ?? ?? ?? ?? 4C 4C C3 FB BF ?? ?? B8 ?? ?? 2E ?? ?? D1 C8 4F 81 }
@@ -60477,7 +60477,7 @@ rule _PseudoSigner_01_VOB_ProtectCD_5_Anorganix: PEiD
 
 }
 
-rule Software_Compress_V12_BG_Software_Protect_Technologies_additional: PEiD
+rule Software_Compress_V12_BG_Software_Protect_Technologies_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { E9 B8 00 00 00 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 00 00 00 00 00 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 00 53 65 63 75 72 65 45 58 45 20 45 78 65 63 75 74 61 62 6C 65 20 46 69 6C 65 20 50 72 6F 74 65 63 74 6F 72 0D 0A 43 6F 70 79 72 69 67 68 74 28 63 29 20 32 30 30 34 2D 32 30 30 37 20 5A 69 70 57 4F 52 58 20 54 65 63 68 6E 6F 6C 6F 67 69 65 73 2C 20 4C 4C 43 0D 0A 50 6F 72 74 69 6F 6E 73 20 43 6F 70 79 72 69 67 68 74 20 28 63 29 20 31 39 39 37 2D 32 30 30 31 20 4C 65 65 20 48 61 73 69 75 6B 0D 0A 41 6C 6C 20 52 69 67 68 74 73 20 52 65 73 65 72 76 65 64 2E 0D 0A 00 00 8B 44 24 04 23 05 ?? ?? ?? ?? ?? ?? ?? ?? 00 00 83 C4 04 FE 05 ?? ?? ?? ?? 0B C0 74 02 FF E0 8B E5 5D C2 0C 00 80 3D ?? ?? ?? ?? 00 75 13 50 2B C0 50 E8 ?? ?? 00 00 83 C4 04 58 FE 05 ?? ?? ?? ?? ?? 94 9A 8D 91 9A 93 CC CD 00 B8 93 90 9D 9E 93 BE 93 93 90 9C 00 B8 93 90 9D 9E 93 B9 8D 9A 9A 00 B8 9A 8B B2 90 9B 8A 93 9A B7 9E 91 9B 93 9A BE 00 B8 9A 8B B2 90 }
@@ -60697,7 +60697,7 @@ rule RPoly_crypt_10b_from_Vaska_18032007_1905: PEiD
 
 }
 
-rule RLP_v073beta_ap0x: PEiD
+rule RLP_v073beta_ap0x_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 8B DD E8 00 00 00 00 5D 95 32 C0 95 89 9D 80 00 00 00 B8 42 31 40 00 BB 41 30 40 00 2B C3 03 C5 33 D2 8A 10 40 B9 ?? ?? 00 00 8B F9 30 10 8A 10 40 49 75 F8 64 EF 86 3D 30 00 00 0F B9 FF 4B 89 52 5C 4C BD 77 C2 0C CE 88 4E 2D E8 00 00 00 5D 0D DB 5E 56 }
@@ -60898,7 +60898,7 @@ rule WATCOM_CCpp_DLL: PEiD
 
 }
 
-rule Crypto_Lock_V202_Eng_Ryan_Thian_additional: PEiD
+rule Crypto_Lock_V202_Eng_Ryan_Thian_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { 5B 81 E3 00 FF FF FF 66 81 3B 4D 5A 75 33 8B F3 03 73 3C 81 3E 50 45 00 00 75 26 0F B7 46 18 8B C8 69 C0 AD 0B 00 00 F7 E0 2D AB 5D 41 4B 69 C9 DE C0 00 00 03 C1 }
@@ -60952,7 +60952,7 @@ rule SPLayer_v008: PEiD
 
 }
 
-rule PEiD_Bundle_v101_BoB_BobSoft: PEiD
+rule PEiD_Bundle_v101_BoB_BobSoft_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 E8 23 02 00 00 8B 44 24 04 52 48 66 31 C0 66 81 38 4D 5A 75 F5 8B 50 3C 81 3C 02 50 45 00 00 75 E9 5A C2 04 00 60 89 DD 89 C3 8B 45 3C 8B 54 28 78 01 EA 52 8B 52 20 01 EA 31 C9 41 8B 34 8A }
@@ -60979,7 +60979,7 @@ rule EXE32Pack_v138_additional: PEiD
 
 }
 
-rule Upack_v032_beta_Dwing_additional: PEiD
+rule Upack_v032_beta_Dwing_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { E9 ?? ?? ?? ?? 42 79 44 77 69 6E 67 40 00 00 00 50 45 00 00 4C 01 02 ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 32 }
@@ -61501,7 +61501,7 @@ rule _PseudoSigner_02_Microsoft_Visual_Cpp_70_DLL_Anorganix: PEiD
 
 }
 
-rule Goats_Mutilator_V16_Goat_e0f: PEiD
+rule Goats_Mutilator_V16_Goat_e0f_Duplicate_1: PEiD
 {
     strings:
         $a = { E8 EA 0B 00 00 ?? ?? ?? 8B 1C 79 F6 63 D8 8D 22 B0 BF F6 49 08 C3 02 BD 3B 6C 29 46 13 28 5D }
@@ -62465,7 +62465,7 @@ rule RLPack_V119_Dll_LZMA_430_ap0xnbsp_nbsp_Sign_by_fly: PEiD
 
 }
 
-rule eXPressor_V10_CGSoftLabs: PEiD
+rule eXPressor_V10_CGSoftLabs_Duplicate_1: PEiD
 {
     strings:
         $a = { E9 35 14 00 00 E9 31 13 00 00 E9 98 12 00 00 E9 EF 0C 00 00 E9 42 13 00 00 E9 E9 02 00 00 E9 EF 0B 00 00 E9 1B 0D 00 00 }
@@ -63397,7 +63397,7 @@ rule EXECryptor_224_StrongbitSoftComplete_Development_h1: PEiD
 
 }
 
-rule AsCrypt_V01_SToRM: PEiD
+rule AsCrypt_V01_SToRM_Duplicate_1: PEiD
 {
     strings:
         $a = { B9 ?? ?? ?? ?? 81 ?? ?? ?? ?? ?? ?? 83 04 24 04 ?? 90 90 90 83 E9 03 E2 EC EB ?? 00 00 00 00 00 00 00 00 00 00 }
@@ -64075,7 +64075,7 @@ rule EXECryptor_239_DLL_minimum_protection_additional: PEiD
 
 }
 
-rule PE_Armor_v07x_Hying: PEiD
+rule PE_Armor_v07x_Hying_Duplicate_1: PEiD
 {
     strings:
         $a = { 60 E8 00 00 00 00 5D 81 ED ?? ?? ?? ?? 8D B5 ?? ?? ?? ?? 55 56 }
@@ -64093,7 +64093,7 @@ rule NsPack_V11_LiuXingPing_additional: PEiD
 
 }
 
-rule eXpressor_v10_CGSoftLabs_additional: PEiD
+rule eXpressor_v10_CGSoftLabs_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { E9 35 14 00 00 E9 31 13 00 00 E9 98 12 00 00 E9 EF 0C 00 00 E9 42 13 }
@@ -65067,7 +65067,7 @@ rule PE_PaCK_v10_C_Copyright_1998_by_ANAKiN: PEiD
 
 }
 
-rule yodas_Protector_V10b_Ashkbiz_Danehkar: PEiD
+rule yodas_Protector_V10b_Ashkbiz_Danehkar_Duplicate_1: PEiD
 {
     strings:
         $a = { 55 8B EC 53 56 57 60 E8 00 00 00 00 5D 81 ED 4C 32 40 00 E8 03 00 00 00 EB 01 ?? B9 EA 47 40 00 81 E9 E9 32 40 00 8B D5 81 C2 E9 32 40 00 8D 3A 8B F7 33 C0 E8 04 00 00 00 90 EB 01 ?? E8 03 00 00 00 EB 01 ?? AC }
@@ -65735,7 +65735,7 @@ rule Unnamed_Scrambler_11C_p0ke_additional: PEiD
 
 }
 
-rule Obsidium_v1304_Obsidium_Software: PEiD
+rule Obsidium_v1304_Obsidium_Software_Duplicate_1: PEiD
 {
     strings:
         $a = { EB 02 ?? ?? E8 25 00 00 00 EB 04 ?? ?? ?? ?? EB 01 ?? 8B 54 24 0C EB 01 ?? 83 82 B8 00 00 00 23 EB 01 ?? 33 C0 EB 02 ?? ?? C3 EB 02 ?? ?? EB 04 ?? ?? ?? ?? 64 67 FF 36 00 00 EB 03 ?? ?? ?? 64 67 89 26 00 00 EB 02 ?? ?? EB 01 ?? 50 EB 01 ?? 33 C0 EB 01 }
@@ -65792,7 +65792,7 @@ rule kkrunchy_023_alpha_Ryd: PEiD
 
 }
 
-rule EXECryptor_V21X_SoftCompletecom_additional: PEiD
+rule EXECryptor_V21X_SoftCompletecom_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { E9 ?? ?? ?? ?? 66 9C 60 50 8D 88 ?? ?? ?? ?? 8D 90 04 16 ?? ?? 8B DC 8B E1 }
@@ -65848,7 +65848,7 @@ rule PseudoSigner_01_Borland_Delphi_30_additional: PEiD
 
 }
 
-rule Can2Exe_v001_Hint_DOS_EP: PEiD
+rule Can2Exe_v001_Hint_DOS_EP_Duplicate_1: PEiD
 {
     strings:
         $a = { 0E 1F 0E 07 E8 ?? ?? E8 ?? ?? 3A C6 73 }
@@ -67113,7 +67113,7 @@ rule EXE2COM_Limited: PEiD
 
 }
 
-rule RCryptor_v16c_Vaska: PEiD
+rule RCryptor_v16c_Vaska_Duplicate_1: PEiD
 {
     strings:
         $a = { 8B C7 03 04 24 2B C7 80 38 50 0F 85 1B 8B 1F FF 68 ?? ?? ?? ?? B8 ?? ?? ?? ?? 3D ?? ?? ?? ?? 74 06 80 30 ?? 40 EB }
@@ -67612,7 +67612,7 @@ rule PESpin_v01_Cyberbob_h_additional: PEiD
 
 }
 
-rule EXECryptor_V21X_softcompletecom_: PEiD
+rule EXECryptor_V21X_softcompletecom__Duplicate_1: PEiD
 {
     strings:
         $a = { 83 C6 14 8B 55 FC E9 ?? FF FF FF }
@@ -67848,7 +67848,7 @@ rule XPack_167_com_additional: PEiD
 
 }
 
-rule Borland_Delphi_DLL: PEiD
+rule Borland_Delphi_DLL_Duplicate_1: PEiD
 {
     strings:
         $a = { 55 8B EC 83 }
@@ -68180,7 +68180,7 @@ rule PseudoSigner_02_CD_Cops_II: PEiD
 
 }
 
-rule UPolyx_04_by_delikon: PEiD
+rule UPolyx_04_by_delikon_Duplicate_1: PEiD
 {
     strings:
         $a = { C3 ?? ?? ?? ?? ?? 83 EC 04 89 }
@@ -68234,7 +68234,7 @@ rule REC_v034_3: PEiD
 
 }
 
-rule NeoLite_v20_additional: PEiD
+rule NeoLite_v20_additional_Duplicate_1: PEiD
 {
     strings:
         $a = { E9 ?? ?? ?? ?? ?? ?? ?? ?? 57 41 54 43 4F 4D ?? 43 2F 43 2B 2B 33 32 ?? 52 75 }
@@ -68253,7 +68253,7 @@ rule Werus_Crypter_10_Kas: PEiD
 
 }
 
-rule eXPressor_V13_CGSoftLabs: PEiD
+rule eXPressor_V13_CGSoftLabs_Duplicate_1: PEiD
 {
     strings:
         $a = { 55 8B EC 83 EC ?? 53 56 57 EB 0C 45 }
@@ -68390,7 +68390,7 @@ rule eXPressor_V145x_CGSoftLabs_additional: PEiD
 
 }
 
-rule EXE_Shield_v05_Smoke: PEiD
+rule EXE_Shield_v05_Smoke_Duplicate_1: PEiD
 {
     strings:
         $a = { E8 04 00 00 00 83 60 EB 0C 5D EB 05 45 55 EB 04 B8 EB F9 00 C3 E8 00 00 00 00 5D 81 ED BC 1A 40 00 EB 01 00 8D B5 46 1B 40 00 BA B3 0A 00 00 EB 01 00 8D 8D F9 25 40 00 8B 09 E8 14 00 00 00 83 EB 01 00 8B FE E8 00 00 00 00 58 83 C0 07 50 C3 00 EB 04 58 40 50 C3 8A 06 46 EB 01 00 D0 C8 E8 14 00 00 00 83 EB 01 00 2A C2 E8 00 00 00 00 5B 83 C3 07 53 C3 00 EB 04 5B 43 53 C3 EB 01 00 32 C2 E8 0B 00 00 00 00 32 C1 EB 01 00 C0 C0 02 EB 09 2A C2 5B EB 01 00 43 53 C3 88 07 EB 01 00 47 4A 75 B4 90 }

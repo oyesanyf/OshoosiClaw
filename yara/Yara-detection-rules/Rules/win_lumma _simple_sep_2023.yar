@@ -9,9 +9,9 @@ rule win_lumma_simple_strings
 	strings:
 		
 		$s1 = "Binedx765ance Chaedx765in Waledx765let" wide
-		$s2 = "%appdaedx765ta%\\Moedx765zilla\\Firedx765efox\\Profedx765iles"
-		$s3 = "\\Locedx765al Extensedx765ion Settinedx765gs\\" 
-		$s4 = "%appdedx765ata%\\Opedx765era Softwedx765are\\Opedx765era GX Staedx765ble"
+		$s2 = "%appdaedx765ta%\\\\\\Moedx765zilla\\\\\\Firedx765efox\\\\\\Profedx765iles"
+		$s3 = "\\\\\\Locedx765al Extensedx765ion Settinedx765gs\\" 
+		$s4 = "%appdedx765ata%\\\\\\Opedx765era Softwedx765are\\\\\\Opedx765era GX Staedx765ble"
 
 
 		/*

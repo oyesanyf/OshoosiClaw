@@ -7,7 +7,7 @@
 
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
-import "androguard"
+// // import "androguard"
 
 
 rule andr_sk_bank
@@ -26,10 +26,10 @@ rule andr_sk_bank
 		$str_5 = "com.ahnlab.v3mobileplus"
 
 	condition:
-		androguard.package_name("com.qbjkyd.rhsxa") or
-		androguard.certificate.sha1("543382EDDAFC05B435F13BBE97037BB335C2948B") or
-		(androguard.permission(/android.permission.RECEIVE_SMS/) and
-		androguard.permission(/android.permission.INTERNET/) and 
-		androguard.permission(/android.permission.RECEIVE_BOOT_COMPLETED/) and 
-		all of ($str_*))
+// 		androguard.package_name("com.qbjkyd.rhsxa") or (Disabled by Oshoosi Hardener)
+// 		androguard.certificate.sha1("543382EDDAFC05B435F13BBE97037BB335C2948B") or (Disabled by Oshoosi Hardener)
+// 		(androguard.permission(/android.permission.RECEIVE_SMS/) and (Disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.INTERNET/) and  (Disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.RECEIVE_BOOT_COMPLETED/) and  (Disabled by Oshoosi Hardener)
+		all of ($str_*)
 }

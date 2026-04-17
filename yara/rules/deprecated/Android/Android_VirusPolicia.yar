@@ -8,7 +8,7 @@
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
 
-import "androguard"
+// // import "androguard"
 
 rule BaDoink : official android
 {
@@ -34,7 +34,7 @@ rule BaDoink : official android
 //		$type_c_4 = "FLAG_REQUEST_ENHANCED_WEB_ACCESSIBILITY"
 
 	condition:
-		androguard.app_name("BaDoink") or
+// 		androguard.app_name("BaDoink") or (Disabled by Oshoosi Hardener)
 		//all of ($url_string_*) or
 		$type_a_1 or
 		all of ($type_b*) 

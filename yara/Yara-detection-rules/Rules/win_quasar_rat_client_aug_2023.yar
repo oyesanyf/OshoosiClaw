@@ -14,9 +14,9 @@ rule win_quasar_rat_client
 	
 		$s1 = "Quasar Client" ascii wide
 		$s2 = "Quasar.Client.Properties.Resources" ascii wide
-		$s3 = "Google\\Chrome\\User Data\\Default\\" wide
-		$s4 = "\\Mozilla\\Firefox\\Profiles" wide
-		$s5 = "Yandex\\YandexBrowser\\User Data\\Default\\" wide
+		$s3 = "Google\\\\\\Chrome\\User Data\\Default\\" wide
+		$s4 = "\\\\\\Mozilla\\\\\\Firefox\\\\\\Profiles" wide
+		$s5 = "Yandex\\\\\\YandexBrowser\\User Data\\Default\\" wide
 		
 	condition:
 			uint16(0) == 0x5a4d 

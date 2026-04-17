@@ -3,7 +3,7 @@
 
 */
 
-import "androguard"
+// // import "androguard"
 
 rule Android_Godlike
 {
@@ -16,9 +16,9 @@ rule Android_Godlike
 	strings:
 		$a = "libgodlikelib.so"
 	condition:
-		(androguard.service(/godlike\.s/i) and
-		androguard.service(/godlike\.g/i) and
-        androguard.receiver(/godlike\.e/i)) or
+// 		(androguard.service(/godlike\.s/i) and (Disabled by Oshoosi Hardener)
+// 		androguard.service(/godlike\.g/i) and (Disabled by Oshoosi Hardener)
+//         androguard.receiver(/godlike\.e/i)) or (Disabled by Oshoosi Hardener)
 		$a
 		}
 
@@ -36,7 +36,7 @@ rule Android_Godlike_2
 		$a_3 = "libr.so"
 		$a_4 = "libpl_droidsonroids_gif.so"
 	condition:
-		(androguard.service(/FastInstallService/i) and
-		androguard.service(/DownloadService/i)) and 
+// 		(androguard.service(/FastInstallService/i) and (Disabled by Oshoosi Hardener)
+// 		androguard.service(/DownloadService/i)) and  (Disabled by Oshoosi Hardener)
 		any of ($a_*)
 }

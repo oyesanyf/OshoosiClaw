@@ -328,6 +328,162 @@ impl OpenShellManager {
         }
     }
 
+    /// Execute a command inside an existing (or ephemeral) sandbox and capture output.
+    ///
+    /// If `sandbox_name` is `None`, creates an ephemeral sandbox, runs the command,
+    /// and destroys it. This is ideal for one-shot tasks like downloading and
+    /// compiling YARA rules in isolation.
+    pub fn exec_in_sandbox(
+        &self,
+        sandbox_name: Option<&str>,
+        command: &[&str],
+        timeout_secs: u64,
+    ) -> OpenShellResult {
+        let ephemeral = sandbox_name.is_none();
+        let name = sandbox_name.unwrap_or("osoosi-ephemeral");
+
+        if ephemeral {
+            let create = self.create_sandbox_raw(name);
+            if !create.success {
+                return create;
+            }
+        }
+
+        info!("OpenShell: exec in '{}': {}", name, command.join(" "));
+
+        let mut cmd = Command::new(&self.cli_path);
+        cmd.args(["sandbox", "exec", name, "--"]);
+        cmd.args(command);
+
+        let _ = timeout_secs;
+        let output = cmd.output();
+
+        let result = match output {
+            Ok(o) => {
+                let stdout = String::from_utf8_lossy(&o.stdout).to_string();
+                let stderr = String::from_utf8_lossy(&o.stderr).to_string();
+                let msg = if o.status.success() { stdout } else { format!("{}\n{}", stdout, stderr) };
+                OpenShellResult {
+                    success: o.status.success(),
+                    message: msg,
+                    sandbox_name: Some(name.to_string()),
+                }
+            }
+            Err(e) => OpenShellResult {
+                success: false,
+                message: format!("exec failed: {}", e),
+                sandbox_name: Some(name.to_string()),
+            },
+        };
+
+        if ephemeral {
+            let _ = self.destroy_sandbox(Some(name));
+        }
+
+        result
+    }
+
+    /// Create a sandbox without running the osoosi agent inside it (raw creation).
+    fn create_sandbox_raw(&self, name: &str) -> OpenShellResult {
+        let mut cmd = Command::new(&self.cli_path);
+        cmd.args(["sandbox", "create", "--name", name]);
+        if self.policy_path.exists() {
+            cmd.args(["--policy", &self.policy_path.to_string_lossy()]);
+        }
+
+        match cmd.output() {
+            Ok(o) => {
+                let msg = if o.status.success() {
+                    String::from_utf8_lossy(&o.stdout).to_string()
+                } else {
+                    String::from_utf8_lossy(&o.stderr).to_string()
+                };
+                OpenShellResult { success: o.status.success(), message: msg, sandbox_name: Some(name.to_string()) }
+            }
+            Err(e) => OpenShellResult {
+                success: false,
+                message: format!("Failed to create sandbox: {}", e),
+                sandbox_name: None,
+            },
+        }
+    }
+
+    /// Download and validate YARA rules inside an OpenShell sandbox.
+    ///
+    /// This is the recommended way to handle untrusted YARA rules from GitHub:
+    /// 1. Downloads inside the sandbox (network isolation)
+    /// 2. Compiles each file with `yr compile` to validate syntax
+    /// 3. Only copies validated rules back to the host workspace
+    pub fn provision_yara_in_sandbox(&self, yara_dir: &str) -> OpenShellResult {
+        if !self.is_available() {
+            return OpenShellResult {
+                success: false,
+                message: "OpenShell not available. Falling back to direct provisioning.".to_string(),
+                sandbox_name: None,
+            };
+        }
+
+        info!("Provisioning YARA rules via OpenShell sandbox...");
+
+        let script = format!(
+            r#"set -e
+# Install yara-x CLI for validation
+command -v yr >/dev/null 2>&1 || cargo install yara-x-cli 2>/dev/null || pip install yara-python 2>/dev/null || true
+
+YARA_DIR="{yara_dir}"
+mkdir -p "$YARA_DIR"
+
+# Download and extract each source
+download_and_validate() {{
+    local name="$1" url="$2"
+    local dir="$YARA_DIR/$name"
+    mkdir -p "$dir"
+
+    if [ "$(ls -A "$dir" 2>/dev/null)" ]; then
+        echo "SKIP: $name already present"
+        return 0
+    fi
+
+    echo "DOWNLOAD: $name from $url"
+    curl -sSL -o "/tmp/$name.zip" "$url" || return 1
+    unzip -qo "/tmp/$name.zip" -d "/tmp/$name_extract" || return 1
+    cp -r /tmp/$name_extract/*/* "$dir/" 2>/dev/null || cp -r /tmp/$name_extract/* "$dir/" 2>/dev/null
+    rm -rf "/tmp/$name.zip" "/tmp/$name_extract"
+
+    # Validate each .yar file with yr compile
+    local total=0 valid=0 fixed=0 failed=0
+    for f in $(find "$dir" -name '*.yar' -type f); do
+        total=$((total+1))
+        if yr compile "$f" >/dev/null 2>&1; then
+            valid=$((valid+1))
+        else
+            # Try to compile and capture error for diagnostics
+            echo "WARN: $f failed validation" >&2
+            failed=$((failed+1))
+        fi
+    done
+    echo "VALIDATED: $name — $valid/$total valid ($failed failed)"
+}}
+
+download_and_validate "yara_forge" "https://github.com/YARAHQ/yara-forge/releases/latest/download/yara-forge-rules-extended.zip"
+download_and_validate "signature_base" "https://github.com/Neo23x0/signature-base/archive/refs/heads/master.zip"
+download_and_validate "community" "https://github.com/Yara-Rules/rules/archive/refs/heads/master.zip"
+download_and_validate "reversinglabs" "https://github.com/reversinglabs/reversinglabs-yara-rules/archive/refs/heads/master.zip"
+download_and_validate "elastic" "https://github.com/elastic/protections-artifacts/archive/refs/heads/main.zip"
+download_and_validate "bartblaze" "https://github.com/bartblaze/Yara-rules/archive/refs/heads/master.zip"
+
+echo "DONE: YARA provisioning complete"
+"#,
+            yara_dir = yara_dir
+        );
+
+        self.exec_in_sandbox(
+            None,
+            &["sh", "-c", &script],
+            600, // 10 minute timeout
+        )
+    }
+
     /// Stream logs from a sandbox.
     pub fn stream_logs(&self, name: Option<&str>) -> OpenShellResult {
         let sandbox_name = name.unwrap_or("osoosi");

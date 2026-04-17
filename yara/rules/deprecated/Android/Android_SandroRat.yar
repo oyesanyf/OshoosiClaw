@@ -1,7 +1,7 @@
-import "androguard"
+// // import "androguard"
 
 
-rule SandroRat
+rule SandroRat_Duplicate_1
 {
 	meta:
 		author = "Jacob Soo Lead Re"
@@ -10,5 +10,5 @@ rule SandroRat
 		source = "https://blogs.mcafee.com/mcafee-labs/sandrorat-android-rat-targeting-polish-banking-users-via-e-mail-phishing/"
 
 	condition:
-		androguard.activity(/net.droidjack.server/i) 
+// 		androguard.activity(/net.droidjack.server/i)  (Disabled by Oshoosi Hardener)
 }

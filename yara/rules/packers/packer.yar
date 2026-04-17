@@ -21,7 +21,7 @@ rule emotet_packer {
       date = "2017-12-12"
     strings:
 		$pdb1 = "123EErrrtools.pdb"
-		$pdb2=  "gGEW\\F???/.pdb"
+		$pdb2=  "gGEW\\\\\\F???/.pdb"
 
     condition:
        $pdb1 or $pdb2
@@ -2428,7 +2428,7 @@ condition:
 }
 
 
-rule SoftwareCompressv12BGSoftwareProtectTechnologies
+rule SoftwareCompressv12BGSoftwareProtectTechnologies_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -5450,7 +5450,7 @@ condition:
 }
 
 
-rule NsPackV2XLiuXingPing
+rule NsPackV2XLiuXingPing_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -5786,7 +5786,7 @@ condition:
 }
 
 
-rule Obsidiumv1304ObsidiumSoftware
+rule Obsidiumv1304ObsidiumSoftware_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -7108,7 +7108,7 @@ condition:
 }
 
 
-rule Obsidiumv1300ObsidiumSoftware
+rule Obsidiumv1300ObsidiumSoftware_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -7326,7 +7326,7 @@ condition:
 }
 
 
-rule PEDiminisherv01Teraphy
+rule PEDiminisherv01Teraphy_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -7813,7 +7813,7 @@ condition:
 }
 
 
-rule RLPV073betaap0x
+rule RLPV073betaap0x_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -8139,7 +8139,7 @@ condition:
 }
 
 
-rule eXPressorV13CGSoftLabs
+rule eXPressorV13CGSoftLabs_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -8619,7 +8619,7 @@ condition:
 }
 
 
-rule Upackv032betaDwing
+rule Upackv032betaDwing_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -9233,7 +9233,7 @@ condition:
 }
 
 
-rule SoftDefenderv11xRandyLi
+rule SoftDefenderv11xRandyLi_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -12105,7 +12105,7 @@ condition:
 }
 
 
-rule piritv15
+rule piritv15_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -14227,7 +14227,7 @@ condition:
 }
 
 
-rule eXpressorv12CGSoftLabs
+rule eXpressorv12CGSoftLabs_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -14564,7 +14564,7 @@ condition:
 }
 
 
-rule PeStubOEPv1x
+rule PeStubOEPv1x_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -14625,7 +14625,7 @@ condition:
 }
 
 
-rule eXPressorV1451CGSoftLabs
+rule eXPressorV1451CGSoftLabs_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -15265,7 +15265,7 @@ condition:
 }
 
 
-rule RCryptorv16dVaska
+rule RCryptorv16dVaska_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -15423,7 +15423,7 @@ condition:
 }
 
 
-rule AHpack01FEUERRADER
+rule AHpack01FEUERRADER_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -15749,7 +15749,7 @@ condition:
 }
 
 
-rule NullsoftPiMPInstallSystemv1x
+rule NullsoftPiMPInstallSystemv1x_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -16522,7 +16522,7 @@ condition:
 }
 
 
-rule SCObfuscatorSuperCRacker
+rule SCObfuscatorSuperCRacker_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -16730,7 +16730,7 @@ condition:
 }
 
 
-rule PackmanV10BrandonLaCombe
+rule PackmanV10BrandonLaCombe_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -17529,7 +17529,7 @@ condition:
 }
 
 
-rule SpecialEXEPaswordProtectorv101EngPavolCerven
+rule SpecialEXEPaswordProtectorv101EngPavolCerven_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -17975,7 +17975,7 @@ condition:
 }
 
 
-rule yodasProtectorv101AshkbizDanehkar
+rule yodasProtectorv101AshkbizDanehkar_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -18909,7 +18909,7 @@ condition:
 }
 
 
-rule Petitev14
+rule Petitev14_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -19353,7 +19353,7 @@ condition:
 }
 
 
-rule MorphineV27Holy_FatherRatter29A
+rule MorphineV27Holy_FatherRatter29A_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -19667,7 +19667,7 @@ condition:
 }
 
 
-rule PESpinv11Cyberbob
+rule PESpinv11Cyberbob_Duplicate_1
 {
       meta:
 		author="malware-lu"
@@ -19995,9 +19995,7 @@ rule obsidium : Packer
 		description="Obsidium"
 
 	strings:
-		$str1={EB 02 [2] E8 25 00 00 00 EB 04 [4] EB 01 ?? 8B 54 24 0C EB 01 ?? 83 82 B8 00 00 00 23 EB 01 ?? 33 C0 EB 02 [2] C3 EB 02 [2] EB 04} /*EntryPoint*/
-
-	condition:
+		$str1={EB 02 [2] E8 25 00 00 00 EB 04 [4] EB 01 ?? 8B 54 24 0C EB 01 ?? 83 82 B8 00 00 00 23 EB 01 ?? 33 C0 EB 02 [2] C3 EB 02 [2] EB 04} /*EntryPoint*\//	condition:
 		$str1 at pe.entry_point
 }
 
@@ -20009,9 +20007,7 @@ rule pecompact2 : Packer
 		description="PECompact"
 
 	strings:
-		$str1={B8 [3] 00 50 64 FF 35 00 00 00 00 64 89 25 00 00 00 00 33 C0 89 08 50 45 43} /*EntryPoint*/
-
-	condition:
+		$str1={B8 [3] 00 50 64 FF 35 00 00 00 00 64 89 25 00 00 00 00 33 C0 89 08 50 45 43} /*EntryPoint*\//	condition:
 		$str1 at pe.entry_point
 }
 
@@ -20023,9 +20019,7 @@ rule aspack : Packer
 		description="ASPack"
 
 	strings:
-		$str1={60 E8 00 00 00 00 5D 81 ED 5D 3B 40 00 64 A1 30 00 00 00 0F B6 40 02 0A C0 74 04 33 C0 87 00 B9 [2] 00 00 8D BD B7 3B 40 00 8B F7 AC} /*EntryPoint*/
-
-	condition:
+		$str1={60 E8 00 00 00 00 5D 81 ED 5D 3B 40 00 64 A1 30 00 00 00 0F B6 40 02 0A C0 74 04 33 C0 87 00 B9 [2] 00 00 8D BD B7 3B 40 00 8B F7 AC} /*EntryPoint*\//	condition:
 		$str1 at pe.entry_point
 }
 
@@ -20037,9 +20031,7 @@ rule execryptor : Protector
 		description="EXECryptor"
 
 	strings:
-		$str1={E8 24 00 00 00 8B 4C 24 0C C7 01 17 00 01 00 C7 81 B8 00 00 00 00 00 00 00 31 C0 89 41 14 89 41 18 80 A1 C1 00 00 00 FE C3 31 C0 64 FF 30 64 89 20 64 8F 05 00 00 00 00} /*EntryPoint*/
-
-	condition:
+		$str1={E8 24 00 00 00 8B 4C 24 0C C7 01 17 00 01 00 C7 81 B8 00 00 00 00 00 00 00 31 C0 89 41 14 89 41 18 80 A1 C1 00 00 00 FE C3 31 C0 64 FF 30 64 89 20 64 8F 05 00 00 00 00} /*EntryPoint*\//	condition:
 		$str1 at pe.entry_point
 }
 

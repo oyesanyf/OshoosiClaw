@@ -10,9 +10,6 @@ rule Maldoc_Suspicious_OLE_target {
     filetype = "Office documents"
     date = "2018-06-13"
   strings:
-    $env1 = /oleObject".*Target=.*.http.*.doc"/
-    $env2 = /oleObject".*Target=.*.http.*.ppt"/
-    $env3 = /oleObject".*Target=.*.http.*.xlx"/
-  condition:
+    $env1 = /oleObject".*Target=.*.http.*.doc"\//    $env2 = /oleObject".*Target=.*.http.*.ppt"\//    $env3 = /oleObject".*Target=.*.http.*.xlx"\//  condition:
     any of them
 }

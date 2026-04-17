@@ -13,8 +13,7 @@ rule with_urls : mail {
                 $eml_02 = "To:"
                 $eml_03 = "Subject:"
 
-		$url_regex = /https?:\/\/([\w\.-]+)([\/\w \.-]*)/
-	condition:
+		$url_regex = /https?:\/\/([\w\.-]+)([\/\w \.-]*)\//	condition:
 		all of them
 }
 
@@ -28,8 +27,7 @@ rule without_urls : mail {
                 $eml_02 = "To:"
                 $eml_03 = "Subject:"
 
-		$url_regex = /https?:\/\/([\w\.-]+)([\/\w \.-]*)/
-	condition:
+		$url_regex = /https?:\/\/([\w\.-]+)([\/\w \.-]*)\//	condition:
                 all of ( $eml_* ) and
 		not $url_regex
 }

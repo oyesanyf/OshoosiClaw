@@ -14,8 +14,7 @@ rule win_redline_wextract_hunting_oct_2023
 		$s2 = "POSTRUNPROGRAM" wide
 		$s3 = "POSTRUNPROGRAM" ascii
 		
-		$regex = /[a-zA-Z0-9]{6,10}\.exe/
-		
+		$regex = /[a-zA-Z0-9]{6,10}\.exe\//		
 	condition:
 		(all of ($s*)) 
 	and 

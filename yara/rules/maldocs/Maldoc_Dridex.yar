@@ -48,14 +48,7 @@ rule PHISH_02Dez2015_dropped_p0o6543f {
 	strings:
 		$s1 = "netsh.exe" fullword wide
 		$s2 = "routemon.exe" fullword wide
-		$s3 = "script=" fullword wide /* Goodware String - occured 4 times */
-		$s4 = "disconnect" fullword wide /* Goodware String - occured 14 times */
-		$s5 = "GetClusterResourceTypeKey" fullword ascii /* Goodware String - occured 17 times */
-		$s6 = "QueryInformationJobObject" fullword ascii /* Goodware String - occured 34 times */
-		$s7 = "interface" fullword wide /* Goodware String - occured 52 times */
-		$s8 = "connect" fullword wide /* Goodware String - occured 61 times */
-		$s9 = "FreeConsole" fullword ascii /* Goodware String - occured 91 times */
-	condition:
+		$s3 = "script=" fullword wide /* Goodware String - occured 4 times *\//		$s4 = "disconnect" fullword wide /* Goodware String - occured 14 times *\//		$s5 = "GetClusterResourceTypeKey" fullword ascii /* Goodware String - occured 17 times *\//		$s6 = "QueryInformationJobObject" fullword ascii /* Goodware String - occured 34 times *\//		$s7 = "interface" fullword wide /* Goodware String - occured 52 times *\//		$s8 = "connect" fullword wide /* Goodware String - occured 61 times *\//		$s9 = "FreeConsole" fullword ascii /* Goodware String - occured 91 times *\//	condition:
 		uint16(0) == 0x5a4d and filesize < 250KB and all of them
 }
 

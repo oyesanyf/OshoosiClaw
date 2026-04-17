@@ -1120,9 +1120,21 @@ impl AgentProvisioner {
     }
 
     pub async fn provision_yara_rules(&self) -> anyhow::Result<()> {
+        self.provision_yara_rules_with_sandbox(false).await
+    }
+
+    /// Provision YARA rules. If `sandboxed` is true, the caller has already
+    /// verified that OpenShell handled the download — skip re-downloading.
+    pub async fn provision_yara_rules_with_sandbox(&self, sandboxed: bool) -> anyhow::Result<()> {
         let yara_base_dir = std::path::Path::new("yara");
         if !yara_base_dir.exists() {
             std::fs::create_dir_all(&yara_base_dir)?;
+        }
+
+        if sandboxed {
+            info!("YARA rules were provisioned via OpenShell sandbox. Skipping direct download.");
+            let _ = self.sanitize_yara_rules(yara_base_dir);
+            return Ok(());
         }
 
         let sources = [
@@ -1384,6 +1396,11 @@ impl AgentProvisioner {
 
     /// Sanitize YARA rules to prevent compilation errors (androguard imports, type mismatches, missing includes).
     pub fn sanitize_yara_rules(&self, dir: &std::path::Path) -> anyhow::Result<()> {
+        let mut seen_rules = std::collections::HashSet::new();
+        self.sanitize_yara_rules_internal(dir, &mut seen_rules)
+    }
+
+    fn sanitize_yara_rules_internal(&self, dir: &std::path::Path, seen_rules: &mut std::collections::HashSet<String>) -> anyhow::Result<()> {
         use std::path::Path;
         if !dir.exists() { return Ok(()); }
 
@@ -1391,55 +1408,175 @@ impl AgentProvisioner {
             let entry = entry?;
             let path = entry.path();
             if path.is_dir() {
-                let _ = self.sanitize_yara_rules(&path);
+                let _ = self.sanitize_yara_rules_internal(&path, seen_rules);
             } else if path.extension().map_or(false, |e| e == "yar" || e == "yara") {
                 // Use lossy reading to handle potential encoding issues in malware rules
                 if let Ok(bytes) = std::fs::read(&path) {
-                    let content = String::from_utf8_lossy(&bytes);
-                    
-                    // Check for known problematic patterns
-                    let has_andro = content.to_lowercase().contains("import \"androguard\"") || content.to_lowercase().contains("import 'androguard'");
-                    let has_crash = content.contains("pe.exports(\"Crash\") & pe.characteristics");
-                    let has_include = content.contains("include \"") || content.contains("include '");
+                    let raw_content = String::from_utf8_lossy(&bytes);
+                    // Pre-pass: fix unclosed block comments where */ was written as *\/
+                    let content = raw_content.replace("*\\/", "*/");
+                    let content_lower = content.to_lowercase();
 
-                    if has_andro || has_crash || has_include {
+                    let has_andro = content_lower.contains("import \"androguard\"") || content_lower.contains("import 'androguard'");
+                    let has_crash = content.contains("pe.exports(\"Crash\")") && content.contains("& pe.characteristics");
+                    let has_include = content.contains("include \"") || content.contains("include '");
+                    let has_empty_regex = (content.contains("|/") || content.contains("| /")) && content.contains('=');
+                    let has_backslash = content.contains('\\');
+                    let has_unclosed_repetition = content.contains("?{") || content.contains("? {") || content.contains("?  {");
+                    let has_unk_identifier = (content.contains("filename") || content.contains("filetype")) && (content.contains("==") || content.contains("!="));
+                    let has_duplicate_maze = path.to_string_lossy().contains("RANSOM_Maze.yar") && content.matches("rule Maze").count() > 1;
+                    let has_broken_comment = raw_content.contains("*\\/");
+
+                    if has_andro || has_crash || has_include || has_empty_regex || has_backslash || has_unclosed_repetition || has_duplicate_maze || has_unk_identifier || has_broken_comment {
                         let mut lines = Vec::new();
                         let mut changed = false;
+                        if has_broken_comment { changed = true; }
+                        let mut maze_count = 0;
                         let parent = path.parent().unwrap_or(Path::new("."));
 
                         for line in content.lines() {
                             let mut new_line = line.to_string();
                             let trimmed = line.trim();
 
-                            // 1. Disable androguard imports (Android-specific, often missing)
-                            if (trimmed.starts_with("import") || trimmed.starts_with("//import")) && trimmed.contains("androguard") && !trimmed.starts_with("//") {
+                            if trimmed.starts_with("//") {
+                                lines.push(new_line);
+                                continue;
+                            }
+
+                            let lower = trimmed.to_lowercase();
+
+                            // 1. Disable androguard imports
+                            if (trimmed.starts_with("import") || trimmed.starts_with("//import")) && trimmed.contains("androguard") {
                                 new_line = format!("// {}", line);
                                 changed = true;
                             }
                             // 2. Fix APT_CrashOverride.yar type mismatch (boolean & int)
-                            else if line.contains("pe.exports(\"Crash\") & pe.characteristics") {
-                                new_line = line.replace("pe.exports(\"Crash\")", "(pe.exports(\"Crash\") ? 1 : 0)");
+                            else if (line.contains("pe.exports(\"Crash\")") || line.contains("pe.exports(\"crash\")")) && line.contains("& pe.characteristics") {
+                                new_line = line.replace("pe.exports(\"Crash\")", "pe.exports(\"Crash\") != false")
+                                              .replace("pe.exports(\"crash\")", "pe.exports(\"crash\") != false")
+                                              .replace("& pe.characteristics", "and pe.characteristics != 0");
                                 changed = true;
                             }
-                            // 3. Fix missing includes by commenting them out
-                            else if (trimmed.starts_with("include") || trimmed.starts_with("//include")) && !trimmed.starts_with("//") {
-                                // Extract the path between quotes
+                            // 3. Fix missing includes
+                            else if trimmed.starts_with("include") && !trimmed.starts_with("//") {
                                 let q = if trimmed.contains('\"') { '\"' } else { '\'' };
                                 let parts: Vec<&str> = trimmed.split(q).collect();
                                 if parts.len() >= 2 {
                                     let inc_path_str = parts[1];
                                     let inc_path = parent.join(inc_path_str);
                                     if !inc_path.exists() {
-                                        new_line = format!("// {}", line);
-                                        changed = true;
+                                        let alt_path = parent.parent().unwrap_or(Path::new(".")).join(inc_path_str);
+                                        if !alt_path.exists() {
+                                            new_line = format!("// {}", line);
+                                            changed = true;
+                                        }
                                     }
                                 }
                             }
+                            // 4. Fix empty regex matches
+                            else if (trimmed.contains("|/") || trimmed.contains("| /")) && trimmed.contains('=') && trimmed.contains('/') {
+                                if let Some(idx) = new_line.find("|/") {
+                                    new_line.replace_range(idx..idx+1, "");
+                                    changed = true;
+                                } else if let Some(idx) = new_line.find("| /") {
+                                    new_line.replace_range(idx..idx+1, "");
+                                    changed = true;
+                                }
+                            }
+                            // 5. Fix unclosed counted repetition
+                            else if trimmed.contains('/') && trimmed.contains('=') && (trimmed.contains("?{") || trimmed.contains("? {")) {
+                                if new_line.contains("?{") {
+                                    new_line = new_line.replace("?{", "?\\{");
+                                    changed = true;
+                                } else if new_line.contains("? {") {
+                                    new_line = new_line.replace("? {", "? \\{");
+                                    changed = true;
+                                }
+                            }
+                            // 6. Comment out unknown identifiers (filename, filetype, filepath, extension)
+                            else if (lower.contains("filename") || lower.contains("filetype") || lower.contains("filepath") || lower.contains("extension"))
+                                     && (lower.contains("==") || lower.contains("!=") || lower.contains("matches") || lower.contains("contains")) {
+                                new_line = format!("// {}", line);
+                                changed = true;
+                            }
+                            // 7. Handle duplicate Maze rule
+                            else if trimmed.starts_with("rule Maze") {
+                                maze_count += 1;
+                                if maze_count > 1 {
+                                    new_line = line.replace("rule Maze", "rule Maze_Duplicate");
+                                    changed = true;
+                                }
+                            }
+
+                            // 8. Fix broken hex string delimiters and invalid escape sequences
+                            if trimmed.contains('\\') && !new_line.trim().starts_with("//") {
+                                // Fix hex string delimiters: \{ ... \} → { ... }
+                                if new_line.contains("= \\{") || new_line.contains("=\\{") {
+                                    new_line = new_line.replace("= \\{", "= {").replace("=\\{", "={");
+                                    changed = true;
+                                }
+                                if new_line.contains("\\}") && (new_line.contains("= {") || new_line.contains("={")) {
+                                    new_line = new_line.replace("\\}", "}");
+                                    changed = true;
+                                }
+                                let chars: Vec<char> = new_line.chars().collect();
+                                let mut i = 0;
+                                let mut fixed = String::new();
+                                let mut esc_changed = false;
+                                while i < chars.len() {
+                                    if chars[i] == '\\' && i + 1 < chars.len() {
+                                        let next = chars[i+1];
+                                        let valid = matches!(next,
+                                            'n' | 'r' | 't' | '\\' | '\"' | '\'' | 'x' | 'u' | 'U'
+                                            | 'd' | 'w' | 's' | 'D' | 'W' | 'S' | 'b' | 'B'
+                                            | '0'..='9' | '$' | '^' | '*' | '+' | '?' | '(' | ')'
+                                            | '[' | ']' | '{' | '}' | '|' | '.' | '/' | ' '
+                                        );
+                                        if !valid {
+                                            fixed.push('\\');
+                                            fixed.push('\\');
+                                            fixed.push(next);
+                                            i += 2;
+                                            esc_changed = true;
+                                            continue;
+                                        }
+                                        fixed.push(chars[i]);
+                                        fixed.push(next);
+                                        i += 2;
+                                        continue;
+                                    }
+                                    fixed.push(chars[i]);
+                                    i += 1;
+                                }
+                                if esc_changed {
+                                    new_line = fixed;
+                                    changed = true;
+                                }
+                            }
+
+                            // 9. Global Deduplication
+                            if trimmed.contains("rule ") && !new_line.trim().starts_with("//") {
+                                let parts: Vec<&str> = trimmed.split_whitespace().collect();
+                                for (idx, part) in parts.iter().enumerate() {
+                                    if *part == "rule" && idx + 1 < parts.len() {
+                                        let rule_name = parts[idx+1].trim_end_matches('{').split(':').next().unwrap_or("").trim();
+                                        if seen_rules.contains(rule_name) {
+                                            let new_rule_name = format!("{}_Duplicate", rule_name);
+                                            new_line = new_line.replacen(rule_name, &new_rule_name, 1);
+                                            changed = true;
+                                        } else {
+                                            seen_rules.insert(rule_name.to_string());
+                                        }
+                                        break;
+                                    }
+                                }
+                            }
+
                             lines.push(new_line);
                         }
-                        
+
                         if changed {
-                            info!("Sanitized YARA rule: {}", path.display());
+                            info!("Sanitized YARA rule (Hardened): {}", path.display());
                             let _ = std::fs::write(&path, lines.join("\n"));
                         }
                     }

@@ -1,4 +1,4 @@
-import "androguard"
+// // import "androguard"
 
 rule Android_DeathRing
 {
@@ -9,6 +9,6 @@ rule Android_DeathRing
 		source = "https://blog.lookout.com/blog/2014/12/04/deathring/"
 
 	condition:
-		androguard.service(/MainOsService/i) and
-        androguard.receiver(/ApkUninstallReceiver/i)
+// 		androguard.service(/MainOsService/i) and (Disabled by Oshoosi Hardener)
+//         androguard.receiver(/ApkUninstallReceiver/i) (Disabled by Oshoosi Hardener)
 }

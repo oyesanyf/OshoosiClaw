@@ -51,8 +51,7 @@ rule marcher_v2
 		author = "Antonio S. <asanchez@koodous.com>"
 		source = "https://analyst.koodous.com/rulesets/1301"
 	strings:
-		$a = /assets\/[a-z]{1,12}.datPK/
-		$b = "mastercard_img"
+		$a = /assets\/[a-z]{1,12}.datPK\//		$b = "mastercard_img"
 		$c = "visa_verifed"
 
 	condition:

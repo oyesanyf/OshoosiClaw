@@ -8,7 +8,7 @@
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
 
-import "androguard"
+// // import "androguard"
 
 rule Android_AliPay_smsStealer : android
 {
@@ -26,9 +26,9 @@ rule Android_AliPay_smsStealer : android
 		$str_4 = "mPhoneNumber"
 
 	condition:
-		androguard.certificate.sha1("0CDFC700D0BDDC3EA50D71B54594BF3711D0F5B2") or
-		androguard.permission(/android.permission.RECEIVE_SMS/) and
-		androguard.permission(/android.permission.INTERNET/) and
-		androguard.permission(/android.permission.RECEIVE_BOOT_COMPLETED/) and 		
+// 		androguard.certificate.sha1("0CDFC700D0BDDC3EA50D71B54594BF3711D0F5B2") or (Disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.RECEIVE_SMS/) and (Disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.INTERNET/) and (Disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.RECEIVE_BOOT_COMPLETED/) and 		 (Disabled by Oshoosi Hardener)
 		all of ($str_*)
 }

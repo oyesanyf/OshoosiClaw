@@ -346,7 +346,7 @@ rule Check_Qemu_DeviceMap
 		Description = "Checks for Qemu reg keys"
 		Sample = "de1af0e97e94859d372be7fcf3a5daa5"
 	strings:
-		$key = "HARDWARE\\DEVICEMAP\\Scsi\\Scsi Port 0\\Scsi Bus 0\\Target Id 0\\Logical Unit Id 0" nocase wide ascii
+		$key = "HARDWARE\\DEVICEMAP\\Scsi\\Scsi Port 0\\Scsi Bus 0\\\\\\Target Id 0\\\\\\Logical Unit Id 0" nocase wide ascii
 		$value = "Identifier" nocase wide ascii
 		$data = "QEMU" wide nocase ascii
 	condition:
@@ -373,7 +373,7 @@ rule Check_VBox_DeviceMap
 		Description = "Checks Vbox registry keys"
 		Sample = "de1af0e97e94859d372be7fcf3a5daa5"
 	strings:
-		$key = "HARDWARE\\DEVICEMAP\\Scsi\\Scsi Port 0\\Scsi Bus 0\\Target Id 0\\Logical Unit Id 0" nocase wide ascii
+		$key = "HARDWARE\\DEVICEMAP\\Scsi\\Scsi Port 0\\Scsi Bus 0\\\\\\Target Id 0\\\\\\Logical Unit Id 0" nocase wide ascii
 		$value = "Identifier" nocase wide ascii
 		$data = "VBOX" nocase wide ascii
 	condition:
@@ -386,7 +386,7 @@ rule Check_VBox_Guest_Additions
 		Description = "Checks for the existence of the guest additions registry key"
 		Sample = "de1af0e97e94859d372be7fcf3a5daa5"
 	strings:
-		$key = "SOFTWARE\\Oracle\\VirtualBox Guest Additions" wide ascii nocase
+		$key = "SOFTWARE\\\\\\Oracle\\\\\\VirtualBox Guest Additions" wide ascii nocase
 	condition:
 		any of them
 }
@@ -410,7 +410,7 @@ rule Check_VMWare_DeviceMap
 		Description = "Checks for the existence of VmWare Registry Keys"
 		Sample = "de1af0e97e94859d372be7fcf3a5daa5"
 	strings:
-		$key = "HARDWARE\\DEVICEMAP\\Scsi\\Scsi Port 0\\Scsi Bus 0\\Target Id 0\\Logical Unit Id 0" wide ascii nocase
+		$key = "HARDWARE\\DEVICEMAP\\Scsi\\Scsi Port 0\\Scsi Bus 0\\\\\\Target Id 0\\\\\\Logical Unit Id 0" wide ascii nocase
 		$value = "Identifier" wide nocase ascii
 		$data = "VMware" wide nocase ascii
 	condition:
@@ -423,7 +423,7 @@ rule Check_VmTools
 		Description = "Checks for the existence of VmTools reg key"
 		Sample = "de1af0e97e94859d372be7fcf3a5daa5"
 	strings:
-		$ ="SOFTWARE\\VMware, Inc.\\VMware Tools" nocase ascii wide
+		$ ="SOFTWARE\\\\\\VMware, Inc.\\\\\\VMware Tools" nocase ascii wide
 	condition:
 		any of them
 }
@@ -537,7 +537,7 @@ rule Check_DriveSize
 		Sample = "de1af0e97e94859d372be7fcf3a5daa5"
 
 	strings:
-		$physicaldrive = "\\\\.\\PhysicalDrive0" wide ascii nocase
+		$physicaldrive = "\\\\.\\\\\\PhysicalDrive0" wide ascii nocase
 		$dwIoControlCode = {68 5c 40 07 00 [0-5] FF 15} //push 7405ch ; push esi (handle) then call deviceoiocontrol IOCTL_DISK_GET_LENGTH_INFO
 	condition:
 		pe.imports("kernel32.dll","CreateFileA") and
@@ -554,7 +554,7 @@ rule Check_FilePaths
 	strings:
 		$path1 = "SANDBOX" wide ascii
 		$path2 = "\\SAMPLE" wide ascii
-		$path3 = "\\VIRUS" wide ascii
+		$path3 = "\\\\\\VIRUS" wide ascii
 	condition:
 		all of ($path*) and pe.imports("kernel32.dll","GetModuleFileNameA")
 }
@@ -707,7 +707,7 @@ rule anti_dbgtools {
         $f8 = "winhex.exe" nocase
         $f9 = "processhacker.exe" nocase
         $f10 = "hiew32.exe" nocase
-        $c11 = "\\\\.\\NTICE"
+        $c11 = "\\\\.\\\\\\NTICE"
         $c12 = "\\\\.\\SICE"
         $c13 = "\\\\.\\Syser"
         $c14 = "\\\\.\\SyserBoot"
@@ -722,7 +722,7 @@ rule antisb_joesanbox {
         description = "Anti-Sandbox checks for Joe Sandbox"
 	version = "0.1"
     strings:
-	$p1 = "Software\\Microsoft\\Windows\\CurrentVersion" nocase
+	$p1 = "Software\\\\\\Microsoft\\Windows\\\\\\CurrentVersion" nocase
 	$c1 = "RegQueryValue"
 	$s1 = "55274-640-2673064-23950"
     condition:
@@ -735,7 +735,7 @@ rule antisb_anubis {
         description = "Anti-Sandbox checks for Anubis"
 	version = "0.1"
     strings:
-        $p1 = "Software\\Microsoft\\Windows\\CurrentVersion" nocase
+        $p1 = "Software\\\\\\Microsoft\\Windows\\\\\\CurrentVersion" nocase
         $c1 = "RegQueryValue"
         $s1 = "76487-337-8429955-22614"
         $s2 = "76487-640-1457236-23837"
@@ -771,7 +771,7 @@ rule antisb_cwsandbox {
         description = "Anti-Sandbox checks for CWSandbox"
 	version = "0.1"
     strings:
-        $p1 = "Software\\Microsoft\\Windows\\CurrentVersion" nocase
+        $p1 = "Software\\\\\\Microsoft\\Windows\\\\\\CurrentVersion" nocase
         $s1 = "76487-644-3177037-23510"
     condition:
         all of them
@@ -828,9 +828,9 @@ rule disable_antivirus {
         description = "Disable AntiVirus"
 	version = "0.2"
     strings:
-        $p1 = "Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Explorer\\DisallowRun" nocase
-        $p2 = "Software\\Microsoft\\Windows\\CurrentVersion\\Uninstall\\" nocase
-        $p3 = "SOFTWARE\\Policies\\Microsoft\\Windows Defender" nocase
+        $p1 = "Software\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\Policies\\\\\\Explorer\\DisallowRun" nocase
+        $p2 = "Software\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\Uninstall\\" nocase
+        $p3 = "SOFTWARE\\\\\\Policies\\\\\\Microsoft\\Windows Defender" nocase
         $c1 = "RegSetValue"
         $r1 = "AntiVirusDisableNotify"
         $r2 = "DontReportInfectionInformation"
@@ -859,7 +859,7 @@ rule disable_uax {
         description = "Disable User Access Control"
 	version = "0.1"
     strings:
-        $p1 = "SOFTWARE\\Microsoft\\Security Center" nocase
+        $p1 = "SOFTWARE\\\\\\Microsoft\\Security Center" nocase
         $r1 = "UACDisableNotify"
     condition:
         all of them
@@ -871,7 +871,7 @@ rule disable_firewall {
         description = "Disable Firewall"
 	version = "0.1"
     strings:
-        $p1 = "SYSTEM\\CurrentControlSet\\Services\\SharedAccess\\Parameters\\FirewallPolicy" nocase
+        $p1 = "SYSTEM\\\\\\CurrentControlSet\\Services\\SharedAccess\\\\\\Parameters\\\\\\FirewallPolicy" nocase
         $c1 = "RegSetValue"
         $r1 = "FirewallPolicy"
         $r2 = "EnableFirewall"
@@ -887,7 +887,7 @@ rule disable_registry {
         description = "Disable Registry editor"
 	version = "0.1"
     strings:
-        $p1 = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System" nocase
+        $p1 = "SOFTWARE\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\Policies\\System" nocase
         $c1 = "RegSetValue"
         $r1 = "DisableRegistryTools"
         $r2 = "DisableRegedit"
@@ -916,7 +916,7 @@ rule disable_taskmanager {
         description = "Disable Task Manager"
 	version = "0.1"
     strings:
-        $p1 = "SOFTWARE\\Microsoft\\Windows\\CurrentVersion\\Policies\\System" nocase
+        $p1 = "SOFTWARE\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\Policies\\System" nocase
         $r1 = "DisableTaskMgr"
     condition:
         1 of ($p*) and 1 of ($r*)
@@ -928,7 +928,7 @@ rule check_patchlevel {
         description = "Check if hotfix are applied"
 	version = "0.1"
     strings:
-        $p1 = "SOFTWARE\\Microsoft\\Windows NT\\CurrentVersion\\Hotfix" nocase
+        $p1 = "SOFTWARE\\\\\\Microsoft\\Windows NT\\\\\\CurrentVersion\\\\\\Hotfix" nocase
     condition:
         any of them
 }
@@ -958,16 +958,16 @@ rule vmdetect_misc : vmdetect
 	strings:
 		$vbox1 = "VBoxService" nocase ascii wide
 		$vbox2 = "VBoxTray" nocase ascii wide
-		$vbox3 = "SOFTWARE\\Oracle\\VirtualBox Guest Additions" nocase ascii wide
-		$vbox4 = "SOFTWARE\\\\Oracle\\\\VirtualBox Guest Additions" nocase ascii wide
+		$vbox3 = "SOFTWARE\\\\\\Oracle\\\\\\VirtualBox Guest Additions" nocase ascii wide
+		$vbox4 = "SOFTWARE\\\\\\\\Oracle\\\\\\\\VirtualBox Guest Additions" nocase ascii wide
 
 		$wine1 = "wine_get_unix_file_name" ascii wide
 
 		$vmware1 = "vmmouse.sys" ascii wide
 		$vmware2 = "VMware Virtual IDE Hard Drive" ascii wide
 
-		$miscvm1 = "SYSTEM\\ControlSet001\\Services\\Disk\\Enum" nocase ascii wide
-		$miscvm2 = "SYSTEM\\\\ControlSet001\\\\Services\\\\Disk\\\\Enum" nocase ascii wide
+		$miscvm1 = "SYSTEM\\\\\\ControlSet001\\Services\\Disk\\\\\\Enum" nocase ascii wide
+		$miscvm2 = "SYSTEM\\\\\\\\ControlSet001\\\\Services\\\\Disk\\\\\\\\Enum" nocase ascii wide
 
 		// Drivers
 		$vmdrv1 = "hgfs.sys" ascii wide

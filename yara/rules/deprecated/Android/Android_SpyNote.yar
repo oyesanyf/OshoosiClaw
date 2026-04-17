@@ -9,7 +9,7 @@
 */
 
 
-import "androguard"
+// // import "androguard"
 
 rule spynote_variants
 {
@@ -26,7 +26,7 @@ rule spynote_variants
         $str_4 = "screamHacker" 
         $str_5 = "screamon"
     condition:
-        androguard.package_name("dell.scream.application") or 
-        androguard.certificate.sha1("219D542F901D8DB85C729B0F7AE32410096077CB") or
+//         androguard.package_name("dell.scream.application") or  (Disabled by Oshoosi Hardener)
+//         androguard.certificate.sha1("219D542F901D8DB85C729B0F7AE32410096077CB") or (Disabled by Oshoosi Hardener)
         all of ($str_*)
 }

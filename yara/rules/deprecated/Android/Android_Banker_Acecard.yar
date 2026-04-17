@@ -7,7 +7,7 @@
 
 	You can get it, along with installation instructions, at https://github.com/Koodous/androguard-yara
 */
-import "androguard"
+// // import "androguard"
 
 rule Banker_Acecard
 {
@@ -19,5 +19,6 @@ strings:
 $str_1 = "Cardholder name"
 $str_2 = "instagram.php"
 condition:
-((androguard.package_name("starter.fl") and androguard.service("starter.CosmetiqFlServicesCallHeadlessSmsSendService")) or androguard.package_name("cosmetiq.fl") or all of ($str_*)) and androguard.permissions_number > 19
+// ((androguard.package_name("starter.fl") and androguard.service("starter.CosmetiqFlServicesCallHeadlessSmsSendService")) or androguard.package_name("cosmetiq.fl") or all of ($str_*)) and androguard.permissions_number > 19 (Disabled by Oshoosi Hardener)
+	all of ($str_*)
 }

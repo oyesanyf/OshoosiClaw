@@ -1,4 +1,4 @@
-import "androguard"
+// // import "androguard"
 
 rule Android_AVITOMMS_Variant
 {
@@ -9,9 +9,9 @@ rule Android_AVITOMMS_Variant
 		source = "https://blog.avast.com/android-banker-trojan-preys-on-credit-card-information"
 
 	condition:
-		(androguard.receiver(/AlarmReceiverKnock/) and 
-		 androguard.receiver(/BootReciv/) and 
-		 androguard.receiver(/AlarmReceiverAdm/))
+// 		(androguard.receiver(/AlarmReceiverKnock/) and  (Disabled by Oshoosi Hardener)
+// 		 androguard.receiver(/BootReciv/) and  (Disabled by Oshoosi Hardener)
+// 		 androguard.receiver(/AlarmReceiverAdm/)) (Disabled by Oshoosi Hardener)
 		
 }
 
@@ -24,10 +24,10 @@ rule Android_AVITOMMS_Rule2
 		source = "https://blog.avast.com/android-banker-trojan-preys-on-credit-card-information"
 
 	condition:
-		androguard.service(/IMService/) and 
-		androguard.receiver(/BootReciv/) and 
-		androguard.permission(/android.permission.RECEIVE_BOOT_COMPLETED/i) and 
-		androguard.permission(/android.permission.KILL_BACKGROUND_PROCESSES/i) and 
-		androguard.permission(/android.permission.SEND_SMS/i) and
-		androguard.permission(/android.permission.INTERNET/i)
+// 		androguard.service(/IMService/) and  (Disabled by Oshoosi Hardener)
+// 		androguard.receiver(/BootReciv/) and  (Disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.RECEIVE_BOOT_COMPLETED/i) and  (Disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.KILL_BACKGROUND_PROCESSES/i) and  (Disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.SEND_SMS/i) and (Disabled by Oshoosi Hardener)
+// 		androguard.permission(/android.permission.INTERNET/i) (Disabled by Oshoosi Hardener)
 }

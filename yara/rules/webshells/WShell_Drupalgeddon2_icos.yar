@@ -20,7 +20,6 @@ rule Dotico_PHP_webshell : webshell {
         date = "2019/12/04"
     strings:
         $php = "<?php" ascii
-        $regexp = /basename\/\*[a-z0-9]{,6}\*\/\(\/\*[a-z0-9]{,5}\*\/trim\/\*[a-z0-9]{,5}\*\/\(\/\*[a-z0-9]{,5}\*\//
-    condition:
+        $regexp = /basename\/\*[a-z0-9]{,6}\*\/\(\/\*[a-z0-9]{,5}\*\/trim\/\*[a-z0-9]{,5}\*\/\(\/\*[a-z0-9]{,5}\*\/\//    condition:
         $php at 0 and $regexp and filesize > 70KB and filesize < 110KB
 }
