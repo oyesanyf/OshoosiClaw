@@ -579,9 +579,10 @@ async fn handle_grant_access() -> anyhow::Result<()> {
         
         #[cfg(target_os = "windows")]
         {
-            println!("  1. Run 'scripts\\grant-sysmon-read.ps1' as Administrator.");
-            println!("  2. If Sysmon is missing, install it: 'winget install Microsoft.Sysmon'");
-            println!("  3. Restart your terminal/session for group changes to apply.");
+            println!("  1. Run PowerShell as Administrator.");
+            println!("  2. Run: $sid = (New-Object System.Security.Principal.NTAccount($env:USERNAME)).Translate([System.Security.Principal.SecurityIdentifier]).Value");
+            println!("  3. Run: wevtutil sl Microsoft-Windows-Sysmon/Operational /ca:\"O:BAG:SYD:(A;;0x1;;;BA)(A;;0x1;;;S-1-5-32-573)(A;;0x1;;;$sid)\"");
+            println!("  4. If Sysmon is missing, install it: 'winget install Microsoft.Sysmon'");
         }
         
         #[cfg(target_os = "linux")]

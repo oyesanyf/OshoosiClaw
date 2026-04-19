@@ -9,8 +9,8 @@ use tracing::{info, warn, error};
 use sysinfo::Disks;
 
 pub const CISA_KEV_FEED_URL: &str = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
-pub const OTX_PULSES_SUBSCRIBED_URL: &str = "https://otx.alienvault.com/api/v1/pulses/subscribed";
-pub const NVD_CVE_API_URL: &str = "https://services.nvd.nist.gov/rest/json/cves/2.0";
+pub const OTX_PULSES_SUBSCRIBED_URL: &str = "https://otx.alienvault.com/api/v1/pulses/subscribed/";
+pub const NVD_CVE_API_URL: &str = "https://services.nvd.nist.gov/rest/json/cves/2.0/";
 
 #[derive(Debug, Clone, Default)]
 pub struct OtxIndicators {
@@ -129,7 +129,7 @@ impl ThreatFeedFetcher {
 
         // Build a dedicated client with longer timeout for OTX
         let otx_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(30))
+            .timeout(std::time::Duration::from_secs(60))
             .connect_timeout(std::time::Duration::from_secs(10))
             .user_agent("OpenOsoosi-Agent/1.0")
             .build()
@@ -139,18 +139,14 @@ impl ThreatFeedFetcher {
 
         // Only fetch pulses from the last 7 days to keep it focused
         let since = (chrono::Utc::now() - chrono::Duration::days(7))
-            .format("%Y-%m-%dT%H:%M:%S")
+            .format("%Y-%m-%dT%H:%M:%SZ")
             .to_string();
-
-        let url = format!(
-            "{}?limit=50&modified_since={}",
-            OTX_PULSES_SUBSCRIBED_URL, since
-        );
 
         info!("[OTX] Fetching critical pulses (since {})...", since);
 
         let response = match otx_client
-            .get(&url)
+            .get(OTX_PULSES_SUBSCRIBED_URL)
+            .query(&[("limit", "50"), ("modified_since", &since)])
             .header("X-OTX-API-KEY", api_key)
             .send()
             .await
@@ -258,17 +254,20 @@ impl ThreatFeedFetcher {
             return Err(anyhow::anyhow!("Offline mode: skipping NVD fetch"));
         }
 
-        let mut url = format!("{}?resultsPerPage=50", NVD_CVE_API_URL);
-        
-        // Add since-date to only get recent updates (optimization)
-        // Standard NVD 2.0 uses lastModStartDate
-        let since_dt = Utc::now() - chrono::Duration::days(3);
-        let since = since_dt.format("%Y-%m-%dT%H:%M:%S").to_string();
-        url.push_str(&format!("&lastModStartDate={}", since));
+        let now_dt = Utc::now();
+        let since_dt = now_dt - chrono::Duration::days(3);
+        let since = format!("{}Z", since_dt.format("%Y-%m-%dT%H:%M:%S.000"));
+        let now = format!("{}Z", now_dt.format("%Y-%m-%dT%H:%M:%S.000"));
 
         info!("[NVD] Fetching recent CVEs (since {})...", since);
 
-        let mut req = self.client.get(&url);
+        let mut req = self.client.get(NVD_CVE_API_URL)
+            .query(&[
+                ("resultsPerPage", "50"),
+                ("lastModStartDate", &since),
+                ("lastModEndDate", &now),
+            ]);
+
         if let Some(key) = api_key {
             req = req.header("apiKey", key);
         }
