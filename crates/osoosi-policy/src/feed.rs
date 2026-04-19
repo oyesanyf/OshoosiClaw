@@ -345,7 +345,7 @@ impl ThreatFeedFetcher {
     pub async fn download_and_extract_nsrl(&self, dest_dir: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
         // URLs to try in order — primary and fallback
         let urls = [
-            "https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/2025.03.1/RDS_2025.03.1_modern.zip",
+            "https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/rds_2026.03.1/RDS_2026.03.1_modern.zip",
         ];
 
         if !dest_dir.exists() {
@@ -471,8 +471,8 @@ impl ThreatFeedFetcher {
         use tokio::io::AsyncWriteExt;
 
         let urls = [
-            "https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/2025.03.1/RDS_2025.03.1_modern.zip",
-            "https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/current/rds_modern.zip",
+            "https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/rds_2026.03.1/RDS_2026.03.1_modern.zip",
+            "https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/rds_2025.03.1/RDS_2025.03.1_modern.zip",
         ];
 
         if !dest_dir.exists() {

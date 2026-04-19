@@ -134,12 +134,87 @@
                 </div>
             </div>
 
-            <!-- Other views placeholder -->
-            <div id="other-view" class="view-content">
-                <div class="placeholder-view">
-                    <i data-lucide="hammer"></i>
-                    <h3>View Under Construction</h3>
-                    <p>This module is currently being provisioned by the Oshoosi Agent.</p>
+            <!-- Threats View -->
+            <div id="threats-view" class="view-content">
+                <div class="card glass shadow-glow">
+                    <div class="card-header">
+                        <h3>Identified Threats & Vulnerabilities</h3>
+                    </div>
+                    <div class="card-body">
+                        <div id="threats-data-list" class="timeline-list">
+                            <p class="placeholder-text">Waiting for threat data...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mesh Network View -->
+            <div id="mesh-view" class="view-content">
+                <div class="stats-grid" id="mesh-stats-grid">
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-info">
+                            <span class="stat-label">Pending Joins</span>
+                            <span class="stat-value" id="stat-pending-joins">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-info">
+                            <span class="stat-label">Quarantined Peers</span>
+                            <span class="stat-value" id="stat-quarantined">0</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="card glass shadow-glow mt-4">
+                    <div class="card-header">
+                        <h3>Peer Actions</h3>
+                    </div>
+                    <div class="card-body">
+                        <div id="mesh-data-list" class="timeline-list">
+                            <p class="placeholder-text">Waiting for mesh data...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Malware Scanner View -->
+            <div id="malware-view" class="view-content">
+                <div class="stats-grid">
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-info">
+                            <span class="stat-label">Total Scanned</span>
+                            <span class="stat-value" id="stat-scanned">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-info">
+                            <span class="stat-label">Malware Found</span>
+                            <span class="stat-value red" id="stat-malware-found">0</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="card glass shadow-glow mt-4">
+                    <div class="card-header">
+                        <h3>Recent Detections</h3>
+                    </div>
+                    <div class="card-body">
+                        <div id="malware-data-list" class="timeline-list">
+                            <p class="placeholder-text">Waiting for malware scan data...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Repair Engine View -->
+            <div id="repair-view" class="view-content">
+                <div class="card glass shadow-glow">
+                    <div class="card-header">
+                        <h3>System Patch & Repair Status</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="repair-status-container" id="repair-data">
+                            <p class="placeholder-text">Waiting for repair status...</p>
+                        </div>
+                    </div>
                 </div>
             </div>
         </main>

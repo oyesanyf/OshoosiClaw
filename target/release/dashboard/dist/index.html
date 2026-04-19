@@ -1,0 +1,229 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>OshoosiClaw — Autonomous Security Dashboard</title>
+    <link rel="stylesheet" href="style.css">
+    <link href="https://fonts.googleapis.com/css2?family=Inter:wght@300;400;600;700&family=Outfit:wght@400;600&display=swap" rel="stylesheet">
+    <script src="https://unpkg.com/lucide@latest"></script>
+    <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+</head>
+<body class="dark-theme">
+    <div class="app-container">
+        <!-- Sidebar -->
+        <aside class="sidebar">
+            <div class="logo-container">
+                <div class="logo-icon">🏹</div>
+                <h1 class="logo-text">Oshoosi<span>Claw</span></h1>
+            </div>
+            <nav class="nav-menu">
+                <a href="#" class="nav-item active" data-view="dashboard">
+                    <i data-lucide="layout-dashboard"></i>
+                    <span>Dashboard</span>
+                </a>
+                <a href="#" class="nav-item" data-view="threats">
+                    <i data-lucide="shield-alert"></i>
+                    <span>Threat Intelligence</span>
+                </a>
+                <a href="#" class="nav-item" data-view="mesh">
+                    <i data-lucide="share-2"></i>
+                    <span>Mesh Network</span>
+                </a>
+                <a href="#" class="nav-item" data-view="malware">
+                    <i data-lucide="scan"></i>
+                    <span>Malware Scanner</span>
+                </a>
+                <a href="#" class="nav-item" data-view="repair">
+                    <i data-lucide="wrench"></i>
+                    <span>Repair Engine</span>
+                </a>
+            </nav>
+            <div class="sidebar-footer">
+                <div class="status-indicator">
+                    <div class="status-dot online"></div>
+                    <span id="agent-status-text">Agent Online</span>
+                </div>
+                <div class="node-id-label">Node ID: <span id="node-id-short">...</span></div>
+            </div>
+        </aside>
+
+        <!-- Main Content -->
+        <main class="content">
+            <header class="top-header">
+                <div class="header-left">
+                    <h2 id="view-title">Detection Overview</h2>
+                </div>
+                <div class="header-right">
+                    <div class="search-bar">
+                        <i data-lucide="search"></i>
+                        <input type="text" placeholder="Search threats, files, or nodes...">
+                    </div>
+                    <div class="notification-bell">
+                        <i data-lucide="bell"></i>
+                        <span class="notification-badge">0</span>
+                    </div>
+                </div>
+            </header>
+
+            <div id="dashboard-view" class="view-content active">
+                <!-- Stats Grid -->
+                <div class="stats-grid">
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper blue">
+                            <i data-lucide="activity"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Uptime</span>
+                            <span class="stat-value" id="stat-uptime">—</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper red">
+                            <i data-lucide="shield-alert"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Recent Threats</span>
+                            <span class="stat-value" id="stat-threat-count">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper green">
+                            <i data-lucide="users"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Mesh Peers</span>
+                            <span class="stat-value" id="stat-peer-count">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper purple">
+                            <i data-lucide="database"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Chain Verified</span>
+                            <span class="stat-value" id="stat-chain-verified">...</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Main Grid -->
+                <div class="main-grid">
+                    <div class="card glass shadow-glow threat-timeline">
+                        <div class="card-header">
+                            <h3>Live Threat Timeline</h3>
+                            <button class="btn-text">View All</button>
+                        </div>
+                        <div class="card-body">
+                            <div id="threat-list" class="timeline-list">
+                                <p class="placeholder-text">Waiting for threat data...</p>
+                            </div>
+                        </div>
+                    </div>
+
+                    <div class="card glass shadow-glow activity-feed">
+                        <div class="card-header">
+                            <h3>Recent Activity</h3>
+                        </div>
+                        <div class="card-body">
+                            <div id="activity-feed" class="feed-list">
+                                <p class="placeholder-text">Waiting for activity data...</p>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Threats View -->
+            <div id="threats-view" class="view-content">
+                <div class="card glass shadow-glow">
+                    <div class="card-header">
+                        <h3>Identified Threats & Vulnerabilities</h3>
+                    </div>
+                    <div class="card-body">
+                        <div id="threats-data-list" class="timeline-list">
+                            <p class="placeholder-text">Waiting for threat data...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Mesh Network View -->
+            <div id="mesh-view" class="view-content">
+                <div class="stats-grid" id="mesh-stats-grid">
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-info">
+                            <span class="stat-label">Pending Joins</span>
+                            <span class="stat-value" id="stat-pending-joins">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-info">
+                            <span class="stat-label">Quarantined Peers</span>
+                            <span class="stat-value" id="stat-quarantined">0</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="card glass shadow-glow mt-4">
+                    <div class="card-header">
+                        <h3>Peer Actions</h3>
+                    </div>
+                    <div class="card-body">
+                        <div id="mesh-data-list" class="timeline-list">
+                            <p class="placeholder-text">Waiting for mesh data...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Malware Scanner View -->
+            <div id="malware-view" class="view-content">
+                <div class="stats-grid">
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-info">
+                            <span class="stat-label">Total Scanned</span>
+                            <span class="stat-value" id="stat-scanned">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-info">
+                            <span class="stat-label">Malware Found</span>
+                            <span class="stat-value red" id="stat-malware-found">0</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="card glass shadow-glow mt-4">
+                    <div class="card-header">
+                        <h3>Recent Detections</h3>
+                    </div>
+                    <div class="card-body">
+                        <div id="malware-data-list" class="timeline-list">
+                            <p class="placeholder-text">Waiting for malware scan data...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Repair Engine View -->
+            <div id="repair-view" class="view-content">
+                <div class="card glass shadow-glow">
+                    <div class="card-header">
+                        <h3>System Patch & Repair Status</h3>
+                    </div>
+                    <div class="card-body">
+                        <div class="repair-status-container" id="repair-data">
+                            <p class="placeholder-text">Waiting for repair status...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+        </main>
+    </div>
+
+    <!-- Scripts -->
+    <script src="app.js"></script>
+    <script>
+        lucide.createIcons();
+    </script>
+</body>
+</html>

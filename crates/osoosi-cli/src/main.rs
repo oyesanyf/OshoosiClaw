@@ -574,6 +574,28 @@ async fn handle_grant_access() -> anyhow::Result<()> {
         println!("Result: SUCCESS");
     } else {
         println!("Result: FAILED/PARTIAL");
+        println!("\n[!] CRITICAL: Automated permission grant failed.");
+        println!("[!] Please perform the following manual steps to enable agent monitoring:");
+        
+        #[cfg(target_os = "windows")]
+        {
+            println!("  1. Run 'scripts\\grant-sysmon-read.ps1' as Administrator.");
+            println!("  2. If Sysmon is missing, install it: 'winget install Microsoft.Sysmon'");
+            println!("  3. Restart your terminal/session for group changes to apply.");
+        }
+        
+        #[cfg(target_os = "linux")]
+        {
+            println!("  1. Run 'sudo usermod -aG adm,syslog,systemd-journal $USER'");
+            println!("  2. Install ACL tools: 'sudo apt install acl' or 'sudo yum install acl'");
+            println!("  3. Log out and back in for group changes to take effect.");
+        }
+
+        #[cfg(target_os = "macos")]
+        {
+            println!("  1. Open 'System Settings' > 'Privacy & Security' > 'Full Disk Access'.");
+            println!("  2. Click the '+' button and add your 'osoosi' executable.");
+        }
     }
 
     // NSRL Background download after summary
@@ -699,6 +721,7 @@ fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
         if !suppress_warning {
             warn!("ONNX Runtime dylib not found. Disabling ML features. To enable: set ORT_DYLIB_PATH or place onnxruntime.dll next to the executable.");
         }
+        std::env::set_var("OSOOSI_NO_ORT", "1");
         Ok(())
     }
 }

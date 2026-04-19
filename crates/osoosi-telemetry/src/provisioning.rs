@@ -125,8 +125,8 @@ impl AgentProvisioner {
         info!("OpenSSL winget entries failed. Using direct download from slproweb.com...");
         
         let urls = [
-            ("Full", "https://slproweb.com/download/Win64OpenSSL-3_6_1.exe"),
-            ("Minimal (Light)", "https://slproweb.com/download/Win64OpenSSL_Light-3_6_1.exe"),
+            ("Full", "https://slproweb.com/download/Win64OpenSSL-4_0_0.exe"),
+            ("Minimal (Light)", "https://slproweb.com/download/Win64OpenSSL_Light-4_0_0.exe"),
         ];
 
         for (name, url) in urls {
