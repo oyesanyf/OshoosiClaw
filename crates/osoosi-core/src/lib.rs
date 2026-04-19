@@ -685,9 +685,12 @@ impl EdrOrchestrator {
             for path in paths {
                 if let Err(e) = watcher.watch(path) {
                     tracing::warn!("Could not watch {}: {}", path, e);
+                } else {
+                    info!("File Monitor: Watching {}", path);
                 }
             }
         }
+        info!("File Change Monitor is active ({} paths registered).", paths.len());
         
         // Start background OS file baseline hash on startup
         let baseline_memory = self.memory.clone();
