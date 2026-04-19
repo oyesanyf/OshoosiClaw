@@ -309,8 +309,8 @@ impl MeshNode {
                     SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
                         warn!("Connection closed with {}: {:?}", peer_id, cause);
                     }
-                    SwarmEvent::IncomingConnectionError { local_addr, send_back_addr, error, .. } => {
-                        warn!("Incoming connection error from {}: {} (local: {})", send_back_addr, error, local_addr);
+                    SwarmEvent::NewListenAddr { address, .. } => {
+                        info!("Local node is listening on {}", address);
                     }
                     SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                         warn!("Outgoing connection error to {:?}: {}", peer_id, error);

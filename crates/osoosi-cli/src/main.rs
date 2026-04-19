@@ -189,17 +189,21 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             let start_instant = std::time::Instant::now();
             let orchestrator = EdrOrchestrator::new().await?;
 
-            // Bind dashboard as soon as the orchestrator exists so the UI can load while loops start.
+            // 1. Start P2P Mesh Networking (Discovery, Consensus, and Peer Approval)
+            let join_gate = orchestrator.start_p2p_loop().await.ok();
+
+            // 2. Bind dashboard as soon as the orchestrator exists so the UI can load while loops start.
             if dashboard {
                 info!("Auto-launching dashboard UI...");
                 let dash_orch = Arc::new(orchestrator.clone());
+                let dash_gate = join_gate.clone();
                 tokio::spawn(async move {
                     let mut current_port = 3030u16;
                     let mut opened_port: Option<u16> = None;
                     while current_port <= 3040 {
                         match osoosi_dashboard::spawn_dashboard_with_backend(
                             current_port,
-                            None,
+                            dash_gate.clone(),
                             Some(dash_orch.clone()),
                         )
                         .await

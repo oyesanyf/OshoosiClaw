@@ -408,13 +408,97 @@ impl EdrOrchestrator {
         })
     }
 
-    /// Start the P2P Mesh event loop.
-    pub async fn start_p2p_loop(&self) {
-        let _mesh_mutex = self.mesh.clone();
-        let _orchestrator = self.clone();
+    /// Start the P2P Mesh event loop. Returns the JoinGate to be shared with the Dashboard.
+    pub async fn start_p2p_loop(&self) -> anyhow::Result<Arc<osoosi_wire::JoinGate>> {
+        let (tx, rx) = tokio::sync::mpsc::channel(100);
+        
+        // Save the command sender so the orchestrator can broadcast messages to the mesh
+        {
+            let mut mesh_tx = self.mesh_command_tx.lock().await;
+            *mesh_tx = Some(tx.clone());
+        }
 
-        // Placeholder: mesh lifecycle would be managed here.
-        // In a real implementation, MeshNode would run in its own task.
+        let mesh_config = osoosi_types::load_mesh_listen_config();
+        let peer_rules = osoosi_types::load_peer_rules_config();
+        let autonomy = osoosi_types::load_autonomy_config();
+
+        let join_gate = Arc::new(osoosi_wire::JoinGate::new(
+            self.memory.clone(),
+            tx,
+            autonomy.auto_approve_reputation_threshold,
+            peer_rules.clone(),
+            mesh_config.master_node_public_key.clone(),
+        ));
+
+        // Take the mesh node out of the mutex (it runs its own loop)
+        let mesh_node_opt = {
+            let mut mesh_guard = self.mesh.lock().await;
+            mesh_guard.take()
+        };
+
+        if let Some(mesh_node) = mesh_node_opt {
+            let orch = self.clone();
+            let gate = join_gate.clone();
+            let peer_count = self.mesh_peer_count.clone();
+
+            tokio::spawn(async move {
+                mesh_node.run_loop(
+                    gate,
+                    rx,
+                    Some(peer_count),
+                    peer_rules,
+                    move |sig| {
+                        info!("Mesh Intelligence: External threat reported from {}: {:?}", sig.source_node, sig.reason);
+                        // Persist mesh threat so it shows in the dashboard
+                        if let Err(e) = orch.memory.log_threat(&sig) {
+                            error!("Failed to persist mesh threat: {}", e);
+                        }
+                        orch.audit.log("MESH_THREAT_RECEIVED", serde_json::json!({
+                            "source_node": sig.source_node,
+                            "threat_id": sig.id,
+                            "confidence": sig.confidence,
+                        }));
+                    },
+                    move |msg| {
+                        // Handle policy consensus messages
+                        if let osoosi_types::PolicyConsensusMessage::Vote(ref vote) = msg {
+                             let mut consensus = orch.policy_consensus.blocking_lock();
+                             consensus.entry(vote.voter_id.clone()).or_default().push(msg.clone());
+                        }
+                    },
+                    |_shard| {}, // Ghost shards - placeholder for future distributed storage
+                    |_intel| {}, // Global intel
+                    |_sample| {}, // Malware samples
+                    |_tarpit| {}, // Tarpit signals
+                    |_confidential| {}, // Confidential messages
+                ).await;
+            });
+            
+            // Start periodic peer announce heartbeat
+            let orch_announce = self.clone();
+            tokio::spawn(async move {
+                loop {
+                    tokio::time::sleep(tokio::time::Duration::from_secs(30)).await;
+                    let ann = osoosi_types::PeerAnnounce {
+                        source_node: orch_announce.trust.did().to_string(),
+                        timestamp: chrono::Utc::now(),
+                        is_patched: true, // Placeholder: should check patch engine
+                        os_name: "Windows".to_string(),
+                        os_version: "10/11".to_string(),
+                        os_supported: true,
+                        membership_proof: None, // Should be signed by master node if configured
+                    };
+                    let tx_guard = orch_announce.mesh_command_tx.lock().await;
+                    if let Some(ref tx) = *tx_guard {
+                        let _ = tx.send(osoosi_wire::MeshCommand::PublishPeerAnnounce(ann)).await;
+                    }
+                }
+            });
+
+            info!("P2P Mesh Network is active (Node: {}).", self.trust.did());
+        }
+
+        Ok(join_gate)
     }
 
     /// Start background maintenance loop for rule updates and health checks.
@@ -929,52 +1013,55 @@ impl EdrOrchestrator {
     /// Background task to fetch latest threat feeds (KEV, NVD).
     pub async fn start_fetcher_loop(&self) {
         let fetcher = ThreatFeedFetcher::new();
-        loop {
-            info!("Fetching latest threat intelligence feeds...");
-            match fetcher.fetch_kev().await {
-                Ok(kevs) => {
-                    info!("Successfully loaded {} known exploited vulnerabilities.", kevs.len());
-                    if let Err(e) = self.memory.insert_kevs_batch(&kevs) {
-                        error!("Failed to persist KEV batch: {} (will retry next cycle)", e);
-                    } else {
-                        info!("KEV batch persisted successfully.");
-                    }
-                },
-                Err(e) => error!("Failed to fetch CISA KEV feed: {}", e),
-            }
-
-            // Optional OTX feed (enabled when OTX_API_KEY is provided).
-            if let Ok(api_key) = std::env::var("OTX_API_KEY") {
-                let key = api_key.trim();
-                if !key.is_empty() {
-                    match fetcher.fetch_otx_indicators(key).await {
-                        Ok(indicators) => {
-                            let total = indicators.total_count();
-                            self.policy.update_otx_indicators(indicators);
-                            info!("Successfully loaded {} OTX indicators.", total);
+        let orch = self.clone();
+        tokio::spawn(async move {
+            loop {
+                info!("Fetching latest threat intelligence feeds...");
+                match fetcher.fetch_kev().await {
+                    Ok(kevs) => {
+                        info!("Successfully loaded {} known exploited vulnerabilities.", kevs.len());
+                        if let Err(e) = orch.memory.insert_kevs_batch(&kevs) {
+                            error!("Failed to persist KEV batch: {} (will retry next cycle)", e);
+                        } else {
+                            info!("KEV batch persisted successfully.");
                         }
-                        Err(e) => error!("Failed to fetch OTX indicators: {}", e),
-                    }
+                    },
+                    Err(e) => error!("Failed to fetch CISA KEV feed: {}", e),
                 }
-            }
 
-            // Optional NVD feed (enabled when NVD_API_KEY is provided).
-            let nvd_key = std::env::var("NVD_API_KEY").ok();
-            match fetcher.fetch_nvd_cves(nvd_key.as_deref()).await {
-                Ok(cves) => {
-                    if !cves.is_empty() {
-                        info!("Successfully loaded {} NVD vulnerability records.", cves.len());
-                        if let Err(e) = self.memory.insert_kevs_batch(&cves) {
-                            error!("Failed to persist NVD records: {}", e);
+                // Optional OTX feed (enabled when OTX_API_KEY is provided).
+                if let Ok(api_key) = std::env::var("OTX_API_KEY") {
+                    let key = api_key.trim();
+                    if !key.is_empty() {
+                        match fetcher.fetch_otx_indicators(key).await {
+                            Ok(indicators) => {
+                                let total = indicators.total_count();
+                                orch.policy.update_otx_indicators(indicators);
+                                info!("Successfully loaded {} OTX indicators.", total);
+                            }
+                            Err(e) => error!("Failed to fetch OTX indicators: {}", e),
                         }
                     }
                 }
-                Err(e) => error!("Failed to fetch NVD records: {}", e),
-            }
 
-            // Update cycle: Every 24 hours.
-            tokio::time::sleep(tokio::time::Duration::from_secs(86400)).await;
-        }
+                // Optional NVD feed (enabled when NVD_API_KEY is provided).
+                let nvd_key = std::env::var("NVD_API_KEY").ok();
+                match fetcher.fetch_nvd_cves(nvd_key.as_deref()).await {
+                    Ok(cves) => {
+                        if !cves.is_empty() {
+                            info!("Successfully loaded {} NVD vulnerability records.", cves.len());
+                            if let Err(e) = orch.memory.insert_kevs_batch(&cves) {
+                                error!("Failed to persist NVD records: {}", e);
+                            }
+                        }
+                    }
+                    Err(e) => error!("Failed to fetch NVD records: {}", e),
+                }
+
+                // Update cycle: Every 24 hours.
+                tokio::time::sleep(tokio::time::Duration::from_secs(86400)).await;
+            }
+        });
     }
 
     /// List all pending approval requests from autonomous agents.
