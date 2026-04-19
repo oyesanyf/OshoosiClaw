@@ -428,7 +428,15 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                         let id = d.get("id")?.as_str().unwrap_or("").to_string();
                         let cve_id = d.get("cve_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         let process_name = d.get("process_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let type_str: String = if process_name.is_empty() { "Threat".into() } else { process_name };
+                        let image_path = d.get("image_path").or(d.get("file_path")).and_then(|v| v.as_str()).unwrap_or("");
+                        let type_str = if !process_name.is_empty() {
+                            process_name
+                        } else if !image_path.is_empty() {
+                            image_path.rsplit(['\\', '/']).next().unwrap_or(image_path).to_string()
+                        } else {
+                            let cve = d.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
+                            if !cve.is_empty() { cve.to_string() } else { "Threat".to_string() }
+                        };
                         let confidence = d.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
                         let ts = e.timestamp.to_rfc3339();
                         let source_node = d.get("source_node").and_then(|v| v.as_str()).unwrap_or("").to_string();
@@ -455,13 +463,22 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                     .into_iter()
                     .map(|t| {
                         let obj = t.as_object().cloned().unwrap_or_default();
-                        let process_name = obj.get("process_name").and_then(|v| v.as_str()).unwrap_or("Threat");
+                        let process_name = obj.get("process_name").and_then(|v| v.as_str()).unwrap_or("");
+                        let image_path = obj.get("image_path").or(obj.get("file_path")).and_then(|v| v.as_str()).unwrap_or("");
+                        let title = if !process_name.is_empty() {
+                            process_name.to_string()
+                        } else if !image_path.is_empty() {
+                            image_path.rsplit(['\\', '/']).next().unwrap_or(image_path).to_string()
+                        } else {
+                            let cve = obj.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
+                            if !cve.is_empty() { cve.to_string() } else { "Threat".to_string() }
+                        };
                         let cve_id = obj.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
                         let reason = obj.get("reason").and_then(|v| v.as_str());
                         let predicted_next = obj.get("predicted_next").and_then(|v| v.as_str());
                         json!({
                             "id": obj.get("id"),
-                            "type": process_name,
+                            "type": title,
                             "cve_id": cve_id,
                             "confidence": obj.get("confidence"),
                             "timestamp": obj.get("timestamp"),

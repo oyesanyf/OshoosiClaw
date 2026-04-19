@@ -3,7 +3,11 @@
 # ============================================
 
 # ---------- Rust / Cargo ----------
-/target/
+/target/*
+!/target/release/
+/target/release/*
+!/target/release/*.exe
+!/target/release/*.dll
 /target_alt/
 **/*.rs.bk
 *.pdb
@@ -13,7 +17,9 @@ Cargo.lock
 
 # ---------- Build Artifacts ----------
 *.exe
+!target/release/*.exe
 *.dll
+!target/release/*.dll
 !bin/onnxruntime.dll
 *.dylib
 *.so
@@ -111,7 +117,7 @@ agent/*.pyc
 # ---------- Node (Dashboard) ----------
 node_modules/
 dashboard/node_modules/
-dashboard/dist/
+!dashboard/dist/
 
 # ---------- System / Gemini ----------
 .gemini/

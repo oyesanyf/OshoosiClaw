@@ -179,6 +179,8 @@ function renderThreats(threats) {
                     <span><i data-lucide="clock" style="width:12px"></i> ${formatTimestamp(threat.timestamp)}</span>
                 </div>
                 <div class="item-details" style="font-size: 11px; margin-top: 4px; color: var(--text-muted);">
+                    ${threat.reason ? `<div style="color:var(--accent-red); margin-bottom:2px;">${threat.reason}</div>` : ''}
+                    ${threat.file_path ? `<div style="margin-bottom:2px;">File: ${threat.file_path}</div>` : ''}
                     ID: ${threat.id} | Source: ${threat.source_node}
                 </div>
             </div>
@@ -231,12 +233,14 @@ function renderThreatsView(threats) {
                 <i data-lucide="shield-alert"></i>
             </div>
             <div class="item-info">
-                <div class="item-title">${threat.type} Detected <span style="font-size:10px; padding:2px 6px; border-radius:8px; background:var(--accent-red); color:white; margin-left:8px;">HIGH SEVERITY</span></div>
+                <div class="item-title">${threat.type} <span style="font-size:10px; padding:2px 6px; border-radius:8px; background:var(--accent-red); color:white; margin-left:8px;">HIGH SEVERITY</span></div>
                 <div class="item-meta">
                     <span><i data-lucide="crosshair" style="width:12px"></i> Confidence: ${(threat.confidence * 100).toFixed(0)}%</span>
                     <span><i data-lucide="clock" style="width:12px"></i> ${formatTimestamp(threat.timestamp)}</span>
                     <span><i data-lucide="target" style="width:12px"></i> Source: ${threat.source_node || 'Unknown'}</span>
                 </div>
+                ${threat.reason ? `<div class="item-reason" style="font-size:12px; color:var(--accent-red); margin-top:6px; background:rgba(255,77,77,0.05); padding:8px; border-radius:4px; border-left:3px solid var(--accent-red);">Reason: ${threat.reason}</div>` : ''}
+                ${threat.file_path ? `<div style="font-size:11px; color:var(--text-muted); margin-top:4px;">Path: ${threat.file_path}</div>` : ''}
             </div>
             <div class="item-actions" style="display:flex; align-items:center;">
                 <button class="btn-text" style="color:var(--text-muted); border:1px solid var(--glass-border); padding:6px 12px; border-radius:6px;">Mark False Positive</button>
