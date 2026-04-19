@@ -102,9 +102,14 @@ pub fn resolve_dashboard_asset_dir() -> PathBuf {
             let mut dir = Some(cwd);
             for _ in 0..8 {
                 if let Some(ref d) = dir {
-                    let candidate = d.join("dashboard").join("dist");
-                    if candidate.exists() {
-                        asset_path = candidate;
+                    let candidate_dist = d.join("dashboard").join("dist");
+                    if candidate_dist.exists() {
+                        asset_path = candidate_dist;
+                        break;
+                    }
+                    let candidate_src = d.join("dashboard").join("src");
+                    if candidate_src.exists() {
+                        asset_path = candidate_src;
                         break;
                     }
                     dir = d.parent().map(|p| p.to_path_buf());
