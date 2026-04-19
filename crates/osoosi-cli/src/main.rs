@@ -746,7 +746,13 @@ fn find_onnxruntime_dylib() -> Option<PathBuf> {
             let path = exe_dir.join(filename);
             if path.exists() { return Some(path); }
             
-            // Also check 'target/debug' or 'target/release' if running via cargo
+            // Also check 'bin/' directory (where we commit the official DLL)
+            let path_bin = exe_dir.join("../../bin").join(filename);
+            if path_bin.exists() { return Some(path_bin); }
+            let path_bin_local = PathBuf::from("bin").join(filename);
+            if path_bin_local.exists() { return Some(path_bin_local); }
+
+            // Also check 'target/debug' if running via cargo
             let path_debug = exe_dir.join("../../target/debug").join(filename);
             if path_debug.exists() { return Some(path_debug); }
         }
