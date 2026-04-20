@@ -29,22 +29,16 @@ pub struct OsoosiBehavior {
     pub kademlia: kad::Behaviour<kad::store::MemoryStore>,
 }
 
-pub struct MeshNode {
-    swarm: libp2p::Swarm<OsoosiBehavior>,
-    pub threat_topic: gossipsub::IdentTopic,
-    pub consensus_topic: gossipsub::IdentTopic,
-    pub peer_announce_topic: gossipsub::IdentTopic,
-    pub ghost_shard_topic: gossipsub::IdentTopic,
-    pub intel_topic: gossipsub::IdentTopic,
-    pub name: String,
-    pub malware_sample_topic: gossipsub::IdentTopic,
-    pub audit_proof_topic: gossipsub::IdentTopic,
-    pub tarpit_topic: gossipsub::IdentTopic,
     pub confidential_topic: gossipsub::IdentTopic,
+    pub zone: String,
+    pub memory: Arc<osoosi_memory::MemoryStore>,
 }
 
 impl MeshNode {
-    pub async fn new() -> anyhow::Result<Self> {
+    pub async fn new(memory: Arc<osoosi_memory::MemoryStore>) -> anyhow::Result<Self> {
+        let mesh_config = osoosi_types::load_mesh_listen_config();
+        let zone = mesh_config.zone.clone();
+
         let mut swarm = libp2p::SwarmBuilder::with_new_identity()
             .with_tokio()
             .with_tcp(
@@ -89,15 +83,15 @@ impl MeshNode {
             .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
             .build();
 
-        let threat_topic = gossipsub::IdentTopic::new("osoosi-threats");
-        let consensus_topic = gossipsub::IdentTopic::new("osoosi-consensus");
-        let peer_announce_topic = gossipsub::IdentTopic::new("osoosi-peer-announce");
-        let ghost_shard_topic = gossipsub::IdentTopic::new("osoosi-ghost-shards");
-        let intel_topic = gossipsub::IdentTopic::new("osoosi-intel");
-        let malware_sample_topic = gossipsub::IdentTopic::new("osoosi-malware-samples");
-        let audit_proof_topic = gossipsub::IdentTopic::new("osoosi-audit-proofs");
-        let tarpit_topic = gossipsub::IdentTopic::new(super::TARPIT_TOPIC);
-        let confidential_topic = gossipsub::IdentTopic::new(super::CONFIDENTIAL_TOPIC);
+        let threat_topic = gossipsub::IdentTopic::new(format!("osoosi-threats-{}", zone));
+        let consensus_topic = gossipsub::IdentTopic::new(format!("osoosi-consensus-{}", zone));
+        let peer_announce_topic = gossipsub::IdentTopic::new(format!("osoosi-peer-announce-{}", zone));
+        let ghost_shard_topic = gossipsub::IdentTopic::new(format!("osoosi-ghost-shards-{}", zone));
+        let intel_topic = gossipsub::IdentTopic::new(format!("osoosi-intel-{}", zone));
+        let malware_sample_topic = gossipsub::IdentTopic::new(format!("osoosi-malware-samples-{}", zone));
+        let audit_proof_topic = gossipsub::IdentTopic::new(format!("osoosi-audit-proofs-{}", zone));
+        let tarpit_topic = gossipsub::IdentTopic::new(format!("{}-{}", super::TARPIT_TOPIC, zone));
+        let confidential_topic = gossipsub::IdentTopic::new(format!("{}-{}", super::CONFIDENTIAL_TOPIC, zone));
 
         swarm.behaviour_mut().gossipsub.subscribe(&threat_topic)?;
         swarm.behaviour_mut().gossipsub.subscribe(&consensus_topic)?;
@@ -138,6 +132,18 @@ impl MeshNode {
             swarm, 
             threat_topic, 
             consensus_topic, 
+            peer_announce_topic,
+            ghost_shard_topic,
+            intel_topic,
+            malware_sample_topic,
+            audit_proof_topic,
+            tarpit_topic,
+            confidential_topic,
+            name: "osoosi-mesh".to_string(),
+            zone,
+            memory,
+        })
+    }
             peer_announce_topic, 
             ghost_shard_topic, 
             intel_topic, 
@@ -262,6 +268,13 @@ impl MeshNode {
                     }
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Gossipsub(gossipsub::Event::Message { propagation_source, message, .. })) => {
                         if quarantined.contains(&propagation_source) { continue; }
+                        
+                        // REPUTATION FILTERING: Drop messages from untrusted peers at scale
+                        let peer_reputation = self.memory.get_reputation(&propagation_source.to_string()).unwrap_or(0.5);
+                        if peer_reputation < 0.1 {
+                            debug!("Dropping gossip message from low-reputation peer: {}", propagation_source);
+                            continue;
+                        }
                         if message.topic == self.threat_topic.hash() {
                             if let Ok(sig) = serde_json::from_slice::<ThreatSignature>(&message.data) {
                                 if sig.verify() { on_threat(sig); }

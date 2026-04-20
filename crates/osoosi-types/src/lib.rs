@@ -12,6 +12,7 @@ pub mod threat;
 pub mod trust;
 pub mod repair;
 pub mod holograph;
+pub mod executor;
 
 pub use config::*;
 pub use error::*;
@@ -22,3 +23,4 @@ pub use threat::*;
 pub use trust::*;
 pub use repair::*;
 pub use holograph::*;
+pub use executor::*;

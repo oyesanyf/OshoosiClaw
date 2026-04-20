@@ -25,6 +25,7 @@ pub mod watchdog;
 pub mod canary;
 pub mod browser_guard;
 pub mod capa_analyzer;
+pub mod secured_executor;
 pub mod remediation;
 pub mod adaptive;
 pub mod byzantine;
@@ -117,6 +118,8 @@ pub struct EdrOrchestrator {
     storyteller: Arc<crate::forensics::ForensicStoryteller>,
     /// Runtime paths (db_path, traps_path) from config
     runtime_config: osoosi_types::RuntimeConfig,
+    /// Secured execution layer (Direct or OpenShell)
+    secured_executor: Arc<dyn SecuredExecutor>,
 }
 impl EdrOrchestrator {
     pub fn behavioral_classifier(&self) -> Arc<osoosi_behavioral::BehavioralClassifier> {
@@ -321,6 +324,17 @@ impl EdrOrchestrator {
 
     pub async fn new() -> anyhow::Result<Self> {
         let runtime_config = load_runtime_config();
+        
+        let secured_executor: Arc<dyn SecuredExecutor> = if runtime_config.secure_runtime == "openshell" {
+            info!("Initializing OpenShell sandboxed runtime (Sandbox: {})...", runtime_config.openshell_sandbox);
+            Arc::new(crate::secured_executor::OpenShellExecutor::new(
+                &runtime_config.openshell_sandbox,
+                runtime_config.openshell_policy.as_deref(),
+            ))
+        } else {
+            Arc::new(crate::secured_executor::DirectExecutor::new())
+        };
+
         let memory = Arc::new(MemoryStore::new(&runtime_config.db_path)?);
         let telemetry = Arc::new(SysmonParser::new());
         let policy = Arc::new(PolicyEngine::new(memory.clone()));
@@ -331,11 +345,11 @@ impl EdrOrchestrator {
             policy_init.load_sigma_rules(std::path::Path::new(&sigma_dir));
             debug!("Sigma rule loading took {:?}", start.elapsed());
         });
-        let mesh = Arc::new(tokio::sync::Mutex::new(Some(MeshNode::new().await?)));
+        let mesh = Arc::new(tokio::sync::Mutex::new(Some(MeshNode::new(memory.clone()).await?)));
         let mesh_command_tx = Arc::new(tokio::sync::Mutex::new(None));
         let response = Arc::new(DeceptionManager::new());
         let audit = Arc::new(AuditTrail::new());
-        let trust = Arc::new(TrustManager::new()?);
+        let trust = Arc::new(TrustManager::new(secured_executor.clone())?);
         let exclude_paths = osoosi_types::load_exclude_paths_from_config();
         let watcher = Arc::new(tokio::sync::Mutex::new(
             osoosi_telemetry::FileWatcher::new(Some(memory.clone()), exclude_paths)?
@@ -405,6 +419,7 @@ impl EdrOrchestrator {
             adaptive,
             storyteller,
             runtime_config,
+            secured_executor,
         })
     }
 
@@ -1149,6 +1164,26 @@ impl EdrOrchestrator {
         // Einstein Engine: Check for "Dilation of Truth" (temporal anomalies)
         let temporal_score = self.relativistic.check_temporal_dilation(&event);
         
+        // 0. Bloom Filter "Known Malicious" Fast-Path: 
+        // Immediately flag hashes we've already identified as malicious across the mesh.
+        if let Some(hashes) = event.data.get("Hashes").and_then(|h| h.as_str()) {
+            for hash_part in hashes.split(',') {
+                let parts: Vec<&str> = hash_part.split('=').collect();
+                if parts.len() == 2 {
+                    let hash_val = parts[1];
+                    if self.memory.is_hash_known_malicious_fast(hash_val) {
+                        warn!("Bloom Filter HIT: Known malicious hash detected: {}", hash_val);
+                        let mut sig = osoosi_types::ThreatSignature::new(event.computer.clone());
+                        sig.confidence = 1.0;
+                        sig.hash_blake3 = Some(hash_val.to_string());
+                        sig.add_reason(format!("Bloom Filter: Hash {} matches a known malicious signature from the mesh", hash_val));
+                        signature = Some(sig);
+                        break; 
+                    }
+                }
+            }
+        }
+
         // 1. NSRL "Known Good" Fast-Path: Skip deep analysis for trusted binaries.
         // We use a three-tier check: In-Memory L1 -> Persistent L2 -> Authoritative DB L3.
         if let Some(sha1) = event.data.get("Hashes").and_then(|h| h.as_str())

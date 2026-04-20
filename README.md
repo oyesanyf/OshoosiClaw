@@ -35,7 +35,8 @@
 
 - 🔐 **Trust** is mathematically proven through Merkle Proofs and S2S Certificates
 - 🔬 **Detection** is powered by a 6-engine forensic pipeline (EMBER ML + CAPA + FLOSS + HollowsHunter + YARA + ClamAV)
-- 🧠 **Intelligence** is shared peer-to-peer across a libp2p mesh with differential privacy
+- 🧠 **Intelligence** is shared peer-to-peer across a **Million-Node Mesh** with Zonal Sharding and Reputation Filtering
+- 🛡️ **Runtime Security** is hardened via **NVIDIA OpenShell** (Standalone Sandbox - No Docker required)
 - 🛡️ **Response** is autonomous — quarantine, tarpit, deceive, or heal — based on confidence thresholds
 
 ### Why Rust?
@@ -107,7 +108,9 @@ graph LR
 | **Collaboration** | Central server aggregates data | P2P mesh shares intelligence with differential privacy |
 | **Deception** | Static honeypots (if any) | Dynamic Ghost Traps + Tarpitting + Holographic Sharding |
 | **Reasoning** | Rule-based matching only | LLM agent reasons about context and acts |
-| **Provisioning** | Admin installs tools manually | `grant-access` auto-deployments |
+| **Sandboxing** | Direct host execution | Hardened via **NVIDIA OpenShell** L7 policies |
+| **Scalability** | Hub-and-spoke (bottleneck) | **Million-Node Mesh** with Zonal Sharding |
+| **Provisioning** | Admin installs tools manually | Hardened, auditable pipeline via `SecuredExecutor` |
 
 ### The Autonomous Decision Matrix
 
@@ -335,6 +338,8 @@ OshoosiClaw agents form a **decentralized P2P mesh** using libp2p Gossipsub:
 |:--------|:------------|
 | **DID Identity** | Every agent has a unique `did:osoosi` cryptographic identity |
 | **Mutual Attestation** | Agents verify each other's binary integrity via challenge-response |
+| **Zonal Sharding** | Nodes organized by zone/industry to support **Million-Node Scale** |
+| **Reputation Filter** | Gossip prioritization based on top 1% most trusted nodes |
 | **Differential Privacy** | Threat intelligence is shared with Laplacian noise to prevent fingerprinting |
 | **Reputation Scoring** | Peers earn trust through consistent, accurate threat reports |
 | **Shadow Chain** | Distributed immutable audit ledger prevents log tampering |
@@ -475,9 +480,9 @@ $env:OSOOSI_LLM_AGENT_ENABLED="1"
 
 > **OshoosiClaw takes security seriously.**
 
-- **Configuration Integrity**: `osoosi.toml` and policy files are SHA-256 signed. The agent **hard refuses** to start if signatures are invalid.
+- **Configuration Integrity**: `osoosi.toml` and policy files are **OpenSSL-signed**. The agent **hard refuses** to start if signatures are invalid.
+- **Sandboxed Execution**: All external forensic tools (CAPA, FLOSS, etc.) run inside an **NVIDIA OpenShell** sandbox. OpenShell leverages standalone compute drivers like **libkrun** or **Firecracker** to provide L7 isolation without the overhead or dependency of a full Docker daemon.
 - **Tamper-Evident Logging**: All events are recorded in a Merkle Logchain. Any modification is cryptographically detectable.
-- **Sandboxed Execution**: Autonomous remediation scripts run in a WASM sandbox with fuel limits and taint tracking.
 - **Differential Privacy**: Threat intelligence shared across the mesh includes Laplacian noise to prevent fingerprinting.
 
 For vulnerability reports, see [SECURITY.md](SECURITY.md).

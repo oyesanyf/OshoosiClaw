@@ -26,9 +26,6 @@ fn file_sha256(path: &Path) -> anyhow::Result<String> {
 }
 
 /// Sign a configuration file by writing its SHA-256 hash to a `.sig` sidecar.
-///
-/// Call this after generating or updating a policy file so that future
-/// startups can verify the file has not been tampered with.
 pub fn sign_config_file(path: &Path) -> anyhow::Result<String> {
     let hash = file_sha256(path)?;
     let sig_path = path.with_extension(
@@ -37,6 +34,28 @@ pub fn sign_config_file(path: &Path) -> anyhow::Result<String> {
     std::fs::write(&sig_path, &hash)?;
     info!("Signed config file {:?} → hash={}", path, &hash[..16]);
     Ok(hash)
+}
+
+/// [NEW] Sign a config file using OpenSSL (Asymmetric).
+pub async fn sign_config_with_openssl(path: &Path, executor: &dyn osoosi_types::SecuredExecutor, priv_key_path: &Path) -> anyhow::Result<()> {
+    let sig_path = path.with_extension(
+        format!("{}{}.openssl", path.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default(), SIG_EXTENSION)
+    );
+    
+    let mut cmd = std::process::Command::new("openssl");
+    cmd.args([
+        "dgst", "-sha256", "-sign", &priv_key_path.to_string_lossy(),
+        "-out", &sig_path.to_string_lossy(),
+        &path.to_string_lossy()
+    ]);
+    
+    let output = executor.execute(cmd).await?;
+    if !output.status.success() {
+        return Err(anyhow::anyhow!("OpenSSL signing failed: {}", String::from_utf8_lossy(&output.stderr)));
+    }
+    
+    info!("OpenSSL Signed config file: {:?}", path);
+    Ok(())
 }
 
 /// Verify a configuration file's integrity using Ed25519 Digital Signatures.

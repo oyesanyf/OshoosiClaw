@@ -23,16 +23,10 @@ pub struct CapaAnalyzer {
 
 impl CapaAnalyzer {
     pub fn new(memory: Arc<osoosi_memory::MemoryStore>) -> Self {
-        // Try to find CAPA in common locations if not provided
-        // The user mentioned cloning it to D:\harfile\capa
-        let capa_root = osoosi_types::resolve_tools_dir().join("capa");
-        let rules_path = capa_root.join("rules");
-        let floss_path = osoosi_types::resolve_tool_path("floss", "floss.exe");
-
         Self {
-            _capa_path: capa_root,
-            rules_path,
-            floss_path,
+            _capa_path: osoosi_types::resolve_capa_dir(),
+            rules_path: osoosi_types::resolve_capa_rules_dir(),
+            floss_path: osoosi_types::resolve_floss_path(),
             _memory: memory,
         }
     }

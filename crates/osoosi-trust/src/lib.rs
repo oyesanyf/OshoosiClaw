@@ -13,10 +13,11 @@ use std::fs;
 pub struct TrustManager {
     signing_key: SigningKey,
     did: NodeDID,
+    executor: std::sync::Arc<dyn osoosi_types::SecuredExecutor>,
 }
 
 impl TrustManager {
-    pub fn new() -> anyhow::Result<Self> {
+    pub fn new(executor: std::sync::Arc<dyn osoosi_types::SecuredExecutor>) -> anyhow::Result<Self> {
         // In a real app, load this from secure storage/TPM
         let mut csprng = rand::thread_rng();
         let signing_key = SigningKey::generate(&mut csprng);
@@ -27,7 +28,7 @@ impl TrustManager {
             public_key: hex::encode(public_key.to_bytes()),
         };
 
-        Ok(Self { signing_key, did })
+        Ok(Self { signing_key, did, executor })
     }
 
     /// Generate a Master Node membership proof (signature) for a peer ID.
@@ -41,7 +42,7 @@ impl TrustManager {
     }
 
     /// Set up a local Certificate Authority (CA) using OpenSSL.
-    pub fn init_ca(&self, path: &str) -> anyhow::Result<()> {
+    pub async fn init_ca(&self, path: &str) -> anyhow::Result<()> {
         let path = Path::new(path);
         if !path.exists() {
             fs::create_dir_all(path)?;
@@ -50,27 +51,27 @@ impl TrustManager {
         info!("Initializing Osoosi Root CA...");
 
         // 1. Generate Root Key
-        let output = Command::new("openssl")
-            .args([
-                "genrsa", "-out", 
-                path.join("rootCA.key").to_str().unwrap(), 
-                "4096"
-            ])
-            .output()?;
+        let mut key_cmd = Command::new("openssl");
+        key_cmd.args([
+            "genrsa", "-out", 
+            path.join("rootCA.key").to_str().unwrap(), 
+            "4096"
+        ]);
+        let output = self.executor.execute(key_cmd).await?;
         if !output.status.success() {
             return Err(anyhow::anyhow!("OpenSSL failed to generate CA key: {}", String::from_utf8_lossy(&output.stderr)));
         }
 
         // 2. Generate Root Certificate
-        let output = Command::new("openssl")
-            .args([
-                "req", "-x509", "-new", "-nodes", 
-                "-key", path.join("rootCA.key").to_str().unwrap(),
-                "-sha256", "-days", "3650", 
-                "-out", path.join("rootCA.crt").to_str().unwrap(),
-                "-subj", "/C=US/ST=Cyber/L=Decentralized/O=Osoosi/OU=Security/CN=OsoosiRootCA"
-            ])
-            .output()?;
+        let mut cert_cmd = Command::new("openssl");
+        cert_cmd.args([
+            "req", "-x509", "-new", "-nodes", 
+            "-key", path.join("rootCA.key").to_str().unwrap(),
+            "-sha256", "-days", "3650", 
+            "-out", path.join("rootCA.crt").to_str().unwrap(),
+            "-subj", "/C=US/ST=Cyber/L=Decentralized/O=Osoosi/OU=Security/CN=OsoosiRootCA"
+        ]);
+        let output = self.executor.execute(cert_cmd).await?;
 
         if !output.status.success() {
             return Err(anyhow::anyhow!("OpenSSL failed to generate CA cert: {}", String::from_utf8_lossy(&output.stderr)));
@@ -80,7 +81,7 @@ impl TrustManager {
     }
 
     /// Issue a Service-to-Service (S2S) Certificate for a peer.
-    pub fn issue_certificate(&self, ca_path: &str, peer_did: &str, output_path: &str) -> anyhow::Result<()> {
+    pub async fn issue_certificate(&self, ca_path: &str, peer_did: &str, output_path: &str) -> anyhow::Result<()> {
         let ca_path = Path::new(ca_path);
         let out_path = Path::new(output_path);
         if !out_path.exists() {
@@ -90,33 +91,34 @@ impl TrustManager {
         info!("Issuing S2S Certificate for node: {}", peer_did);
 
         // 1. Generate Peer Key
-        Command::new("openssl")
-            .args(["genrsa", "-out", out_path.join("peer.key").to_str().unwrap(), "2048"])
-            .output()?;
+        let mut key_cmd = Command::new("openssl");
+        key_cmd.args(["genrsa", "-out", out_path.join("peer.key").to_str().unwrap(), "2048"]);
+        self.executor.execute(key_cmd).await?;
 
         // 2. Generate CSR (include DID in Common Name)
         let subj = format!("/C=US/ST=Cyber/L=Node/O=Osoosi/CN={}", peer_did);
-        Command::new("openssl")
-            .args([
-                "req", "-new", 
-                "-key", out_path.join("peer.key").to_str().unwrap(),
-                "-out", out_path.join("peer.csr").to_str().unwrap(),
-                "-subj", &subj
-            ])
-            .output()?;
+        let mut csr_cmd = Command::new("openssl");
+        csr_cmd.args([
+            "req", "-new", 
+            "-key", out_path.join("peer.key").to_str().unwrap(),
+            "-out", out_path.join("peer.csr").to_str().unwrap(),
+            "-subj", &subj
+        ]);
+        self.executor.execute(csr_cmd).await?;
 
         // 3. Sign with CA
-        let output = Command::new("openssl")
-            .args([
-                "x509", "-req", 
-                "-in", out_path.join("peer.csr").to_str().unwrap(),
-                "-CA", ca_path.join("rootCA.crt").to_str().unwrap(),
-                "-CAkey", ca_path.join("rootCA.key").to_str().unwrap(),
-                "-CAcreateserial", 
-                "-out", out_path.join("peer.crt").to_str().unwrap(),
-                "-days", "365", "-sha256"
-            ])
-            .output()?;
+        // 3. Sign with CA
+        let mut sign_cmd = Command::new("openssl");
+        sign_cmd.args([
+            "x509", "-req", 
+            "-in", out_path.join("peer.csr").to_str().unwrap(),
+            "-CA", ca_path.join("rootCA.crt").to_str().unwrap(),
+            "-CAkey", ca_path.join("rootCA.key").to_str().unwrap(),
+            "-CAcreateserial", 
+            "-out", out_path.join("peer.crt").to_str().unwrap(),
+            "-days", "365", "-sha256"
+        ]);
+        let output = self.executor.execute(sign_cmd).await?;
 
         if !output.status.success() {
             return Err(anyhow::anyhow!("OpenSSL failed to sign peer cert: {}", String::from_utf8_lossy(&output.stderr)));

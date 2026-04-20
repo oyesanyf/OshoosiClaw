@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use osoosi_core::EdrOrchestrator;
+use osoosi_core::{EdrOrchestrator, secured_executor::{DirectExecutor, OpenShellExecutor}};
 use osoosi_policy::ThreatFeedFetcher;
 
 use std::fs;
@@ -173,7 +173,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         let _ = osoosi_core::firewall::open_mesh_ports();
     } else if is_starting || is_bootstrapping {
         // Ensure essentials on startup
-        let provisioner = osoosi_telemetry::AgentProvisioner::new();
+        let executor = Arc::new(DirectExecutor::new());
+        let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
         if let Err(e) = provisioner.provision_telemetry().await {
             warn!("Automated provisioning encountered issues: {}. Continuing startup...", e);
         }
@@ -343,11 +344,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             let tm = orchestrator.trust();
             match action {
                 TrustAction::InitCa => {
-                    tm.init_ca("./certs/ca")?;
+                    tm.init_ca("./certs/ca").await?;
                     info!("Root CA successfully initialized in ./certs/ca");
                 }
                 TrustAction::Issue { peer_did, out } => {
-                    tm.issue_certificate("./certs/ca", &peer_did, &out)?;
+                    tm.issue_certificate("./certs/ca", &peer_did, &out).await?;
                     info!("S2S Certificate issued to {}", out);
                 }
                 TrustAction::WhoAmI => {
@@ -420,7 +421,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Some(Commands::BootstrapModels) => {
             let _ = ensure_onnx_runtime().await;
             info!("Bootstrapping ML models (MalwareScanner + SmolLM3 Storyteller)...");
-            let provisioner = osoosi_telemetry::AgentProvisioner::new();
+            let executor = Arc::new(DirectExecutor::new());
+            let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
             let _ = provisioner.provision_smollm_models().await;
         }
         Some(Commands::SignConfigs) => {
@@ -492,8 +494,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 async fn handle_grant_access() -> anyhow::Result<()> {
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     {
-        use osoosi_telemetry::AgentProvisioner;
-        let provisioner = AgentProvisioner::new();
+        let executor = Arc::new(DirectExecutor::new());
+        let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
         
         info!("GrantAccess pre-step: ensuring ONNX Runtime is provisioned...");
         if let Err(e) = ensure_onnx_runtime().await {
@@ -515,9 +517,45 @@ async fn handle_grant_access() -> anyhow::Result<()> {
              warn!("Warning: Failed to provision ClamAV: {}", e);
         }
 
-        info!("GrantAccess pre-step: ensuring OpenSSL is provisioned...");
+        info!("GrantAccess pre-step: ensuring OpenSSL is provisioned and validated...");
         if let Err(e) = provisioner.provision_openssl().await {
              warn!("Warning: Failed to provision OpenSSL: {}", e);
+        } else {
+             // USER REQUEST: Validate it is used to sign stuff
+             info!("Validating OpenSSL signing capabilities...");
+             let test_file = std::env::temp_dir().join("osoosi_sign_test.txt");
+             let test_sig = std::env::temp_dir().join("osoosi_sign_test.sig");
+             let _ = std::fs::write(&test_file, "Oshoosi OpenSSL Validation");
+             
+             let mut gen_key = tokio::process::Command::new("openssl");
+             gen_key.args(["genrsa", "-out", "test_priv.pem", "2048"]);
+             
+             let mut sign_cmd = tokio::process::Command::new("openssl");
+             sign_cmd.args(["dgst", "-sha256", "-sign", "test_priv.pem", "-out", &test_sig.to_string_lossy(), &test_file.to_string_lossy()]);
+             
+             let mut verify_cmd = tokio::process::Command::new("openssl");
+             verify_cmd.args(["dgst", "-sha256", "-verify", "test_pub.pem", "-signature", &test_sig.to_string_lossy(), &test_file.to_string_lossy()]);
+             
+             // Extract public key first
+             let mut pub_cmd = tokio::process::Command::new("openssl");
+             pub_cmd.args(["rsa", "-in", "test_priv.pem", "-pubout", "-out", "test_pub.pem"]);
+
+             let success = async {
+                 let _ = gen_key.status().await;
+                 let _ = pub_cmd.status().await;
+                 let s = sign_cmd.status().await?.success();
+                 Ok::<bool, anyhow::Error>(s)
+             }.await.unwrap_or(false);
+
+             if success {
+                 info!("✓ OpenSSL Signing Validation: SUCCESS");
+             } else {
+                 warn!("! OpenSSL Signing Validation: FAILED");
+             }
+             let _ = std::fs::remove_file("test_priv.pem");
+             let _ = std::fs::remove_file("test_pub.pem");
+             let _ = std::fs::remove_file(&test_file);
+             let _ = std::fs::remove_file(&test_sig);
         }
 
         info!("GrantAccess pre-step: ensuring FLOSS is provisioned...");

@@ -15,6 +15,7 @@ pub use memory_scanner::*;
 
 pub struct MemoryStore {
     conn: Mutex<Connection>,
+    bloom_filter: Mutex<bloomfilter::Bloom<String>>,
 }
 
 impl MemoryStore {
@@ -29,13 +30,17 @@ impl MemoryStore {
             let _ = encryption::apply_encryption(&conn, &key);
         }
 
-        conn.execute_batch(
-            "PRAGMA journal_mode=WAL; PRAGMA busy_timeout=30000; PRAGMA synchronous=NORMAL;"
-        )?;
-        
         let lock = Mutex::new(conn);
-        let s = Self { conn: lock };
+        
+        // Initialize Bloom filter: 1,000,000 items with 0.01% false positive rate
+        let bloom = bloomfilter::Bloom::new_for_fp_rate(1_000_000, 0.0001);
+        
+        let s = Self { 
+            conn: lock,
+            bloom_filter: Mutex::new(bloom),
+        };
         s.init_db()?;
+        s.repopulate_bloom_filter()?;
         Ok(s)
     }
 
@@ -830,5 +835,49 @@ impl MemoryStore {
             results.push(serde_json::Value::Object(map));
         }
         Ok(results)
+    }
+
+    pub fn repopulate_bloom_filter(&self) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT hash_blake3 FROM threats WHERE hash_blake3 IS NOT NULL")?;
+        let hashes = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        
+        let mut bloom = self.bloom_filter.lock().unwrap();
+        for hash in hashes {
+            if let Ok(h) = hash {
+                bloom.set(&h);
+            }
+        }
+        Ok(())
+    }
+
+    /// Fast probabilistic check for malicious hash. Returns true if POSSIBLY malicious.
+    pub fn is_hash_known_malicious_fast(&self, hash: &str) -> bool {
+        let bloom = self.bloom_filter.lock().unwrap();
+        bloom.check(&hash.to_string())
+    }
+
+    pub fn get_reputation(&self, node_id: &str) -> anyhow::Result<f32> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare("SELECT score FROM reputation WHERE node_id = ?")?;
+        let mut rows = stmt.query([node_id])?;
+        if let Some(row) = rows.next()? {
+            Ok(row.get(0)?)
+        } else {
+            Ok(0.5) // Default neutral reputation
+        }
+    }
+
+    pub fn update_reputation(&self, node_id: &str, delta: f32) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO reputation (node_id, score, last_updated) 
+             VALUES (?, ?, ?) 
+             ON CONFLICT(node_id) DO UPDATE SET 
+             score = MAX(0.0, MIN(1.0, score + ?)),
+             last_updated = ?",
+            params![node_id, 0.5 + delta, Utc::now().to_rfc3339(), delta, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
     }
 }

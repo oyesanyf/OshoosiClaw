@@ -430,6 +430,68 @@ pub fn resolve_tool_path(tool_name: &str, executable_name: &str) -> PathBuf {
     resolve_tools_dir().join(tool_name).join(executable_name)
 }
 
+pub fn resolve_capa_dir() -> PathBuf {
+    resolve_tools_dir().join("capa")
+}
+
+pub fn resolve_capa_rules_dir() -> PathBuf {
+    resolve_capa_dir().join("rules")
+}
+
+pub fn resolve_capa_sigs_dir() -> PathBuf {
+    resolve_capa_dir().join("signatures")
+}
+
+pub fn resolve_floss_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    { resolve_tools_dir().join("floss").join("floss.exe") }
+    #[cfg(not(target_os = "windows"))]
+    { resolve_tools_dir().join("floss").join("floss") }
+}
+
+pub fn resolve_hollows_hunter_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    { resolve_tools_dir().join("hollows_hunter").join("hollows_hunter.exe") }
+    #[cfg(not(target_os = "windows"))]
+    { resolve_tools_dir().join("hollows_hunter").join("hollows_hunter") }
+}
+
+pub fn resolve_ngrep_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    { resolve_tools_dir().join("ngrep").join("ngrep.exe") }
+    #[cfg(not(target_os = "windows"))]
+    { resolve_tools_dir().join("ngrep").join("ngrep") }
+}
+
+pub fn resolve_sysmon_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        let is_64 = std::env::var("PROCESSOR_ARCHITECTURE")
+            .map(|a| a.eq_ignore_ascii_case("AMD64") || a.eq_ignore_ascii_case("ARM64"))
+            .unwrap_or(cfg!(target_pointer_width = "64"));
+        if is_64 {
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("Sysmon64.exe")
+        } else {
+            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("Sysmon.exe")
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    { PathBuf::from("/usr/local/bin/sysmon") }
+}
+
+pub fn resolve_clamscan_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(pf) = std::env::var("ProgramFiles") {
+            let p = PathBuf::from(pf).join("ClamAV").join("clamscan.exe");
+            if p.exists() { return p; }
+        }
+        PathBuf::from("clamscan.exe")
+    }
+    #[cfg(not(target_os = "windows"))]
+    { PathBuf::from("/usr/bin/clamscan") }
+}
+
 /// Resolve the models directory for ML/LLM models (Malware, SmolLM, etc.).
 /// Env override: OSOOSI_MODELS_DIR.
 /// Defaults to current_dir/models or project_root/models if found.
@@ -461,6 +523,21 @@ pub fn resolve_models_dir() -> PathBuf {
     
     // Ultimate fallback: current_dir/models
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("models")
+}
+
+pub fn resolve_smollm_dir() -> PathBuf {
+    resolve_models_dir().join("smollm")
+}
+
+pub fn resolve_smollm_onnx_path() -> PathBuf {
+    resolve_smollm_dir().join("smollm2-135m-it.onnx")
+}
+
+pub fn resolve_openssl_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    { PathBuf::from("openssl.exe") } // Usually on PATH after install
+    #[cfg(not(target_os = "windows"))]
+    { PathBuf::from("openssl") }
 }
 
 /// Walk up from current_dir to find project/workspace root (osoosi.toml or Cargo.toml with [workspace]).
@@ -572,6 +649,15 @@ pub fn load_runtime_config() -> RuntimeConfig {
         if !v.trim().is_empty() {
             cfg.traps_path = v.trim().to_string();
         }
+    }
+    if let Ok(v) = std::env::var("OSOOSI_SECURE_RUNTIME") {
+        cfg.secure_runtime = Some(v.trim().to_string());
+    }
+    if let Ok(v) = std::env::var("OSOOSI_OPENSHELL_SANDBOX") {
+        cfg.openshell_sandbox = v.trim().to_string();
+    }
+    if let Ok(v) = std::env::var("OSOOSI_OPENSHELL_POLICY") {
+        cfg.openshell_policy = Some(v.trim().to_string());
     }
     cfg
 }
@@ -761,6 +847,7 @@ pub struct WireListenConfig {
     pub bootstrap_peers: Vec<String>,
     pub master_node_public_key: Option<String>,
     pub membership_proof: Option<String>,
+    pub zone: String,
 }
 
 pub fn load_mesh_listen_config_extended() -> WireListenConfig {
@@ -768,6 +855,7 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
     let mut bootstrap_peers = Vec::new();
     let mut master_node_public_key = None;
     let mut membership_proof = None;
+    let mut zone = "Global".to_string();
 
     if let Some(path) = resolve_config_path() {
         if let Ok(content) = std::fs::read_to_string(&path) {
@@ -801,6 +889,9 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
                         }
                     }
                 }
+                if let Some(z) = fc.wire.zone.clone() {
+                    zone = z;
+                }
             }
         }
     }
@@ -820,6 +911,9 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
     if let Ok(proof) = std::env::var("OSOOSI_MEMBERSHIP_PROOF") {
         membership_proof = Some(proof.trim().to_string());
     }
+    if let Ok(z) = std::env::var("OSOOSI_MESH_ZONE") {
+        zone = z.trim().to_string();
+    }
 
     if listen_addrs.is_empty() {
         listen_addrs.push("/ip4/0.0.0.0/tcp/4001".to_string());
@@ -830,6 +924,7 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
         bootstrap_peers,
         master_node_public_key,
         membership_proof,
+        zone,
     }
 }
 
@@ -886,6 +981,15 @@ pub struct RuntimeConfig {
     /// Path for deception ghost files (HDS). Env: OSOOSI_TRAPS_PATH
     #[serde(default = "default_traps_path")]
     pub traps_path: String,
+    /// Secure runtime to use for internet-facing tasks (e.g. "openshell", "none"). Env: OSOOSI_SECURE_RUNTIME
+    #[serde(default)]
+    pub secure_runtime: Option<String>,
+    /// Name of the OpenShell sandbox to use. Env: OSOOSI_OPENSHELL_SANDBOX
+    #[serde(default = "default_openshell_sandbox")]
+    pub openshell_sandbox: String,
+    /// Path to the OpenShell egress policy YAML. Env: OSOOSI_OPENSHELL_POLICY
+    #[serde(default)]
+    pub openshell_policy: Option<String>,
 }
 
 fn default_fuel_limit() -> u64 {
@@ -900,6 +1004,9 @@ fn default_db_path() -> String {
 fn default_traps_path() -> String {
     "./traps".to_string()
 }
+fn default_openshell_sandbox() -> String {
+    "osoosi-agent".to_string()
+}
 
 impl Default for RuntimeConfig {
     fn default() -> Self {
@@ -908,6 +1015,9 @@ impl Default for RuntimeConfig {
             action_max_memory: default_max_memory(),
             db_path: default_db_path(),
             traps_path: default_traps_path(),
+            secure_runtime: None,
+            openshell_sandbox: default_openshell_sandbox(),
+            openshell_policy: None,
         }
     }
 }
@@ -983,6 +1093,9 @@ pub struct WireConfig {
     /// Public key of the Master Node (ed25519 hex). If set, only peers signed by this key can join.
     #[serde(default)]
     pub master_node_public_key: Option<String>,
+    /// Zonal Sharding: The logical zone for this node (e.g. Finance, HR).
+    #[serde(default)]
+    pub zone: Option<String>,
 }
 
 fn default_min_reputation() -> f32 {
