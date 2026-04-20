@@ -232,6 +232,35 @@ pub fn clear_firewall_persistence() -> Result<()> {
     Ok(())
 }
 
+/// Open ports required for Mesh (4001) and Dashboard (3030).
+pub fn open_mesh_ports() -> Result<()> {
+    #[cfg(target_os = "windows")]
+    {
+        let ports = [("Osoosi-Mesh", 4001), ("Osoosi-Dashboard", 3030)];
+        for (name, port) in ports {
+            let _ = Command::new("netsh")
+                .args([
+                    "advfirewall", "firewall", "add", "rule",
+                    &format!("name={}", name),
+                    "dir=in", "action=allow", "protocol=TCP",
+                    &format!("localport={}", port),
+                    "enable=yes", "profile=any"
+                ])
+                .status();
+        }
+    }
+    #[cfg(target_os = "linux")]
+    {
+        // Try ufw first
+        let _ = Command::new("sudo").args(["ufw", "allow", "4001/tcp"]).status();
+        let _ = Command::new("sudo").args(["ufw", "allow", "3030/tcp"]).status();
+        // Fallback to iptables
+        let _ = Command::new("sudo").args(["iptables", "-I", "INPUT", "-p", "tcp", "--dport", "4001", "-j", "ACCEPT"]).status();
+        let _ = Command::new("sudo").args(["iptables", "-I", "INPUT", "-p", "tcp", "--dport", "3030", "-j", "ACCEPT"]).status();
+    }
+    Ok(())
+}
+
 pub fn block_process_network(process_id: Option<u32>, image_path: Option<&str>) -> Result<String> {
     if is_program_in_allowlist(image_path) {
         return Err(anyhow!(

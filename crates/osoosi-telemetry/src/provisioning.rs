@@ -33,7 +33,8 @@ impl AgentProvisioner {
     pub async fn provision_telemetry(&self) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         {
-            self.provision_windows().await
+            self.provision_windows().await?;
+            self.provision_capa().await
         }
         #[cfg(target_os = "linux")]
         {
@@ -798,20 +799,6 @@ impl AgentProvisioner {
             ("model.safetensors", format!("https://huggingface.co/{}/resolve/main/model.safetensors", MODEL_REPO)),
             ("tokenizer.json",    format!("https://huggingface.co/{}/resolve/main/tokenizer.json",    MODEL_REPO)),
             ("config.json",       format!("https://huggingface.co/{}/resolve/main/config.json",       MODEL_REPO)),
-            ("smollm2-135m-it.onnx", format!("https://huggingface.co/{}/resolve/main/onnx/model.onnx", MODEL_REPO)),
-        ];
-
-        for (name, url) in &files {
-            let dest = smollm_dir.join(name);
-            if dest.exists() { continue; }
-
-            info!("Downloading {}...", name);
-            self.download_with_resume(url, &dest).await?;
-        }
-
-        // Copy tokenizer to parent models dir for ONNX-only mode if needed
-        let parent_tok = base_models_dir.join("tokenizer.json");
-        if !parent_tok.exists() {
             let _ = std::fs::copy(&tokenizer_path, &parent_tok);
         }
 

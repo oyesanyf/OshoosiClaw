@@ -170,9 +170,14 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
     if is_granting {
         handle_grant_access().await?;
+        let _ = osoosi_core::firewall::open_mesh_ports();
     } else if is_starting || is_bootstrapping {
-        // Just ensure the essentials (ONNX) if we are starting but haven't run grant-access
-       // Now that provisioning is potentially done, initialize ORT
+        // Ensure essentials on startup
+        let provisioner = osoosi_telemetry::AgentProvisioner::new();
+        if let Err(e) = provisioner.provision_telemetry().await {
+            warn!("Automated provisioning encountered issues: {}. Continuing startup...", e);
+        }
+        let _ = osoosi_core::firewall::open_mesh_ports();
     }
     
     let suppress_ml_warning = is_granting || is_bootstrapping;
