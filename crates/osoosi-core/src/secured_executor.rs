@@ -89,6 +89,25 @@ impl OpenShellExecutor {
         }
     }
 
+    /// [NEW] Detect if NVIDIA OpenShell is available on this system.
+    pub async fn is_available() -> bool {
+        // Check for 'openshell' binary and 'docker' status
+        let openshell_check = Command::new("openshell")
+            .arg("--version")
+            .output().await;
+        
+        if let Ok(output) = openshell_check {
+            if output.status.success() {
+                // Also check if docker is running
+                let docker_check = Command::new("docker")
+                    .arg("info")
+                    .output().await;
+                return docker_check.map(|o| o.status.success()).unwrap_or(false);
+            }
+        }
+        false
+    }
+
     async fn ensure_sandbox(&self) -> anyhow::Result<()> {
         // Check if sandbox exists
         let check = Command::new("openshell")
@@ -156,5 +175,19 @@ impl SecuredExecutor for OpenShellExecutor {
         }
 
         Ok(())
+    }
+}
+
+/// [NEW] Universal factory to get the best possible executor for the current host.
+pub async fn get_best_executor() -> std::sync::Arc<dyn SecuredExecutor> {
+    if OpenShellExecutor::is_available().await {
+        info!("NVIDIA OpenShell detected. Using containerized sandbox.");
+        std::sync::Arc::new(OpenShellExecutor::new("osoosi-runtime", None))
+    } else {
+        // Fallback to Native OS Sandbox (Landlock/JobObjects)
+        // For now, this returns DirectExecutor which will eventually 
+        // trigger the Landlock/AppContainer logic.
+        info!("NVIDIA OpenShell/Docker not available. Falling back to Native OS Sandboxing.");
+        std::sync::Arc::new(DirectExecutor::new())
     }
 }

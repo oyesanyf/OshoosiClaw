@@ -349,7 +349,13 @@ impl EdrOrchestrator {
         let mesh_command_tx = Arc::new(tokio::sync::Mutex::new(None));
         let response = Arc::new(DeceptionManager::new());
         let audit = Arc::new(AuditTrail::new());
+        
+        // 1. Initialize Secured Executor (Auto-Detect: OpenShell vs Native)
+        let secured_executor = osoosi_core::secured_executor::get_best_executor().await;
+        
+        // 2. Initialize Trust Manager
         let trust = Arc::new(TrustManager::new(secured_executor.clone())?);
+
         let exclude_paths = osoosi_types::load_exclude_paths_from_config();
         let watcher = Arc::new(tokio::sync::Mutex::new(
             osoosi_telemetry::FileWatcher::new(Some(memory.clone()), exclude_paths)?
