@@ -51,7 +51,7 @@ impl CapaAnalyzer {
         // 2. Prepare the command
         // We will run this via python if the user has a clone, or direct exe if available
         let mut cmd = std::process::Command::new("python");
-        cmd.arg("-m").arg("capa"); // Use the capa module
+        cmd.arg("-m").arg("capa.main"); // Use the capa.main module
         cmd.arg("--json"); // Output as JSON for parsing
         cmd.arg("--rules").arg(&self.rules_path); // Use the custom rules folder
         cmd.arg(file_path);

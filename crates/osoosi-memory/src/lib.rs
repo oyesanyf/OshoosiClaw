@@ -77,7 +77,9 @@ impl MemoryStore {
                 process_name TEXT,
                 confidence REAL,
                 detected_at TEXT,
-                source_node TEXT
+                source_node TEXT,
+                file_path TEXT,
+                reason TEXT
             )",
             [],
         )?;
@@ -632,8 +634,8 @@ impl MemoryStore {
     pub fn log_threat(&self, sig: &ThreatSignature) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT INTO threats (id, cve_id, hash_blake3, process_name, confidence, detected_at, source_node)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT INTO threats (id, cve_id, hash_blake3, process_name, confidence, detected_at, source_node, file_path, reason)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 sig.id,
                 sig.cve_id,
@@ -641,7 +643,9 @@ impl MemoryStore {
                 sig.process_name,
                 sig.confidence,
                 sig.detected_at.to_rfc3339(),
-                sig.source_node
+                sig.source_node,
+                sig.process_name, // Use process_name as a placeholder for file_path if not separate
+                sig.reason
             ],
         )?;
         Ok(())
@@ -744,7 +748,7 @@ impl MemoryStore {
     pub fn get_recent_threats(&self, limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, cve_id, process_name, confidence, detected_at, source_node 
+            "SELECT id, cve_id, process_name, confidence, detected_at, source_node, file_path, reason 
              FROM threats ORDER BY detected_at DESC LIMIT ?1"
         )?;
         let rows = stmt.query_map(params![limit as i64], |row| {
@@ -755,6 +759,8 @@ impl MemoryStore {
                 "confidence": row.get::<_, f64>(3)?,
                 "timestamp": row.get::<_, String>(4)?,
                 "source_node": row.get::<_, String>(5)?,
+                "file_path": row.get::<_, Option<String>>(6)?,
+                "reason": row.get::<_, Option<String>>(7)?,
             }))
         })?;
         let mut out = Vec::new();

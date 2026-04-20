@@ -8,7 +8,8 @@ const state = {
     threats: [],
     activity: [],
     chain_verified: false,
-    current_view: 'dashboard'
+    current_view: 'dashboard',
+    searchQuery: ''
 };
 
 /**
@@ -16,6 +17,7 @@ const state = {
  */
 function init() {
     setupNav();
+    setupSearch();
     updateDashboard();
     setInterval(updateDashboard, POLL_INTERVAL);
 }
@@ -62,6 +64,23 @@ function setupNav() {
             
             state.current_view = view;
         });
+    });
+}
+
+/**
+ * Handle search input
+ */
+function setupSearch() {
+    const input = document.getElementById('search-input');
+    if (!input) return;
+    
+    input.addEventListener('input', (e) => {
+        const query = e.target.value.toLowerCase();
+        state.searchQuery = query;
+        renderThreats(state.threats);
+        if (state.current_view === 'threats') {
+            renderThreatsView(state.threats);
+        }
     });
 }
 
@@ -167,7 +186,21 @@ function renderThreats(threats) {
         return;
     }
 
-    list.innerHTML = threats.map(threat => `
+    const filtered = threats.filter(t => {
+        if (!state.searchQuery) return true;
+        const q = state.searchQuery;
+        return (t.type && t.type.toLowerCase().includes(q)) || 
+               (t.id && t.id.toLowerCase().includes(q)) ||
+               (t.file_path && t.file_path.toLowerCase().includes(q)) ||
+               (t.reason && t.reason.toLowerCase().includes(q));
+    });
+
+    if (filtered.length === 0) {
+        list.innerHTML = '<p class="placeholder-text">No matches found for "' + state.searchQuery + '".</p>';
+        return;
+    }
+
+    list.innerHTML = filtered.map(threat => `
         <div class="timeline-item">
             <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
                 <i data-lucide="shield-alert"></i>
@@ -227,7 +260,21 @@ function renderThreatsView(threats) {
         return;
     }
 
-    list.innerHTML = threats.map(threat => `
+    const filtered = threats.filter(t => {
+        if (!state.searchQuery) return true;
+        const q = state.searchQuery;
+        return (t.type && t.type.toLowerCase().includes(q)) || 
+               (t.id && t.id.toLowerCase().includes(q)) ||
+               (t.file_path && t.file_path.toLowerCase().includes(q)) ||
+               (t.reason && t.reason.toLowerCase().includes(q));
+    });
+
+    if (filtered.length === 0) {
+        list.innerHTML = '<p class="placeholder-text">No matches found for "' + state.searchQuery + '".</p>';
+        return;
+    }
+
+    list.innerHTML = filtered.map(threat => `
         <div class="timeline-item">
             <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
                 <i data-lucide="shield-alert"></i>
