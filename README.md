@@ -36,7 +36,8 @@
 - 🔐 **Trust** is mathematically proven through Merkle Proofs and S2S Certificates
 - 🔬 **Detection** is powered by a 6-engine forensic pipeline (EMBER ML + CAPA + FLOSS + HollowsHunter + YARA + ClamAV)
 - 🧠 **Intelligence** is shared peer-to-peer across a **Million-Node Mesh** with Zonal Sharding and Reputation Filtering
-- 🛡️ **Runtime Security** is hardened via **NVIDIA OpenShell** (Sandboxed Runtime - Docker Required)
+- 🛡️ **Runtime Security** is hardened via **Native OS Sandboxing** (Landlock on Linux, Job Objects on Windows)
+- 🛡️ **Optional Sandboxing**: NVIDIA OpenShell (Docker required ONLY for Central Gateway nodes)
 - 🛡️ **Response** is autonomous — quarantine, tarpit, deceive, or heal — based on confidence thresholds
 
 ### Why Rust?
@@ -481,7 +482,9 @@ $env:OSOOSI_LLM_AGENT_ENABLED="1"
 > **OshoosiClaw takes security seriously.**
 
 - **Configuration Integrity**: `osoosi.toml` and policy files are **OpenSSL-signed**. The agent **hard refuses** to start if signatures are invalid.
-- **Sandboxed Execution**: All external forensic tools (CAPA, FLOSS, etc.) run inside an **NVIDIA OpenShell** sandbox. OpenShell currently requires **Docker** to orchestrate the sandbox lifecycle and L7 policies. Standalone support for **libkrun** or **Firecracker** is emerging as an experimental feature in the OpenShell repository.
+- **Sandboxed Execution**: 
+    - **Endpoints (Million-Node Scale)**: Uses zero-dependency **Native OS Sandboxing** (Landlock for Linux, Job Objects/AppContainer for Windows). **NO DOCKER REQUIRED** on endpoint nodes.
+    - **Central Gateway**: Supports **NVIDIA OpenShell** for heavyweight forensics and policy orchestration. Docker is only required if you choose to deploy a Central OpenShell Gateway.
 - **Tamper-Evident Logging**: All events are recorded in a Merkle Logchain. Any modification is cryptographically detectable.
 - **Differential Privacy**: Threat intelligence shared across the mesh includes Laplacian noise to prevent fingerprinting.
 
