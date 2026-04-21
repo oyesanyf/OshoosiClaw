@@ -18,6 +18,8 @@ pub struct CapaAnalyzer {
     rules_path: PathBuf,
     /// Path to the 'floss' executable
     floss_path: PathBuf,
+    /// Path to the signatures directory
+    signatures_path: PathBuf,
     /// Memory: For caching analysis results (avoid re-running)
     _memory: Arc<osoosi_memory::MemoryStore>,
 }
@@ -28,6 +30,7 @@ impl CapaAnalyzer {
             capa_path: osoosi_types::resolve_capa_path(),
             rules_path: osoosi_types::resolve_capa_rules_dir(),
             floss_path: osoosi_types::resolve_floss_path(),
+            signatures_path: osoosi_types::resolve_capa_sigs_dir(),
             _memory: memory,
         }
     }
@@ -55,6 +58,9 @@ impl CapaAnalyzer {
             c.arg("-m").arg("capa.main");
             c.arg("--json");
             c.arg("--rules").arg(&self.rules_path);
+            if self.signatures_path.exists() {
+                c.arg("--signatures").arg(&self.signatures_path);
+            }
             c
         };
         cmd.arg(file_path);

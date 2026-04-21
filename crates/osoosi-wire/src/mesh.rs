@@ -341,14 +341,18 @@ impl MeshNode {
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Kademlia(kad::Event::OutboundQueryProgressed { result, .. })) => {
                         if let kad::QueryResult::GetClosestPeers(Ok(kad::GetClosestPeersOk { peers, .. })) = result {
                             for peer_info in peers {
-                                let _ = join_gate.on_peer_discovered(peer_info.peer_id, None);
+                                if peer_info.peer_id != *self.swarm.local_peer_id() {
+                                    let _ = join_gate.on_peer_discovered(peer_info.peer_id, None);
+                                }
                             }
                         }
                     }
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Kademlia(kad::Event::RoutingUpdated { peer, addresses, .. })) => {
-                        debug!("Kademlia routing updated for peer {}: {:?}", peer, addresses);
-                        let addr = addresses.iter().next().map(|a| a.to_string());
-                        let _ = join_gate.on_peer_discovered(peer, addr);
+                        if peer != *self.swarm.local_peer_id() {
+                            debug!("Kademlia routing updated for peer {}: {:?}", peer, addresses);
+                            let addr = addresses.iter().next().map(|a| a.to_string());
+                            let _ = join_gate.on_peer_discovered(peer, addr);
+                        }
                     }
                     _ => {}
                 }
