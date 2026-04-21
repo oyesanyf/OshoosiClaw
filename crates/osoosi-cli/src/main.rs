@@ -1,5 +1,5 @@
 use clap::{Parser, Subcommand};
-use osoosi_core::{EdrOrchestrator, secured_executor::{DirectExecutor, OpenShellExecutor}};
+use osoosi_core::{EdrOrchestrator, secured_executor::DirectExecutor};
 use osoosi_policy::ThreatFeedFetcher;
 
 use std::fs;

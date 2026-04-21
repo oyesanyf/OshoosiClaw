@@ -28,7 +28,16 @@ pub struct OsoosiBehavior {
     pub identify: identify::Behaviour,
     pub kademlia: kad::Behaviour<kad::store::MemoryStore>,
 }
-
+pub struct MeshNode {
+    pub swarm: libp2p::Swarm<OsoosiBehavior>,
+    pub threat_topic: gossipsub::IdentTopic,
+    pub consensus_topic: gossipsub::IdentTopic,
+    pub peer_announce_topic: gossipsub::IdentTopic,
+    pub ghost_shard_topic: gossipsub::IdentTopic,
+    pub intel_topic: gossipsub::IdentTopic,
+    pub malware_sample_topic: gossipsub::IdentTopic,
+    pub audit_proof_topic: gossipsub::IdentTopic,
+    pub tarpit_topic: gossipsub::IdentTopic,
     pub confidential_topic: gossipsub::IdentTopic,
     pub zone: String,
     pub memory: Arc<osoosi_memory::MemoryStore>,
@@ -113,11 +122,20 @@ impl MeshNode {
             }
         }
 
+        let local_peer_id = *swarm.local_peer_id();
         for peer_addr in mesh_config.bootstrap_peers {
             if let Ok(maddr) = peer_addr.parse::<Multiaddr>() {
+                let mut peer_id_opt = None;
                 if let Some(Protocol::P2p(peer_id)) = maddr.iter().last() {
-                    swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
-                    swarm.behaviour_mut().kademlia.add_address(&peer_id, maddr.clone());
+                    if peer_id == local_peer_id {
+                        continue;
+                    }
+                    peer_id_opt = Some(peer_id);
+                }
+
+                if let Some(pid) = peer_id_opt {
+                    swarm.behaviour_mut().gossipsub.add_explicit_peer(&pid);
+                    swarm.behaviour_mut().kademlia.add_address(&pid, maddr.clone());
                 }
                 let _ = swarm.dial(maddr);
             }
@@ -125,8 +143,10 @@ impl MeshNode {
 
         // Set Kademlia to server mode to help others discover the network
         swarm.behaviour_mut().kademlia.set_mode(Some(kad::Mode::Server));
-        // Start bootstrapping the DHT
-        let _ = swarm.behaviour_mut().kademlia.bootstrap();
+        // Start bootstrapping the DHT if we have peers
+        if swarm.behaviour_mut().kademlia.kbuckets().any(|b| b.num_entries() > 0) {
+            let _ = swarm.behaviour_mut().kademlia.bootstrap();
+        }
 
         Ok(MeshNode { 
             swarm, 
@@ -139,19 +159,8 @@ impl MeshNode {
             audit_proof_topic,
             tarpit_topic,
             confidential_topic,
-            name: "osoosi-mesh".to_string(),
             zone,
             memory,
-        })
-    }
-            peer_announce_topic, 
-            ghost_shard_topic, 
-            intel_topic, 
-            malware_sample_topic,
-            audit_proof_topic,
-            tarpit_topic,
-            confidential_topic,
-            name: String::new(), // placeholder
         })
     }
 
@@ -260,7 +269,7 @@ impl MeshNode {
                 event = self.swarm.select_next_some() => match event {
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Mdns(mdns::Event::Discovered(list))) => {
                         for (pid, addr) in list {
-                            if !quarantined.contains(&pid) {
+                            if pid != *self.swarm.local_peer_id() && !quarantined.contains(&pid) {
                                 self.swarm.behaviour_mut().kademlia.add_address(&pid, addr.clone());
                                 let _ = join_gate.on_peer_discovered(pid, Some(addr.to_string()));
                             }
@@ -270,7 +279,7 @@ impl MeshNode {
                         if quarantined.contains(&propagation_source) { continue; }
                         
                         // REPUTATION FILTERING: Drop messages from untrusted peers at scale
-                        let peer_reputation = self.memory.get_reputation(&propagation_source.to_string()).unwrap_or(0.5);
+                        let peer_reputation = self.memory.get_reputation_value(&propagation_source.to_string()).unwrap_or(0.5);
                         if peer_reputation < 0.1 {
                             debug!("Dropping gossip message from low-reputation peer: {}", propagation_source);
                             continue;
@@ -310,6 +319,7 @@ impl MeshNode {
                         }
                     }
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
+                        if peer_id == *self.swarm.local_peer_id() { continue; }
                         debug!("Identify: discovered {} from {:?}", peer_id, info.listen_addrs);
                         self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                         for addr in info.listen_addrs {

@@ -12,7 +12,8 @@ use regex::Regex;
 
 pub struct CapaAnalyzer {
     /// Path to the 'capa' executable or the Python script
-    _capa_path: PathBuf,
+    /// Path to the 'capa' executable
+    capa_path: PathBuf,
     /// Path to the rules directory (defaults to the rules folder in the cloned repo)
     rules_path: PathBuf,
     /// Path to the 'floss' executable
@@ -24,7 +25,7 @@ pub struct CapaAnalyzer {
 impl CapaAnalyzer {
     pub fn new(memory: Arc<osoosi_memory::MemoryStore>) -> Self {
         Self {
-            _capa_path: osoosi_types::resolve_capa_dir(),
+            capa_path: osoosi_types::resolve_capa_path(),
             rules_path: osoosi_types::resolve_capa_rules_dir(),
             floss_path: osoosi_types::resolve_floss_path(),
             _memory: memory,
@@ -43,11 +44,19 @@ impl CapaAnalyzer {
         info!("CAPA Analyzer: Running capability analysis on suspicious file: {:?}", file_path);
 
         // 2. Prepare the command
-        // We will run this via python if the user has a clone, or direct exe if available
-        let mut cmd = std::process::Command::new("python");
-        cmd.arg("-m").arg("capa.main"); // Use the capa.main module
-        cmd.arg("--json"); // Output as JSON for parsing
-        cmd.arg("--rules").arg(&self.rules_path); // Use the custom rules folder
+        // Try standalone binary first, then fallback to 'python -m capa.main'
+        let mut cmd = if self.capa_path.exists() {
+            let mut c = std::process::Command::new(&self.capa_path);
+            c.arg("--json");
+            c.arg("--rules").arg(&self.rules_path);
+            c
+        } else {
+            let mut c = std::process::Command::new("python");
+            c.arg("-m").arg("capa.main");
+            c.arg("--json");
+            c.arg("--rules").arg(&self.rules_path);
+            c
+        };
         cmd.arg(file_path);
 
         // Use a 30s timeout to prevent hanging on large/packed binaries

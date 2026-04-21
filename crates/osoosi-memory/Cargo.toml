@@ -22,3 +22,4 @@ magika = { workspace = true }
 goblin = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 winapi = { workspace = true, features = ["memoryapi", "processthreadsapi", "winnt", "handleapi"] }
+bloomfilter = "1.0"

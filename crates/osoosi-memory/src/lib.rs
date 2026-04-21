@@ -857,7 +857,7 @@ impl MemoryStore {
         bloom.check(&hash.to_string())
     }
 
-    pub fn get_reputation(&self, node_id: &str) -> anyhow::Result<f32> {
+    pub fn get_reputation_value(&self, node_id: &str) -> anyhow::Result<f32> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT score FROM reputation WHERE node_id = ?")?;
         let mut rows = stmt.query([node_id])?;

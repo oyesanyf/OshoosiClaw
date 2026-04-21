@@ -250,6 +250,8 @@ struct WireConfigPartial {
     pub master_node_public_key: Option<String>,
     #[serde(default)]
     pub membership_proof: Option<String>,
+    #[serde(default)]
+    pub zone: Option<String>,
 }
 
 /// Partial config for loading from file (only sections we need; rest use defaults).
@@ -436,6 +438,13 @@ pub fn resolve_capa_dir() -> PathBuf {
 
 pub fn resolve_capa_rules_dir() -> PathBuf {
     resolve_capa_dir().join("rules")
+}
+
+pub fn resolve_capa_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    { resolve_capa_dir().join("capa.exe") }
+    #[cfg(not(target_os = "windows"))]
+    { resolve_capa_dir().join("capa") }
 }
 
 pub fn resolve_capa_sigs_dir() -> PathBuf {

@@ -188,17 +188,13 @@ impl AgentProvisioner {
             
             if self.download_with_resume(url, &installer_path).await.is_ok() {
                 info!("OpenSSL {} downloaded. Running silent setup...", name);
-                let mut install_cmd = if is_msi {
-                    let mut cmd = Command::new("msiexec");
-                    cmd.args(["/i", &installer_path.to_string_lossy(), "/qn", "/norestart"]);
-                    cmd
+                let res = if is_msi {
+                    self.exec_with_retry("msiexec", &["/i", &installer_path.to_string_lossy(), "/qn", "/norestart"], &format!("OpenSSL {} Installation", name), 2).await
                 } else {
-                    let mut cmd = Command::new(&installer_path);
-                    cmd.args(["/verysilent", "/sp-", "/suppressmsgboxes", "/norestart"]);
-                    cmd
+                    self.exec_with_retry(&installer_path.to_string_lossy(), &["/verysilent", "/sp-", "/suppressmsgboxes", "/norestart"], &format!("OpenSSL {} Installation", name), 2).await
                 };
-                
-                if self.exec_with_retry(install_cmd, &format!("OpenSSL {} Installation", name), 2).await.is_ok() {
+
+                if res.is_ok() {
                     let _ = std::fs::remove_file(&installer_path);
                     if self.command_exists_win("openssl").await {
                         info!("OpenSSL {} installed successfully.", name);
@@ -225,14 +221,16 @@ impl AgentProvisioner {
     }
 
     /// Helper to execute a command with a specified number of retries.
-    async fn exec_with_retry(&self, mut cmd: Command, name: &str, retries: usize) -> anyhow::Result<()> {
+    async fn exec_with_retry(&self, program: &str, args: &[&str], name: &str, retries: usize) -> anyhow::Result<()> {
         let mut last_error = None;
         for i in 1..=retries {
             if i > 1 {
                 info!("Attempt {}/{} to {}...", i, retries, name);
                 tokio::time::sleep(std::time::Duration::from_secs(3 * (i - 1) as u64)).await;
             }
-            match self.executor.execute(cmd.clone()).await {
+            let mut cmd = Command::new(program);
+            cmd.args(args);
+            match self.executor.execute(cmd).await {
                 Ok(output) if output.status.success() => return Ok(()),
                 Ok(output) => last_error = Some(anyhow::anyhow!("Command '{}' failed with status: {}", name, output.status)),
                 Err(e) => last_error = Some(anyhow::anyhow!("Execution error for '{}': {}", name, e)),
@@ -269,11 +267,14 @@ impl AgentProvisioner {
         for (bin, args) in candidates {
             let mut cmd = Command::new(bin);
             cmd.args(*args);
-            if let Ok(output) = self.executor.execute(cmd).await {
-                if output.status.success() && self.command_exists("openssl").await {
-                    info!("Installed OpenSSL using: {} {}", bin, args.join(" "));
-                    return Ok(());
+            match self.executor.execute(cmd).await {
+                Ok(output) => {
+                    if output.status.success() && self.command_exists("openssl").await {
+                        info!("Installed OpenSSL using: {} {}", bin, args.join(" "));
+                        return Ok(());
+                    }
                 }
+                _ => continue,
             }
         }
 
@@ -367,6 +368,7 @@ impl AgentProvisioner {
                 }
         } else if self
             .run_sysmon_with_repair(&binary, &["-accepteula", "-i"], None)
+            .await
             .is_ok()
         {
             info!("Sysmon installed successfully.");
@@ -394,36 +396,42 @@ impl AgentProvisioner {
         cfg: Option<&Path>,
         allow_repair: bool,
     ) -> anyhow::Result<()> {
-        let mut cmd = Command::new(binary);
-        cmd.args(args);
-        if let Some(c) = cfg {
-            cmd.arg(c);
-        }
-        let output = self.executor.execute(cmd).await?;
-        if output.status.success() {
-            return Ok(());
-        }
-
-        let mut combined = String::new();
-        combined.push_str(&String::from_utf8_lossy(&output.stdout));
-        combined.push('\n');
-        combined.push_str(&String::from_utf8_lossy(&output.stderr));
-        let combined_lc = combined.to_ascii_lowercase();
-
-        if allow_repair && combined_lc.contains("already registered") {
-            warn!("Sysmon reports an already-registered driver. Reinstalling (uninstall force -> install/update)...");
-            let mut uninstall_cmd = Command::new(binary);
-            uninstall_cmd.args(["-accepteula", "-u", "force"]);
-            let status = self.executor.execute(uninstall_cmd).await?.status;
-            if !status.success() {
-                return Err(anyhow::anyhow!(
-                    "Sysmon uninstall (force) failed while recovering from registered driver state."
-                ));
+        let mut current_allow_repair = allow_repair;
+        let mut current_args = args;
+        
+        loop {
+            let mut cmd = Command::new(binary);
+            cmd.args(current_args);
+            if let Some(c) = cfg {
+                cmd.arg(c);
             }
-            return self.run_sysmon_with_repair_once(binary, args, cfg, false).await;
-        }
+            let output = self.executor.execute(cmd).await?;
+            if output.status.success() {
+                return Ok(());
+            }
 
-        Err(anyhow::anyhow!("Sysmon command failed: {}", combined.trim()))
+            let mut combined = String::new();
+            combined.push_str(&String::from_utf8_lossy(&output.stdout));
+            combined.push('\n');
+            combined.push_str(&String::from_utf8_lossy(&output.stderr));
+            let combined_lc = combined.to_ascii_lowercase();
+
+            if current_allow_repair && combined_lc.contains("already registered") {
+                warn!("Sysmon reports an already-registered driver. Reinstalling (uninstall force -> install/update)...");
+                let mut uninstall_cmd = Command::new(binary);
+                uninstall_cmd.args(["-accepteula", "-u", "force"]);
+                let status = self.executor.execute(uninstall_cmd).await?.status;
+                if !status.success() {
+                    return Err(anyhow::anyhow!(
+                        "Sysmon uninstall (force) failed while recovering from registered driver state."
+                    ));
+                }
+                current_allow_repair = false;
+                continue;
+            }
+
+            return Err(anyhow::anyhow!("Sysmon command failed: {}", combined.trim()));
+        }
     }
 
     #[cfg(target_os = "windows")]
@@ -500,11 +508,8 @@ impl AgentProvisioner {
         self.download_with_resume("https://download.sysinternals.com/files/Sysmon.zip", zip_path).await?;
 
         info!("Extracting Sysmon...");
-        let ps_script = format!("Expand-Archive -Path 'Sysmon.zip' -DestinationPath '.' -Force; Remove-Item 'Sysmon.zip'");
-        let mut cmd = Command::new("powershell");
-        cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps_script]);
-        
-        self.exec_with_retry(cmd, "Sysmon Extraction", 2).await?;
+        let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '.' -Force; Remove-Item '{}'", zip_path.display(), zip_path.display());
+        self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "Sysmon Extraction", 2).await?;
         info!("Sysmon downloaded and extracted successfully.");
 
         if required_path.exists() {
@@ -546,10 +551,7 @@ impl AgentProvisioner {
         self.download_with_resume(&download_url, &installer_path).await?;
 
         info!("Installing ClamAV silently...");
-        let mut install_cmd = Command::new("msiexec");
-        install_cmd.args(["/i", &installer_path_str, "/qn", "/norestart"]);
-        
-        self.exec_with_retry(install_cmd, "ClamAV Installation", 2).await?;
+        self.exec_with_retry("msiexec", &["/i", &installer_path_str, "/qn", "/norestart"], "ClamAV Installation", 2).await?;
 
         let _ = std::fs::remove_file(&installer_path);
 
@@ -864,7 +866,14 @@ impl AgentProvisioner {
             ("model.safetensors", format!("https://huggingface.co/{}/resolve/main/model.safetensors", MODEL_REPO)),
             ("tokenizer.json",    format!("https://huggingface.co/{}/resolve/main/tokenizer.json",    MODEL_REPO)),
             ("config.json",       format!("https://huggingface.co/{}/resolve/main/config.json",       MODEL_REPO)),
-            let _ = std::fs::copy(&tokenizer_path, &parent_tok);
+        ];
+
+        for (name, url) in files {
+            let path = smollm_dir.join(name);
+            if !path.exists() {
+                info!("Downloading {}...", name);
+                self.executor.download(&url, &path, false).await?;
+            }
         }
 
         info!("SmolLM2-135M-Instruct models provisioned successfully.");
@@ -878,7 +887,7 @@ impl AgentProvisioner {
         #[cfg(target_os = "windows")]
         {
             let floss_exe = osoosi_types::resolve_floss_path();
-            if self.command_exists_win("floss") || floss_exe.exists() {
+            if self.command_exists_win("floss").await || floss_exe.exists() {
                 info!("FLOSS already available on Windows.");
                 return Ok(());
             }
@@ -901,9 +910,7 @@ impl AgentProvisioner {
                  target_dir_str, zip_path.to_string_lossy(), target_dir_str, zip_path.to_string_lossy()
             );
 
-            let mut cmd = Command::new("powershell");
-            cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd]);
-            self.exec_with_retry(cmd, "FLOSS Extraction", 2).await?;
+            self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &ps_cmd], "FLOSS Extraction", 2).await?;
             Ok(())
         }
 
@@ -987,16 +994,8 @@ impl AgentProvisioner {
              self.download_with_resume(&url, &zip_path).await?;
 
             info!("Extracting HollowsHunter...");
-            let ps_cmd = format!(
-                "New-Item -ItemType Directory -Force -Path '{}' | Out-Null; \
-                 Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
-                 Remove-Item '{}'",
-                target_dir_str, zip_path.to_string_lossy(), target_dir_str, zip_path.to_string_lossy()
-            );
-
-            let mut cmd = Command::new("powershell");
-            cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd]);
-            self.exec_with_retry(cmd, "HollowsHunter Extraction", 2).await?;
+            let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", zip_path.display(), target_dir.display());
+            self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "HollowsHunter Extraction", 2).await?;
             Ok(())
         }
 
@@ -1050,19 +1049,8 @@ impl AgentProvisioner {
              self.download_with_resume(&url, &zip_path).await?;
 
             info!("Extracting ngrep...");
-            let ps_cmd = format!(
-                "New-Item -ItemType Directory -Force -Path '{}' | Out-Null; \
-                 Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
-                 if (Test-Path '{}\\ngrep.exe') {{ Move-Item -Path '{}\\ngrep.exe' -Destination '{}' -Force; }} \
-                 elseif (Test-Path '{}\\ngrep-windows-x86_64\\ngrep.exe') {{ Move-Item -Path '{}\\ngrep-windows-x86_64\\ngrep.exe' -Destination '{}' -Force; }} \
-                 Remove-Item '{}'; \
-                 if (Test-Path '{}\\ngrep-windows-x86_64') {{ Remove-Item -Recurse -Force '{}\\ngrep-windows-x86_64' }}",
-                target_dir_str, zip_path.to_string_lossy(), target_dir_str, target_dir_str, target_dir_str, target_dir_str, target_dir_str, target_dir_str, target_dir_str, zip_path.to_string_lossy(), target_dir_str, target_dir_str
-            );
-
-            let mut cmd = Command::new("powershell");
-            cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd]);
-            self.exec_with_retry(cmd, "ngrep Extraction", 2).await?;
+            let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", zip_path.display(), target_dir.display());
+            self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "ngrep Extraction", 2).await?;
             Ok(())
         }
         #[cfg(not(target_os = "windows"))]
@@ -1092,10 +1080,7 @@ impl AgentProvisioner {
 
             info!("Installing Npcap silently (requires Elevation)...");
             // /S = Silent, /admin_only=1, /dot11_support=0, /loopback_support=1
-            let mut install_cmd = Command::new(&installer_path);
-            install_cmd.args(["/S", "/admin_only=1", "/dot11_support=0", "/loopback_support=1"]);
-            
-            self.exec_with_retry(install_cmd, "Npcap Installation", 2).await?;
+            self.exec_with_retry(installer_path.to_str().unwrap(), &["/S", "/admin_only=1", "/dot11_support=0", "/loopback_support=1"], "Npcap Installation", 2).await?;
             let _ = std::fs::remove_file(&installer_path);
             
             info!("Npcap installed successfully.");
@@ -1111,7 +1096,7 @@ impl AgentProvisioner {
     pub async fn provision_sniffglue(&self) -> anyhow::Result<()> {
         #[cfg(target_os = "linux")]
         {
-            if self.command_exists("sniffglue") {
+            if self.command_exists("sniffglue").await {
                 info!("sniffglue already available on Linux.");
                 return Ok(());
             }
@@ -1150,7 +1135,7 @@ impl AgentProvisioner {
         }
         #[cfg(target_os = "macos")]
         {
-            if self.command_exists("sniffglue") {
+            if self.command_exists("sniffglue").await {
                 info!("sniffglue already available on macOS.");
                 return Ok(());
             }
@@ -1249,9 +1234,7 @@ impl AgentProvisioner {
                      tmp_extract.to_string_lossy(), tmp_extract.to_string_lossy(), zip_path.to_string_lossy(), tmp_extract.to_string_lossy(), tmp_extract.to_string_lossy(), target_sub_dir.to_string_lossy(), tmp_extract.to_string_lossy(), target_sub_dir.to_string_lossy(), tmp_extract.to_string_lossy()
                 );
                 
-                let mut cmd = Command::new("powershell");
-                cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd]);
-                let _ = self.exec_with_retry(cmd, &format!("Extract YARA {}", name), 2).await;
+                self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &ps_cmd], &format!("Extract YARA {}", name), 2).await?;
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -1338,9 +1321,7 @@ impl AgentProvisioner {
                 zip_path, tmp_extract, tmp_extract, version, zip_path, tmp_extract
             );
 
-            let mut cmd = Command::new("powershell");
-            cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd]);
-            self.exec_with_retry(cmd, "ONNX Extraction", 2).await?;
+            self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &ps_cmd], "ONNX Extraction", 2).await?;
             info!("ONNX Runtime provisioned successfully.");
             Ok(())
         }
@@ -1348,7 +1329,7 @@ impl AgentProvisioner {
         #[cfg(target_os = "linux")]
         {
             let lib_name = "libonnxruntime.so";
-            if std::path::Path::new(lib_name).exists() || self.command_exists("ldconfig") {
+            if std::path::Path::new(lib_name).exists() || self.command_exists("ldconfig").await {
                 // In reality we should check if it's on ld path, but let's just deploy locally
             }
 
@@ -1606,9 +1587,7 @@ impl AgentProvisioner {
             #[cfg(target_os = "windows")]
             {
                 let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", rules_zip.display(), temp_extract.display());
-                let mut cmd = Command::new("powershell");
-                cmd.args(["-NoProfile", "-NonInteractive", "-Command", &cmd_str]);
-                self.exec_with_retry(cmd, "CAPA Rules Extraction", 2).await?;
+                self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "CAPA Rules Extraction", 2).await?;
             }
             
             // Move contents: temp_rules/capa-rules-9.4.0/* -> rules/
@@ -1634,9 +1613,7 @@ impl AgentProvisioner {
                 #[cfg(target_os = "windows")]
                 {
                     let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", sigs_zip.display(), sigs_dir.display());
-                    let mut cmd = Command::new("powershell");
-                    cmd.args(["-NoProfile", "-NonInteractive", "-Command", &cmd_str]);
-                    self.exec_with_retry(cmd, "CAPA Signatures Extraction", 2).await?;
+                    self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "CAPA Signatures Extraction", 2).await?;
                 }
                 
                 let _ = std::fs::remove_file(&sigs_zip);

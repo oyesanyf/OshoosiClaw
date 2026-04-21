@@ -39,7 +39,7 @@ use osoosi_telemetry::SysmonParser;
 use osoosi_policy::{PolicyEngine, ThreatFeedFetcher};
 use osoosi_wire::{MeshNode, MeshCommand, JoinGate};
 use osoosi_runtime::{DeceptionManager, TarpitManager};
-use osoosi_types::{SysmonEvent, load_runtime_config};
+use osoosi_types::{SysmonEvent, load_runtime_config, SecuredExecutor};
 use osoosi_audit::AuditTrail;
 use osoosi_repair::PatchEngine;
 use osoosi_trust::TrustManager;
@@ -325,7 +325,7 @@ impl EdrOrchestrator {
     pub async fn new() -> anyhow::Result<Self> {
         let runtime_config = load_runtime_config();
         
-        let secured_executor: Arc<dyn SecuredExecutor> = if runtime_config.secure_runtime == "openshell" {
+        let secured_executor: Arc<dyn SecuredExecutor> = if runtime_config.secure_runtime.as_deref() == Some("openshell") {
             info!("Initializing OpenShell sandboxed runtime (Sandbox: {})...", runtime_config.openshell_sandbox);
             Arc::new(crate::secured_executor::OpenShellExecutor::new(
                 &runtime_config.openshell_sandbox,
@@ -350,8 +350,7 @@ impl EdrOrchestrator {
         let response = Arc::new(DeceptionManager::new());
         let audit = Arc::new(AuditTrail::new());
         
-        // 1. Initialize Secured Executor (Auto-Detect: OpenShell vs Native)
-        let secured_executor = osoosi_core::secured_executor::get_best_executor().await;
+
         
         // 2. Initialize Trust Manager
         let trust = Arc::new(TrustManager::new(secured_executor.clone())?);
@@ -587,6 +586,12 @@ impl EdrOrchestrator {
                 for (pid, process) in sys.processes() {
                     if *pid == my_pid {
                         continue; // NEVER scan self
+                    }
+                    
+                    let process_name = process.name();
+                    // EXEMPTIONS: Critical system processes that legitimately spike during maintenance/updates
+                    if process_name == "MsMpEng.exe" || process_name == "TrustedInstaller.exe" || process_name == "TiWorker.exe" {
+                        continue; 
                     }
 
                     let cpu_usage = process.cpu_usage();
@@ -1169,6 +1174,8 @@ impl EdrOrchestrator {
 
         // Einstein Engine: Check for "Dilation of Truth" (temporal anomalies)
         let temporal_score = self.relativistic.check_temporal_dilation(&event);
+
+        let mut signature: Option<osoosi_types::ThreatSignature> = None;
         
         // 0. Bloom Filter "Known Malicious" Fast-Path: 
         // Immediately flag hashes we've already identified as malicious across the mesh.
@@ -1227,7 +1234,9 @@ impl EdrOrchestrator {
             }
         }
 
-        let mut signature = self.policy.scan_event(&event);
+        if signature.is_none() {
+            signature = self.policy.scan_event(&event);
+        }
         
         if temporal_score > 0.6 {
             warn!("Einstein Alert: Significant temporal dilation ({}) for event from {}.", temporal_score, event.computer);
@@ -1319,8 +1328,9 @@ impl EdrOrchestrator {
                  let path = std::path::Path::new(image_path);
                  // Only run CAPA if NSRL/Cache doesn't know the file
                  let is_known = self.nsrl_cache.contains_key(image_path);
+                 let is_system = osoosi_types::is_system_path(image_path);
                  
-                 if !is_known {
+                 if !is_known && !is_system {
                      match self.capa_analyzer.analyze_file(path).await {
                          Ok(Some(capa_sig)) => {
                              signature = Some(capa_sig);

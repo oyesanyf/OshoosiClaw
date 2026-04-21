@@ -167,7 +167,7 @@ impl SecuredExecutor for OpenShellExecutor {
             wrapped.arg("-C").arg("-");
         }
         
-        wrapped.arg("-o").arg(&dest_str).arg(url);
+        wrapped.arg("-o").arg(dest_str.as_ref()).arg(url);
 
         let status = wrapped.status().await?;
         if !status.success() {
