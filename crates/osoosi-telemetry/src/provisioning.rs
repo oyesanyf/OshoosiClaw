@@ -25,14 +25,17 @@ impl AgentProvisioner {
         #[cfg(target_os = "windows")]
         {
             self.provision_windows().await?;
+            self.provision_firewall().await?;
             self.provision_capa().await
         }
         #[cfg(target_os = "linux")]
         {
+            self.provision_firewall().await?;
             self.provision_linux().await
         }
         #[cfg(target_os = "macos")]
         {
+            self.provision_firewall().await?;
             self.provision_macos().await
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
@@ -83,6 +86,58 @@ impl AgentProvisioner {
                 "Unsupported operating system for automated OpenSSL provisioning."
             ))
         }
+    }
+
+    /// Provision Firewall rules for the Oshoosi Mesh.
+    pub async fn provision_firewall(&self) -> anyhow::Result<()> {
+        info!("Provisioning firewall rules for mesh networking...");
+        
+        #[cfg(target_os = "windows")]
+        {
+            // Mesh Port: 9000 (libp2p), Dashboard Port: 3000
+            let ports = [("OshoosiMesh", "9000"), ("OshoosiDashboard", "3000")];
+            for (name, port) in ports {
+                let check_cmd = format!("netsh advfirewall firewall show rule name='{}'", name);
+                let mut check = Command::new("powershell");
+                check.args(["-NoProfile", "-Command", &check_cmd]);
+                
+                if !self.executor.execute(check).await?.status.success() {
+                    info!("Adding firewall rule: {} (Port {})...", name, port);
+                    let add_cmd = format!(
+                        "netsh advfirewall firewall add rule name='{}' dir=in action=allow protocol=TCP localport={}",
+                        name, port
+                    );
+                    let mut add = Command::new("powershell");
+                    add.args(["-NoProfile", "-Command", &add_cmd]);
+                    self.executor.execute(add).await?;
+                }
+            }
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            // Try ufw first
+            if self.command_exists("ufw").await {
+                let mut cmd = Command::new("sudo");
+                cmd.args(["ufw", "allow", "9000/tcp"]);
+                let _ = self.executor.execute(cmd).await;
+                let mut cmd = Command::new("sudo");
+                cmd.args(["ufw", "allow", "3000/tcp"]);
+                let _ = self.executor.execute(cmd).await;
+            } else if self.command_exists("firewall-cmd").await {
+                let mut cmd = Command::new("sudo");
+                cmd.args(["firewall-cmd", "--permanent", "--add-port=9000/tcp"]);
+                let _ = self.executor.execute(cmd).await;
+                let mut cmd = Command::new("sudo");
+                cmd.args(["firewall-cmd", "--permanent", "--add-port=3000/tcp"]);
+                let _ = self.executor.execute(cmd).await;
+                let mut cmd = Command::new("sudo");
+                cmd.args(["firewall-cmd", "--reload"]);
+                let _ = self.executor.execute(cmd).await;
+            }
+        }
+
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]

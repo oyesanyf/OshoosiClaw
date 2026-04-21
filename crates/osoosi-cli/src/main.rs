@@ -275,6 +275,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
             info!("Starting OpenỌ̀ṣọ́ọ̀sì Security Agent...");
             
+            // 2. [NEW] Ensure Firewall rules are applied on startup (User Request)
+            let provisioner = osoosi_telemetry::AgentProvisioner::new(orchestrator.secured_executor());
+            if let Err(e) = provisioner.provision_firewall().await {
+                warn!("Warning: Failed to verify/apply firewall rules: {}. Mesh connectivity may be degraded.", e);
+            }
+            
             // Start components
             orchestrator.start_maintenance_loop();
             orchestrator.start_cybershield_monitor();
@@ -304,7 +310,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Some(Commands::Provision { binary: _, config: _ }) => {
             use osoosi_telemetry::AgentProvisioner;
             info!("Provisioning Oshoosi dependencies...");
-            let provisioner = AgentProvisioner::new();
+            let executor = osoosi_core::secured_executor::get_best_executor().await;
+            let provisioner = AgentProvisioner::new(executor);
             match provisioner.provision_telemetry().await {
                 Ok(_) => info!("Automated provisioning complete."),
                 Err(e) => error!("Automated provisioning failed: {}", e),
@@ -494,7 +501,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 async fn handle_grant_access() -> anyhow::Result<()> {
     #[cfg(any(target_os = "windows", target_os = "linux", target_os = "macos"))]
     {
-        let executor = Arc::new(DirectExecutor::new());
+        let executor = osoosi_core::secured_executor::get_best_executor().await;
         let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
         
         info!("GrantAccess pre-step: ensuring ONNX Runtime is provisioned...");

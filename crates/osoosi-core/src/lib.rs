@@ -1665,6 +1665,11 @@ impl EdrOrchestrator {
         self.audit.clone()
     }
 
+    /// Access the secured executor.
+    pub fn secured_executor(&self) -> Arc<dyn osoosi_types::SecuredExecutor> {
+        self.secured_executor.clone()
+    }
+
     /// Returns the full list of Merkle Trail entries.
     pub fn list_merkle_trail(&self) -> Vec<osoosi_audit::AuditEntry> {
         self.audit.entries()
