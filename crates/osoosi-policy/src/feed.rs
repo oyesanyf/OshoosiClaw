@@ -5,7 +5,7 @@ use serde_json::Value;
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use std::io::Write;
-use tracing::{info, warn, error};
+use tracing::{info, warn, error, debug};
 use sysinfo::Disks;
 
 pub const CISA_KEV_FEED_URL: &str = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
@@ -85,11 +85,53 @@ impl ThreatFeedFetcher {
     /// Fetch latest CISA KEV list. Returns Err when offline; use cached data.
     pub async fn fetch_kev(&self) -> anyhow::Result<Vec<Kev>> {
         if offline_mode() {
-            return Err(anyhow::anyhow!("Offline mode: skipping KEV fetch"));
+            info!("[KEV] Offline mode: Loading from local cache...");
+            return self.load_kev_from_cache().await;
         }
-        let response = self.client.get(CISA_KEV_FEED_URL).send().await?;
-        let json_val: Value = response.json().await?;
-        
+
+        info!("[KEV] Fetching latest feed from CISA...");
+        let mut request = self.client.get(CISA_KEV_FEED_URL);
+        // CISA/Cloudflare may block requests without a proper User-Agent
+        request = request.header("User-Agent", "OpenOsoosi-Agent/1.0");
+
+        let response = match request.send().await {
+            Ok(r) => r,
+            Err(e) => {
+                warn!("[KEV] Network fetch failed: {}. Falling back to cache.", e);
+                return self.load_kev_from_cache().await;
+            }
+        };
+
+        if !response.status().is_success() {
+            warn!("[KEV] Server returned HTTP {}. Falling back to cache.", response.status());
+            return self.load_kev_from_cache().await;
+        }
+
+        // Fetch as bytes to handle potential decoding issues manually if needed
+        let bytes = match response.bytes().await {
+            Ok(b) => b,
+            Err(e) => {
+                warn!("[KEV] Failed to read response body: {}. Falling back to cache.", e);
+                return self.load_kev_from_cache().await;
+            }
+        };
+
+        match serde_json::from_slice::<Value>(&bytes) {
+            Ok(json_val) => {
+                let kevs = self.parse_kev_json(json_val);
+                if !kevs.is_empty() {
+                    let _ = self.save_kev_to_cache(&bytes).await;
+                }
+                Ok(kevs)
+            }
+            Err(e) => {
+                warn!("[KEV] JSON decoding failed: {}. Falling back to cache.", e);
+                self.load_kev_from_cache().await
+            }
+        }
+    }
+
+    fn parse_kev_json(&self, json_val: Value) -> Vec<Kev> {
         let mut kevs = Vec::new();
         if let Some(vulnerabilities) = json_val.get("vulnerabilities").and_then(|v| v.as_array()) {
             for v in vulnerabilities {
@@ -114,8 +156,29 @@ impl ThreatFeedFetcher {
                 kevs.push(kev);
             }
         }
-        
-        Ok(kevs)
+        kevs
+    }
+
+    async fn load_kev_from_cache(&self) -> anyhow::Result<Vec<Kev>> {
+        let cache_path = osoosi_types::resolve_kev_cache_path();
+        if !cache_path.exists() {
+            info!("[KEV] No local cache found at {:?}", cache_path);
+            return Ok(Vec::new());
+        }
+
+        let content = std::fs::read_to_string(&cache_path)?;
+        let json_val: Value = serde_json::from_str(&content)?;
+        Ok(self.parse_kev_json(json_val))
+    }
+
+    async fn save_kev_to_cache(&self, data: &[u8]) -> anyhow::Result<()> {
+        let cache_path = osoosi_types::resolve_kev_cache_path();
+        if let Some(parent) = cache_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        std::fs::write(&cache_path, data)?;
+        debug!("[KEV] Saved latest feed to cache: {:?}", cache_path);
+        Ok(())
     }
 
     /// Fetch OTX indicators — only critical/targeted-attack pulses.

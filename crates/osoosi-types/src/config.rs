@@ -427,6 +427,41 @@ pub fn resolve_tools_dir() -> PathBuf {
     std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("harfile")
 }
 
+/// Resolve the global cache directory for transient/downloaded data (feeds, models).
+pub fn resolve_cache_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("OSOOSI_CACHE_DIR") {
+        return PathBuf::from(p.trim());
+    }
+    
+    if let Some(root) = resolve_project_root() {
+        let c = root.join("cache");
+        if c.is_dir() {
+            return c;
+        }
+    }
+    
+    // Search upward for 'cache' directory
+    let mut dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    loop {
+        let c = dir.join("cache");
+        if c.is_dir() {
+            return c;
+        }
+        if let Some(parent) = dir.parent() {
+            dir = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+    
+    // Ultimate fallback: current_dir/cache
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("cache")
+}
+
+pub fn resolve_kev_cache_path() -> PathBuf {
+    resolve_cache_dir().join("kev.json")
+}
+
 /// Resolve a specific tool path dynamically.
 pub fn resolve_tool_path(tool_name: &str, executable_name: &str) -> PathBuf {
     resolve_tools_dir().join(tool_name).join(executable_name)

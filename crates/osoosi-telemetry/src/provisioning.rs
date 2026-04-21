@@ -250,6 +250,22 @@ impl AgentProvisioner {
             .unwrap_or(false)
     }
 
+    /// Check if a command exists in the system PATH.
+    async fn command_exists(&self, cmd: &str) -> bool {
+        #[cfg(target_os = "windows")]
+        {
+            self.command_exists_win(cmd).await
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let mut check_cmd = Command::new("which");
+            check_cmd.arg(cmd);
+            self.executor.execute(check_cmd).await
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+        }
+    }
+
     #[cfg(target_os = "linux")]
     async fn provision_linux_openssl(&self) -> anyhow::Result<()> {
         if self.command_exists("openssl").await {

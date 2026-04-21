@@ -824,6 +824,32 @@ fn find_onnxruntime_dylib() -> Option<PathBuf> {
     None
 }
 
+/// Helper to find a script (e.g. sanitize_yara.py) by searching upward from EXE and CWD.
+fn resolve_script_path(script_name: &str) -> Option<PathBuf> {
+    if let Ok(exe_path) = std::env::current_exe() {
+        let mut dir = exe_path.parent();
+        while let Some(d) = dir {
+            let candidate = d.join(script_name);
+            if candidate.exists() { return Some(candidate); }
+            // Also check 'scripts/' subdirectory
+            let candidate_scripts = d.join("scripts").join(script_name);
+            if candidate_scripts.exists() { return Some(candidate_scripts); }
+            dir = d.parent();
+        }
+    }
+    if let Ok(cwd) = std::env::current_dir() {
+        let mut dir = Some(cwd.as_path());
+        while let Some(d) = dir {
+            let candidate = d.join(script_name);
+            if candidate.exists() { return Some(candidate); }
+            let candidate_scripts = d.join("scripts").join(script_name);
+            if candidate_scripts.exists() { return Some(candidate_scripts); }
+            dir = d.parent();
+        }
+    }
+    None
+}
+
 /// Stable log directory: `OSOOSI_LOG_DIR`, else repo root `logs/` (walk up from exe for `Cargo.toml`/`.git`),
 /// else `logs/` next to the binary, else cwd `logs/`, else `%TEMP%/osoosi/logs`.
 fn resolve_log_directory() -> PathBuf {
@@ -880,34 +906,27 @@ fn run_yara_sanitizer() {
     info!("Running automated YARA rule sanitization (pre-scan cleanup)...");
     let script_name = "sanitize_yara.py";
     
-    // Search in CWD and EXE dir
-    let mut script_path = PathBuf::from(script_name);
-    if !script_path.exists() {
-        if let Ok(exe_path) = std::env::current_exe() {
-            if let Some(parent) = exe_path.parent() {
-                let candidate = parent.join(script_name);
-                if candidate.exists() {
-                    script_path = candidate;
-                }
-            }
-        }
-    }
-
-    if script_path.exists() {
-        match std::process::Command::new("python")
+    if let Some(script_path) = resolve_script_path(script_name) {
+        info!("Found YARA sanitization script at {:?}", script_path);
+        let py = std::env::var("OSOOSI_PYTHON").unwrap_or_else(|_| {
+            if cfg!(windows) { "python.exe".to_string() } else { "python3".to_string() }
+        });
+        
+        match std::process::Command::new(&py)
             .arg(&script_path)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
             .status() 
         {
             Ok(status) if status.success() => info!("YARA sanitization completed successfully."),
-            Ok(status) => warn!("YARA sanitization script exited with status: {}", status),
-            Err(e) => warn!("Failed to execute YARA sanitization script (is Python installed?): {}", e),
+            Ok(status) => warn!("YARA sanitization script exited with status: {} (Check if 'yara-python' or 'plyara' is needed)", status),
+            Err(e) => warn!("Failed to execute YARA sanitization script with '{}': {}. Is Python installed and on PATH?", py, e),
         }
     } else {
-        warn!("YARA sanitization script not found. Skipping automated cleanup.");
+        warn!("YARA sanitization script '{}' not found in CWD, EXE dir, or project root. Skipping automated cleanup.", script_name);
     }
 }
+
 
 fn open_browser(url: &str) { let _ = webbrowser::open(url); }
 
