@@ -431,7 +431,7 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                         let source_node = d.get("source_node").and_then(|v| v.as_str()).unwrap_or("");
                         
                         // Deduplicate by CVE or Process Name per node
-                        let key = format!("{}-{}-{}", cve_id, process_name, source_node);
+                        let key = format!("{}-{}-{}", cve_id.trim(), process_name.trim(), source_node.trim());
                         if seen.contains(&key) {
                             return None;
                         }
@@ -498,7 +498,21 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                         })
                     })
                     .collect();
-                Json(Value::Array(formatted))
+
+                // Final deduplication stage for MemoryStore results
+                let mut final_list = Vec::new();
+                let mut seen_threats = std::collections::HashSet::new();
+                for item in formatted {
+                    let cve = item["cve_id"].as_str().unwrap_or("");
+                    let t_type = item["type"].as_str().unwrap_or("");
+                    let source = item["source_node"].as_str().unwrap_or("");
+                    let key = format!("{}-{}-{}", cve.trim(), t_type.trim(), source.trim());
+                    if !seen_threats.contains(&key) {
+                        seen_threats.insert(key);
+                        final_list.push(item);
+                    }
+                }
+                Json(Value::Array(final_list))
             }
         }
         None => Json(json!([])),
