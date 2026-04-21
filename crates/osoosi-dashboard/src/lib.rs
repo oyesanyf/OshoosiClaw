@@ -418,28 +418,36 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                 .unwrap_or_default();
             if threats.is_empty() {
                 let entries = orch.audit().entries();
+                let mut seen = std::collections::HashSet::new();
                 let threat_entries: Vec<Value> = entries
                     .iter()
                     .rev()
                     .filter(|e| e.event_type == "THREAT_DETECTED")
-                    .take(20)
                     .filter_map(|e| {
                         let d = e.data.as_object()?;
+                        
+                        let cve_id = d.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
+                        let process_name = d.get("process_name").and_then(|v| v.as_str()).unwrap_or("");
+                        let source_node = d.get("source_node").and_then(|v| v.as_str()).unwrap_or("");
+                        
+                        // Deduplicate by CVE or Process Name per node
+                        let key = format!("{}-{}-{}", cve_id, process_name, source_node);
+                        if seen.contains(&key) {
+                            return None;
+                        }
+                        seen.insert(key);
+
                         let id = d.get("id")?.as_str().unwrap_or("").to_string();
-                        let cve_id = d.get("cve_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                        let process_name = d.get("process_name").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         let image_path = d.get("image_path").or(d.get("file_path")).and_then(|v| v.as_str()).unwrap_or("");
                         let type_str = if !process_name.is_empty() {
-                            process_name
+                            process_name.to_string()
                         } else if !image_path.is_empty() {
                             image_path.rsplit(['\\', '/']).next().unwrap_or(image_path).to_string()
                         } else {
-                            let cve = d.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
-                            if !cve.is_empty() { cve.to_string() } else { "Threat".to_string() }
+                            if !cve_id.is_empty() { cve_id.to_string() } else { "Threat".to_string() }
                         };
                         let confidence = d.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
                         let ts = e.timestamp.to_rfc3339();
-                        let source_node = d.get("source_node").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         let reason = d.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         let predicted_next = d.get("predicted_next").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         let file_path = d.get("image_path").or(d.get("file_path")).or(d.get("target_path")).and_then(|v| v.as_str()).map(String::from);
@@ -456,6 +464,7 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                             "predicted_next": if predicted_next.is_empty() { Value::Null } else { json!(predicted_next) }
                         }))
                     })
+                    .take(20)
                     .collect();
                 Json(Value::Array(threat_entries))
             } else {
@@ -766,11 +775,11 @@ async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
             let entries = orch.audit().entries();
+            let mut seen_summaries = std::collections::HashSet::new();
             let items: Vec<Value> = entries
                 .iter()
                 .rev()
-                .take(50)
-                .map(|e| {
+                .filter_map(|e| {
                     let summary = match e.event_type.as_str() {
                         "THREAT_DETECTED" => {
                             let proc = e.data.get("process_name").and_then(|v| v.as_str()).unwrap_or("Threat");
@@ -810,6 +819,13 @@ async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
                         "repair" => "Repair Engine".to_string(),
                         _ => e.event_type.clone(),
                     };
+
+                    // Deduplicate recent identical summaries in activity feed
+                    if seen_summaries.contains(&summary) {
+                        return None;
+                    }
+                    seen_summaries.insert(summary.clone());
+
                     let mut item = json!({
                         "type": e.event_type,
                         "timestamp": e.timestamp.to_rfc3339(),
@@ -834,8 +850,9 @@ async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
                             }
                         }
                     }
-                    item
+                    Some(item)
                 })
+                .take(50)
                 .collect();
             Json(Value::Array(items))
         }

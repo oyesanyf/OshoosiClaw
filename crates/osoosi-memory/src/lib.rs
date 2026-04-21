@@ -753,8 +753,11 @@ impl MemoryStore {
     pub fn get_recent_threats(&self, limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, cve_id, process_name, confidence, detected_at, source_node, file_path, reason 
-             FROM threats ORDER BY detected_at DESC LIMIT ?1"
+            "SELECT id, cve_id, process_name, confidence, MAX(detected_at), source_node, file_path, reason 
+             FROM threats 
+             GROUP BY COALESCE(NULLIF(cve_id, ''), NULLIF(process_name, ''), file_path), source_node
+             ORDER BY detected_at DESC 
+             LIMIT ?1"
         )?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             Ok(serde_json::json!({

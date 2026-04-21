@@ -584,6 +584,11 @@ async fn handle_grant_access() -> anyhow::Result<()> {
              warn!("Warning: Failed to provision sniffglue: {}", e);
         }
 
+        info!("GrantAccess pre-step: ensuring CAPA is provisioned...");
+        if let Err(e) = provisioner.provision_capa().await {
+             warn!("Warning: Failed to provision CAPA: {}", e);
+        }
+
         info!("GrantAccess pre-step: ensuring YARA rules are provisioned...");
         {
             let osh = osoosi_core::openshell::OpenShellManager::new();

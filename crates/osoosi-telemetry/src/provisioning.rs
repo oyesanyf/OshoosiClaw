@@ -31,12 +31,14 @@ impl AgentProvisioner {
         #[cfg(target_os = "linux")]
         {
             self.provision_firewall().await?;
-            self.provision_linux().await
+            self.provision_linux().await?;
+            self.provision_capa().await
         }
         #[cfg(target_os = "macos")]
         {
             self.provision_firewall().await?;
-            self.provision_macos().await
+            self.provision_macos().await?;
+            self.provision_capa().await
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
@@ -1557,14 +1559,19 @@ impl AgentProvisioner {
         }
         Ok(())
     }
-    /// Provision CAPA rules and signatures from Mandiant's GitHub.
+    /// Provision CAPA rules, signatures, and standalone binary from Mandiant's GitHub.
     pub async fn provision_capa(&self) -> anyhow::Result<()> {
         let capa_dir = osoosi_types::resolve_capa_dir();
         let rules_dir = osoosi_types::resolve_capa_rules_dir();
         let sigs_dir = osoosi_types::resolve_capa_sigs_dir();
 
-        if rules_dir.exists() && sigs_dir.exists() {
-            info!("CAPA rules and signatures already provisioned.");
+        #[cfg(target_os = "windows")]
+        let capa_bin = capa_dir.join("capa.exe");
+        #[cfg(not(target_os = "windows"))]
+        let capa_bin = capa_dir.join("capa");
+
+        if rules_dir.exists() && sigs_dir.exists() && (capa_bin.exists() || self.command_exists("capa").await) {
+            info!("CAPA dependencies already provisioned.");
             return Ok(());
         }
 
@@ -1572,13 +1579,45 @@ impl AgentProvisioner {
             std::fs::create_dir_all(&capa_dir)?;
         }
 
-        // 1. Download Rules (v9.4.0)
-        if !rules_dir.exists() {
-            info!("Downloading CAPA rules (v9.4.0)...");
-            let rules_zip = capa_dir.join("rules.zip");
-            let rules_url = "https://github.com/mandiant/capa-rules/archive/refs/tags/v9.4.0.zip";
+        let version = "9.4.0";
+
+        // 1. Download Binary if missing
+        if !capa_bin.exists() && !self.command_exists("capa").await {
+            info!("Downloading CAPA binary (v{})...", version);
             
-            self.download_with_resume(rules_url, &rules_zip).await?;
+            #[cfg(target_os = "windows")]
+            let url = format!("https://github.com/mandiant/capa/releases/download/v{}/capa-v{}-windows.zip", version, version);
+            #[cfg(target_os = "linux")]
+            let url = format!("https://github.com/mandiant/capa/releases/download/v{}/capa-v{}-linux.zip", version, version);
+            #[cfg(target_os = "macos")]
+            let url = format!("https://github.com/mandiant/capa/releases/download/v{}/capa-v{}-macos.zip", version, version);
+            
+            let zip_path = capa_dir.join("capa_bin.zip");
+            self.download_with_resume(&url, &zip_path).await?;
+            
+            info!("Extracting CAPA binary...");
+            #[cfg(target_os = "windows")]
+            {
+                let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", zip_path.display(), capa_dir.display());
+                self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "CAPA Binary Extraction", 2).await?;
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let cmd_str = format!("unzip -o '{}' -d '{}' && chmod +x '{}'", zip_path.display(), capa_dir.display(), capa_bin.display());
+                let mut cmd = std::process::Command::new("sh");
+                cmd.args(["-c", &cmd_str]);
+                let _ = self.executor.execute(cmd).await;
+            }
+            let _ = std::fs::remove_file(&zip_path);
+        }
+
+        // 2. Download Rules
+        if !rules_dir.exists() {
+            info!("Downloading CAPA rules (v{})...", version);
+            let rules_zip = capa_dir.join("rules.zip");
+            let rules_url = format!("https://github.com/mandiant/capa-rules/archive/refs/tags/v{}.zip", version);
+            
+            self.download_with_resume(&rules_url, &rules_zip).await?;
             
             info!("Extracting CAPA rules...");
             let temp_extract = capa_dir.join("temp_rules");
@@ -1589,9 +1628,15 @@ impl AgentProvisioner {
                 let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", rules_zip.display(), temp_extract.display());
                 self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "CAPA Rules Extraction", 2).await?;
             }
+            #[cfg(not(target_os = "windows"))]
+            {
+                let cmd_str = format!("unzip -o '{}' -d '{}'", rules_zip.display(), temp_extract.display());
+                let mut cmd = std::process::Command::new("sh");
+                cmd.args(["-c", &cmd_str]);
+                let _ = self.executor.execute(cmd).await;
+            }
             
-            // Move contents: temp_rules/capa-rules-9.4.0/* -> rules/
-            let source = temp_extract.join("capa-rules-9.4.0");
+            let source = temp_extract.join(format!("capa-rules-{}", version));
             if source.exists() {
                 let _ = std::fs::rename(source, &rules_dir);
             }
@@ -1600,7 +1645,7 @@ impl AgentProvisioner {
             let _ = std::fs::remove_dir_all(&temp_extract);
         }
 
-        // 2. Download Signatures
+        // 3. Download Signatures
         if !sigs_dir.exists() {
             info!("Downloading CAPA signatures...");
             let sigs_zip = capa_dir.join("sigs.zip");
@@ -1614,6 +1659,13 @@ impl AgentProvisioner {
                 {
                     let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", sigs_zip.display(), sigs_dir.display());
                     self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "CAPA Signatures Extraction", 2).await?;
+                }
+                #[cfg(not(target_os = "windows"))]
+                {
+                    let cmd_str = format!("unzip -o '{}' -d '{}'", sigs_zip.display(), sigs_dir.display());
+                    let mut cmd = std::process::Command::new("sh");
+                    cmd.args(["-c", &cmd_str]);
+                    let _ = self.executor.execute(cmd).await;
                 }
                 
                 let _ = std::fs::remove_file(&sigs_zip);
