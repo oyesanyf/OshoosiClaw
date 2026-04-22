@@ -1087,8 +1087,8 @@ impl EdrOrchestrator {
                     Err(e) => error!("Failed to fetch NVD records: {}", e),
                 }
 
-                // Update cycle: Every 24 hours.
-                tokio::time::sleep(tokio::time::Duration::from_secs(86400)).await;
+                // Update cycle: Every 4 hours.
+                tokio::time::sleep(tokio::time::Duration::from_secs(14400)).await;
             }
         });
     }
@@ -1206,7 +1206,7 @@ impl EdrOrchestrator {
             // Tier 1: In-memory session cache (Extremely fast)
             if let Some(is_good) = self.nsrl_cache.get(sha1) {
                 if *is_good {
-                    debug!("NSRL Bypass (Memory Cache): Trusted hash {}", sha1);
+                    info!("NSRL Bypass (Memory Cache): Trusted hash {}", sha1);
                     return Ok(());
                 }
             }
@@ -1216,7 +1216,7 @@ impl EdrOrchestrator {
                 if let Ok(Some((last_sha1, is_nsrl))) = self.memory.get_file_integrity(path) {
                     if last_sha1 == sha1 && is_nsrl {
                         self.nsrl_cache.insert(sha1.to_string(), true);
-                        debug!("NSRL Bypass (Persistent Cache): Trusted path {}", path);
+                        info!("NSRL Bypass (Persistent Cache): Trusted path {}", path);
                         return Ok(());
                     }
                 }
@@ -1228,7 +1228,7 @@ impl EdrOrchestrator {
                 if let Some(path) = event.data.get("Image").and_then(|v| v.as_str()) {
                     let _ = self.memory.upsert_file_integrity(path, sha1, true);
                 }
-                debug!("NSRL Bypass (DB Verified): {} -> Known Good.", 
+                info!("NSRL Bypass (DB Verified): {} -> Known Good.", 
                     event.data.get("Image").and_then(|i| i.as_str()).unwrap_or("Unknown"));
                 return Ok(());
             }

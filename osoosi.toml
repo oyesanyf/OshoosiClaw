@@ -5,7 +5,7 @@
 # Paths to watch for file changes. Use "all" to monitor all physical drives (C:\, D:\, etc. on Windows).
 watch_paths = ["all"]
 # Paths to exclude from monitoring (e.g. C:\Temp, D:\NoBackup, C:\Program Files\WindowsApps)
-exclude_paths = ["C:\\Temp", "D:\\NoBackup", "C:\\Program Files\\WindowsApps"]
+exclude_paths = ["C:\\Temp", "D:\\NoBackup", "C:\\Program Files\\WindowsApps", "C:\\harfile\\OshoosiClaw\\logs"]
 
 [backup]
 # Run backup when agent starts. Set enabled = true and target path to activate.

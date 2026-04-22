@@ -38,6 +38,10 @@
                     <i data-lucide="wrench"></i>
                     <span>Repair Engine</span>
                 </a>
+                <a href="#" class="nav-item" data-view="process-map">
+                    <i data-lucide="network"></i>
+                    <span>Process Map</span>
+                </a>
             </nav>
             <div class="sidebar-footer">
                 <div class="status-indicator">
@@ -217,10 +221,27 @@
                     </div>
                 </div>
             </div>
+
+            <!-- Process Map View -->
+            <div id="process-map-view" class="view-content">
+                <div class="card glass shadow-glow" style="height: calc(100vh - 200px);">
+                    <div class="card-header">
+                        <h3>Attack Graph & Process Map</h3>
+                        <div class="header-actions">
+                            <button class="btn-text" id="refresh-graph"><i data-lucide="refresh-cw" style="width:14px; margin-right:4px;"></i> Refresh Graph</button>
+                        </div>
+                    </div>
+                    <div class="card-body" style="height: 100%; padding:0; position:relative;">
+                        <div id="attack-graph" style="height: 100%; width: 100%;"></div>
+                        <div id="graph-loading" class="placeholder-text" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%);">Loading graph data...</div>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 
     <!-- Scripts -->
+    <script type="text/javascript" src="https://unpkg.com/vis-network/standalone/umd/vis-network.min.js"></script>
     <script src="app.js"></script>
     <script>
         lucide.createIcons();

@@ -9,7 +9,8 @@ const state = {
     activity: [],
     chain_verified: false,
     current_view: 'dashboard',
-    searchQuery: ''
+    searchQuery: '',
+    network: null
 };
 
 /**
@@ -56,6 +57,10 @@ function setupNav() {
             } else if (view === 'repair') {
                 document.getElementById('repair-view').classList.add('active');
                 viewTitle.innerText = "Repair Engine";
+            } else if (view === 'process-map') {
+                document.getElementById('process-map-view').classList.add('active');
+                viewTitle.innerText = "Attack Graph & Process Map";
+                renderProcessMapView();
             } else {
                 document.getElementById('other-view').classList.add('active');
                 viewTitle.innerText = item.querySelector('span').innerText;
@@ -139,6 +144,9 @@ async function updateDashboard() {
         }
         if (state.current_view === 'repair' && repairStatus) {
             renderRepairView(repairStatus);
+        }
+        if (state.current_view === 'process-map') {
+            // Optional: Auto-refresh graph every few polls if needed
         }
 
         // Update global indicator
@@ -365,6 +373,94 @@ function renderRepairView(repairStatus) {
         </div>
     `;
     lucide.createIcons();
+}
+
+/**
+ * Render Process Map (Attack Graph)
+ */
+async function renderProcessMapView() {
+    const container = document.getElementById('attack-graph');
+    const loading = document.getElementById('graph-loading');
+    if (!container) return;
+
+    if (loading) loading.style.display = 'block';
+
+    const graphData = await fetchAPI('/attack-graph?limit=100');
+    if (!graphData) {
+        if (loading) loading.innerText = "Failed to load graph data.";
+        return;
+    }
+
+    if (loading) loading.style.display = 'none';
+
+    if (!state.network) {
+        initGraph(container, graphData);
+    } else {
+        state.network.setData({
+            nodes: new vis.DataSet(graphData.nodes),
+            edges: new vis.DataSet(graphData.edges)
+        });
+    }
+}
+
+function initGraph(container, data) {
+    const options = {
+        nodes: {
+            shape: 'dot',
+            size: 20,
+            font: {
+                size: 12,
+                color: '#ffffff',
+                face: 'Inter'
+            },
+            borderWidth: 2,
+            shadow: true
+        },
+        edges: {
+            width: 2,
+            color: { inherit: 'from' },
+            smooth: {
+                type: 'continuous'
+            },
+            arrows: {
+                to: { enabled: true, scaleFactor: 0.5 }
+            }
+        },
+        physics: {
+            enabled: true,
+            barnesHut: {
+                gravitationalConstant: -2000,
+                centralGravity: 0.3,
+                springLength: 95,
+                springConstant: 0.04,
+                damping: 0.09,
+                avoidOverlap: 0.1
+            },
+            stabilization: { iterations: 100 }
+        },
+        groups: {
+            host: { color: { background: '#6366f1', border: '#4338ca' } },
+            process: { color: { background: '#8b5cf6', border: '#6d28d9' } },
+            ip: { color: { background: '#f59e0b', border: '#d97706' } },
+            domain: { color: { background: '#ec4899', border: '#be185d' } },
+            threat: { color: { background: '#ef4444', border: '#b91c1c' } },
+            response: { color: { background: '#10b981', border: '#047857' } },
+            predicted: { color: { background: '#f97316', border: '#ea580c' } }
+        }
+    };
+
+    const visData = {
+        nodes: new vis.DataSet(data.nodes),
+        edges: new vis.DataSet(data.edges)
+    };
+
+    state.network = new vis.Network(container, visData, options);
+    
+    // Add event listener for refreshing
+    const refreshBtn = document.getElementById('refresh-graph');
+    if (refreshBtn) {
+        refreshBtn.onclick = () => renderProcessMapView();
+    }
 }
 
 /**

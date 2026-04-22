@@ -89,6 +89,20 @@ impl ThreatFeedFetcher {
             return self.load_kev_from_cache().await;
         }
 
+        let cache_path = osoosi_types::resolve_kev_cache_path();
+        if cache_path.exists() {
+            if let Ok(metadata) = std::fs::metadata(&cache_path) {
+                if let Ok(modified) = metadata.modified() {
+                    if let Ok(elapsed) = modified.elapsed() {
+                        if elapsed.as_secs() < 14400 { // 4 hours
+                            debug!("[KEV] Cache is fresh ({}s old), skipping fetch.", elapsed.as_secs());
+                            return self.load_kev_from_cache().await;
+                        }
+                    }
+                }
+            }
+        }
+
         info!("[KEV] Fetching latest feed from CISA...");
         let mut request = self.client.get(CISA_KEV_FEED_URL);
         // CISA/Cloudflare may block requests without a proper User-Agent

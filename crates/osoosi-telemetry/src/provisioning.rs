@@ -1603,12 +1603,29 @@ impl AgentProvisioner {
             
             #[cfg(target_os = "windows")]
             let url = format!("https://github.com/mandiant/capa/releases/download/v{}/capa-v{}-windows.zip", version, version);
+            
             #[cfg(target_os = "linux")]
-            let url = format!("https://github.com/mandiant/capa/releases/download/v{}/capa-v{}-linux.zip", version, version);
+            let url = {
+                let arch = if std::env::consts::ARCH == "aarch64" { "-arm64" } else { "" };
+                format!("https://github.com/mandiant/capa/releases/download/v{}/capa-v{}-linux{}.zip", version, version, arch)
+            };
+            
             #[cfg(target_os = "macos")]
-            let url = format!("https://github.com/mandiant/capa/releases/download/v{}/capa-v{}-macos.zip", version, version);
+            let url = {
+                let arch = if std::env::consts::ARCH == "aarch64" { "-arm64" } else { "" };
+                format!("https://github.com/mandiant/capa/releases/download/v{}/capa-v{}-macos{}.zip", version, version, arch)
+            };
             
             let zip_path = capa_dir.join("capa_bin.zip");
+            
+            // Add AV exclusion on Windows before downloading
+            #[cfg(target_os = "windows")]
+            {
+                let exclusion_path = capa_dir.to_string_lossy();
+                let ps_cmd = format!("Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue", exclusion_path);
+                let _ = self.exec_with_retry("powershell", &["-NoProfile", "-Command", &ps_cmd], "AV Exclusion", 1).await;
+            }
+
             self.download_with_resume(&url, &zip_path).await?;
             
             info!("Extracting CAPA binary...");
@@ -1616,13 +1633,38 @@ impl AgentProvisioner {
             {
                 let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", zip_path.display(), capa_dir.display());
                 self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "CAPA Binary Extraction", 2).await?;
+                
+                // RESILIENCE: Check if extracted into a subfolder and move it out
+                let subfolder = capa_dir.join(format!("capa-v{}-windows", version));
+                if subfolder.exists() {
+                    let sub_bin = subfolder.join("capa.exe");
+                    if sub_bin.exists() {
+                        let _ = std::fs::rename(sub_bin, &capa_bin);
+                    }
+                    let _ = std::fs::remove_dir_all(subfolder);
+                }
             }
             #[cfg(not(target_os = "windows"))]
             {
-                let cmd_str = format!("unzip -o '{}' -d '{}' && chmod +x '{}'", zip_path.display(), capa_dir.display(), capa_bin.display());
+                let cmd_str = format!("unzip -o '{}' -d '{}'", zip_path.display(), capa_dir.display());
                 let mut cmd = std::process::Command::new("sh");
                 cmd.args(["-c", &cmd_str]);
                 let _ = self.executor.execute(cmd).await;
+                
+                // RESILIENCE: Handle subfolder extraction on Linux/Mac
+                let os_name = if cfg!(target_os = "macos") { "macos" } else { "linux" };
+                let arch_suffix = if std::env::consts::ARCH == "aarch64" { "-arm64" } else { "" };
+                let subfolder = capa_dir.join(format!("capa-v{}-{}{}", version, os_name, arch_suffix));
+                
+                if subfolder.exists() {
+                    let sub_bin = subfolder.join("capa");
+                    if sub_bin.exists() {
+                        let _ = std::fs::rename(sub_bin, &capa_bin);
+                    }
+                    let _ = std::fs::remove_dir_all(subfolder);
+                }
+                
+                let _ = std::process::Command::new("chmod").args(["+x", &capa_bin.to_string_lossy()]).status();
             }
             let _ = std::fs::remove_file(&zip_path);
         }
