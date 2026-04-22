@@ -12,7 +12,8 @@ use serde::Deserialize;
 pub struct Config {
     pub hidden_size: usize,
     pub intermediate_size: usize,
-    pub vocabulary_size: usize,
+    #[serde(alias = "vocabulary_size")]
+    pub vocab_size: usize,
     pub num_hidden_layers: usize,
     pub num_attention_heads: usize,
     pub num_key_value_heads: usize,
@@ -29,7 +30,7 @@ impl From<Config> for LlamaConfig {
         Self {
             hidden_size: c.hidden_size,
             intermediate_size: c.intermediate_size,
-            vocab_size: c.vocabulary_size,
+            vocab_size: c.vocab_size,
             num_hidden_layers: c.num_hidden_layers,
             num_attention_heads: c.num_attention_heads,
             num_key_value_heads: c.num_key_value_heads,
