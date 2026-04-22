@@ -275,6 +275,8 @@ struct FileConfig {
     sandbox: SandboxSecurityConfigPartial,
     #[serde(default)]
     hex_patch: HexPatchConfig,
+    #[serde(default)]
+    pub ai: AiConfig,
 }
 
 /// Hex-patch agent config: auto-patch files when rules match.
@@ -1144,6 +1146,49 @@ pub struct WireConfig {
 
 fn default_min_reputation() -> f32 {
     1.0 // Require explicit approval by default (no auto-approve)
+}
+
+/// AI configuration: enable/disable ML features.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AiConfig {
+    /// Enable AI features (ONNX, SmolLM, etc.).
+    #[serde(default = "default_ai_enabled")]
+    pub enabled: bool,
+}
+
+fn default_ai_enabled() -> bool {
+    true
+}
+
+impl Default for AiConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+        }
+    }
+}
+
+pub fn load_ai_config() -> AiConfig {
+    if let Some(path) = resolve_config_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(cfg) = toml::from_str::<FileConfig>(&content) {
+                let mut c = cfg.ai;
+                if let Ok(v) = std::env::var("OSOOSI_NO_AI") {
+                    if v == "1" || v.eq_ignore_ascii_case("true") {
+                        c.enabled = false;
+                    }
+                }
+                return c;
+            }
+        }
+    }
+    let mut cfg = AiConfig::default();
+    if let Ok(v) = std::env::var("OSOOSI_NO_AI") {
+        if v == "1" || v.eq_ignore_ascii_case("true") {
+            cfg.enabled = false;
+        }
+    }
+    cfg
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

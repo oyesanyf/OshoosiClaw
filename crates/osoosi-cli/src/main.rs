@@ -21,6 +21,9 @@ struct Cli {
     /// Grant OpenỌ̀ṣọ́ọ̀sì access to security event logs (equivalent to 'grant-access' command)
     #[arg(long)]
     grant_access: bool,
+    /// Disable all AI features (ONNX Runtime, SmolLM fallback, behavioral analysis)
+    #[arg(long, env = "OSOOSI_NO_AI")]
+    no_ai: bool,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -164,6 +167,20 @@ async fn main() -> anyhow::Result<()> {
 
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
     // 1. Handle autonomous provisioning for critical modes
+    // Force disable AI if requested via CLI or env
+    if cli.no_ai {
+        std::env::set_var("OSOOSI_NO_AI", "1");
+        std::env::set_var("OSOOSI_NO_ORT", "1");
+        info!("AI features explicitly disabled.");
+    }
+    
+    let ai_cfg = osoosi_types::load_ai_config();
+    if !ai_cfg.enabled {
+        std::env::set_var("OSOOSI_NO_ORT", "1");
+        std::env::set_var("OSOOSI_NO_AI", "1");
+        info!("AI features disabled via config.");
+    }
+
     let is_starting = matches!(cli.command, Some(Commands::Start { .. }));
     let is_granting = cli.grant_access || matches!(cli.command, Some(Commands::GrantAccess));
     let is_bootstrapping = matches!(cli.command, Some(Commands::BootstrapModels));
@@ -682,8 +699,8 @@ async fn ensure_onnx_runtime() -> anyhow::Result<()> {
 
     info!("[ONNX Setup] Missing runtime. Provisioning autonomously...");
     
-    // We use version 1.17.1 as requested/verified for the current bindings
-    let ort_version = "1.17.1";
+    // We use version 1.18.1 as requested/verified for the current bindings
+    let ort_version = "1.18.1";
     let (archive_url, archive_name) = match (std::env::consts::OS, std::env::consts::ARCH) {
         ("windows", "x86_64") => (
             format!("https://github.com/microsoft/onnxruntime/releases/download/v{}/onnxruntime-win-x64-{}.zip", ort_version, ort_version),
@@ -748,80 +765,111 @@ async fn setup_firewall() -> anyhow::Result<()> {
 }
 
 fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
-    if let Some(dylib) = find_onnxruntime_dylib() {
-        info!("Dynamic Discovery: Using ONNX Runtime at {:?}", dylib);
-        
-        // Critical: Set the environment variable BEFORE calling init_from
-        std::env::set_var("ORT_DYLIB_PATH", &dylib);
-        
-        // Use catch_unwind to prevent internal crate panics from crashing the entire daemon.
-        // The 'ort' crate can occasionally panic during dynamic symbol resolution if the DLL is incompatible.
-        let dylib_str = dylib.to_string_lossy().to_string();
-        let result = std::panic::catch_unwind(move || {
-            ort::init_from(dylib_str).commit()
-        });
-
-        match result {
-            Ok(Ok(_)) => {
-                info!("Successfully initialized ONNX Runtime API.");
-                Ok(())
-            },
-            Ok(Err(e)) => {
-                let msg = format!("Failed to commit ONNX Runtime: {}", e);
-                if !suppress_warning { error!("{}", msg); }
-                anyhow::bail!(msg)
-            },
-            Err(_) => {
-                let msg = "ONNX Runtime initialization panicked internally. Incompatible DLL or missing dependencies (VC++ Redistributable).";
-                if !suppress_warning { error!("{}", msg); }
-                anyhow::bail!(msg)
-            }
-        }
-    } else {
-        if !suppress_warning {
-            warn!("ONNX Runtime dylib not found. Disabling ML features. To enable: set ORT_DYLIB_PATH or place onnxruntime.dll next to the executable.");
-        }
-        std::env::set_var("OSOOSI_NO_ORT", "1");
-        Ok(())
+    if std::env::var("OSOOSI_NO_ORT").map(|v| v == "1").unwrap_or(false) {
+        return Ok(());
     }
+
+    let mut attempt = 0;
+    loop {
+        if let Some(dylib) = find_onnxruntime_dylib() {
+            info!("Dynamic Discovery: Using ONNX Runtime at {:?}", dylib);
+            std::env::set_var("ORT_DYLIB_PATH", &dylib);
+            
+            let dylib_str = dylib.to_string_lossy().to_string();
+            let result = std::panic::catch_unwind(move || {
+                ort::init_from(dylib_str).commit()
+            });
+
+            match result {
+                Ok(Ok(_)) => {
+                    info!("Successfully initialized ONNX Runtime API.");
+                    return Ok(());
+                },
+                Ok(Err(e)) => {
+                    warn!("Failed to commit ONNX Runtime: {}. Retrying provisioning...", e);
+                },
+                Err(_) => {
+                    warn!("ONNX Runtime initialization panicked internally (Incompatible DLL). Retrying provisioning...");
+                }
+            }
+        } else {
+            warn!("ONNX Runtime dylib not found or incompatible.");
+        }
+
+        if attempt >= 1 {
+            break;
+        }
+
+        info!("Attempting to provision correct ONNX Runtime version autonomously...");
+        // Use a handle to block on the async provisioning if we are in a sync context (lazy init)
+        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
+        if let Err(e) = rt.block_on(ensure_onnx_runtime()) {
+            error!("Autonomous provisioning failed: {}", e);
+            break;
+        }
+        attempt += 1;
+    }
+
+    if !suppress_warning {
+        warn!("AI features will be disabled due to ONNX Runtime failure.");
+    }
+    std::env::set_var("OSOOSI_NO_ORT", "1");
+    Ok(())
 }
 
 fn find_onnxruntime_dylib() -> Option<PathBuf> {
     let filename = if cfg!(windows) { "onnxruntime.dll" } else if cfg!(target_os = "macos") { "libonnxruntime.dylib" } else { "libonnxruntime.so" };
     
+    let mut candidates = Vec::new();
+
     // 1. Check ORT_DYLIB_PATH environment variable (Highest Priority)
     if let Ok(env_path) = std::env::var("ORT_DYLIB_PATH") {
-        let path = PathBuf::from(env_path);
-        if path.exists() { return Some(path); }
+        candidates.push(PathBuf::from(env_path));
     }
 
-    // 2. Check executable directory (Mandatory for production release)
+    // 2. Check executable directory
     if let Ok(exe_path) = std::env::current_exe() {
         if let Some(exe_dir) = exe_path.parent() {
-            let path = exe_dir.join(filename);
-            if path.exists() { return Some(path); }
-            
-            // Also check 'bin/' directory (where we commit the official DLL)
-            let path_bin = exe_dir.join("../../bin").join(filename);
-            if path_bin.exists() { return Some(path_bin); }
-            let path_bin_local = PathBuf::from("bin").join(filename);
-            if path_bin_local.exists() { return Some(path_bin_local); }
-
-            // Also check 'target/debug' if running via cargo
-            let path_debug = exe_dir.join("../../target/debug").join(filename);
-            if path_debug.exists() { return Some(path_debug); }
+            candidates.push(exe_dir.join(filename));
+            candidates.push(exe_dir.join("../../bin").join(filename));
+            candidates.push(exe_dir.join("bin").join(filename));
+            candidates.push(exe_dir.join("../../target/release").join(filename));
+            candidates.push(exe_dir.join("../../target/debug").join(filename));
         }
     }
 
     // 3. Check current working directory
     if let Ok(cwd) = std::env::current_dir() {
-        let path = cwd.join(filename);
-        if path.exists() { return Some(path); }
+        candidates.push(cwd.join(filename));
+        candidates.push(cwd.join("bin").join(filename));
+        candidates.push(cwd.join("candidates").join(filename));
     }
 
-    // DO NOT check C:\Windows\System32 or other system paths. 
-    // They often contain ancient versions (e.g. v1.7.1) that cause panics with ort 2.0.
+    for path in candidates {
+        if path.exists() {
+            if validate_onnx_dylib(&path) {
+                return Some(path);
+            } else {
+                info!("Found ONNX Runtime at {:?} but it failed compatibility check. Skipping...", path);
+            }
+        }
+    }
+
     None
+}
+
+fn validate_onnx_dylib(path: &Path) -> bool {
+    use libloading::{Library, Symbol};
+    unsafe {
+        match Library::new(path) {
+            Ok(lib) => {
+                // Check for a standard ONNX function to ensure it's actually valid and compatible
+                let api_base: Result<Symbol<unsafe extern "C" fn()>, _> = lib.get(b"OrtGetApiBase");
+                api_base.is_ok()
+            }
+            Err(_) => false,
+        }
+    }
 }
 
 /// Helper to find a script (e.g. sanitize_yara.py) by searching upward from EXE and CWD.

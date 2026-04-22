@@ -88,6 +88,7 @@ git2 = "0.19"
 winreg = "0.52"
 winapi = { version = "0.3", features = ["memoryapi", "processthreadsapi", "winnt", "handleapi"] }
 bloomfilter = "1.0.9"
+libloading = "0.8"
 
 [profile.release]
 lto = true

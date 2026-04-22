@@ -2208,6 +2208,10 @@ impl EdrOrchestrator {
 
     /// Start model training loop: aggregate self + peer data, train, save to models/.
     pub async fn start_model_training_loop(&self, interval_secs: u64) {
+        if std::env::var("OSOOSI_NO_AI").map(|v| v == "1").unwrap_or(false) {
+            info!("Skipping model training loop: AI features are disabled.");
+            return;
+        }
         let memory = self.memory.clone();
         let threat_model = self.threat_model.clone();
         tokio::spawn(async move {

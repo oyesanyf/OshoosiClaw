@@ -61,8 +61,9 @@ impl BehavioralClassifier {
         let model_path = smollm_dir.join("smollm2-135m-it.onnx");
         let tokenizer_path = smollm_dir.join("tokenizer.json");
 
+        let no_ai = std::env::var("OSOOSI_NO_AI").map(|v| v == "1").unwrap_or(false);
         let no_ort = std::env::var("OSOOSI_NO_ORT").map(|v| v == "1").unwrap_or(false);
-        let (model, tokenizer) = if !no_ort && model_path.exists() && tokenizer_path.exists() {
+        let (model, tokenizer) = if !no_ai && !no_ort && model_path.exists() && tokenizer_path.exists() {
             info!("Loading SmolLM2-135M-Instruct model from {:?}", model_path);
             
             // Second layer of protection: catch panics during session creation
@@ -106,7 +107,7 @@ impl BehavioralClassifier {
             .build()
             .unwrap_or_default();
 
-        let smollm = if model.is_none() {
+        let smollm = if !no_ai && model.is_none() {
             // Attempt to load native SmolLM2 if available (fallback)
             let smollm_dir = Path::new(&models_dir).join("smollm");
             match SmolLMAnalyzer::new(&smollm_dir) {

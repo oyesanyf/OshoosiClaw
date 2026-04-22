@@ -328,9 +328,22 @@ impl AgentProvisioner {
     #[cfg(target_os = "windows")]
     async fn provision_windows(&self) -> anyhow::Result<()> {
         info!("Provisioning Windows telemetry (Sysmon)...");
+        
         let config_dir = Path::new("config");
-        let cfg_primary = config_dir.join("config.xml");
+        if !config_dir.exists() {
+            let _ = std::fs::create_dir_all(config_dir);
+        }
+        
+        // Requirement: Sysmon must use latest SwiftOnSecurity config downloaded at start
+        let user_cfg_url = "https://raw.githubusercontent.com/SwiftOnSecurity/sysmon-config/master/sysmonconfig-export.xml";
         let cfg_fallback = config_dir.join("sysmonconfig-export.xml");
+        
+        info!("Downloading latest Sysmon configuration from SwiftOnSecurity GitHub...");
+        if let Err(e) = self.download_with_resume(user_cfg_url, &cfg_fallback).await {
+            warn!("Failed to download latest Sysmon config: {}. Will use existing or default if available.", e);
+        }
+
+        let cfg_primary = config_dir.join("config.xml");
         let config = if cfg_primary.is_file() {
             Some(cfg_primary.as_path())
         } else if cfg_fallback.is_file() {
