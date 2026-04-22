@@ -9,10 +9,7 @@ use tracing::{info, error, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, EnvFilter};
-use std::io::copy;
-use zip::ZipArchive;
-use flate2::read::GzDecoder;
-use tar::Archive;
+use hf_hub::api::tokio::ApiBuilder;
 
 #[derive(Parser)]
 #[command(name = "osoosi")]
@@ -444,11 +441,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             osoosi_core::hardened::print_security_assessment();
         }
         Some(Commands::BootstrapModels) => {
-            let _ = ensure_onnx_runtime().await;
-            info!("Bootstrapping ML models (MalwareScanner + SmolLM3 Storyteller)...");
-            let executor = Arc::new(DirectExecutor::new());
-            let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
-            let _ = provisioner.provision_smollm_models().await;
+            let _ = ensure_ai_models().await;
+            info!("Bootstrapping ML models (MalwareScanner + SmolLM2 Storyteller) complete.");
         }
         Some(Commands::SignConfigs) => {
             osoosi_core::config_integrity::sign_all_critical_configs();
@@ -522,19 +516,14 @@ async fn handle_grant_access() -> anyhow::Result<()> {
         let executor = osoosi_core::secured_executor::get_best_executor().await;
         let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
         
-        info!("GrantAccess pre-step: ensuring ONNX Runtime is provisioned...");
-        if let Err(e) = ensure_onnx_runtime().await {
-            warn!("Warning: Failed to autonomously provision ONNX Runtime: {}. ML features may be disabled.", e);
-        }
-        
         info!("GrantAccess pre-step: ensuring Sysmon telemetry is provisioned...");
         if let Err(e) = provisioner.provision_telemetry().await {
              warn!("Warning: Failed to provision telemetry: {}", e);
         }
 
-        info!("GrantAccess pre-step: ensuring SmolLM2-135M-Instruct models are provisioned...");
-        if let Err(e) = provisioner.provision_smollm_models().await {
-             warn!("Warning: Failed to provision SmolLM models: {}", e);
+        info!("GrantAccess pre-step: ensuring ML models are provisioned...");
+        if let Err(e) = ensure_ai_models().await {
+             warn!("Warning: Failed to provision AI models: {}", e);
         }
 
         info!("GrantAccess pre-step: ensuring ClamAV is provisioned...");
@@ -629,10 +618,6 @@ async fn handle_grant_access() -> anyhow::Result<()> {
             }
         }
 
-        info!("GrantAccess pre-step: ensuring ONNX Runtime (ML Engine) is provisioned...");
-        if let Err(e) = provisioner.provision_onnx_runtime().await {
-             warn!("Critical Warning: Failed to provision ONNX Runtime. ML features will be disabled: {}", e);
-        }
 
         #[cfg(target_os = "windows")]
         {
@@ -689,72 +674,6 @@ async fn handle_grant_access() -> anyhow::Result<()> {
     Ok(())
 }
 
-async fn ensure_onnx_runtime() -> anyhow::Result<()> {
-    if find_onnxruntime_dylib().is_some() {
-        return Ok(());
-    }
-
-    let ort_filename = if cfg!(windows) { "onnxruntime.dll" } else if cfg!(target_os = "macos") { "libonnxruntime.dylib" } else { "libonnxruntime.so" };
-    let exe_dir = std::env::current_exe().ok().and_then(|p| p.parent().map(|p| p.to_path_buf())).unwrap_or_else(|| PathBuf::from("."));
-    let ort_path = exe_dir.join(ort_filename);
-
-    info!("[ONNX Setup] Missing runtime. Provisioning autonomously...");
-    
-    // We use version 1.18.1 as requested/verified for the current bindings
-    let ort_version = "1.18.1";
-    let (archive_url, archive_name) = match (std::env::consts::OS, std::env::consts::ARCH) {
-        ("windows", "x86_64") => (
-            format!("https://github.com/microsoft/onnxruntime/releases/download/v{}/onnxruntime-win-x64-{}.zip", ort_version, ort_version),
-            "onnxruntime.zip"
-        ),
-        ("linux", "x86_64") => (
-            format!("https://github.com/microsoft/onnxruntime/releases/download/v{}/onnxruntime-linux-x64-{}.tgz", ort_version, ort_version),
-            "onnxruntime.tgz"
-        ),
-        ("macos", _) => (
-            format!("https://github.com/microsoft/onnxruntime/releases/download/v{}/onnxruntime-osx-universal2-{}.tgz", ort_version, ort_version),
-            "onnxruntime.tgz"
-        ),
-        _ => anyhow::bail!("Unsupported platform for autonomous ONNX provisioning")
-    };
-
-    let resp = reqwest::get(&archive_url).await?;
-    if !resp.status().is_success() {
-        anyhow::bail!("Failed to download ONNX archive: {}", resp.status());
-    }
-    let bytes = resp.bytes().await?;
-    let temp_archive = std::env::temp_dir().join(archive_name);
-    std::fs::write(&temp_archive, &bytes)?;
-
-    info!("[ONNX Setup] Extracting {}...", ort_filename);
-    if archive_url.ends_with(".zip") {
-        let file = std::fs::File::open(&temp_archive)?;
-        let mut archive = ZipArchive::new(file)?;
-        for i in 0..archive.len() {
-            let mut file = archive.by_index(i)?;
-            if file.name().ends_with(ort_filename) {
-                let mut outfile = std::fs::File::create(&ort_path)?;
-                copy(&mut file, &mut outfile)?;
-                break;
-            }
-        }
-    } else {
-        let tar_gz = std::fs::File::open(&temp_archive)?;
-        let tar = GzDecoder::new(tar_gz);
-        let mut archive = Archive::new(tar);
-        for entry in archive.entries()? {
-            let mut entry = entry?;
-            if entry.path()?.to_string_lossy().ends_with(ort_filename) {
-                entry.unpack(&ort_path)?;
-                break;
-            }
-        }
-    }
-    
-    let _ = std::fs::remove_file(&temp_archive);
-    info!("Successfully provisioned ONNX Runtime to {:?}", ort_path);
-    Ok(())
-}
 
 async fn setup_firewall() -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
@@ -770,108 +689,36 @@ fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
         return Ok(());
     }
 
-    let mut attempt = 0;
-    loop {
-        if let Some(dylib) = find_onnxruntime_dylib() {
-            info!("Dynamic Discovery: Using ONNX Runtime at {:?}", dylib);
-            std::env::set_var("ORT_DYLIB_PATH", &dylib);
-            
-            let dylib_str = dylib.to_string_lossy().to_string();
-            let result = std::panic::catch_unwind(move || {
-                ort::init_from(dylib_str).commit()
-            });
+    let dll_path = Path::new("onnxruntime.dll");
 
-            match result {
-                Ok(Ok(_)) => {
-                    info!("Successfully initialized ONNX Runtime API.");
-                    return Ok(());
-                },
-                Ok(Err(e)) => {
-                    warn!("Failed to commit ONNX Runtime: {}. Retrying provisioning...", e);
-                },
-                Err(_) => {
-                    warn!("ONNX Runtime initialization panicked internally (Incompatible DLL). Retrying provisioning...");
-                }
+    // 1. If it exists, it might be the "bad" one causing the panic. 
+    // We must remove it to allow 'ort' with 'copy-dylibs' to replace it.
+    if dll_path.exists() {
+        info!("🗑️ Removing potentially incompatible DLL...");
+        let _ = fs::remove_file(dll_path); 
+    }
+
+    // 2. Initialize with a guard to prevent the line 807 panic
+    let init_result = std::panic::catch_unwind(|| {
+        ort::init()
+            .commit()
+    });
+
+    match init_result {
+        Ok(Ok(_)) => {
+            info!("✅ ONNX Runtime provisioned successfully.");
+            Ok(())
+        }
+        _ => {
+            if !suppress_warning {
+                error!("❌ FATAL: ONNX Runtime cannot be provisioned. AI features will be disabled.");
             }
-        } else {
-            warn!("ONNX Runtime dylib not found or incompatible.");
-        }
-
-        if attempt >= 1 {
-            break;
-        }
-
-        info!("Attempting to provision correct ONNX Runtime version autonomously...");
-        // Use a handle to block on the async provisioning if we are in a sync context (lazy init)
-        let rt = tokio::runtime::Builder::new_current_thread().enable_all().build()?;
-        if let Err(e) = rt.block_on(ensure_onnx_runtime()) {
-            error!("Autonomous provisioning failed: {}", e);
-            break;
-        }
-        attempt += 1;
-    }
-
-    if !suppress_warning {
-        warn!("AI features will be disabled due to ONNX Runtime failure.");
-    }
-    std::env::set_var("OSOOSI_NO_ORT", "1");
-    Ok(())
-}
-
-fn find_onnxruntime_dylib() -> Option<PathBuf> {
-    let filename = if cfg!(windows) { "onnxruntime.dll" } else if cfg!(target_os = "macos") { "libonnxruntime.dylib" } else { "libonnxruntime.so" };
-    
-    let mut candidates = Vec::new();
-
-    // 1. Check ORT_DYLIB_PATH environment variable (Highest Priority)
-    if let Ok(env_path) = std::env::var("ORT_DYLIB_PATH") {
-        candidates.push(PathBuf::from(env_path));
-    }
-
-    // 2. Check executable directory
-    if let Ok(exe_path) = std::env::current_exe() {
-        if let Some(exe_dir) = exe_path.parent() {
-            candidates.push(exe_dir.join(filename));
-            candidates.push(exe_dir.join("../../bin").join(filename));
-            candidates.push(exe_dir.join("bin").join(filename));
-            candidates.push(exe_dir.join("../../target/release").join(filename));
-            candidates.push(exe_dir.join("../../target/debug").join(filename));
-        }
-    }
-
-    // 3. Check current working directory
-    if let Ok(cwd) = std::env::current_dir() {
-        candidates.push(cwd.join(filename));
-        candidates.push(cwd.join("bin").join(filename));
-        candidates.push(cwd.join("candidates").join(filename));
-    }
-
-    for path in candidates {
-        if path.exists() {
-            if validate_onnx_dylib(&path) {
-                return Some(path);
-            } else {
-                info!("Found ONNX Runtime at {:?} but it failed compatibility check. Skipping...", path);
-            }
-        }
-    }
-
-    None
-}
-
-fn validate_onnx_dylib(path: &Path) -> bool {
-    use libloading::{Library, Symbol};
-    unsafe {
-        match Library::new(path) {
-            Ok(lib) => {
-                // Check for a standard ONNX function to ensure it's actually valid and compatible
-                let api_base: Result<Symbol<unsafe extern "C" fn()>, _> = lib.get(b"OrtGetApiBase");
-                api_base.is_ok()
-            }
-            Err(_) => false,
+            std::env::set_var("OSOOSI_NO_ORT", "1");
+            Ok(())
         }
     }
 }
+
 
 /// Helper to find a script (e.g. sanitize_yara.py) by searching upward from EXE and CWD.
 fn resolve_script_path(script_name: &str) -> Option<PathBuf> {
@@ -1012,16 +859,23 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
     let _ = fs::create_dir_all(&smollm_dir);
     let _ = fs::create_dir_all(&malware_dir);
 
-    // Use tokio-enabled API builder
-    let api = match hf_hub::api::tokio::ApiBuilder::new()
-        .with_cache_dir(models_dir.to_path_buf())
-        .build() {
+    // Use tokio-enabled API builder with optional HF_TOKEN
+    let api = {
+        let mut builder = ApiBuilder::new()
+            .with_cache_dir(models_dir.to_path_buf());
+        
+        if let Ok(token) = std::env::var("HF_TOKEN") {
+            builder = builder.with_token(Some(token));
+        }
+        
+        match builder.build() {
             Ok(api) => api,
             Err(e) => {
                 warn!("Failed to initialize HuggingFace API: {}. AI features might be degraded.", e);
                 return Ok(());
             }
-        };
+        }
+    };
 
     // 1. SmolLM2-135M-Instruct
     let smollm_repo = api.model("HuggingFaceTB/SmolLM2-135M-Instruct".to_string());

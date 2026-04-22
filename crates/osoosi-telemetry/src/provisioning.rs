@@ -871,45 +871,6 @@ impl AgentProvisioner {
         }
     }
 
-    /// Provision SmolLM2-135M-Instruct models for local native inference.
-    /// SmolLM2-135M-Instruct is the correct 135M ultra-lean model.
-    pub async fn provision_smollm_models(&self) -> anyhow::Result<()> {
-        let smollm_dir = osoosi_types::resolve_smollm_dir();
-        
-        if !smollm_dir.exists() {
-            std::fs::create_dir_all(&smollm_dir)?;
-        }
-
-        let model_path     = smollm_dir.join("model.safetensors");
-        let tokenizer_path = smollm_dir.join("tokenizer.json");
-        let config_path    = smollm_dir.join("config.json");
-        let onnx_path      = osoosi_types::resolve_smollm_onnx_path();
-
-        if model_path.exists() && tokenizer_path.exists() && config_path.exists() && onnx_path.exists() {
-            info!("SmolLM2-135M-Instruct models already provisioned.");
-            return Ok(());
-        }
-
-        info!("Provisioning SmolLM2-135M-Instruct models (public, ultra-lean, 135M params)...");
-
-        const MODEL_REPO: &str = "HuggingFaceTB/SmolLM2-135M-Instruct";
-        let files = [
-            ("model.safetensors", format!("https://huggingface.co/{}/resolve/main/model.safetensors", MODEL_REPO)),
-            ("tokenizer.json",    format!("https://huggingface.co/{}/resolve/main/tokenizer.json",    MODEL_REPO)),
-            ("config.json",       format!("https://huggingface.co/{}/resolve/main/config.json",       MODEL_REPO)),
-        ];
-
-        for (name, url) in files {
-            let path = smollm_dir.join(name);
-            if !path.exists() {
-                info!("Downloading {}...", name);
-                self.executor.download(&url, &path, false).await?;
-            }
-        }
-
-        info!("SmolLM2-135M-Instruct models provisioned successfully.");
-        Ok(())
-    }
 
     /// Provision FLOSS (FLARE Obfuscated String Solver) for deobfuscating malware strings.
     pub async fn provision_floss(&self) -> anyhow::Result<()> {
@@ -1324,78 +1285,6 @@ impl AgentProvisioner {
         }
     }
 
-    /// Provision ONNX Runtime shared library (required for ML inference).
-    pub async fn provision_onnx_runtime(&self) -> anyhow::Result<()> {
-        let version = "1.18.1";
-        
-        #[cfg(target_os = "windows")]
-        {
-            let dll_name = "onnxruntime.dll";
-            if std::path::Path::new(dll_name).exists() {
-                info!("ONNX Runtime (onnxruntime.dll) already present.");
-                return Ok(());
-            }
-
-            info!("ONNX Runtime not found. Downloading v{} for Windows...", version);
-            let url = format!("https://github.com/microsoft/onnxruntime/releases/download/v{}/onnxruntime-win-x64-{}.zip", version, version);
-            let zip_path = "ort_win.zip";
-            let tmp_extract = "ort_tmp_extract";
-
-            self.download_with_resume(&url, std::path::Path::new(zip_path)).await?;
-
-            info!("Extracting ONNX Runtime...");
-            let ps_cmd = format!(
-                "Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
-                 Copy-Item -Path '{}\\onnxruntime-win-x64-{}\\lib\\onnxruntime.dll' -Destination '.' -Force; \
-                 Remove-Item '{}'; \
-                 Remove-Item -Recurse -Force '{}'",
-                zip_path, tmp_extract, tmp_extract, version, zip_path, tmp_extract
-            );
-
-            self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &ps_cmd], "ONNX Extraction", 2).await?;
-            info!("ONNX Runtime provisioned successfully.");
-            Ok(())
-        }
-
-        #[cfg(target_os = "linux")]
-        {
-            let lib_name = "libonnxruntime.so";
-            if std::path::Path::new(lib_name).exists() || self.command_exists("ldconfig").await {
-                // In reality we should check if it's on ld path, but let's just deploy locally
-            }
-
-            info!("ONNX Runtime not found. Downloading v{} for Linux...", version);
-            let url = format!("https://github.com/microsoft/onnxruntime/releases/download/v{}/onnxruntime-linux-x64-{}.tgz", version, version);
-            let tgz_path = "/tmp/ort.tgz";
-            
-            let mut cmd = Command::new("sh");
-            cmd.args(["-c", &format!(
-                "curl -L -o {} {} && tar -xzf {} -C /tmp && cp /tmp/onnxruntime-linux-x64-{}/lib/libonnxruntime.so.{} . && ln -sf libonnxruntime.so.{} libonnxruntime.so",
-                tgz_path, url, tgz_path, version, version, version
-            )]);
-            let status = self.executor.execute(cmd).await?.status;
-
-            if status.success() {
-                info!("ONNX Runtime provisioned successfully.");
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Failed to install ONNX Runtime on Linux."))
-            }
-        }
-
-        #[cfg(target_os = "macos")]
-        {
-             let url = format!("https://github.com/microsoft/onnxruntime/releases/download/v{}/onnxruntime-osx-universal2-{}.tgz", version, version);
-             // Similar logic for macOS ...
-             info!("ONNX Runtime provisioning for macOS is handled via Homebrew or manual dylib placement.");
-             Ok(())
-        }
-
-        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-        {
-            Err(anyhow::anyhow!("ONNX Runtime provisioning not supported on this platform."))
-        }
-    }
 
     /// Sanitize YARA rules to prevent compilation errors (androguard imports, type mismatches, missing includes).
     pub fn sanitize_yara_rules(&self, dir: &std::path::Path) -> anyhow::Result<()> {
