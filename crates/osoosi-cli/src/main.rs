@@ -195,6 +195,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         if let Err(e) = provisioner.provision_telemetry().await {
             warn!("Automated provisioning encountered issues: {}. Continuing startup...", e);
         }
+        let _ = ensure_ai_models().await;
         let _ = osoosi_core::firewall::open_mesh_ports();
     }
     
@@ -942,7 +943,13 @@ fn init_logging() -> anyhow::Result<tracing_appender::non_blocking::WorkerGuard>
     let filter = EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into());
     let console_layer = fmt::Layer::default().with_writer(std::io::stdout);
     let file_layer = fmt::Layer::default().with_writer(non_blocking).with_ansi(false);
-    tracing_subscriber::registry().with(filter).with(console_layer).with(file_layer).init();
+    
+    tracing_subscriber::registry()
+        .with(filter)
+        .with(console_layer)
+        .with(file_layer)
+        .with(osoosi_exporter::init_opentelemetry_layer())
+        .init();
     info!(
         path = %log_dir.display(),
         "File logs (override with OSOOSI_LOG_DIR)"
@@ -992,3 +999,59 @@ async fn wait_for_shutdown() {
 
 #[cfg(windows)]
 async fn wait_for_shutdown() { let _ = tokio::signal::ctrl_c().await; }
+async fn ensure_ai_models() -> anyhow::Result<()> {
+    if std::env::var("OSOOSI_NO_AI").map(|v| v == "1").unwrap_or(false) {
+        return Ok(());
+    }
+
+    info!("Verifying AI models in ./models/...");
+    let models_dir = Path::new("models");
+    let smollm_dir = models_dir.join("smollm");
+    let malware_dir = models_dir.join("malware");
+
+    let _ = fs::create_dir_all(&smollm_dir);
+    let _ = fs::create_dir_all(&malware_dir);
+
+    // Use tokio-enabled API builder
+    let api = match hf_hub::api::tokio::ApiBuilder::new()
+        .with_cache_dir(models_dir.to_path_buf())
+        .build() {
+            Ok(api) => api,
+            Err(e) => {
+                warn!("Failed to initialize HuggingFace API: {}. AI features might be degraded.", e);
+                return Ok(());
+            }
+        };
+
+    // 1. SmolLM2-135M-Instruct
+    let smollm_repo = api.model("HuggingFaceTB/SmolLM2-135M-Instruct".to_string());
+    let smollm_files = ["model.safetensors", "tokenizer.json", "config.json"];
+    for file in smollm_files {
+        let dest = smollm_dir.join(file);
+        if !dest.exists() {
+            info!("📥 Downloading SmolLM component: {}...", file);
+            match smollm_repo.get(file).await {
+                Ok(downloaded) => {
+                    let _ = fs::copy(downloaded, dest);
+                },
+                Err(e) => warn!("Failed to download {}: {}", file, e),
+            }
+        }
+    }
+
+    // 2. MalConv
+    let malconv_repo = api.model("Xenova/malconv".to_string());
+    let malconv_dest = malware_dir.join("malconv.safetensors");
+    if !malconv_dest.exists() {
+        info!("📥 Downloading MalConv weights...");
+        match malconv_repo.get("model.safetensors").await {
+            Ok(downloaded) => {
+                let _ = fs::copy(downloaded, malconv_dest);
+            },
+            Err(e) => warn!("Failed to download MalConv weights: {}", e),
+        }
+    }
+
+    info!("AI models verified.");
+    Ok(())
+}

@@ -29,3 +29,5 @@ flate2 = "1.0"
 tar = "0.4"
 webbrowser = "1"
 libloading = { workspace = true }
+hf-hub = { workspace = true }
+osoosi-exporter = { path = "../osoosi-exporter" }

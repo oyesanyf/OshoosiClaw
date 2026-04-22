@@ -36,13 +36,13 @@ thiserror = "2"
 anyhow = "1"
 dashmap = "6"
 tracing = "0.1"
-tracing-subscriber = { version = "0.3", features = ["env-filter", "json"] }
+tracing-subscriber = { version = "0.3", features = ["env-filter", "json", "registry", "fmt"] }
 tracing-appender = "0.2"
 hostname = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
 rusqlite = { version = "0.31", features = ["bundled", "serde_json"] }
-clap = { version = "4", features = ["derive"] }
+clap = { version = "4", features = ["derive", "env"] }
 sha2 = "0.10"
 hmac = "0.12"
 hex = "0.4"
@@ -69,7 +69,7 @@ quick-xml = { version = "0.31", features = ["serialize"] }
 sysinfo = "0.30"
 goblin = "0.9"
 magika = "1"
-ort = { version = "=2.0.0-rc.10", features = ["download-binaries", "load-dynamic"] }
+ort = { version = "=2.0.0-rc.10", features = ["download-binaries", "load-dynamic", "copy-dylibs"] }
 axum = { version = "0.7", features = ["macros"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 libc = "0.2"

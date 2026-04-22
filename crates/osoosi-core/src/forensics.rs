@@ -16,9 +16,9 @@ impl Default for ForensicStoryteller {
 impl ForensicStoryteller {
     pub fn new() -> Self {
         let models_dir = std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
-        let model_dir = Path::new(&models_dir);
+        let model_dir = Path::new(&models_dir).join("smollm");
 
-        let analyzer = match SmolLMAnalyzer::new(model_dir) {
+        let analyzer = match SmolLMAnalyzer::new(&model_dir) {
             Ok(a) => Some(a),
             Err(e) => {
                 warn!("AI Storytelling analyzer NOT initialized: {}. Fallback to legacy templates.", e);

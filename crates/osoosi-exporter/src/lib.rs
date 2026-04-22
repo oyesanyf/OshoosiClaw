@@ -19,12 +19,12 @@ use opentelemetry_sdk::trace::SdkTracerProvider;
 
 /// Initialize OpenTelemetry tracing and return a layer to add to the tracing subscriber.
 /// Set OSOOSI_OTEL_ENABLED=1 to enable.
-pub fn init_opentelemetry_layer() -> Option<
-    tracing_opentelemetry::OpenTelemetryLayer<
-        tracing_subscriber::Registry,
-        opentelemetry_sdk::trace::Tracer,
-    >,
-> {
+pub fn init_opentelemetry_layer<S>() -> Option<
+    tracing_opentelemetry::OpenTelemetryLayer<S, opentelemetry_sdk::trace::Tracer>,
+>
+where
+    S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
+{
     if std::env::var("OSOOSI_OTEL_ENABLED")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false)
