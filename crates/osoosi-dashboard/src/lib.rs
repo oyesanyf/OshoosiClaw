@@ -163,6 +163,7 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/mesh/broadcast", post(post_mesh_broadcast))
         .route("/api/analyst/chat", get(get_analyst_chat))
         .route("/api/telemetry/timeseries", get(get_telemetry_timeseries))
+        .route("/api/mesh/topology", get(get_mesh_topology))
         .with_state(state);
 
     if index_html.is_file() {
@@ -1139,5 +1140,12 @@ async fn get_telemetry_timeseries(State(state): State<DashboardState>) -> Json<V
             }))
         }
         None => Json(json!({ "labels": [], "data": [] })),
+    }
+}
+
+async fn get_mesh_topology(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => Json(orch.mesh_topology()),
+        None => Json(json!({ "nodes": [], "edges": [] })),
     }
 }

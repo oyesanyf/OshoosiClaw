@@ -962,7 +962,7 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
     }
 
     if listen_addrs.is_empty() {
-        listen_addrs.push("/ip4/0.0.0.0/tcp/4001".to_string());
+        listen_addrs.push("/ip4/0.0.0.0/tcp/9000".to_string());
     }
 
     WireListenConfig {

@@ -30,7 +30,7 @@ The system is controlled via the `osoosi.toml` file and Environment Variables.
 
 | Parameter | Default | Description |
 | :--- | :--- | :--- |
-| `mesh.listen_addrs` | `["/ip4/0.0.0.0/tcp/4001"]` | Multiaddr formats for P2P listening. |
+| `mesh.listen_addrs` | `["/ip4/0.0.0.0/tcp/9000"]` | Multiaddr formats for P2P listening. |
 | `mesh.require_attestation` | `true` | If true, peers must pass Mutual Attestation to join. |
 | `policy.confidence_threshold` | `0.7` | Threshold at which the agent takes autonomous action. |
 | `holograph.enabled` | `true` | Enables distributed deception sharding. |

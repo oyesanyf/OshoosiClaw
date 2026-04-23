@@ -42,6 +42,10 @@
                     <i data-lucide="network"></i>
                     <span>Process Map</span>
                 </a>
+                <a href="#" class="nav-item" data-view="otel-map">
+                    <i data-lucide="map"></i>
+                    <span>OpenTelemetry Map</span>
+                </a>
             </nav>
             <div class="sidebar-footer">
                 <div class="status-indicator">
@@ -247,6 +251,22 @@
                     <div class="card-body" style="height: 100%; padding:0; position:relative;">
                         <div id="attack-graph" style="height: 100%; width: 100%;"></div>
                         <div id="graph-loading" class="placeholder-text" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%);">Loading graph data...</div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- OpenTelemetry Map View -->
+            <div id="otel-map-view" class="view-content">
+                <div class="card glass shadow-glow" style="height: calc(100vh - 200px);">
+                    <div class="card-header">
+                        <h3>Global Telemetry Mesh Map</h3>
+                        <div class="header-actions">
+                            <span class="badge blue">Live Topology</span>
+                        </div>
+                    </div>
+                    <div class="card-body" style="height: 100%; padding:0; position:relative;">
+                        <div id="otel-mesh-map" style="height: 100%; width: 100%;"></div>
+                        <div id="otel-map-loading" class="placeholder-text" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%);">Initializing 10/10 Mesh Topology...</div>
                     </div>
                 </div>
             </div>

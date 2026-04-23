@@ -679,7 +679,7 @@ async fn handle_grant_access() -> anyhow::Result<()> {
 async fn setup_firewall() -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     {
-        let ps_cmd = "New-NetFirewallRule -DisplayName 'OpenOshoosi-Allow' -Direction Inbound -LocalPort 4001,8080 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue";
+        let ps_cmd = "New-NetFirewallRule -DisplayName 'OpenOshoosi-Allow' -Direction Inbound -LocalPort 9000,8080 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue";
         let _ = std::process::Command::new("powershell").args(&["-Command", ps_cmd]).output()?;
     }
     Ok(())
@@ -935,8 +935,8 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
         return Ok(());
     }
 
-    info!("Verifying AI models in ./models/...");
-    let models_dir = Path::new("models");
+    info!("Verifying AI models in {}...", osoosi_types::resolve_models_dir().display());
+    let models_dir = osoosi_types::resolve_models_dir();
     let smollm_dir = models_dir.join("smollm");
     let malware_dir = models_dir.join("malware");
 

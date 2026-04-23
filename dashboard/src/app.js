@@ -11,6 +11,7 @@ const state = {
     current_view: 'dashboard',
     searchQuery: '',
     network: null,
+    otelNetwork: null,
     telemetryChart: null
 };
 
@@ -62,6 +63,10 @@ function setupNav() {
                 document.getElementById('process-map-view').classList.add('active');
                 viewTitle.innerText = "Attack Graph & Process Map";
                 renderProcessMapView();
+            } else if (view === 'otel-map') {
+                document.getElementById('otel-map-view').classList.add('active');
+                viewTitle.innerText = "Global Telemetry Mesh Map";
+                renderOtelMapView();
             } else {
                 document.getElementById('other-view').classList.add('active');
                 viewTitle.innerText = item.querySelector('span').innerText;
@@ -467,6 +472,70 @@ function initGraph(container, data) {
     if (refreshBtn) {
         refreshBtn.onclick = () => renderProcessMapView();
     }
+}
+
+/**
+ * Render OpenTelemetry Mesh Map
+ */
+async function renderOtelMapView() {
+    const container = document.getElementById('otel-mesh-map');
+    const loading = document.getElementById('otel-map-loading');
+    if (!container) return;
+
+    if (loading) loading.style.display = 'block';
+
+    const topologyData = await fetchAPI('/mesh/topology');
+    if (!topologyData) {
+        if (loading) loading.innerText = "Failed to load mesh topology.";
+        return;
+    }
+
+    if (loading) loading.style.display = 'none';
+
+    if (!state.otelNetwork) {
+        initOtelMap(container, topologyData);
+    } else {
+        state.otelNetwork.setData({
+            nodes: new vis.DataSet(topologyData.nodes),
+            edges: new vis.DataSet(topologyData.edges)
+        });
+    }
+}
+
+function initOtelMap(container, data) {
+    const options = {
+        nodes: {
+            shape: 'dot',
+            size: 25,
+            font: { size: 12, color: '#ffffff', face: 'Outfit' },
+            borderWidth: 2,
+            shadow: true,
+            color: { background: 'rgba(0, 210, 255, 0.2)', border: '#00d2ff' }
+        },
+        edges: {
+            width: 1,
+            color: 'rgba(0, 210, 255, 0.3)',
+            arrows: { to: { enabled: false } },
+            length: 150
+        },
+        physics: {
+            enabled: true,
+            barnesHut: { gravitationalConstant: -3000, springLength: 150 },
+            stabilization: { iterations: 150 }
+        },
+        groups: {
+            host: { color: { background: '#00d2ff', border: '#00d2ff' } },
+            threat: { color: { background: '#ff4d4d', border: '#ff4d4d' } },
+            process: { color: { background: '#bd93f9', border: '#bd93f9' } }
+        }
+    };
+
+    const visData = {
+        nodes: new vis.DataSet(data.nodes),
+        edges: new vis.DataSet(data.edges)
+    };
+
+    state.otelNetwork = new vis.Network(container, visData, options);
 }
 
 /**

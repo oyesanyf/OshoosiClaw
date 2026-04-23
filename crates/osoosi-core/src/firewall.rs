@@ -236,7 +236,7 @@ pub fn clear_firewall_persistence() -> Result<()> {
 pub fn open_mesh_ports() -> Result<()> {
     #[cfg(target_os = "windows")]
     {
-        let ports = [("Osoosi-Mesh", 4001), ("Osoosi-Dashboard", 3030)];
+        let ports = [("Osoosi-Mesh", 9000), ("Osoosi-Dashboard", 3000)];
         for (name, port) in ports {
             let _ = Command::new("netsh")
                 .args([
@@ -252,11 +252,11 @@ pub fn open_mesh_ports() -> Result<()> {
     #[cfg(target_os = "linux")]
     {
         // Try ufw first
-        let _ = Command::new("sudo").args(["ufw", "allow", "4001/tcp"]).status();
-        let _ = Command::new("sudo").args(["ufw", "allow", "3030/tcp"]).status();
+        let _ = Command::new("sudo").args(["ufw", "allow", "9000/tcp"]).status();
+        let _ = Command::new("sudo").args(["ufw", "allow", "3000/tcp"]).status();
         // Fallback to iptables
-        let _ = Command::new("sudo").args(["iptables", "-I", "INPUT", "-p", "tcp", "--dport", "4001", "-j", "ACCEPT"]).status();
-        let _ = Command::new("sudo").args(["iptables", "-I", "INPUT", "-p", "tcp", "--dport", "3030", "-j", "ACCEPT"]).status();
+        let _ = Command::new("sudo").args(["iptables", "-I", "INPUT", "-p", "tcp", "--dport", "9000", "-j", "ACCEPT"]).status();
+        let _ = Command::new("sudo").args(["iptables", "-I", "INPUT", "-p", "tcp", "--dport", "3000", "-j", "ACCEPT"]).status();
     }
     Ok(())
 }
