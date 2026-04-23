@@ -29,6 +29,8 @@ pub mod secured_executor;
 pub mod remediation;
 pub mod adaptive;
 pub mod byzantine;
+pub mod causal_ai;
+pub mod self_healing;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -100,6 +102,8 @@ pub struct EdrOrchestrator {
     behavioral_classifier: Arc<osoosi_behavioral::BehavioralClassifier>,
     /// Behavioral AI Analyzer (OpenAI/Azure adapted from AIEventAnalyzer)
     behavioral_analyzer: Arc<osoosi_behavioral::BehavioralAnalyzer>,
+    behavioral_engine: Arc<osoosi_behavioral::SmolLMAnalyzer>,
+    gemma_cortex: Option<Arc<osoosi_behavioral::Gemma4Analyzer>>,
     /// PII Classifier (Presidio + Tika + Magika fallback)
     #[allow(dead_code)]
     pii_classifier: Arc<crate::pii::PiiClassifier>,
@@ -116,6 +120,12 @@ pub struct EdrOrchestrator {
     adaptive: Arc<crate::adaptive::TelemetryController>,
     /// Forensic Storyteller: AI-driven attack narratives
     storyteller: Arc<crate::forensics::ForensicStoryteller>,
+    /// Causal AI: Process lineage and predictive analysis
+    causal_ai: Arc<crate::causal_ai::CausalEngine>,
+    /// Self-Healing: Automatic rollback of malicious changes
+    self_healing: Arc<crate::self_healing::SelfHealingEngine>,
+    /// Ghost Node: Active deception manager
+    ghost_nodes: Arc<osoosi_wire::GhostNodeManager>,
     /// Runtime paths (db_path, traps_path) from config
     runtime_config: osoosi_types::RuntimeConfig,
     /// Secured execution layer (Direct or OpenShell)
@@ -371,7 +381,7 @@ impl EdrOrchestrator {
 
         let malware_model_path = std::path::PathBuf::from(
             std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string())
-        ).join("malware").join("malware_model.json");
+        ).join("malware").join("malware_model.onnx");
         let malware_scanner = Arc::new(MalwareScanner::new(&malware_model_path));
         let triage_store = crate::triage::new_triage_store();
         let baseline = Arc::new(crate::baseline::BehavioralBaseline::new());
@@ -379,7 +389,7 @@ impl EdrOrchestrator {
         let approval_queue = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let shield = Arc::new(crate::shield::ShieldLayer::new());
         let node_id = trust.did().to_string();
-        let holograph = Arc::new(osoosi_wire::holograph::HolographEngine::new(node_id));
+        let holograph = Arc::new(osoosi_wire::holograph::HolographEngine::new(node_id.clone()));
         let relativistic = Arc::new(crate::relativistic::RelativisticGuard::new());
         let behavioral_classifier = Arc::new(osoosi_behavioral::BehavioralClassifier::new().await);
         let behavioral_analyzer = Arc::new(osoosi_behavioral::BehavioralAnalyzer::new());
@@ -390,6 +400,19 @@ impl EdrOrchestrator {
         let remediation = Arc::new(crate::remediation::RemediationController::new());
         let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
         let storyteller = Arc::new(crate::forensics::ForensicStoryteller::new());
+        let causal_ai = Arc::new(crate::causal_ai::CausalEngine::new());
+        let self_healing = Arc::new(crate::self_healing::SelfHealingEngine::new(audit.clone(), memory.clone()));
+        let ghost_nodes = Arc::new(osoosi_wire::GhostNodeManager::new(node_id, mesh_command_tx.clone()));
+        
+        let models_dir = std::path::PathBuf::from(std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string()));
+        let smollm_dir = models_dir.join("smollm");
+        let behavioral_engine = Arc::new(osoosi_behavioral::SmolLMAnalyzer::new(&smollm_dir)?);
+        let gemma_dir = models_dir.join("gemma4-e2b");
+        let gemma_cortex = if gemma_dir.exists() {
+            Some(Arc::new(osoosi_behavioral::Gemma4Analyzer::new(&gemma_dir)?))
+        } else {
+            None
+        };
 
         Ok(Self {
             memory,
@@ -423,6 +446,11 @@ impl EdrOrchestrator {
             remediation,
             adaptive,
             storyteller,
+            causal_ai,
+            self_healing,
+            ghost_nodes,
+            behavioral_engine,
+            gemma_cortex,
             runtime_config,
             secured_executor,
         })
@@ -491,6 +519,10 @@ impl EdrOrchestrator {
                     |_sample| {}, // Malware samples
                     |_tarpit| {}, // Tarpit signals
                     |_confidential| {}, // Confidential messages
+                    move |delta| {
+                        let mut model = orch.threat_model.blocking_write();
+                        model.merge_delta(&delta);
+                    },
                 ).await;
             });
             
@@ -820,14 +852,18 @@ impl EdrOrchestrator {
                                     info!("Quarantined malware: {} -> {} (conf={:.2})", result.file_path, autonomy.quarantine_path, result.combined_score);
                                 }
                             } else if should_quarantine {
-                                if let Err(e) = crate::quarantine::quarantine_file(&result.file_path, &autonomy.quarantine_path) {
-                                    error!("Failed to quarantine malware file {}: {}", result.file_path, e);
-                                } else {
                                     info!("Quarantined malware: {} -> {} (conf={:.2})", result.file_path, autonomy.quarantine_path, result.combined_score);
+                                    orchestrator.audit.log("AUTONOMOUS_ACTION", serde_json::json!({
+                                        "message": format!("Quarantined malicious file: {}", result.file_path),
+                                        "details": {
+                                            "path": result.file_path,
+                                            "score": result.combined_score,
+                                            "type": result.malware_type
+                                        }
+                                    }));
+                                } else if autonomy.auto_quarantine_malware && result.is_malware {
+                                    info!("Malware detected but below quarantine threshold (conf={:.2} < {:.2}): alert only", result.combined_score, autonomy.quarantine_confidence_threshold);
                                 }
-                            } else if autonomy.auto_quarantine_malware && result.is_malware {
-                                info!("Malware detected but below quarantine threshold (conf={:.2} < {:.2}): alert only", result.combined_score, autonomy.quarantine_confidence_threshold);
-                            }
                         }
                     }
                 }
@@ -1164,13 +1200,58 @@ impl EdrOrchestrator {
         Ok(result)
     }
 
-    pub async fn process_telemetry(&self, event: SysmonEvent) -> anyhow::Result<()> {
+    pub async fn process_telemetry(&self, event: osoosi_types::SysmonEvent) -> anyhow::Result<()> {
         use osoosi_types::{ResponseAction, SysmonEventId};
+
+        // Map SysmonEvent to LogEvent for behavioral analysis
+        let log_event = osoosi_behavioral::LogEvent {
+            source: "sysmon".to_string(),
+            event_id: event.event_id as u32,
+            timestamp: event.timestamp,
+            computer: event.computer.clone(),
+            data: event.data.as_object()
+                .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
+                .unwrap_or_default(),
+        };
+
+        // Behavioral analysis (Gemma 4 Reasoning for Chat Flow)
+        if let Some(ref cortex) = self.gemma_cortex {
+            let cortex = cortex.clone();
+            let log_event_clone = log_event.clone();
+            let orchestrator = self.clone();
+            tokio::spawn(async move {
+                let sentence = osoosi_behavioral::event_to_behavioral_sentence(&log_event_clone);
+                if let Ok(reasoning) = cortex.reason_about_attack(&sentence) {
+                    let _ = orchestrator.audit.log("AI_REASONING", serde_json::json!({
+                        "message": format!("Gemma 4: {}", reasoning),
+                        "details": {
+                            "event_id": log_event_clone.event_id,
+                            "confidence": 0.85,
+                            "reason": reasoning
+                        }
+                    }));
+                }
+            });
+        }
+
+        // Standard behavioral classification (Rules + BERT)
+        let analysis = self.behavioral_classifier.classify(&log_event).await;
+        if analysis.is_suspicious {
+            self.audit.log("THREAT_DETECTED", serde_json::json!({
+                "event_id": event.event_id as u32,
+                "confidence": analysis.score,
+                "reason": analysis.reason,
+                "sentence": analysis.sentence
+            }));
+        }
 
         // Log telemetry entry to Merkle Audit Chain
         self.audit.log("TELEMETRY_INGESTED", serde_json::to_value(&event)?);
 
         info!("Processing Sysmon telemetry: {:?}", event.event_id);
+
+        // 10/10 Causal Engine: Ingest event into the Causal AI Attack Graph
+        self.causal_ai.ingest_event(&event);
 
         // Einstein Engine: Check for "Dilation of Truth" (temporal anomalies)
         let temporal_score = self.relativistic.check_temporal_dilation(&event);
@@ -2030,6 +2111,7 @@ impl EdrOrchestrator {
         let intel_tx = peer_intel_tx.clone();
         let sample_tx = malware_sample_tx.clone();
         let autonomy_conf = autonomy.clone();
+        let self_clone = self.clone();
         let mesh_future = Box::pin(async move {
             mesh.run_loop(
                 join_gate_clone,
@@ -2050,6 +2132,10 @@ impl EdrOrchestrator {
                 },
                 move |c| {
                     info!("MESH: Received confidential message from peer: {:?}", c);
+                },
+                move |delta| {
+                    let mut model = self_clone.threat_model.blocking_write();
+                    model.merge_delta(&delta);
                 },
             )
             .await;

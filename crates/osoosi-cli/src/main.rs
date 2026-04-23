@@ -149,26 +149,12 @@ pub enum SandboxAction {
 
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
-    // 1. Force the app to use the DLL in the local folder, bypassing System32.
-    // This must happen BEFORE any logging or other modules might trigger an 'ort' load.
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(exe_dir) = exe.parent() {
-            let local_dll = exe_dir.join("onnxruntime.dll");
-            if local_dll.exists() {
-                // Use a stringly-typed path for the env var
-                if let Some(p) = local_dll.to_str() {
-                    std::env::set_var("ORT_DYLIB_PATH", p);
-                }
-            }
-        }
-    }
-
     set_panic_hook();
     let _guard = init_logging()?;
     
+    // We defer ORT configuration to async_main after potential provisioning
     let cli = Cli::parse();
     
-    // Lazy init ORT after potential provisioning in async_main
     if let Err(e) = async_main(cli).await {
         error!("Fatal execution error: {}", e);
         std::process::exit(1);
@@ -726,8 +712,6 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
 
     let dll_path = ort_dynamic_library_path();
 
-    // ort 2.0.0-rc.x binds ORT_API_VERSION N → expects GetVersionString "1.N.x" (e.g. 22 → 1.22.x).
-    // Older URLs (1.17–1.19) always panic in ort with "not compatible with the ONNX Runtime binary".
     let versions = [
         ("1.22.2", "https://github.com/microsoft/onnxruntime/releases/download/v1.22.2/onnxruntime-win-x64-1.22.2.zip"),
         ("1.22.1", "https://github.com/microsoft/onnxruntime/releases/download/v1.22.1/onnxruntime-win-x64-1.22.1.zip"),
@@ -736,9 +720,26 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
     let mut success = false;
 
     for (version, url) in versions {
+        // 1. Check if existing DLL is incompatible version
+        if dll_path.exists() {
+            #[cfg(target_os = "windows")]
+            {
+                use std::process::Command;
+                let output = Command::new("powershell")
+                    .args(["-NoProfile", "-Command", &format!("(Get-Item '{}').VersionInfo.ProductVersion", dll_path.to_string_lossy())])
+                    .output();
+                if let Ok(out) = output {
+                    let v_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
+                    if !v_str.starts_with("1.22") {
+                        warn!("Incompatible ONNX Runtime version detected: {}. Expected 1.22.x. Removing...", v_str);
+                        let _ = fs::remove_file(&dll_path);
+                    }
+                }
+            }
+        }
+
         info!("Attempting to initialize ONNX Runtime (target version: {})...", version);
         
-        // 1. If the DLL is missing, or we're on a retry, download it
         if !dll_path.exists() {
             info!("📥 Downloading ONNX Runtime v{}...", version);
             let zip_path = "ort_tmp.zip";
@@ -750,7 +751,6 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
                 continue;
             }
 
-            // Extract DLL next to the executable (or ORT_DYLIB_PATH), not only cwd.
             let dest = escape_ps_literal(&dll_path.to_string_lossy());
             let zip_q = escape_ps_literal(zip_path);
             let tmp_q = escape_ps_literal(tmp_dir);
@@ -797,6 +797,7 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
             error!("❌ FATAL: All ONNX Runtime initialization attempts failed. AI features will be disabled.");
         }
         std::env::set_var("OSOOSI_NO_ORT", "1");
+        anyhow::bail!("All ONNX Runtime initialization attempts failed.");
     }
     
     Ok(())
@@ -960,7 +961,7 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
         }
     };
 
-    // 1. SmolLM2-135M-Instruct
+    // 1. SmolLM2-135M-Instruct (Native)
     let smollm_repo = api.model("HuggingFaceTB/SmolLM2-135M-Instruct".to_string());
     let smollm_files = ["model.safetensors", "tokenizer.json", "config.json"];
     for file in smollm_files {
@@ -976,7 +977,26 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
         }
     }
 
-    // 2. MalConv — needs Candle-compatible `.safetensors` (embedding / conv_feat / conv_gate / fc).
+    // 2. SmolLM2-135M-Instruct (ONNX)
+    let smollm_onnx_repo = api.model("onnx-community/SmolLM2-135M-Instruct".to_string());
+    let smollm_onnx_dest = smollm_dir.join("smollm2-135m-it.onnx");
+    if !smollm_onnx_dest.exists() {
+        info!("📥 Downloading SmolLM component: smollm2-135m-it.onnx...");
+        // Try various names
+        for filename in ["model.onnx", "smollm2-135m-it.onnx", "onnx/model.onnx"] {
+            match smollm_onnx_repo.get(filename).await {
+                Ok(downloaded) => {
+                    if fs::copy(downloaded, &smollm_onnx_dest).is_ok() {
+                        info!("✅ SmolLM ONNX model saved.");
+                        break;
+                    }
+                },
+                Err(_) => continue,
+            }
+        }
+    }
+
+    // 3. MalConv — needs Candle-compatible `.safetensors`.
     let ai_cfg = osoosi_types::load_ai_config();
     let malconv_dest = malware_dir.join("malconv.safetensors");
     if !malconv_dest.exists() {
@@ -995,10 +1015,9 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
             "pytorch_model.safetensors",
             "weights.safetensors",
         ];
-        // Legacy IDs may be private, renamed, or non-safetensors; HF_TOKEN helps if a repo is gated.
         let malconv_repos = [
-            "onnx-community/malconv",
             "Xenova/malconv",
+            "onnx-community/malconv",
             "microsoft/malconv",
         ];
         'malconv_hf: for repo_name in malconv_repos {
@@ -1017,13 +1036,6 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
                     }
                 }
             }
-        }
-        if !malconv_dest.exists() {
-            warn!(
-                "⚠️ No MalConv `.safetensors` found. Direct byte classification is disabled. \
-Set `[ai].malconv_weights_url` or `OSOOSI_MALCONV_WEIGHTS_URL`, or place `models/malware/malconv.safetensors` manually. \
-Public Hugging Face MalConv repos often publish Keras `.h5` or ONNX only, which this build does not load here."
-            );
         }
     }
 

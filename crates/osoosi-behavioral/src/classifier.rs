@@ -13,7 +13,7 @@ use std::sync::Mutex;
 use tokenizers::Tokenizer;
 use tracing::{debug, info, warn};
 use std::sync::Arc;
-use crate::smollm::SmolLMAnalyzer;
+use crate::llm_engine::SmolLMAnalyzer;
 
 /// Result of behavioral classification.
 #[derive(Debug, Clone, Serialize, Deserialize)]

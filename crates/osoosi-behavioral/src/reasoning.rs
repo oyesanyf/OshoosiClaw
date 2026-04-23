@@ -3,7 +3,7 @@ use crate::LogEvent;
 use tracing::{info, warn, error, debug};
 use std::time::Duration;
 use std::sync::Arc;
-use crate::smollm::SmolLMAnalyzer;
+use crate::llm_engine::SmolLMAnalyzer;
 
 /// Tier 2: Expert investigation results from Foundation-Sec.
 #[derive(Debug, Clone, Serialize, Deserialize)]

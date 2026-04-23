@@ -8,11 +8,13 @@ pub mod holograph;
 pub mod pqc;
 pub mod tarpit;
 pub mod confidential;
+pub mod ghost_node;
 
 pub use join_gate::JoinGate;
 pub use mesh::*;
 pub use tarpit::*;
 pub use confidential::*;
+pub use ghost_node::*;
 
 /// Gossipsub topic for mesh-wide tarpitting signals.
 pub const TARPIT_TOPIC: &str = "osoosi-tarpit-v1";
@@ -43,6 +45,8 @@ pub enum MeshCommand {
     BroadcastTarpit(TarpitSignal),
     /// Broadcast an FHE-encrypted vote or IOC.
     BroadcastConfidential(ConfidentialMessage),
+    /// Broadcast a Federated Model Delta for collaborative learning.
+    BroadcastModelDelta(osoosi_types::FederatedModelDelta),
 }
 
 /// Collaborative attacker throttling signal for the Gossip mesh.

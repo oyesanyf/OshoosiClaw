@@ -165,4 +165,18 @@ impl ThreatModel {
         self.weights = Self::load_weights(&self.config)?;
         Ok(())
     }
+
+    /// Federated Learning: Merge a delta from a peer node.
+    pub fn merge_delta(&mut self, delta: &osoosi_types::FederatedModelDelta) {
+        info!("Merging federated model delta from Node {} ({} features)", delta.source_node, delta.features.len());
+        
+        for (feat, weight) in &delta.features {
+            let entry = self.weights.features.entry(feat.clone()).or_insert(0.0);
+            // Average the weights (simplistic Federated Averaging)
+            *entry = (*entry + *weight) / 2.0;
+        }
+        
+        self.weights.sample_count += 1;
+        let _ = self.save();
+    }
 }

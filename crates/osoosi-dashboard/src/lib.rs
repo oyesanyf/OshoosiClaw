@@ -161,6 +161,7 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/behavioral/deep-dive", post(post_behavioral_deep_dive))
         .route("/api/consensus", get(get_consensus))
         .route("/api/mesh/broadcast", post(post_mesh_broadcast))
+        .route("/api/analyst/chat", get(get_analyst_chat))
         .with_state(state);
 
     if index_html.is_file() {
@@ -1072,5 +1073,32 @@ async fn post_triage_decide(
             }
         }
         None => Json(json!({"ok": false, "error": "Backend not running"})),
+    }
+}
+async fn get_analyst_chat(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            let entries = orch.audit().entries();
+            let chat_entries: Vec<Value> = entries
+                .iter()
+                .rev()
+                .filter(|e| e.event_type == "AI_REASONING" || e.event_type == "AUTONOMOUS_ACTION")
+                .map(|e| {
+                    let author = if e.event_type == "AI_REASONING" { "Gemma 4 Cortex" } else { "Immune System" };
+                    let message = e.data.get("message").and_then(|v| v.as_str()).unwrap_or("...");
+                    let details = e.data.get("details").cloned().unwrap_or(Value::Null);
+                    json!({
+                        "author": author,
+                        "message": message,
+                        "details": details,
+                        "timestamp": e.timestamp.to_rfc3339(),
+                        "is_action": e.event_type == "AUTONOMOUS_ACTION"
+                    })
+                })
+                .take(50)
+                .collect();
+            Json(Value::Array(chat_entries))
+        }
+        None => Json(json!([])),
     }
 }

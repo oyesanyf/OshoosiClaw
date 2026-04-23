@@ -115,6 +115,15 @@ pub struct GlobalIntelligence {
     pub source_node: String,
 }
 
+/// Federated Model Delta: Gossip-based shared feature weights (Privacy Preserving).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct FederatedModelDelta {
+    pub source_node: String,
+    pub features: std::collections::HashMap<String, f32>,
+    pub epsilon: f32, // DP noise level used
+    pub timestamp: DateTime<Utc>,
+}
+
 /// A "Threat Signature" for P2P gossip.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ThreatSignature {

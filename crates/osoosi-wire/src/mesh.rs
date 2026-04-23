@@ -39,6 +39,7 @@ pub struct MeshNode {
     pub audit_proof_topic: gossipsub::IdentTopic,
     pub tarpit_topic: gossipsub::IdentTopic,
     pub confidential_topic: gossipsub::IdentTopic,
+    pub model_delta_topic: gossipsub::IdentTopic,
     pub zone: String,
     pub memory: Arc<osoosi_memory::MemoryStore>,
 }
@@ -101,6 +102,7 @@ impl MeshNode {
         let audit_proof_topic = gossipsub::IdentTopic::new(format!("osoosi-audit-proofs-{}", zone));
         let tarpit_topic = gossipsub::IdentTopic::new(format!("{}-{}", super::TARPIT_TOPIC, zone));
         let confidential_topic = gossipsub::IdentTopic::new(format!("{}-{}", super::CONFIDENTIAL_TOPIC, zone));
+        let model_delta_topic = gossipsub::IdentTopic::new(format!("osoosi-model-deltas-{}", zone));
 
         swarm.behaviour_mut().gossipsub.subscribe(&threat_topic)?;
         swarm.behaviour_mut().gossipsub.subscribe(&consensus_topic)?;
@@ -111,6 +113,7 @@ impl MeshNode {
         swarm.behaviour_mut().gossipsub.subscribe(&audit_proof_topic)?;
         swarm.behaviour_mut().gossipsub.subscribe(&tarpit_topic)?;
         swarm.behaviour_mut().gossipsub.subscribe(&confidential_topic)?;
+        swarm.behaviour_mut().gossipsub.subscribe(&model_delta_topic)?;
 
         let mesh_config = osoosi_types::load_mesh_listen_config();
 
@@ -159,13 +162,14 @@ impl MeshNode {
             audit_proof_topic,
             tarpit_topic,
             confidential_topic,
+            model_delta_topic,
             zone,
             memory,
         })
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn run_loop<F, G, H, I, J, K, L>(
+    pub async fn run_loop<F, G, H, I, J, K, L, M>(
         mut self,
         join_gate: Arc<JoinGate>,
         mut command_rx: mpsc::Receiver<MeshCommand>,
@@ -178,6 +182,7 @@ impl MeshNode {
         mut on_malware_sample: J,
         mut on_tarpit: K,
         mut on_confidential: L,
+        mut on_model_delta: M,
     ) where
         F: FnMut(ThreatSignature) + Send + 'static,
         G: FnMut(osoosi_types::PolicyConsensusMessage) + Send + 'static,
@@ -186,6 +191,7 @@ impl MeshNode {
         J: FnMut(MalwareSample) + Send + 'static,
         K: FnMut(super::TarpitSignal) + Send + 'static,
         L: FnMut(super::ConfidentialMessage) + Send + 'static,
+        M: FnMut(osoosi_types::FederatedModelDelta) + Send + 'static,
     {
         let mut quarantined: HashSet<PeerId> = HashSet::new();
         let mut approved: HashSet<PeerId> = HashSet::new();
@@ -265,6 +271,11 @@ impl MeshNode {
                             let _ = self.swarm.behaviour_mut().gossipsub.publish(self.confidential_topic.clone(), j.as_bytes());
                         }
                     }
+                    MeshCommand::BroadcastModelDelta(delta) => {
+                        if let Ok(j) = serde_json::to_string(&delta) {
+                            let _ = self.swarm.behaviour_mut().gossipsub.publish(self.model_delta_topic.clone(), j.as_bytes());
+                        }
+                    }
                 },
                 event = self.swarm.select_next_some() => match event {
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Mdns(mdns::Event::Discovered(list))) => {
@@ -315,6 +326,10 @@ impl MeshNode {
                         } else if message.topic == self.confidential_topic.hash() {
                             if let Ok(msg) = serde_json::from_slice::<super::ConfidentialMessage>(&message.data) {
                                 on_confidential(msg);
+                            }
+                        } else if message.topic == self.model_delta_topic.hash() {
+                            if let Ok(delta) = serde_json::from_slice::<osoosi_types::FederatedModelDelta>(&message.data) {
+                                on_model_delta(delta);
                             }
                         }
                     }

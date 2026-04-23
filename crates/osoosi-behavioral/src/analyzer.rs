@@ -6,7 +6,7 @@ use anyhow::{Result, anyhow};
 use crate::log_reader::LogEvent;
 use crate::colog::CoLogFilter;
 use crate::reasoning::ReasoningEngine;
-use crate::smollm::SmolLMAnalyzer;
+use crate::llm_engine::SmolLMAnalyzer;
 use std::sync::{Mutex, Arc};
 use tracing::info;
 

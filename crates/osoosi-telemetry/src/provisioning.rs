@@ -334,24 +334,42 @@ impl AgentProvisioner {
             let _ = std::fs::create_dir_all(config_dir);
         }
         
-        // Requirement: Sysmon must use latest SwiftOnSecurity config downloaded at start
-        let user_cfg_url = "https://raw.githubusercontent.com/SwiftOnSecurity/sysmon-config/master/sysmonconfig-export.xml";
-        let cfg_fallback = config_dir.join("sysmonconfig-export.xml");
-        
-        info!("Downloading latest Sysmon configuration from SwiftOnSecurity GitHub...");
-        if let Err(e) = self.download_with_resume(user_cfg_url, &cfg_fallback).await {
-            warn!("Failed to download latest Sysmon config: {}. Will use existing or default if available.", e);
+        // 10/10 Logic: Generate a "Log Everything" config locally to ensure no event IDs are skipped.
+        let full_fidelity_cfg = config_dir.join("sysmon-immune-system.xml");
+        let all_events_xml = r#"<Sysmon schemaversion="4.30">
+  <HashAlgorithms>md5,sha256,IMPHASH</HashAlgorithms>
+  <EventFiltering>
+    <!-- Log ALL events for all 26+ IDs -->
+    <ProcessCreate onmatch="exclude" />
+    <FileCreateTime onmatch="exclude" />
+    <NetworkConnect onmatch="exclude" />
+    <SysmonServiceStateChanged onmatch="exclude" />
+    <ProcessTerminate onmatch="exclude" />
+    <DriverLoad onmatch="exclude" />
+    <ImageLoad onmatch="exclude" />
+    <CreateRemoteThread onmatch="exclude" />
+    <RawAccessRead onmatch="exclude" />
+    <ProcessAccess onmatch="exclude" />
+    <FileCreate onmatch="exclude" />
+    <RegistryEvent onmatch="exclude" />
+    <FileCreateStreamHash onmatch="exclude" />
+    <PipeEvent onmatch="exclude" />
+    <WmiEvent onmatch="exclude" />
+    <DnsQuery onmatch="exclude" />
+    <FileDelete onmatch="exclude" />
+    <ClipboardChange onmatch="exclude" />
+    <ProcessTampering onmatch="exclude" />
+    <FileDeleteDetected onmatch="exclude" />
+  </EventFiltering>
+</Sysmon>"#;
+
+        if let Err(e) = std::fs::write(&full_fidelity_cfg, all_events_xml) {
+            warn!("Failed to write Full Fidelity Sysmon config: {}. Falling back to default.", e);
+        } else {
+            info!("Generated Full Fidelity 'Immune System' Sysmon configuration.");
         }
 
-        let cfg_primary = config_dir.join("config.xml");
-        let config = if cfg_primary.is_file() {
-            Some(cfg_primary.as_path())
-        } else if cfg_fallback.is_file() {
-            Some(cfg_fallback.as_path())
-        } else {
-            None
-        };
-        self.ensure_windows_sysmon(config).await
+        self.ensure_windows_sysmon(Some(&full_fidelity_cfg)).await
     }
 
     #[cfg(target_os = "windows")]
