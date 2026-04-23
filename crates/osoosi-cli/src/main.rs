@@ -1016,6 +1016,7 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
             "weights.safetensors",
         ];
         let malconv_repos = [
+            "oyesanyf/OshoosiClaw-Weights",
             "Xenova/malconv",
             "onnx-community/malconv",
             "microsoft/malconv",
@@ -1023,7 +1024,7 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
         'malconv_hf: for repo_name in malconv_repos {
             let repo = api.model(repo_name.to_string());
             for file in malconv_files {
-                info!("📥 Trying MalConv `{}` / `{}`...", repo_name, file);
+                info!("📥 Verifying MalConv AI component: `{}` / `{}`...", repo_name, file);
                 match repo.get(file).await {
                     Ok(downloaded) => {
                         if fs::copy(downloaded, &malconv_dest).is_ok() {

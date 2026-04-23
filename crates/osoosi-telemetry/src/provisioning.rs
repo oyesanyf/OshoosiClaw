@@ -339,7 +339,7 @@ impl AgentProvisioner {
         
         // 10/10 Logic: Generate a "Log Everything" config locally to ensure no event IDs are skipped.
         let full_fidelity_cfg = config_dir.join("sysmon-immune-system.xml");
-        let all_events_xml = r#"<Sysmon schemaversion="4.30">
+        let all_events_xml = r#"<Sysmon schemaversion="4.91">
   <HashAlgorithms>md5,sha256,IMPHASH</HashAlgorithms>
   <EventFiltering>
     <!-- Log ALL events for all 26+ IDs -->
@@ -1669,8 +1669,8 @@ impl AgentProvisioner {
         info!("MalConv weights missing. Downloading from verified Oshoosi repository...");
         let _ = std::fs::create_dir_all(&malconv_dir);
         
-        // Verified MalConv (SecureBERT adapted) weights URL
-        let url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/malconv.safetensors";
+        // Verified MalConv (SecureBERT adapted) weights URL - Direct download
+        let url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/malconv.safetensors?download=true";
         
         self.download_with_resume(url, &weight_path).await?;
         
