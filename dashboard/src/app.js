@@ -100,7 +100,7 @@ function setupSearch() {
  */
 async function updateDashboard() {
     try {
-        const [status, threats, mesh, activity, malwareDetections, repairStatus] = await Promise.all([
+        const [status, threats, mesh, activity, malwareDetections, repairStatus, telemetryData] = await Promise.all([
             fetchAPI('/status'),
             fetchAPI('/threats'),
             fetchAPI('/mesh-stats'),
@@ -137,6 +137,10 @@ async function updateDashboard() {
         if (activity) {
             state.activity = activity;
             renderActivity(activity);
+        }
+
+        if (telemetryData) {
+            updateTelemetryChart(telemetryData);
         }
 
         // Render views

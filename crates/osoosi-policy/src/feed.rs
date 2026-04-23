@@ -221,26 +221,41 @@ impl ThreatFeedFetcher {
 
         info!("[OTX] Fetching critical pulses (since {})...", since);
 
-        let response = match otx_client
-            .get(OTX_PULSES_SUBSCRIBED_URL)
-            .query(&[("limit", "50"), ("modified_since", &since)])
-            .header("X-OTX-API-KEY", api_key)
-            .send()
-            .await
-        {
-            Ok(r) => r,
-            Err(e) => {
-                // Network/TLS error — don't crash, just warn
-                info!("[OTX] Could not reach OTX API ({}). Will retry next cycle.", e);
-                return Ok(out); // Return empty, not an error
+        let mut attempts = 0;
+        let mut response = None;
+        while attempts < 3 {
+            match otx_client
+                .get(OTX_PULSES_SUBSCRIBED_URL.trim_end_matches('/'))
+                .query(&[("limit", "50"), ("modified_since", &since)])
+                .header("X-OTX-API-KEY", api_key)
+                .send()
+                .await
+            {
+                Ok(r) if r.status().is_success() => {
+                    response = Some(r);
+                    break;
+                }
+                Ok(r) => {
+                    let status = r.status();
+                    warn!("[OTX] Attempt {} failed with status {}. Retrying...", attempts + 1, status);
+                }
+                Err(e) => {
+                    warn!("[OTX] Attempt {} network error: {}. Retrying...", attempts + 1, e);
+                }
+            }
+            attempts += 1;
+            if attempts < 3 {
+                tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempts as u32))).await;
+            }
+        }
+
+        let response = match response {
+            Some(r) => r,
+            None => {
+                info!("[OTX] Failed to reach OTX API after {} attempts. Will retry next cycle.", attempts);
+                return Ok(out);
             }
         };
-
-        if !response.status().is_success() {
-            let status = response.status();
-            info!("[OTX] API returned HTTP {}. Check OTX_API_KEY validity.", status);
-            return Ok(out); // Return empty, not an error
-        }
 
         let json_val: Value = match response.json().await {
             Ok(v) => v,
@@ -338,29 +353,46 @@ impl ThreatFeedFetcher {
 
         info!("[NVD] Fetching recent CVEs (since {})...", since);
 
-        let mut req = self.client.get(NVD_CVE_API_URL)
-            .query(&[
-                ("resultsPerPage", "50"),
-                ("lastModStartDate", &since),
-                ("lastModEndDate", &now),
-            ]);
+        let mut attempts = 0;
+        let mut response = None;
+        while attempts < 3 {
+            let mut req = self.client.get(NVD_CVE_API_URL)
+                .query(&[
+                    ("resultsPerPage", "50"),
+                    ("lastModStartDate", &since),
+                    ("lastModEndDate", &now),
+                ]);
 
-        if let Some(key) = api_key {
-            req = req.header("apiKey", key);
+            if let Some(key) = api_key {
+                req = req.header("apiKey", key);
+            }
+
+            match req.send().await {
+                Ok(r) if r.status().is_success() => {
+                    response = Some(r);
+                    break;
+                }
+                Ok(r) => {
+                    let status = r.status();
+                    warn!("[NVD] Attempt {} failed with status {}. Retrying...", attempts + 1, status);
+                }
+                Err(e) => {
+                    warn!("[NVD] Attempt {} network error: {}. Retrying...", attempts + 1, e);
+                }
+            }
+            attempts += 1;
+            if attempts < 3 {
+                tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempts as u32))).await;
+            }
         }
 
-        let response = match req.send().await {
-            Ok(r) => r,
-            Err(e) => {
-                info!("[NVD] Could not reach NVD API ({}).", e);
+        let response = match response {
+            Some(r) => r,
+            None => {
+                info!("[NVD] Failed to reach NVD API after {} attempts. Will retry next cycle.", attempts);
                 return Ok(Vec::new());
             }
         };
-
-        if !response.status().is_success() {
-            info!("[NVD] API returned HTTP {}. Check NVD_API_KEY.", response.status());
-            return Ok(Vec::new());
-        }
 
         let json_val: Value = match response.json().await {
             Ok(v) => v,

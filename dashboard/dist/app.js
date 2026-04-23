@@ -9,7 +9,10 @@ const state = {
     activity: [],
     chain_verified: false,
     current_view: 'dashboard',
-    searchQuery: ''
+    searchQuery: '',
+    network: null,
+    otelNetwork: null,
+    telemetryChart: null
 };
 
 /**
@@ -56,6 +59,14 @@ function setupNav() {
             } else if (view === 'repair') {
                 document.getElementById('repair-view').classList.add('active');
                 viewTitle.innerText = "Repair Engine";
+            } else if (view === 'process-map') {
+                document.getElementById('process-map-view').classList.add('active');
+                viewTitle.innerText = "Attack Graph & Process Map";
+                renderProcessMapView();
+            } else if (view === 'otel-map') {
+                document.getElementById('otel-map-view').classList.add('active');
+                viewTitle.innerText = "Global Telemetry Mesh Map";
+                renderOtelMapView();
             } else {
                 document.getElementById('other-view').classList.add('active');
                 viewTitle.innerText = item.querySelector('span').innerText;
@@ -89,13 +100,14 @@ function setupSearch() {
  */
 async function updateDashboard() {
     try {
-        const [status, threats, mesh, activity, malwareDetections, repairStatus] = await Promise.all([
+        const [status, threats, mesh, activity, malwareDetections, repairStatus, telemetryData] = await Promise.all([
             fetchAPI('/status'),
             fetchAPI('/threats'),
             fetchAPI('/mesh-stats'),
             fetchAPI('/activity'),
             fetchAPI('/malware-detections'),
-            fetchAPI('/repair-status')
+            fetchAPI('/repair-status'),
+            fetchAPI('/telemetry/timeseries')
         ]);
 
         if (status) {
@@ -127,6 +139,10 @@ async function updateDashboard() {
             renderActivity(activity);
         }
 
+        if (telemetryData) {
+            updateTelemetryChart(telemetryData);
+        }
+
         // Render views
         if (state.current_view === 'threats' && threats) {
             renderThreatsView(threats);
@@ -139,6 +155,13 @@ async function updateDashboard() {
         }
         if (state.current_view === 'repair' && repairStatus) {
             renderRepairView(repairStatus);
+        }
+        if (state.current_view === 'process-map') {
+            // Optional: Auto-refresh graph every few polls if needed
+        }
+
+        if (timeseries) {
+            updateTelemetryChart(timeseries);
         }
 
         // Update global indicator
@@ -368,6 +391,158 @@ function renderRepairView(repairStatus) {
 }
 
 /**
+ * Render Process Map (Attack Graph)
+ */
+async function renderProcessMapView() {
+    const container = document.getElementById('attack-graph');
+    const loading = document.getElementById('graph-loading');
+    if (!container) return;
+
+    if (loading) loading.style.display = 'block';
+
+    const graphData = await fetchAPI('/attack-graph?limit=100');
+    if (!graphData) {
+        if (loading) loading.innerText = "Failed to load graph data.";
+        return;
+    }
+
+    if (loading) loading.style.display = 'none';
+
+    if (!state.network) {
+        initGraph(container, graphData);
+    } else {
+        state.network.setData({
+            nodes: new vis.DataSet(graphData.nodes),
+            edges: new vis.DataSet(graphData.edges)
+        });
+    }
+}
+
+function initGraph(container, data) {
+    const options = {
+        nodes: {
+            shape: 'dot',
+            size: 20,
+            font: {
+                size: 12,
+                color: '#ffffff',
+                face: 'Inter'
+            },
+            borderWidth: 2,
+            shadow: true
+        },
+        edges: {
+            width: 2,
+            color: { inherit: 'from' },
+            smooth: {
+                type: 'continuous'
+            },
+            arrows: {
+                to: { enabled: true, scaleFactor: 0.5 }
+            }
+        },
+        physics: {
+            enabled: true,
+            barnesHut: {
+                gravitationalConstant: -2000,
+                centralGravity: 0.3,
+                springLength: 95,
+                springConstant: 0.04,
+                damping: 0.09,
+                avoidOverlap: 0.1
+            },
+            stabilization: { iterations: 100 }
+        },
+        groups: {
+            host: { color: { background: '#6366f1', border: '#4338ca' } },
+            process: { color: { background: '#8b5cf6', border: '#6d28d9' } },
+            ip: { color: { background: '#f59e0b', border: '#d97706' } },
+            domain: { color: { background: '#ec4899', border: '#be185d' } },
+            threat: { color: { background: '#ef4444', border: '#b91c1c' } },
+            response: { color: { background: '#10b981', border: '#047857' } },
+            predicted: { color: { background: '#f97316', border: '#ea580c' } }
+        }
+    };
+
+    const visData = {
+        nodes: new vis.DataSet(data.nodes),
+        edges: new vis.DataSet(data.edges)
+    };
+
+    state.network = new vis.Network(container, visData, options);
+    
+    // Add event listener for refreshing
+    const refreshBtn = document.getElementById('refresh-graph');
+    if (refreshBtn) {
+        refreshBtn.onclick = () => renderProcessMapView();
+    }
+}
+
+/**
+ * Render OpenTelemetry Mesh Map
+ */
+async function renderOtelMapView() {
+    const container = document.getElementById('otel-mesh-map');
+    const loading = document.getElementById('otel-map-loading');
+    if (!container) return;
+
+    if (loading) loading.style.display = 'block';
+
+    const topologyData = await fetchAPI('/mesh/topology');
+    if (!topologyData) {
+        if (loading) loading.innerText = "Failed to load mesh topology.";
+        return;
+    }
+
+    if (loading) loading.style.display = 'none';
+
+    if (!state.otelNetwork) {
+        initOtelMap(container, topologyData);
+    } else {
+        state.otelNetwork.setData({
+            nodes: new vis.DataSet(topologyData.nodes),
+            edges: new vis.DataSet(topologyData.edges)
+        });
+    }
+}
+
+function initOtelMap(container, data) {
+    const options = {
+        nodes: {
+            shape: 'dot',
+            size: 25,
+            font: { size: 12, color: '#ffffff', face: 'Outfit' },
+            borderWidth: 2,
+            shadow: true,
+            color: { background: 'rgba(0, 210, 255, 0.2)', border: '#00d2ff' }
+        },
+        edges: {
+            width: 1,
+            color: 'rgba(0, 210, 255, 0.3)',
+            arrows: { to: { enabled: false } },
+            length: 150
+        },
+        physics: {
+            enabled: true,
+            barnesHut: { gravitationalConstant: -3000, springLength: 150 },
+            stabilization: { iterations: 150 }
+        },
+        groups: {
+            host: { color: { background: '#00d2ff', border: '#00d2ff' } },
+            threat: { color: { background: '#ff4d4d', border: '#ff4d4d' } },
+            process: { color: { background: '#bd93f9', border: '#bd93f9' } }
+        }
+    };
+
+    const visData = {
+        nodes: new vis.DataSet(data.nodes),
+        edges: new vis.DataSet(data.edges)
+    };
+
+    state.otelNetwork = new vis.Network(container, visData, options);
+}
+
+/**
  * Handle ISO timestamps
  */
 function formatTimestamp(iso) {
@@ -376,6 +551,55 @@ function formatTimestamp(iso) {
         return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     } catch {
         return iso;
+    }
+}
+
+/**
+ * Update the OpenTelemetry Chart
+ */
+function updateTelemetryChart(data) {
+    const ctx = document.getElementById('telemetry-chart');
+    if (!ctx) return;
+
+    if (!state.telemetryChart) {
+        state.telemetryChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.labels.map(l => l.split(' ')[1]), // Just show HH:MM
+                datasets: [{
+                    label: 'Events/min',
+                    data: data.data,
+                    borderColor: '#00d2ff',
+                    backgroundColor: 'rgba(0, 210, 255, 0.1)',
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                        ticks: { color: '#8b949e', font: { size: 10 } }
+                    },
+                    x: {
+                        grid: { display: false },
+                        ticks: { color: '#8b949e', font: { size: 10 } }
+                    }
+                }
+            }
+        });
+    } else {
+        state.telemetryChart.data.labels = data.labels.map(l => l.split(' ')[1]);
+        state.telemetryChart.data.datasets[0].data = data.data;
+        state.telemetryChart.update('none');
     }
 }
 

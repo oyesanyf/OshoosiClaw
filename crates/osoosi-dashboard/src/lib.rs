@@ -1120,6 +1120,11 @@ async fn get_telemetry_timeseries(State(state): State<DashboardState>) -> Json<V
                     break;
                 }
                 
+                // Only count actual Sysmon telemetry ingestion
+                if entry.event_type != "TELEMETRY_INGESTED" {
+                    continue;
+                }
+                
                 // Format: YYYY-MM-DD HH:MM
                 let minute = entry.timestamp.format("%Y-%m-%d %H:%M").to_string();
                 let entry_count = buckets.entry(minute).or_insert(0u32);

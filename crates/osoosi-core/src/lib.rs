@@ -139,6 +139,8 @@ pub struct EdrOrchestrator {
     runtime_config: osoosi_types::RuntimeConfig,
     /// Secured execution layer (Direct or OpenShell)
     secured_executor: Arc<dyn SecuredExecutor>,
+    /// Debouncer for behavioral alerts (reason -> last_log_time)
+    behavioral_debouncer: Arc<dashmap::DashMap<String, Instant>>,
 }
 impl EdrOrchestrator {
     pub fn behavioral_classifier(&self) -> Arc<osoosi_behavioral::BehavioralClassifier> {
@@ -461,6 +463,7 @@ impl EdrOrchestrator {
             gemma_cortex,
             runtime_config,
             secured_executor,
+            behavioral_debouncer: Arc::new(dashmap::DashMap::new()),
         })
     }
 
@@ -715,18 +718,28 @@ impl EdrOrchestrator {
                             // Layer 2: SecureBERT / Rule-based Classification
                             let result = classifier.classify(&event).await;
                             if result.is_suspicious {
-                                warn!(
-                                    "BEHAVIORAL ALERT: {} (score={:.2}, reason={})",
-                                    result.sentence.chars().take(80).collect::<String>(),
-                                    result.score,
-                                    result.reason
-                                );
+                                let should_log = match orchestrator.behavioral_debouncer.get(&result.reason) {
+                                    Some(last) => last.elapsed() > Duration::from_secs(300),
+                                    None => true,
+                                };
+                                
+                                if should_log {
+                                    warn!(
+                                        "BEHAVIORAL ALERT: {} (score={:.2}, reason={})",
+                                        result.sentence.chars().take(80).collect::<String>(),
+                                        result.score,
+                                        result.reason
+                                    );
+                                    orchestrator.behavioral_debouncer.insert(result.reason.clone(), Instant::now());
+                                }
+                                
                                 orchestrator.audit.log("BEHAVIORAL_ALERT", serde_json::json!({
                                     "sentence": result.sentence,
                                     "score": result.score,
                                     "reason": result.reason,
                                     "event_id": result.event_id,
                                     "source": result.source,
+                                    "timestamp": chrono::Utc::now(),
                                 }));
                             }
                         }

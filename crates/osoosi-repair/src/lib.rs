@@ -291,22 +291,24 @@ impl PatchEngine {
             let desc = format!("Osoosi-{}", &snap_id);
             
             // 10/10 Logic: Bypass the 24-hour restore point frequency limit by temporarily setting registry key
-            let bypass_ps = r#"
+            let script = format!(r#"
 $regPath = "HKLM:\Software\Microsoft\Windows NT\CurrentVersion\SystemRestore"
-if (-not (Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
+if (-not (Test-Path $regPath)) {{ New-Item -Path $regPath -Force | Out-Null }}
 $oldVal = Get-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -ErrorAction SilentlyContinue
 Set-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -Value 0 -Type DWord -Force
-try {
-  Checkpoint-Computer -Description "$args" -RestorePointType "MODIFY_SETTINGS" -ErrorAction Stop
-} catch {
+try {{
+  Checkpoint-Computer -Description "{}" -RestorePointType "MODIFY_SETTINGS" -ErrorAction Stop
+  Write-Output "Successfully created restore point."
+}} catch {{
   Write-Warning "Restore point failed: $_"
-} finally {
-  if ($oldVal) { Set-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -Value $oldVal.SystemRestorePointCreationFrequency -Force }
-  else { Remove-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -Force -ErrorAction SilentlyContinue }
-}
-"#;
+}} finally {{
+  if ($oldVal) {{ Set-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -Value $oldVal.SystemRestorePointCreationFrequency -Force }}
+  else {{ Remove-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -Force -ErrorAction SilentlyContinue }}
+}}
+"#, desc.replace('"', "`\""));
+
             let status = Command::new("powershell")
-                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", bypass_ps, &desc.replace('\'', "")])
+                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
                 .status()?;
             
             if !status.success() {
@@ -641,9 +643,13 @@ $kb = "{}"
 $pkg = Get-WindowsPackage -Online | Where-Object {{ $_.PackageName -like "*$kb*" }}
 if ($pkg) {{
   Write-Output "Found package $($pkg.PackageName). Removing via DISM..."
-  Remove-WindowsPackage -Online -PackageName $pkg.PackageName -NoRestart -ErrorAction Stop
+  try {{
+    Remove-WindowsPackage -Online -PackageName $pkg.PackageName -NoRestart -ErrorAction Stop
+  }} catch {{
+    Write-Warning "DISM removal failed for $($pkg.PackageName): $_. System may require manual cleanup."
+  }}
 }} else {{
-  throw "Package for $kb not found via DISM"
+  Write-Warning "Package for $kb not found via DISM. It may already be removed or is a non-standard update (e.g. Defender)."
 }}
 "#, kb_num);
                             let dism_status = Command::new("powershell")
