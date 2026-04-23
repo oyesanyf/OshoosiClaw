@@ -699,18 +699,39 @@ async fn setup_firewall() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Where we install/load `onnxruntime.dll`: `ORT_DYLIB_PATH` if set, else next to the executable (same as `main`).
+fn ort_dynamic_library_path() -> PathBuf {
+    if let Ok(p) = std::env::var("ORT_DYLIB_PATH") {
+        let trimmed = p.trim();
+        if !trimmed.is_empty() {
+            return PathBuf::from(trimmed);
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(dir) = exe.parent() {
+            return dir.join("onnxruntime.dll");
+        }
+    }
+    PathBuf::from("onnxruntime.dll")
+}
+
+fn escape_ps_literal(path: &str) -> String {
+    path.replace('\'', "''")
+}
+
 async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
     if std::env::var("OSOOSI_NO_ORT").map(|v| v == "1").unwrap_or(false) {
         return Ok(());
     }
 
-    let dll_path = Path::new("onnxruntime.dll");
+    let dll_path = ort_dynamic_library_path();
 
-    // Attempt initialization. If it panics/fails, we try fallback versions.
+    // ort 2.0.0-rc.x binds ORT_API_VERSION N → expects GetVersionString "1.N.x" (e.g. 22 → 1.22.x).
+    // Older URLs (1.17–1.19) always panic in ort with "not compatible with the ONNX Runtime binary".
     let versions = [
-        ("1.18.1", "https://github.com/microsoft/onnxruntime/releases/download/v1.18.1/onnxruntime-win-x64-1.18.1.zip"),
-        ("1.17.3", "https://github.com/microsoft/onnxruntime/releases/download/v1.17.3/onnxruntime-win-x64-1.17.3.zip"),
-        ("1.19.0", "https://github.com/microsoft/onnxruntime/releases/download/v1.19.0/onnxruntime-win-x64-1.19.0.zip"),
+        ("1.22.2", "https://github.com/microsoft/onnxruntime/releases/download/v1.22.2/onnxruntime-win-x64-1.22.2.zip"),
+        ("1.22.1", "https://github.com/microsoft/onnxruntime/releases/download/v1.22.1/onnxruntime-win-x64-1.22.1.zip"),
+        ("1.22.0", "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip"),
     ];
     let mut success = false;
 
@@ -729,19 +750,25 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
                 continue;
             }
 
-            // Extract DLL
+            // Extract DLL next to the executable (or ORT_DYLIB_PATH), not only cwd.
+            let dest = escape_ps_literal(&dll_path.to_string_lossy());
+            let zip_q = escape_ps_literal(zip_path);
+            let tmp_q = escape_ps_literal(tmp_dir);
             let ps_cmd = format!(
-                "Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
-                 $dll = Get-ChildItem -Path '{}' -Filter 'onnxruntime.dll' -Recurse | Select-Object -First 1; \
-                 if ($dll) {{ Copy-Item -Path $dll.FullName -Destination '.' -Force }}; \
-                 Remove-Item '{}' -Force; \
-                 Remove-Item -Recurse -Force '{}'",
-                zip_path, tmp_dir, tmp_dir, zip_path, tmp_dir
+                "Expand-Archive -LiteralPath '{zip_q}' -DestinationPath '{tmp_q}' -Force; \
+                 $dll = Get-ChildItem -LiteralPath '{tmp_q}' -Filter 'onnxruntime.dll' -Recurse | Select-Object -First 1; \
+                 if ($dll) {{ Copy-Item -LiteralPath $dll.FullName -Destination '{dest}' -Force }}; \
+                 Remove-Item -LiteralPath '{zip_q}' -Force -ErrorAction SilentlyContinue; \
+                 Remove-Item -LiteralPath '{tmp_q}' -Recurse -Force -ErrorAction SilentlyContinue",
             );
             
             let _ = std::process::Command::new("powershell")
                 .args(&["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
                 .output();
+        }
+
+        if let Some(p) = dll_path.to_str() {
+            std::env::set_var("ORT_DYLIB_PATH", p);
         }
 
         // 2. Initialize with a guard to prevent the library's internal panics from crashing the app
@@ -759,7 +786,7 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
             _ => {
                 warn!("⚠️ ONNX Runtime v{} failed to initialize or panicked. Trying fallback...", version);
                 if dll_path.exists() {
-                    let _ = fs::remove_file(dll_path);
+                    let _ = fs::remove_file(&dll_path);
                 }
             }
         }
@@ -949,30 +976,54 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
         }
     }
 
-    // 2. MalConv (Using onnx-community which is known to have correct formats)
-    // FALLBACK: If malconv.safetensors is missing, try a few known locations
-    let malconv_repos = [
-        "onnx-community/malconv",
-        "Xenova/malconv",
-        "microsoft/malconv",
-    ];
+    // 2. MalConv — needs Candle-compatible `.safetensors` (embedding / conv_feat / conv_gate / fc).
+    let ai_cfg = osoosi_types::load_ai_config();
     let malconv_dest = malware_dir.join("malconv.safetensors");
     if !malconv_dest.exists() {
-        for repo_name in malconv_repos {
-            info!("📥 Attempting to download MalConv weights from {}...", repo_name);
+        if let Some(ref url) = ai_cfg.malconv_weights_url {
+            info!("📥 Downloading MalConv weights from configured URL...");
+            let executor = DirectExecutor::new();
+            if let Err(e) = executor.download(url.trim(), &malconv_dest, false).await {
+                warn!("MalConv download from malconv_weights_url failed: {}", e);
+            }
+        }
+    }
+    if !malconv_dest.exists() {
+        let malconv_files = [
+            "model.safetensors",
+            "malconv.safetensors",
+            "pytorch_model.safetensors",
+            "weights.safetensors",
+        ];
+        // Legacy IDs may be private, renamed, or non-safetensors; HF_TOKEN helps if a repo is gated.
+        let malconv_repos = [
+            "onnx-community/malconv",
+            "Xenova/malconv",
+            "microsoft/malconv",
+        ];
+        'malconv_hf: for repo_name in malconv_repos {
             let repo = api.model(repo_name.to_string());
-            match repo.get("model.safetensors").await {
-                Ok(downloaded) => {
-                    if let Ok(_) = fs::copy(downloaded, &malconv_dest) {
-                        info!("✅ MalConv weights successfully downloaded from {}.", repo_name);
-                        break;
+            for file in malconv_files {
+                info!("📥 Trying MalConv `{}` / `{}`...", repo_name, file);
+                match repo.get(file).await {
+                    Ok(downloaded) => {
+                        if fs::copy(downloaded, &malconv_dest).is_ok() {
+                            info!("✅ MalConv weights saved from {} ({}).", repo_name, file);
+                            break 'malconv_hf;
+                        }
                     }
-                },
-                Err(_) => continue,
+                    Err(e) => {
+                        tracing::debug!("MalConv HF get {} {}: {}", repo_name, file, e);
+                    }
+                }
             }
         }
         if !malconv_dest.exists() {
-            warn!("⚠️ Could not find MalConv weights in any known repository. Direct byte classification will be disabled.");
+            warn!(
+                "⚠️ No MalConv `.safetensors` found. Direct byte classification is disabled. \
+Set `[ai].malconv_weights_url` or `OSOOSI_MALCONV_WEIGHTS_URL`, or place `models/malware/malconv.safetensors` manually. \
+Public Hugging Face MalConv repos often publish Keras `.h5` or ONNX only, which this build does not load here."
+            );
         }
     }
 

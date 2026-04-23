@@ -1,5 +1,5 @@
-# ============================================
-# OpenỌ̀ṣọ́ọ̀sì (OshoosiClaw) — .gitignore
+﻿# ============================================
+# Openß╗î╠Çß╣úß╗ì╠üß╗ì╠Çs├¼ (OshoosiClaw) ΓÇö .gitignore
 # ============================================
 
 # ---------- Rust / Cargo ----------
@@ -9,6 +9,7 @@
 !/target/release/*.exe
 !/target/release/*.dll
 /target_alt/
+/target_ci_check/
 **/*.rs.bk
 *.pdb
 Cargo.lock

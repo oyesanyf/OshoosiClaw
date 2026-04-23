@@ -1,7 +1,7 @@
 use std::path::Path;
 use std::process::Output;
 use async_trait::async_trait;
-use tracing::{info, warn, error, debug};
+use tracing::info;
 use tokio::process::Command;
 use osoosi_types::SecuredExecutor;
 
@@ -23,7 +23,7 @@ impl DirectExecutor {
 
 #[async_trait]
 impl SecuredExecutor for DirectExecutor {
-    async fn execute(&self, mut cmd: std::process::Command) -> anyhow::Result<Output> {
+    async fn execute(&self, cmd: std::process::Command) -> anyhow::Result<Output> {
         let mut tokio_cmd = Command::from(cmd);
         let output = tokio_cmd.output().await?;
         Ok(output)

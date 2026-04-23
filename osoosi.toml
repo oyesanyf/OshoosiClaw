@@ -66,3 +66,6 @@ nvd_api_key = "84c5283c-79bc-42c2-ac1c-71e57fee597a"
 # Enable AI features (ONNX Runtime, SmolLM fallback, behavioral analysis)
 # If disabled, the agent will skip all ML-heavy tasks and use rule-based detection only.
 enabled = true
+# Optional: direct HTTPS URL to MalConv `.safetensors` (Candle-compatible). Overrides Hugging Face discovery.
+# Can also set OSOOSI_MALCONV_WEIGHTS_URL. Many public HF MalConv repos ship Keras/ONNX only, not safetensors.
+# malconv_weights_url = "https://example.org/malconv.safetensors"

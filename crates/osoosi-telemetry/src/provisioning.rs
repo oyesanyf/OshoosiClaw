@@ -7,7 +7,7 @@
 
 use std::path::Path;
 use std::process::Command;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 use std::sync::Arc;
 use osoosi_types::SecuredExecutor;
 
@@ -428,7 +428,7 @@ impl AgentProvisioner {
         allow_repair: bool,
     ) -> anyhow::Result<()> {
         let mut current_allow_repair = allow_repair;
-        let mut current_args = args;
+        let current_args = args;
         
         loop {
             let mut cmd = Command::new(binary);
@@ -967,8 +967,7 @@ impl AgentProvisioner {
         {
             let exe_path = osoosi_types::resolve_hollows_hunter_path();
             let target_dir = exe_path.parent().unwrap_or(&osoosi_types::resolve_tools_dir().join("hollows_hunter")).to_path_buf();
-            let target_dir_str = target_dir.to_string_lossy();
-            
+
             if exe_path.exists() {
                 info!("HollowsHunter already available at {}.", exe_path.display());
                 return Ok(());
@@ -1021,7 +1020,6 @@ impl AgentProvisioner {
         {
             let exe_path = osoosi_types::resolve_ngrep_path();
             let target_dir = exe_path.parent().unwrap_or(&osoosi_types::resolve_tools_dir().join("ngrep")).to_path_buf();
-            let target_dir_str = target_dir.to_string_lossy();
 
             if exe_path.exists() {
                 info!("ngrep already available at {}.", exe_path.display());

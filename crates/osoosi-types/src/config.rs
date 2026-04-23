@@ -1154,16 +1154,35 @@ pub struct AiConfig {
     /// Enable AI features (ONNX, SmolLM, etc.).
     #[serde(default = "default_ai_enabled")]
     pub enabled: bool,
+    /// Optional HTTPS URL to MalConv weights as `.safetensors` (tensor names must match `osoosi_model::MalConv`).
+    #[serde(default)]
+    pub malconv_weights_url: Option<String>,
 }
 
 fn default_ai_enabled() -> bool {
     true
 }
 
+fn apply_ai_env_overrides(mut c: AiConfig) -> AiConfig {
+    if let Ok(v) = std::env::var("OSOOSI_NO_AI") {
+        if v == "1" || v.eq_ignore_ascii_case("true") {
+            c.enabled = false;
+        }
+    }
+    if let Ok(url) = std::env::var("OSOOSI_MALCONV_WEIGHTS_URL") {
+        let t = url.trim();
+        if !t.is_empty() {
+            c.malconv_weights_url = Some(t.to_string());
+        }
+    }
+    c
+}
+
 impl Default for AiConfig {
     fn default() -> Self {
         Self {
             enabled: true,
+            malconv_weights_url: None,
         }
     }
 }
@@ -1172,23 +1191,11 @@ pub fn load_ai_config() -> AiConfig {
     if let Some(path) = resolve_config_path() {
         if let Ok(content) = std::fs::read_to_string(&path) {
             if let Ok(cfg) = toml::from_str::<FileConfig>(&content) {
-                let mut c = cfg.ai;
-                if let Ok(v) = std::env::var("OSOOSI_NO_AI") {
-                    if v == "1" || v.eq_ignore_ascii_case("true") {
-                        c.enabled = false;
-                    }
-                }
-                return c;
+                return apply_ai_env_overrides(cfg.ai);
             }
         }
     }
-    let mut cfg = AiConfig::default();
-    if let Ok(v) = std::env::var("OSOOSI_NO_AI") {
-        if v == "1" || v.eq_ignore_ascii_case("true") {
-            cfg.enabled = false;
-        }
-    }
-    cfg
+    apply_ai_env_overrides(AiConfig::default())
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
