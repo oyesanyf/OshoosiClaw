@@ -26,18 +26,21 @@ impl AgentProvisioner {
         {
             self.provision_windows().await?;
             self.provision_firewall().await?;
+            self.provision_malconv_weights().await?;
             self.provision_capa().await
         }
         #[cfg(target_os = "linux")]
         {
             self.provision_firewall().await?;
             self.provision_linux().await?;
+            self.provision_malconv_weights().await?;
             self.provision_capa().await
         }
         #[cfg(target_os = "macos")]
         {
             self.provision_firewall().await?;
             self.provision_macos().await?;
+            self.provision_malconv_weights().await?;
             self.provision_capa().await
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
@@ -1649,6 +1652,29 @@ impl AgentProvisioner {
         }
 
         info!("CAPA provisioning complete.");
+        Ok(())
+    }
+
+    /// Provision MalConv weights for direct byte-level classification.
+    pub async fn provision_malconv_weights(&self) -> anyhow::Result<()> {
+        let models_dir = std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
+        let malconv_dir = Path::new(&models_dir).join("malware");
+        let weight_path = malconv_dir.join("malconv.safetensors");
+
+        if weight_path.exists() {
+            info!("MalConv weights already available.");
+            return Ok(());
+        }
+
+        info!("MalConv weights missing. Downloading from verified Oshoosi repository...");
+        let _ = std::fs::create_dir_all(&malconv_dir);
+        
+        // Verified MalConv (SecureBERT adapted) weights URL
+        let url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/malconv.safetensors";
+        
+        self.download_with_resume(url, &weight_path).await?;
+        
+        info!("MalConv weights provisioned successfully.");
         Ok(())
     }
 }
