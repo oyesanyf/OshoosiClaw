@@ -162,6 +162,7 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/consensus", get(get_consensus))
         .route("/api/mesh/broadcast", post(post_mesh_broadcast))
         .route("/api/analyst/chat", get(get_analyst_chat))
+        .route("/api/telemetry/timeseries", get(get_telemetry_timeseries))
         .with_state(state);
 
     if index_html.is_file() {
@@ -1100,5 +1101,43 @@ async fn get_analyst_chat(State(state): State<DashboardState>) -> Json<Value> {
             Json(Value::Array(chat_entries))
         }
         None => Json(json!([])),
+    }
+}
+
+async fn get_telemetry_timeseries(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            let entries = orch.audit().entries();
+            let mut buckets = std::collections::BTreeMap::new();
+            
+            // Bucket events by minute for the last hour
+            let now = chrono::Utc::now();
+            let one_hour_ago = now - chrono::Duration::hours(1);
+            
+            for entry in entries.iter().rev() {
+                if entry.timestamp < one_hour_ago {
+                    break;
+                }
+                
+                // Format: YYYY-MM-DD HH:MM
+                let minute = entry.timestamp.format("%Y-%m-%d %H:%M").to_string();
+                let entry_count = buckets.entry(minute).or_insert(0u32);
+                *entry_count += 1;
+            }
+            
+            let mut labels = Vec::new();
+            let mut data = Vec::new();
+            
+            for (min, count) in buckets {
+                labels.push(min);
+                data.push(count);
+            }
+            
+            Json(json!({
+                "labels": labels,
+                "data": data
+            }))
+        }
+        None => Json(json!({ "labels": [], "data": [] })),
     }
 }

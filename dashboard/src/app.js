@@ -10,7 +10,8 @@ const state = {
     chain_verified: false,
     current_view: 'dashboard',
     searchQuery: '',
-    network: null
+    network: null,
+    telemetryChart: null
 };
 
 /**
@@ -100,7 +101,8 @@ async function updateDashboard() {
             fetchAPI('/mesh-stats'),
             fetchAPI('/activity'),
             fetchAPI('/malware-detections'),
-            fetchAPI('/repair-status')
+            fetchAPI('/repair-status'),
+            fetchAPI('/telemetry/timeseries')
         ]);
 
         if (status) {
@@ -147,6 +149,10 @@ async function updateDashboard() {
         }
         if (state.current_view === 'process-map') {
             // Optional: Auto-refresh graph every few polls if needed
+        }
+
+        if (timeseries) {
+            updateTelemetryChart(timeseries);
         }
 
         // Update global indicator
@@ -472,6 +478,55 @@ function formatTimestamp(iso) {
         return date.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
     } catch {
         return iso;
+    }
+}
+
+/**
+ * Update the OpenTelemetry Chart
+ */
+function updateTelemetryChart(data) {
+    const ctx = document.getElementById('telemetry-chart');
+    if (!ctx) return;
+
+    if (!state.telemetryChart) {
+        state.telemetryChart = new Chart(ctx, {
+            type: 'line',
+            data: {
+                labels: data.labels.map(l => l.split(' ')[1]), // Just show HH:MM
+                datasets: [{
+                    label: 'Events/min',
+                    data: data.data,
+                    borderColor: '#00d2ff',
+                    backgroundColor: 'rgba(0, 210, 255, 0.1)',
+                    borderWidth: 2,
+                    pointRadius: 3,
+                    fill: true,
+                    tension: 0.4
+                }]
+            },
+            options: {
+                responsive: true,
+                maintainAspectRatio: false,
+                plugins: {
+                    legend: { display: false }
+                },
+                scales: {
+                    y: {
+                        beginAtZero: true,
+                        grid: { color: 'rgba(255, 255, 255, 0.05)' },
+                        ticks: { color: '#8b949e', font: { size: 10 } }
+                    },
+                    x: {
+                        grid: { display: false },
+                        ticks: { color: '#8b949e', font: { size: 10 } }
+                    }
+                }
+            }
+        });
+    } else {
+        state.telemetryChart.data.labels = data.labels.map(l => l.split(' ')[1]);
+        state.telemetryChart.data.datasets[0].data = data.data;
+        state.telemetryChart.update('none');
     }
 }
 
