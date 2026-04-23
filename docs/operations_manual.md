@@ -50,3 +50,22 @@ In a mesh of 1 million nodes, traditional consensus is slow. OpenỌ̀ṣọ́�
 The Einstein Engine uses **BLAKE3 hashing** to link events.
 - `Event(t) = Hash(Event(t-1) + Data(t))`
 This creates a **State World-Line**. Attackers trying to move laterally or elevate privileges inevitably introduce "foreign data" into the process world-line, causing a hash mismatch (Decoherence).
+
+## 🏗️ Resilience & Hardening (v1.1+)
+
+OshoosiClaw includes several "Production Hardening" features to ensure stability in hostile or unstable environments:
+
+### 1. Resilient Threat Feeds
+- **Exponential Backoff**: OTX and NVD fetchers now use jittered exponential backoff (2s, 4s, 8s) to survive transient network failures.
+- **Fail-Safe Cache**: If a feed cannot be reached after 3 retries, the agent falls back to the last successful local cache to ensure continuous protection.
+
+### 2. Hardened Repair Engine
+- **Transactional Rollbacks**: The Windows Repair Engine uses isolated PowerShell script blocks for `Checkpoint-Computer`, preventing parameter binding errors.
+- **Graceful DISM Cleanup**: Rollback failures are caught and logged as warnings rather than fatal errors, preventing agent crashes during failed system uninstalls.
+
+### 3. Asynchronous AI Provisioning
+- **Lazy Loading**: `MalConv` weights (`malconv.safetensors`) are downloaded in the background on startup. The agent remains functional in a "Degraded AI" state until weights are hot-loaded into the ML pipeline.
+
+### 4. Log Debouncing
+- **Spam Protection**: Behavioral alerts are debounced at the orchestrator level. Unique alerts (by reason) are throttled to once every 5 minutes to prevent dashboard/log inundation during high-frequency activity.
+

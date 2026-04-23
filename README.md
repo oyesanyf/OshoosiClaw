@@ -598,3 +598,12 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
   <br/>
   <em>"Like Ọ̀ṣọ́ọ̀sì, it is both patient and decisive."</em>
 </p>
+## 🏗️ Production Stability & Hardening (v1.1)
+
+Recent hardening efforts have focused on agent resilience and production stability:
+
+- **Resilient Threat Ingestion**: OTX/NVD feeds now feature exponential backoff and jitter to handle transient API failures.
+- **Hardened Repair Engine**: PowerShell parameter binding fixes for `Checkpoint-Computer` and non-fatal DISM rollback handling.
+- **Auto-Provisioning AI**: Background weight downloader for `MalConv` allows the agent to start immediately and hot-load ML capabilities once ready.
+- **Intelligent Log Debouncing**: Orchestrator-level throttling prevents behavioral alert spam while preserving critical forensic evidence in the audit trail.
+- **Telemetry Precision**: Dashboard telemetry aggregation now filters for verified `TELEMETRY_INGESTED` events for accurate ingestion tracking.
