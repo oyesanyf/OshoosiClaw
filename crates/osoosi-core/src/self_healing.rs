@@ -1,10 +1,11 @@
 use std::sync::Arc;
 use osoosi_audit::AuditTrail;
 use osoosi_memory::MemoryStore;
-use tracing::{info, error, warn};
+use tracing::{info, warn};
 
 pub struct SelfHealingEngine {
     audit: Arc<AuditTrail>,
+    #[allow(dead_code)]
     memory: Arc<MemoryStore>,
 }
 

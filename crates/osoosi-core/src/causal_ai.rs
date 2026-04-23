@@ -1,4 +1,4 @@
-use std::collections::{HashMap, VecDeque};
+use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
@@ -19,6 +19,7 @@ pub struct CausalEngine {
     /// PID -> ProcessNode
     processes: Arc<RwLock<HashMap<u32, ProcessNode>>>,
     /// Track lineage chains for high-risk processes
+    #[allow(dead_code)]
     lineage_cache: Arc<RwLock<HashMap<u32, Vec<u32>>>>,
 }
 

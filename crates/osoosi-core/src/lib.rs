@@ -102,29 +102,38 @@ pub struct EdrOrchestrator {
     behavioral_classifier: Arc<osoosi_behavioral::BehavioralClassifier>,
     /// Behavioral AI Analyzer (OpenAI/Azure adapted from AIEventAnalyzer)
     behavioral_analyzer: Arc<osoosi_behavioral::BehavioralAnalyzer>,
+    #[allow(dead_code)]
     behavioral_engine: Arc<osoosi_behavioral::SmolLMAnalyzer>,
     gemma_cortex: Option<Arc<osoosi_behavioral::Gemma4Analyzer>>,
     /// PII Classifier (Presidio + Tika + Magika fallback)
     #[allow(dead_code)]
     pii_classifier: Arc<crate::pii::PiiClassifier>,
     /// Browser security auditor (extensions, search hijacking)
+    #[allow(dead_code)]
     browser_guard: Arc<crate::browser_guard::BrowserGuard>,
     /// CAPA: Deep capability analysis for unknown files
+    #[allow(dead_code)]
     capa_analyzer: Arc<crate::capa_analyzer::CapaAnalyzer>,
     /// NSRL "Known Good" Cache (SHA1 -> IsValid) to avoid SQLite hits for every process spawn.
+    #[allow(dead_code)]
     nsrl_cache: Arc<dashmap::DashMap<String, bool>>,
     /// Remediation: Autonomous response actions (Isolate/Kill)
     #[allow(dead_code)]
     remediation: Arc<crate::remediation::RemediationController>,
     /// Adaptive Telemetry: Scaling fidelity based on CPU/Detections
+    #[allow(dead_code)]
     adaptive: Arc<crate::adaptive::TelemetryController>,
     /// Forensic Storyteller: AI-driven attack narratives
+    #[allow(dead_code)]
     storyteller: Arc<crate::forensics::ForensicStoryteller>,
     /// Causal AI: Process lineage and predictive analysis
+    #[allow(dead_code)]
     causal_ai: Arc<crate::causal_ai::CausalEngine>,
     /// Self-Healing: Automatic rollback of malicious changes
+    #[allow(dead_code)]
     self_healing: Arc<crate::self_healing::SelfHealingEngine>,
     /// Ghost Node: Active deception manager
+    #[allow(dead_code)]
     ghost_nodes: Arc<osoosi_wire::GhostNodeManager>,
     /// Runtime paths (db_path, traps_path) from config
     runtime_config: osoosi_types::RuntimeConfig,
