@@ -687,11 +687,20 @@ pub fn bootstrap_security_rules() {
                 }
 
                 // Exclude models directory (ONNX models trigger heuristic scans)
-                let models_dir = cwd.join("models");
+                let models_dir = osoosi_types::resolve_models_dir();
                 if models_dir.exists() {
                     let _ = Command::new("powershell")
                         .creation_flags(CREATE_NO_WINDOW)
                         .args(["-Command", &format!("Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue", models_dir.to_string_lossy())])
+                        .status();
+                }
+
+                // Exclude tools directory (contains forensic binaries like hayabusa, chainsaw, malconv)
+                let tools_dir = osoosi_types::resolve_tools_dir();
+                if tools_dir.exists() {
+                    let _ = Command::new("powershell")
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .args(["-Command", &format!("Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue", tools_dir.to_string_lossy())])
                         .status();
                 }
 

@@ -237,25 +237,41 @@ function renderThreats(threats) {
         return;
     }
 
-    list.innerHTML = filtered.map(threat => `
+    const groups = {};
+    filtered.forEach(t => {
+        // Variation is defined by Type + Source + Simplified Reason
+        const simplifiedReason = (t.reason || 'Anomalous behavior').split(':')[0]; 
+        const key = `${t.type}-${t.source_node || 'Unknown'}-${simplifiedReason}`;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(t);
+    });
+
+    list.innerHTML = Object.entries(groups).map(([key, groupThreats]) => {
+        const t = groupThreats[0];
+        const maxConfidence = Math.max(...groupThreats.map(gt => gt.confidence || 0));
+        const severity = maxConfidence > 0.8 ? 'CRITICAL' : (maxConfidence > 0.6 ? 'HIGH' : 'MEDIUM');
+        const severityColor = maxConfidence > 0.8 ? 'var(--accent-red)' : (maxConfidence > 0.6 ? '#ff9900' : '#ffcc00');
+        
+        return `
         <div class="timeline-item">
             <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
                 <i data-lucide="shield-alert"></i>
             </div>
             <div class="item-info">
-                <div class="item-title">${threat.type} Detected</div>
-                <div class="item-meta">
-                    <span><i data-lucide="crosshair" style="width:12px"></i> Confidence: ${(threat.confidence * 100).toFixed(0)}%</span>
-                    <span><i data-lucide="clock" style="width:12px"></i> ${formatTimestamp(threat.timestamp)}</span>
+                <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
+                    <span>${t.type} ${groupThreats.length > 1 ? `<span style="font-size:10px; color:var(--text-muted); margin-left:4px;">(${groupThreats.length} events)</span>` : ''}</span>
+                    <span style="font-size:9px; padding:1px 5px; border-radius:4px; background:${severityColor}; color:white; vertical-align:middle;">${severity}</span>
                 </div>
-                <div class="item-details" style="font-size: 11px; margin-top: 4px; color: var(--text-muted);">
-                    ${threat.reason ? `<div style="color:var(--accent-red); margin-bottom:2px;">${threat.reason}</div>` : ''}
-                    ${threat.file_path ? `<div style="margin-bottom:2px;">File: ${threat.file_path}</div>` : ''}
-                    ID: ${threat.id} | Source: ${threat.source_node}
+                <div class="item-meta">
+                    <span><i data-lucide="crosshair" style="width:12px"></i> ${(maxConfidence * 100).toFixed(0)}% Confidence</span>
+                    <span><i data-lucide="clock" style="width:12px"></i> ${formatTimestamp(t.timestamp)}</span>
+                </div>
+                <div class="item-details" style="font-size: 11px; margin-top: 4px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 250px;">
+                    ${t.reason || 'Anomalous behavior'} | Source: ${t.source_node}
                 </div>
             </div>
         </div>
-    `).join('');
+    `}).join('');
     
     lucide.createIcons();
 }
@@ -289,48 +305,55 @@ function renderActivity(activity) {
  * Render detailed threats view
  */
 function renderThreatsView(threats) {
-    const list = document.getElementById('threats-data-list');
+    const list = document.getElementById('threat-view-list');
     if (!list) return;
-    
-    if (!threats || threats.length === 0) {
-        list.innerHTML = '<p class="placeholder-text">No active threats detected in the network.</p>';
-        return;
-    }
 
-    const filtered = threats.filter(t => {
-        if (!state.searchQuery) return true;
-        const q = state.searchQuery;
-        return (t.type && t.type.toLowerCase().includes(q)) || 
-               (t.id && t.id.toLowerCase().includes(q)) ||
-               (t.file_path && t.file_path.toLowerCase().includes(q)) ||
-               (t.reason && t.reason.toLowerCase().includes(q));
+    const groups = {};
+    threats.forEach(t => {
+        const simplifiedReason = (t.reason || 'Anomalous behavior').split(':')[0]; 
+        const key = `${t.type}-${t.source_node || 'Unknown'}-${simplifiedReason}`;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(t);
     });
 
-    if (filtered.length === 0) {
-        list.innerHTML = '<p class="placeholder-text">No matches found for "' + state.searchQuery + '".</p>';
-        return;
-    }
+    list.innerHTML = Object.entries(groups).map(([key, groupThreats]) => {
+        const t = groupThreats[0];
+        const maxConfidence = Math.max(...groupThreats.map(gt => gt.confidence || 0));
+        const severity = maxConfidence > 0.8 ? 'CRITICAL SEVERITY' : (maxConfidence > 0.6 ? 'HIGH SEVERITY' : 'MEDIUM SEVERITY');
+        const severityColor = maxConfidence > 0.8 ? 'var(--accent-red)' : (maxConfidence > 0.6 ? '#ff9900' : '#ffcc00');
 
-    list.innerHTML = filtered.map(threat => `
-        <div class="timeline-item">
+        return `
+        <div class="timeline-item group-item" style="margin-bottom: 20px; border-bottom: 1px solid var(--glass-border); padding-bottom: 16px;">
             <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
                 <i data-lucide="shield-alert"></i>
             </div>
             <div class="item-info">
-                <div class="item-title">${threat.type} <span style="font-size:10px; padding:2px 6px; border-radius:8px; background:var(--accent-red); color:white; margin-left:8px;">HIGH SEVERITY</span></div>
-                <div class="item-meta">
-                    <span><i data-lucide="crosshair" style="width:12px"></i> Confidence: ${(threat.confidence * 100).toFixed(0)}%</span>
-                    <span><i data-lucide="clock" style="width:12px"></i> ${formatTimestamp(threat.timestamp)}</span>
-                    <span><i data-lucide="target" style="width:12px"></i> Source: ${threat.source_node || 'Unknown'}</span>
+                <div class="item-title" style="font-size: 16px; font-weight: 600;">
+                    ${t.type} 
+                    <span style="font-size:10px; padding:2px 8px; border-radius:12px; background:${severityColor}; color:white; margin-left:12px; vertical-align: middle;">${severity}</span>
                 </div>
-                ${threat.reason ? `<div class="item-reason" style="font-size:12px; color:var(--accent-red); margin-top:6px; background:rgba(255,77,77,0.05); padding:8px; border-radius:4px; border-left:3px solid var(--accent-red);">Reason: ${threat.reason}</div>` : ''}
-                ${threat.file_path ? `<div style="font-size:11px; color:var(--text-muted); margin-top:4px;">Path: ${threat.file_path}</div>` : ''}
+                <div class="item-meta" style="margin: 8px 0;">
+                    <span><i data-lucide="crosshair" style="width:12px"></i> Max Confidence: ${(maxConfidence * 100).toFixed(0)}%</span>
+                    <span><i data-lucide="clock" style="width:12px"></i> Latest: ${formatTimestamp(t.timestamp)}</span>
+                    <span><i data-lucide="target" style="width:12px"></i> Source: ${t.source_node || 'Unknown'}</span>
+                </div>
+                <div class="group-reasons" style="display: flex; flex-direction: column; gap: 8px; margin-top: 12px;">
+                    ${groupThreats.map(gt => `
+                        <div class="reason-entry" style="font-size:12px; color:var(--text-header); background:rgba(255,255,255,0.03); padding:10px; border-radius:6px; border-left:3px solid ${severityColor};">
+                            <div style="font-weight: 600; margin-bottom: 2px;">Detection Signal:</div>
+                            ${gt.reason || 'Anomalous behavior detected'}
+                            <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">Confidence: ${(gt.confidence * 100).toFixed(0)}% | ${formatTimestamp(gt.timestamp)}</div>
+                        </div>
+                    `).join('')}
+                </div>
+                ${t.file_path ? `<div style="font-size:11px; color:var(--text-muted); margin-top:10px; opacity: 0.8;">Primary Path: ${t.file_path}</div>` : ''}
             </div>
-            <div class="item-actions" style="display:flex; align-items:center;">
-                <button class="btn-text" style="color:var(--text-muted); border:1px solid var(--glass-border); padding:6px 12px; border-radius:6px;">Mark False Positive</button>
+            <div class="item-actions" style="display:flex; flex-direction: column; gap: 8px; justify-content: center; min-width: 150px;">
+                <button class="btn-text" style="color:var(--text-muted); border:1px solid var(--glass-border); padding:8px 16px; border-radius:6px; width: 100%; transition: all 0.2s;">Mark False Positive</button>
+                <button class="btn-text" style="color:var(--accent-blue); border:1px solid var(--accent-blue); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(0, 210, 255, 0.05);">Investigate Node</button>
             </div>
         </div>
-    `).join('');
+    `}).join('');
     lucide.createIcons();
 }
 

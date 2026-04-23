@@ -66,7 +66,7 @@ If the hash is "Known Good," the event is **immediately skipped** — zero false
 Sigma rule matching + NVD/KEV intelligence correlation.
 
 ### Tier 2: ML Threat Model (Milliseconds)
-EMBER-style 54-feature PE static analysis with local ML inference.
+EMBER-style 54-feature PE static analysis + **MalConv Deep Byte Analysis** with local ONNX Runtime inference.
 
 ### Tier 3: Behavioral AI (Seconds)
 CoLog → SecureBERT → Gemma 3 → OpenAI cascade.
