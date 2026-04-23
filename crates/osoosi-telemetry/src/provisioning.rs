@@ -474,9 +474,25 @@ impl AgentProvisioner {
             }
 
             let mut combined = String::new();
-            combined.push_str(&String::from_utf8_lossy(&output.stdout));
+            
+            fn decode_utf16_or_8(bytes: &[u8]) -> String {
+                if bytes.len() >= 2 && bytes.iter().step_by(2).skip(1).all(|&b| b == 0) {
+                    // Likely UTF-16LE with nulls
+                    let u16_data: Vec<u16> = bytes.chunks_exact(2)
+                        .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                        .collect();
+                    String::from_utf16_lossy(&u16_data)
+                } else if bytes.contains(&0) {
+                    // Try a simpler null-skip if it's just weirdly encoded
+                    bytes.iter().filter(|&&b| b != 0).map(|&b| b as char).collect()
+                } else {
+                    String::from_utf8_lossy(bytes).to_string()
+                }
+            }
+
+            combined.push_str(&decode_utf16_or_8(&output.stdout));
             combined.push('\n');
-            combined.push_str(&String::from_utf8_lossy(&output.stderr));
+            combined.push_str(&decode_utf16_or_8(&output.stderr));
             let combined_lc = combined.to_ascii_lowercase();
 
             if current_allow_repair && combined_lc.contains("already registered") {

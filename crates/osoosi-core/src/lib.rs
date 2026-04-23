@@ -1273,7 +1273,8 @@ impl EdrOrchestrator {
         // Log telemetry entry to Merkle Audit Chain
         self.audit.log("TELEMETRY_INGESTED", serde_json::to_value(&event)?);
 
-        info!("Processing Sysmon telemetry: {:?}", event.event_id);
+        // Log to console and log file
+        info!("Sysmon Event [ID={:?}]: {}", event.event_id, event.data);
 
         // 10/10 Causal Engine: Ingest event into the Causal AI Attack Graph
         self.causal_ai.ingest_event(&event);

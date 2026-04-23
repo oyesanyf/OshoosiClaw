@@ -110,10 +110,11 @@ impl WindowsEventReader {
             .unwrap_or(false)
     }
 
-    fn query_wevtutil(&self) -> anyhow::Result<Vec<String>> {
+    fn query_wevtutil(&mut self) -> anyhow::Result<Vec<String>> {
         use std::process::Command;
         let mut cmd = Command::new("wevtutil");
-        cmd.args(["qe", &self.channel, "/rd:true", "/e:root", "/c:50", "/f:xml"]);
+        // Increased to 1000 to catch busy systems, using /rd:true to get latest first
+        cmd.args(["qe", &self.channel, "/rd:true", "/e:root", "/c:1000", "/f:xml"]);
         let output = cmd.output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -141,7 +142,22 @@ impl WindowsEventReader {
             .filter(|s| s.contains("</Event>"))
             .map(|s| format!("<Event>{}", s))
             .collect();
-        Ok(events)
+        
+        // Very basic deduplication: only return events if we haven't seen them (simple string compare for now)
+        // In a real EDR we would use bookmarks, but this is a quick win for "watch all events".
+        let mut new_events = Vec::new();
+        for ev in events {
+            if Some(ev.clone()) == self.last_bookmark {
+                break; // Found the last one we saw
+            }
+            new_events.push(ev);
+        }
+        
+        if let Some(first) = new_events.first() {
+            self.last_bookmark = Some(first.clone());
+        }
+        
+        Ok(new_events)
     }
 }
 

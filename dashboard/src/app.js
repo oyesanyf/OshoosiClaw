@@ -239,9 +239,8 @@ function renderThreats(threats) {
 
     const groups = {};
     filtered.forEach(t => {
-        // Variation is defined by Type + Source + Simplified Reason
-        const simplifiedReason = (t.reason || 'Anomalous behavior').split(':')[0]; 
-        const key = `${t.type}-${t.source_node || 'Unknown'}-${simplifiedReason}`;
+        // Variation is defined by Type + Source only; reasons are listed inside
+        const key = `${t.type}-${t.source_node || 'Unknown'}`;
         if (!groups[key]) groups[key] = [];
         groups[key].push(t);
     });
@@ -266,8 +265,10 @@ function renderThreats(threats) {
                     <span><i data-lucide="crosshair" style="width:12px"></i> ${(maxConfidence * 100).toFixed(0)}% Confidence</span>
                     <span><i data-lucide="clock" style="width:12px"></i> ${formatTimestamp(t.timestamp)}</span>
                 </div>
-                <div class="item-details" style="font-size: 11px; margin-top: 4px; color: var(--text-muted); overflow: hidden; text-overflow: ellipsis; white-space: nowrap; max-width: 250px;">
-                    ${t.reason || 'Anomalous behavior'} | Source: ${t.source_node}
+                <div class="item-details" style="font-size: 11px; margin-top: 4px; color: var(--text-muted);">
+                    ${Array.from(new Set(groupThreats.map(gt => gt.reason || 'Anomalous behavior'))).join('; ')}
+                    <br/>
+                    <span style="font-size: 10px; opacity: 0.8;">Source: ${t.source_node}</span>
                 </div>
             </div>
         </div>
@@ -310,8 +311,7 @@ function renderThreatsView(threats) {
 
     const groups = {};
     threats.forEach(t => {
-        const simplifiedReason = (t.reason || 'Anomalous behavior').split(':')[0]; 
-        const key = `${t.type}-${t.source_node || 'Unknown'}-${simplifiedReason}`;
+        const key = `${t.type}-${t.source_node || 'Unknown'}`;
         if (!groups[key]) groups[key] = [];
         groups[key].push(t);
     });

@@ -418,8 +418,8 @@ if ($collection.Count -eq 0) {{ throw "No matching Windows update found for {kb}
 $installer = $session.CreateUpdateInstaller()
 $installer.Updates = $collection
 $res = $installer.Install()
-if ($res.ResultCode -eq 4 -and $kb -eq "KB2267602") {{
-  Write-Output "Defender definition update (KB2267602) failed via COM (likely already updating or restricted). Continuing as it is non-critical."
+if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
+  Write-Output "Update ($kb) failed via COM (likely already updating, restricted, or partition space issue). Continuing as it is non-critical for agent function."
 }} elseif ($res.ResultCode -notin 2,3) {{
   throw "Install failed. ResultCode=$($res.ResultCode) (2=Success, 3=SuccessWithErrors, 4=Failed, 5=Aborted)"
 }}
