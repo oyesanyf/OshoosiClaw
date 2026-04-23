@@ -88,9 +88,9 @@ impl TelemetryController {
         #[cfg(target_os = "windows")]
         {
             let config_xml = match mode {
-                TelemetryMode::Silent => "<Sysmon schemaversion='4.30'><EventFiltering><ProcessCreate onmatch='exclude'/></EventFiltering></Sysmon>",
-                TelemetryMode::Normal => "<Sysmon schemaversion='4.30'><EventFiltering></EventFiltering></Sysmon>",
-                TelemetryMode::Burst  => "<Sysmon schemaversion='4.30'><EventFiltering><ProcessCreate onmatch='include'/><NetworkConnect onmatch='include'/><ImageLoad onmatch='include'/></EventFiltering></Sysmon>",
+                TelemetryMode::Silent => "<Sysmon schemaversion='4.91'><EventFiltering><ProcessCreate onmatch='exclude'/></EventFiltering></Sysmon>",
+                TelemetryMode::Normal => "<Sysmon schemaversion='4.91'><EventFiltering></EventFiltering></Sysmon>",
+                TelemetryMode::Burst  => "<Sysmon schemaversion='4.91'><EventFiltering><ProcessCreate onmatch='include'/><NetworkConnect onmatch='include'/><ImageLoad onmatch='include'/></EventFiltering></Sysmon>",
             };
 
             let temp_config = std::env::temp_dir().join("sysmon_adaptive_config.xml");
