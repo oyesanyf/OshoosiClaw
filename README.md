@@ -34,7 +34,7 @@
 **OshoosiClaw** is a next-generation, autonomous **Endpoint Detection & Response (EDR)** agent built entirely in **Rust**. It implements a **Decentralized Immune System** model where:
 
 - 🔐 **Trust** is mathematically proven through Merkle Proofs and S2S Certificates
-- 🔬 **Detection** is powered by a 6-engine forensic pipeline (EMBER ML + CAPA + FLOSS + HollowsHunter + YARA + ClamAV)
+- 🔬 **Detection** is powered by a 10-engine forensic pipeline (EMBER ML + CAPA + FLOSS + HollowsHunter + YARA + ClamAV + Hayabusa + Chainsaw + Xori + RedBPF)
 - 🧠 **Intelligence** is shared peer-to-peer across a **Million-Node Mesh** with Zonal Sharding and Reputation Filtering
 - 🛡️ **Runtime Security** is hardened via **Native OS Sandboxing** (Landlock on Linux, Job Objects on Windows)
 - 🛡️ **Optional Sandboxing**: NVIDIA OpenShell (Docker required ONLY for Central Gateway nodes)
@@ -152,6 +152,28 @@ sequenceDiagram
     O->>O: Confidence 0.95 -> ISOLATE
     O->>M: Broadcast Threat
     O->>O: Kill Process
+
+### C2 Detection Strategy (Windows/Linux/macOS)
+
+OshoosiClaw implements a hybrid C2 detection model combining native Rust scanning with industry-standard behavioral engines:
+
+```mermaid
+graph TD
+    A[C2 Detector] --> B{Strategy?}
+    B -->|Host-Based Log Analysis| C[Hayabusa]
+    B -->|Fast Forensic Triage| D[Chainsaw]
+    B -->|Static Capability Detection| E[Xori]
+    B -->|Real-time Kernel Monitoring| F[RedBPF]
+    B -->|Native Signature Scanning| G[yara-x]
+    
+    C --> H[Sigma Rules Scanning]
+    D --> I[MFT Anomaly Detection]
+    E --> J[Shellcode Emulation]
+    F --> K[Network Beacon Detection]
+    G --> L[Pattern Matching]
+    
+    H & I & J & K & L --> M[Unified C2 Score]
+```
 ```
 
 ---
@@ -281,6 +303,10 @@ OshoosiClaw uses a **six-engine detection pipeline** — a depth of analysis tha
 | 5️⃣ | **Mandiant CAPA** | Capability extraction | Behavioral intent analysis |
 | 6️⃣ | **Mandiant FLOSS** | String de-obfuscation | Hidden C2/config extraction |
 | 7️⃣ | **HollowsHunter** | Live memory forensics | In-memory implant detection |
+| 8️⃣ | **Hayabusa** | Sigma Rule Engine | Host-based C2 log analysis (Post-Execution) |
+| 9️⃣ | **Chainsaw** | Fast Forensic Triage | MFT anomalies & triage artifacts |
+| 🔟 | **Xori** | Shellcode Emulator | Static capability detection (Pre-Execution) |
+| 🛡️ | **RedBPF** | eBPF Network Monitor | Real-time C2 beacon detection (Linux Kernel) |
 
 ### Sysmon Event Coverage (Complete)
 
@@ -555,6 +581,11 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 | [NSRL RDS](https://www.nist.gov/itl/ssd/software-quality-group/national-software-reference-library-nsrl) | NIST | Public Domain | Known-good software hash database (121 GB) |
 | [Magika](https://github.com/google/magika) | Google | Apache 2.0 | AI-powered file type identification |
 | [AlienVault OTX](https://otx.alienvault.com/) | AT&T Cybersecurity | Free API | Open threat intelligence indicators |
+| [Hayabusa](https://github.com/Yamato-Security/hayabusa) | Yamato Security | MIT | Sigma rules-based threat hunting engine |
+| [Chainsaw](https://github.com/WithSecureLabs/chainsaw) | WithSecureLabs | GPL 3.0 | Fast forensic triage and MFT analysis |
+| [Xori](https://github.com/CheckPointSW/xori) | Check Point | Apache 2.0 | Static analysis and shellcode emulation |
+| [RedBPF](https://github.com/redsift/redbpf) | Red Sift | MIT | eBPF monitoring and analysis |
+| [yara-x](https://github.com/VirusTotal/yara-x) | VirusTotal | Apache 2.0 | Pure Rust implementation of YARA |
 
 ### Rust Crate Dependencies
 

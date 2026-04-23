@@ -14,6 +14,8 @@ mod analyzer;
 pub mod llm_engine;
 mod process_tree;
 pub mod forensics;
+pub mod yara_analyzer;
+pub mod ebpf_monitor;
 
 pub use log_reader::{BehavioralLogReader, LogEvent};
 pub use sentence::event_to_behavioral_sentence;
@@ -23,3 +25,5 @@ pub use analyzer::{BehavioralAnalyzer, AnalysisMode, InvestigativePrompt};
 pub use process_tree::{ProcessTreeEmbedder, ProcessRelationship};
 pub use llm_engine::{SmolLMAnalyzer, Gemma4Analyzer};
 pub use forensics::{PacketForensics, TriageResult};
+pub use yara_analyzer::YaraAnalyzer;
+pub use ebpf_monitor::EbpfMonitor;

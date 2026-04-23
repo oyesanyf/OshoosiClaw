@@ -25,4 +25,6 @@ candle-core = { workspace = true }
 candle-nn = { workspace = true }
 candle-transformers = { workspace = true }
 rand = { workspace = true }
+yara-x = { workspace = true }
+walkdir = { workspace = true }
 

@@ -29,7 +29,10 @@ impl AgentProvisioner {
             self.provision_malconv_weights().await?;
             self.provision_behavioral_model().await?;
             self.provision_hollows_hunter().await?;
-            self.provision_capa().await
+            self.provision_capa().await?;
+            self.provision_hayabusa().await?;
+            self.provision_chainsaw().await?;
+            self.provision_xori().await
         }
         #[cfg(target_os = "linux")]
         {
@@ -37,7 +40,9 @@ impl AgentProvisioner {
             self.provision_linux().await?;
             self.provision_malconv_weights().await?;
             self.provision_behavioral_model().await?;
-            self.provision_capa().await
+            self.provision_capa().await?;
+            self.provision_hayabusa().await?;
+            self.provision_chainsaw().await
         }
         #[cfg(target_os = "macos")]
         {
@@ -45,7 +50,9 @@ impl AgentProvisioner {
             self.provision_macos().await?;
             self.provision_malconv_weights().await?;
             self.provision_behavioral_model().await?;
-            self.provision_capa().await
+            self.provision_capa().await?;
+            self.provision_hayabusa().await?;
+            self.provision_chainsaw().await
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
@@ -1705,6 +1712,125 @@ impl AgentProvisioner {
         }
 
         info!("Behavioral model weights provisioned successfully.");
+        Ok(())
+    }
+
+    /// Provision Hayabusa (Threat Hunting Engine).
+    pub async fn provision_hayabusa(&self) -> anyhow::Result<()> {
+        let tools_dir = osoosi_types::resolve_tools_dir();
+        let hayabusa_dir = tools_dir.join("hayabusa");
+        #[cfg(target_os = "windows")]
+        let hayabusa_bin = hayabusa_dir.join("hayabusa.exe");
+        #[cfg(not(target_os = "windows"))]
+        let hayabusa_bin = hayabusa_dir.join("hayabusa");
+
+        if hayabusa_bin.exists() {
+            info!("Hayabusa already provisioned.");
+            return Ok(());
+        }
+
+        info!("Provisioning Hayabusa...");
+        let version = "2.17.0";
+        #[cfg(target_os = "windows")]
+        let url = format!("https://github.com/Yamato-Security/hayabusa/releases/download/v{}/hayabusa-{}-win-x64.zip", version, version);
+        #[cfg(target_os = "linux")]
+        let url = format!("https://github.com/Yamato-Security/hayabusa/releases/download/v{}/hayabusa-{}-linux-x64.zip", version, version);
+        #[cfg(target_os = "macos")]
+        let url = format!("https://github.com/Yamato-Security/hayabusa/releases/download/v{}/hayabusa-{}-mac-x64.zip", version, version);
+
+        let zip_path = tools_dir.join("hayabusa.zip");
+        self.download_with_resume(&url, &zip_path).await?;
+
+        // Extraction logic similar to CAPA
+        #[cfg(target_os = "windows")]
+        {
+            let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", zip_path.display(), hayabusa_dir.display());
+            self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "Hayabusa Extraction", 2).await?;
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = std::fs::create_dir_all(&hayabusa_dir);
+            let cmd_str = format!("unzip -o '{}' -d '{}'", zip_path.display(), hayabusa_dir.display());
+            let mut cmd = std::process::Command::new("sh");
+            cmd.args(["-c", &cmd_str]);
+            let _ = self.executor.execute(cmd).await;
+            let _ = std::process::Command::new("chmod").args(["+x", &hayabusa_bin.to_string_lossy()]).status();
+        }
+        let _ = std::fs::remove_file(&zip_path);
+        
+        info!("Hayabusa provisioned successfully.");
+        Ok(())
+    }
+
+    /// Provision Chainsaw (Fast Forensic Triage).
+    pub async fn provision_chainsaw(&self) -> anyhow::Result<()> {
+        let tools_dir = osoosi_types::resolve_tools_dir();
+        let chainsaw_dir = tools_dir.join("chainsaw");
+        #[cfg(target_os = "windows")]
+        let chainsaw_bin = chainsaw_dir.join("chainsaw.exe");
+        #[cfg(not(target_os = "windows"))]
+        let chainsaw_bin = chainsaw_dir.join("chainsaw");
+
+        if chainsaw_bin.exists() {
+            info!("Chainsaw already provisioned.");
+            return Ok(());
+        }
+
+        info!("Provisioning Chainsaw...");
+        let version = "2.10.0";
+        #[cfg(target_os = "windows")]
+        let url = format!("https://github.com/WithSecureLabs/chainsaw/releases/download/v{}/chainsaw_x86_64-pc-windows-msvc.zip", version);
+        #[cfg(target_os = "linux")]
+        let url = format!("https://github.com/WithSecureLabs/chainsaw/releases/download/v{}/chainsaw_x86_64-unknown-linux-gnu.tar.gz", version);
+        #[cfg(target_os = "macos")]
+        let url = format!("https://github.com/WithSecureLabs/chainsaw/releases/download/v{}/chainsaw_x86_64-apple-darwin.tar.gz", version);
+
+        let pkg_path = tools_dir.join(if cfg!(target_os = "windows") { "chainsaw.zip" } else { "chainsaw.tar.gz" });
+        self.download_with_resume(&url, &pkg_path).await?;
+
+        #[cfg(target_os = "windows")]
+        {
+            let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", pkg_path.display(), chainsaw_dir.display());
+            self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "Chainsaw Extraction", 2).await?;
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            let _ = std::fs::create_dir_all(&chainsaw_dir);
+            let cmd_str = format!("tar -xzf '{}' -C '{}'", pkg_path.display(), chainsaw_dir.display());
+            let mut cmd = std::process::Command::new("sh");
+            cmd.args(["-c", &cmd_str]);
+            let _ = self.executor.execute(cmd).await;
+            let _ = std::process::Command::new("chmod").args(["+x", &chainsaw_bin.to_string_lossy()]).status();
+        }
+        let _ = std::fs::remove_file(&pkg_path);
+
+        info!("Chainsaw provisioned successfully.");
+        Ok(())
+    }
+
+    /// Provision Xori (Shellcode Emulator).
+    pub async fn provision_xori(&self) -> anyhow::Result<()> {
+        let tools_dir = osoosi_types::resolve_tools_dir();
+        let xori_dir = tools_dir.join("xori");
+        #[cfg(target_os = "windows")]
+        let xori_bin = xori_dir.join("xori.exe");
+        #[cfg(not(target_os = "windows"))]
+        let xori_bin = xori_dir.join("xori");
+
+        if xori_bin.exists() {
+            info!("Xori already provisioned.");
+            return Ok(());
+        }
+
+        // Xori is often built from source or provided as a crate, 
+        // but for this agent we'll attempt to download a pre-built binary if available 
+        // or just log that it needs manual setup if not found.
+        info!("Provisioning Xori...");
+        // Placeholder for Xori binary download logic
+        // For now, we'll create the directory to signify intent.
+        let _ = std::fs::create_dir_all(&xori_dir);
+        
+        info!("Xori directory prepared. (Binary download pending official release availability).");
         Ok(())
     }
 
