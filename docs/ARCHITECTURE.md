@@ -37,7 +37,7 @@ OshoosiClaw follows a **modular monolith** pattern — 20 specialized Rust crate
 │       │               │              │                │           │
 │       ▼               ▼              ▼                ▼           │
 │  ┌────────────────────────────────────────────────────────────┐   │
-│  │               CAPA → FLOSS → HollowsHunter                │   │
+│  │     CAPA → FLOSS → HollowsHunter → Hayabusa → Chainsaw     │   │
 │  │              (Deep Forensic Analysis Pipeline)              │   │
 │  └────────────────────────────────────────────────────────────┘   │
 │       │                                                           │
@@ -78,6 +78,14 @@ Deep capability extraction and string de-obfuscation for unknown files.
 Triggered **reactively** by Sysmon events:
 - **Event ID 10 (ProcessAccess)** targeting `lsass.exe` → credential dumping
 - **Event ID 8 (CreateRemoteThread)** → code injection
+
+### Tier 6: C2 Detection (Real-time & Forensic)
+Specialized engines for spotting Command & Control activity:
+- **Hayabusa**: Host-based Sigma rule engine for Event Log analysis.
+- **Chainsaw**: Fast triage of MFT and system artifacts.
+- **RedBPF**: Real-time Linux kernel monitoring for network beacons.
+- **Xori**: Shellcode emulation for pre-execution capability detection.
+- **yara-x**: Native Rust pattern matching for malware families.
 
 ## Response Matrix
 
