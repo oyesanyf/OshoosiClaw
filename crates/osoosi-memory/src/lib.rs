@@ -1,7 +1,7 @@
 //! Local SQLite persistence for threat intelligence and file integrity.
 
 use rusqlite::{params, Connection};
-use osoosi_types::{Kev, ThreatSignature, ReputationScore, PendingJoinRequest, QuarantinedPeer, ResponseAction, PeerAnnounce, PeerStatus, MalwareSample};
+use osoosi_types::{Kev, ThreatSignature, ReputationScore, PendingJoinRequest, QuarantinedPeer, ResponseAction, ActionState, PeerAnnounce, PeerStatus, MalwareSample};
 use chrono::{DateTime, Utc};
 use tracing::debug;
 // use std::path::Path;
@@ -740,6 +740,8 @@ impl MemoryStore {
                 reason: None,
                 predicted_next: None,
                 epsilon: None,
+                require_approval: false,
+                action_state: ActionState::Executed,
             })
         })?;
         let mut out = Vec::new();

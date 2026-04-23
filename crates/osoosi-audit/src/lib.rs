@@ -95,6 +95,12 @@ impl AuditTrail {
         self.entries.lock().expect("audit entries mutex poisoned").clone()
     }
 
+    /// Get recent entries.
+    pub fn get_recent_entries(&self, count: usize) -> Vec<AuditEntry> {
+        let entries = self.entries.lock().expect("audit entries mutex poisoned");
+        entries.iter().rev().take(count).cloned().collect()
+    }
+
     /// Generate a Merkle Proof for a specific entry index.
     pub fn generate_proof(&self, index: usize) -> Option<osoosi_types::MerkleProof> {
         let entries = self.entries.lock().expect("audit entries mutex poisoned");

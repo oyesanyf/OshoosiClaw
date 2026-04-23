@@ -2,6 +2,7 @@
 
 pub mod discovery;
 pub mod remediator;
+pub mod registry;
 pub mod patch_hash_store;
 pub mod jit;
 
@@ -296,9 +297,10 @@ $regPath = "HKLM:\Software\Microsoft\Windows NT\CurrentVersion\SystemRestore"
 if (-not (Test-Path $regPath)) {{ New-Item -Path $regPath -Force | Out-Null }}
 $oldVal = Get-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -ErrorAction SilentlyContinue
 Set-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -Value 0 -Type DWord -Force
+$desc = "{}"
 try {{
-  Checkpoint-Computer -Description "{}" -RestorePointType "MODIFY_SETTINGS" -ErrorAction Stop
-  Write-Output "Successfully created restore point."
+  Checkpoint-Computer -Description $desc -RestorePointType "MODIFY_SETTINGS" -ErrorAction Stop
+  Write-Output "Successfully created restore point: $desc"
 }} catch {{
   Write-Warning "Restore point failed: $_"
 }} finally {{

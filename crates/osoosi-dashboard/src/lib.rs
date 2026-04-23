@@ -164,6 +164,10 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/analyst/chat", get(get_analyst_chat))
         .route("/api/telemetry/timeseries", get(get_telemetry_timeseries))
         .route("/api/mesh/topology", get(get_mesh_topology))
+        .route("/api/zone-summary", get(get_zone_summary))
+        .route("/api/pending-actions", get(get_pending_actions))
+        .route("/api/approve-action", post(post_approve_action))
+        .route("/api/reject-action", post(post_reject_action))
         .with_state(state);
 
     if index_html.is_file() {
@@ -604,6 +608,7 @@ async fn get_repair_status(State(state): State<DashboardState>) -> Json<Value> {
                 "pending_count": pending,
                 "last_error": last_error,
                 "remediation_hint": remediation_hint,
+                "privilege_required": remediation_hint.is_some(),
                 "status": if pending > 0 { "patches_pending" } else { "monitoring" }
             }))
         }
@@ -619,6 +624,59 @@ async fn get_repair_status(State(state): State<DashboardState>) -> Json<Value> {
         })),
     }
 }
+
+async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => Json(orch.get_zone_summary().await),
+        None => Json(json!({ "error": "backend not active" })),
+    }
+}
+
+async fn get_pending_actions(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            let pending = orch.get_pending_approvals().await;
+            Json(json!(pending))
+        }
+        None => Json(json!([])),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ActionApprovalRequest {
+    threat_id: String,
+}
+
+async fn post_approve_action(
+    State(state): State<DashboardState>,
+    Json(req): Json<ActionApprovalRequest>,
+) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            match orch.approve_action(&req.threat_id).await {
+                Ok(_) => Json(json!({ "status": "success", "msg": "Action approved and executed" })),
+                Err(e) => Json(json!({ "status": "fail", "msg": e.to_string() })),
+            }
+        }
+        None => Json(json!({ "status": "fail", "msg": "backend not active" })),
+    }
+}
+
+async fn post_reject_action(
+    State(state): State<DashboardState>,
+    Json(req): Json<ActionApprovalRequest>,
+) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            match orch.reject_action(&req.threat_id).await {
+                Ok(_) => Json(json!({ "status": "success", "msg": "Action rejected" })),
+                Err(e) => Json(json!({ "status": "fail", "msg": e.to_string() })),
+            }
+        }
+        None => Json(json!({ "status": "fail", "msg": "backend not active" })),
+    }
+}
+
 
 async fn get_consensus(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {

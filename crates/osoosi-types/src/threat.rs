@@ -19,6 +19,22 @@ pub enum ResponseAction {
     GhostTarpit,
     /// Kill process and network
     Isolate,
+    /// Deep memory scan (Windows only)
+    MemoryScan,
+    /// Rollback registry persistence
+    RegistryRepair,
+}
+
+/// State of an autonomous action (Human-in-the-loop).
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
+#[serde(rename_all = "lowercase")]
+pub enum ActionState {
+    #[default]
+    Pending,
+    Approved,
+    Rejected,
+    Executed,
+    Failed,
 }
 
 impl std::str::FromStr for ResponseAction {
@@ -147,6 +163,12 @@ pub struct ThreatSignature {
     /// Privacy budget (epsilon) spent on this signature (Differential Privacy).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub epsilon: Option<f32>,
+    /// Whether this action requires manual human approval before execution.
+    #[serde(default)]
+    pub require_approval: bool,
+    /// Current state of the recommended action.
+    #[serde(default)]
+    pub action_state: ActionState,
 }
 
 impl ThreatSignature {
@@ -166,6 +188,8 @@ impl ThreatSignature {
             reason: None,
             predicted_next: None,
             epsilon: None,
+            require_approval: false,
+            action_state: ActionState::Pending,
         }
     }
 

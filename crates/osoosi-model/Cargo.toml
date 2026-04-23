@@ -30,3 +30,4 @@ tokio = { workspace = true, features = ["full"] }
 pe-sign = "0.1"
 rusqlite = { workspace = true }
 git2 = { workspace = true }
+reqwest = { workspace = true, features = ["json"] }

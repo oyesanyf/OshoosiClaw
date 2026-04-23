@@ -67,6 +67,14 @@ function setupNav() {
                 document.getElementById('otel-map-view').classList.add('active');
                 viewTitle.innerText = "Global Telemetry Mesh Map";
                 renderOtelMapView();
+            } else if (view === 'zone') {
+                document.getElementById('zone-view').classList.add('active');
+                viewTitle.innerText = "Zone Security Gateway";
+                renderZoneView();
+            } else if (view === 'approvals') {
+                document.getElementById('approvals-view').classList.add('active');
+                viewTitle.innerText = "Response Approval Queue";
+                renderApprovalsView();
             } else {
                 document.getElementById('other-view').classList.add('active');
                 viewTitle.innerText = item.querySelector('span').innerText;
@@ -158,6 +166,12 @@ async function updateDashboard() {
         }
         if (state.current_view === 'process-map') {
             // Optional: Auto-refresh graph every few polls if needed
+        }
+        if (state.current_view === 'zone') {
+            renderZoneView();
+        }
+        if (state.current_view === 'approvals') {
+            renderApprovalsView();
         }
 
         if (timeseries) {
@@ -605,3 +619,93 @@ function updateTelemetryChart(data) {
 
 // Start the app
 document.addEventListener('DOMContentLoaded', init);
+
+/**
+ * Render Zone Overview
+ */
+async function renderZoneView() {
+    const summary = await fetchAPI('/zone-summary');
+    if (!summary) return;
+
+    const container = document.getElementById('zone-summary-container');
+    if (container) {
+        container.innerHTML = `
+            <div class="stat-card glass">
+                <div class="stat-label">Security Score</div>
+                <div class="stat-value" style="color: ${summary.security_score > 80 ? 'var(--accent-green)' : 'var(--accent-red)'}">${summary.security_score}%</div>
+            </div>
+            <div class="stat-card glass">
+                <div class="stat-label">Zone Node Count</div>
+                <div class="stat-value">${summary.peer_count + 1}</div>
+            </div>
+            <div class="stat-card glass">
+                <div class="stat-label">Zone ID</div>
+                <div class="stat-value" style="font-size: 14px;">${summary.zone}</div>
+            </div>
+        `;
+    }
+
+    const recs = document.getElementById('zone-recommendations');
+    if (recs) {
+        if (summary.recommendations && summary.recommendations.length > 0) {
+            recs.innerHTML = summary.recommendations.map(r => `
+                <div class="feed-item">
+                    <div class="item-title" style="color: var(--accent-blue);">Recommendation</div>
+                    <div class="item-meta">${r}</div>
+                </div>
+            `).join('');
+        } else {
+            recs.innerHTML = '<p class="placeholder-text">Security posture is optimal.</p>';
+        }
+    }
+}
+
+/**
+ * Render Approval Queue
+ */
+async function renderApprovalsView() {
+    const approvals = await fetchAPI('/pending-actions');
+    const list = document.getElementById('approval-list');
+    if (!list) return;
+
+    if (!approvals || approvals.length === 0) {
+        list.innerHTML = '<p class="placeholder-text">No pending actions requiring approval.</p>';
+        return;
+    }
+
+    list.innerHTML = approvals.map(app => `
+        <div class="timeline-item">
+            <div class="item-icon" style="background-color: rgba(255, 165, 0, 0.1); color: orange;">
+                <i data-lucide="help-circle"></i>
+            </div>
+            <div class="item-info">
+                <div class="item-title">Pending Action: ${app.action}</div>
+                <div class="item-meta">${app.description}</div>
+                <div class="item-actions mt-2">
+                    <button class="btn-small btn-approve" onclick="approveAction('${app.id}')">Approve</button>
+                    <button class="btn-small btn-reject" onclick="rejectAction('${app.id}')">Reject</button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+    lucide.createIcons();
+}
+
+window.approveAction = async function(id) {
+    const res = await fetch(`${API_BASE}/approve-action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threat_id: id })
+    });
+    if (res.ok) renderApprovalsView();
+};
+
+window.rejectAction = async function(id) {
+    const res = await fetch(`${API_BASE}/reject-action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threat_id: id })
+    });
+    if (res.ok) renderApprovalsView();
+};
+

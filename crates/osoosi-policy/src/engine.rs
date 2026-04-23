@@ -9,7 +9,7 @@ use crate::semantic::SemanticEngine;
 use crate::graph::{GraphCorrelationEngine, Relationship};
 use crate::feed::OtxIndicators;
 use crate::traffic_adapter;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 use std::sync::Arc;
 use std::sync::RwLock;
 
@@ -29,6 +29,8 @@ pub struct PolicyEngine {
     sigma: Arc<RwLock<crate::sigma::SigmaEngine>>,
     /// Learned Zero-Day defenses from the mesh (CVE -> Learned Rule)
     global_intel_rules: Arc<DashMap<String, String>>,
+    /// Alert cache to prevent duplicate notifications (Key: ProcessName + CVE -> LastAlertedTime)
+    alert_cache: Arc<DashMap<String, std::time::Instant>>,
 }
 
 impl PolicyEngine {
@@ -41,6 +43,7 @@ impl PolicyEngine {
             otx_indicators: Arc::new(RwLock::new(OtxIndicators::default())),
             sigma: Arc::new(RwLock::new(crate::sigma::SigmaEngine::new())),
             global_intel_rules: Arc::new(DashMap::new()),
+            alert_cache: Arc::new(DashMap::new()),
         }
     }
 
@@ -143,12 +146,24 @@ impl PolicyEngine {
                     let base_no_ext = basename.trim_end_matches(".exe");
                     let is_exact = basename == product_lower || base_no_ext == product_lower;
                     if is_exact {
-                        warn!("CVE Correlation: Process {} matches product in CISA KEV ({})", basename, kev.cve_id);
-                        signature.confidence = 0.85;
-                        signature.cve_id = Some(kev.cve_id.clone());
-                        signature.recommended_action = ResponseAction::GhostTarpit;
-                        signature.add_reason(format!("CISA KEV: process {} matches known exploited product ({})", basename, kev.cve_id));
-                        is_threat = true;
+                        // Alert deduplication: don't alert more than once every 5 minutes for the same process+CVE
+                        let cache_key = format!("{}:{}", basename, kev.cve_id);
+                        let should_alert = match self.alert_cache.get(&cache_key) {
+                            Some(last) => last.elapsed() > std::time::Duration::from_secs(300),
+                            None => true,
+                        };
+
+                        if should_alert {
+                            warn!("CVE Correlation: Process {} matches product in CISA KEV ({})", basename, kev.cve_id);
+                            self.alert_cache.insert(cache_key, std::time::Instant::now());
+                            signature.confidence = 0.85;
+                            signature.cve_id = Some(kev.cve_id.clone());
+                            signature.recommended_action = ResponseAction::GhostTarpit;
+                            signature.add_reason(format!("CISA KEV: process {} matches known exploited product ({})", basename, kev.cve_id));
+                            is_threat = true;
+                        } else {
+                            debug!("Deduplicating CVE Correlation alert for {} / {}", basename, kev.cve_id);
+                        }
                         break;
                     }
                 }

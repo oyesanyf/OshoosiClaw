@@ -14,9 +14,7 @@ use sysinfo::{System, Pid};
 
 /// Files and paths to skip: SQLite ephemeral, OpenỌ̀ṣọ́ọ̀sì's own data, common noisy dirs, and user exclusions.
 fn should_skip_path(path: &Path, osoosi_dir: &Path, exclude_paths: &[String]) -> bool {
-    // Canonicalize to remove .\, ..\, symlinks — notify often produces paths with .\
-    let canon_path = path.canonicalize().unwrap_or_else(|_| path.to_path_buf());
-    let s = canon_path.to_string_lossy();
+    let s = path.to_string_lossy();
     let s_lower = s.to_lowercase();
 
     // SQLite ephemeral files
@@ -28,43 +26,47 @@ fn should_skip_path(path: &Path, osoosi_dir: &Path, exclude_paths: &[String]) ->
     }
 
     // OpenỌ̀ṣọ́ọ̀sì's own files (self-writes cause feedback loop)
-    if s_lower.ends_with("osoosi.db") || s_lower.ends_with("osoosi.log") {
+    // Check for both the exact name and common log rotation patterns (.log.2026-04-23, .log.1, etc)
+    if s_lower.contains("osoosi.db") || s_lower.contains("osoosi.log") || s_lower.contains("osoosi_core.log") {
         return true;
     }
 
-    // Skip the entire OpenỌ̀ṣọ́ọ̀sì install directory (canonical comparison)
-    if canon_path.starts_with(osoosi_dir) {
-        return true;
+    // Skip the entire OpenỌ̀ṣọ́ọ̀sì install directory (canonical comparison if possible)
+    if let Ok(canon_path) = path.canonicalize() {
+        if canon_path.starts_with(osoosi_dir) {
+            return true;
+        }
     }
 
     // Belt-and-suspenders: also check via string prefix (case-insensitive on Windows)
-    let dir_str = osoosi_dir.to_string_lossy().to_lowercase();
-    if s_lower.starts_with(&dir_str) {
+    let dir_str = osoosi_dir.to_string_lossy().to_lowercase().replace("\\\\?\\", "");
+    let s_clean = s_lower.replace("\\\\?\\", "");
+    if s_clean.starts_with(&dir_str) {
         return true;
     }
 
     // Registry transaction logs (always locked by Windows)
-    let fname = canon_path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if fname == "ntuser.dat.LOG1" || fname == "ntuser.dat.LOG2"
-        || fname == "usrclass.dat.LOG1" || fname == "usrclass.dat.LOG2"
+    let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+    if fname.starts_with("ntuser.dat.LOG") || fname.starts_with("usrclass.dat.LOG")
     {
         return true;
     }
 
     // Common noisy directories
-    for segment in canon_path.components() {
-        let seg = segment.as_os_str().to_string_lossy();
+    for segment in path.components() {
+        let seg = segment.as_os_str().to_string_lossy().to_lowercase();
         match seg.as_ref() {
             ".git" | "node_modules" | "target" | "__pycache__"
-            | "$Recycle.Bin" | "System Volume Information" | ".Trash"
-            | "AppData" | "Windows" | "ProgramData" => return true,
+            | "$recycle.bin" | "system volume information" | ".trash"
+            | "appdata" | "windows" | "programdata" => return true,
             _ => {}
         }
     }
 
     // User-defined exclusions
     for exclude in exclude_paths {
-        if s_lower.contains(&exclude.to_lowercase()) {
+        let clean_exclude = exclude.to_lowercase().replace("\\\\?\\", "");
+        if s_clean.contains(&clean_exclude) {
             return true;
         }
     }

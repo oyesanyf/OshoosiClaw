@@ -85,7 +85,9 @@ pub fn verify_confidence_bounds(confidence: f64) -> f64 {
 pub fn verify_escalation_ladder(action: &ResponseAction, confidence: f64) -> bool {
     let min_confidence = match action {
         ResponseAction::Alert => THREAT_THRESHOLD,
+        ResponseAction::MemoryScan => 0.5,
         ResponseAction::Deception => 0.4,
+        ResponseAction::RegistryRepair => 0.6,
         ResponseAction::Tarpit => TARPIT_THRESHOLD,
         ResponseAction::GhostTarpit => 0.8,
         ResponseAction::Isolate => ISOLATE_THRESHOLD,
@@ -172,10 +174,12 @@ pub fn verify_no_unauthorized_allow(confidence: f64, has_threat: bool) -> bool {
 pub fn action_severity(action: &ResponseAction) -> u8 {
     match action {
         ResponseAction::Alert => 1,
-        ResponseAction::Deception => 2,
-        ResponseAction::Tarpit => 3,
-        ResponseAction::GhostTarpit => 4,
-        ResponseAction::Isolate => 5,
+        ResponseAction::MemoryScan => 2,
+        ResponseAction::Deception => 3,
+        ResponseAction::RegistryRepair => 4,
+        ResponseAction::Tarpit => 5,
+        ResponseAction::GhostTarpit => 6,
+        ResponseAction::Isolate => 7,
     }
 }
 

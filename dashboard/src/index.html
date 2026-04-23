@@ -22,6 +22,14 @@
                     <i data-lucide="layout-dashboard"></i>
                     <span>Dashboard</span>
                 </a>
+                <a href="#" class="nav-item" data-view="zone">
+                    <i data-lucide="globe"></i>
+                    <span>Zone Overview</span>
+                </a>
+                <a href="#" class="nav-item" data-view="approvals">
+                    <i data-lucide="check-square"></i>
+                    <span>Approval Queue</span>
+                </a>
                 <a href="#" class="nav-item" data-view="otel-map">
                     <i data-lucide="map"></i>
                     <span>Telemetry Map</span>
@@ -267,6 +275,35 @@
                     <div class="card-body" style="height: 100%; padding:0; position:relative;">
                         <div id="otel-mesh-map" style="height: 100%; width: 100%;"></div>
                         <div id="otel-map-loading" class="placeholder-text" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%);">Initializing 10/10 Mesh Topology...</div>
+                    </div>
+                </div>
+            </div>
+            <!-- Zone Overview View -->
+            <div id="zone-view" class="view-content">
+                <div id="zone-summary-container" class="stats-grid">
+                    <p class="placeholder-text">Loading zone security summary...</p>
+                </div>
+                <div class="card glass shadow-glow mt-4">
+                    <div class="card-header">
+                        <h3>Zone-Wide Security Recommendations</h3>
+                    </div>
+                    <div id="zone-recommendations" class="card-body feed-list">
+                        <p class="placeholder-text">No recommendations at this time.</p>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Approval Queue View -->
+            <div id="approvals-view" class="view-content">
+                <div class="card glass shadow-glow">
+                    <div class="card-header">
+                        <h3>Pending Autonomous Responses</h3>
+                        <p style="font-size: 12px; color: var(--text-muted);">High-impact actions awaiting human confirmation.</p>
+                    </div>
+                    <div class="card-body">
+                        <div id="approval-list" class="timeline-list">
+                            <p class="placeholder-text">Approval queue is empty.</p>
+                        </div>
                     </div>
                 </div>
             </div>

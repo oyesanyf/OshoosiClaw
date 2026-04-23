@@ -27,6 +27,8 @@ impl AgentProvisioner {
             self.provision_windows().await?;
             self.provision_firewall().await?;
             self.provision_malconv_weights().await?;
+            self.provision_behavioral_model().await?;
+            self.provision_hollows_hunter().await?;
             self.provision_capa().await
         }
         #[cfg(target_os = "linux")]
@@ -34,6 +36,7 @@ impl AgentProvisioner {
             self.provision_firewall().await?;
             self.provision_linux().await?;
             self.provision_malconv_weights().await?;
+            self.provision_behavioral_model().await?;
             self.provision_capa().await
         }
         #[cfg(target_os = "macos")]
@@ -41,6 +44,7 @@ impl AgentProvisioner {
             self.provision_firewall().await?;
             self.provision_macos().await?;
             self.provision_malconv_weights().await?;
+            self.provision_behavioral_model().await?;
             self.provision_capa().await
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
@@ -1669,12 +1673,39 @@ impl AgentProvisioner {
         info!("MalConv weights missing. Downloading from verified Oshoosi repository...");
         let _ = std::fs::create_dir_all(&malconv_dir);
         
-        // Verified MalConv (SecureBERT adapted) weights URL - Direct download
         let url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/malconv.safetensors?download=true";
-        
         self.download_with_resume(url, &weight_path).await?;
         
         info!("MalConv weights provisioned successfully.");
         Ok(())
     }
+
+    pub async fn provision_behavioral_model(&self) -> anyhow::Result<()> {
+        let models_dir = std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
+        let smollm_dir = Path::new(&models_dir).join("smollm");
+        let model_path = smollm_dir.join("smollm2-135m-it.onnx");
+        let tokenizer_path = smollm_dir.join("tokenizer.json");
+
+        if model_path.exists() && tokenizer_path.exists() {
+            info!("Behavioral model weights (SmolLM2) already available.");
+            return Ok(());
+        }
+
+        info!("Behavioral model weights missing. Provisioning from verified Oshoosi repository...");
+        let _ = std::fs::create_dir_all(&smollm_dir);
+
+        let model_url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/smollm2-135m-it.onnx?download=true";
+        let tokenizer_url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/tokenizer.json?download=true";
+
+        if !model_path.exists() {
+            self.download_with_resume(model_url, &model_path).await?;
+        }
+        if !tokenizer_path.exists() {
+            self.download_with_resume(tokenizer_url, &tokenizer_path).await?;
+        }
+
+        info!("Behavioral model weights provisioned successfully.");
+        Ok(())
+    }
+
 }

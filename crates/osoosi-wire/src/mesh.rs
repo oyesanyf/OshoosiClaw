@@ -336,7 +336,6 @@ impl MeshNode {
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
                         if peer_id == *self.swarm.local_peer_id() { continue; }
                         debug!("Identify: discovered {} from {:?}", peer_id, info.listen_addrs);
-                        self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
                         for addr in info.listen_addrs {
                             self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
                         }
