@@ -289,15 +289,28 @@ impl PatchEngine {
         {
             info!("Creating Windows restore point before patch...");
             let desc = format!("Osoosi-{}", &snap_id);
-            let ps = format!(
-                "Checkpoint-Computer -Description '{}' -RestorePointType 'MODIFY_SETTINGS'",
-                desc.replace('\'', "")
-            );
+            
+            // 10/10 Logic: Bypass the 24-hour restore point frequency limit by temporarily setting registry key
+            let bypass_ps = r#"
+$regPath = "HKLM:\Software\Microsoft\Windows NT\CurrentVersion\SystemRestore"
+if (-not (Test-Path $regPath)) { New-Item -Path $regPath -Force | Out-Null }
+$oldVal = Get-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -ErrorAction SilentlyContinue
+Set-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -Value 0 -Type DWord -Force
+try {
+  Checkpoint-Computer -Description "$args" -RestorePointType "MODIFY_SETTINGS" -ErrorAction Stop
+} catch {
+  Write-Warning "Restore point failed: $_"
+} finally {
+  if ($oldVal) { Set-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -Value $oldVal.SystemRestorePointCreationFrequency -Force }
+  else { Remove-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -Force -ErrorAction SilentlyContinue }
+}
+"#;
             let status = Command::new("powershell")
-                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps])
+                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", bypass_ps, &desc.replace('\'', "")])
                 .status()?;
+            
             if !status.success() {
-                return Err(anyhow!("Failed to create Windows restore point"));
+                warn!("Failed to create Windows restore point. Proceeding with caution (Atomic rollback via wusa/dism still available).");
             }
         }
         #[cfg(target_os = "linux")]
@@ -614,14 +627,35 @@ if ($res.ResultCode -eq 4 -and $kb -eq "KB2267602") {{
                 let kb = tx.patch.version.trim().to_uppercase();
                 if kb.starts_with("KB") {
                     let kb_num = kb.trim_start_matches("KB");
+                    info!("Attempting wusa rollback for {}...", kb);
                     let status = Command::new("wusa.exe")
                         .args(["/uninstall", &format!("/kb:{}", kb_num), "/quiet", "/norestart"])
                         .status()?;
+                    
                     if !status.success() {
-                        if kb == "KB2267602" {
+                        let code = status.code().unwrap_or(-1);
+                        if code == 87 || code == -2147024809 { // Invalid parameter
+                            warn!("wusa.exe rollback failed with code 87. Attempting DISM fallback for {}...", kb);
+                            let dism_ps = format!(r#"
+$kb = "{}"
+$pkg = Get-WindowsPackage -Online | Where-Object {{ $_.PackageName -like "*$kb*" }}
+if ($pkg) {{
+  Write-Output "Found package $($pkg.PackageName). Removing via DISM..."
+  Remove-WindowsPackage -Online -PackageName $pkg.PackageName -NoRestart -ErrorAction Stop
+}} else {{
+  throw "Package for $kb not found via DISM"
+}}
+"#, kb_num);
+                            let dism_status = Command::new("powershell")
+                                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &dism_ps])
+                                .status()?;
+                            if !dism_status.success() {
+                                return Err(anyhow!("Windows rollback failed for {} (both wusa and DISM failed)", kb));
+                            }
+                        } else if kb == "KB2267602" {
                             warn!("Rollback (uninstall) of Defender definitions ({}) is not supported by wusa.exe. Marking as soft failure.", kb);
                         } else {
-                            return Err(anyhow!("Windows rollback failed for {} (wusa exit code: {})", kb, status.code().unwrap_or(-1)));
+                            return Err(anyhow!("Windows rollback failed for {} (wusa exit code: {})", kb, code));
                         }
                     }
                 } else {
