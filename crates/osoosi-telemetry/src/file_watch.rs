@@ -86,7 +86,6 @@ fn osoosi_install_dir() -> std::path::PathBuf {
 
 pub struct FileWatcher {
     watcher: notify::RecommendedWatcher,
-    receiver: mpsc::Receiver<anyhow::Result<FileChangeEvent>>,
     pub trap_paths: Arc<dashmap::DashSet<String>>,
 }
 
@@ -99,7 +98,7 @@ pub struct FileChangeEvent {
 
 impl FileWatcher {
     /// Create a new file watcher. Pass `Some(memory)` to persist unhashable paths to a skip list.
-    pub fn new(memory: Option<Arc<osoosi_memory::MemoryStore>>, exclude_paths: Vec<String>) -> anyhow::Result<Self> {
+    pub fn new(memory: Option<Arc<osoosi_memory::MemoryStore>>, exclude_paths: Vec<String>) -> anyhow::Result<(Self, mpsc::Receiver<anyhow::Result<FileChangeEvent>>)> {
         let (tx, rx) = mpsc::channel(100);
         let rt = tokio::runtime::Handle::current();
         let install_dir = osoosi_install_dir();
@@ -184,11 +183,10 @@ impl FileWatcher {
             }
         })?;
 
-        Ok(Self {
+        Ok((Self {
             watcher,
-            receiver: rx,
             trap_paths,
-        })
+        }, rx))
     }
 
     pub fn watch<P: AsRef<Path>>(&mut self, path: P) -> anyhow::Result<()> {
@@ -196,11 +194,8 @@ impl FileWatcher {
         self.watcher.watch(path.as_ref(), RecursiveMode::Recursive)?;
         Ok(())
     }
-
-    pub async fn next_event(&mut self) -> Option<anyhow::Result<FileChangeEvent>> {
-        self.receiver.recv().await
-    }
 }
+
 
 /// Run a background task on startup to build a baseline hash table of every file in the watch paths.
 /// This hashes the entire filesystem from the specified roots and stores it in SQLite

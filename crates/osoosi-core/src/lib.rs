@@ -75,8 +75,9 @@ pub struct EdrOrchestrator {
     audit: Arc<AuditTrail>,
     /// Trust: Identity and Attestation
     trust: Arc<TrustManager>,
-    /// Telemetry: File System Watcher
     watcher: Arc<tokio::sync::Mutex<osoosi_telemetry::FileWatcher>>,
+    /// Receiver for file system events. Taken by the monitor loop.
+    file_event_rx: Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Receiver<anyhow::Result<osoosi_telemetry::FileChangeEvent>>>>>,
     /// Repair Engine: Patch discovery and application
     patch_engine: Arc<PatchEngine>,
     /// Local model trained on self + peer data (stored in models/)
@@ -379,9 +380,9 @@ impl EdrOrchestrator {
         let trust = Arc::new(TrustManager::new(secured_executor.clone())?);
 
         let exclude_paths = osoosi_types::load_exclude_paths_from_config();
-        let watcher = Arc::new(tokio::sync::Mutex::new(
-            osoosi_telemetry::FileWatcher::new(Some(memory.clone()), exclude_paths)?
-        ));
+        let (watcher_obj, file_rx) = osoosi_telemetry::FileWatcher::new(Some(memory.clone()), exclude_paths)?;
+        let watcher = Arc::new(tokio::sync::Mutex::new(watcher_obj));
+        let file_event_rx = Arc::new(tokio::sync::Mutex::new(Some(file_rx)));
         let mesh_peer_count = Arc::new(AtomicU32::new(0));
         let repair_config = osoosi_types::load_repair_config();
         let patch_engine = Arc::new(PatchEngine::new(audit.clone(), repair_config));
@@ -439,6 +440,7 @@ impl EdrOrchestrator {
             audit,
             trust,
             watcher,
+            file_event_rx,
             patch_engine,
             threat_model,
             malware_scanner,
@@ -784,10 +786,16 @@ impl EdrOrchestrator {
         });
 
         let orchestrator = self.clone();
-        tokio::spawn(async move {
-            let mut watcher: tokio::sync::MutexGuard<osoosi_telemetry::FileWatcher> = orchestrator.watcher.lock().await;
-            while let Some(res) = watcher.next_event().await {
-                if let Ok(event) = res {
+        let rx_opt = {
+            let mut guard = self.file_event_rx.lock().await;
+            guard.take()
+        };
+
+        if let Some(mut rx) = rx_opt {
+            tokio::spawn(async move {
+                info!("File Monitor: Real-time event loop started.");
+                while let Some(res) = rx.recv().await {
+                    if let Ok(event) = res {
                     info!("File change detected: {} (Hash: {})", event.path, event.hash);
                     let _ = orchestrator.memory.update_file_hash(&event.path, &event.hash);
 
@@ -893,7 +901,8 @@ impl EdrOrchestrator {
                     }
                 }
             }
-        });
+            });
+        }
         Ok(())
     }
 

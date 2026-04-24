@@ -374,6 +374,9 @@ impl AgentProvisioner {
     <ClipboardChange onmatch="exclude" />
     <ProcessTampering onmatch="exclude" />
     <FileDeleteDetected onmatch="exclude" />
+    <FileBlockExecutable onmatch="exclude" />
+    <FileBlockShredding onmatch="exclude" />
+    <FileExecutableDetected onmatch="exclude" />
   </EventFiltering>
 </Sysmon>"#;
 
