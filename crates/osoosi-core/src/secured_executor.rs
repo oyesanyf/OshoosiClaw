@@ -42,6 +42,15 @@ impl SecuredExecutor for DirectExecutor {
             }
         }
 
+        // Support HF_TOKEN for Hugging Face downloads
+        if url.contains("huggingface.co") {
+            if let Ok(token) = std::env::var("HF_TOKEN") {
+                request = request.header("Authorization", format!("Bearer {}", token));
+            } else if let Ok(token) = std::env::var("HUGGING_FACE_HUB_TOKEN") {
+                request = request.header("Authorization", format!("Bearer {}", token));
+            }
+        }
+
         let resp = request.send().await?;
         let status = resp.status();
         
@@ -165,6 +174,14 @@ impl SecuredExecutor for OpenShellExecutor {
         
         if resume {
             wrapped.arg("-C").arg("-");
+        }
+        
+        if url.contains("huggingface.co") {
+            if let Ok(token) = std::env::var("HF_TOKEN") {
+                wrapped.arg("-H").arg(format!("Authorization: Bearer {}", token));
+            } else if let Ok(token) = std::env::var("HUGGING_FACE_HUB_TOKEN") {
+                wrapped.arg("-H").arg(format!("Authorization: Bearer {}", token));
+            }
         }
         
         wrapped.arg("-o").arg(dest_str.as_ref()).arg(url);
