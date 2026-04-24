@@ -22,6 +22,9 @@ struct Cli {
     /// Disable all AI features (ONNX Runtime, SmolLM fallback, behavioral analysis)
     #[arg(long, env = "OSOOSI_NO_AI")]
     no_ai: bool,
+    /// Enable debug logging (sets log level to DEBUG)
+    #[arg(short, long)]
+    debug: bool,
     #[command(subcommand)]
     command: Option<Commands>,
 }
@@ -150,10 +153,9 @@ pub enum SandboxAction {
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     set_panic_hook();
-    let _guard = init_logging()?;
     
-    // We defer ORT configuration to async_main after potential provisioning
     let cli = Cli::parse();
+    let _guard = init_logging(cli.debug)?;
     
     if let Err(e) = async_main(cli).await {
         error!("Fatal execution error: {}", e);
@@ -860,7 +862,7 @@ fn resolve_log_directory() -> PathBuf {
         .unwrap_or_else(|_| std::env::temp_dir().join("osoosi").join("logs"))
 }
 
-fn init_logging() -> anyhow::Result<tracing_appender::non_blocking::WorkerGuard> {
+fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::WorkerGuard> {
     let log_dir = resolve_log_directory();
     fs::create_dir_all(&log_dir).map_err(|e| {
         anyhow::anyhow!(
@@ -871,7 +873,8 @@ fn init_logging() -> anyhow::Result<tracing_appender::non_blocking::WorkerGuard>
     })?;
     let file_appender = tracing_appender::rolling::daily(&log_dir, "osoosi.log");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-    let filter = EnvFilter::from_default_env().add_directive(tracing::Level::INFO.into());
+    let level = if debug { tracing::Level::DEBUG } else { tracing::Level::WARN };
+    let filter = EnvFilter::from_default_env().add_directive(level.into());
     let console_layer = fmt::Layer::default().with_writer(std::io::stdout);
     let file_layer = fmt::Layer::default().with_writer(non_blocking).with_ansi(false);
     

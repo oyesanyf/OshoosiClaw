@@ -7,69 +7,63 @@
   <CheckRevocation/>
 
   <EventFiltering>
+    <!-- CATEGORY: Visibility (PRIORITY: Critical) -->
     <!-- EVENT ID 1: PROCESS CREATION -->
     <ProcessCreate onmatch="exclude"/>
-
-    <!-- EVENT ID 2: FILE CREATION TIME CHANGE -->
-    <FileCreateTime onmatch="exclude"/>
-
     <!-- EVENT ID 3: NETWORK CONNECTION -->
     <NetworkConnect onmatch="exclude"/>
-
-    <!-- EVENT ID 5: PROCESS TERMINATED -->
-    <ProcessTerminate onmatch="exclude"/>
-
-    <!-- EVENT ID 6: DRIVER LOADED -->
-    <DriverLoad onmatch="exclude"/>
-
     <!-- EVENT ID 7: IMAGE LOAD -->
     <ImageLoad onmatch="exclude"/>
 
+    <!-- CATEGORY: Anti-Injection (PRIORITY: High) -->
     <!-- EVENT ID 8: CREATEREMOTETHREAD -->
     <CreateRemoteThread onmatch="exclude"/>
-
-    <!-- EVENT ID 9: RAWACCESSREAD -->
-    <RawAccessRead onmatch="exclude"/>
-
     <!-- EVENT ID 10: PROCESSACCESS -->
     <ProcessAccess onmatch="exclude"/>
+    <!-- EVENT ID 25: PROCESS TAMPERING -->
+    <ProcessTampering onmatch="exclude"/>
 
+    <!-- CATEGORY: Persistence (PRIORITY: Medium) -->
     <!-- EVENT ID 11: FILECREATE -->
     <FileCreate onmatch="exclude">
        <TargetFilename condition="contains">\OshoosiClaw\logs\</TargetFilename>
     </FileCreate>
-
     <!-- EVENT ID 12, 13, 14: REGISTRY MODIFICATION -->
     <RegistryEvent onmatch="exclude"/>
-
-    <!-- EVENT ID 15: FILECREATESTREAMHASH -->
-    <FileCreateStreamHash onmatch="exclude"/>
-
-    <!-- EVENT ID 17, 18: PIPE EVENTS -->
-    <PipeEvent onmatch="exclude"/>
-
     <!-- EVENT ID 19, 20, 21: WMI EVENTS -->
     <WmiEvent onmatch="exclude"/>
 
+    <!-- CATEGORY: Kernel Integrity (PRIORITY: High) -->
+    <!-- EVENT ID 6: DRIVER LOADED -->
+    <DriverLoad onmatch="exclude"/>
+    <!-- EVENT ID 9: RAWACCESSREAD -->
+    <RawAccessRead onmatch="exclude"/>
+
+    <!-- ADDITIONAL FORENSIC EVENTS -->
+    <!-- EVENT ID 2: FILE CREATION TIME CHANGE -->
+    <FileCreateTime onmatch="exclude"/>
+    <!-- EVENT ID 5: PROCESS TERMINATED -->
+    <ProcessTerminate onmatch="exclude"/>
+    <!-- EVENT ID 15: FILECREATESTREAMHASH -->
+    <FileCreateStreamHash onmatch="exclude"/>
+    <!-- EVENT ID 17, 18: PIPE EVENTS -->
+    <PipeEvent onmatch="exclude"/>
     <!-- EVENT ID 22: DNS QUERY -->
     <DnsQuery onmatch="exclude"/>
-
     <!-- EVENT ID 23: FILE DELETE -->
     <FileDelete onmatch="exclude">
        <TargetFilename condition="contains">\OshoosiClaw\logs\</TargetFilename>
     </FileDelete>
-
     <!-- EVENT ID 24: CLIPBOARD MONITORING -->
     <ClipboardChange onmatch="exclude"/>
-
-    <!-- EVENT ID 25: PROCESS TAMPERING -->
-    <ProcessTampering onmatch="exclude"/>
-
     <!-- EVENT ID 26: FILE DELETE DETECTED -->
     <FileDeleteDetected onmatch="exclude"/>
-
     <!-- EVENT ID 27: FILE BLOCK EXECUTABLE -->
     <FileBlockExecutable onmatch="exclude"/>
+    <!-- EVENT ID 28: FILE BLOCK SHREDDING -->
+    <FileBlockShredding onmatch="exclude"/>
+    <!-- EVENT ID 29: FILE EXECUTABLE DETECTED -->
+    <FileExecutableDetected onmatch="exclude"/>
 
   </EventFiltering>
 </Sysmon>

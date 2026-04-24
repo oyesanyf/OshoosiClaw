@@ -112,9 +112,13 @@ impl WindowsEventReader {
     fn query_wevtutil(&mut self) -> anyhow::Result<Vec<String>> {
         use std::process::Command;
         let mut cmd = Command::new("wevtutil");
-        // Increased to 10,000 to ensure we don't miss events on busy systems.
-        // We use /rd:true to get the newest first.
-        cmd.args(["qe", &self.channel, "/rd:true", "/e:root", "/c:10000", "/f:xml"]);
+        if self.last_record_id > 0 {
+            let query = format!("*[System[(EventRecordID > {})]]", self.last_record_id);
+            cmd.args(["qe", &self.channel, &format!("/q:{}", query), "/rd:false", "/e:root", "/c:200", "/f:xml"]);
+        } else {
+            // First run, just get the most recent 100 events to establish a baseline
+            cmd.args(["qe", &self.channel, "/rd:true", "/e:root", "/c:100", "/f:xml"]);
+        }
         let output = cmd.output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -148,10 +152,12 @@ impl WindowsEventReader {
         let mut new_events = Vec::new();
         let mut max_id = self.last_record_id;
 
+        // Note: if we used /rd:false above, the events come in chronological order.
+        // For /rd:true (first run), they come newest first.
         for ev in events {
             let record_id = self.extract_record_id(&ev);
             if record_id <= self.last_record_id && self.last_record_id != 0 {
-                break; // Hit already processed events
+                continue; // Skip already processed events just in case
             }
             if record_id > max_id {
                 max_id = record_id;

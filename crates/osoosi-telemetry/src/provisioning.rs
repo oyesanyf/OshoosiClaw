@@ -347,26 +347,39 @@ impl AgentProvisioner {
   <CopyOnDeletePE/>
 
   <EventFiltering>
+    <!-- Visibility (Critical) -->
     <ProcessCreate onmatch="exclude" />
-    <FileCreateTime onmatch="exclude" />
     <NetworkConnect onmatch="exclude" />
-    <ProcessTerminate onmatch="exclude" />
-    <DriverLoad onmatch="exclude" />
     <ImageLoad onmatch="exclude" />
+
+    <!-- Anti-Injection (High) -->
     <CreateRemoteThread onmatch="exclude" />
-    <RawAccessRead onmatch="exclude" />
     <ProcessAccess onmatch="exclude" />
+    <ProcessTampering onmatch="exclude" />
+
+    <!-- Persistence (Medium) -->
     <FileCreate onmatch="exclude" />
     <RegistryEvent onmatch="exclude" />
+    <WmiEvent onmatch="exclude" />
+
+    <!-- Kernel Integrity (High) -->
+    <DriverLoad onmatch="exclude" />
+    <RawAccessRead onmatch="exclude" />
+
+    <!-- Additional Forensic Coverage -->
+    <FileCreateTime onmatch="exclude" />
+    <ProcessTerminate onmatch="exclude" />
     <FileCreateStreamHash onmatch="exclude" />
     <PipeEvent onmatch="exclude" />
-    <WmiEvent onmatch="exclude" />
     <DnsQuery onmatch="exclude" />
     <FileDelete onmatch="exclude" />
     <ClipboardChange onmatch="exclude" />
-    <ProcessTampering onmatch="exclude" />
     <FileDeleteDetected onmatch="exclude" />
     <FileExecutableDetected onmatch="exclude" />
+    <FileBlockExecutable onmatch="exclude" />
+    <FileBlockShredding onmatch="exclude" />
+    <SysmonServiceState onmatch="exclude" />
+    <SysmonConfigChange onmatch="exclude" />
 "#);
 
         for rule in rules {
