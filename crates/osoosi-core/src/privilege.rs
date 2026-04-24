@@ -735,6 +735,24 @@ pub fn bootstrap_security_rules() {
                     .creation_flags(CREATE_NO_WINDOW)
                     .args(["-Command", &format!("Add-MpPreference -ExclusionProcess '{}' -ErrorAction SilentlyContinue", exe_str)])
                     .status();
+
+                // Exclude bin directory (contains ClamAV, etc.)
+                let bin_dir = osoosi_types::resolve_bin_dir();
+                if bin_dir.exists() {
+                    let _ = Command::new("powershell")
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .args(["-Command", &format!("Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue", bin_dir.to_string_lossy())])
+                        .status();
+                }
+
+                // Exclude cache directory (contains transient data, feeds, etc.)
+                let cache_dir = osoosi_types::resolve_cache_dir();
+                if cache_dir.exists() {
+                    let _ = Command::new("powershell")
+                        .creation_flags(CREATE_NO_WINDOW)
+                        .args(["-Command", &format!("Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue", cache_dir.to_string_lossy())])
+                        .status();
+                }
             }
 
             // 2. Firewall Rules (Force Inbound/Outbound Allow for the P2P Mesh)
