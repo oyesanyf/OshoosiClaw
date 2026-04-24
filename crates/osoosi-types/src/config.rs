@@ -1182,7 +1182,7 @@ impl Default for AiConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            malconv_weights_url: Some("https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/malconv.safetensors?download=true".to_string()),
+            malconv_weights_url: Some("https://huggingface.co/Xenova/malconv/resolve/main/model.safetensors?download=true".to_string()),
         }
     }
 }

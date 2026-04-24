@@ -113,8 +113,8 @@ impl WindowsEventReader {
     fn query_wevtutil(&mut self) -> anyhow::Result<Vec<String>> {
         use std::process::Command;
         let mut cmd = Command::new("wevtutil");
-        // Increased to 1000 to catch busy systems, using /rd:true to get latest first
-        cmd.args(["qe", &self.channel, "/rd:true", "/e:root", "/c:1000", "/f:xml"]);
+        // Increased to 5000 to catch busy systems, using /rd:true to get latest first
+        cmd.args(["qe", &self.channel, "/rd:true", "/e:root", "/c:5000", "/f:xml"]);
         let output = cmd.output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);

@@ -1016,8 +1016,8 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
             "weights.safetensors",
         ];
         let malconv_repos = [
-            "oyesanyf/OshoosiClaw-Weights",
             "Xenova/malconv",
+            "oyesanyf/OshoosiClaw-Weights",
             "onnx-community/malconv",
             "microsoft/malconv",
         ];

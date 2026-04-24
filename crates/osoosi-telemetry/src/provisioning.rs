@@ -495,6 +495,12 @@ impl AgentProvisioner {
             combined.push_str(&decode_utf16_or_8(&output.stderr));
             let combined_lc = combined.to_ascii_lowercase();
 
+            // SUCCESS OVERRIDE: If output indicates success, don't treat non-zero exit as failure
+            if combined_lc.contains("loading configuration file") || combined_lc.contains("configuration updated") {
+                info!("Sysmon reports configuration updated/loaded successfully.");
+                return Ok(());
+            }
+
             if current_allow_repair && combined_lc.contains("already registered") {
                 warn!("Sysmon reports an already-registered driver. Reinstalling (uninstall force -> install/update)...");
                 let mut uninstall_cmd = Command::new(binary);

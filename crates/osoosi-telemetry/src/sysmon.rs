@@ -60,6 +60,9 @@ impl SysmonParser {
                     match current_tag.as_str() {
                         "EventID" => event_id = Some(text.parse()?),
                         "Computer" => computer = text,
+                        "EventRecordID" => {
+                            event_data.insert("EventRecordID".to_string(), json!(text));
+                        }
                         _ => {}
                     }
                 }
