@@ -802,7 +802,7 @@ impl EdrOrchestrator {
                     // Magika pre-filter: only executable/scannable files go to the full scanner
                     let path = std::path::Path::new(&event.path);
                     if let Some(result) = orchestrator.malware_scanner.scan_file(path) {
-                        // ClamAV says clean → let it go (trust ClamAV over ML/signatures)
+                        // 1. ClamAV says clean → let it go (trust ClamAV over ML/signatures)
                         if result.clam_detected == Some(false) {
                             info!("ClamAV clean: {} — allowing (no action)", result.file_path);
                             orchestrator.audit.log("CLAMAV_CLEAN", serde_json::json!({
@@ -813,6 +813,30 @@ impl EdrOrchestrator {
                             }));
                             continue;
                         }
+
+                        // 2. Trigger Deep Static Analysis (CAPA, FLOSS, Falcon) for suspicious files or executables
+                        let is_executable = result.magika_label.contains("exe") || result.magika_label.contains("pe") || result.magika_label.contains("elf");
+                        if result.combined_score > 0.5 || is_executable {
+                            let analyzer = orchestrator.static_analyzer.clone();
+                            let path_buf = path.to_path_buf();
+                            let orch_clone = orchestrator.clone();
+                            tokio::spawn(async move {
+                                match analyzer.analyze_file(&path_buf).await {
+                                    Ok(Some(deep_sig)) => {
+                                        warn!("DEEP ANALYSIS IDENTIFIED THREAT (CAPA/FLOSS): {} - confidence {:.2}", deep_sig.id, deep_sig.confidence);
+                                        let _ = orch_clone.memory.log_threat(&deep_sig);
+                                        orch_clone.audit.log("DEEP_STATIC_THREAT", serde_json::json!({
+                                            "path": path_buf.display().to_string(),
+                                            "reasons": deep_sig.reason,
+                                            "confidence": deep_sig.confidence
+                                        }));
+                                    }
+                                    Ok(None) => debug!("Deep analysis complete: no additional threats found for {:?}", path_buf),
+                                    Err(e) => error!("Deep static analysis failed for {:?}: {}", path_buf, e),
+                                }
+                            });
+                        }
+
                         if result.is_malware {
                             warn!(
                                 "MALWARE DETECTED: {} (magika={}, type={}, ml={:.2}, sig={:.2}, combined={:.2})",
