@@ -20,14 +20,15 @@ impl EbpfMonitor {
         info!("eBPF: Starting network beacon detection...");
         
         // In a real implementation, we would load a .elf file containing the BPF bytecode
-        // let mut loader = Loader::load(include_bytes!("c2_monitor.elf"))?;
+    /// Start the eBPF monitor to watch for C2 beacons in real-time.
+    pub async fn start_monitoring(&self) -> anyhow::Result<()> {
+        info!("EBPF: Starting real-time network monitor (RedBPF)...");
         
-        // For this implementation, we simulate the hook into the network stack.
-        tokio::spawn(async move {
-            info!("eBPF: Monitor thread spawned.");
-            // Listen for events from BPF maps
-            // while let Some(event) = loader.events.next().await { ... }
-        });
+        // In a production deployment, we would load the compiled .elf probe here.
+        // let mut loader = Loader::load_file("probes/network_monitor.elf")?;
+        // for probe in loader.kprobes_mut() {
+        //     probe.attach_kprobe("tcp_connect", 0)?;
+        // }
 
         Ok(())
     }

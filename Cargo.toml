@@ -90,6 +90,13 @@ winapi = { version = "0.3", features = ["memoryapi", "processthreadsapi", "winnt
 bloomfilter = "1.0.9"
 libloading = "0.8"
 yara-x = "1.15.0"
+hayabusa = { git = "https://github.com/Yamato-Security/hayabusa" }
+chainsaw = { git = "https://github.com/WithSecureLabs/chainsaw" }
+die-rust = { package = "die", git = "https://github.com/elastic/die-rust" }
+falcon-analyzer = { package = "falcon", version = "0.6.0" }
+falcon-rs = "0.1"
+redbpf = "2.3.0"
+xori = { git = "https://github.com/endgameinc/xori" }
 
 [profile.release]
 lto = true

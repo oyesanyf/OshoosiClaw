@@ -27,4 +27,10 @@ candle-transformers = { workspace = true }
 rand = { workspace = true }
 yara-x = { workspace = true }
 walkdir = { workspace = true }
+hayabusa = { workspace = true }
+chainsaw = { workspace = true }
+die-rust = { workspace = true }
+falcon-analyzer = { workspace = true }
+redbpf = { workspace = true }
+xori = { workspace = true }
 
