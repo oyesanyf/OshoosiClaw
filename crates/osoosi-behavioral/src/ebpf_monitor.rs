@@ -1,8 +1,8 @@
 #[cfg(target_os = "linux")]
 use redbpf::load::Loader;
-use tracing::{info, warn, error};
-use std::sync::Arc;
-use tokio::sync::mpsc;
+use tracing::warn;
+#[cfg(target_os = "linux")]
+use tracing::info;
 
 #[cfg(target_os = "linux")]
 pub struct EbpfMonitor {

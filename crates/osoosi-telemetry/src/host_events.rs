@@ -118,21 +118,23 @@ impl WindowsEventReader {
         let output = cmd.output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let msg = if stderr.contains("Access is denied") || stderr.contains("access denied") {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            let msg = if stderr.contains("Access is denied") || stderr.contains("access denied") || stdout.contains("Access is denied") {
                 format!(
                     "wevtutil failed (access denied). OpenỌ̀ṣọ́ọ̀sì runs unprivileged—it does not request admin. \
                     Admin must grant read access: add the OpenỌ̀ṣọ́ọ̀sì service account to 'Event Log Readers' group, \
                     or set channel ACL via: wevtutil gl \"{}\" then wevtutil sl \"{}\" /ca:<SDDL>",
                     self.channel, self.channel
                 )
-            } else if stderr.contains("The specified channel could not be found") {
+            } else if stderr.contains("not found") || stdout.contains("not found") {
                 format!(
-                    "wevtutil failed: channel '{}' was not found. Install/configure Sysmon or set OSOOSI_EVENT_SOURCE to an existing channel (e.g., Security/System/Application). Details: {}",
+                    "wevtutil failed: channel '{}' was not found. Install/configure Sysmon or set OSOOSI_EVENT_SOURCE to an existing channel. Details: {} {}",
                     self.channel,
-                    stderr
+                    stderr,
+                    stdout
                 )
             } else {
-                format!("wevtutil failed: {}", stderr)
+                format!("wevtutil failed: STDERR: {} | STDOUT: {}", stderr, stdout)
             };
             return Err(anyhow::anyhow!("{}", msg));
         }

@@ -1,9 +1,8 @@
-use std::collections::{HashMap, VecDeque};
-use std::sync::Arc;
+use std::collections::VecDeque;
 use dashmap::DashMap;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
-use tracing::{info, warn, debug};
+use tracing::{info, debug};
 use osoosi_types::{SysmonEvent, ThreatSignature, ResponseAction, ActionState};
 
 /// A single event in a process's timeline.

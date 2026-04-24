@@ -1,6 +1,6 @@
 use std::path::{Path, PathBuf};
 use yara_x::{Scanner, Compiler};
-use tracing::{info, warn, error, debug};
+use tracing::{info, warn, debug};
 use osoosi_types::ThreatSignature;
 
 pub struct YaraAnalyzer {

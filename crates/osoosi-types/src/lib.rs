@@ -13,6 +13,7 @@ pub mod trust;
 pub mod repair;
 pub mod holograph;
 pub mod executor;
+pub mod blocking;
 
 pub use config::*;
 pub use error::*;
@@ -24,3 +25,4 @@ pub use trust::*;
 pub use repair::*;
 pub use holograph::*;
 pub use executor::*;
+pub use blocking::*;

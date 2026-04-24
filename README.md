@@ -7,7 +7,7 @@
 
 <p align="center">
   <a href="#-features"><img src="https://img.shields.io/badge/Engine-Rust%20🦀-orange?style=for-the-badge" alt="Rust"/></a>
-  <a href="#-detection-arsenal"><img src="https://img.shields.io/badge/Detection-6%20Engines-red?style=for-the-badge" alt="Detection"/></a>
+  <a href="#-detection-arsenal"><img src="https://img.shields.io/badge/Detection-12%20Engines-red?style=for-the-badge" alt="Detection"/></a>
   <a href="#-mesh-networking"><img src="https://img.shields.io/badge/Mesh-libp2p%20P2P-blue?style=for-the-badge" alt="Mesh"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"/></a>
   <a href="#-architecture"><img src="https://img.shields.io/badge/Crates-20-purple?style=for-the-badge" alt="Crates"/></a>
@@ -34,7 +34,7 @@
 **OshoosiClaw** is a next-generation, autonomous **Endpoint Detection & Response (EDR)** agent built entirely in **Rust**. It implements a **Decentralized Immune System** model where:
 
 - 🔐 **Trust** is mathematically proven through Merkle Proofs and S2S Certificates
-- 🔬 **Detection** is powered by a 10-engine forensic pipeline (EMBER ML + CAPA + FLOSS + HollowsHunter + YARA + ClamAV + Hayabusa + Chainsaw + Xori + RedBPF)
+- 🔬 **Detection** is powered by a 12-engine forensic pipeline (EMBER ML + CAPA + FLOSS + HollowsHunter + YARA + ClamAV + Hayabusa + Chainsaw + Xori + RedBPF + Gemma4 + yara-x)
 - 🧠 **Intelligence** is shared peer-to-peer across a **Million-Node Mesh** with Zonal Sharding and Reputation Filtering
 - 🛡️ **Runtime Security** is hardened via **Native OS Sandboxing** (Landlock on Linux, Job Objects on Windows)
 - 🛡️ **Optional Sandboxing**: NVIDIA OpenShell (Docker required ONLY for Central Gateway nodes)
@@ -60,7 +60,7 @@ OshoosiClaw does not rely on a single ML model. It uses a **cascading AI pipelin
 | **File Identification** | [**Google Magika**](https://github.com/google/magika) | Deep learning-based pre-filtering. Identifies PE/ELF/Scripts before heavy analysis. |
 | **Static Malware Detection** | [**EMBER ML**](https://github.com/elastic/ember) | Gradient-boosted tree model trained on 54 PE features (sections, imports, entropy). |
 | **Behavioral NLP** | [**SecureBERT**](https://huggingface.co/ehsanaghaei/SecureBERT) | Security-domain BERT model that classifies PowerShell, CLI commands, and log sentences. |
-| **Reasoning & Context** | [**Gemma 3 4B** / **Llama 3.1 8B**](https://ollama.com/) | Local LLMs (via Ollama) that reason about complex detection chains and decide on autonomous response. |
+| **Reasoning & Context** | [**Gemma 4 9B** / **Llama 3.1 8B**](https://ollama.com/) | Local LLMs (via Ollama) that reason about complex detection chains and decide on autonomous response. |
 
 ---
 
@@ -165,14 +165,16 @@ graph TD
     B -->|Static Capability Detection| E[Xori]
     B -->|Real-time Kernel Monitoring| F[RedBPF]
     B -->|Native Signature Scanning| G[yara-x]
+    B -->|LLM Reasoning| H[Gemma 4]
     
-    C --> H[Sigma Rules Scanning]
-    D --> I[MFT Anomaly Detection]
-    E --> J[Shellcode Emulation]
-    F --> K[Network Beacon Detection]
-    G --> L[Pattern Matching]
+    C --> I[Sigma Rules Scanning]
+    D --> J[MFT Anomaly Detection]
+    E --> K[Shellcode Emulation]
+    F --> L[Network Beacon Detection]
+    G --> M[Pattern Matching]
+    H --> N[Contextual Decisioning]
     
-    H & I & J & K & L --> M[Unified C2 Score]
+    I & J & K & L & M & N --> O[Unified Consensus Score]
 ```
 ```
 
@@ -232,8 +234,9 @@ OshoosiClaw is built as a **modular monolith** — 20 specialized crates that co
 │  ┌────▼──────────────▼──────────────▼─────────────────▼──────────┐ │
 │  │                    EdrOrchestrator                             │ │
 │  │  ┌─────────────────────────────────────────────────────────┐  │ │
-│  │  │              Detection Pipeline (6 Engines)              │  │ │
-│  │  │  Magika → ClamAV → YARA → EMBER ML → CAPA → FLOSS      │  │ │
+│  │  │              Detection Pipeline (12 Engines)             │  │ │
+│  │  │ Magika → ClamAV → YARA → EMBER ML → CAPA → FLOSS →      │  │ │
+│  │  │ Hayabusa → Chainsaw → Xori → RedBPF → Gemma4 → yara-x   │  │ │
 │  │  └─────────────────────────────────────────────────────────┘  │ │
 │  │  ┌─────────────────────────────────────────────────────────┐  │ │
 │  │  │            Memory Forensics (HollowsHunter)              │  │ │
@@ -262,7 +265,7 @@ OshoosiClaw is built as a **modular monolith** — 20 specialized crates that co
 | `osoosi-telemetry` | **Ogun** *(Iron Layer)* | Cross-platform event ingestion (Sysmon/Auditd/ESF) + FIM |
 | `osoosi-policy` | — | Detection engines (STGC, Sigma, KEV, NSRL feeds) |
 | `osoosi-model` | — | ML model training, Magika/ClamAV malware scanning |
-| `osoosi-behavioral` | — | SecureBERT + Gemma 3 + OpenAI behavioral AI |
+| `osoosi-behavioral` | — | SecureBERT + Gemma 4 + OpenAI behavioral AI |
 | `osoosi-wire` | — | P2P mesh (libp2p Gossipsub), peer join gate, reputation |
 | `osoosi-trust` | — | Identity (DID), Merkle Proofs, certificate issuing |
 | `osoosi-audit` | — | Tamper-evident Merkle Logchain |
@@ -306,7 +309,9 @@ OshoosiClaw uses a **six-engine detection pipeline** — a depth of analysis tha
 | 8️⃣ | **Hayabusa** | Sigma Rule Engine | Host-based C2 log analysis (Post-Execution) |
 | 9️⃣ | **Chainsaw** | Fast Forensic Triage | MFT anomalies & triage artifacts |
 | 🔟 | **Xori** | Shellcode Emulator | Static capability detection (Pre-Execution) |
-| 🛡️ | **RedBPF** | eBPF Network Monitor | Real-time C2 beacon detection (Linux Kernel) |
+| 1️⃣1️⃣ | **RedBPF** | eBPF Network Monitor | Real-time C2 beacon detection (Linux Kernel) |
+| 1️⃣2️⃣ | **yara-x** | Native Rust YARA | High-speed pattern matching |
+| 🧠 | **Gemma 4** | LLM Consensus | Context-aware decision reasoning |
 
 ### Sysmon Event Coverage (Complete)
 
@@ -574,7 +579,7 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 | [PE-sieve](https://github.com/hasherezade/pe-sieve) | hasherezade / Google | BSD 2-Clause | In-memory PE scanning engine |
 | [Sysmon](https://learn.microsoft.com/sysinternals/downloads/sysmon) | Microsoft Sysinternals | Sysinternals EULA | Kernel-level ETW telemetry driver |
 | [ClamAV](https://www.clamav.net/) | Cisco Talos | GPL 2.0 | Signature-based antivirus scanning |
-| [Ollama](https://ollama.com/) | Ollama Inc. | MIT | Local LLM inference (Llama 3.1 8B, Gemma 3)  |
+| [Ollama](https://ollama.com/) | Ollama Inc. | MIT | Local LLM inference (Llama 3.1 8B, Gemma 4)  |
 | [OpenSSL](https://www.openssl.org/) | OpenSSL Project | Apache 2.0 | Cryptographic operations & TLS |
 | [YARA](https://virustotal.github.io/yara/) | VirusTotal / Google | BSD 3-Clause | Pattern matching for threat detection |
 | [Sigma](https://sigmahq.io/) | SigmaHQ Community | LGPL 2.1 | Generic log detection rules |
@@ -616,7 +621,7 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 | Model / Framework | Provider | Purpose |
 |:-------------------|:---------|:--------|
 | [SecureBERT](https://huggingface.co/ehsanaghaei/SecureBERT) | Ehsan Aghaei | Security-domain NLP classification |
-| [Gemma 3 4B](https://ai.google.dev/gemma) | Google DeepMind | Local behavioral reasoning (via Ollama) |
+| [Gemma 4 9B](https://ai.google.dev/gemma) | Google DeepMind | Local behavioral reasoning (via Ollama) |
 | [Llama 3.1 8B](https://llama.meta.com/) | Meta AI | Autonomous agent reasoning (via Ollama) |
 | [EMBER](https://github.com/elastic/ember) | Elastic / Endgame | PE feature extraction methodology (54 features) |
 | [LangChain](https://python.langchain.com/) | LangChain Inc. | LLM agent orchestration framework |

@@ -168,6 +168,9 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/pending-actions", get(get_pending_actions))
         .route("/api/approve-action", post(post_approve_action))
         .route("/api/reject-action", post(post_reject_action))
+        .route("/api/blocking/rules", get(get_blocking_rules))
+        .route("/api/blocking/rules", post(post_blocking_rule))
+        .route("/api/blocking/rules/unlock", post(post_blocking_unlock))
         .with_state(state);
 
     if index_html.is_file() {
@@ -805,6 +808,63 @@ async fn get_malware_mesh_samples(State(state): State<DashboardState>) -> Json<V
             }
         }
         None => Json(json!({ "count": 0, "samples": [], "live": false })),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct BlockingRuleRequest {
+    path: String,
+    kind: String, // "Executable" or "Shredding"
+}
+
+#[derive(Debug, Deserialize)]
+struct UnlockRequest {
+    path: String,
+}
+
+async fn get_blocking_rules(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            let rules = orch.blocking_manager.get_rules().await;
+            Json(json!(rules))
+        }
+        None => Json(json!([])),
+    }
+}
+
+async fn post_blocking_rule(
+    State(state): State<DashboardState>,
+    Json(req): Json<BlockingRuleRequest>,
+) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            let kind = match req.kind.to_lowercase().as_str() {
+                "executable" => osoosi_types::BlockingKind::Executable,
+                "shredding" => osoosi_types::BlockingKind::Shredding,
+                _ => return Json(json!({ "ok": false, "error": "Invalid blocking kind" })),
+            };
+            let rule = osoosi_types::BlockingRule { path: req.path, kind };
+            match orch.blocking_manager.add_rule(rule).await {
+                Ok(_) => Json(json!({ "ok": true, "message": "Blocking rule added" })),
+                Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
+        None => Json(json!({ "ok": false, "error": "Backend not active" })),
+    }
+}
+
+async fn post_blocking_unlock(
+    State(state): State<DashboardState>,
+    Json(req): Json<UnlockRequest>,
+) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            match orch.blocking_manager.remove_rule(&req.path).await {
+                Ok(_) => Json(json!({ "ok": true, "message": "Blocking rule removed (unlocked)" })),
+                Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
+            }
+        }
+        None => Json(json!({ "ok": false, "error": "Backend not active" })),
     }
 }
 

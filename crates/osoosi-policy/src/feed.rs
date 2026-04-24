@@ -7,10 +7,12 @@ use std::collections::HashSet;
 use std::io::Write;
 use tracing::{info, warn, error, debug};
 use sysinfo::Disks;
+use base64::Engine;
 
 pub const CISA_KEV_FEED_URL: &str = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
 pub const OTX_PULSES_SUBSCRIBED_URL: &str = "https://otx.alienvault.com/api/v1/pulses/subscribed/";
 pub const NVD_CVE_API_URL: &str = "https://services.nvd.nist.gov/rest/json/cves/2.0";
+pub const OTX_TAXII_POLL_URL: &str = "https://otx.alienvault.com/taxii/poll";
 
 #[derive(Debug, Clone, Default)]
 pub struct OtxIndicators {
@@ -23,6 +25,39 @@ pub struct OtxIndicators {
 impl OtxIndicators {
     pub fn total_count(&self) -> usize {
         self.ips.len() + self.domains.len() + self.urls.len() + self.hashes.len()
+    }
+
+    pub fn to_vec(&self) -> Vec<osoosi_types::OtxIndicator> {
+        let mut out = Vec::new();
+        for ip in &self.ips {
+            out.push(osoosi_types::OtxIndicator {
+                indicator_type: "ipv4".to_string(),
+                value: ip.clone(),
+                source: "OTX".to_string(),
+            });
+        }
+        for domain in &self.domains {
+            out.push(osoosi_types::OtxIndicator {
+                indicator_type: "domain".to_string(),
+                value: domain.clone(),
+                source: "OTX".to_string(),
+            });
+        }
+        for url in &self.urls {
+            out.push(osoosi_types::OtxIndicator {
+                indicator_type: "url".to_string(),
+                value: url.clone(),
+                source: "OTX".to_string(),
+            });
+        }
+        for hash in &self.hashes {
+            out.push(osoosi_types::OtxIndicator {
+                indicator_type: "hash".to_string(),
+                value: hash.clone(),
+                source: "OTX".to_string(),
+            });
+        }
+        out
     }
 }
 
@@ -200,6 +235,12 @@ impl ThreatFeedFetcher {
     /// Uses the subscribed pulses endpoint with `modified_since` to limit scope,
     /// and filters to only high-value adversary/malware pulses.
     pub async fn fetch_otx_indicators(&self, api_key: &str) -> anyhow::Result<OtxIndicators> {
+        // 10/10 Logic: Support both standard API and TAXII 1.1
+        if std::env::var("OTX_USE_TAXII").map(|v| v == "1").unwrap_or(false) {
+            let collection = std::env::var("OTX_TAXII_COLLECTION").unwrap_or_else(|_| "user_LevelBlue".to_string());
+            return self.fetch_otx_taxii_indicators(api_key, &collection).await;
+        }
+
         if offline_mode() {
             return Err(anyhow::anyhow!("Offline mode: skipping OTX fetch"));
         }
@@ -808,7 +849,7 @@ impl ThreatFeedFetcher {
             seen_versions.insert(version.clone());
 
             // Compare versions: YYYY.MM.V
-            if version_is_newer(&version, current_version) {
+            if self.version_is_newer(&version, current_version) {
                 // Check for full and delta downloads
                 let full_url = format!(
                     "https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/rds_{}/RDS_{}_modern.zip",
@@ -842,17 +883,78 @@ impl ThreatFeedFetcher {
 
         Ok(updates)
     }
-}
 
-/// Compare two NSRL version strings of the form "YYYY.MM.V".
-/// Returns true if `candidate` is newer than `current`.
-fn version_is_newer(candidate: &str, current: &str) -> bool {
-    let parse = |v: &str| -> (u32, u32, u32) {
-        let parts: Vec<&str> = v.split('.').collect();
-        let year = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
-        let month = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
-        let patch = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
-        (year, month, patch)
-    };
-    parse(candidate) > parse(current)
+    /// Compare two NSRL version strings of the form "YYYY.MM.V".
+    /// Returns true if `candidate` is newer than `current`.
+    fn version_is_newer(&self, candidate: &str, current: &str) -> bool {
+        let parse = |v: &str| -> (u32, u32, u32) {
+            let parts: Vec<&str> = v.split('.').collect();
+            let year = parts.first().and_then(|s| s.parse().ok()).unwrap_or(0);
+            let month = parts.get(1).and_then(|s| s.parse().ok()).unwrap_or(0);
+            let patch = parts.get(2).and_then(|s| s.parse().ok()).unwrap_or(0);
+            (year, month, patch)
+        };
+        parse(candidate) > parse(current)
+    }
+
+    /// Fetch OTX indicators via TAXII 1.1 protocol.
+    pub async fn fetch_otx_taxii_indicators(&self, api_key: &str, collection: &str) -> anyhow::Result<OtxIndicators> {
+        info!("[OTX TAXII] Polling collection '{}'...", collection);
+        
+        let begin = (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
+        let message_id = uuid::Uuid::new_v4().to_string();
+        
+        let body = format!(
+            r#"<taxii_11:Poll_Request xmlns:taxii_11="http://taxii.mitre.org/messages/taxii_xml_binding-1.1" message_id="{}" collection_name="{}">
+                <taxii_11:Exclusive_Begin_Timestamp>{}</taxii_11:Exclusive_Begin_Timestamp>
+                <taxii_11:Poll_Parameters allow_asynch="false"/>
+            </taxii_11:Poll_Request>"#,
+            message_id, collection, begin
+        );
+
+        let auth = base64::engine::general_purpose::STANDARD.encode(format!("{}:foo", api_key));
+        
+        let response = self.client.post(OTX_TAXII_POLL_URL)
+            .header("Authorization", format!("Basic {}", auth))
+            .header("Content-Type", "application/xml")
+            .body(body)
+            .send()
+            .await?;
+
+        if !response.status().is_success() {
+            let status = response.status();
+            let text = response.text().await.unwrap_or_default();
+            anyhow::bail!("[OTX TAXII] HTTP error {}: {}", status, text);
+        }
+
+        let xml = response.text().await?;
+        let mut out = OtxIndicators::default();
+        
+        // Regex-based extraction (similar to the CLI tool)
+        let patterns = vec![
+            ("ipv4", r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
+            ("md5", r"\b[a-fA-F0-9]{32}\b"),
+            ("sha1", r"\b[a-fA-F0-9]{40}\b"),
+            ("sha256", r"\b[a-fA-F0-9]{64}\b"),
+            ("url", r#"https?://[^\s<>"']+"#),
+            ("domain", r"\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b"),
+        ];
+
+        for (kind, pattern) in patterns {
+            let re = regex::Regex::new(pattern).unwrap();
+            for mat in re.find_iter(&xml) {
+                let val = mat.as_str().to_lowercase();
+                match kind {
+                    "ipv4" => { out.ips.insert(val); }
+                    "md5" | "sha1" | "sha256" => { out.hashes.insert(val); }
+                    "url" => { out.urls.insert(val); }
+                    "domain" => { out.domains.insert(val); }
+                    _ => {}
+                }
+            }
+        }
+
+        info!("[OTX TAXII] Loaded {} indicators from TAXII feed.", out.total_count());
+        Ok(out)
+    }
 }

@@ -148,6 +148,7 @@ pub struct ThreatSignature {
     pub hash_blake3: Option<String>,
     pub process_name: Option<String>,
     pub confidence: f32, // 0.0 - 1.0
+    pub detector_count: u32,
     pub detected_at: DateTime<Utc>,
     pub source_node: String,
     pub signature: Option<String>,
@@ -179,6 +180,7 @@ impl ThreatSignature {
             hash_blake3: None,
             process_name: None,
             confidence: 0.0,
+            detector_count: 0,
             detected_at: Utc::now(),
             source_node,
             signature: None,
@@ -264,4 +266,12 @@ impl ThreatSignature {
         clone.signature = None;
         Ok(serde_json::to_vec(&clone)?)
     }
+}
+
+/// OTX (Open Threat Exchange) indicator.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct OtxIndicator {
+    pub indicator_type: String,
+    pub value: String,
+    pub source: String,
 }

@@ -205,17 +205,22 @@ impl MemoryStore {
             [],
         )?;
 
-        // NSRL (National Software Reference Library) table: Known Good files (allowlist)
+        // OTX Indicators table (synchronized from OTX TAXII / pulses)
         conn.execute(
-            "CREATE TABLE IF NOT EXISTS nsrl (
-                sha1 TEXT PRIMARY KEY,
-                md5 TEXT,
-                sha256 TEXT,
-                file_name TEXT,
-                file_size INTEGER,
-                product_code TEXT,
-                os_code TEXT
+            "CREATE TABLE IF NOT EXISTS otx_indicators (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                indicator_type TEXT NOT NULL,
+                value TEXT NOT NULL,
+                source TEXT NOT NULL,
+                first_seen TEXT NOT NULL,
+                last_seen TEXT NOT NULL,
+                UNIQUE(indicator_type, value, source)
             )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_otx_lookup ON otx_indicators(indicator_type, value)",
             [],
         )?;
 
@@ -740,6 +745,7 @@ impl MemoryStore {
                 reason: None,
                 predicted_next: None,
                 epsilon: None,
+                detector_count: 1,
                 require_approval: false,
                 action_state: ActionState::Executed,
             })
@@ -884,5 +890,38 @@ impl MemoryStore {
             params![node_id, 0.5 + delta, Utc::now().to_rfc3339(), delta, Utc::now().to_rfc3339()],
         )?;
         Ok(())
+    }
+
+    /// Upsert OTX indicators in batch.
+    pub fn upsert_otx_indicators(&self, indicators: &[osoosi_types::OtxIndicator]) -> anyhow::Result<()> {
+        let mut conn = self.conn.lock().unwrap();
+        let tx = conn.transaction()?;
+        {
+            let mut stmt = tx.prepare_cached(
+                "INSERT INTO otx_indicators (indicator_type, value, source, first_seen, last_seen)
+                 VALUES (?, ?, ?, ?, ?)
+                 ON CONFLICT(indicator_type, value, source) DO UPDATE SET last_seen = ?5"
+            )?;
+            let now = Utc::now().to_rfc3339();
+            for ind in indicators {
+                stmt.execute(params![
+                    ind.indicator_type,
+                    ind.value,
+                    ind.source,
+                    now,
+                    now,
+                ])?;
+            }
+        }
+        tx.commit()?;
+        Ok(())
+    }
+
+    /// Check if a value (IP, Domain, Hash, etc.) exists in the OTX indicator database.
+    pub fn is_indicator_malicious(&self, kind: &str, value: &str) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare_cached("SELECT 1 FROM otx_indicators WHERE indicator_type = ? AND value = ? LIMIT 1")?;
+        let exists = stmt.exists(params![kind, value])?;
+        Ok(exists)
     }
 }

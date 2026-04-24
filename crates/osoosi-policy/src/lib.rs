@@ -10,6 +10,7 @@ pub mod graph;
 pub mod traffic_adapter;
 pub mod predictive;
 pub mod sigma;
+pub mod voters;
 pub mod verified;
 
 pub mod admin;

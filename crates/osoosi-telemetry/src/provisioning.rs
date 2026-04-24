@@ -338,26 +338,18 @@ impl AgentProvisioner {
         ))
     }
 
-    /// Windows: Install Sysmon
-    #[cfg(target_os = "windows")]
-    async fn provision_windows(&self) -> anyhow::Result<()> {
-        info!("Provisioning Windows telemetry (Sysmon)...");
-        
-        let config_dir = Path::new("config");
-        if !config_dir.exists() {
-            let _ = std::fs::create_dir_all(config_dir);
-        }
-        
-        // 10/10 Logic: Generate a "Log Everything" config locally to ensure no event IDs are skipped.
-        let full_fidelity_cfg = config_dir.join("sysmon-immune-system.xml");
-        let all_events_xml = r#"<Sysmon schemaversion="4.91">
-  <HashAlgorithms>md5,sha256,IMPHASH</HashAlgorithms>
+    pub fn generate_sysmon_xml(&self, rules: &[osoosi_types::BlockingRule]) -> String {
+        let mut xml = String::from(r#"<Sysmon schemaversion="4.82">
+  <HashAlgorithms>*</HashAlgorithms>
+  <CheckRevocation/>
+  <DnsLookup/>
+  <ArchiveDirectory>Sysmon</ArchiveDirectory>
+  <CopyOnDeletePE/>
+
   <EventFiltering>
-    <!-- Log ALL events for all 26+ IDs -->
     <ProcessCreate onmatch="exclude" />
     <FileCreateTime onmatch="exclude" />
     <NetworkConnect onmatch="exclude" />
-    <SysmonServiceStateChanged onmatch="exclude" />
     <ProcessTerminate onmatch="exclude" />
     <DriverLoad onmatch="exclude" />
     <ImageLoad onmatch="exclude" />
@@ -372,22 +364,66 @@ impl AgentProvisioner {
     <DnsQuery onmatch="exclude" />
     <FileDelete onmatch="exclude" />
     <ClipboardChange onmatch="exclude" />
-    <SysmonConfigChange onmatch="exclude" />
     <ProcessTampering onmatch="exclude" />
     <FileDeleteDetected onmatch="exclude" />
-    <FileBlockExecutable onmatch="exclude" />
-    <FileBlockShredding onmatch="exclude" />
     <FileExecutableDetected onmatch="exclude" />
-  </EventFiltering>
-</Sysmon>"#;
+"#);
 
-        if let Err(e) = std::fs::write(&full_fidelity_cfg, all_events_xml) {
+        for rule in rules {
+            match rule.kind {
+                osoosi_types::BlockingKind::Executable => {
+                    xml.push_str(&format!(
+                        "    <FileBlockExecutable onmatch=\"include\">\n      <TargetFilename condition=\"begin with\">{}</TargetFilename>\n    </FileBlockExecutable>\n",
+                        rule.path
+                    ));
+                }
+                osoosi_types::BlockingKind::Shredding => {
+                    xml.push_str(&format!(
+                        "    <FileBlockShredding onmatch=\"include\">\n      <Image condition=\"image\">{}</Image>\n    </FileBlockShredding>\n",
+                        rule.path
+                    ));
+                }
+            }
+        }
+
+        xml.push_str("  </EventFiltering>\n</Sysmon>");
+        xml
+    }
+
+    /// Windows: Install Sysmon
+    #[cfg(target_os = "windows")]
+    async fn provision_windows(&self) -> anyhow::Result<()> {
+        info!("Provisioning Windows telemetry (Sysmon)...");
+        
+        let config_dir = Path::new("config");
+        if !config_dir.exists() {
+            let _ = std::fs::create_dir_all(config_dir);
+        }
+        
+        let full_fidelity_cfg = config_dir.join("sysmon-immune-system.xml");
+        let xml = self.generate_sysmon_xml(&[]);
+        
+        if let Err(e) = std::fs::write(&full_fidelity_cfg, xml) {
             warn!("Failed to write Full Fidelity Sysmon config: {}. Falling back to default.", e);
         } else {
             info!("Generated Full Fidelity 'Immune System' Sysmon configuration.");
         }
 
         self.ensure_windows_sysmon(Some(&full_fidelity_cfg)).await
+    }
+
+    #[cfg(target_os = "windows")]
+    pub async fn apply_blocking_rules(&self, rules: &[osoosi_types::BlockingRule]) -> anyhow::Result<()> {
+        let xml = self.generate_sysmon_xml(rules);
+        let config_path = Path::new("config").join("sysmon-blocking.xml");
+        std::fs::write(&config_path, xml)?;
+        
+        let binary = self.ensure_sysmon_binary().await?;
+        let mut cmd = Command::new(&binary);
+        cmd.args(["-accepteula", "-c", config_path.to_str().unwrap()]);
+        self.executor.execute(cmd).await?;
+        info!("Applied {} active Sysmon blocking rules.", rules.len());
+        Ok(())
     }
 
     #[cfg(target_os = "windows")]

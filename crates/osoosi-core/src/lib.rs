@@ -32,6 +32,7 @@ pub mod byzantine;
 pub mod causal_ai;
 pub mod self_healing;
 pub mod correlator;
+pub mod blocking_manager;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
@@ -41,8 +42,8 @@ use osoosi_memory::MemoryStore;
 use osoosi_telemetry::SysmonParser;
 use osoosi_policy::{PolicyEngine, ThreatFeedFetcher};
 use osoosi_wire::{MeshNode, MeshCommand, JoinGate};
-use osoosi_runtime::{DeceptionManager, TarpitManager};
-use osoosi_types::{SysmonEvent, load_runtime_config, SecuredExecutor};
+use osoosi_runtime::DeceptionManager;
+use osoosi_types::{SysmonEvent, load_runtime_config, SecuredExecutor, SysmonEventId};
 use osoosi_audit::AuditTrail;
 use osoosi_repair::PatchEngine;
 use osoosi_trust::TrustManager;
@@ -106,7 +107,9 @@ pub struct EdrOrchestrator {
     behavioral_analyzer: Arc<osoosi_behavioral::BehavioralAnalyzer>,
     #[allow(dead_code)]
     behavioral_engine: Arc<osoosi_behavioral::SmolLMAnalyzer>,
+    #[allow(dead_code)]
     gemma_cortex: Option<Arc<osoosi_behavioral::Gemma4Analyzer>>,
+    pub blocking_manager: Arc<crate::blocking_manager::BlockingManager>,
     /// PII Classifier (Presidio + Tika + Magika fallback)
     #[allow(dead_code)]
     pii_classifier: Arc<crate::pii::PiiClassifier>,
@@ -428,6 +431,50 @@ impl EdrOrchestrator {
             None
         };
 
+        let provisioner = Arc::new(osoosi_telemetry::AgentProvisioner::new(secured_executor.clone()));
+        let blocking_manager = Arc::new(crate::blocking_manager::BlockingManager::new(provisioner));
+        // Register Voters into Policy Engine for Multi-Detector Consensus
+        policy.add_voter(Box::new(osoosi_policy::voters::SemanticVoter {
+            engine: osoosi_policy::semantic::SemanticEngine::new(),
+        }));
+        
+        policy.add_voter(Box::new(osoosi_policy::voters::SigmaVoter {
+            engine: policy.sigma_engine().clone(),
+        }));
+        
+        policy.add_voter(Box::new(osoosi_policy::voters::NsrlVoter {
+            cache: nsrl_cache.clone(),
+        }));
+
+        policy.add_voter(Box::new(osoosi_policy::voters::OtxVoter {
+            indicators: policy.otx_indicators_ref().clone(),
+            memory: memory.clone(),
+        }));
+
+        if let Some(ref gemma) = gemma_cortex {
+            policy.add_voter(Box::new(osoosi_policy::voters::GemmaVoter {
+                analyzer: gemma.clone(),
+            }));
+        }
+
+        // Yara-X Memory Voter with default C2 beacon patterns
+        let mut compiler = yara_x::Compiler::new();
+        if let Ok(_) = compiler.add_source(r#"
+            rule C2_Beacon_Generic {
+                strings:
+                    $mz = { 4D 5A }
+                    $cobalt_strike = "beacon.dll"
+                    $sliver = "sliver"
+                condition:
+                    $mz and ($cobalt_strike or $sliver)
+            }
+        "#) {
+            let rules = compiler.build();
+            policy.add_voter(Box::new(osoosi_policy::voters::YaraXMemoryVoter {
+                rules,
+            }));
+        }
+
         Ok(Self {
             memory,
             mesh_peer_count,
@@ -467,6 +514,7 @@ impl EdrOrchestrator {
             ghost_nodes,
             behavioral_engine,
             gemma_cortex,
+            blocking_manager,
             runtime_config,
             secured_executor,
             behavioral_debouncer: Arc::new(dashmap::DashMap::new()),
@@ -1159,8 +1207,13 @@ impl EdrOrchestrator {
                         match fetcher.fetch_otx_indicators(key).await {
                             Ok(indicators) => {
                                 let total = indicators.total_count();
+                                // Persist to encrypted SQLite database for cross-boot telemetry matching
+                                let indicators_vec = indicators.to_vec();
+                                if let Err(e) = orch.memory.upsert_otx_indicators(&indicators_vec) {
+                                    error!("Failed to persist OTX indicators to SQLite: {}", e);
+                                }
                                 orch.policy.update_otx_indicators(indicators);
-                                info!("Successfully loaded {} OTX indicators.", total);
+                                info!("Successfully loaded {} OTX indicators (persisted to SQLite).", total);
                             }
                             Err(e) => error!("Failed to fetch OTX indicators: {}", e),
                         }
@@ -1259,55 +1312,69 @@ impl EdrOrchestrator {
     }
 
     pub async fn process_telemetry(&self, event: osoosi_types::SysmonEvent) -> anyhow::Result<()> {
-        use osoosi_types::{ResponseAction, SysmonEventId};
+        use osoosi_types::ResponseAction;
 
-        // Map SysmonEvent to LogEvent for behavioral analysis
-        let log_event = osoosi_behavioral::LogEvent {
-            source: "sysmon".to_string(),
-            event_id: event.event_id as u32,
-            timestamp: event.timestamp,
-            computer: event.computer.clone(),
-            data: event.data.as_object()
-                .map(|obj| obj.iter().map(|(k, v)| (k.clone(), v.clone())).collect())
-                .unwrap_or_default(),
-        };
-
-        // Behavioral analysis (Gemma 4 Reasoning for Chat Flow)
-        if let Some(ref cortex) = self.gemma_cortex {
-            let cortex = cortex.clone();
-            let log_event_clone = log_event.clone();
-            let orchestrator = self.clone();
-            tokio::spawn(async move {
-                let sentence = osoosi_behavioral::event_to_behavioral_sentence(&log_event_clone);
-                if let Ok(reasoning) = cortex.reason_about_attack(&sentence) {
-                    let _ = orchestrator.audit.log("AI_REASONING", serde_json::json!({
-                        "message": format!("Gemma 4: {}", reasoning),
-                        "details": {
-                            "event_id": log_event_clone.event_id,
-                            "confidence": 0.85,
-                            "reason": reasoning
-                        }
-                    }));
-                }
-            });
-        }
-
-        // Standard behavioral classification (Rules + BERT)
-        let analysis = self.behavioral_classifier.classify(&log_event).await;
-        if analysis.is_suspicious {
+        // 1. Policy Consensus Check (Multi-Detector Voting Registry)
+        if let Some(signature) = self.policy.scan_event(&event) {
+            info!("Consensus Threat Identified: {} (Confidence: {:.2}, Detectors: {})", 
+                signature.id, signature.confidence, signature.detector_count);
+            
+            // Log threat to persistent store
+            let _ = self.memory.log_threat(&signature);
+            
+            // Audit log for tamper-evidence
             self.audit.log("THREAT_DETECTED", serde_json::json!({
-                "event_id": event.event_id as u32,
-                "confidence": analysis.score,
-                "reason": analysis.reason,
-                "sentence": analysis.sentence
+                "id": signature.id,
+                "confidence": signature.confidence,
+                "detector_count": signature.detector_count,
+                "reason": signature.reason,
+                "action": signature.recommended_action,
             }));
+
+            // 2. Autonomous Remediation Logic
+            match signature.recommended_action {
+                ResponseAction::Isolate => {
+                    if let Some(image) = event.data.get("Image").and_then(|v| v.as_str()) {
+                         warn!("AUTONOMOUS BLOCK: Consensus threshold met for {}. Applying FileBlockExecutable.", image);
+                         let rule = osoosi_types::BlockingRule {
+                             path: image.to_string(),
+                             kind: osoosi_types::BlockingKind::Executable,
+                         };
+                         // Apply dynamic Sysmon block
+                         let bm = self.blocking_manager.clone();
+                         tokio::spawn(async move {
+                             if let Err(e) = bm.add_rule(rule).await {
+                                 error!("Failed to apply autonomous block: {}", e);
+                             }
+                         });
+                         
+                         // Immediate termination
+                         if let Some(pid) = event.process_id() {
+                             warn!("Terminating suspicious process PID: {}", pid);
+                             let _ = self.remediation.kill_process_tree(pid as u32);
+                         }
+                    }
+                }
+                action => {
+                    // Perform non-isolating actions (Tarpit, Deception, Alert)
+                    let orch = self.clone();
+                    let ev = event.clone();
+                    let sig = signature.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = orch.perform_action(&ev, &sig, action).await {
+                            error!("Failed to perform response action {:?}: {}", action, e);
+                        }
+                    });
+                }
+            }
         }
 
         // Log telemetry entry to Merkle Audit Chain
         self.audit.log("TELEMETRY_INGESTED", serde_json::to_value(&event)?);
 
-        // Log to console and log file
-        info!("Sysmon Event [ID={:?}]: {}", event.event_id, event.data);
+        // Log to console and log file with full forensic detail
+        let event_name = format!("{:?}", event.event_id);
+        info!("PRO-FORENSIC [Sysmon ID={}]: {} | Data: {}", event.event_id as u32, event_name, event.data);
 
         // 10/10 Causal Engine: Ingest event into the Causal AI Attack Graph
         self.causal_ai.ingest_event(&event);

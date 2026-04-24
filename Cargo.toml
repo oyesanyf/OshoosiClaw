@@ -18,6 +18,7 @@ members = [
     "crates/osoosi-sandbox",
     "crates/osoosi-behavioral", "crates/osoosi-dp",
     "crates/test-peer",
+    "crates/otx-taxii-rs",
 ]
 
 [workspace.package]
@@ -96,6 +97,7 @@ die-rust = { package = "die", git = "https://github.com/elastic/die-rust" }
 falcon-analyzer = { package = "falcon", version = "0.6.0" }
 falcon-rs = "0.1"
 redbpf = "2.3.0"
+process-memory = "0.5.0"
 xori = { git = "https://github.com/endgameinc/xori" }
 
 [profile.release]

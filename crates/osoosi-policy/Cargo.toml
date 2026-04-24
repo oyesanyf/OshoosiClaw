@@ -9,6 +9,7 @@ description = "Threat Detection Policy Engine for OpenỌ̀ṣọ́ọ̀sì Agen
 osoosi-types = { path = "../osoosi-types" }
 osoosi-telemetry = { path = "../osoosi-telemetry" }
 osoosi-memory = { path = "../osoosi-memory" }
+osoosi-behavioral = { path = "../osoosi-behavioral" }
 osoosi-audit = { path = "../osoosi-audit" }
 uuid = { workspace = true, features = ["v4"] }
 chrono = { workspace = true }
@@ -27,4 +28,7 @@ rusqlite = { workspace = true }
 futures = { workspace = true }
 regex = { workspace = true }
 sysinfo = { workspace = true }
+yara-x = { workspace = true }
+process-memory = { workspace = true }
 rand.workspace = true
+base64 = "0.22"

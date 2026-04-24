@@ -5,8 +5,8 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::{info, warn, error, debug};
-use osoosi_types::{ThreatSignature, ResponseAction};
+use tracing::info;
+use osoosi_types::ThreatSignature;
 use serde_json::Value;
 use regex::Regex;
 
@@ -220,7 +220,7 @@ impl StaticAnalyzer {
         Ok(None)
     }
 
-    async fn run_die_rust(&self, file_path: &Path) -> anyhow::Result<Option<String>> {
+    async fn run_die_rust(&self, _file_path: &Path) -> anyhow::Result<Option<String>> {
         // die-rust library integration
         // let detections = die_rust::detect_file(file_path)?;
         // if let Some(best) = detections.first() {
