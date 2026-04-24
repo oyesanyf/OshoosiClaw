@@ -50,8 +50,7 @@ pub fn create_host_event_reader(channel_or_path: &str) -> anyhow::Result<Box<dyn
 #[cfg(target_os = "windows")]
 struct WindowsEventReader {
     channel: String,
-    #[allow(dead_code)]
-    last_bookmark: Option<String>,
+    last_record_id: u64,
     sysmon_parser: super::SysmonParser,
 }
 
@@ -72,7 +71,7 @@ impl WindowsEventReader {
         }
         Ok(Self {
             channel: resolved,
-            last_bookmark: None,
+            last_record_id: 0,
             sysmon_parser: super::SysmonParser::new(),
         })
     }
@@ -113,8 +112,9 @@ impl WindowsEventReader {
     fn query_wevtutil(&mut self) -> anyhow::Result<Vec<String>> {
         use std::process::Command;
         let mut cmd = Command::new("wevtutil");
-        // Increased to 5000 to catch busy systems, using /rd:true to get latest first
-        cmd.args(["qe", &self.channel, "/rd:true", "/e:root", "/c:5000", "/f:xml"]);
+        // Increased to 10,000 to ensure we don't miss events on busy systems.
+        // We use /rd:true to get the newest first.
+        cmd.args(["qe", &self.channel, "/rd:true", "/e:root", "/c:10000", "/f:xml"]);
         let output = cmd.output()?;
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
@@ -143,21 +143,33 @@ impl WindowsEventReader {
             .map(|s| format!("<Event>{}", s))
             .collect();
         
-        // Very basic deduplication: only return events if we haven't seen them (simple string compare for now)
-        // In a real EDR we would use bookmarks, but this is a quick win for "watch all events".
         let mut new_events = Vec::new();
+        let mut max_id = self.last_record_id;
+
         for ev in events {
-            if Some(ev.clone()) == self.last_bookmark {
-                break; // Found the last one we saw
+            let record_id = self.extract_record_id(&ev);
+            if record_id <= self.last_record_id && self.last_record_id != 0 {
+                break; // Hit already processed events
+            }
+            if record_id > max_id {
+                max_id = record_id;
             }
             new_events.push(ev);
         }
-        
-        if let Some(first) = new_events.first() {
-            self.last_bookmark = Some(first.clone());
-        }
-        
+
+        self.last_record_id = max_id;
         Ok(new_events)
+    }
+
+    fn extract_record_id(&self, xml: &str) -> u64 {
+        // Quick extraction without full XML parse
+        if let Some(pos) = xml.find("<EventRecordID>") {
+            let start = pos + "<EventRecordID>".len();
+            if let Some(end) = xml[start..].find("</EventRecordID>") {
+                return xml[start..start + end].parse().unwrap_or(0);
+            }
+        }
+        0
     }
 }
 

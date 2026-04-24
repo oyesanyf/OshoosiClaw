@@ -372,6 +372,7 @@ impl AgentProvisioner {
     <DnsQuery onmatch="exclude" />
     <FileDelete onmatch="exclude" />
     <ClipboardChange onmatch="exclude" />
+    <SysmonConfigChange onmatch="exclude" />
     <ProcessTampering onmatch="exclude" />
     <FileDeleteDetected onmatch="exclude" />
     <FileBlockExecutable onmatch="exclude" />

@@ -1,6 +1,6 @@
 //! Threat Intelligence Feeds (CISA KEV, OTX).
 
-use osoosi_types::Kev;
+use osoosi_types::{Kev, NsrlRecord};
 use serde_json::Value;
 use chrono::{DateTime, Utc};
 use std::collections::HashSet;
@@ -53,14 +53,14 @@ impl ThreatFeedFetcher {
 
     /// Import NSRL records from a NIST .sqlite file (Modern RDA format).
     /// This expects a standard NSRL sqlite schema with a 'FILE' table.
-    pub async fn import_nsrl_from_sqlite(&self, path: &std::path::Path) -> anyhow::Result<Vec<osoosi_types::NsrlRecord>> {
+    pub async fn import_nsrl_from_sqlite(&self, path: &std::path::Path) -> anyhow::Result<Vec<NsrlRecord>> {
         use rusqlite::Connection;
         
         let conn = Connection::open(path)?;
         let mut stmt = conn.prepare("SELECT sha1, md5, sha256, name, size, product, os FROM FILE")?;
         
         let records_iter = stmt.query_map([], |row| {
-            Ok(osoosi_types::NsrlRecord {
+            Ok(NsrlRecord {
                 sha1: row.get::<_, String>(0)?,
                 md5: row.get::<_, Option<String>>(1)?,
                 sha256: row.get::<_, Option<String>>(2)?,
@@ -223,10 +223,11 @@ impl ThreatFeedFetcher {
 
         let mut attempts = 0;
         let mut response = None;
-        while attempts < 3 {
+        let max_attempts = 5;
+        while attempts < max_attempts {
             match otx_client
                 .get(OTX_PULSES_SUBSCRIBED_URL.trim_end_matches('/'))
-                .query(&[("limit", "50"), ("modified_since", &since)])
+                .query(&[("limit", "100"), ("modified_since", &since)])
                 .header("X-OTX-API-KEY", api_key)
                 .send()
                 .await
@@ -244,16 +245,16 @@ impl ThreatFeedFetcher {
                 }
             }
             attempts += 1;
-            if attempts < 3 {
-                tokio::time::sleep(std::time::Duration::from_secs(2u64.pow(attempts as u32))).await;
+            if attempts < max_attempts {
+                // Exponential backoff with jitter
+                let backoff = (2u64.pow(attempts as u32) * 1000) + (rand::random::<u64>() % 1000);
+                tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
             }
         }
-
         let response = match response {
             Some(r) => r,
             None => {
-                info!("[OTX] Failed to reach OTX API after {} attempts. Will retry next cycle.", attempts);
-                return Ok(out);
+                anyhow::bail!("[OTX] Failed to reach OTX API after {} attempts. Will retry next cycle.", attempts);
             }
         };
 

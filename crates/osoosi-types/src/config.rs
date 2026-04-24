@@ -586,6 +586,13 @@ pub fn resolve_openssl_path() -> PathBuf {
     { PathBuf::from("openssl") }
 }
 
+pub fn resolve_xori_path() -> PathBuf {
+    #[cfg(target_os = "windows")]
+    { resolve_tools_dir().join("xori").join("xori.exe") }
+    #[cfg(not(target_os = "windows"))]
+    { resolve_tools_dir().join("xori").join("xori") }
+}
+
 /// Walk up from current_dir to find project/workspace root (osoosi.toml or Cargo.toml with [workspace]).
 fn resolve_project_root() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;

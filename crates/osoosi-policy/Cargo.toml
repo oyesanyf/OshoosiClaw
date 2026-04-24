@@ -27,3 +27,4 @@ rusqlite = { workspace = true }
 futures = { workspace = true }
 regex = { workspace = true }
 sysinfo = { workspace = true }
+rand.workspace = true

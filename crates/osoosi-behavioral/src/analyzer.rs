@@ -207,7 +207,7 @@ impl BehavioralAnalyzer {
 
     fn format_events_for_llm(&self, events: &[LogEvent]) -> String {
         let mut out = String::from("<security_event_data>\n");
-        for ev in events.iter().take(30) {
+        for ev in events.iter().take(100) {
             let msg = ev.data.get("Message").and_then(|m| m.as_str()).unwrap_or("No message");
             out.push_str(&format!("[{}] {} (Source: {}): {}\n", ev.timestamp, ev.computer, ev.source, msg));
         }

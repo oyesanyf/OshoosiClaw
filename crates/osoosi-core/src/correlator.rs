@@ -140,6 +140,33 @@ impl EventCorrelator {
                 }
                 ctx.add_event("DNS", query, alert_score);
             },
+            "7" => { // Image Load
+                let image_loaded = event.data.get("ImageLoaded").and_then(|v| v.as_str()).unwrap_or("");
+                if image_loaded.contains("Temp\\") || image_loaded.contains("AppData\\") {
+                    alert_score = 0.1;
+                    reason = format!("Suspicious Image Load from user directory: {}", image_loaded);
+                }
+                ctx.add_event("ImageLoad", image_loaded, alert_score);
+            },
+            "8" => { // CreateRemoteThread
+                let target_image = event.data.get("TargetImage").and_then(|v| v.as_str()).unwrap_or("");
+                alert_score = 0.6; // High suspicion for cross-process thread creation
+                reason = format!("Process created a remote thread in: {}", target_image);
+                ctx.add_event("Injection", &format!("To {}", target_image), alert_score);
+            },
+            "10" => { // Process Access
+                let target_image = event.data.get("TargetImage").and_then(|v| v.as_str()).unwrap_or("");
+                if target_image.contains("lsass.exe") {
+                    alert_score = 0.7;
+                    reason = format!("Process accessed LSASS memory (potential credential dumping)");
+                }
+                ctx.add_event("ProcessAccess", &format!("To {}", target_image), alert_score);
+            },
+            "25" => { // Process Tampering
+                alert_score = 0.8;
+                reason = format!("Process tampering detected (hollowing/herpaderping)");
+                ctx.add_event("Tampering", "Detected", alert_score);
+            },
             _ => {}
         }
 

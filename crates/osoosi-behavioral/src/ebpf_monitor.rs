@@ -15,11 +15,6 @@ impl EbpfMonitor {
         Self {}
     }
 
-    /// Start monitoring network traffic for C2 patterns.
-    pub async fn start_monitoring(&self) -> anyhow::Result<()> {
-        info!("eBPF: Starting network beacon detection...");
-        
-        // In a real implementation, we would load a .elf file containing the BPF bytecode
     /// Start the eBPF monitor to watch for C2 beacons in real-time.
     pub async fn start_monitoring(&self) -> anyhow::Result<()> {
         info!("EBPF: Starting real-time network monitor (RedBPF)...");

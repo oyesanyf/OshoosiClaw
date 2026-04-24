@@ -31,6 +31,8 @@ hayabusa = { workspace = true }
 chainsaw = { workspace = true }
 die-rust = { workspace = true }
 falcon-analyzer = { workspace = true }
-redbpf = { workspace = true }
 xori = { workspace = true }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+redbpf = { workspace = true }
 

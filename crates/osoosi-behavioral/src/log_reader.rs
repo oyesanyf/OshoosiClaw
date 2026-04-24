@@ -154,7 +154,7 @@ impl BehavioralLogReader {
                 channel,
                 "/rd:true",
                 "/e:root",
-                "/c:30",
+                "/c:500",
                 "/f:xml",
             ])
             .output()?;
