@@ -205,6 +205,8 @@ pub struct EdrOrchestrator {
     correlator: Arc<crate::correlator::EventCorrelator>,
     /// Static Analyzer: CAPA + FLOSS + LLM reasoning
     static_analyzer: Arc<crate::static_analyzer::StaticAnalyzer>,
+    /// Runtime config (db paths, sandboxes, etc.)
+    runtime_config: osoosi_types::RuntimeConfig,
 }
 impl EdrOrchestrator {
     pub fn behavioral_classifier(&self) -> Arc<osoosi_behavioral::BehavioralClassifier> {
@@ -213,6 +215,10 @@ impl EdrOrchestrator {
 
     pub fn memory(&self) -> Arc<MemoryStore> {
         self.memory.clone()
+    }
+
+    pub fn secured_executor(&self) -> Arc<dyn osoosi_types::SecuredExecutor> {
+        self.host_executor.clone()
     }
 
     /// Add feedback to the behavioral model (Continuous Learning)

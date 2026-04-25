@@ -143,6 +143,9 @@ pub struct BackupConfig {
     /// Paths to include (for file_sync). Empty = use platform defaults (e.g. user Documents)
     #[serde(default)]
     pub include_paths: Vec<String>,
+    /// Minimum interval in seconds between backups (throttling). Default: 86400 (24h).
+    #[serde(default)]
+    pub interval_secs: Option<u64>,
 }
 
 fn default_backup_type() -> String {
@@ -156,6 +159,7 @@ impl Default for BackupConfig {
             backup_type: default_backup_type(),
             target: String::new(),
             include_paths: Vec::new(),
+            interval_secs: None,
         }
     }
 }
@@ -396,40 +400,30 @@ pub fn resolve_bin_dir() -> PathBuf {
 }
 
 /// Resolve the tools directory (floss, capa, hollows_hunter).
-/// Env override: OSOOSI_TOOLS_ROOT or OSOOSI_HARFILE (legacy).
-/// Defaults to current_dir/harfile or project_root/harfile if found.
+/// Env override: OSOOSI_TOOLS_ROOT.
+/// Defaults to project_root/tools or project_root/harfile if found.
 pub fn resolve_tools_dir() -> PathBuf {
     if let Ok(p) = std::env::var("OSOOSI_TOOLS_ROOT") {
         return PathBuf::from(p.trim());
     }
-    if let Ok(p) = std::env::var("OSOOSI_HARFILE") {
-        return PathBuf::from(p.trim());
-    }
     
-    // Check if harfile exists in project root or current dir
     if let Some(root) = resolve_project_root() {
+        // 1. Try 'tools' in project root (modern default)
+        let t = root.join("tools");
+        if t.is_dir() {
+            return t;
+        }
+        // 2. Try 'harfile' in project root (legacy default)
         let h = root.join("harfile");
         if h.is_dir() {
             return h;
         }
+        // 3. Default to project_root/tools (will be created by provisioner)
+        return t;
     }
     
-    // Fallback to searching upward for 'harfile' directory
-    let mut dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
-    loop {
-        let h = dir.join("harfile");
-        if h.is_dir() {
-            return h;
-        }
-        if let Some(parent) = dir.parent() {
-            dir = parent.to_path_buf();
-        } else {
-            break;
-        }
-    }
-    
-    // Ultimate fallback: current_dir/harfile
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("harfile")
+    // Fallback to current_dir/tools
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("tools")
 }
 
 /// Resolve the global cache directory for transient/downloaded data (feeds, models).

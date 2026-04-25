@@ -27,6 +27,20 @@ pub fn run_backup_on_start(config: &BackupConfig, memory: Option<Arc<osoosi_memo
         return;
     }
 
+    if let Some(ref m) = memory {
+        if let Ok(Some(last_at_str)) = m.get_backup_status("last_at") {
+            if let Ok(last_time) = chrono::DateTime::parse_from_rfc3339(&last_at_str) {
+                let last_utc = last_time.with_timezone(&chrono::Utc);
+                let elapsed = chrono::Utc::now() - last_utc;
+                let min_interval = config.interval_secs.unwrap_or(86400); // Default 24h
+                if elapsed.num_seconds() < min_interval as i64 {
+                    info!("Backup throttle: Last backup was {:?} ago (min: {}s). Skipping restore point.", elapsed, min_interval);
+                    return;
+                }
+            }
+        }
+    }
+
     let result = match config.backup_type.as_str() {
         "restore_point" => run_restore_point(config),
         "full_image" => run_full_image(config),

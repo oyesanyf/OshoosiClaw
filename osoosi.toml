@@ -11,7 +11,8 @@ exclude_paths = ["C:\\Temp", "D:\\NoBackup", "C:\\Program Files\\WindowsApps", "
 # Run backup when agent starts. Set enabled = true and target path to activate.
 enabled = false
 backup_type = "file_sync"   # file_sync | restore_point (Win) | full_image (Win, needs admin)
-target = ""                 # e.g. E:\ or /mnt/backup
+# target = ""                 # e.g. E:\ or /mnt/backup
+# interval_secs = 86400       # Min interval in seconds between backups (24h default)
 # include_paths = ["C:\\Users\\YourName\\Documents"]  # optional; defaults to Documents, Desktop, Pictures
 
 [quarantine_admin]

@@ -107,6 +107,8 @@ pub struct PatchEngine {
     discoverer: PatchDiscoverer,
     remediator: StandaloneRemediator,
     repair_config: RepairConfig,
+    /// Throttling: track the last time a snapshot was created to avoid redundant restore points.
+    last_snapshot_at: Arc<tokio::sync::Mutex<Option<std::time::Instant>>>,
 }
 
 impl PatchEngine {
@@ -116,6 +118,7 @@ impl PatchEngine {
             discoverer: PatchDiscoverer::new(),
             remediator: StandaloneRemediator::new(),
             repair_config,
+            last_snapshot_at: Arc::new(tokio::sync::Mutex::new(None)),
         }
     }
 
@@ -283,6 +286,19 @@ impl PatchEngine {
     }
 
     async fn create_snapshot(&self, _patch: &PatchMetadata) -> Result<String> {
+        // Optimization: Throttle snapshot creation. 
+        // If a snapshot was created in the last 10 minutes, reuse it for this transaction.
+        {
+            let mut last_at = self.last_snapshot_at.lock().await;
+            if let Some(instant) = *last_at {
+                if instant.elapsed() < std::time::Duration::from_secs(600) {
+                    info!("Snapshot throttle: Reusing recent system snapshot (created {:?} ago).", instant.elapsed());
+                    return Ok("recent-cached-snapshot".to_string());
+                }
+            }
+            *last_at = Some(std::time::Instant::now());
+        }
+
         info!("Creating filesystem snapshot...");
         let snap_id = format!("snap-{}", Uuid::new_v4());
 
