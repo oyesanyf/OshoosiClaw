@@ -38,6 +38,18 @@ The system is controlled via the `osoosi.toml` file and Environment Variables.
 ### Environment Variables
 - `OSOOSI_TRUST_SECRET`: Your Ed25519 private key for Node Identity (DID).
 - `OSOOSI_DB_PATH`: Path to the SQLite persistence store (default: `osoosi.db`).
+- `OTX_API_KEY` / `NVD_API_KEY`: Threat feed API keys (see `[external_api]` in `osoosi.toml`).
+- `OPENSHELL_CLI_PATH`: Full path to the NVIDIA **OpenShell** CLI when not on `PATH` (required for `osoosi start --sandbox` handoff).
+- `OSOOSI_GIT_PATH`: Full path to `git` / `git.exe` when using `osoosi sandbox install` with VCS URLs (`git+https://…`).
+
+### External tools cache (OpenShell / Git)
+
+On every `osoosi start`, the agent **resolves** the `openshell` and `git` executables by searching `PATH`, `%ProgramFiles%\Git\cmd\git.exe` (via environment), Python `Scripts` layouts, and related heuristics — **without hard-coded drive letters** for portable installs. Successful paths are saved to:
+
+- **Windows:** `%APPDATA%\osoosi\tool_paths.json`
+- **Unix:** `$XDG_CONFIG_HOME/osoosi/tool_paths.json` or `~/.config/osoosi/tool_paths.json`
+
+The next run reads this file first (after explicit `OPENSHELL_CLI_PATH` / `OSOOSI_GIT_PATH`). Use `osoosi sandbox install` to bootstrap OpenShell via pip, `git+https://github.com/NVIDIA/OpenShell.git`, or `uv tool install`.
 
 ---
 

@@ -208,7 +208,13 @@ cargo build --release --all-features
 
 # Start the autonomous security loop
 .\target\release\osoosi.exe start
+
+# Optional: grant-access and start in one go (global flag works before or after the subcommand)
+.\target\release\osoosi.exe start --grant-access
+# .\target\release\osoosi.exe --grant-access start
 ```
+
+On each `start`, the agent **discovers** `git` and `openshell` from `PATH` and standard locations, then **persists** absolute paths under `%APPDATA%\osoosi\tool_paths.json` (see [Environment Variables](#environment-variables)). This avoids repeated lookups on later runs.
 
 The **osoosi-dashboard** crate is a workspace member and a direct dependency of **osoosi-cli** (Axum web UI for `start --dashboard` and the `dashboard` subcommand). Standard `cargo build --release` compiles it; you should not exclude it from release builds.
 
@@ -384,18 +390,32 @@ OshoosiClaw agents form a **decentralized P2P mesh** using libp2p Gossipsub:
 
 ## 💻 CLI Reference
 
+Global flags (may appear **before or after** the subcommand): `--debug` / `-d`, `--no-ai`, `--grant-access`.
+
 ### `start` — Launch the Autonomous Security Loop
 
 ```powershell
 .\osoosi.exe start
+.\osoosi.exe start --debug
+.\osoosi.exe start --no-dashboard
 ```
 
-Starts all detection engines, file watchers, mesh networking, behavioral analysis, and the web dashboard.
+Starts all detection engines, file watchers, mesh networking, behavioral analysis, and (by default) the web dashboard.
+
+| Flag | Meaning |
+|:-----|:--------|
+| `--dashboard` / implicit default | Auto-launch the web dashboard (default: on). |
+| `--no-dashboard` | Do not open the dashboard UI. |
+| `--grant-access` | Run the same provisioning steps as `grant-access` before the agent loop (global). |
+| `--sandbox` | Hand off to **NVIDIA OpenShell**: runs `openshell sandbox create … -- osoosi start …` and **exits the host process** on success. If `openshell` is missing, logs a warning and continues with a normal host agent. |
+| `--sandbox-name <name>` | Sandbox name for `--sandbox` (default: `osoosi`). |
+| `--sandbox-deploy-gateway` | Run `openshell gateway deploy` before create (if your setup uses a gateway). |
 
 ### `grant-access` — One-Time System Setup
 
 ```powershell
 .\osoosi.exe grant-access
+.\osoosi.exe start --grant-access
 ```
 
 Automated provisioning pipeline:
@@ -405,6 +425,17 @@ Automated provisioning pipeline:
 4. ✅ Downloads **Mandiant FLOSS** (string de-obfuscation)
 5. ✅ Downloads **HollowsHunter** (memory forensics)
 6. ✅ Begins NSRL "Known Good" database download (121 GB, background)
+
+### `sandbox` — OpenShell CLI helpers
+
+Install or manage [NVIDIA OpenShell](https://github.com/NVIDIA/OpenShell) (external CLI). Example:
+
+```powershell
+.\osoosi.exe sandbox install    # Windows: tries pip, then git+https://github.com/NVIDIA/OpenShell.git, then uv
+.\osoosi.exe sandbox status
+```
+
+Set `OPENSHELL_CLI_PATH` to the full path of `openshell.exe` if it is not on `PATH`. For VCS installs, ensure **Git** is available or set `OSOOSI_GIT_PATH` to `git.exe`.
 
 ### `agent` — LLM Reasoning Agent
 
@@ -507,8 +538,19 @@ $env:OSOOSI_LLM_AGENT_ENABLED="1"
 | `OSOOSI_DATA_DIR` | `data/` | Behavioral learning data |
 | `OSOOSI_OFFLINE_MODE` | `false` | Disable external API calls |
 | `OTX_API_KEY` | — | AlienVault OTX API key |
+| `NVD_API_KEY` | — | NIST NVD API key (optional; higher rate limits) |
 | `OPENAI_API_KEY` | — | OpenAI API key (behavioral fallback) |
-| `OSOOSI_NO_ORT` | `false` | Disable ONNX Runtime |
+| `OSOOSI_NO_AI` / `OSOOSI_NO_ORT` | `false` | Disable AI / ONNX Runtime |
+| `OPENSHELL_CLI_PATH` | — | Full path to `openshell` / `openshell.exe` |
+| `OPENSHELL_SANDBOX_POLICY` | `config/openshell-policy.yaml` | OpenShell policy YAML path |
+| `OSOOSI_GIT_PATH` | — | Full path to `git.exe` when pip needs VCS installs |
+| `HF_TOKEN` / `HUGGINGFACE_HUB_TOKEN` | — | Hugging Face auth for private or rate-limited model downloads |
+| `OSOOSI_MALCONV_WEIGHTS_URL` | — | Direct URL for `malconv.safetensors` (skips broken public mirrors) |
+| `OSOOSI_MALCONV_ONNX_URL` | — | Direct URL for `malconv.onnx` |
+| `OSOOSI_KEV_QUIET_SYSTEM_TOOLS` | on | Set to `0` / `false` / `off` to re-enable CISA-KEV on noisy process create/terminate for common tools |
+| `OSOOSI_LOG_DIR` | repo `logs/` | File log directory |
+
+**Tool path cache (written on `start`):** `{config_dir}/osoosi/tool_paths.json` (e.g. Windows `%APPDATA%\osoosi\tool_paths.json`) stores resolved `git` and `openshell_cli` paths. Explicit env vars above still take precedence.
 
 ---
 
