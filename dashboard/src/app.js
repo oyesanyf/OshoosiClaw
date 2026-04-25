@@ -327,7 +327,7 @@ function renderThreatsView(threats) {
             <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
                 <i data-lucide="shield-alert"></i>
             </div>
-            <div class="item-info">
+            <div class="item-info" style="cursor: pointer;" onclick="const d = document.getElementById('panel-long-${t.id}'); d.style.display = d.style.display === 'none' ? 'flex' : 'none';">
                 <div class="item-title" style="font-size: 16px; font-weight: 600;">
                     ${t.type} 
                     <span style="font-size:10px; padding:2px 8px; border-radius:12px; background:${severityColor}; color:white; margin-left:12px; vertical-align: middle;">${severity}</span>
@@ -337,7 +337,8 @@ function renderThreatsView(threats) {
                     <span><i data-lucide="clock" style="width:12px"></i> Latest: ${formatTimestamp(t.timestamp)}</span>
                     <span><i data-lucide="target" style="width:12px"></i> Source: ${t.source_node || 'Unknown'}</span>
                 </div>
-                <div class="group-reasons" style="display: flex; flex-direction: column; gap: 8px; margin-top: 12px;">
+                <div style="font-size: 11px; color: var(--accent-blue); margin-top: 4px;">Click to expand details</div>
+                <div id="panel-long-${t.id}" class="group-reasons" style="display: none; flex-direction: column; gap: 8px; margin-top: 12px;">
                     ${groupThreats.map(gt => `
                         <div class="reason-entry" style="font-size:12px; color:var(--text-header); background:rgba(255,255,255,0.03); padding:10px; border-radius:6px; border-left:3px solid ${severityColor};">
                             <div style="font-weight: 600; margin-bottom: 2px;">Detection Signal:</div>
@@ -345,8 +346,8 @@ function renderThreatsView(threats) {
                             <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">Confidence: ${(gt.confidence * 100).toFixed(0)}% | ${formatTimestamp(gt.timestamp)}</div>
                         </div>
                     `).join('')}
+                    ${t.file_path ? `<div style="font-size:11px; color:var(--text-muted); margin-top:10px; opacity: 0.8;">Primary Path: ${t.file_path}</div>` : ''}
                 </div>
-                ${t.file_path ? `<div style="font-size:11px; color:var(--text-muted); margin-top:10px; opacity: 0.8;">Primary Path: ${t.file_path}</div>` : ''}
             </div>
             <div class="item-actions" style="display:flex; flex-direction: column; gap: 8px; justify-content: center; min-width: 150px;">
                 <button class="btn-text" onclick="markFalsePositive('${t.id}')" style="color:var(--text-muted); border:1px solid var(--glass-border); padding:8px 16px; border-radius:6px; width: 100%; transition: all 0.2s;">Mark False Positive</button>

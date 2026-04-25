@@ -457,6 +457,10 @@ impl EdrOrchestrator {
             }));
         }
 
+        policy.add_voter(Box::new(osoosi_policy::voters::KevVoter {
+            memory: memory.clone(),
+        }));
+
         // Yara-X Memory Voter with default C2 beacon patterns
         let mut compiler = yara_x::Compiler::new();
         if let Ok(_) = compiler.add_source(r#"
@@ -575,8 +579,13 @@ impl EdrOrchestrator {
                     move |msg| {
                         // Handle policy consensus messages
                         if let osoosi_types::PolicyConsensusMessage::Vote(ref vote) = msg {
-                             let mut consensus = orch.policy_consensus.blocking_lock();
-                             consensus.entry(vote.voter_id.clone()).or_default().push(msg.clone());
+                             let orch_clone = orch.clone();
+                             let msg_clone = msg.clone();
+                             let voter_id = vote.voter_id.clone();
+                             tokio::spawn(async move {
+                                 let mut consensus = orch_clone.policy_consensus.lock().await;
+                                 consensus.entry(voter_id).or_default().push(msg_clone);
+                             });
                         }
                     },
                     |_shard| {}, // Ghost shards - placeholder for future distributed storage
@@ -585,8 +594,11 @@ impl EdrOrchestrator {
                     |_tarpit| {}, // Tarpit signals
                     |_confidential| {}, // Confidential messages
                     move |delta| {
-                        let mut model = orch.threat_model.blocking_write();
-                        model.merge_delta(&delta);
+                        let orch_clone = orch.clone();
+                        tokio::spawn(async move {
+                            let mut model = orch_clone.threat_model.write().await;
+                            model.merge_delta(&delta);
+                        });
                     },
                 ).await;
             });
@@ -1315,11 +1327,35 @@ impl EdrOrchestrator {
         use osoosi_types::ResponseAction;
 
         // 1. Policy Consensus Check (Multi-Detector Voting Registry)
-        if let Some(signature) = self.policy.scan_event(&event) {
+        let mut signature = self.policy.scan_event(&event);
+
+        // Precision Refactor: Entropy Check & OTel Suppression (The "Unified OshoosiClaw Agent" logic)
+        if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
+            let path = std::path::Path::new(image_path);
+            if let Ok(entropy) = self.static_analyzer.calculate_entropy(path).await {
+                let is_browser = image_path.to_lowercase().contains("chrome.exe") || 
+                               image_path.to_lowercase().contains("msedge.exe") || 
+                               image_path.to_lowercase().contains("firefox.exe");
+                
+                if entropy < 6.5 && is_browser {
+                    if let Some(ref sig) = signature {
+                        info!("Suppressing alert for legitimate browser {} with low entropy ({:.2}). Emitting OTel trace instead.", image_path, entropy);
+                        tracing::info!(target: "forensic_story", "OTel Trace: Process {} (low entropy: {:.2}) triggered potential KEV match, but was suppressed as legitimate activity.", image_path, entropy);
+                        signature = None; 
+                    }
+                } else if entropy > 7.5 {
+                    if let Some(ref mut sig) = signature {
+                        sig.confidence = (sig.confidence + 0.15).min(1.0);
+                        sig.add_reason(format!("Static Analysis: High entropy detected ({:.2}), suggesting packed/obfuscated binary.", entropy));
+                    }
+                }
+            }
+        }
+
+        if let Some(signature) = signature {
             info!("Consensus Threat Identified: {} (Confidence: {:.2}, Detectors: {})", 
                 signature.id, signature.confidence, signature.detector_count);
             
-            // Log threat to persistent store
             let _ = self.memory.log_threat(&signature);
             
             // Audit log for tamper-evidence
@@ -1518,17 +1554,22 @@ impl EdrOrchestrator {
             let model = self.threat_model.read().await;
             let score = model.infer(proc.as_deref(), cve.as_deref());
             if score >= 0.5 {
-                let mut sig = osoosi_types::ThreatSignature::new(event.computer.clone());
-                sig.confidence = score;
-                sig.process_name = proc.clone();
-                sig.cve_id = cve.clone();
-                sig.add_reason(format!("ML threat model: process {:?} / CVE {:?} scored {:.2}", proc, cve, score));
-                if let Some(ref p) = proc {
-                    if p.to_lowercase().contains("mimikatz") || p.to_lowercase().contains("lsass") {
-                        sig.set_predicted_next("Credential dumping or LSASS access may lead to lateral movement");
+                let is_fp = self.memory.is_false_positive_pattern(proc.as_deref(), None).unwrap_or(false);
+                if !is_fp {
+                    let mut sig = osoosi_types::ThreatSignature::new(event.computer.clone());
+                    sig.confidence = score;
+                    sig.process_name = proc.clone();
+                    sig.cve_id = cve.clone();
+                    sig.add_reason(format!("ML threat model: process {:?} / CVE {:?} scored {:.2}", proc, cve, score));
+                    if let Some(ref p) = proc {
+                        if p.to_lowercase().contains("mimikatz") || p.to_lowercase().contains("lsass") {
+                            sig.set_predicted_next("Credential dumping or LSASS access may lead to lateral movement");
+                        }
                     }
+                    signature = Some(sig);
+                } else {
+                    tracing::info!("ML threat model suppressed false positive pattern for process {:?}", proc);
                 }
-                signature = Some(sig);
             }
         }
 

@@ -5,7 +5,9 @@
 
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::info;
+use std::fs::File;
+use std::io::Read;
+use tracing::{info, debug};
 use osoosi_types::ThreatSignature;
 use serde_json::Value;
 use regex::Regex;
@@ -42,6 +44,10 @@ impl StaticAnalyzer {
 
         info!("Static Analyzer: Running multi-tool analysis on suspicious file: {:?}", file_path);
 
+        // 0. Calculate Shannon Entropy
+        let entropy = self.calculate_entropy(file_path).unwrap_or(0.0);
+        debug!("Static Analyzer: File {:?} entropy: {:.2}", file_path, entropy);
+
         // 1. CAPA Analysis
         let capa_result = self.run_capa(file_path).await?;
         
@@ -77,10 +83,19 @@ impl StaticAnalyzer {
             signature.add_reason(format!("DiE Signature: {}", die_sig));
         }
 
-        if signature.confidence > 0.3 || !floss_artifacts.is_empty() {
+        if signature.confidence > 0.3 || !floss_artifacts.is_empty() || entropy > 7.2 {
             signature.process_name = file_path.file_name().and_then(|n| n.to_str()).map(String::from);
             
-            // 3. LLM Scoring (passing findings to SmolLM for semantic validation)
+            // 6. Entropy Adjustment
+            if entropy > 7.5 {
+                signature.add_reason(format!("High Entropy ({:.2}): Binary likely packed or encrypted", entropy));
+                signature.confidence = (signature.confidence + 0.25).min(0.99);
+            } else if entropy < 6.5 {
+                signature.add_reason(format!("Low Entropy ({:.2}): Binary likely not obfuscated", entropy));
+                signature.confidence *= 0.8; // Reward low entropy (suppress)
+            }
+
+            // 7. LLM Scoring (passing findings to SmolLM for semantic validation)
             if let Some(llm_score) = self.get_llm_score(&signature, &floss_artifacts).await {
                 info!("Static Analyzer: LLM validated score: {:.2}", llm_score);
                 signature.confidence = (signature.confidence * 0.7 + llm_score * 0.3).min(0.99);
@@ -228,5 +243,31 @@ impl StaticAnalyzer {
         // }
         
         Ok(Some("Detect It Easy: Identified potential packer (UPX 3.96)".to_string()))
+    }
+
+    /// Calculate Shannon Entropy of a file to detect packing/encryption.
+    pub fn calculate_entropy(&self, path: &Path) -> anyhow::Result<f32> {
+        let mut file = File::open(path)?;
+        let mut buffer = Vec::new();
+        file.read_to_end(&mut buffer)?;
+        
+        if buffer.is_empty() {
+            return Ok(0.0);
+        }
+
+        let mut frequencies = [0usize; 256];
+        for &byte in &buffer {
+            frequencies[byte as usize] += 1;
+        }
+
+        let mut entropy = 0.0;
+        let len = buffer.len() as f32;
+        for &count in &frequencies {
+            if count > 0 {
+                let p = count as f32 / len;
+                entropy -= p * p.log2();
+            }
+        }
+        Ok(entropy)
     }
 }

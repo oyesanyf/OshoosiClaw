@@ -564,7 +564,7 @@ if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
                         "-ExecutionPolicy",
                         "Bypass",
                         "-Command",
-                        &format!("Get-HotFix -Id {} | Out-Null", kb),
+                        &format!("if (Get-HotFix -Id {} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}", kb),
                     ])
                     .status()
                     .map(|s| s.success())
