@@ -25,6 +25,7 @@ pub mod watchdog;
 pub mod canary;
 pub mod browser_guard;
 pub mod static_analyzer;
+pub mod voters;
 pub mod secured_executor;
 pub mod remediation;
 pub mod adaptive;
@@ -478,6 +479,11 @@ impl EdrOrchestrator {
                 rules,
             }));
         }
+        
+        // ClamAV Consensus Voter
+        policy.add_voter(Box::new(crate::voters::ClamVoter {
+            scanner: malware_scanner.clone(),
+        }));
 
         Ok(Self {
             memory,

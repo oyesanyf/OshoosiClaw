@@ -71,6 +71,7 @@ Sigma rule matching + NVD/KEV intelligence correlation.
   - **Low Entropy (< 6.5)**: Rewards legitimate browsers/tools with a risk-score reduction.
   - **High Entropy (> 7.5)**: Boosts confidence for packed/encrypted malware.
 - **Precision KEV Matching**: Dynamic CISA KEV matching cross-referenced with NSRL to eliminate false positives for patched legitimate software.
+- **ClamAV Consensus Voter**: Provides formal "clean" or "infected" votes to the consensus engine. "Clean" results act as positive reinforcement with a negative weight, while "Infected" results provide high-confidence alerts.
 
 ### Tier 2.5: OpenTelemetry Forensic Storytelling
 Suspicious behaviors (Registry access, discovery) are wrapped in **OpenTelemetry-instrumented spans**. This turns isolated alerts into a single, context-rich "Forensic Story," reducing alert volume by up to 80% while maintaining a full audit trail.

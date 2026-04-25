@@ -351,6 +351,7 @@ function renderThreatsView(threats) {
             </div>
             <div class="item-actions" style="display:flex; flex-direction: column; gap: 8px; justify-content: center; min-width: 150px;">
                 <button class="btn-text" onclick="markFalsePositive('${t.id}')" style="color:var(--text-muted); border:1px solid var(--glass-border); padding:8px 16px; border-radius:6px; width: 100%; transition: all 0.2s;">Mark False Positive</button>
+                <button class="btn-text" onclick="confirmThreat('${t.id}')" style="color:var(--accent-red); border:1px solid var(--accent-red); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(255, 77, 77, 0.05); transition: all 0.2s;">Confirm Threat</button>
                 <button class="btn-text" onclick="investigateNode('${t.source_node}')" style="color:var(--accent-blue); border:1px solid var(--accent-blue); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(0, 210, 255, 0.05);">Investigate Node</button>
             </div>
         </div>
@@ -734,6 +735,7 @@ window.rejectAction = async function(id) {
 };
 
 window.markFalsePositive = async function(threatId) {
+    if (event) event.stopPropagation();
     if (!confirm("Are you sure you want to mark this as a false positive? This will help the agent learn.")) return;
     
     try {
@@ -757,7 +759,26 @@ window.markFalsePositive = async function(threatId) {
     }
 };
 
+window.confirmThreat = async function(threatId) {
+    if (event) event.stopPropagation();
+    try {
+        const res = await fetch(`${API_BASE}/triage/decide`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ threat_id: threatId, action: 'Isolate' })
+        });
+        const data = await res.json();
+        if (data.ok) {
+            alert("Threat confirmed. Isolation initiated.");
+            updateDashboard();
+        }
+    } catch (err) {
+        console.error("Failed to confirm threat:", err);
+    }
+};
+
 window.investigateNode = function(nodeId) {
+    if (event) event.stopPropagation();
     // Switch to mesh view and highlight node (placeholder logic)
     document.querySelector('[data-view="mesh"]').click();
 };
