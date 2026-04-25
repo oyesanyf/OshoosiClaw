@@ -165,6 +165,7 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/telemetry/timeseries", get(get_telemetry_timeseries))
         .route("/api/mesh/topology", get(get_mesh_topology))
         .route("/api/zone-summary", get(get_zone_summary))
+        .route("/api/story", get(get_story))
         .route("/api/pending-actions", get(get_pending_actions))
         .route("/api/approve-action", post(post_approve_action))
         .route("/api/reject-action", post(post_reject_action))
@@ -471,6 +472,7 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                             "source_node": source_node,
                             "file_path": file_path,
                             "reason": if reason.is_empty() { Value::Null } else { json!(reason) },
+                            "entropy": d.get("entropy").cloned().unwrap_or(Value::Null),
                             "predicted_next": if predicted_next.is_empty() { Value::Null } else { json!(predicted_next) }
                         }))
                     })
@@ -504,6 +506,7 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                             "details": format!("{} from {}", process_name, obj.get("source_node").and_then(|v| v.as_str()).unwrap_or("?")),
                             "source_node": obj.get("source_node"),
                             "reason": reason,
+                            "entropy": obj.get("entropy"),
                             "predicted_next": predicted_next
                         })
                     })
@@ -632,6 +635,16 @@ async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => Json(orch.get_zone_summary().await),
         None => Json(json!({ "error": "backend not active" })),
+    }
+}
+
+async fn get_story(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            let story = orch.generate_story().await;
+            Json(json!({ "story": story }))
+        }
+        None => Json(json!({ "story": "Orchestrator not active." })),
     }
 }
 
@@ -776,6 +789,7 @@ async fn get_malware_detections(State(state): State<DashboardState>) -> Json<Val
                     "ml_score": d.ml_score,
                     "signature_score": d.signature_score,
                     "combined_score": d.combined_score,
+                    "entropy": d.entropy,
                     "evasion": d.evasion_indicators,
                     "yara_available": d.yara_available,
                     "yara_matches": d.yara_matches,

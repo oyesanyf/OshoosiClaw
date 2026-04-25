@@ -21,18 +21,24 @@ pub struct StaticAnalyzer {
     floss_path: PathBuf,
     /// Path to the signatures directory
     signatures_path: PathBuf,
+    /// Executor for running tools (Direct or OpenShell)
+    executor: Arc<dyn osoosi_types::SecuredExecutor>,
     /// Memory: For caching analysis results
-    _memory: Arc<osoosi_memory::MemoryStore>,
+    memory: Arc<osoosi_memory::MemoryStore>,
+    /// In-memory session cache for static analysis results (SHA256 -> ThreatSignature)
+    analysis_cache: dashmap::DashMap<String, Option<ThreatSignature>>,
 }
 
 impl StaticAnalyzer {
-    pub fn new(memory: Arc<osoosi_memory::MemoryStore>) -> Self {
+    pub fn new(memory: Arc<osoosi_memory::MemoryStore>, executor: Arc<dyn osoosi_types::SecuredExecutor>) -> Self {
         Self {
             capa_path: osoosi_types::resolve_capa_path(),
             rules_path: osoosi_types::resolve_capa_rules_dir(),
             floss_path: osoosi_types::resolve_floss_path(),
             signatures_path: osoosi_types::resolve_capa_sigs_dir(),
-            _memory: memory,
+            executor,
+            memory: memory,
+            analysis_cache: dashmap::DashMap::new(),
         }
     }
 
@@ -42,23 +48,39 @@ impl StaticAnalyzer {
             return Ok(None);
         }
 
+        // Calculate hash first for caching
+        let hash = self.calculate_sha256(file_path).unwrap_or_else(|_| "unknown".to_string());
+        if hash != "unknown" {
+            if let Some(cached) = self.analysis_cache.get(&hash) {
+                return Ok(cached.clone());
+            }
+        }
+
         info!("Static Analyzer: Running multi-tool analysis on suspicious file: {:?}", file_path);
 
         // 0. Calculate Shannon Entropy
         let entropy = self.calculate_entropy(file_path).unwrap_or(0.0);
         debug!("Static Analyzer: File {:?} entropy: {:.2}", file_path, entropy);
 
-        // 1. CAPA Analysis
-        let capa_result = self.run_capa(file_path).await?;
+        // 1-5. Parallel Analysis Layer (CAPA, FLOSS, Falcon, Xori, DiE)
+        // Spawning these in parallel reduces sequential 'openshell sandbox connect' latency.
+        let (capa_res, floss_res, falcon_res, xori_res, die_res) = tokio::join!(
+            self.run_capa(file_path),
+            self.run_floss(file_path),
+            self.run_falcon(file_path),
+            self.run_xori(file_path),
+            self.run_die_rust(file_path)
+        );
+
+        let capa_result = capa_res?;
+        let floss_artifacts = floss_res?;
         
-        // 2. FLOSS Analysis (if CAPA found something or if forced)
         let mut signature = if let Some(sig) = capa_result {
             sig
         } else {
             ThreatSignature::new("localhost".to_string())
         };
 
-        let floss_artifacts = self.run_floss(file_path).await?;
         for artifact in &floss_artifacts {
             signature.add_reason(format!("Forensic Artifact: {}", artifact));
             if artifact.contains("IP:") || artifact.contains("Domain:") {
@@ -66,20 +88,17 @@ impl StaticAnalyzer {
             }
         }
 
-        // 3. Falcon Analysis (Formal IR Analysis)
-        if let Ok(Some(falcon_sig)) = self.run_falcon(file_path).await {
+        if let Ok(Some(falcon_sig)) = falcon_res {
              signature.confidence = (signature.confidence + 0.2).min(0.99);
              signature.add_reason(format!("Falcon IR: {}", falcon_sig));
         }
 
-        // 4. Xori Analysis (Shellcode Emulation)
-        if let Ok(Some(xori_sig)) = self.run_xori(file_path).await {
+        if let Ok(Some(xori_sig)) = xori_res {
             signature.confidence = (signature.confidence + 0.2).min(0.99);
             signature.add_reason(format!("Xori Emulation: {}", xori_sig));
         }
 
-        // 5. Detect It Easy (die-rust) Analysis
-        if let Ok(Some(die_sig)) = self.run_die_rust(file_path).await {
+        if let Ok(Some(die_sig)) = die_res {
             signature.add_reason(format!("DiE Signature: {}", die_sig));
         }
 
@@ -113,10 +132,29 @@ impl StaticAnalyzer {
                 signature.add_reason(format!("LLM Validation: Score {:.2}", llm_score));
             }
 
+            if hash != "unknown" {
+                self.analysis_cache.insert(hash, Some(signature.clone()));
+            }
             return Ok(Some(signature));
         }
 
+        if hash != "unknown" {
+            self.analysis_cache.insert(hash, None);
+        }
         Ok(None)
+    }
+
+    fn calculate_sha256(&self, path: &Path) -> anyhow::Result<String> {
+        use sha2::{Sha256, Digest};
+        let mut file = File::open(path)?;
+        let mut hasher = Sha256::new();
+        let mut buffer = [0u8; 8192];
+        loop {
+            let n = file.read(&mut buffer)?;
+            if n == 0 { break; }
+            hasher.update(&buffer[..n]);
+        }
+        Ok(format!("{:x}", hasher.finalize()))
     }
 
     async fn run_clamav(&self, file_path: &Path) -> anyhow::Result<Option<String>> {
@@ -128,8 +166,7 @@ impl StaticAnalyzer {
         let mut cmd = std::process::Command::new(&clam_path);
         cmd.arg("--no-summary").arg(file_path);
 
-        // Run clamscan in a blocking task since it's a synchronous process
-        let output = tokio::task::spawn_blocking(move || cmd.output()).await??;
+        let output = self.executor.execute(cmd).await?;
 
         // clamscan returns 0 if clean, 1 if infected, 2 if error
         if output.status.code() == Some(1) {
@@ -160,7 +197,7 @@ impl StaticAnalyzer {
         };
         cmd.arg(file_path);
 
-        let output = tokio::task::spawn_blocking(move || cmd.output()).await??;
+        let output = self.executor.execute(cmd).await?;
 
         if !output.status.success() {
             return Ok(None);
@@ -199,7 +236,7 @@ impl StaticAnalyzer {
         let mut cmd = std::process::Command::new(&self.floss_path);
         cmd.arg("--json").arg(file_path);
 
-        let output = tokio::task::spawn_blocking(move || cmd.output()).await??;
+        let output = self.executor.execute(cmd).await?;
         if !output.status.success() {
             return Ok(Vec::new());
         }
@@ -257,7 +294,7 @@ impl StaticAnalyzer {
         let mut cmd = std::process::Command::new(&xori_path);
         cmd.arg("-f").arg(file_path).arg("-c").arg(xori_path.parent().unwrap().join("xori.json"));
 
-        let output = tokio::task::spawn_blocking(move || cmd.output()).await??;
+        let output = self.executor.execute(cmd).await?;
         if !output.status.success() {
             return Ok(None);
         }

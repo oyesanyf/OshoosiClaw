@@ -56,6 +56,10 @@
                     <i data-lucide="network"></i>
                     <span>Attack Graph</span>
                 </a>
+                <a href="#" class="nav-item" data-view="story">
+                    <i data-lucide="book-open"></i>
+                    <span>Forensic Story</span>
+                </a>
             </nav>
             <div class="sidebar-footer">
                 <div class="status-indicator">
@@ -296,15 +300,20 @@
             </div>
 
             <!-- Approval Queue View -->
-            <div id="approvals-view" class="view-content">
+                </div>
+            </div>
+            <!-- Forensic Story View -->
+            <div id="story-view" class="view-content">
                 <div class="card glass shadow-glow">
                     <div class="card-header">
-                        <h3>Pending Autonomous Responses</h3>
-                        <p style="font-size: 12px; color: var(--text-muted);">High-impact actions awaiting human confirmation.</p>
+                        <h3>Forensic Storytelling (OpenTelemetry Trace)</h3>
+                        <div class="header-actions">
+                            <button class="btn-text" id="refresh-story"><i data-lucide="refresh-cw" style="width:14px; margin-right:4px;"></i> Regenerate Narrative</button>
+                        </div>
                     </div>
                     <div class="card-body">
-                        <div id="approval-list" class="timeline-list">
-                            <p class="placeholder-text">Approval queue is empty.</p>
+                        <div id="story-container" class="forensic-narrative" style="font-family: 'Outfit', sans-serif; line-height: 1.6; color: var(--text-header); min-height: 200px;">
+                            <p class="placeholder-text">Click 'Regenerate Narrative' to synthesize the latest forensic evidence into a story.</p>
                         </div>
                     </div>
                 </div>

@@ -88,6 +88,7 @@ impl SecuredExecutor for DirectExecutor {
 pub struct OpenShellExecutor {
     sandbox_name: String,
     policy_path: Option<String>,
+    sandbox_verified: std::sync::atomic::AtomicBool,
 }
 
 impl OpenShellExecutor {
@@ -95,6 +96,7 @@ impl OpenShellExecutor {
         Self {
             sandbox_name: sandbox_name.to_string(),
             policy_path: policy_path.map(|s| s.to_string()),
+            sandbox_verified: std::sync::atomic::AtomicBool::new(false),
         }
     }
 
@@ -118,6 +120,10 @@ impl OpenShellExecutor {
     }
 
     async fn ensure_sandbox(&self) -> anyhow::Result<()> {
+        if self.sandbox_verified.load(std::sync::atomic::Ordering::SeqCst) {
+            return Ok(());
+        }
+
         // Check if sandbox exists
         let check = Command::new("openshell")
             .args(["sandbox", "list"])
@@ -125,6 +131,7 @@ impl OpenShellExecutor {
         
         let stdout = String::from_utf8_lossy(&check.stdout);
         if stdout.contains(&self.sandbox_name) {
+            self.sandbox_verified.store(true, std::sync::atomic::Ordering::SeqCst);
             return Ok(());
         }
 
@@ -141,6 +148,7 @@ impl OpenShellExecutor {
             return Err(anyhow::anyhow!("Failed to create OpenShell sandbox: {}", self.sandbox_name));
         }
 
+        self.sandbox_verified.store(true, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
 }

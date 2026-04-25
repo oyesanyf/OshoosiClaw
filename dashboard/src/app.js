@@ -75,6 +75,10 @@ function setupNav() {
                 document.getElementById('approvals-view').classList.add('active');
                 viewTitle.innerText = "Response Approval Queue";
                 renderApprovalsView();
+            } else if (view === 'story') {
+                document.getElementById('story-view').classList.add('active');
+                viewTitle.innerText = "Forensic Storyboard";
+                renderStoryView();
             } else {
                 document.getElementById('other-view').classList.add('active');
                 viewTitle.innerText = item.querySelector('span').innerText;
@@ -264,6 +268,7 @@ function renderThreats(threats) {
                 <div class="item-meta">
                     <span><i data-lucide="crosshair" style="width:12px"></i> ${(maxConfidence * 100).toFixed(0)}% Confidence</span>
                     <span><i data-lucide="clock" style="width:12px"></i> ${formatTimestamp(t.timestamp)}</span>
+                    ${t.entropy ? `<span><i data-lucide="zap" style="width:12px"></i> Entropy: ${t.entropy.toFixed(2)}</span>` : ''}
                 </div>
                 <div class="item-details" style="font-size: 11px; margin-top: 4px; color: var(--text-muted);">
                     ${Array.from(new Set(groupThreats.map(gt => gt.reason || 'Anomalous behavior'))).join('; ')}
@@ -339,6 +344,20 @@ function renderThreatsView(threats) {
                 </div>
                 <div style="font-size: 11px; color: var(--accent-blue); margin-top: 4px;">Click to expand details</div>
                 <div id="panel-long-${t.id}" class="group-reasons" style="display: none; flex-direction: column; gap: 8px; margin-top: 12px;">
+                    ${t.entropy ? `
+                        <div class="entropy-gauge" style="margin-bottom: 10px; background: rgba(255,255,255,0.05); padding: 10px; border-radius: 6px;">
+                            <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); margin-bottom:4px;">
+                                <span>Shannon Entropy</span>
+                                <span>${t.entropy.toFixed(2)} bits</span>
+                            </div>
+                            <div style="height:4px; width:100%; background:rgba(255,255,255,0.1); border-radius:2px; overflow:hidden;">
+                                <div style="height:100%; width:${(t.entropy / 8 * 100).toFixed(0)}%; background:${t.entropy > 7.2 ? 'var(--accent-red)' : 'var(--accent-blue)'};"></div>
+                            </div>
+                            <div style="font-size:9px; color:var(--text-muted); margin-top:4px;">
+                                ${t.entropy > 7.2 ? 'High entropy indicates potential encryption or packing.' : 'Low/Medium entropy suggests standard binary code.'}
+                            </div>
+                        </div>
+                    ` : ''}
                     ${groupThreats.map(gt => `
                         <div class="reason-entry" style="font-size:12px; color:var(--text-header); background:rgba(255,255,255,0.03); padding:10px; border-radius:6px; border-left:3px solid ${severityColor};">
                             <div style="font-weight: 600; margin-bottom: 2px;">Detection Signal:</div>
@@ -352,6 +371,7 @@ function renderThreatsView(threats) {
             <div class="item-actions" style="display:flex; flex-direction: column; gap: 8px; justify-content: center; min-width: 150px;">
                 <button class="btn-text" onclick="markFalsePositive('${t.id}')" style="color:var(--text-muted); border:1px solid var(--glass-border); padding:8px 16px; border-radius:6px; width: 100%; transition: all 0.2s;">Mark False Positive</button>
                 <button class="btn-text" onclick="confirmThreat('${t.id}')" style="color:var(--accent-red); border:1px solid var(--accent-red); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(255, 77, 77, 0.05); transition: all 0.2s;">Confirm Threat</button>
+                <button class="btn-text" onclick="document.querySelector('[data-view=\'story\']').click()" style="color:var(--accent-green); border:1px solid var(--accent-green); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(0, 255, 150, 0.05);">View Forensic Story</button>
                 <button class="btn-text" onclick="investigateNode('${t.source_node}')" style="color:var(--accent-blue); border:1px solid var(--accent-blue); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(0, 210, 255, 0.05);">Investigate Node</button>
             </div>
         </div>
@@ -405,6 +425,7 @@ function renderMalwareView(detections) {
                 <div class="item-meta">
                     <span><i data-lucide="file" style="width:12px"></i> File: ${det.file_path || 'Unknown'}</span>
                     <span><i data-lucide="activity" style="width:12px"></i> Score: ${det.score || 'N/A'}</span>
+                    ${det.entropy ? `<span><i data-lucide="zap" style="width:12px"></i> Entropy: ${det.entropy.toFixed(2)}</span>` : ''}
                 </div>
             </div>
         </div>
@@ -782,4 +803,41 @@ window.investigateNode = function(nodeId) {
     // Switch to mesh view and highlight node (placeholder logic)
     document.querySelector('[data-view="mesh"]').click();
 };
+
+/**
+ * Render Forensic Story view
+ */
+async function renderStoryView() {
+    const container = document.getElementById('story-container');
+    if (!container) return;
+
+    // Add listener to refresh button
+    const refreshBtn = document.getElementById('refresh-story');
+    if (refreshBtn) {
+        refreshBtn.onclick = async () => {
+            container.innerHTML = '<div class="loading-spinner" style="margin: 20px auto;"></div><p class="placeholder-text">Synthesizing forensic story from OpenTelemetry spans...</p>';
+            const story = await fetchAPI('/story');
+            if (story && story.story) {
+                // Convert markdown-ish text to basic HTML (simple bold/newlines)
+                const formatted = story.story
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/\n/g, '<br/>');
+                container.innerHTML = `<div class="story-content" style="padding: 10px;">${formatted}</div>`;
+            } else {
+                container.innerHTML = '<p class="placeholder-text">Failed to generate story. Ensure agent is capturing OTel spans.</p>';
+            }
+        };
+    }
+
+    // Initial load if empty
+    if (container.querySelector('.placeholder-text')) {
+        const story = await fetchAPI('/story');
+        if (story && story.story) {
+            const formatted = story.story
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\n/g, '<br/>');
+            container.innerHTML = `<div class="story-content" style="padding: 10px;">${formatted}</div>`;
+        }
+    }
+}
 

@@ -11,6 +11,13 @@ use tracing::{info, warn};
 use std::sync::Arc;
 use osoosi_types::SecuredExecutor;
 
+/// Opt-in: download MalConv / SmolLM2 from `oyesanyf/OshoosiClaw-Weights` during provisioning. Default **off** — that bundle often 404s unless you publish it.
+fn use_bundled_hf_weights() -> bool {
+    std::env::var("OSOOSI_USE_BUNDLED_HF_WEIGHTS").map_or(false, |v| {
+        v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+    })
+}
+
 pub struct AgentProvisioner {
     executor: Arc<dyn SecuredExecutor>,
 }
@@ -1681,6 +1688,8 @@ impl AgentProvisioner {
     }
 
     /// Provision MalConv weights for direct byte-level classification.
+    /// Default: **no** download — the historical Hugging Face bundle URL often 404s. Set
+    /// `OSOOSI_USE_BUNDLED_HF_WEIGHTS=1` to attempt `oyesanyf/OshoosiClaw-Weights`, or place `malconv.safetensors` under `models/malware/`.
     pub async fn provision_malconv_weights(&self) -> anyhow::Result<()> {
         let models_dir = std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
         let malconv_dir = Path::new(&models_dir).join("malware");
@@ -1690,17 +1699,23 @@ impl AgentProvisioner {
             info!("MalConv weights already available.");
             return Ok(());
         }
+        if !use_bundled_hf_weights() {
+            info!("MalConv weights not present; skipping Hugging Face download (set OSOOSI_USE_BUNDLED_HF_WEIGHTS=1 to try the Oshoosi bundle, or add malconv.safetensors under models/malware).");
+            return Ok(());
+        }
 
-        info!("MalConv weights missing. Downloading from verified Oshoosi repository...");
+        info!("MalConv weights missing. Downloading from Oshoosi Hugging Face bundle (OSOOSI_USE_BUNDLED_HF_WEIGHTS)...");
         let _ = std::fs::create_dir_all(&malconv_dir);
-        
+
         let url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/malconv.safetensors?download=true";
         self.download_with_resume(url, &weight_path).await?;
-        
+
         info!("MalConv weights provisioned successfully.");
         Ok(())
     }
 
+    /// SmolLM2 ONNX + tokenizer. Same opt-in as [`provision_malconv_weights`]: no HF hit unless
+    /// `OSOOSI_USE_BUNDLED_HF_WEIGHTS=1` (or files already on disk / use `ensure_ai_models` public Hub paths).
     pub async fn provision_behavioral_model(&self) -> anyhow::Result<()> {
         let models_dir = std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
         let smollm_dir = Path::new(&models_dir).join("smollm");
@@ -1711,8 +1726,12 @@ impl AgentProvisioner {
             info!("Behavioral model weights (SmolLM2) already available.");
             return Ok(());
         }
+        if !use_bundled_hf_weights() {
+            info!("SmolLM2 bundle not present; skipping oyesanyf Hugging Face download (set OSOOSI_USE_BUNDLED_HF_WEIGHTS=1, or run bootstrap / place files in models/smollm).");
+            return Ok(());
+        }
 
-        info!("Behavioral model weights missing. Provisioning from verified Oshoosi repository...");
+        info!("Behavioral model weights missing. Provisioning from Oshoosi Hugging Face bundle (OSOOSI_USE_BUNDLED_HF_WEIGHTS)...");
         let _ = std::fs::create_dir_all(&smollm_dir);
 
         let model_url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/smollm2-135m-it.onnx?download=true";

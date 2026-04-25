@@ -195,10 +195,10 @@ pub struct EdrOrchestrator {
     /// Ghost Node: Active deception manager
     #[allow(dead_code)]
     ghost_nodes: Arc<osoosi_wire::GhostNodeManager>,
-    /// Runtime paths (db_path, traps_path) from config
-    runtime_config: osoosi_types::RuntimeConfig,
-    /// Secured execution layer (Direct or OpenShell)
-    secured_executor: Arc<dyn SecuredExecutor>,
+    /// Host execution layer (Always Direct for maintenance)
+    host_executor: Arc<dyn SecuredExecutor>,
+    /// Task execution layer (Direct or OpenShell for analysis)
+    task_executor: Arc<dyn SecuredExecutor>,
     /// Debouncer for behavioral alerts (reason -> last_log_time)
     behavioral_debouncer: Arc<dashmap::DashMap<String, Instant>>,
     /// Event Correlator: Multi-engine intelligence fusion
@@ -409,8 +409,9 @@ impl EdrOrchestrator {
         crate::init_hybrid_concurrency();
         let runtime_config = load_runtime_config();
         
-        let secured_executor: Arc<dyn SecuredExecutor> = if runtime_config.secure_runtime.as_deref() == Some("openshell") {
-            info!("Initializing OpenShell sandboxed runtime (Sandbox: {})...", runtime_config.openshell_sandbox);
+        let host_executor: Arc<dyn SecuredExecutor> = Arc::new(crate::secured_executor::DirectExecutor::new());
+        let task_executor: Arc<dyn SecuredExecutor> = if runtime_config.secure_runtime.as_deref() == Some("openshell") {
+            info!("Initializing OpenShell sandboxed task executor (Sandbox: {})...", runtime_config.openshell_sandbox);
             Arc::new(crate::secured_executor::OpenShellExecutor::new(
                 &runtime_config.openshell_sandbox,
                 runtime_config.openshell_policy.as_deref(),
@@ -437,7 +438,7 @@ impl EdrOrchestrator {
 
         
         // 2. Initialize Trust Manager
-        let trust = Arc::new(TrustManager::new(secured_executor.clone())?);
+        let trust = Arc::new(TrustManager::new(host_executor.clone())?);
 
         let exclude_paths = osoosi_types::load_exclude_paths_from_config();
         let (watcher_obj, file_rx) = osoosi_telemetry::FileWatcher::new(Some(memory.clone()), exclude_paths)?;
@@ -476,7 +477,7 @@ impl EdrOrchestrator {
         let behavioral_analyzer = Arc::new(osoosi_behavioral::BehavioralAnalyzer::new());
         let pii_classifier = Arc::new(crate::pii::PiiClassifier::new());
         let browser_guard = Arc::new(crate::browser_guard::BrowserGuard::new(memory.clone(), audit.clone()));
-        let static_analyzer = Arc::new(crate::static_analyzer::StaticAnalyzer::new(memory.clone()));
+        let static_analyzer = Arc::new(crate::static_analyzer::StaticAnalyzer::new(memory.clone(), task_executor.clone()));
         let correlator = Arc::new(crate::correlator::EventCorrelator::new());
         let nsrl_cache = Arc::new(dashmap::DashMap::new());
         let remediation = Arc::new(crate::remediation::RemediationController::new());
@@ -526,7 +527,7 @@ impl EdrOrchestrator {
             None
         };
 
-        let provisioner = Arc::new(osoosi_telemetry::AgentProvisioner::new(secured_executor.clone()));
+        let provisioner = Arc::new(osoosi_telemetry::AgentProvisioner::new(host_executor.clone()));
         let blocking_manager = Arc::new(crate::blocking_manager::BlockingManager::new(provisioner));
         // Register Voters into Policy Engine for Multi-Detector Consensus
         policy.add_voter(Box::new(osoosi_policy::voters::SemanticVoter {
@@ -613,7 +614,8 @@ impl EdrOrchestrator {
             gemma_cortex,
             blocking_manager,
             runtime_config,
-            secured_executor,
+            host_executor,
+            task_executor,
             behavioral_debouncer: Arc::new(dashmap::DashMap::new()),
         })
     }
@@ -1730,7 +1732,7 @@ impl EdrOrchestrator {
             }
         }
 
-        // --- SECOND-TIER: CAPA Analysis for Unknown Files ---
+        // --- SECOND-TIER: CAPA Analysis for Unknown Files --- (OPTIMIZED)
         if signature.is_none() {
              if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
                  let path = std::path::Path::new(image_path);
@@ -1757,23 +1759,29 @@ impl EdrOrchestrator {
                  let is_system = osoosi_types::is_system_path(image_path);
                  
                  if !is_known && !is_system {
-                     match self.static_analyzer.analyze_file(path).await {
-                         Ok(Some(static_sig)) => {
-                             // Feed static findings into correlator for future behavioral correlation
-                             if let Some(pid) = event.process_id() {
-                                 if let Some(reason) = &static_sig.reason {
-                                     for r in reason.split(';') {
-                                         let finding: &str = r.trim();
-                                         self.correlator.add_static_finding(pid, image_path, finding, static_sig.confidence);
+                     let analyzer = self.static_analyzer.clone();
+                     let orch = self.clone();
+                     let ev = event.clone();
+                     let path_buf = path.to_path_buf();
+                     
+                     tokio::spawn(async move {
+                         match analyzer.analyze_file(&path_buf).await {
+                             Ok(Some(static_sig)) => {
+                                 warn!("Static Intelligence: Identified critical capabilities in unknown file: {:?}", path_buf);
+                                 if let Some(pid) = ev.process_id() {
+                                     if let Some(reason) = &static_sig.reason {
+                                         for r in reason.split(';') {
+                                             orch.correlator.add_static_finding(pid, &path_buf.to_string_lossy(), r.trim(), static_sig.confidence);
+                                         }
                                      }
                                  }
-                             }
-                             signature = Some(static_sig);
-                             warn!("Static Intelligence: Identified critical capabilities in unknown file: {:?}", path);
-                         },
-                         Ok(None) => debug!("Static: No suspicious capabilities found for {:?}", path),
-                         Err(e) => error!("Static analysis error for {:?}: {}", path, e),
-                     }
+                                 let _ = orch.handle_threat(&ev, static_sig).await;
+                             },
+                             Ok(None) => debug!("Static: No suspicious capabilities found for {:?}", path_buf),
+                             Err(e) => error!("Static analysis error for {:?}: {}", path_buf, e),
+                         }
+                     });
+                     return Ok(());
                  }
              }
         }
@@ -1901,129 +1909,134 @@ impl EdrOrchestrator {
         }
 
         if let Some(signature) = signature {
-            warn!("ALARM: Threat identified on node {}: {:?}", event.computer, signature);
+            self.handle_threat(&event, signature).await?;
+        }
 
-            // Log detection to Audit Trail (include image_path for dashboard display)
-            let mut audit_data = serde_json::to_value(&signature)?.as_object().cloned().unwrap_or_default();
-            if let Some(img) = event.data.get("Image").and_then(|v| v.as_str()) {
-                audit_data.insert("image_path".to_string(), serde_json::json!(img));
-            }
-            self.audit.log("THREAT_DETECTED", serde_json::Value::Object(audit_data));
-            let _ = self.memory.log_threat(&signature);
+        Ok(())
+    }
 
-            if matches!(event.event_id, SysmonEventId::DnsQuery)
-                && crate::firewall::dns_autoblock_enabled()
-                && signature.confidence >= crate::firewall::dns_autoblock_min_confidence()
-            {
-                let query_name = event.data.get("QueryName").and_then(|v| v.as_str());
-                let query_results = event.data.get("QueryResults").and_then(|v| v.as_str());
-                match crate::firewall::block_dns_destinations(query_name, query_results) {
-                    Ok(msg) => {
-                        warn!("Firewall DNS auto-block applied: {}", msg);
-                        self.audit.log("RESPONSE_ACTION", serde_json::json!({
-                            "type": "FirewallDnsBlock",
-                            "query_name": query_name,
-                            "message": msg
-                        }));
-                    }
-                    Err(e) => {
-                        warn!("Firewall DNS auto-block skipped/failed: {}", e);
-                    }
-                }
-            }
+    /// Internal helper to handle identified threats (broadcast, audit, remediation, triage).
+    async fn handle_threat(&self, event: &osoosi_types::SysmonEvent, signature: osoosi_types::ThreatSignature) -> anyhow::Result<()> {
+        use osoosi_types::ResponseAction;
 
-            // 1. Broadcast to P2P Mesh immediately (Herd Immunity).
-            {
-                let tx_guard = self.mesh_command_tx.lock().await;
-                if let Some(ref tx) = *tx_guard {
-                    // Military-Grade Hardening: Differential Privacy (DP) Broadcast
-                    // Adds Laplacian noise to confidence scores to prevent peer fingerprinting.
-                    let dp_config = osoosi_dp::PrivacyConfig {
-                        epsilon: 0.8, // Privacy budget (smaller = more privacy)
-                        min_samples: 3,
-                        sensitivity: 1.0,
-                    };
-                    let _ = tx.send(MeshCommand::BroadcastNoisyThreat(signature.clone(), dp_config)).await;
+        warn!("ALARM: Threat identified on node {}: {:?}", event.computer, signature);
 
-                    // Phase 3: Shadow Chain (Distributed Audit Ledger)
-                    // Broadcast a signed proof of this detection to ensure audit log immutability.
-                    let proof = self.audit.root();
-                    let _ = tx.try_send(MeshCommand::BroadcastAuditProof(proof));
-                }
-            }
+        // Log detection to Audit Trail (include image_path for dashboard display)
+        let mut audit_data = serde_json::to_value(&signature)?.as_object().cloned().unwrap_or_default();
+        if let Some(img) = event.data.get("Image").and_then(|v| v.as_str()) {
+            audit_data.insert("image_path".to_string(), serde_json::json!(img));
+        }
+        self.audit.log("THREAT_DETECTED", serde_json::Value::Object(audit_data));
+        let _ = self.memory.log_threat(&signature);
 
-            // Auto-generated YARA from high-confidence detections
-            if signature.confidence >= 0.8 {
-                let _ = crate::yara_gen::generate_yara_from_threat(&signature);
-            }
-            
-            // 2. Dispatch Active Response based on Decision Matrix (sensible: only when confidence high)
-            let autonomy = osoosi_types::load_autonomy_config();
-            let mut effective_action = if signature.confidence >= autonomy.action_confidence_threshold {
-                signature.recommended_action
-            } else {
-                info!("Threat confidence {:.2} below action threshold {:.2}: downgrading to Alert", signature.confidence, autonomy.action_confidence_threshold);
-                ResponseAction::Alert
-            };
-
-            // Platform-specific safety check: Validate Windows system files with SFC before isolation.
-            #[cfg(target_os = "windows")]
-            {
-                if effective_action != ResponseAction::Alert {
-                    if let Some(file_path) = event.data.get("Image").and_then(|i| i.as_str()) {
-                        if crate::system_check::validate_windows_file_integrity(file_path).await {
-                             warn!("SFC SAFETY OVERRIDE: File {} verified as clean by Windows SFC. Downgrading action to Alert to prevent system destabilization.", file_path);
-                             effective_action = ResponseAction::Alert;
-                             // We don't modify the signature's confidence here, just the current decision's action.
-                        }
-                    }
-                }
-            }
-
-            // Shield Layer: Verify action safety against Taint/SSRF policies
-            let sink = match effective_action {
-                ResponseAction::Tarpit => Some(osoosi_types::TaintSink::process_injection()),
-                ResponseAction::GhostTarpit | ResponseAction::Deception => Some(osoosi_types::TaintSink::deception()),
-                ResponseAction::Isolate => Some(osoosi_types::TaintSink::mesh_join()), 
-                _ => None,
-            };
-
-            if let Some(sink) = sink {
-                if !self.shield.verify_taint_flow(&event, &sink) {
-                    warn!("SHIELD BLOCK: Autonomous action {:?} blocked by taint policy for event provenance", effective_action);
-                    self.audit.log("SHIELD_BLOCKED", serde_json::json!({
-                        "action": format!("{:?}", effective_action),
-                        "reason": "Taint violation detected in Shield Layer"
+        if matches!(event.event_id, osoosi_types::SysmonEventId::DnsQuery)
+            && crate::firewall::dns_autoblock_enabled()
+            && signature.confidence >= crate::firewall::dns_autoblock_min_confidence()
+        {
+            let query_name = event.data.get("QueryName").and_then(|v| v.as_str());
+            let query_results = event.data.get("QueryResults").and_then(|v| v.as_str());
+            match crate::firewall::block_dns_destinations(query_name, query_results) {
+                Ok(msg) => {
+                    warn!("Firewall DNS auto-block applied: {}", msg);
+                    self.audit.log("RESPONSE_ACTION", serde_json::json!({
+                        "type": "FirewallDnsBlock",
+                        "query_name": query_name,
+                        "message": msg
                     }));
-                    return Ok(());
+                }
+                Err(e) => {
+                    warn!("Firewall DNS auto-block skipped/failed: {}", e);
                 }
             }
+        }
 
-            // Human-in-the-Loop check: high-impact actions may require approval
-            if signature.require_approval && signature.action_state == osoosi_types::ActionState::Pending {
-                info!("Action {:?} requires administrator approval. Queuing for review.", effective_action);
-                self.audit.log("ACTION_PENDING_APPROVAL", serde_json::json!({
-                    "threat_id": signature.id,
-                    "action": format!("{:?}", effective_action)
+        // 1. Broadcast to P2P Mesh immediately (Herd Immunity).
+        {
+            let tx_guard = self.mesh_command_tx.lock().await;
+            if let Some(ref tx) = *tx_guard {
+                // Military-Grade Hardening: Differential Privacy (DP) Broadcast
+                let dp_config = osoosi_dp::PrivacyConfig {
+                    epsilon: 0.8,
+                    min_samples: 3,
+                    sensitivity: 1.0,
+                };
+                let _ = tx.send(MeshCommand::BroadcastNoisyThreat(signature.clone(), dp_config)).await;
+
+                // Phase 3: Shadow Chain (Distributed Audit Ledger)
+                let proof = self.audit.root();
+                let _ = tx.try_send(MeshCommand::BroadcastAuditProof(proof));
+            }
+        }
+
+        // Auto-generated YARA from high-confidence detections
+        if signature.confidence >= 0.8 {
+            let _ = crate::yara_gen::generate_yara_from_threat(&signature);
+        }
+        
+        // 2. Dispatch Active Response based on Decision Matrix
+        let autonomy = osoosi_types::load_autonomy_config();
+        let mut effective_action = if signature.confidence >= autonomy.action_confidence_threshold {
+            signature.recommended_action
+        } else {
+            info!("Threat confidence {:.2} below action threshold {:.2}: downgrading to Alert", signature.confidence, autonomy.action_confidence_threshold);
+            ResponseAction::Alert
+        };
+
+        // Platform-specific safety check: Validate Windows system files with SFC before isolation.
+        #[cfg(target_os = "windows")]
+        {
+            if effective_action != ResponseAction::Alert {
+                if let Some(file_path) = event.data.get("Image").and_then(|i| i.as_str()) {
+                    if crate::system_check::validate_windows_file_integrity(file_path).await {
+                         warn!("SFC SAFETY OVERRIDE: File {} verified as clean by Windows SFC. Downgrading action to Alert.", file_path);
+                         effective_action = ResponseAction::Alert;
+                    }
+                }
+            }
+        }
+
+        // Shield Layer: Verify action safety against Taint/SSRF policies
+        let sink = match effective_action {
+            ResponseAction::Tarpit => Some(osoosi_types::TaintSink::process_injection()),
+            ResponseAction::GhostTarpit | ResponseAction::Deception => Some(osoosi_types::TaintSink::deception()),
+            ResponseAction::Isolate => Some(osoosi_types::TaintSink::mesh_join()), 
+            _ => None,
+        };
+
+        if let Some(sink) = sink {
+            if !self.shield.verify_taint_flow(event, &sink) {
+                warn!("SHIELD BLOCK: Autonomous action {:?} blocked by taint policy", effective_action);
+                self.audit.log("SHIELD_BLOCKED", serde_json::json!({
+                    "action": format!("{:?}", effective_action),
+                    "reason": "Taint violation detected in Shield Layer"
                 }));
-                // We'll proceed with LLM triage below, but skip execution for now.
-            } else {
-                self.perform_action(&event, &signature, effective_action).await?;
+                return Ok(());
             }
+        }
 
-            // LLM triage: add high-confidence threats for agent decision
-            if crate::triage::triage_enabled()
-                && signature.confidence >= crate::triage::triage_confidence_threshold()
-            {
-                crate::triage::add_pending(
-                    &self.triage_store,
-                    &signature.id,
-                    signature.clone(),
-                    &event,
-                    effective_action,
-                );
-                crate::triage::remove_expired(&self.triage_store, 300);
-            }
+        // Human-in-the-Loop check: high-impact actions may require approval
+        if signature.require_approval && signature.action_state == osoosi_types::ActionState::Pending {
+            info!("Action {:?} requires administrator approval. Queuing for review.", effective_action);
+            self.audit.log("ACTION_PENDING_APPROVAL", serde_json::json!({
+                "threat_id": signature.id,
+                "action": format!("{:?}", effective_action)
+            }));
+        } else {
+            self.perform_action(event, &signature, effective_action).await?;
+        }
+
+        // LLM triage: add high-confidence threats for agent decision
+        if crate::triage::triage_enabled()
+            && signature.confidence >= crate::triage::triage_confidence_threshold()
+        {
+            crate::triage::add_pending(
+                &self.triage_store,
+                &signature.id,
+                signature.clone(),
+                event,
+                effective_action,
+            );
+            crate::triage::remove_expired(&self.triage_store, 300);
         }
 
         Ok(())
@@ -2054,9 +2067,14 @@ impl EdrOrchestrator {
         self.audit.clone()
     }
 
-    /// Access the secured executor.
-    pub fn secured_executor(&self) -> Arc<dyn osoosi_types::SecuredExecutor> {
-        self.secured_executor.clone()
+    /// Access the task executor (for sandboxed tool calls).
+    pub fn task_executor(&self) -> Arc<dyn osoosi_types::SecuredExecutor> {
+        self.task_executor.clone()
+    }
+
+    /// Access the host executor (for maintenance).
+    pub fn host_executor(&self) -> Arc<dyn osoosi_types::SecuredExecutor> {
+        self.host_executor.clone()
     }
 
     /// Returns the full list of Merkle Trail entries.
