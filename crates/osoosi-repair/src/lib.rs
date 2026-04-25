@@ -314,7 +314,10 @@ try {{
                 .status()?;
             
             if !status.success() {
-                warn!("Failed to create Windows restore point. Proceeding with caution (Atomic rollback via wusa/dism still available).");
+                warn!(
+                    "Failed to create Windows restore point (exit {:?}). Ensure admin rights and System Restore enabled; wusa/DISM rollback may still apply.",
+                    status.code()
+                );
             }
         }
         #[cfg(target_os = "linux")]

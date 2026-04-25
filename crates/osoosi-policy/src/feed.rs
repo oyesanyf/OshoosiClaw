@@ -89,7 +89,8 @@ impl ThreatFeedFetcher {
     }
 
     /// Import NSRL records from a NIST .sqlite file (Modern RDA format).
-    /// This expects a standard NSRL sqlite schema with a 'FILE' table.
+    /// This loads **all** rows into memory — for large RDS files prefer
+    /// `MemoryStore::import_nsrl_from_nist_rds_sqlite` (ATTACH + `INSERT..SELECT`, fast / low RAM).
     pub async fn import_nsrl_from_sqlite(&self, path: &std::path::Path) -> anyhow::Result<Vec<NsrlRecord>> {
         use rusqlite::Connection;
         
@@ -302,7 +303,22 @@ impl ThreatFeedFetcher {
                 }
                 Ok(r) => {
                     let status = r.status();
-                    warn!("[OTX] Attempt {} failed with status {}. Retrying...", attempts + 1, status);
+                    let code = status.as_u16();
+                    if code == 401 {
+                        warn!(
+                            "[OTX] Attempt {} HTTP {} — check OTX_API_KEY is valid for AlienVault OTX.",
+                            attempts + 1,
+                            status
+                        );
+                    } else if matches!(code, 502 | 503 | 504) {
+                        warn!(
+                            "[OTX] Attempt {} HTTP {} — gateway/upstream error (often transient). Retrying...",
+                            attempts + 1,
+                            status
+                        );
+                    } else {
+                        warn!("[OTX] Attempt {} failed with status {}. Retrying...", attempts + 1, status);
+                    }
                 }
                 Err(e) => {
                     warn!("[OTX] Attempt {} network error: {}. Retrying...", attempts + 1, e);

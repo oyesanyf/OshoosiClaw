@@ -4,7 +4,7 @@ use rusqlite::{params, Connection};
 use osoosi_types::{Kev, ThreatSignature, ReputationScore, PendingJoinRequest, QuarantinedPeer, ResponseAction, ActionState, PeerAnnounce, PeerStatus, MalwareSample};
 use chrono::{DateTime, Utc};
 use tracing::debug;
-// use std::path::Path;
+use std::path::Path;
 use std::sync::Mutex;
 
 pub mod encryption;
@@ -247,12 +247,87 @@ impl MemoryStore {
         Ok(())
     }
 
-    /// Check if a SHA1 hash exists in the NSRL 'Known Good' list.
+    /// Check if a SHA1 hash exists in the NSRL 'Known Good' list (compares lowercase hex).
     pub fn is_nsrl_known_good(&self, sha1: &str) -> anyhow::Result<bool> {
+        let key = sha1.trim().to_ascii_lowercase();
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare_cached("SELECT 1 FROM nsrl WHERE sha1 = ? LIMIT 1")?;
-        let exists = stmt.exists([sha1])?;
+        let exists = stmt.exists([key])?;
         Ok(exists)
+    }
+
+    /// Bulk-import NSRL from an official NIST **RDS** SQLite (Modern `FILE` table) by `ATTACH` + `INSERT…SELECT`.
+    /// This avoids loading millions of rows into Rust and completes much faster with lower RAM use than
+    /// `import_nsrl_from_sqlite` + `upsert_nsrl_records`. Safe to run while the agent is up (WAL + readers).
+    pub fn import_nsrl_from_nist_rds_sqlite(&self, nist_rds_path: &Path) -> anyhow::Result<u64> {
+        let p = nist_rds_path
+            .to_str()
+            .ok_or_else(|| anyhow::anyhow!("NSRL RDS path is not valid UTF-8"))?;
+        if !nist_rds_path.exists() {
+            anyhow::bail!("NSRL RDS file not found: {:?}", nist_rds_path);
+        }
+        let mut conn = self.conn.lock().unwrap();
+        let before: u64 = conn.query_row("SELECT COUNT(*) FROM nsrl", [], |r| r.get(0))?;
+
+        // Tuned for one-shot bulk copy (reduces disk sync overhead; still crash-safe on WAL).
+        let _ = conn.query_row("PRAGMA journal_mode", [], |r: &rusqlite::Row| -> rusqlite::Result<String> {
+            r.get(0)
+        });
+        let _ = conn.execute("PRAGMA synchronous = NORMAL", []);
+        let _ = conn.execute("PRAGMA temp_store = MEMORY", []);
+        // ~200MB page cache: speeds reading the attached NIST file (env overridable for fast SSDs)
+        let cache_kb: i32 = std::env::var("OSOOSI_NSRL_IMPORT_CACHE_KB")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(200_000i32);
+        let _ = conn.execute(&format!("PRAGMA cache_size = -{cache_kb}"), []);
+        // SQLite 3.39+: extra worker threads for large INSERT..SELECT (default env: 4; set 0 to leave default)
+        if let Some(t) = std::env::var("OSOOSI_NSRL_IMPORT_THREADS")
+            .ok()
+            .and_then(|s| s.parse::<i32>().ok())
+        {
+            if t > 0 {
+                let t = t.clamp(1, 32);
+                let _ = conn.execute(&format!("PRAGMA threads = {t}"), []);
+            }
+        } else {
+            let _ = conn.execute("PRAGMA threads = 4", []);
+        }
+
+        let tx = conn.transaction()?;
+        tx.execute("ATTACH DATABASE ? AS nist", [p])?;
+        let file_tbl: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM nist.sqlite_master WHERE type='table' AND name='FILE'",
+            [],
+            |r| r.get(0),
+        )?;
+        if file_tbl == 0 {
+            let _ = tx.execute("DETACH DATABASE nist", []);
+            tx.commit()?;
+            anyhow::bail!("NSRL file has no FILE table (expected NIST modern RDS): {:?}", nist_rds_path);
+        }
+
+        // Map NIST `FILE` columns → our schema; hashes in RDS are typically hex strings.
+        tx.execute(
+            "INSERT OR REPLACE INTO main.nsrl (sha1, md5, sha256, file_name, file_size, product_code, os_code)
+             SELECT lower(sha1), lower(md5), lower(sha256), name, size, product, os FROM nist.FILE",
+            [],
+        )?;
+
+        let _ = tx.execute("DETACH DATABASE nist", []);
+        tx.commit()?;
+
+        let after: u64 = conn.query_row("SELECT COUNT(*) FROM nsrl", [], |r| r.get(0))?;
+        // Restore conservative sync for steady-state operation (small cost).
+        let _ = conn.execute("PRAGMA synchronous = FULL", []);
+        let _ = conn.execute("PRAGMA cache_size = -2000", []); // back to a modest default
+        let _ = conn.execute("PRAGMA threads = 0", []); // restore SQLite default worker count
+        let added = after.saturating_sub(before);
+        debug!(
+            "NSRL bulk import: +{} rows (total {} in nsrl) from {:?}",
+            added, after, nist_rds_path
+        );
+        Ok(added)
     }
 
     /// Upsert a batch of NSRL records.
@@ -265,10 +340,13 @@ impl MemoryStore {
                  VALUES (?, ?, ?, ?, ?, ?, ?)"
             )?;
             for r in records {
+                let sha1 = r.sha1.to_ascii_lowercase();
+                let md5 = r.md5.as_ref().map(|s| s.to_ascii_lowercase());
+                let sha256 = r.sha256.as_ref().map(|s| s.to_ascii_lowercase());
                 stmt.execute(params![
-                    r.sha1,
-                    r.md5,
-                    r.sha256,
+                    sha1,
+                    md5,
+                    sha256,
                     r.file_name,
                     r.file_size,
                     r.product_code,

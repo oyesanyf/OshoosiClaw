@@ -11,6 +11,7 @@ path = "src/main.rs"
 
 [dependencies]
 osoosi-core = { path = "../osoosi-core" }
+osoosi-memory = { path = "../osoosi-memory" }
 osoosi-dashboard = { path = "../osoosi-dashboard" }
 osoosi-types = { path = "../osoosi-types" }
 clap = { workspace = true }

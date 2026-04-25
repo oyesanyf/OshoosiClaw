@@ -12,6 +12,39 @@ use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, EnvFilter};
 use hf_hub::api::tokio::ApiBuilder;
 
+/// Fast `ATTACH`+`INSERT…SELECT` into the agent DB; on failure, fall back to loading all rows in Rust.
+async fn import_nsrl_with_fallback(
+    mem: &Arc<osoosi_memory::MemoryStore>,
+    nist_path: &Path,
+    fetcher: &ThreatFeedFetcher,
+) {
+    match mem.import_nsrl_from_nist_rds_sqlite(nist_path) {
+        Ok(added) => {
+            let total = mem.nsrl_record_count().unwrap_or(0);
+            info!(
+                "[NSRL] Fast bulk import from {:?}: {} new rows (nsrl total ~{}).",
+                nist_path, added, total
+            );
+        }
+        Err(e) => {
+            warn!(
+                "[NSRL] Fast SQL import failed ({}); falling back to row-by-row load (high RAM).",
+                e
+            );
+            match fetcher.import_nsrl_from_sqlite(nist_path).await {
+                Ok(records) => {
+                    if let Err(e2) = mem.upsert_nsrl_records(&records) {
+                        error!("[NSRL] Fallback upsert failed: {}", e2);
+                    } else {
+                        info!("[NSRL] Fallback: stored {} NSRL records.", records.len());
+                    }
+                }
+                Err(e2) => error!("[NSRL] Fallback read failed: {}", e2),
+            }
+        }
+    }
+}
+
 #[derive(Parser)]
 #[command(name = "osoosi")]
 #[command(about = "OpenỌ̀ṣọ́ọ̀sì: Autonomous Security Agent", long_about = None)]
@@ -290,23 +323,14 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                     info!("[NSRL Background] NSRL data missing. Initiating autonomous background download (non-blocking)...");
                     match fetcher.download_nsrl_streaming(&nsrl_dir).await {
                         Ok(db_path) => {
-                            info!("[NSRL Background] Download complete at {:?}. Importing records...", db_path);
-                            if let Ok(records) = fetcher.import_nsrl_from_sqlite(&db_path).await {
-                                if let Err(e) = nsrl_orch.memory().upsert_nsrl_records(&records) {
-                                    error!("[NSRL Background] Failed to upsert records: {}", e);
-                                } else {
-                                    info!("[NSRL Background] Successfully integrated {} 'Known Good' records into trust database.", records.len());
-                                }
-                            }
+                            info!("[NSRL Background] Download complete at {:?}. Importing (fast path when possible)...", db_path);
+                            import_nsrl_with_fallback(&nsrl_orch.memory(), db_path.as_path(), &fetcher).await;
                         }
                         Err(e) => error!("[NSRL Background] Failed to download NSRL: {}", e),
                     }
                 } else if nsrl_count == 0 && db_file.exists() {
-                    info!("[NSRL Background] NSRL database file found on disk, but records are not in memory. Importing...");
-                    if let Ok(records) = fetcher.import_nsrl_from_sqlite(&db_file).await {
-                         let _ = nsrl_orch.memory().upsert_nsrl_records(&records);
-                         info!("[NSRL Background] Imported {} records from existing local database.", records.len());
-                    }
+                    info!("[NSRL Background] NSRL SQLite found on disk but agent DB empty. Importing...");
+                    import_nsrl_with_fallback(&nsrl_orch.memory(), &db_file, &fetcher).await;
                 }
             });
 
@@ -416,9 +440,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                             fetcher.download_nsrl_streaming(&temp_dir).await?
                         }
                     };
-                    let records = fetcher.import_nsrl_from_sqlite(&db_path).await?;
-                    orchestrator.memory().upsert_nsrl_records(&records)?;
-                    info!("Successfully integrated {} records.", records.len());
+                    import_nsrl_with_fallback(&orchestrator.memory(), db_path.as_path(), &fetcher).await;
+                    info!("NSRL import finished (see logs for row counts).");
                 }
             }
         }
@@ -688,10 +711,8 @@ async fn handle_grant_access() -> anyhow::Result<()> {
     let temp_dir = std::env::temp_dir().join("osoosi-nsrl-shared-cache");
     let fetcher = ThreatFeedFetcher::new();
     if let Ok(db_path) = fetcher.download_nsrl_streaming(&temp_dir).await {
-        if let Ok(records) = fetcher.import_nsrl_from_sqlite(&db_path).await {
-            let orchestrator = EdrOrchestrator::new().await?;
-            let _ = orchestrator.memory().upsert_nsrl_records(&records);
-        }
+        let orchestrator = EdrOrchestrator::new().await?;
+        import_nsrl_with_fallback(&orchestrator.memory(), db_path.as_path(), &fetcher).await;
     }
     Ok(())
 }

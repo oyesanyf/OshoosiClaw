@@ -60,6 +60,47 @@ use tracing::{debug, info, warn, error};
 /// Repair status tuple: (last_cve, last_state, last_sig, last_at, pending_count, last_error).
 pub type RepairStatus = (Option<String>, Option<String>, Option<String>, Option<String>, u32, Option<String>);
 
+/// Best-effort YARA-X C2 rules: compilation must not take down the agent (yara-x can panic internally on some versions).
+fn try_build_c2_yara_voter() -> Option<osoosi_policy::voters::YaraXMemoryVoter> {
+    use osoosi_policy::voters::YaraXMemoryVoter;
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+        || -> anyhow::Result<YaraXMemoryVoter> {
+            let mut compiler = yara_x::Compiler::new();
+            compiler
+                .add_source(
+                r#"
+            rule C2_Beacon_Generic {
+                strings:
+                    $mz = { 4D 5A }
+                    $cobalt_strike = "beacon.dll"
+                    $sliver = "sliver"
+                condition:
+                    $mz and ($cobalt_strike or $sliver)
+            }
+        "#,
+                )
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            Ok(YaraXMemoryVoter {
+                rules: compiler.build(),
+            })
+        },
+    ));
+    match r {
+        Ok(Ok(v)) => Some(v),
+        Ok(Err(e)) => {
+            warn!(
+                "YARA-X: C2 rule compile error: {}; skipping YaraXMemoryVoter",
+                e
+            );
+            None
+        }
+        Err(_) => {
+            warn!("YARA-X: C2 rule build panicked; skipping YaraXMemoryVoter");
+            None
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct EdrOrchestrator {
     /// Memory: Local persistence
@@ -112,8 +153,9 @@ pub struct EdrOrchestrator {
     behavioral_classifier: Arc<osoosi_behavioral::BehavioralClassifier>,
     /// Behavioral AI Analyzer (OpenAI/Azure adapted from AIEventAnalyzer)
     behavioral_analyzer: Arc<osoosi_behavioral::BehavioralAnalyzer>,
+    /// Native Candle SmolLM (optional — agent runs if files missing or load fails).
     #[allow(dead_code)]
-    behavioral_engine: Arc<osoosi_behavioral::SmolLMAnalyzer>,
+    behavioral_engine: Option<Arc<osoosi_behavioral::SmolLMAnalyzer>>,
     #[allow(dead_code)]
     gemma_cortex: Option<Arc<osoosi_behavioral::Gemma4Analyzer>>,
     pub blocking_manager: Arc<crate::blocking_manager::BlockingManager>,
@@ -398,11 +440,19 @@ impl EdrOrchestrator {
         let mesh_peer_count = Arc::new(AtomicU32::new(0));
         let repair_config = osoosi_types::load_repair_config();
         let patch_engine = Arc::new(PatchEngine::new(audit.clone(), repair_config));
+        let min_train = std::env::var("OSOOSI_MODEL_MIN_SAMPLES")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(10);
         let model_config = ModelConfig {
             models_dir: std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string()),
-            min_samples: std::env::var("OSOOSI_MODEL_MIN_SAMPLES").ok().and_then(|s| s.parse().ok()).unwrap_or(10),
+            min_samples: min_train,
             ..Default::default()
         };
+        info!(
+            "Federated threat-model training will run when at least {} labeled samples are available (set OSOOSI_MODEL_MIN_SAMPLES to change).",
+            min_train
+        );
         let threat_model = Arc::new(tokio::sync::RwLock::new(ThreatModel::new(model_config)));
 
         let malware_model_path = osoosi_types::resolve_models_dir()
@@ -432,10 +482,40 @@ impl EdrOrchestrator {
         
         let models_dir = std::path::PathBuf::from(std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string()));
         let smollm_dir = models_dir.join("smollm");
-        let behavioral_engine = Arc::new(osoosi_behavioral::SmolLMAnalyzer::new(&smollm_dir)?);
+        let behavioral_engine = match osoosi_behavioral::SmolLMAnalyzer::new(&smollm_dir) {
+            Ok(a) => {
+                info!("Native SmolLM analyzer loaded from {:?}.", smollm_dir);
+                Some(Arc::new(a))
+            }
+            Err(e) => {
+                warn!(
+                    "Native SmolLM analyzer unavailable: {}. Expect tokenizer.json, model.safetensors, and config.json under {:?} (Candle/LLaMA format). The agent continues with rules and optional ONNX path in BehavioralClassifier.",
+                    e, smollm_dir
+                );
+                None
+            }
+        };
         let gemma_dir = models_dir.join("gemma4-e2b");
         let gemma_cortex = if gemma_dir.exists() {
-            Some(Arc::new(osoosi_behavioral::Gemma4Analyzer::new(&gemma_dir)?))
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                osoosi_behavioral::Gemma4Analyzer::new(&gemma_dir)
+            })) {
+                Ok(Ok(analyzer)) => Some(Arc::new(analyzer)),
+                Ok(Err(e)) => {
+                    warn!(
+                        "Gemma 4 ONNX cortex failed to load: {}. Check model.onnx, tokenizer.json, and ONNX Runtime (ort.dll) version vs `ort` crate.",
+                        e
+                    );
+                    None
+                }
+                Err(_) => {
+                    warn!(
+                        "Gemma 4 ONNX init panicked (often ONNX Runtime native library mismatch). Install a matching ORT or remove {:?} to skip.",
+                        gemma_dir
+                    );
+                    None
+                }
+            }
         } else {
             None
         };
@@ -453,6 +533,7 @@ impl EdrOrchestrator {
         
         policy.add_voter(Box::new(osoosi_policy::voters::NsrlVoter {
             cache: nsrl_cache.clone(),
+            memory: memory.clone(),
         }));
 
         policy.add_voter(Box::new(osoosi_policy::voters::OtxVoter {
@@ -470,22 +551,9 @@ impl EdrOrchestrator {
             memory: memory.clone(),
         }));
 
-        // Yara-X Memory Voter with default C2 beacon patterns
-        let mut compiler = yara_x::Compiler::new();
-        if let Ok(_) = compiler.add_source(r#"
-            rule C2_Beacon_Generic {
-                strings:
-                    $mz = { 4D 5A }
-                    $cobalt_strike = "beacon.dll"
-                    $sliver = "sliver"
-                condition:
-                    $mz and ($cobalt_strike or $sliver)
-            }
-        "#) {
-            let rules = compiler.build();
-            policy.add_voter(Box::new(osoosi_policy::voters::YaraXMemoryVoter {
-                rules,
-            }));
+        // Yara-X Memory Voter: wrap build in catch_unwind — yara-x can panic on some toolchains/rule edge cases.
+        if let Some(voter) = try_build_c2_yara_voter() {
+            policy.add_voter(Box::new(voter));
         }
         
         // ClamAV Consensus Voter
@@ -1625,8 +1693,26 @@ impl EdrOrchestrator {
         if signature.is_none() {
              if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
                  let path = std::path::Path::new(image_path);
-                 // Only run CAPA if NSRL/Cache doesn't know the file
-                 let is_known = self.nsrl_cache.contains_key(image_path);
+                 // NSRL L1 cache is keyed by SHA-1 (not path), same as NsrlVoter
+                 let sha1_opt = event.data.get("Hashes").and_then(|h| h.as_str()).and_then(|hashes| {
+                     hashes
+                         .split(',')
+                         .find_map(|p| {
+                             let t = p.trim();
+                             t.strip_prefix("SHA1=")
+                                 .or_else(|| t.strip_prefix("SHA1:"))
+                                 .map(str::trim)
+                                 .map(|s| s.to_ascii_lowercase())
+                         })
+                 });
+                 let is_known = sha1_opt
+                     .as_ref()
+                     .map(|h| self.nsrl_cache.contains_key(h.as_str()))
+                     .unwrap_or(false)
+                     || sha1_opt
+                         .as_ref()
+                         .map(|h| self.memory.is_nsrl_known_good(h).unwrap_or(false))
+                         .unwrap_or(false);
                  let is_system = osoosi_types::is_system_path(image_path);
                  
                  if !is_known && !is_system {

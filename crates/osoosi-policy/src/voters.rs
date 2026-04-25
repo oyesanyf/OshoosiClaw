@@ -100,24 +100,51 @@ impl ThreatVoter for GemmaVoter {
     }
 }
 
-/// NSRL "Known Good" Veto Voter
+/// NSRL "Known Good" Veto Voter (matches NIST **SHA-1** from Sysmon `Hashes`, same as the EDR fast-path).
 pub struct NsrlVoter {
     pub cache: Arc<dashmap::DashMap<String, bool>>,
+    pub memory: Arc<osoosi_memory::MemoryStore>,
+}
+
+fn sha1_from_sysmon_hashes(event: &SysmonEvent) -> Option<String> {
+    let hashes = event.data.get("Hashes")?.as_str()?;
+    for part in hashes.split(',') {
+        let p = part.trim();
+        if let Some(rest) = p
+            .strip_prefix("SHA1=")
+            .or_else(|| p.strip_prefix("SHA1:"))
+        {
+            return Some(rest.trim().to_ascii_lowercase());
+        }
+    }
+    None
 }
 
 impl ThreatVoter for NsrlVoter {
     fn name(&self) -> String { "NSRL-Veto".to_string() }
     fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
-        if let Some(image) = event.data.get("Image").and_then(|v| v.as_str()) {
-            if self.cache.contains_key(image) {
-                return Some(VoteResult {
-                    confidence: 0.0, // This is a veto
-                    reason: "NSRL: Identified as a 'Known Good' system file. Vetoing block.".to_string(),
-                    weight: -2.0, // Massive negative weight acts as a veto
-                });
-            }
+        let sha1 = sha1_from_sysmon_hashes(event)?;
+        if self
+            .cache
+            .get(&sha1)
+            .map(|e| *e.value())
+            .unwrap_or(false)
+        {
+            return Some(vote_result_nsrl_veto());
+        }
+        if self.memory.is_nsrl_known_good(&sha1).unwrap_or(false) {
+            self.cache.insert(sha1, true);
+            return Some(vote_result_nsrl_veto());
         }
         None
+    }
+}
+
+fn vote_result_nsrl_veto() -> VoteResult {
+    VoteResult {
+        confidence: 0.0, // Veto: no "malice" score
+        reason: "NSRL: File hash in NIST known-good set. Vetoing threat block.".to_string(),
+        weight: -2.0,
     }
 }
 

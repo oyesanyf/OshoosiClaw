@@ -106,7 +106,11 @@ impl ThreatModel {
     /// Train from a batch of threat signatures (self + peer data).
     pub fn train(&mut self, samples: &[ThreatSignature]) -> anyhow::Result<()> {
         if samples.len() < self.config.min_samples {
-            warn!("Not enough samples to train ({} < {})", samples.len(), self.config.min_samples);
+            warn!(
+                "Not enough samples to train ({} < {}). For development, lower the threshold with OSOOSI_MODEL_MIN_SAMPLES.",
+                samples.len(),
+                self.config.min_samples
+            );
             return Ok(());
         }
 

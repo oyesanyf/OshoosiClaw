@@ -121,7 +121,18 @@ impl MeshNode {
         for addr in mesh_config.listen_addrs {
             if let Ok(maddr) = addr.parse::<Multiaddr>() {
                 if let Err(e) = swarm.listen_on(maddr.clone()) {
-                    warn!("Failed to listen on {}: {}", maddr, e);
+                    let es = e.to_string();
+                    if es.contains("10048")
+                        || es.to_lowercase().contains("address already in use")
+                        || es.to_lowercase().contains("address in use")
+                    {
+                        warn!(
+                            "Failed to listen on {}: {} — port may be in use (stop duplicate agent or set OSOOSI_MESH_LISTEN_ADDRS to a free port).",
+                            maddr, e
+                        );
+                    } else {
+                        warn!("Failed to listen on {}: {}", maddr, e);
+                    }
                 }
             }
         }
