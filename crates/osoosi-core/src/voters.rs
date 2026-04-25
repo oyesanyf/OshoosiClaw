@@ -1,8 +1,8 @@
 use osoosi_policy::engine::{ThreatVoter, VoteResult};
 use osoosi_types::SysmonEvent;
-use osoosi_model::MalwareScanner;
-use std::sync::Arc;
+use osoosi_model::{MalwareScanResult, MalwareScanner};
 use std::path::Path;
+use std::sync::Arc;
 
 /// ClamAV Consensus Voter
 /// 
@@ -43,5 +43,86 @@ impl ThreatVoter for ClamVoter {
             }
         }
         None
+    }
+}
+
+/// Minimum `combined_score` from [`MalwareScanner::scan_file`] to cast a **malicious** vote.
+/// (Below this, the voter abstains so weak signals do not drown the consensus.)  
+/// `is_malware` from the scanner (same threshold as internal `0.75` gate) still yields a vote regardless.
+fn malconv_vote_min_combined() -> f64 {
+    std::env::var("OSOOSI_MALCONV_VOTE_MIN_SCORE")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(0.55_f64)
+}
+
+/// MalConv / EMBER ONNX / YARA **MalwareScanner** voter — so byte-level and PE ML participate in
+/// the same `[CONSENSUS]` registry as OTX, Sigma, KEV, etc.
+pub struct MalConvVoter {
+    pub scanner: Arc<MalwareScanner>,
+}
+
+impl ThreatVoter for MalConvVoter {
+    fn name(&self) -> String {
+        "MalConv-ML".to_string()
+    }
+
+    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        if std::env::var("OSOOSI_NO_AI")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+        {
+            return None;
+        }
+
+        const MAX_BYTES: u64 = 48 * 1024 * 1024;
+        let mut best: Option<MalwareScanResult> = None;
+        let mut best_path: Option<String> = None;
+
+        for key in ["Image", "TargetImage", "TargetFilename"] {
+            let Some(p) = event.data.get(key).and_then(|v| v.as_str()) else {
+                continue;
+            };
+            let path = Path::new(p);
+            if !path.is_file() {
+                continue;
+            }
+            if let Ok(m) = path.metadata() {
+                if m.len() > MAX_BYTES {
+                    continue;
+                }
+            }
+            if let Some(res) = self.scanner.scan_file(path) {
+                let replace = best
+                    .as_ref()
+                    .map(|b| res.combined_score > b.combined_score)
+                    .unwrap_or(true);
+                if replace {
+                    best_path = Some(p.to_string());
+                    best = Some(res);
+                }
+            }
+        }
+
+        let res = best?;
+        let min_c = malconv_vote_min_combined();
+        if !res.is_malware && res.combined_score < min_c {
+            return None;
+        }
+
+        let conf = (res.combined_score.min(1.0)) as f32;
+        let path_note = best_path.as_deref().unwrap_or("?");
+        Some(VoteResult {
+            confidence: conf,
+            reason: format!(
+                "MalwareScanner (MalConv/ONNX+YARA): combined={:.3} ml={:.3} sig={:.3} magika={} file={}",
+                res.combined_score,
+                res.ml_score,
+                res.signature_score,
+                res.magika_label,
+                path_note
+            ),
+            weight: 0.88,
+        })
     }
 }

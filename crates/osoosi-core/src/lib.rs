@@ -19,6 +19,7 @@ pub mod relativistic;
 pub mod system_check;
 pub mod pii;
 pub mod openshell;
+pub mod tool_paths;
 pub mod config_integrity;
 pub mod hardened;
 pub mod landlock;
@@ -40,18 +41,26 @@ pub mod causal_ai;
 pub mod self_healing;
 pub mod correlator;
 pub mod blocking_manager;
+pub mod otx_tarpit;
 
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
+use std::sync::Once;
 use std::time::{Duration, Instant};
 use osoosi_memory::MemoryStore;
 use osoosi_telemetry::SysmonParser;
 use osoosi_policy::{PolicyEngine, ThreatFeedFetcher};
 use osoosi_wire::{MeshNode, MeshCommand, JoinGate};
 use osoosi_runtime::DeceptionManager;
-use osoosi_types::{SysmonEvent, load_runtime_config, SecuredExecutor, SysmonEventId};
+use osoosi_types::{
+    load_runtime_config, resolve_nvd_api_key, resolve_otx_api_key, SecuredExecutor, SysmonEvent,
+    SysmonEventId,
+};
 use osoosi_audit::AuditTrail;
+
+static OTX_FEED_KEY_SOURCE_LOG: Once = Once::new();
+static OTX_FEED_DISABLED_LOG: Once = Once::new();
 use osoosi_repair::PatchEngine;
 use osoosi_trust::TrustManager;
 use osoosi_model::{ThreatModel, ModelConfig, MalwareScanner};
@@ -308,17 +317,14 @@ impl EdrOrchestrator {
         let client = reqwest::Client::builder()
             .timeout(Duration::from_secs(4))
             .build()?;
-        let api_key = std::env::var("OTX_API_KEY").ok();
+        let api_key = resolve_otx_api_key();
         let mut max_hits = 0u64;
 
         for domain in Self::dns_domain_candidates(query_name) {
             let url = format!("https://otx.alienvault.com/api/v1/indicators/domain/{}/general", domain);
             let mut req = client.get(&url);
             if let Some(ref k) = api_key {
-                let key = k.trim();
-                if !key.is_empty() {
-                    req = req.header("X-OTX-API-KEY", key);
-                }
+                req = req.header("X-OTX-API-KEY", k);
             }
             let resp = req.send().await;
             let Ok(resp) = resp else {
@@ -558,6 +564,11 @@ impl EdrOrchestrator {
         
         // ClamAV Consensus Voter
         policy.add_voter(Box::new(crate::voters::ClamVoter {
+            scanner: malware_scanner.clone(),
+        }));
+
+        // MalConv / ONNX malware model + YARA — same [`MalwareScanner`] as Clam; separate vote for ML path
+        policy.add_voter(Box::new(crate::voters::MalConvVoter {
             scanner: malware_scanner.clone(),
         }));
 
@@ -1298,10 +1309,21 @@ impl EdrOrchestrator {
                     Err(e) => error!("Failed to fetch CISA KEV feed: {}", e),
                 }
 
-                // Optional OTX feed (enabled when OTX_API_KEY is provided).
-                if let Ok(api_key) = std::env::var("OTX_API_KEY") {
-                    let key = api_key.trim();
-                    if !key.is_empty() {
+                // Optional OTX feed: `OTX_API_KEY` or `[external_api].otx_api_key` in osoosi.toml.
+                match resolve_otx_api_key() {
+                    Some(ref key) => {
+                        OTX_FEED_KEY_SOURCE_LOG.call_once(|| {
+                            let from = if std::env::var("OTX_API_KEY")
+                                .ok()
+                                .map(|s| !s.trim().is_empty())
+                                .unwrap_or(false)
+                            {
+                                "environment (OTX_API_KEY)"
+                            } else {
+                                "osoosi.toml [external_api]"
+                            };
+                            info!("OTX threat feed: enabled (API key from {})", from);
+                        });
                         match fetcher.fetch_otx_indicators(key).await {
                             Ok(indicators) => {
                                 let total = indicators.total_count();
@@ -1316,10 +1338,17 @@ impl EdrOrchestrator {
                             Err(e) => error!("Failed to fetch OTX indicators: {}", e),
                         }
                     }
+                    None => {
+                        OTX_FEED_DISABLED_LOG.call_once(|| {
+                            info!(
+                                "OTX threat feed: disabled — set OTX_API_KEY or [external_api].otx_api_key in osoosi.toml"
+                            );
+                        });
+                    }
                 }
 
-                // Optional NVD feed (enabled when NVD_API_KEY is provided).
-                let nvd_key = std::env::var("NVD_API_KEY").ok();
+                // Optional NVD feed: `NVD_API_KEY` or `[external_api].nvd_api_key` in osoosi.toml.
+                let nvd_key = resolve_nvd_api_key();
                 match fetcher.fetch_nvd_cves(nvd_key.as_deref()).await {
                     Ok(cves) => {
                         if !cves.is_empty() {
@@ -1482,8 +1511,20 @@ impl EdrOrchestrator {
                 "action": signature.recommended_action,
             }));
 
-            // 2. Autonomous Remediation Logic
-            match signature.recommended_action {
+            // 2. Autonomous Remediation Logic (same confidence gate as deep pipeline)
+            let autonomy = osoosi_types::load_autonomy_config();
+            let effective_action = if signature.confidence >= autonomy.action_confidence_threshold {
+                signature.recommended_action
+            } else {
+                info!(
+                    "Fast-path threat confidence {:.2} below action threshold {:.2}: using Alert only",
+                    signature.confidence,
+                    autonomy.action_confidence_threshold
+                );
+                ResponseAction::Alert
+            };
+
+            match effective_action {
                 ResponseAction::Isolate => {
                     if let Some(image) = event.data.get("Image").and_then(|v| v.as_str()) {
                          warn!("AUTONOMOUS BLOCK: Consensus threshold met for {}. Applying FileBlockExecutable.", image);
@@ -2795,6 +2836,17 @@ impl EdrOrchestrator {
                     tarpit.apply_tarpit(pid as u32, 60).await;
                     self.audit.log("RESPONSE_ACTION", serde_json::json!({"type": "Tarpit", "pid": pid}));
                 }
+                if let Some(msg) = crate::otx_tarpit::try_apply_process_network_qostarpit(
+                    event,
+                    signature,
+                    action,
+                ) {
+                    warn!("OTX/Network reactive QoS: {}", msg);
+                    self.audit.log(
+                        "NETWORK_QOS_TARPIT",
+                        crate::otx_tarpit::audit_payload(event, signature, action, &msg),
+                    );
+                }
             }
             ResponseAction::GhostTarpit => {
                 let traps_path = &self.runtime_config.traps_path;
@@ -2820,6 +2872,17 @@ impl EdrOrchestrator {
                         }
                         Err(e) => warn!("Firewall auto-block failed: {}", e),
                     }
+                }
+                if let Some(msg) = crate::otx_tarpit::try_apply_process_network_qostarpit(
+                    event,
+                    signature,
+                    action,
+                ) {
+                    warn!("OTX/Network reactive QoS: {}", msg);
+                    self.audit.log(
+                        "NETWORK_QOS_TARPIT",
+                        crate::otx_tarpit::audit_payload(event, signature, action, &msg),
+                    );
                 }
             }
             ResponseAction::Alert => {

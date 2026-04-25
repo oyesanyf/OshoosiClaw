@@ -277,6 +277,9 @@ struct FileConfig {
     hex_patch: HexPatchConfig,
     #[serde(default)]
     pub ai: AiConfig,
+    /// AlienVault OTX / NVD keys — see `load_external_api_config` and `resolve_*_api_key`.
+    #[serde(default)]
+    external_api: ExternalApiConfig,
 }
 
 /// Hex-patch agent config: auto-patch files when rules match.
@@ -1161,7 +1164,9 @@ pub struct AiConfig {
     /// Enable AI features (ONNX, SmolLM, etc.).
     #[serde(default = "default_ai_enabled")]
     pub enabled: bool,
-    /// Optional HTTPS URL to MalConv weights as `.safetensors` (tensor names must match `osoosi_model::MalConv`).
+    /// Optional HTTPS URL to MalConv **Candle** weights as `.safetensors` (tensor names must match `osoosi_model::MalConv`).
+    /// Note: [cycloevan/malconv](https://huggingface.co/cycloevan/malconv) is a TensorFlow/Keras **training** reference (`.h5`);
+    /// it is not a Hugging Face Inference deployment and does not supply this format by default—use a converted weights URL or bundled repo below.
     #[serde(default)]
     pub malconv_weights_url: Option<String>,
 }
@@ -1189,7 +1194,8 @@ impl Default for AiConfig {
     fn default() -> Self {
         Self {
             enabled: true,
-            malconv_weights_url: Some("https://huggingface.co/Xenova/malconv/resolve/main/model.safetensors?download=true".to_string()),
+            // Bundled weights mirror (Candle safetensors). cycloevan/malconv is TF `.h5` + training code, not HF inference.
+            malconv_weights_url: Some("https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/malconv.safetensors?download=true".to_string()),
         }
     }
 }
@@ -1203,6 +1209,68 @@ pub fn load_ai_config() -> AiConfig {
         }
     }
     apply_ai_env_overrides(AiConfig::default())
+}
+
+/// Keys under `[external_api]` in `osoosi.toml` (e.g. OTX, NVD). Environment always wins; see
+/// `resolve_otx_api_key` / `resolve_nvd_api_key`.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct ExternalApiConfig {
+    #[serde(default)]
+    pub otx_api_key: Option<String>,
+    #[serde(default)]
+    pub nvd_api_key: Option<String>,
+}
+
+/// Loads `[external_api]` from the resolved `osoosi.toml` (if present).
+pub fn load_external_api_config() -> ExternalApiConfig {
+    if let Some(path) = resolve_config_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(cfg) = toml::from_str::<FileConfig>(&content) {
+                return cfg.external_api;
+            }
+        }
+    }
+    ExternalApiConfig::default()
+}
+
+/// OTX API key: `OTX_API_KEY` overrides `[external_api].otx_api_key` in `osoosi.toml`.
+pub fn resolve_otx_api_key() -> Option<String> {
+    if let Ok(v) = std::env::var("OTX_API_KEY") {
+        let t = v.trim();
+        if !t.is_empty() {
+            return Some(t.to_string());
+        }
+    }
+    load_external_api_config()
+        .otx_api_key
+        .and_then(|s| {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        })
+}
+
+/// NVD API key: `NVD_API_KEY` overrides `[external_api].nvd_api_key` in `osoosi.toml`.
+pub fn resolve_nvd_api_key() -> Option<String> {
+    if let Ok(v) = std::env::var("NVD_API_KEY") {
+        let t = v.trim();
+        if !t.is_empty() {
+            return Some(t.to_string());
+        }
+    }
+    load_external_api_config()
+        .nvd_api_key
+        .and_then(|s| {
+            let t = s.trim();
+            if t.is_empty() {
+                None
+            } else {
+                Some(t.to_string())
+            }
+        })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

@@ -8,9 +8,12 @@ use osoosi_types::{SysmonEvent, ThreatSignature};
 use crate::semantic::SemanticEngine;
 use crate::graph::{GraphCorrelationEngine, Relationship};
 use crate::feed::OtxIndicators;
-use tracing::{info, warn};
 use std::sync::Arc;
 use std::sync::RwLock;
+use tracing::{debug, info, warn};
+
+/// `tracing` target for grep-friendly consensus / voting lines (`RUST_LOG=consensus=debug`).
+pub const CONSENSUS_LOG_TARGET: &str = "consensus";
 
 pub struct VoteResult {
     pub confidence: f32,
@@ -62,7 +65,14 @@ impl PolicyEngine {
 
     pub fn add_voter(&self, voter: Box<dyn ThreatVoter>) {
         if let Ok(mut guard) = self.voters.write() {
+            let name = voter.name();
             guard.push(voter);
+            info!(
+                target: CONSENSUS_LOG_TARGET,
+                voter = %name,
+                total = guard.len(),
+                "[CONSENSUS] registered threat voter"
+            );
         }
     }
 
@@ -123,7 +133,12 @@ impl PolicyEngine {
         use osoosi_types::ResponseAction;
 
         let voters_len = self.voters.read().map(|v| v.len()).unwrap_or(0);
-        info!("Scanning Sysmon Event ID: {:?} via Consensus Registry ({} voters)", event.event_id, voters_len);
+        debug!(
+            target: CONSENSUS_LOG_TARGET,
+            event_id = ?event.event_id,
+            registered_voters = voters_len,
+            "[CONSENSUS] round start"
+        );
 
         let mut signature = ThreatSignature::new(event.computer.clone());
         let mut total_score: f32 = 0.0;
@@ -138,26 +153,47 @@ impl PolicyEngine {
                 let vname = voter.name();
                 if let Some(res) = voter.vote(event) {
                     if res.weight < 0.0 {
-                        // Veto detected
-                        warn!("Consensus Veto: {} blocked the detection. Reason: {}", vname, res.reason);
+                        warn!(
+                            target: CONSENSUS_LOG_TARGET,
+                            voter = %vname,
+                            reason = %res.reason,
+                            "[CONSENSUS] veto — detection blocked"
+                        );
                         vetoed = true;
                         signature.add_reason(format!("Veto [{}]: {}", vname, res.reason));
                         break;
                     }
 
-                    info!("Voter Hit: {} (Confidence: {:.2}, Weight: {:.2})", vname, res.confidence, res.weight);
-                    total_score += res.confidence * res.weight;
+                    let contribution = res.confidence * res.weight;
+                    info!(
+                        target: CONSENSUS_LOG_TARGET,
+                        voter = %vname,
+                        conf = res.confidence,
+                        weight = res.weight,
+                        contribution,
+                        reason = %res.reason,
+                        "[CONSENSUS] voter YIELD (counts toward score)"
+                    );
+                    total_score += contribution;
                     vote_count += 1;
                     signature.add_reason(format!("[{}]: {}", vname, res.reason));
                     is_threat = true;
                     if vname == OTX_VOTER {
                         otx_voted = true;
                     }
+                } else {
+                    debug!(
+                        target: CONSENSUS_LOG_TARGET,
+                        voter = %vname,
+                        event_id = ?event.event_id,
+                        "[CONSENSUS] voter abstain (no match)"
+                    );
                 }
             }
         }
 
         if vetoed {
+            debug!(target: CONSENSUS_LOG_TARGET, "[CONSENSUS] round aborted (veto)");
             return None;
         }
 
@@ -165,13 +201,17 @@ impl PolicyEngine {
         if !otx_voted {
             if let Some(otx_reason) = self.otx_ioc_match_for_event(event) {
                 let w = crate::otx_connection::otx_consensus_weight(event);
+                let c = crate::otx_connection::OTX_CONSENSUS_CONFIDENCE;
                 info!(
-                    "Voter Hit: {} (safety-net) (Confidence: {:.2}, Weight: {:.2})",
-                    OTX_VOTER,
-                    crate::otx_connection::OTX_CONSENSUS_CONFIDENCE,
-                    w
+                    target: CONSENSUS_LOG_TARGET,
+                    voter = OTX_VOTER,
+                    conf = c,
+                    weight = w,
+                    contribution = c * w,
+                    reason = %otx_reason,
+                    "[CONSENSUS] OTX safety-net YIELD (IoC in cache/SQLite)"
                 );
-                total_score += crate::otx_connection::OTX_CONSENSUS_CONFIDENCE * w;
+                total_score += c * w;
                 vote_count += 1;
                 signature.add_reason(format!("[{}]: {}", OTX_VOTER, otx_reason));
                 is_threat = true;
@@ -179,6 +219,11 @@ impl PolicyEngine {
         }
 
         if !is_threat {
+            debug!(
+                target: CONSENSUS_LOG_TARGET,
+                event_id = ?event.event_id,
+                "[CONSENSUS] no threat (zero yielding votes)"
+            );
             return None;
         }
 
@@ -212,6 +257,16 @@ impl PolicyEngine {
                 signature.add_reason("Down-ranked: matches federated false positive pattern");
             }
         }
+
+        info!(
+            target: CONSENSUS_LOG_TARGET,
+            event_id = ?event.event_id,
+            votes = vote_count,
+            weighted_score = total_score,
+            confidence = signature.confidence,
+            action = ?signature.recommended_action,
+            "[CONSENSUS] round COMPLETE — threat signature emitted"
+        );
         
         Some(signature)
     }

@@ -16,6 +16,41 @@ pub const OTX_PULSES_ACTIVITY_URL: &str = "https://otx.alienvault.com/api/v1/pul
 pub const NVD_CVE_API_URL: &str = "https://services.nvd.nist.gov/rest/json/cves/2.0";
 pub const OTX_TAXII_POLL_URL: &str = "https://otx.alienvault.com/taxii/poll";
 
+/// Remote object size from S3 (ETag-style listing); `None` if HEAD fails.
+async fn nsrl_s3_content_length(client: &reqwest::Client, url: &str) -> Option<u64> {
+    let resp = client
+        .head(url)
+        .header(reqwest::header::USER_AGENT, "OpenOsoosi-Agent/1.0")
+        .send()
+        .await
+        .ok()?;
+    if !resp.status().is_success() {
+        return None;
+    }
+    resp.headers()
+        .get(reqwest::header::CONTENT_LENGTH)
+        .and_then(|v| v.to_str().ok())
+        .and_then(|s| s.parse().ok())
+}
+
+fn nsrl_local_zip_valid(path: &std::path::Path) -> bool {
+    std::fs::File::open(path)
+        .ok()
+        .and_then(|f| zip::ZipArchive::new(f).ok())
+        .map(|a| a.len() > 0)
+        .unwrap_or(false)
+}
+
+fn nsrl_local_zip_matches_complete(path: &std::path::Path, remote_len: u64) -> bool {
+    let Ok(meta) = std::fs::metadata(path) else {
+        return false;
+    };
+    if meta.len() != remote_len {
+        return false;
+    }
+    nsrl_local_zip_valid(path)
+}
+
 #[derive(Debug, Clone, Default)]
 pub struct OtxIndicators {
     pub ips: HashSet<String>,
@@ -702,6 +737,7 @@ impl ThreatFeedFetcher {
         let state_path = dest_dir.join("nsrl_modern_stream.state.json");
 
         let download_client = reqwest::Client::builder()
+            .user_agent("OpenOsoosi-Agent/1.0")
             .connect_timeout(std::time::Duration::from_secs(60))
             .tcp_keepalive(std::time::Duration::from_secs(30))
             .build()
@@ -728,6 +764,29 @@ impl ThreatFeedFetcher {
                     0
                 };
 
+                // Skip Range if we already have the full object (avoids S3 HTTP 416 when offset == file size).
+                if current_size > 0 {
+                    if let Some(remote_len) = nsrl_s3_content_length(&download_client, url).await {
+                        if current_size > remote_len {
+                            warn!(
+                                "[NSRL Background] Local file ({current_size} B) is larger than remote ({remote_len} B). Removing stale partial."
+                            );
+                            let _ = std::fs::remove_file(&zip_path);
+                            let _ = std::fs::remove_file(&state_path);
+                            retry_count += 1;
+                            continue;
+                        }
+                        if current_size == remote_len && nsrl_local_zip_matches_complete(&zip_path, remote_len) {
+                            info!(
+                                "[NSRL Background] Local ZIP already matches remote ({} B). Resuming to extract.",
+                                remote_len
+                            );
+                            download_finished = true;
+                            break;
+                        }
+                    }
+                }
+
                 let mut request = download_client.get(*url);
                 if current_size > 0 {
                     request = request.header("Range", format!("bytes={}-", current_size));
@@ -752,6 +811,30 @@ impl ThreatFeedFetcher {
                     if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::NOT_FOUND {
                         warn!("[NSRL Background] URL returned {}. Skipping to next URL.", status);
                         break; 
+                    }
+                    // Range past EOF: treat as "already have full file" or delete stale partial and retry.
+                    if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
+                        warn!(
+                            "[NSRL Background] HTTP 416 for {} (range not satisfiable). Verifying local copy…",
+                            url
+                        );
+                        let local_len = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
+                        if let Some(remote_len) = nsrl_s3_content_length(&download_client, url).await {
+                            if local_len == remote_len && nsrl_local_zip_matches_complete(&zip_path, remote_len) {
+                                info!("[NSRL Background] Local file is complete; continuing to extract.");
+                                download_finished = true;
+                                break;
+                            }
+                        } else if local_len > 0 && nsrl_local_zip_valid(&zip_path) {
+                            info!("[NSRL Background] ZIP validates after 416; continuing to extract.");
+                            download_finished = true;
+                            break;
+                        }
+                        warn!("[NSRL Background] Discarding partial/stale download and starting over.");
+                        let _ = std::fs::remove_file(&zip_path);
+                        let _ = std::fs::remove_file(&state_path);
+                        retry_count += 1;
+                        continue;
                     }
                     error!("[NSRL Background] HTTP {} for {}.", status, url);
                     last_error = Some(anyhow::anyhow!("HTTP error {}", status));

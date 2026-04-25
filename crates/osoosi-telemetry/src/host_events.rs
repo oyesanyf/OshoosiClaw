@@ -109,15 +109,39 @@ impl WindowsEventReader {
             .unwrap_or(false)
     }
 
+    fn wevt_batch_size() -> u32 {
+        std::env::var("OSOOSI_WEVT_BATCH")
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .filter(|&n: &u32| n >= 10 && n <= 10_000)
+            .unwrap_or(1_000)
+    }
+
     fn query_wevtutil(&mut self) -> anyhow::Result<Vec<String>> {
         use std::process::Command;
+        let n = Self::wevt_batch_size();
         let mut cmd = Command::new("wevtutil");
         if self.last_record_id > 0 {
             let query = format!("*[System[(EventRecordID > {})]]", self.last_record_id);
-            cmd.args(["qe", &self.channel, &format!("/q:{}", query), "/rd:false", "/e:root", "/c:200", "/f:xml"]);
+            cmd.args([
+                "qe",
+                &self.channel,
+                &format!("/q:{}", query),
+                "/rd:false",
+                "/e:root",
+                &format!("/c:{n}"),
+                "/f:xml",
+            ]);
         } else {
-            // First run, just get the most recent 100 events to establish a baseline
-            cmd.args(["qe", &self.channel, "/rd:true", "/e:root", "/c:100", "/f:xml"]);
+            // First run: recent events to establish baseline (same cap as steady-state default).
+            cmd.args([
+                "qe",
+                &self.channel,
+                "/rd:true",
+                "/e:root",
+                &format!("/c:{}", n.min(500)),
+                "/f:xml",
+            ]);
         }
         let output = cmd.output()?;
         if !output.status.success() {

@@ -53,6 +53,7 @@ hostname = { workspace = true }
 rayon = { workspace = true }
 
 uuid = { workspace = true, features = ["v4", "serde"] }
+dirs = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }

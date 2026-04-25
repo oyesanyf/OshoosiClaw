@@ -85,28 +85,15 @@ impl TelemetryController {
     }
 
     async fn apply_telemetry_profile(&self, mode: TelemetryMode) -> anyhow::Result<()> {
-        #[cfg(target_os = "windows")]
-        {
-            let config_xml = match mode {
-                TelemetryMode::Silent => "<Sysmon schemaversion='4.91'><EventFiltering><ProcessCreate onmatch='include'/></EventFiltering></Sysmon>",
-                TelemetryMode::Normal => "<Sysmon schemaversion='4.91'><EventFiltering><ProcessCreate onmatch='exclude'/><NetworkConnect onmatch='exclude'/><FileCreate onmatch='exclude'/></EventFiltering></Sysmon>",
-                TelemetryMode::Burst  => "<Sysmon schemaversion='4.91'><EventFiltering><ProcessCreate onmatch='exclude'/><NetworkConnect onmatch='exclude'/><ImageLoad onmatch='exclude'/><FileCreate onmatch='exclude'/><RegistryEvent onmatch='exclude'/><ProcessAccess onmatch='exclude'/><FileDeleteDetected onmatch='exclude'/></EventFiltering></Sysmon>",
-            };
-
-            let temp_config = std::env::temp_dir().join("sysmon_adaptive_config.xml");
-            std::fs::write(&temp_config, config_xml)?;
-            
-            // Re-apply sysmon config
-            let status = std::process::Command::new("sysmon.exe")
-                .args(["-c", &temp_config.to_string_lossy()])
-                .status()?;
-            
-            if !status.success() {
-                return Err(anyhow::anyhow!("Failed to apply Sysmon adaptive profile via sysmon -c"));
-            }
-        }
-        
-        info!("Applied adaptive profile: {:?}", mode);
+        // Important: do **not** push a reduced Sysmon EventFiltering here. A previous version wrote
+        // minimal XML via `sysmon -c` on every mode change, which dropped most event IDs (only a
+        // handful remained). Full capture is defined by `osoosi_telemetry::full_fidelity_sysmon_xml`
+        // during `install-telemetry`; the agent must not undo that. `TelemetryMode` remains for
+        // in-app signaling / future gating only.
+        info!(
+            "Adaptive telemetry mode set to {:?} (Sysmon config unchanged — full event IDs remain enabled)",
+            mode
+        );
         Ok(())
     }
 }

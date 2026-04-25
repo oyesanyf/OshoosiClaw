@@ -49,14 +49,14 @@ async fn import_nsrl_with_fallback(
 #[command(name = "osoosi")]
 #[command(about = "OpenỌ̀ṣọ́ọ̀sì: Autonomous Security Agent", long_about = None)]
 struct Cli {
-    /// Grant OpenỌ̀ṣọ́ọ̀sì access to security event logs (equivalent to 'grant-access' command)
-    #[arg(long)]
+    /// Grant OpenỌ̀ṣọ́ọ̀sì access to security event logs (equivalent to `grant-access` subcommand). Works before or after subcommands, e.g. `osoosi start --grant-access`
+    #[arg(long, global = true)]
     grant_access: bool,
     /// Disable all AI features (ONNX Runtime, SmolLM fallback, behavioral analysis)
-    #[arg(long, env = "OSOOSI_NO_AI")]
+    #[arg(long, env = "OSOOSI_NO_AI", global = true)]
     no_ai: bool,
-    /// Enable debug logging (sets log level to DEBUG)
-    #[arg(short, long)]
+    /// Enable debug logging (sets log level to DEBUG). Allowed before or after subcommands, e.g. `osoosi sandbox status --debug`
+    #[arg(short, long, global = true)]
     debug: bool,
     #[command(subcommand)]
     command: Option<Commands>,
@@ -69,6 +69,18 @@ enum Commands {
         /// Also start and open the web dashboard
         #[arg(long, default_value_t = true)]
         dashboard: bool,
+        /// Do not open the web dashboard (applies to this process and, with `--sandbox`, the agent in the sandbox)
+        #[arg(long, default_value_t = false)]
+        no_dashboard: bool,
+        /// Run the agent inside an NVIDIA OpenShell sandbox (`openshell sandbox create` runs `osoosi start` inside). On success this process exits; no host daemon.
+        #[arg(long)]
+        sandbox: bool,
+        /// Sandbox name when using `--sandbox` (default: osoosi)
+        #[arg(long, default_value = "osoosi")]
+        sandbox_name: String,
+        /// Run `openshell gateway deploy` before creating the sandbox
+        #[arg(long, default_value_t = false)]
+        sandbox_deploy_gateway: bool,
     },
     /// View the local threat intelligence status
     Status,
@@ -260,8 +272,45 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
     // 2. Handle subcommands
     match cli.command {
-        Some(Commands::Start { dashboard }) => {
+        Some(Commands::Start {
+            dashboard,
+            no_dashboard,
+            sandbox: start_in_sandbox,
+            sandbox_name,
+            sandbox_deploy_gateway,
+        }) => {
+            osoosi_core::tool_paths::discover_and_persist();
             run_yara_sanitizer();
+            let with_dashboard = dashboard && !no_dashboard;
+
+            if start_in_sandbox {
+                use osoosi_core::openshell::OpenShellManager;
+                let manager = OpenShellManager::new();
+                if !manager.is_available() {
+                    warn!(
+                        "--sandbox: OpenShell CLI not found on this machine (not a code bug). Install NVIDIA OpenShell and ensure `openshell` is on PATH, or set OPENSHELL_CLI_PATH to the executable. See project README (Sandboxing). Starting agent on the host instead."
+                    );
+                } else {
+                    if sandbox_deploy_gateway {
+                        let g = manager.deploy_gateway();
+                        if !g.success {
+                            warn!("--sandbox: gateway deploy did not succeed ({}). Proceeding to sandbox create…", g.message);
+                        }
+                    }
+                    let extra: &[&str] = if with_dashboard {
+                        &[]
+                    } else {
+                        &["--no-dashboard"]
+                    };
+                    let r = manager.create_sandbox(Some(sandbox_name.as_str()), extra);
+                    if r.success {
+                        info!("Sandbox created; agent is running inside OpenShell. Exiting host process.");
+                        return Ok(());
+                    }
+                    warn!("--sandbox: OpenShell create failed ({}). Starting agent on the host instead.", r.message);
+                }
+            }
+
             let start_instant = std::time::Instant::now();
             let orchestrator = EdrOrchestrator::new().await?;
 
@@ -269,7 +318,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             let join_gate = orchestrator.start_p2p_loop().await.ok();
 
             // 2. Bind dashboard as soon as the orchestrator exists so the UI can load while loops start.
-            if dashboard {
+            if with_dashboard {
                 info!("Auto-launching dashboard UI...");
                 let dash_orch = Arc::new(orchestrator.clone());
                 let dash_gate = join_gate.clone();
@@ -446,7 +495,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
         }
         Some(Commands::GrantAccess) => {
-            handle_grant_access().await?;
+            // `handle_grant_access()` already ran when `is_granting` (top of `async_main`).
         }
         Some(Commands::CheckAccess) => {
             println!("Oshoosi Privilege Check (platform: {})", osoosi_core::privilege::current_platform());
@@ -475,7 +524,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 SandboxAction::Status => println!("Status: {:?}", manager.status()),
                 SandboxAction::Install => { let _ = OpenShellManager::install(); }
                 SandboxAction::DeployGateway => { let _ = manager.deploy_gateway(); }
-                SandboxAction::Create { name, policy: _ } => { let _ = manager.create_sandbox(Some(&name)); }
+                SandboxAction::Create { name, policy: _ } => { let _ = manager.create_sandbox(Some(&name), &[]); }
                 SandboxAction::Connect { name } => { let _ = manager.connect_sandbox(Some(&name)); }
                 SandboxAction::Destroy { name } => { let _ = manager.destroy_sandbox(Some(&name)); }
                 SandboxAction::ApplyPolicy { name, policy } => { let _ = manager.apply_policy(Some(&name), policy.as_ref().map(Path::new)); }
@@ -913,8 +962,17 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
     })?;
     let file_appender = tracing_appender::rolling::daily(&log_dir, "osoosi.log");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-    let level = if debug { tracing::Level::DEBUG } else { tracing::Level::WARN };
-    let filter = EnvFilter::from_default_env().add_directive(level.into());
+    // Default: WARN when not in --debug. Always allow `target=consensus` at info so
+    // `[CONSENSUS] voter YIELD` / round COMPLETE are visible without full crate INFO spam.
+    // Use `--debug` or `RUST_LOG=consensus=debug` to see per-voter abstain / round start.
+    let level = if debug {
+        tracing::Level::DEBUG
+    } else {
+        tracing::Level::WARN
+    };
+    let filter = EnvFilter::from_default_env()
+        .add_directive(level.into())
+        .add_directive("consensus=info".parse().expect("static directive"));
     let console_layer = fmt::Layer::default().with_writer(std::io::stdout);
     let file_layer = fmt::Layer::default().with_writer(non_blocking).with_ansi(false);
     
@@ -1039,7 +1097,7 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
         }
     }
 
-    // 3. MalConv — needs Candle-compatible `.safetensors`.
+    // 3. MalConv — Candle-compatible `.safetensors` only. cycloevan/malconv on HF is Keras/TF (see model card), not an inference endpoint.
     let ai_cfg = osoosi_types::load_ai_config();
     let malconv_dest = malware_dir.join("malconv.safetensors");
     if !malconv_dest.exists() {
@@ -1058,11 +1116,12 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
             "pytorch_model.safetensors",
             "weights.safetensors",
         ];
+        // Prefer repos that ship safetensors/ONNX; cycloevan/malconv is last (often TF-only / no hosted inference on HF).
         let malconv_repos = [
-            "Xenova/malconv",
             "oyesanyf/OshoosiClaw-Weights",
+            "Xenova/malconv",
             "onnx-community/malconv",
-            "microsoft/malconv",
+            "cycloevan/malconv",
         ];
         'malconv_hf: for repo_name in malconv_repos {
             let repo = api.model(repo_name.to_string());

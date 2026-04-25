@@ -1,5 +1,5 @@
 use crate::engine::{ThreatVoter, VoteResult};
-use osoosi_types::SysmonEvent;
+use osoosi_types::{SysmonEvent, SysmonEventId};
 use std::sync::Arc;
 
 
@@ -182,6 +182,67 @@ impl ThreatVoter for YaraXMemoryVoter {
     }
 }
 
+/// KEV `product` text → compare **tokens** to the executable **stem** (e.g. `git.exe` ↔ "Git" / "Windows Git"),
+/// not loose `contains` (which turned every `git.exe` / `chrome.exe` into a KEV hit).
+fn kev_product_matches_stem(stem: &str, product: &str) -> bool {
+    let stem = stem.to_lowercase();
+    for token in product.split(|c: char| !c.is_alphanumeric()) {
+        let t = token.to_lowercase();
+        if t.len() < 3 {
+            continue;
+        }
+        if stem == t {
+            return true;
+        }
+    }
+    false
+}
+
+/// Suppress CISA-KEV on **ProcessCreate** and **ProcessTerminate** for ubiquitous tools in typical install
+/// locations (huge FP rate — e.g. `git.exe` + KEV "Git" on portable/custom paths, terminate events).
+/// Set `OSOOSI_KEV_QUIET_SYSTEM_TOOLS=0` to restore KEV on those events. **NetworkConnect / DNS / Image** still evaluated.
+fn kev_quiet_benign_process_lifecycle(path: &str, stem: &str) -> bool {
+    if std::env::var("OSOOSI_KEV_QUIET_SYSTEM_TOOLS")
+        .map(|v| {
+            v == "0"
+                || v.eq_ignore_ascii_case("false")
+                || v.eq_ignore_ascii_case("off")
+        })
+        .unwrap_or(false)
+    {
+        return false;
+    }
+    let p = path.to_lowercase();
+    let trusted = p.contains("program files")
+        || p.contains("programdata\\chocolatey")
+        || p.contains("programdata\\scoop")
+        || p.contains("\\windows\\system32")
+        || p.contains("\\windows\\syswow64")
+        // Git for Windows (standard + portable, e.g. C:\tools\git\mingw64\bin\git.exe)
+        || p.contains("\\mingw64\\")
+        || p.contains("\\mingw32\\")
+        || p.contains("git\\mingw");
+    if !trusted {
+        return false;
+    }
+    const NOISY: &[&str] = &[
+        "chrome",
+        "msedge",
+        "firefox",
+        "brave",
+        "opera",
+        "git",
+        "devenv",
+        "code",
+        "code-insiders",
+        "wsl",
+        "wslhost",
+        "wslservice",
+        "node",
+    ];
+    NOISY.contains(&stem)
+}
+
 /// CISA KEV (Known Exploited Vulnerabilities) Voter
 pub struct KevVoter {
     pub memory: std::sync::Arc<osoosi_memory::MemoryStore>,
@@ -190,46 +251,77 @@ pub struct KevVoter {
 impl ThreatVoter for KevVoter {
     fn name(&self) -> String { "CISA-KEV".to_string() }
     fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
-        let image = event.data.get("Image").and_then(|v| v.as_str())
-            .and_then(|p| std::path::Path::new(p).file_name())
+        let full_path = event.data.get("Image").and_then(|v| v.as_str())?;
+        let stem = std::path::Path::new(full_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("unknown")
+            .to_lowercase();
+        let file_name = std::path::Path::new(full_path)
+            .file_name()
             .and_then(|n| n.to_str())
             .unwrap_or("unknown")
             .to_lowercase();
-            
-        let is_known_good = if let Some(path) = event.data.get("Image").and_then(|v| v.as_str()) {
-            self.memory.get_file_integrity(path).map(|opt| opt.map(|(_, nsrl, _)| nsrl).unwrap_or(false)).unwrap_or(false)
-        } else {
-            false
-        };
+
+        if matches!(
+            event.event_id,
+            SysmonEventId::ProcessCreate | SysmonEventId::ProcessTerminate
+        ) && kev_quiet_benign_process_lifecycle(full_path, &stem)
+        {
+            return None;
+        }
+
+        let is_known_good = self
+            .memory
+            .get_file_integrity(full_path)
+            .map(|opt| opt.map(|(_, nsrl, _)| nsrl).unwrap_or(false))
+            .unwrap_or(false);
 
         if let Ok(kevs) = self.memory.get_all_kevs() {
             for kev in kevs {
-                let product = kev.product.to_lowercase();
-                if image.contains(&product) || product.contains(&image) {
-                    // VERSION-AWARE LOGIC: 
-                    // If we have a resolved product version, and it looks like a modern/patched version, 
-                    // we down-rank the confidence significantly.
-                    let mut confidence = if is_known_good { 0.45 } else { 0.85 };
-                    
-                    if let Some(ref version) = event.product_version {
-                        // Heuristic: If version starts with '2.5', '3.', etc., it's likely newer than many 2025 CVEs' initial vulnerable versions.
-                        // For a real production system, we would have a 'min_safe_version' in the KEV table.
-                        if version.starts_with("2.5") || version.starts_with("3.") || version.starts_with("v2.5") {
-                            confidence *= 0.5; // Downgrade to Alert-only range
-                            return Some(VoteResult {
-                                confidence,
-                                reason: format!("CISA KEV [POSSIBLE FP]: {} matches product {} ({}), but running version {} appears to be patched.", image, kev.product, kev.cve_id, version),
-                                weight: 0.6,
-                            });
-                        }
-                    }
-
-                    return Some(VoteResult {
-                        confidence,
-                        reason: format!("CISA KEV: process {} matches known exploited product {} ({})", image, kev.product, kev.cve_id),
-                        weight: 1.0,
-                    });
+                if !kev_product_matches_stem(&stem, &kev.product) {
+                    continue;
                 }
+
+                // VERSION-AWARE LOGIC: If we have a resolved product version, and it looks like a modern/patched version,
+                // we down-rank the confidence significantly.
+                let mut confidence = if is_known_good { 0.45 } else { 0.85 };
+
+                if let Some(ref version) = event.product_version {
+                    if version.starts_with("2.5")
+                        || version.starts_with("3.")
+                        || version.starts_with("v2.5")
+                    {
+                        confidence *= 0.5; // Downgrade to Alert-only range
+                        return Some(VoteResult {
+                            confidence,
+                            reason: format!(
+                                "CISA KEV [POSSIBLE FP]: {} matches product {} ({}), but running version {} appears to be patched.",
+                                file_name, kev.product, kev.cve_id, version
+                            ),
+                            weight: 0.6,
+                        });
+                    }
+                }
+
+                // Prefer KEV when tied to **network / file / image** telemetry; down-weight bare ProcessCreate.
+                let (weight, reason_note) = if event.event_id == SysmonEventId::ProcessCreate {
+                    (
+                        0.75,
+                        " (ProcessCreate: correlate with network/DNS/patch; lower vote weight)",
+                    )
+                } else {
+                    (1.0, "")
+                };
+
+                return Some(VoteResult {
+                    confidence,
+                    reason: format!(
+                        "CISA KEV: {} matches KEV product {} ({}){}",
+                        file_name, kev.product, kev.cve_id, reason_note
+                    ),
+                    weight,
+                });
             }
         }
         None

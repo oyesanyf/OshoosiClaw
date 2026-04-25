@@ -339,68 +339,7 @@ impl AgentProvisioner {
     }
 
     pub fn generate_sysmon_xml(&self, rules: &[osoosi_types::BlockingRule]) -> String {
-        let mut xml = String::from(r#"<Sysmon schemaversion="4.82">
-  <HashAlgorithms>*</HashAlgorithms>
-  <CheckRevocation/>
-  <DnsLookup/>
-  <ArchiveDirectory>Sysmon</ArchiveDirectory>
-  <CopyOnDeletePE/>
-
-  <EventFiltering>
-    <!-- Visibility (Critical) -->
-    <ProcessCreate onmatch="exclude" />
-    <NetworkConnect onmatch="exclude" />
-    <ImageLoad onmatch="exclude" />
-
-    <!-- Anti-Injection (High) -->
-    <CreateRemoteThread onmatch="exclude" />
-    <ProcessAccess onmatch="exclude" />
-    <ProcessTampering onmatch="exclude" />
-
-    <!-- Persistence (Medium) -->
-    <FileCreate onmatch="exclude" />
-    <RegistryEvent onmatch="exclude" />
-    <WmiEvent onmatch="exclude" />
-
-    <!-- Kernel Integrity (High) -->
-    <DriverLoad onmatch="exclude" />
-    <RawAccessRead onmatch="exclude" />
-
-    <!-- Additional Forensic Coverage -->
-    <FileCreateTime onmatch="exclude" />
-    <ProcessTerminate onmatch="exclude" />
-    <FileCreateStreamHash onmatch="exclude" />
-    <PipeEvent onmatch="exclude" />
-    <DnsQuery onmatch="exclude" />
-    <FileDelete onmatch="exclude" />
-    <ClipboardChange onmatch="exclude" />
-    <FileDeleteDetected onmatch="exclude" />
-    <FileExecutableDetected onmatch="exclude" />
-    <FileBlockExecutable onmatch="exclude" />
-    <FileBlockShredding onmatch="exclude" />
-    <SysmonServiceState onmatch="exclude" />
-    <SysmonConfigChange onmatch="exclude" />
-"#);
-
-        for rule in rules {
-            match rule.kind {
-                osoosi_types::BlockingKind::Executable => {
-                    xml.push_str(&format!(
-                        "    <FileBlockExecutable onmatch=\"include\">\n      <TargetFilename condition=\"begin with\">{}</TargetFilename>\n    </FileBlockExecutable>\n",
-                        rule.path
-                    ));
-                }
-                osoosi_types::BlockingKind::Shredding => {
-                    xml.push_str(&format!(
-                        "    <FileBlockShredding onmatch=\"include\">\n      <Image condition=\"image\">{}</Image>\n    </FileBlockShredding>\n",
-                        rule.path
-                    ));
-                }
-            }
-        }
-
-        xml.push_str("  </EventFiltering>\n</Sysmon>");
-        xml
+        full_fidelity_sysmon_xml(rules)
     }
 
     /// Windows: Install Sysmon
@@ -1909,4 +1848,67 @@ impl AgentProvisioner {
         Ok(())
     }
 
+}
+
+/// Full-fidelity Sysmon configuration: for each event class, `onmatch="exclude"` with **no** filter
+/// rules means *nothing* is excluded, so **all** events of that type are logged. This is the
+/// profile Oshoosi expects for EDR/OTX/DNS/NSRL correlation.
+///
+/// **Do not** replace this with reduced EventFiltering: the adaptive controller must not rewrite
+/// Sysmon with partial profiles, or most event IDs stop flowing.
+pub fn full_fidelity_sysmon_xml(rules: &[osoosi_types::BlockingRule]) -> String {
+    let mut xml = String::from(r#"<Sysmon schemaversion="4.82">
+  <HashAlgorithms>*</HashAlgorithms>
+  <CheckRevocation/>
+  <DnsLookup/>
+  <ArchiveDirectory>Sysmon</ArchiveDirectory>
+  <CopyOnDeletePE/>
+
+  <EventFiltering>
+    <!-- exclude + no children = log every event of this type -->
+    <ProcessCreate onmatch="exclude" />
+    <FileCreateTime onmatch="exclude" />
+    <NetworkConnect onmatch="exclude" />
+    <ProcessTerminate onmatch="exclude" />
+    <DriverLoad onmatch="exclude" />
+    <ImageLoad onmatch="exclude" />
+    <CreateRemoteThread onmatch="exclude" />
+    <RawAccessRead onmatch="exclude" />
+    <ProcessAccess onmatch="exclude" />
+    <FileCreate onmatch="exclude" />
+    <RegistryEvent onmatch="exclude" />
+    <FileCreateStreamHash onmatch="exclude" />
+    <PipeEvent onmatch="exclude" />
+    <DnsQuery onmatch="exclude" />
+    <WmiEvent onmatch="exclude" />
+    <FileDelete onmatch="exclude" />
+    <ClipboardChange onmatch="exclude" />
+    <ProcessTampering onmatch="exclude" />
+    <FileDeleteDetected onmatch="exclude" />
+    <FileExecutableDetected onmatch="exclude" />
+    <FileBlockExecutable onmatch="exclude" />
+    <FileBlockShredding onmatch="exclude" />
+    <SysmonServiceState onmatch="exclude" />
+    <SysmonConfigChange onmatch="exclude" />
+"#);
+
+    for rule in rules {
+        match rule.kind {
+            osoosi_types::BlockingKind::Executable => {
+                xml.push_str(&format!(
+                    "    <FileBlockExecutable onmatch=\"include\">\n      <TargetFilename condition=\"begin with\">{}</TargetFilename>\n    </FileBlockExecutable>\n",
+                    rule.path
+                ));
+            }
+            osoosi_types::BlockingKind::Shredding => {
+                xml.push_str(&format!(
+                    "    <FileBlockShredding onmatch=\"include\">\n      <Image condition=\"image\">{}</Image>\n    </FileBlockShredding>\n",
+                    rule.path
+                ));
+            }
+        }
+    }
+
+    xml.push_str("  </EventFiltering>\n</Sysmon>");
+    xml
 }

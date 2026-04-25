@@ -8,9 +8,14 @@
 //! Rust crate dependency, because it uses a different Rust edition (2024)
 //! and has heavy gRPC/K8s dependencies.
 
+use std::env;
+use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing::{info, warn, error};
+
+/// `pip install git+https://...` (VCS) — needs `git` on PATH; same default as NVIDIA OpenShell docs.
+const OPENSHELL_PIP_GIT_URL: &str = "git+https://github.com/NVIDIA/OpenShell.git";
 
 /// Default sandbox policy path relative to the osoosi installation directory.
 const DEFAULT_POLICY_PATH: &str = "config/openshell-policy.yaml";
@@ -68,13 +73,28 @@ impl OpenShellManager {
         Self::check_python_module()
     }
 
-    /// Check if OpenShell is available via python -m openshell.
+    /// Check if OpenShell is available via `python -m openshell` / `py -m openshell` (Windows).
     fn check_python_module() -> bool {
-        Command::new("python")
-            .args(["-m", "openshell", "--version"])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        let attempts: &[(&str, &[&str])] = if cfg!(windows) {
+            &[
+                ("python", &["-m", "openshell", "--version"]),
+                ("py", &["-3", "-m", "openshell", "--version"]),
+                ("py", &["-m", "openshell", "--version"]),
+            ]
+        } else {
+            &[("python", &["-m", "openshell", "--version"])]
+        };
+        for (exe, args) in attempts {
+            if Command::new(exe)
+                .args(*args)
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
+            {
+                return true;
+            }
+        }
+        false
     }
 
     /// Get the full status of OpenShell (installation, gateway, sandboxes).
@@ -187,7 +207,8 @@ impl OpenShellManager {
     /// Create a new sandbox for the osoosi agent with the configured policy.
     ///
     /// The sandbox name defaults to "osoosi" but can be customized.
-    pub fn create_sandbox(&self, name: Option<&str>) -> OpenShellResult {
+    /// `osoosi_start_extra` is appended after `osoosi start` (e.g. `&["--no-dashboard"]`).
+    pub fn create_sandbox(&self, name: Option<&str>, osoosi_start_extra: &[&str]) -> OpenShellResult {
         let sandbox_name = name.unwrap_or("osoosi");
         info!("Creating OpenShell sandbox '{}' with policy: {:?}", sandbox_name, self.policy_path);
 
@@ -206,6 +227,7 @@ impl OpenShellManager {
 
         // Run the osoosi agent inside the sandbox
         cmd.args(["--", "osoosi", "start"]);
+        cmd.args(osoosi_start_extra);
 
         let output = cmd.output();
 
@@ -506,7 +528,7 @@ echo "DONE: YARA provisioning complete"
         }
     }
 
-    /// Install OpenShell CLI on this system (Linux/macOS).
+    /// Install OpenShell CLI: Unix uses NVIDIA `install.sh`; Windows tries PyPI, then `git+https://github.com/NVIDIA/OpenShell.git`, `py -m pip`, and `uv`.
     pub fn install() -> OpenShellResult {
         info!("Installing NVIDIA OpenShell CLI...");
 
@@ -536,105 +558,149 @@ echo "DONE: YARA provisioning complete"
 
         #[cfg(windows)]
         {
-            // On Windows, use pip/uv or download the binary directly
-            let output = Command::new("pip")
-                .args(["install", "-U", "openshell"])
-                .output();
+            return Self::install_openshell_windows();
+        }
+    }
 
-            match output {
-                Ok(o) => {
-                    let stdout = String::from_utf8_lossy(&o.stdout);
-                    let stderr = String::from_utf8_lossy(&o.stderr);
-                    if o.status.success() {
-                        OpenShellResult {
-                            success: true,
-                            message: stdout.to_string(),
-                            sandbox_name: None,
-                        }
-                    } else {
-                        // Fallback: try uv
-                        if let Ok(uv_out) = Command::new("uv")
-                            .args(["tool", "install", "-U", "openshell"])
-                            .output()
-                        {
-                            OpenShellResult {
-                                success: uv_out.status.success(),
-                                message: String::from_utf8_lossy(&uv_out.stdout).to_string(),
-                                sandbox_name: None,
-                            }
-                        } else {
-                            OpenShellResult {
-                                success: false,
-                                message: format!("pip install failed: {}. Try: uv tool install openshell", stderr),
-                                sandbox_name: None,
-                            }
-                        }
-                    }
-                }
-                Err(e) => OpenShellResult {
-                    success: false,
-                    message: format!("Installation failed (pip not found): {}. Install with: uv tool install openshell", e),
+    /// Windows: `pip install -U openshell`, then VCS install from GitHub, then `uv tool install`.
+    /// Discovers `git.exe` (`where`, common paths, or `OSOOSI_GIT_PATH`) and prepends its `cmd`/`bin` dirs to `PATH`
+    /// so `pip install git+https://...` can run `git clone` (same as a manual `setx PATH ...; pip install git+...`).
+    #[cfg(windows)]
+    fn install_openshell_windows() -> OpenShellResult {
+        if let Some(ref g) = crate::tool_paths::resolve_git_executable() {
+            info!("Using Git at {} (set OSOOSI_GIT_PATH to override)", g.display());
+        } else {
+            warn!("Git not found (install Git for Windows or set OSOOSI_GIT_PATH); PyPI openshell may still work; VCS install will fail without git.");
+        }
+
+        let path_for_pip = crate::tool_paths::resolve_git_executable()
+            .map(|g| Self::path_env_with_git_prepend(&g))
+            .or_else(|| env::var_os("PATH"));
+
+        let try_pip = |args: &[&str]| -> std::io::Result<std::process::Output> {
+            let mut cmd = Command::new("pip");
+            cmd.args(args);
+            if let Some(ref p) = path_for_pip {
+                cmd.env("PATH", p);
+            }
+            cmd.output()
+        };
+
+        // 1) PyPI wheel/sdist
+        match try_pip(&["install", "-U", "openshell"]) {
+            Ok(o) if o.status.success() => {
+                return OpenShellResult {
+                    success: true,
+                    message: String::from_utf8_lossy(&o.stdout).to_string(),
                     sandbox_name: None,
-                },
+                };
+            }
+            Ok(o) => {
+                warn!(
+                    "pip install -U openshell failed: {}",
+                    String::from_utf8_lossy(&o.stderr)
+                );
+            }
+            Err(e) => warn!("Could not run pip: {}", e),
+        }
+
+        // 2) From NVIDIA Git (requires git on effective PATH)
+        match try_pip(&["install", "-U", OPENSHELL_PIP_GIT_URL]) {
+            Ok(o) if o.status.success() => {
+                return OpenShellResult {
+                    success: true,
+                    message: format!(
+                        "Installed from {}:\n{}",
+                        OPENSHELL_PIP_GIT_URL,
+                        String::from_utf8_lossy(&o.stdout)
+                    ),
+                    sandbox_name: None,
+                };
+            }
+            Ok(o) => {
+                warn!(
+                    "pip install {} failed: {}",
+                    OPENSHELL_PIP_GIT_URL,
+                    String::from_utf8_lossy(&o.stderr)
+                );
+            }
+            Err(e) => warn!("pip (VCS install): {}", e),
+        }
+
+        // 3) `py -m pip` with same PATH (Windows Python launcher)
+        if let Some(p) = &path_for_pip {
+            let mut cmd = Command::new("py");
+            cmd.args(["-3", "-m", "pip", "install", "-U", OPENSHELL_PIP_GIT_URL]);
+            cmd.env("PATH", p);
+            if let Ok(o) = cmd.output() {
+                if o.status.success() {
+                    return OpenShellResult {
+                        success: true,
+                        message: String::from_utf8_lossy(&o.stdout).to_string(),
+                        sandbox_name: None,
+                    };
+                }
             }
         }
+
+        // 4) uv (often manages its own toolchain)
+        let mut uv = Command::new("uv");
+        uv.args(["tool", "install", "-U", "openshell"]);
+        if let Some(ref p) = path_for_pip {
+            uv.env("PATH", p);
+        }
+        match uv.output() {
+            Ok(uv_out) if uv_out.status.success() => OpenShellResult {
+                success: true,
+                message: String::from_utf8_lossy(&uv_out.stdout).to_string(),
+                sandbox_name: None,
+            },
+            Ok(uv_out) => OpenShellResult {
+                success: false,
+                message: format!(
+                    "All install methods failed. Last uv stderr: {}",
+                    String::from_utf8_lossy(&uv_out.stderr)
+                ),
+                sandbox_name: None,
+            },
+            Err(e) => OpenShellResult {
+                success: false,
+                message: format!(
+                    "Install failed (pip/git+https and uv failed). Ensure Git and pip are available, or set OPENSHELL_CLI_PATH. Last error: {}",
+                    e
+                ),
+                sandbox_name: None,
+            },
+        }
+    }
+
+    /// Prepend Git `cmd` and sibling `bin` to `PATH` so pip’s VCS install can invoke `git`.
+    #[cfg(windows)]
+    fn path_env_with_git_prepend(git_exe: &Path) -> OsString {
+        let mut prefixes: Vec<PathBuf> = Vec::new();
+        if let Some(cmd_dir) = git_exe.parent() {
+            prefixes.push(cmd_dir.to_path_buf());
+            if let Some(root) = cmd_dir.parent() {
+                let bin_dir = root.join("bin");
+                if bin_dir.is_dir() {
+                    prefixes.push(bin_dir);
+                }
+            }
+        }
+        let existing = env::var_os("PATH").unwrap_or_default();
+        let mut combined: Vec<PathBuf> = prefixes;
+        combined.extend(env::split_paths(&existing));
+        env::join_paths(combined).unwrap_or(existing)
     }
 
     // --- Internal helpers ---
 
     fn find_openshell_cli() -> PathBuf {
-        // 1. Environment variable
-        if let Ok(p) = std::env::var("OPENSHELL_CLI_PATH") {
-            let path = PathBuf::from(p);
-            if path.exists() {
-                return path;
-            }
-        }
-
-        // 2. System PATH
-        if let Some(p) = Self::which_openshell() {
-            return p;
-        }
-
-        // 3. Common install locations
-        #[cfg(unix)]
-        {
-            if let Ok(home) = std::env::var("HOME") {
-                let local_bin = PathBuf::from(&home).join(".local/bin/openshell");
-                if local_bin.exists() { return local_bin; }
-            }
-            let usr_local = PathBuf::from("/usr/local/bin/openshell");
-            if usr_local.exists() { return usr_local; }
-        }
-
-        #[cfg(windows)]
-        {
-            if let Ok(userprofile) = std::env::var("USERPROFILE") {
-                let local_bin = PathBuf::from(&userprofile).join(".local\\bin\\openshell.exe");
-                if local_bin.exists() { return local_bin; }
-            }
-        }
-
-        // Fallback: hope it's on PATH
-        PathBuf::from("openshell")
+        crate::tool_paths::resolve_openshell_cli_path()
     }
 
     fn which_openshell() -> Option<PathBuf> {
-        #[cfg(windows)]
-        let output = Command::new("where").arg("openshell").output().ok()?;
-        #[cfg(unix)]
-        let output = Command::new("which").arg("openshell").output().ok()?;
-
-        if output.status.success() {
-            let path = String::from_utf8_lossy(&output.stdout)
-                .lines()
-                .next()?
-                .trim()
-                .to_string();
-            Some(PathBuf::from(path))
-        } else {
-            None
-        }
+        crate::tool_paths::resolve_executable("openshell")
     }
 
     fn find_policy_path() -> PathBuf {
