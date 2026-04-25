@@ -150,22 +150,41 @@ pub enum SandboxAction {
     Logs { name: String },
 }
 
-#[tokio::main]
-async fn main() -> anyhow::Result<()> {
-    set_panic_hook();
-    
-    let cli = Cli::parse();
-    let _guard = init_logging(cli.debug)?;
-    
-    if let Err(e) = async_main(cli).await {
-        error!("Fatal execution error: {}", e);
-        std::process::exit(1);
+fn main() -> anyhow::Result<()> {
+    // Rayon global pool for CPU-tier analysis (policy+entropy bridge, parallel scans). Must run before any `rayon::spawn`.
+    osoosi_core::init_hybrid_concurrency();
+    let worker_threads = osoosi_core::tokio_worker_threads();
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .worker_threads(worker_threads)
+        .max_blocking_threads(osoosi_core::max_blocking_threads())
+        .enable_all()
+        .thread_name_fn(|| {
+            static C: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+            let n = C.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+            format!("osoosi-tokio-{}", n)
+        })
+        .build()?;
+    match rt.block_on(async {
+        set_panic_hook();
+        let cli = Cli::parse();
+        let _guard = init_logging(cli.debug)?;
+        async_main(cli).await
+    }) {
+        Ok(()) => Ok(()),
+        Err(e) => {
+            eprintln!("Fatal execution error: {}", e);
+            std::process::exit(1);
+        }
     }
-    
-    Ok(())
 }
 
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
+    info!(
+        tokio_workers = osoosi_core::tokio_worker_threads(),
+        max_blocking = osoosi_core::max_blocking_threads(),
+        rayon = osoosi_core::rayon_thread_count(),
+        "Hybrid runtime: Tokio I/O + Rayon compute pools configured"
+    );
     // 1. Handle autonomous provisioning for critical modes
     // Force disable AI if requested via CLI or env
     if cli.no_ai {

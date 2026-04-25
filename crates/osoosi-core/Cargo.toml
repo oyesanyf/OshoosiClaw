@@ -50,6 +50,7 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }
 hostname = { workspace = true }
+rayon = { workspace = true }
 
 uuid = { workspace = true, features = ["v4", "serde"] }
 

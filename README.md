@@ -210,6 +210,8 @@ cargo build --release --all-features
 .\target\release\osoosi.exe start
 ```
 
+The **osoosi-dashboard** crate is a workspace member and a direct dependency of **osoosi-cli** (Axum web UI for `start --dashboard` and the `dashboard` subcommand). Standard `cargo build --release` compiles it; you should not exclude it from release builds.
+
 ### Docker (Coming Soon)
 
 ```bash
