@@ -2,7 +2,7 @@ use base64::{engine::general_purpose, Engine as _};
 use chrono::{DateTime, Utc};
 use regex::Regex;
 use reqwest::blocking::Client;
-use reqwest::header::{AUTHORIZATION, CONTENT_TYPE};
+use reqwest::header::{ACCEPT, AUTHORIZATION, CONTENT_TYPE};
 use serde::Serialize;
 use std::collections::HashSet;
 use uuid::Uuid;
@@ -10,6 +10,11 @@ use uuid::Uuid;
 pub const OTX_DISCOVERY_URL: &str = "https://otx.alienvault.com/taxii/discovery";
 pub const OTX_COLLECTIONS_URL: &str = "https://otx.alienvault.com/taxii/collections";
 pub const OTX_POLL_URL: &str = "https://otx.alienvault.com/taxii/poll";
+
+/// TAXII 1.1 HTTP binding (required by many servers; omitting these often yields HTTP 406).
+const TAXII_XML_BINDING: &str = "urn:taxii.mitre.org:message:xml:1.1";
+const TAXII_SERVICES: &str = "urn:taxii.mitre.org:services:1.1";
+const TAXII_PROTOCOL_HTTP: &str = "urn:taxii.mitre.org:protocol:http:1.0";
 
 #[derive(Debug, Serialize, Eq, PartialEq, Hash, Clone)]
 pub struct Indicator {
@@ -31,7 +36,12 @@ pub fn post_taxii(
     let response = client
         .post(url)
         .header(AUTHORIZATION, format!("Basic {auth}"))
+        .header(ACCEPT, "application/xml")
         .header(CONTENT_TYPE, "application/xml")
+        .header("X-TAXII-Content-Type", TAXII_XML_BINDING)
+        .header("X-TAXII-Accept", TAXII_XML_BINDING)
+        .header("X-TAXII-Services", TAXII_SERVICES)
+        .header("X-TAXII-Protocol", TAXII_PROTOCOL_HTTP)
         .body(body.to_string())
         .send()?;
 
