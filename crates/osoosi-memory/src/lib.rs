@@ -219,6 +219,25 @@ impl MemoryStore {
             [],
         )?;
 
+        // NSRL (National Software Reference Library) Known Good table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS nsrl (
+                sha1 TEXT PRIMARY KEY,
+                md5 TEXT,
+                sha256 TEXT,
+                file_name TEXT,
+                file_size INTEGER,
+                product_code TEXT,
+                os_code TEXT
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_nsrl_sha1 ON nsrl(sha1)",
+            [],
+        )?;
+
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_otx_lookup ON otx_indicators(indicator_type, value)",
             [],

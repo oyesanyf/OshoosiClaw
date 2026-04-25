@@ -34,7 +34,7 @@
 **OshoosiClaw** is a next-generation, autonomous **Endpoint Detection & Response (EDR)** agent built entirely in **Rust**. It implements a **Decentralized Immune System** model where:
 
 - 🔐 **Trust** is mathematically proven through Merkle Proofs and S2S Certificates
-- 🔬 **Detection** is powered by a 12-engine forensic pipeline (EMBER ML + CAPA + FLOSS + HollowsHunter + YARA + ClamAV + Hayabusa + Chainsaw + Xori + RedBPF + Gemma4 + yara-x)
+- 🔬 **Detection** is powered by a **Unified Agentic Engine** (Shannon Entropy + OTel Tracing + EMBER ML + CAPA + FLOSS + HollowsHunter + YARA + ClamAV + Hayabusa + Chainsaw + Xori + RedBPF + Gemma4 + yara-x)
 - 🧠 **Intelligence** is shared peer-to-peer across a **Million-Node Mesh** with Zonal Sharding and Reputation Filtering
 - 🛡️ **Runtime Security** is hardened via **Native OS Sandboxing** (Landlock on Linux, Job Objects on Windows)
 - 🛡️ **Optional Sandboxing**: NVIDIA OpenShell (Docker required ONLY for Central Gateway nodes)
@@ -58,6 +58,8 @@ OshoosiClaw does not rely on a single ML model. It uses a **cascading AI pipelin
 | Model Tier | Engine | Purpose |
 |:-----------|:-------|:--------|
 | **File Identification** | [**Google Magika**](https://github.com/google/magika) | Deep learning-based pre-filtering. Identifies PE/ELF/Scripts before heavy analysis. |
+| **Precision Guardrail** | **Shannon Entropy** | Differentiates between legitimate browsers/tools and packed malware. |
+| **Forensic Storytelling**| **OpenTelemetry (OTel)** | Wraps suspicious events into a context-rich forensic story instead of disconnected alerts. |
 | **Static Malware Detection** | [**EMBER ML**](https://github.com/elastic/ember) | Gradient-boosted tree model trained on 54 PE features (sections, imports, entropy). |
 | **Behavioral NLP** | [**SecureBERT**](https://huggingface.co/ehsanaghaei/SecureBERT) | Security-domain BERT model that classifies PowerShell, CLI commands, and log sentences. |
 | **Reasoning & Context** | [**Gemma 4 9B** / **Llama 3.1 8B**](https://ollama.com/) | Local LLMs (via Ollama) that reason about complex detection chains and decide on autonomous response. |

@@ -558,6 +558,10 @@ impl EdrOrchestrator {
             let gate = join_gate.clone();
             let peer_count = self.mesh_peer_count.clone();
 
+            let orch_sig = orch.clone();
+            let orch_msg = orch.clone();
+            let orch_delta = orch.clone();
+
             tokio::spawn(async move {
                 mesh_node.run_loop(
                     gate,
@@ -567,10 +571,10 @@ impl EdrOrchestrator {
                     move |sig| {
                         info!("Mesh Intelligence: External threat reported from {}: {:?}", sig.source_node, sig.reason);
                         // Persist mesh threat so it shows in the dashboard
-                        if let Err(e) = orch.memory.log_threat(&sig) {
+                        if let Err(e) = orch_sig.memory.log_threat(&sig) {
                             error!("Failed to persist mesh threat: {}", e);
                         }
-                        orch.audit.log("MESH_THREAT_RECEIVED", serde_json::json!({
+                        orch_sig.audit.log("MESH_THREAT_RECEIVED", serde_json::json!({
                             "source_node": sig.source_node,
                             "threat_id": sig.id,
                             "confidence": sig.confidence,
@@ -579,7 +583,7 @@ impl EdrOrchestrator {
                     move |msg| {
                         // Handle policy consensus messages
                         if let osoosi_types::PolicyConsensusMessage::Vote(ref vote) = msg {
-                             let orch_clone = orch.clone();
+                             let orch_clone = orch_msg.clone();
                              let msg_clone = msg.clone();
                              let voter_id = vote.voter_id.clone();
                              tokio::spawn(async move {
@@ -594,7 +598,7 @@ impl EdrOrchestrator {
                     |_tarpit| {}, // Tarpit signals
                     |_confidential| {}, // Confidential messages
                     move |delta| {
-                        let orch_clone = orch.clone();
+                        let orch_clone = orch_delta.clone();
                         tokio::spawn(async move {
                             let mut model = orch_clone.threat_model.write().await;
                             model.merge_delta(&delta);
@@ -1332,7 +1336,7 @@ impl EdrOrchestrator {
         // Precision Refactor: Entropy Check & OTel Suppression (The "Unified OshoosiClaw Agent" logic)
         if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
             let path = std::path::Path::new(image_path);
-            if let Ok(entropy) = self.static_analyzer.calculate_entropy(path).await {
+            if let Ok(entropy) = self.static_analyzer.calculate_entropy(path) {
                 let is_browser = image_path.to_lowercase().contains("chrome.exe") || 
                                image_path.to_lowercase().contains("msedge.exe") || 
                                image_path.to_lowercase().contains("firefox.exe");

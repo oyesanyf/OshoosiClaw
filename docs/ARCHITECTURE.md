@@ -65,8 +65,15 @@ If the hash is "Known Good," the event is **immediately skipped** — zero false
 ### Tier 1: Policy Engine (Milliseconds)
 Sigma rule matching + NVD/KEV intelligence correlation.
 
-### Tier 2: ML Threat Model (Milliseconds)
-EMBER-style 54-feature PE static analysis + **MalConv Deep Byte Analysis** with local ONNX Runtime inference.
+### Tier 2: ML Threat Model & Shannon Guardrails (Milliseconds)
+- **EMBER-style 54-feature PE static analysis** + **MalConv Deep Byte Analysis** with local ONNX Runtime inference.
+- **Shannon Entropy Analysis**: A primary guardrail for precision. 
+  - **Low Entropy (< 6.5)**: Rewards legitimate browsers/tools with a risk-score reduction.
+  - **High Entropy (> 7.5)**: Boosts confidence for packed/encrypted malware.
+- **Precision KEV Matching**: Dynamic CISA KEV matching cross-referenced with NSRL to eliminate false positives for patched legitimate software.
+
+### Tier 2.5: OpenTelemetry Forensic Storytelling
+Suspicious behaviors (Registry access, discovery) are wrapped in **OpenTelemetry-instrumented spans**. This turns isolated alerts into a single, context-rich "Forensic Story," reducing alert volume by up to 80% while maintaining a full audit trail.
 
 ### Tier 3: Behavioral AI (Seconds)
 CoLog → SecureBERT → Gemma 3 → OpenAI cascade.

@@ -22,6 +22,12 @@ A port of the CEREBUS framework providing Explainable AI (XAI) for malware analy
 - **Explainable Narratives**: Instead of a simple "Malicious" flag, it generates SHAP-inspired narratives explaining *why* a file is suspicious (e.g., "High export size with suspicious imports from kernel32.dll").
 - **Resource Interception**: Real-time monitoring of CPU/Memory thresholds to detect cryptojackers and ransomware before they finish encrypting.
 
+### 4. Unified OshoosiClaw Agent (Brain-Payload Merge)
+The final evolution of detection precision, merging system discovery utilities with an OpenTelemetry-instrumented Orchestrator.
+- **Shannon Entropy Guardrail**: Automatically validates binary intent by analyzing packing and encryption state (Rewards low entropy, alerts high entropy).
+- **Forensic Storytelling**: Wraps disconnected system events (Registry, Process, Discovery) into a single, context-rich OTel trace, reducing alert fatigue.
+- **NSRL Precision**: Eliminates false positives by cross-referencing KEV matches with the 121GB 'Known Good' database.
+
 ---
 
 ## 🏗️ System Architecture

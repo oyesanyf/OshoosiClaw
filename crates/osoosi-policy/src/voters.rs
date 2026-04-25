@@ -221,3 +221,40 @@ impl ThreatVoter for YaraXMemoryVoter {
     }
 }
 
+/// CISA KEV (Known Exploited Vulnerabilities) Voter
+pub struct KevVoter {
+    pub memory: std::sync::Arc<osoosi_memory::MemoryStore>,
+}
+
+impl ThreatVoter for KevVoter {
+    fn name(&self) -> String { "CISA-KEV".to_string() }
+    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        let image = event.data.get("Image").and_then(|v| v.as_str())
+            .and_then(|p| std::path::Path::new(p).file_name())
+            .and_then(|n| n.to_str())
+            .unwrap_or("unknown")
+            .to_lowercase();
+            
+        let is_known_good = if let Some(path) = event.data.get("Image").and_then(|v| v.as_str()) {
+            self.memory.get_file_integrity(path).map(|opt| opt.map(|(_, nsrl)| nsrl).unwrap_or(false)).unwrap_or(false)
+        } else {
+            false
+        };
+
+        if let Ok(kevs) = self.memory.get_all_kevs() {
+            for kev in kevs {
+                let product = kev.product.to_lowercase();
+                if image.contains(&product) || product.contains(&image) {
+                    let confidence = if is_known_good { 0.45 } else { 0.85 };
+                    return Some(VoteResult {
+                        confidence,
+                        reason: format!("CISA KEV: process {} matches known exploited product {} ({})", image, kev.product, kev.cve_id),
+                        weight: 1.0,
+                    });
+                }
+            }
+        }
+        None
+    }
+}
+
