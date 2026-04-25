@@ -643,3 +643,9 @@ Recent hardening efforts have focused on agent resilience and production stabili
 - **Auto-Provisioning AI**: Background weight downloader for `MalConv` allows the agent to start immediately and hot-load ML capabilities once ready.
 - **Intelligent Log Debouncing**: Orchestrator-level throttling prevents behavioral alert spam while preserving critical forensic evidence in the audit trail.
 - **Telemetry Precision**: Dashboard telemetry aggregation now filters for verified `TELEMETRY_INGESTED` events for accurate ingestion tracking.
+- **Resource Optimization**: Native XPath filtering (`/q:"*[System[(EventRecordID > X)]]"`) for Windows Sysmon polling drastically reduces CPU and memory overhead during high-volume event ingestion.
+- **Dashboard Usability**: Rebuilt interactive dashboard UI components including Node Investigation and instant False Positive overrides.
+- **AlienVault OTX TAXII**: Full integration with the `otx-taxii-rs` crate, enabling real-time polling of AlienVault OTX feeds and immediate policy engine evaluation via the new `OtxVoter`.
+- **Yara-X Memory Scanning**: Introduced `YaraXMemoryVoter` for detecting C2 beacons in running process memory.
+- **Adaptive Telemetry Profiles**: Restructured Sysmon coverage into Silent, Normal, and Burst modes with robust coverage mappings for Anti-Injection, Persistence, Kernel Integrity, and Visibility.
+- **Reduced Verbosity**: Global `--debug` flag introduced, defaulting to `WARN` level to improve signal-to-noise ratio in operational environments.
