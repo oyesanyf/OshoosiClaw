@@ -369,10 +369,10 @@ function renderThreatsView(threats) {
                 </div>
             </div>
             <div class="item-actions" style="display:flex; flex-direction: column; gap: 8px; justify-content: center; min-width: 150px;">
-                <button class="btn-text" onclick="markFalsePositive('${t.id}')" style="color:var(--text-muted); border:1px solid var(--glass-border); padding:8px 16px; border-radius:6px; width: 100%; transition: all 0.2s;">Mark False Positive</button>
-                <button class="btn-text" onclick="confirmThreat('${t.id}')" style="color:var(--accent-red); border:1px solid var(--accent-red); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(255, 77, 77, 0.05); transition: all 0.2s;">Confirm Threat</button>
-                <button class="btn-text" onclick="document.querySelector('[data-view=\'story\']').click()" style="color:var(--accent-green); border:1px solid var(--accent-green); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(0, 255, 150, 0.05);">View Forensic Story</button>
-                <button class="btn-text" onclick="investigateNode('${t.source_node}')" style="color:var(--accent-blue); border:1px solid var(--accent-blue); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(0, 210, 255, 0.05);">Investigate Node</button>
+                <button class="btn-text" onclick="markTruePositive('${t.id}')" style="color:var(--accent-green); border:1px solid var(--accent-green); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(0, 255, 150, 0.05); transition: all 0.2s;">Mark as True Positive</button>
+                <button class="btn-text" onclick="markFalsePositive('${t.id}')" style="color:var(--text-muted); border:1px solid var(--glass-border); padding:8px 16px; border-radius:6px; width: 100%; transition: all 0.2s;">Mark as False Positive</button>
+                <button class="btn-text" onclick="confirmThreat('${t.id}')" style="color:var(--accent-red); border:1px solid var(--accent-red); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(255, 77, 77, 0.05); transition: all 0.2s;">Confirm & Isolate</button>
+                <button class="btn-text" onclick="document.querySelector('[data-view=\'story\']').click()" style="color:var(--text-header); border:1px solid var(--glass-border); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(255, 255, 255, 0.05);">Forensic Story</button>
             </div>
         </div>
     `}).join('');
@@ -756,8 +756,8 @@ window.rejectAction = async function(id) {
 };
 
 window.markFalsePositive = async function(threatId) {
-    if (event) event.stopPropagation();
-    if (!confirm("Are you sure you want to mark this as a false positive? This will help the agent learn.")) return;
+    if (window.event) window.event.stopPropagation();
+    if (!confirm("Are you sure this is a False Positive? This will stop active responses and un-ghost files.")) return;
     
     try {
         const res = await fetch(`${API_BASE}/threats/${threatId}/false-positive`, {
@@ -765,13 +765,8 @@ window.markFalsePositive = async function(threatId) {
         });
         const data = await res.json();
         if (data.ok) {
-            // Re-fetch and update
-            const threats = await fetchAPI('/threats');
-            if (threats) {
-                state.threats = threats;
-                renderThreatsView(threats);
-                renderThreats(threats);
-            }
+            alert("Threat marked as false positive. Remediation initiated.");
+            updateDashboard();
         } else {
             alert("Error: " + data.error);
         }
@@ -780,8 +775,28 @@ window.markFalsePositive = async function(threatId) {
     }
 };
 
+window.markTruePositive = async function(threatId) {
+    if (window.event) window.event.stopPropagation();
+    if (!confirm("Confirm this as a True Positive? This will boost detection confidence across the mesh.")) return;
+    
+    try {
+        const res = await fetch(`${API_BASE}/threats/${threatId}/true-positive`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (data.ok) {
+            alert("Threat confirmed. Intelligence reinforced across mesh.");
+            updateDashboard();
+        } else {
+            alert("Error: " + data.error);
+        }
+    } catch (err) {
+        console.error("Failed to mark true positive:", err);
+    }
+};
+
 window.confirmThreat = async function(threatId) {
-    if (event) event.stopPropagation();
+    if (window.event) window.event.stopPropagation();
     try {
         const res = await fetch(`${API_BASE}/triage/decide`, {
             method: 'POST',

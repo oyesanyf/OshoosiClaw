@@ -139,4 +139,14 @@ impl DeceptionManager {
         
         Ok(())
     }
+
+    /// Clear all Ghost files in a directory.
+    pub async fn clear_ghost_files<P: AsRef<Path>>(&self, dir: P) -> anyhow::Result<()> {
+        let dir = dir.as_ref();
+        if dir.exists() {
+            info!("Remediating deception: removing ghost files from {:?}", dir);
+            fs::remove_dir_all(dir).await?;
+        }
+        Ok(())
+    }
 }

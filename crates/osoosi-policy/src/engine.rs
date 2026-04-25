@@ -243,18 +243,28 @@ impl PolicyEngine {
             signature.recommended_action = ResponseAction::Alert;
         }
 
-        // Federated learning: down-rank if matches known false positive pattern
+        // Federated learning: adjust confidence based on known true/false positive patterns
         if is_threat {
-            // ... (keep existing down-ranking logic if any)
-        }
-        
-        if is_threat {
-            if let Ok(true) = self.memory.is_false_positive_pattern(
-                signature.process_name.as_deref(),
-                signature.hash_blake3.as_deref(),
-            ) {
-                signature.confidence = (signature.confidence * 0.3).max(0.1);
-                signature.add_reason("Down-ranked: matches federated false positive pattern");
+            let proc = signature.process_name.as_deref();
+            let hash = signature.hash_blake3.as_deref();
+
+            // 1. If it's a confirmed TRUE positive, boost to 1.0
+            if let Ok(true) = self.memory.is_true_positive_pattern(proc, hash) {
+                signature.confidence = 1.0;
+                signature.add_reason("Reinforced: matches confirmed federated threat pattern");
+                // Ensure action is at least GhostTarpit
+                if signature.recommended_action == ResponseAction::Alert || signature.recommended_action == ResponseAction::Tarpit {
+                    signature.recommended_action = ResponseAction::GhostTarpit;
+                }
+            }
+            // 2. If it's a known FALSE positive, suppress
+            else if let Ok(true) = self.memory.is_false_positive_pattern(proc, hash) {
+                signature.confidence = (signature.confidence * 0.05).max(0.0);
+                signature.add_reason("Suppressed: matches federated false positive pattern");
+                // If confidence is now very low, don't take action
+                if signature.confidence < 0.2 {
+                    signature.recommended_action = ResponseAction::Alert;
+                }
             }
         }
 

@@ -621,6 +621,14 @@ pub fn resolve_config_path() -> Option<PathBuf> {
     if local.exists() {
         return Some(local);
     }
+    
+    // Check parent directory (useful when running from target/release)
+    if let Some(parent) = cwd.parent() {
+        let parent_local = parent.join("osoosi.toml");
+        if parent_local.exists() {
+            return Some(parent_local);
+        }
+    }
     #[cfg(not(target_os = "windows"))]
     {
         if let Some(home) = dirs::config_dir() {

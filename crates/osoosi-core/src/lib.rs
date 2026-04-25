@@ -2443,6 +2443,51 @@ impl EdrOrchestrator {
         }
     }
 
+    /// Mark a threat as false positive and revert any active response.
+    pub async fn handle_false_positive(&self, threat_id: &str) -> anyhow::Result<()> {
+        let source = self.trust.did().to_string();
+        if self.memory.mark_threat_false_positive(threat_id, &source)? {
+            info!("Threat {} marked as false positive. Reverting active response...", threat_id);
+            
+            // 1. Revert Deception (Ghost Files)
+            let traps_dir = self.runtime_config.traps_path.as_str();
+            let _ = self.response.clear_ghost_files(traps_dir).await;
+
+            // 2. Clear Tarpits (Socket-level)
+            // Note: In a full impl, we'd track IPs per threat. For now, we clear global state or use a placeholder.
+            
+            self.audit.log("FALSE_POSITIVE_REMEDIATION", serde_json::json!({
+                "threat_id": threat_id,
+                "action": "remediation_triggered",
+            }));
+            
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Threat not found"))
+        }
+    }
+
+    /// Mark a threat as true positive (verified by analyst).
+    pub async fn handle_true_positive(&self, threat_id: &str) -> anyhow::Result<()> {
+        let source = self.trust.did().to_string();
+        if self.memory.mark_threat_true_positive(threat_id, &source)? {
+            info!("Threat {} confirmed as TRUE positive. Broadcasting to mesh...", threat_id);
+            
+            self.audit.log("TRUE_POSITIVE_CONFIRMED", serde_json::json!({
+                "threat_id": threat_id,
+                "action": "intelligence_reinforced",
+            }));
+
+            // Share the confirmed threat as intelligence across the mesh
+            let summary = format!("Verified Threat Pattern (Confirmed by {}): {}", source, threat_id);
+            let _ = self.broadcast_intelligence(summary).await;
+            
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Threat not found"))
+        }
+    }
+
     pub async fn start_mesh_with_join_gate(&self) -> anyhow::Result<Arc<JoinGate>> {
         let autonomy = osoosi_types::load_autonomy_config();
         let peer_rules = osoosi_types::load_peer_rules_config();

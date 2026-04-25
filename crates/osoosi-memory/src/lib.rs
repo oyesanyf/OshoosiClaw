@@ -906,6 +906,29 @@ impl MemoryStore {
         Ok(true)
     }
 
+    /// Mark a threat as a confirmed true positive (reinforcement).
+    pub fn mark_threat_true_positive(&self, threat_id: &str, source_node: &str) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare(
+            "SELECT process_name, hash_blake3 FROM threats WHERE id = ?1"
+        )?;
+        let mut rows = stmt.query(params![threat_id])?;
+        let Some(row) = rows.next()? else {
+            return Ok(false);
+        };
+        let process_name: Option<String> = row.get(0)?;
+        let hash_blake3: Option<String> = row.get(1)?;
+        let proc = process_name.as_deref().unwrap_or("");
+        let hash = hash_blake3.as_deref().unwrap_or("");
+        
+        conn.execute(
+            "INSERT OR REPLACE INTO verified_threat_patterns (process_name, hash_blake3, source_node, marked_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![proc, hash, source_node, Utc::now().to_rfc3339()],
+        )?;
+        Ok(true)
+    }
+
     /// Check if process/hash matches a known false positive pattern.
     pub fn is_false_positive_pattern(&self, process_name: Option<&str>, hash_blake3: Option<&str>) -> anyhow::Result<bool> {
         let conn = self.conn.lock().unwrap();
@@ -913,6 +936,18 @@ impl MemoryStore {
         let hash = hash_blake3.unwrap_or("");
         let mut stmt = conn.prepare(
             "SELECT 1 FROM false_positive_patterns WHERE (process_name != '' AND process_name = ?1) OR (hash_blake3 != '' AND hash_blake3 = ?2) LIMIT 1"
+        )?;
+        let mut rows = stmt.query(params![proc, hash])?;
+        Ok(rows.next()?.is_some())
+    }
+
+    /// Check if process/hash matches a confirmed true positive pattern.
+    pub fn is_true_positive_pattern(&self, process_name: Option<&str>, hash_blake3: Option<&str>) -> anyhow::Result<bool> {
+        let conn = self.conn.lock().unwrap();
+        let proc = process_name.unwrap_or("");
+        let hash = hash_blake3.unwrap_or("");
+        let mut stmt = conn.prepare(
+            "SELECT 1 FROM verified_threat_patterns WHERE (process_name != '' AND process_name = ?1) OR (hash_blake3 != '' AND hash_blake3 = ?2) LIMIT 1"
         )?;
         let mut rows = stmt.query(params![proc, hash])?;
         Ok(rows.next()?.is_some())

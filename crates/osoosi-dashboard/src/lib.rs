@@ -156,6 +156,7 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/triage/decide", post(post_triage_decide))
         .route("/api/query", get(get_query))
         .route("/api/threats/:threat_id/false-positive", post(post_threat_false_positive))
+        .route("/api/threats/:threat_id/true-positive", post(post_threat_true_positive))
         .route("/api/behavioral/feedback", post(post_behavioral_feedback))
         .route("/api/behavioral/analyze", get(get_behavioral_analyze))
         .route("/api/behavioral/deep-dive", post(post_behavioral_deep_dive))
@@ -1074,20 +1075,31 @@ async fn get_agent_context(State(state): State<DashboardState>) -> Json<Value> {
     }
 }
 
-/// Mark threat as false positive (federated learning).
+/// Mark threat as false positive (federated learning + remediation).
 async fn post_threat_false_positive(
     State(state): State<DashboardState>,
     Path(threat_id): Path<String>,
 ) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
-            let source = orch.trust().did().id.clone();
-            
-            // If it's a behavioral threat, we might have the sentence stored in metadata or audit.
-            // For now, we mainly mark it in the main threat store.
-            match orch.memory().mark_threat_false_positive(&threat_id, &source) {
-                Ok(true) => Json(json!({"ok": true, "message": "Threat marked as false positive"})),
-                Ok(false) => Json(json!({"ok": false, "error": "Threat not found"})),
+            match orch.handle_false_positive(&threat_id).await {
+                Ok(_) => Json(json!({"ok": true, "message": "Threat marked as false positive and remediated"})),
+                Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+            }
+        }
+        None => Json(json!({"ok": false, "error": "Backend not running"})),
+    }
+}
+
+/// Mark threat as true positive (reinforcement).
+async fn post_threat_true_positive(
+    State(state): State<DashboardState>,
+    Path(threat_id): Path<String>,
+) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            match orch.handle_true_positive(&threat_id).await {
+                Ok(_) => Json(json!({"ok": true, "message": "Threat confirmed as true positive and shared"})),
                 Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
             }
         }

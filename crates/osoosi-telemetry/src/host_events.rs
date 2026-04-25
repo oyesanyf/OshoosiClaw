@@ -168,9 +168,12 @@ impl WindowsEventReader {
         }
         let xml = String::from_utf8_lossy(&output.stdout);
         let events: Vec<String> = xml
-            .split("<Event>")
+            .split("<Event")
             .filter(|s| s.contains("</Event>"))
-            .map(|s| format!("<Event>{}", s))
+            .map(|s| {
+                let end_pos = s.find("</Event>").unwrap_or(s.len());
+                format!("<Event{}", &s[..end_pos + "</Event>".len()])
+            })
             .collect();
         
         let mut new_events = Vec::new();
@@ -210,6 +213,12 @@ impl HostEventReader for WindowsEventReader {
     fn poll_events(&mut self) -> anyhow::Result<Vec<HostSecurityEvent>> {
         let xml_events = self.query_wevtutil()?;
         let mut out = Vec::new();
+        let count = xml_events.len();
+        
+        if count > 0 {
+            tracing::info!(target: "telemetry", "Polled {} new events from channel '{}'", count, self.channel);
+        }
+
         for xml in xml_events {
             match self.sysmon_parser.parse_xml(&xml) {
                 Ok(sysmon) => {
