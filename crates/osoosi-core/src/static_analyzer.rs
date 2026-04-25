@@ -95,7 +95,18 @@ impl StaticAnalyzer {
                 signature.confidence *= 0.8; // Reward low entropy (suppress)
             }
 
-            // 7. LLM Scoring (passing findings to SmolLM for semantic validation)
+            // 7. ClamAV Analysis (Voting Integration)
+            if let Ok(Some(clam_sig)) = self.run_clamav(file_path).await {
+                signature.confidence = (signature.confidence + 0.5).min(1.0);
+                signature.add_reason(format!("ClamAV Detection: {}", clam_sig));
+                info!("Static Analyzer: ClamAV voted MALICIOUS for {:?}", file_path);
+            } else {
+                // If ClamAV says it's clean, slightly reduce confidence (unless it's an exploit)
+                signature.confidence *= 0.9;
+                debug!("Static Analyzer: ClamAV voted CLEAN for {:?}", file_path);
+            }
+
+            // 8. LLM Scoring (passing findings to SmolLM for semantic validation)
             if let Some(llm_score) = self.get_llm_score(&signature, &floss_artifacts).await {
                 info!("Static Analyzer: LLM validated score: {:.2}", llm_score);
                 signature.confidence = (signature.confidence * 0.7 + llm_score * 0.3).min(0.99);
@@ -103,6 +114,32 @@ impl StaticAnalyzer {
             }
 
             return Ok(Some(signature));
+        }
+
+        Ok(None)
+    }
+
+    async fn run_clamav(&self, file_path: &Path) -> anyhow::Result<Option<String>> {
+        let clam_path = osoosi_types::resolve_clamscan_path();
+        if !clam_path.exists() {
+            return Ok(None); // ClamAV not installed or not in PATH
+        }
+
+        let mut cmd = std::process::Command::new(&clam_path);
+        cmd.arg("--no-summary").arg(file_path);
+
+        // Run clamscan in a blocking task since it's a synchronous process
+        let output = tokio::task::spawn_blocking(move || cmd.output()).await??;
+
+        // clamscan returns 0 if clean, 1 if infected, 2 if error
+        if output.status.code() == Some(1) {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            // Example output: /path/to/file: Win.Trojan.Agent-12345 FOUND
+            if let Some(detection) = stdout.lines().find(|l| l.contains("FOUND")) {
+                let sig_name = detection.split(':').last().unwrap_or("Unknown Malware").replace("FOUND", "").trim().to_string();
+                return Ok(Some(sig_name));
+            }
+            return Ok(Some("Generic Malware Signature".to_string()));
         }
 
         Ok(None)
