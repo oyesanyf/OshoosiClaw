@@ -15,6 +15,7 @@ use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
+use serde::Serialize;
 use tokio::sync::mpsc;
 use tracing::{info, warn, debug};
 
@@ -168,6 +169,20 @@ impl MeshNode {
         })
     }
 
+    /// Serialize and publish; never panics (unlike `unwrap()` on `serde_json::to_string`).
+    fn publish_gossip_json<T: Serialize>(&mut self, topic: &gossipsub::IdentTopic, value: &T) {
+        match serde_json::to_string(value) {
+            Ok(j) => {
+                let _ = self
+                    .swarm
+                    .behaviour_mut()
+                    .gossipsub
+                    .publish(topic.clone(), j.as_bytes());
+            }
+            Err(e) => warn!("[mesh] gossip message JSON serialization failed: {}", e),
+        }
+    }
+
     #[allow(clippy::too_many_arguments)]
     pub async fn run_loop<F, G, H, I, J, K, L, M>(
         mut self,
@@ -221,35 +236,35 @@ impl MeshNode {
                         quarantined.remove(&pid);
                     }
                     MeshCommand::Broadcast(sig) => {
-                         let j = serde_json::to_string(&sig).unwrap();
-                         let _ = self.swarm.behaviour_mut().gossipsub.publish(self.threat_topic.clone(), j.as_bytes());
+                        let topic = self.threat_topic.clone();
+                        self.publish_gossip_json(&topic, &sig);
                     }
                     MeshCommand::BroadcastConsensus(msg) => {
-                        let j = serde_json::to_string(&msg).unwrap();
-                        let _ = self.swarm.behaviour_mut().gossipsub.publish(self.consensus_topic.clone(), j.as_bytes());
+                        let topic = self.consensus_topic.clone();
+                        self.publish_gossip_json(&topic, &msg);
                     }
                     MeshCommand::PublishPeerAnnounce(ann) => {
-                        let j = serde_json::to_string(&ann).unwrap();
-                        let _ = self.swarm.behaviour_mut().gossipsub.publish(self.peer_announce_topic.clone(), j.as_bytes());
+                        let topic = self.peer_announce_topic.clone();
+                        self.publish_gossip_json(&topic, &ann);
                     }
                     MeshCommand::BroadcastGhostShard(shard) => {
-                        let j = serde_json::to_string(&shard).unwrap();
-                        let _ = self.swarm.behaviour_mut().gossipsub.publish(self.ghost_shard_topic.clone(), j.as_bytes());
+                        let topic = self.ghost_shard_topic.clone();
+                        self.publish_gossip_json(&topic, &shard);
                     }
                     MeshCommand::BroadcastGlobalIntel(intel) => {
-                        let j = serde_json::to_string(&intel).unwrap();
-                        let _ = self.swarm.behaviour_mut().gossipsub.publish(self.intel_topic.clone(), j.as_bytes());
+                        let topic = self.intel_topic.clone();
+                        self.publish_gossip_json(&topic, &intel);
                     }
                     MeshCommand::BroadcastMalwareSample(sample) => {
-                        let j = serde_json::to_string(&sample).unwrap();
-                        let _ = self.swarm.behaviour_mut().gossipsub.publish(self.malware_sample_topic.clone(), j.as_bytes());
+                        let topic = self.malware_sample_topic.clone();
+                        self.publish_gossip_json(&topic, &sample);
                     }
                     MeshCommand::BroadcastNoisyThreat(mut sig, dp_conf) => {
                         let dp = osoosi_dp::DifferentialPrivacy::new(dp_conf.clone());
                         sig.confidence = (sig.confidence + dp.laplace_noise()).clamp(0.0, 1.0);
                         sig.epsilon = Some(dp_conf.epsilon);
-                        let j = serde_json::to_string(&sig).unwrap();
-                        let _ = self.swarm.behaviour_mut().gossipsub.publish(self.threat_topic.clone(), j.as_bytes());
+                        let topic = self.threat_topic.clone();
+                        self.publish_gossip_json(&topic, &sig);
                     }
                     MeshCommand::BroadcastAuditProof(proof) => {
                         let _ = self.swarm.behaviour_mut().gossipsub.publish(self.audit_proof_topic.clone(), proof.as_bytes());
@@ -262,19 +277,16 @@ impl MeshNode {
                         }
                     }
                     MeshCommand::BroadcastTarpit(signal) => {
-                        if let Ok(j) = serde_json::to_string(&signal) {
-                            let _ = self.swarm.behaviour_mut().gossipsub.publish(self.tarpit_topic.clone(), j.as_bytes());
-                        }
+                        let topic = self.tarpit_topic.clone();
+                        self.publish_gossip_json(&topic, &signal);
                     }
                     MeshCommand::BroadcastConfidential(msg) => {
-                        if let Ok(j) = serde_json::to_string(&msg) {
-                            let _ = self.swarm.behaviour_mut().gossipsub.publish(self.confidential_topic.clone(), j.as_bytes());
-                        }
+                        let topic = self.confidential_topic.clone();
+                        self.publish_gossip_json(&topic, &msg);
                     }
                     MeshCommand::BroadcastModelDelta(delta) => {
-                        if let Ok(j) = serde_json::to_string(&delta) {
-                            let _ = self.swarm.behaviour_mut().gossipsub.publish(self.model_delta_topic.clone(), j.as_bytes());
-                        }
+                        let topic = self.model_delta_topic.clone();
+                        self.publish_gossip_json(&topic, &delta);
                     }
                 },
                 event = self.swarm.select_next_some() => match event {
