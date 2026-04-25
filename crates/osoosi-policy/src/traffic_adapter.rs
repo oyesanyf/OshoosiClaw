@@ -402,6 +402,7 @@ fn synthetic_event_from_packet_text(traffic_data: &str) -> SysmonEvent {
         timestamp: Utc::now(),
         computer: "trafficllm-adapter".to_string(),
         data: json!(map),
+        product_version: None,
     }
 }
 

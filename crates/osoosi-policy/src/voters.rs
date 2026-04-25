@@ -145,8 +145,9 @@ impl ThreatVoter for GemmaVoter {
     fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         let cmd_line = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("unknown");
         let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let version = event.product_version.as_deref().unwrap_or("unknown");
         
-        let summary = format!("Process Create: image={} cmdline={}", image, cmd_line);
+        let summary = format!("Process Create: image={} version={} cmdline={}", image, version, cmd_line);
         
         match self.analyzer.reason_about_attack(&summary) {
             Ok(reasoning) => {
@@ -236,7 +237,7 @@ impl ThreatVoter for KevVoter {
             .to_lowercase();
             
         let is_known_good = if let Some(path) = event.data.get("Image").and_then(|v| v.as_str()) {
-            self.memory.get_file_integrity(path).map(|opt| opt.map(|(_, nsrl)| nsrl).unwrap_or(false)).unwrap_or(false)
+            self.memory.get_file_integrity(path).map(|opt| opt.map(|(_, nsrl, _)| nsrl).unwrap_or(false)).unwrap_or(false)
         } else {
             false
         };
@@ -245,7 +246,24 @@ impl ThreatVoter for KevVoter {
             for kev in kevs {
                 let product = kev.product.to_lowercase();
                 if image.contains(&product) || product.contains(&image) {
-                    let confidence = if is_known_good { 0.45 } else { 0.85 };
+                    // VERSION-AWARE LOGIC: 
+                    // If we have a resolved product version, and it looks like a modern/patched version, 
+                    // we down-rank the confidence significantly.
+                    let mut confidence = if is_known_good { 0.45 } else { 0.85 };
+                    
+                    if let Some(ref version) = event.product_version {
+                        // Heuristic: If version starts with '2.5', '3.', etc., it's likely newer than many 2025 CVEs' initial vulnerable versions.
+                        // For a real production system, we would have a 'min_safe_version' in the KEV table.
+                        if version.starts_with('2.5') || version.starts_with('3.') || version.starts_with('v2.5') {
+                            confidence *= 0.5; // Downgrade to Alert-only range
+                            return Some(VoteResult {
+                                confidence,
+                                reason: format!("CISA KEV [POSSIBLE FP]: {} matches product {} ({}), but running version {} appears to be patched.", image, kev.product, kev.cve_id, version),
+                                weight: 0.6,
+                            });
+                        }
+                    }
+
                     return Some(VoteResult {
                         confidence,
                         reason: format!("CISA KEV: process {} matches known exploited product {} ({})", image, kev.product, kev.cve_id),

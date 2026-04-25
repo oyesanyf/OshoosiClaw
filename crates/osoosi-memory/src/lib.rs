@@ -68,6 +68,7 @@ impl MemoryStore {
                 path TEXT PRIMARY KEY,
                 hash_blake3 TEXT,
                 is_nsrl_validated INTEGER DEFAULT 0,
+                product_version TEXT,
                 last_seen TEXT
             )",
             [],
@@ -291,24 +292,24 @@ impl MemoryStore {
     }
 
     /// Retrieve the cached integrity status for a file path.
-    /// Returns (hash_blake3, is_nsrl_validated).
-    pub fn get_file_integrity(&self, path: &str) -> anyhow::Result<Option<(String, bool)>> {
+    /// Returns (hash_blake3, is_nsrl_validated, product_version).
+    pub fn get_file_integrity(&self, path: &str) -> anyhow::Result<Option<(String, bool, Option<String>)>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare_cached("SELECT hash_blake3, is_nsrl_validated FROM file_integrity WHERE path = ?")?;
+        let mut stmt = conn.prepare_cached("SELECT hash_blake3, is_nsrl_validated, product_version FROM file_integrity WHERE path = ?")?;
         let mut rows = stmt.query([path])?;
         if let Some(row) = rows.next()? {
-            Ok(Some((row.get(0)?, row.get::<_, i32>(1)? == 1)))
+            Ok(Some((row.get(0)?, row.get::<_, i32>(1)? == 1, row.get(2)?)))
         } else {
             Ok(None)
         }
     }
 
     /// Record a file's integrity status.
-    pub fn upsert_file_integrity(&self, path: &str, hash: &str, is_nsrl: bool) -> anyhow::Result<()> {
+    pub fn upsert_file_integrity(&self, path: &str, hash: &str, is_nsrl: bool, version: Option<&str>) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR REPLACE INTO file_integrity (path, hash_blake3, is_nsrl_validated, last_seen) VALUES (?, ?, ?, ?)",
-            params![path, hash, if is_nsrl { 1 } else { 0 }, Utc::now().to_rfc3339()],
+            "INSERT OR REPLACE INTO file_integrity (path, hash_blake3, is_nsrl_validated, product_version, last_seen) VALUES (?, ?, ?, ?, ?)",
+            params![path, hash, if is_nsrl { 1 } else { 0 }, version, Utc::now().to_rfc3339()],
         )?;
         Ok(())
     }

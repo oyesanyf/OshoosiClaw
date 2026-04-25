@@ -11,6 +11,8 @@ pub mod forensics;
 pub mod privilege;
 pub mod quarantine;
 pub mod triage;
+pub mod version_utils;
+pub mod gossip;
 pub mod yara_gen;
 pub mod shield;
 pub mod relativistic;
@@ -1341,8 +1343,28 @@ impl EdrOrchestrator {
         Ok(result)
     }
 
-    pub async fn process_telemetry(&self, event: osoosi_types::SysmonEvent) -> anyhow::Result<()> {
+    pub async fn process_telemetry(&self, mut event: osoosi_types::SysmonEvent) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
+
+        // --- GLOBAL VERSION AWARENESS ---
+        // Resolve and cache product version for the event's image to prevent false positives.
+        if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
+            let path = std::path::Path::new(image_path);
+            
+            // Try cache first
+            if let Ok(Some((_, _, Some(version)))) = self.memory.get_file_integrity(image_path) {
+                event.product_version = Some(version);
+            } else {
+                // Resolve and update cache if it's a process create or image load
+                if event.event_id == osoosi_types::SysmonEventId::ProcessCreate || event.event_id == osoosi_types::SysmonEventId::ImageLoad {
+                    if let Some(version) = version_utils::get_file_version_info(path) {
+                        event.product_version = Some(version);
+                        // Note: Full integrity upsert usually happens during static analysis or NSRL check,
+                        // but we store this version in the event for immediate use by voters.
+                    }
+                }
+            }
+        }
 
         // 1. Tier-1/2 on Rayon (policy + entropy) — see `hybrid_runtime::run_on_rayon`
         let policy = self.policy.clone();
@@ -1485,7 +1507,7 @@ impl EdrOrchestrator {
 
             // Tier 2: Persistent integrity cache (Checks if hash for this path has been validated before)
             if let Some(path) = event.data.get("Image").and_then(|v| v.as_str()) {
-                if let Ok(Some((last_sha1, is_nsrl))) = self.memory.get_file_integrity(path) {
+                if let Ok(Some((last_sha1, is_nsrl, _))) = self.memory.get_file_integrity(path) {
                     if last_sha1 == sha1 && is_nsrl {
                         self.nsrl_cache.insert(sha1.to_string(), true);
                         info!("NSRL Bypass (Persistent Cache): Trusted path {}", path);
@@ -1498,7 +1520,8 @@ impl EdrOrchestrator {
             if self.memory.is_nsrl_known_good(sha1).unwrap_or(false) {
                 self.nsrl_cache.insert(sha1.to_string(), true);
                 if let Some(path) = event.data.get("Image").and_then(|v| v.as_str()) {
-                    let _ = self.memory.upsert_file_integrity(path, sha1, true);
+                    let version = event.product_version.as_deref();
+                    let _ = self.memory.upsert_file_integrity(path, sha1, true, version);
                 }
                 info!("NSRL Bypass (DB Verified): {} -> Known Good.", 
                     event.data.get("Image").and_then(|i| i.as_str()).unwrap_or("Unknown"));

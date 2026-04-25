@@ -121,6 +121,9 @@ pub struct SysmonEvent {
     pub timestamp: DateTime<Utc>,
     pub computer: String,
     pub data: serde_json::Value,
+    /// Optional: Resolved product version of the primary image in this event.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub product_version: Option<String>,
 }
 
 /// Event 3: Network connection

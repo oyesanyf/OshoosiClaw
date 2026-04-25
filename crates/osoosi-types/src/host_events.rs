@@ -39,6 +39,7 @@ impl HostSecurityEvent {
             timestamp: self.timestamp,
             computer: self.computer.clone(),
             data: self.data.clone(),
+            product_version: None,
         }
     }
 }

@@ -97,6 +97,7 @@ impl SysmonParser {
             timestamp: Utc::now(),
             computer,
             data: json!(event_data),
+            product_version: None,
         })
     }
 }

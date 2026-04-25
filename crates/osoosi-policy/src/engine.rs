@@ -192,6 +192,7 @@ mod tests {
                 "CommandLine": cmd_line,
                 "ProcessId": 1234,
             }),
+            product_version: None,
         }
     }
 
