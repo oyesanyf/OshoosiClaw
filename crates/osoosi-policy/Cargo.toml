@@ -6,6 +6,7 @@ license.workspace = true
 description = "Threat Detection Policy Engine for OpenỌ̀ṣọ́ọ̀sì Agentic EDR"
 
 [dependencies]
+otx_taxii = { package = "otx-taxii-rs", path = "../otx-taxii-rs" }
 osoosi-types = { path = "../osoosi-types" }
 osoosi-telemetry = { path = "../osoosi-telemetry" }
 osoosi-memory = { path = "../osoosi-memory" }

@@ -11,10 +11,11 @@ pub const OTX_DISCOVERY_URL: &str = "https://otx.alienvault.com/taxii/discovery"
 pub const OTX_COLLECTIONS_URL: &str = "https://otx.alienvault.com/taxii/collections";
 pub const OTX_POLL_URL: &str = "https://otx.alienvault.com/taxii/poll";
 
-/// TAXII 1.1 HTTP binding (required by many servers; omitting these often yields HTTP 406).
-const TAXII_XML_BINDING: &str = "urn:taxii.mitre.org:message:xml:1.1";
-const TAXII_SERVICES: &str = "urn:taxii.mitre.org:services:1.1";
-const TAXII_PROTOCOL_HTTP: &str = "urn:taxii.mitre.org:protocol:http:1.0";
+/// TAXII 1.1 message binding (X-TAXII-Content-Type / X-TAXII-Accept).
+pub const TAXII_MESSAGE_XML: &str = "urn:taxii.mitre.org:message:xml:1.1";
+pub const TAXII_SERVICES: &str = "urn:taxii.mitre.org:services:1.1";
+/// OTX uses HTTPS; `http:1.0` URN is rejected for discovery.
+pub const TAXII_PROTOCOL: &str = "urn:taxii.mitre.org:protocol:https:1.0";
 
 #[derive(Debug, Serialize, Eq, PartialEq, Hash, Clone)]
 pub struct Indicator {
@@ -33,15 +34,17 @@ pub fn post_taxii(
     let password = "foo";
     let auth = general_purpose::STANDARD.encode(format!("{api_key}:{password}"));
 
+    // OTX/CloudFront: 406 if `Accept: application/xml` is missing (default reqwest UA). TAXII 1.1 also requires
+    // X-TAXII-* headers or the server returns 200 with a Status_Message FAILURE (see MITRE TAXII HTTP binding).
     let response = client
         .post(url)
         .header(AUTHORIZATION, format!("Basic {auth}"))
         .header(ACCEPT, "application/xml")
-        .header(CONTENT_TYPE, "application/xml")
-        .header("X-TAXII-Content-Type", TAXII_XML_BINDING)
-        .header("X-TAXII-Accept", TAXII_XML_BINDING)
+        .header("X-TAXII-Protocol", TAXII_PROTOCOL)
         .header("X-TAXII-Services", TAXII_SERVICES)
-        .header("X-TAXII-Protocol", TAXII_PROTOCOL_HTTP)
+        .header("X-TAXII-Content-Type", TAXII_MESSAGE_XML)
+        .header("X-TAXII-Accept", TAXII_MESSAGE_XML)
+        .header(CONTENT_TYPE, "application/xml")
         .body(body.to_string())
         .send()?;
 

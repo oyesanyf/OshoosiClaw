@@ -37,7 +37,7 @@ impl SysmonParser {
         let mut in_event_data = false;
 
         loop {
-            match reader.read_event(&mut buf) {
+            match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
                     current_tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
                     if current_tag == "EventData" {

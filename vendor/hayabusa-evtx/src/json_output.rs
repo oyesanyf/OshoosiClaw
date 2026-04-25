@@ -9,7 +9,6 @@ use crate::binxml::name::BinXmlName;
 use crate::err::SerializationError::JsonStructureError;
 use core::borrow::BorrowMut;
 use log::trace;
-use quick_xml::events::BytesText;
 use serde_json::{Map, Value, json};
 use std::borrow::Cow;
 
@@ -427,16 +426,15 @@ impl BinXmlOutput for JsonOutput {
     }
 
     fn visit_entity_reference(&mut self, entity: &BinXmlName) -> Result<(), SerializationError> {
-        // Use BytesText to decode+unescape the entity (quick_xml 0.28+: `decode` was replaced by `unescape`).
-        let entity_ref = "&".to_string() + entity.as_str() + ";";
-        let xml_event = BytesText::from_escaped(&entity_ref);
-        match xml_event.unescape() {
+        // Entity reference: unescape with quick_xml::escape (BytesText::unescape removed in newer quick-xml).
+        let entity_ref = format!("&{};", entity.as_str());
+        match quick_xml::escape::unescape(&entity_ref) {
             Ok(s) => {
-                self.visit_characters(Cow::Owned(BinXmlValue::StringType(s.to_string())))?;
+                self.visit_characters(Cow::Owned(BinXmlValue::StringType(s.into_owned())))?;
                 Ok(())
             }
             Err(_) => Err(JsonStructureError {
-                message: format!("Unterminated XML Entity {entity_ref}"),
+                message: format!("Unterminated XML Entity &{};", entity.as_str()),
             }),
         }
     }

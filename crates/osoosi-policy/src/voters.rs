@@ -254,7 +254,7 @@ impl ThreatVoter for KevVoter {
                     if let Some(ref version) = event.product_version {
                         // Heuristic: If version starts with '2.5', '3.', etc., it's likely newer than many 2025 CVEs' initial vulnerable versions.
                         // For a real production system, we would have a 'min_safe_version' in the KEV table.
-                        if version.starts_with('2.5') || version.starts_with('3.') || version.starts_with('v2.5') {
+                        if version.starts_with("2.5") || version.starts_with("3.") || version.starts_with("v2.5") {
                             confidence *= 0.5; // Downgrade to Alert-only range
                             return Some(VoteResult {
                                 confidence,

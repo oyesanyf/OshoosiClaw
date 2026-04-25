@@ -7,7 +7,6 @@ use std::collections::HashSet;
 use std::io::Write;
 use tracing::{info, warn, error, debug};
 use sysinfo::Disks;
-use base64::Engine;
 
 pub const CISA_KEV_FEED_URL: &str = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
 pub const OTX_PULSES_SUBSCRIBED_URL: &str = "https://otx.alienvault.com/api/v1/pulses/subscribed/";
@@ -234,9 +233,14 @@ impl ThreatFeedFetcher {
     ///
     /// Uses the subscribed pulses endpoint with `modified_since` to limit scope,
     /// and filters to only high-value adversary/malware pulses.
+    ///
+    /// **Default: TAXII 1.1** (same client as `otx-taxii-rs`, reliable vs REST `/pulses/subscribed` timeouts).
+    /// Set `OTX_USE_TAXII=0` to use the JSON REST API instead.
     pub async fn fetch_otx_indicators(&self, api_key: &str) -> anyhow::Result<OtxIndicators> {
-        // 10/10 Logic: Support both standard API and TAXII 1.1
-        if std::env::var("OTX_USE_TAXII").map(|v| v == "1").unwrap_or(false) {
+        let use_taxii = std::env::var("OTX_USE_TAXII")
+            .map(|v| v != "0" && !v.eq_ignore_ascii_case("false") && v != "off")
+            .unwrap_or(true);
+        if use_taxii {
             let collection = std::env::var("OTX_TAXII_COLLECTION").unwrap_or_else(|_| "user_LevelBlue".to_string());
             return self.fetch_otx_taxii_indicators(api_key, &collection).await;
         }
@@ -897,60 +901,53 @@ impl ThreatFeedFetcher {
         parse(candidate) > parse(current)
     }
 
-    /// Fetch OTX indicators via TAXII 1.1 protocol.
+    /// Fetch OTX indicators via TAXII 1.1 (uses `otx_taxii` — same as `otx-taxii-rs.exe`: correct
+    /// `Accept` + `X-TAXII-*` headers and HTTPS protocol URN for AlienVault OTX).
     pub async fn fetch_otx_taxii_indicators(&self, api_key: &str, collection: &str) -> anyhow::Result<OtxIndicators> {
-        info!("[OTX TAXII] Polling collection '{}'...", collection);
-        
-        let begin = (chrono::Utc::now() - chrono::Duration::hours(24)).to_rfc3339();
-        let message_id = uuid::Uuid::new_v4().to_string();
-        
-        let body = format!(
-            r#"<taxii_11:Poll_Request xmlns:taxii_11="http://taxii.mitre.org/messages/taxii_xml_binding-1.1" message_id="{}" collection_name="{}">
-                <taxii_11:Exclusive_Begin_Timestamp>{}</taxii_11:Exclusive_Begin_Timestamp>
-                <taxii_11:Poll_Parameters allow_asynch="false"/>
-            </taxii_11:Poll_Request>"#,
-            message_id, collection, begin
-        );
+        info!("[OTX TAXII] Polling collection '{}' (shared otx_taxii client)...", collection);
 
-        let auth = base64::engine::general_purpose::STANDARD.encode(format!("{}:foo", api_key));
-        
-        let response = self.client.post(OTX_TAXII_POLL_URL)
-            .header("Authorization", format!("Basic {}", auth))
-            .header("Content-Type", "application/xml")
-            .body(body)
-            .send()
-            .await?;
-
-        if !response.status().is_success() {
-            let status = response.status();
-            let text = response.text().await.unwrap_or_default();
-            anyhow::bail!("[OTX TAXII] HTTP error {}: {}", status, text);
+        if offline_mode() {
+            return Err(anyhow::anyhow!("Offline mode: skipping OTX TAXII fetch"));
         }
 
-        let xml = response.text().await?;
-        let mut out = OtxIndicators::default();
-        
-        // Regex-based extraction (similar to the CLI tool)
-        let patterns = vec![
-            ("ipv4", r"\b(?:\d{1,3}\.){3}\d{1,3}\b"),
-            ("md5", r"\b[a-fA-F0-9]{32}\b"),
-            ("sha1", r"\b[a-fA-F0-9]{40}\b"),
-            ("sha256", r"\b[a-fA-F0-9]{64}\b"),
-            ("url", r#"https?://[^\s<>"']+"#),
-            ("domain", r"\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b"),
-        ];
+        let api_key = api_key.to_string();
+        let collection = collection.to_string();
 
-        for (kind, pattern) in patterns {
-            let re = regex::Regex::new(pattern).unwrap();
-            for mat in re.find_iter(&xml) {
-                let val = mat.as_str().to_lowercase();
-                match kind {
-                    "ipv4" => { out.ips.insert(val); }
-                    "md5" | "sha1" | "sha256" => { out.hashes.insert(val); }
-                    "url" => { out.urls.insert(val); }
-                    "domain" => { out.domains.insert(val); }
-                    _ => {}
+        let xml = tokio::task::spawn_blocking(move || -> anyhow::Result<String> {
+            let client = reqwest::blocking::Client::builder()
+                .timeout(std::time::Duration::from_secs(120))
+                .connect_timeout(std::time::Duration::from_secs(30))
+                .user_agent("OpenOsoosi-Agent/1.0 (otx_taxii)")
+                .build()?;
+            let begin = chrono::Utc::now() - chrono::Duration::hours(24);
+            let body = otx_taxii::poll_request(&collection, begin);
+            otx_taxii::post_taxii(&client, otx_taxii::OTX_POLL_URL, &api_key, &body)
+                .map_err(|e| anyhow::anyhow!("{}", e))
+        })
+        .await
+        .map_err(|e| anyhow::anyhow!("[OTX TAXII] join error: {e}"))??;
+
+        if xml.contains("status_type=\"FAILURE\"") || xml.contains("Status_Type=\"FAILURE\"") {
+            anyhow::bail!("[OTX TAXII] Server returned TAXII FAILURE status in body (check collection name and API key).");
+        }
+
+        let mut out = OtxIndicators::default();
+        for ind in otx_taxii::extract_indicators(&xml) {
+            let v = ind.value.to_lowercase();
+            match ind.indicator_type.as_str() {
+                "ipv4" => {
+                    out.ips.insert(v);
                 }
+                "md5" | "sha1" | "sha256" => {
+                    out.hashes.insert(v);
+                }
+                "url" => {
+                    out.urls.insert(v);
+                }
+                "domain" | "email" => {
+                    out.domains.insert(v);
+                }
+                _ => {}
             }
         }
 
