@@ -85,6 +85,22 @@ impl PolicyEngine {
         }
     }
 
+    /// Returns a match reason if this Sysmon event hits an OTX IoC.
+    ///
+    /// IOCs are populated by the background `ThreatFeedFetcher::fetch_otx_indicators` (which uses
+    /// **TAXII 1.1** when `OTX_USE_TAXII` is left at default) and persisted in SQLite. This is a
+    /// **local lookup** — not a live TAXII poll per connection.
+    pub fn otx_ioc_match_for_event(&self, event: &SysmonEvent) -> Option<String> {
+        let otx = self.otx_indicators.read().ok()?;
+        crate::otx_connection::otx_match_sysmon_event(&otx, &self.memory, event)
+    }
+
+    /// Check a single outbound (or inbound) IP from a connection against OTX state (memory + SQLite).
+    pub fn otx_ioc_match_for_ip(&self, ip: &str) -> Option<String> {
+        let otx = self.otx_indicators.read().ok()?;
+        crate::otx_connection::otx_match_destination_ip(&otx, &self.memory, ip)
+    }
+
     pub fn load_sigma_rules(&self, dir: &std::path::Path) {
         if let Ok(mut guard) = self.sigma.write() {
             guard.load_rules_from_dir(dir);
@@ -98,6 +114,11 @@ impl PolicyEngine {
     }
 
     /// Process a Sysmon event and check for threats.
+    ///
+    /// OTX / TAXII (or REST) **IoCs participate in the same weighted vote** as all other
+    /// [`ThreatVoter`]s, typically through [`crate::voters::OtxVoter`]. If that voter is not
+    /// registered, a matching [`Self::otx_ioc_match_for_event`] is merged in so TAXII-backed IOCs
+    /// still affect consensus.
     pub fn scan_event(&self, event: &SysmonEvent) -> Option<ThreatSignature> {
         use osoosi_types::ResponseAction;
 
@@ -109,29 +130,52 @@ impl PolicyEngine {
         let mut vote_count: u32 = 0;
         let mut is_threat = false;
         let mut vetoed = false;
+        let mut otx_voted = false;
+        const OTX_VOTER: &str = "OTX-C2";
 
         if let Ok(voters_guard) = self.voters.read() {
             for voter in voters_guard.iter() {
+                let vname = voter.name();
                 if let Some(res) = voter.vote(event) {
                     if res.weight < 0.0 {
                         // Veto detected
-                        warn!("Consensus Veto: {} blocked the detection. Reason: {}", voter.name(), res.reason);
+                        warn!("Consensus Veto: {} blocked the detection. Reason: {}", vname, res.reason);
                         vetoed = true;
-                        signature.add_reason(format!("Veto [{}]: {}", voter.name(), res.reason));
+                        signature.add_reason(format!("Veto [{}]: {}", vname, res.reason));
                         break;
                     }
 
-                    info!("Voter Hit: {} (Confidence: {:.2}, Weight: {:.2})", voter.name(), res.confidence, res.weight);
+                    info!("Voter Hit: {} (Confidence: {:.2}, Weight: {:.2})", vname, res.confidence, res.weight);
                     total_score += res.confidence * res.weight;
                     vote_count += 1;
-                    signature.add_reason(format!("[{}]: {}", voter.name(), res.reason));
+                    signature.add_reason(format!("[{}]: {}", vname, res.reason));
                     is_threat = true;
+                    if vname == OTX_VOTER {
+                        otx_voted = true;
+                    }
                 }
             }
         }
 
         if vetoed {
             return None;
+        }
+
+        // Safety net: TAXII/REST IoCs must count toward voting even if OtxVoter was not registered.
+        if !otx_voted {
+            if let Some(otx_reason) = self.otx_ioc_match_for_event(event) {
+                let w = crate::otx_connection::otx_consensus_weight(event);
+                info!(
+                    "Voter Hit: {} (safety-net) (Confidence: {:.2}, Weight: {:.2})",
+                    OTX_VOTER,
+                    crate::otx_connection::OTX_CONSENSUS_CONFIDENCE,
+                    w
+                );
+                total_score += crate::otx_connection::OTX_CONSENSUS_CONFIDENCE * w;
+                vote_count += 1;
+                signature.add_reason(format!("[{}]: {}", OTX_VOTER, otx_reason));
+                is_threat = true;
+            }
         }
 
         if !is_threat {
@@ -177,10 +221,12 @@ impl PolicyEngine {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use osoosi_types::SysmonEventId;
+    use osoosi_types::{SysmonEvent, SysmonEventId};
     use chrono::Utc;
     use std::sync::Arc;
-    use crate::voters::SemanticVoter;
+    use crate::voters::{OtxVoter, SemanticVoter};
+    use crate::feed::OtxIndicators;
+    use serde_json::json;
 
     fn make_event(image: &str, cmd_line: &str) -> osoosi_types::SysmonEvent {
         osoosi_types::SysmonEvent {
@@ -220,5 +266,70 @@ mod tests {
         let event = make_event("C:\\Program Files\\notepad.exe", "notepad");
         let sig = engine.scan_event(&event);
         let _ = sig; // just ensure it doesn't panic
+    }
+
+    /// OTX IoCs merge into voting via safety-net when `OtxVoter` is not registered.
+    #[test]
+    fn test_otx_ioc_safety_net_participates_in_consensus() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory"));
+        let engine = PolicyEngine::new(memory);
+        let mut otx = OtxIndicators::default();
+        otx.ips.insert("198.51.100.2".to_string());
+        engine.update_otx_indicators(otx);
+
+        let event = SysmonEvent {
+            event_id: SysmonEventId::NetworkConnect,
+            timestamp: Utc::now(),
+            computer: "h".to_string(),
+            data: json!({
+                "Image": "C:\\\\Windows\\\\System32\\\\curl.exe",
+                "DestinationIp": "198.51.100.2",
+                "DestinationPort": 443,
+                "ProcessId": 1,
+            }),
+            product_version: None,
+        };
+
+        let sig = engine.scan_event(&event).expect("OTX should vote via safety-net");
+        let reason = sig.reason.as_deref().unwrap();
+        assert!(reason.contains("OTX-C2"), "reason was: {}", reason);
+        assert_eq!(sig.detector_count, 1);
+    }
+
+    /// When `OtxVoter` is present, the same OTX reason must not be applied twice.
+    #[test]
+    fn test_otx_voter_no_double_votes() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory"));
+        let engine = PolicyEngine::new(memory.clone());
+        let mut otx = OtxIndicators::default();
+        otx.ips.insert("198.51.100.3".to_string());
+        engine.update_otx_indicators(otx);
+
+        engine.add_voter(Box::new(OtxVoter {
+            indicators: engine.otx_indicators_ref().clone(),
+            memory: memory.clone(),
+        }));
+
+        let event = SysmonEvent {
+            event_id: SysmonEventId::NetworkConnect,
+            timestamp: Utc::now(),
+            computer: "h".to_string(),
+            data: json!({
+                "Image": "C:\\\\Windows\\\\System32\\\\curl.exe",
+                "DestinationIp": "198.51.100.3",
+                "ProcessId": 1,
+            }),
+            product_version: None,
+        };
+
+        let sig = engine.scan_event(&event).expect("OtxVoter + OTX");
+        let reason = sig.reason.as_deref().unwrap();
+        assert_eq!(
+            reason.matches("OTX-C2").count(),
+            1,
+            "expected single OTX block in reasons: {}",
+            reason
+        );
+        assert_eq!(sig.detector_count, 1);
     }
 }

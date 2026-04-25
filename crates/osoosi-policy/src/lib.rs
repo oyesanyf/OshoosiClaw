@@ -4,6 +4,7 @@
 //! Correlates telemetry (Sysmon) with known vulnerabilities.
 
 pub mod engine;
+pub mod otx_connection;
 pub mod feed;
 pub mod semantic;
 pub mod graph;
@@ -16,6 +17,10 @@ pub mod verified;
 pub mod admin;
 
 pub use engine::*;
+pub use otx_connection::{
+    normalize_ip_for_otx, otx_consensus_weight, otx_match_destination_ip, otx_match_sysmon_event,
+    otx_match_with_policy_state, OTX_CONSENSUS_CONFIDENCE,
+};
 pub use feed::*;
 pub use semantic::*;
 pub use graph::*;

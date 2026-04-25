@@ -16,7 +16,6 @@ pub mod gossip;
 pub mod yara_gen;
 pub mod shield;
 pub mod relativistic;
-pub mod gossip;
 pub mod system_check;
 pub mod pii;
 pub mod openshell;

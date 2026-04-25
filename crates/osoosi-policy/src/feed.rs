@@ -9,7 +9,10 @@ use tracing::{info, warn, error, debug};
 use sysinfo::Disks;
 
 pub const CISA_KEV_FEED_URL: &str = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
+/// Subscribed-pulses feed; often **504s or times out** on AlienVault’s side (see OTX community reports).
 pub const OTX_PULSES_SUBSCRIBED_URL: &str = "https://otx.alienvault.com/api/v1/pulses/subscribed/";
+/// Activity feed; same JSON shape as `results` pulses, but typically **reliable** when `/subscribed` fails.
+pub const OTX_PULSES_ACTIVITY_URL: &str = "https://otx.alienvault.com/api/v1/pulses/activity";
 pub const NVD_CVE_API_URL: &str = "https://services.nvd.nist.gov/rest/json/cves/2.0";
 pub const OTX_TAXII_POLL_URL: &str = "https://otx.alienvault.com/taxii/poll";
 
@@ -234,8 +237,11 @@ impl ThreatFeedFetcher {
     /// Uses the subscribed pulses endpoint with `modified_since` to limit scope,
     /// and filters to only high-value adversary/malware pulses.
     ///
-    /// **Default: TAXII 1.1** (same client as `otx-taxii-rs`, reliable vs REST `/pulses/subscribed` timeouts).
+    /// **Default: TAXII 1.1** (same client as `otx-taxii-rs`).
     /// Set `OTX_USE_TAXII=0` to use the JSON REST API instead.
+    ///
+    /// REST mode uses **`/pulses/activity` by default** (stable). Set `OTX_REST_PULSE_SOURCE=subscribed` to use
+    /// `/pulses/subscribed?modified_since=...` (known to 504/timeout for many users).
     pub async fn fetch_otx_indicators(&self, api_key: &str) -> anyhow::Result<OtxIndicators> {
         let use_taxii = std::env::var("OTX_USE_TAXII")
             .map(|v| v != "0" && !v.eq_ignore_ascii_case("false") && v != "off")
@@ -249,34 +255,47 @@ impl ThreatFeedFetcher {
             return Err(anyhow::anyhow!("Offline mode: skipping OTX fetch"));
         }
 
-        // Build a dedicated client with longer timeout for OTX
+        let use_subscribed = std::env::var("OTX_REST_PULSE_SOURCE")
+            .map(|v| v.eq_ignore_ascii_case("subscribed"))
+            .unwrap_or(false);
+
+        // Longer timeout when hitting the flaky `/subscribed` route.
+        let read_secs: u64 = if use_subscribed { 120 } else { 90 };
         let otx_client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(60))
-            .connect_timeout(std::time::Duration::from_secs(10))
+            .timeout(std::time::Duration::from_secs(read_secs))
+            .connect_timeout(std::time::Duration::from_secs(15))
             .user_agent("OpenOsoosi-Agent/1.0")
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
         let mut out = OtxIndicators::default();
 
-        // Only fetch pulses from the last 7 days to keep it focused
         let since = (chrono::Utc::now() - chrono::Duration::days(7))
             .format("%Y-%m-%dT%H:%M:%SZ")
             .to_string();
 
-        info!("[OTX] Fetching critical pulses (since {})...", since);
+        if use_subscribed {
+            info!("[OTX] REST: using /pulses/subscribed (modified_since={}) …", since);
+        } else {
+            info!("[OTX] REST: using /pulses/activity?limit=100 (set OTX_REST_PULSE_SOURCE=subscribed for legacy) …");
+        }
 
         let mut attempts = 0;
         let mut response = None;
         let max_attempts = 5;
         while attempts < max_attempts {
-            match otx_client
-                .get(OTX_PULSES_SUBSCRIBED_URL.trim_end_matches('/'))
-                .query(&[("limit", "100"), ("modified_since", &since)])
-                .header("X-OTX-API-KEY", api_key)
-                .send()
-                .await
-            {
+            let req = if use_subscribed {
+                otx_client
+                    .get(OTX_PULSES_SUBSCRIBED_URL.trim_end_matches('/'))
+                    .query(&[("limit", "100"), ("modified_since", &since)])
+                    .header("X-OTX-API-KEY", api_key)
+            } else {
+                otx_client
+                    .get(OTX_PULSES_ACTIVITY_URL)
+                    .query(&[("limit", "100")])
+                    .header("X-OTX-API-KEY", api_key)
+            };
+            match req.send().await {
                 Ok(r) if r.status().is_success() => {
                     response = Some(r);
                     break;
@@ -291,7 +310,6 @@ impl ThreatFeedFetcher {
             }
             attempts += 1;
             if attempts < max_attempts {
-                // Exponential backoff with jitter
                 let backoff = (2u64.pow(attempts as u32) * 1000) + (rand::random::<u64>() % 1000);
                 tokio::time::sleep(std::time::Duration::from_millis(backoff)).await;
             }
@@ -299,7 +317,24 @@ impl ThreatFeedFetcher {
         let response = match response {
             Some(r) => r,
             None => {
-                anyhow::bail!("[OTX] Failed to reach OTX API after {} attempts. Will retry next cycle.", attempts);
+                if use_subscribed {
+                    warn!("[OTX] /pulses/subscribed failed after {max_attempts} attempts; falling back to /pulses/activity");
+                    let r = otx_client
+                        .get(OTX_PULSES_ACTIVITY_URL)
+                        .query(&[("limit", "100")])
+                        .header("X-OTX-API-KEY", api_key)
+                        .send()
+                        .await?;
+                    if !r.status().is_success() {
+                        anyhow::bail!(
+                            "[OTX] subscribed + activity fallback failed: {}",
+                            r.status()
+                        );
+                    }
+                    r
+                } else {
+                    anyhow::bail!("[OTX] Failed to reach OTX REST API after {attempts} attempts. Will retry next cycle.");
+                }
             }
         };
 
@@ -313,7 +348,6 @@ impl ThreatFeedFetcher {
 
         if let Some(results) = json_val.get("results").and_then(|v| v.as_array()) {
             for pulse in results {
-                // Only process pulses that are critical/targeted
                 let adversary = pulse.get("adversary")
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
@@ -324,8 +358,13 @@ impl ThreatFeedFetcher {
                 let tlp = pulse.get("tlp")
                     .and_then(|v| v.as_str())
                     .unwrap_or("white");
+                let has_indicators = pulse
+                    .get("indicators")
+                    .and_then(|v| v.as_array())
+                    .map(|a| !a.is_empty())
+                    .unwrap_or(false);
 
-                // Filter: only keep pulses with an adversary, or tagged critical/APT/ransomware
+                // `subscribed`: keep previous strict "critical" gate. `activity` pulses often lack APT tags; allow any pulse that still ships indicators.
                 let is_critical = !adversary.is_empty()
                     || tags.iter().any(|t| {
                         let lower = t.to_lowercase();
@@ -337,7 +376,12 @@ impl ThreatFeedFetcher {
                     || tlp == "red" || tlp == "amber";
 
                 if !is_critical {
-                    continue;
+                    if use_subscribed {
+                        continue;
+                    }
+                    if !has_indicators {
+                        continue;
+                    }
                 }
 
                 if let Some(indicators) = pulse.get("indicators").and_then(|v| v.as_array()) {

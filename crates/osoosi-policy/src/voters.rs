@@ -2,6 +2,7 @@ use crate::engine::{ThreatVoter, VoteResult};
 use osoosi_types::SysmonEvent;
 use std::sync::Arc;
 
+
 /// Semantic Intent Voter (Algorithm 2)
 pub struct SemanticVoter {
     pub engine: crate::semantic::SemanticEngine,
@@ -34,80 +35,12 @@ impl ThreatVoter for OtxVoter {
     fn name(&self) -> String { "OTX-C2".to_string() }
     fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         let guard = self.indicators.read().ok()?;
-        if guard.total_count() == 0 {
-            return None;
-        }
-
-        let destination_ip = event.data.get("DestinationIp").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
-        let source_ip = event.data.get("SourceIp").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
-        let query_name = event.data.get("QueryName").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
-        let hashes_field = event.data.get("Hashes").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
-        let cmd_line = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
-        let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("").to_ascii_lowercase();
-
-        let mut hit = None;
-
-        if !destination_ip.is_empty() {
-            if guard.ips.contains(&destination_ip) {
-                hit = Some(format!("Destination IP {} matched OTX IoC (cache)", destination_ip));
-            } else if let Ok(true) = self.memory.is_indicator_malicious("ipv4", &destination_ip) {
-                hit = Some(format!("Destination IP {} matched OTX IoC (SQLite)", destination_ip));
-            }
-        } else if !source_ip.is_empty() {
-            if guard.ips.contains(&source_ip) {
-                hit = Some(format!("Source IP {} matched OTX IoC (cache)", source_ip));
-            } else if let Ok(true) = self.memory.is_indicator_malicious("ipv4", &source_ip) {
-                hit = Some(format!("Source IP {} matched OTX IoC (SQLite)", source_ip));
-            }
-        } else if !query_name.is_empty() {
-            if guard.domains.contains(&query_name) {
-                hit = Some(format!("Domain {} matched OTX IoC (cache)", query_name));
-            } else if let Ok(true) = self.memory.is_indicator_malicious("domain", &query_name) {
-                hit = Some(format!("Domain {} matched OTX IoC (SQLite)", query_name));
-            } else {
-                for domain in &guard.domains {
-                    if query_name.ends_with(domain) {
-                        hit = Some(format!("Domain {} matched OTX suffix IoC {}", query_name, domain));
-                        break;
-                    }
-                }
-            }
-        } else if !hashes_field.is_empty() {
-            for h in &guard.hashes {
-                if hashes_field.contains(h) {
-                    hit = Some(format!("Hashes field matched OTX hash {} (cache)", h));
-                    break;
-                }
-            }
-            if hit.is_none() {
-                for hash_part in hashes_field.split(',') {
-                    let val = hash_part.split('=').nth(1).unwrap_or(hash_part).trim();
-                    if let Ok(true) = self.memory.is_indicator_malicious("hash", val) {
-                        hit = Some(format!("Hashes field matched OTX hash {} (SQLite)", val));
-                        break;
-                    }
-                }
-            }
-        } else if !cmd_line.is_empty() {
-            for url in &guard.urls {
-                if cmd_line.contains(url) {
-                    hit = Some(format!("Command line matched OTX URL {}", url));
-                    break;
-                }
-            }
-        } else if !image.is_empty() {
-            for url in &guard.urls {
-                if image.contains(url) {
-                    hit = Some(format!("Image path matched OTX URL {}", url));
-                    break;
-                }
-            }
-        }
+        let hit = crate::otx_connection::otx_match_sysmon_event(&guard, &self.memory, event);
 
         hit.map(|reason| VoteResult {
-            confidence: 0.95,
+            confidence: crate::otx_connection::OTX_CONSENSUS_CONFIDENCE,
             reason,
-            weight: 1.0, // OTX is high weight
+            weight: crate::otx_connection::otx_consensus_weight(event),
         })
     }
 }
