@@ -1,0 +1,1 @@
+This is a fork of the rust evtx crate [here](https://github.com/omerbenamram/evtx) for use with [hayabusa](https://github.com/Yamato-Security/hayabusa).

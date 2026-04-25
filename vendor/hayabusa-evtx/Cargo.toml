@@ -1,0 +1,106 @@
+[package]
+name = "evtx"
+description = "A fork of the evtx Rust crate for Hayabusa."
+homepage = "https://github.com/Yamato-Security/hayabusa-evtx"
+repository = "https://github.com/Yamato-Security/hayabusa-evtx"
+license = "MIT"
+readme = "README.md"
+
+version = "0.9.6"
+authors = ["Omer Ben-Amram <omerbenamram@gmail.com>, Yamato Security"]
+edition = "2024"
+
+exclude = ["**/*.evtx", "**/*.dat"]
+
+[dependencies]
+bitflags = "2.*"
+crc32fast = "1.*"
+chrono = { version = "0.4.*", features = ["serde"] }
+encoding = "0.*"
+byteorder = "1"
+quick-xml = "*"
+thiserror = "1"
+log = { version = "0.*", features = ["release_max_level_debug"] }
+winstructs = "0.*"
+hashbrown = "*"
+# Optional for multithreading.
+rayon = { version = "1", optional = true }
+
+memchr = "2.*"
+
+# `evtx_dump` dependencies
+anyhow = { version = "*", optional = true }
+clap = { version = "4", optional = true }
+dialoguer = { version = "*", optional = true }
+indoc = { version = "*", optional = true }
+
+serde_json = { version = "1", features = ["preserve_order"]}
+
+[target.'cfg(not(windows))'.dependencies]
+# jemalloc is significantly more peformant than the system allocator.
+jemallocator = { version = "0.5", optional = true }
+
+[target.'cfg(windows)'.dependencies]
+# jemalloc is significantly more peformant than the system allocator.
+rpmalloc = { version = "0.2", optional = true }
+
+
+[features]
+default = ["multithreading", "evtx_dump"]
+fast-alloc = ["jemallocator", "rpmalloc"]
+evtx_dump = ["clap", "dialoguer", "indoc", "anyhow"]
+multithreading = ["rayon"]
+
+[dev-dependencies]
+insta = { version = "=1", features = ["json"] }
+pretty_assertions = "1.*"
+criterion = "0.5"
+assert_cmd = "2"
+predicates = "3"
+env_logger = "0.*"
+tempfile = "3.*"
+
+[profile.release]
+opt-level = 3
+codegen-units = 1
+lto = "fat"
+
+# rexpect relies on unix process semantics, but it's only used for process interaction tests.
+[target.'cfg(not(target_os = "windows"))'.dev-dependencies]
+rexpect = "0.*"
+
+[build-dependencies]
+skeptic = "0.*"
+
+[[bin]]
+name = "evtx_dump"
+required-features = ["evtx_dump"]
+
+[[bench]]
+name = "benchmark"
+path = "./src/benches/benchmark.rs"
+harness = false
+
+[package.metadata.raze]
+# The path at which to write output files.
+#
+# `cargo raze` will generate Bazel-compatible BUILD files into this path.
+# This can either be a relative path (e.g. "foo/bar"), relative to this
+# Cargo.toml file; or relative to the Bazel workspace root (e.g. "//foo/bar").
+workspace_path = "//cargo"
+
+# This causes aliases for dependencies to be rendered in the BUILD
+# file located next to this `Cargo.toml` file.
+package_aliases_dir = "."
+
+# The set of targets to generate BUILD rules for.
+targets = [
+    "x86_64-apple-darwin",
+    "x86_64-pc-windows-msvc",
+    "x86_64-unknown-linux-gnu",
+]
+
+# The two acceptable options are "Remote" and "Vendored" which
+# is used to indicate whether the user is using a non-vendored or
+# vendored set of dependencies.
+genmode = "Remote"

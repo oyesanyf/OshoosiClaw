@@ -66,7 +66,7 @@ blake3 = "1.5"
 notify = "6"
 libp2p = "0.54"
 futures = "0.3"
-quick-xml = { version = "0.31", features = ["serialize"] }
+quick-xml = { version = "0.28.2", features = ["serialize"] }
 sysinfo = "0.30"
 goblin = "0.9"
 magika = "1"
@@ -108,3 +108,7 @@ opt-level = 3
 
 [patch.crates-io]
 notatin = { git = "https://github.com/strozfriedberg/notatin" }
+
+# hayabusa-evtx uses removed `BytesText::decode`; use local fork until upstream lands quick-xml 0.28+ fix.
+[patch."https://github.com/Yamato-Security/hayabusa-evtx.git"]
+evtx = { path = "vendor/hayabusa-evtx" }

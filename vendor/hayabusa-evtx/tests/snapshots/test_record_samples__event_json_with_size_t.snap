@@ -1,0 +1,55 @@
+---
+source: tests/test_record_samples.rs
+expression: "&value"
+---
+{
+  "Event": {
+    "#attributes": {
+      "xmlns": "http://schemas.microsoft.com/win/2004/08/events/event"
+    },
+    "System": {
+      "Provider": {
+        "#attributes": {
+          "Name": "Microsoft-Windows-Security-Auditing",
+          "Guid": "{54849625-5478-4994-a5ba-3e3b0328c30d}"
+        }
+      },
+      "EventID": 4907,
+      "Version": 0,
+      "Level": 0,
+      "Task": 13568,
+      "Opcode": 0,
+      "Keywords": "0x8020000000000000",
+      "TimeCreated": {
+        "#attributes": {
+          "SystemTime": "2015-08-23T21:25:49.063125Z"
+        }
+      },
+      "EventRecordID": 196,
+      "Correlation": null,
+      "Execution": {
+        "#attributes": {
+          "ProcessID": 632,
+          "ThreadID": 684
+        }
+      },
+      "Channel": "Security",
+      "Computer": "WIN-L0ZZQ76PMUF",
+      "Security": null
+    },
+    "EventData": {
+      "SubjectUserSid": "S-1-5-18",
+      "SubjectUserName": "WIN-L0ZZQ76PMUF$",
+      "SubjectDomainName": "WORKGROUP",
+      "SubjectLogonId": "0x3e7",
+      "ObjectServer": "Security",
+      "ObjectType": "File",
+      "ObjectName": "C:\\Program Files\\Reference Assemblies\\Microsoft\\Framework\\v3.0\\System.IO.Log.dll",
+      "HandleId": "0x7eec",
+      "OldSd": "",
+      "NewSd": "S:ARAI(AU;SAFA;DCLCRPCRSDWDWO;;;WD)",
+      "ProcessId": "0x858",
+      "ProcessName": "C:\\Windows\\servicing\\TrustedInstaller.exe"
+    }
+  }
+}

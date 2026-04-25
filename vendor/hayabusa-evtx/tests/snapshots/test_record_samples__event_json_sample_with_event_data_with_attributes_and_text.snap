@@ -1,0 +1,48 @@
+---
+source: tests/test_record_samples.rs
+expression: "&value"
+---
+{
+  "Event": {
+    "#attributes": {
+      "xmlns": "http://schemas.microsoft.com/win/2004/08/events/event"
+    },
+    "System": {
+      "Provider": {
+        "#attributes": {
+          "Name": "EventLog"
+        }
+      },
+      "EventID": {
+        "#attributes": {
+          "Qualifiers": 32768
+        },
+        "#text": 6009
+      },
+      "Level": 4,
+      "Task": 0,
+      "Keywords": "0x80000000000000",
+      "TimeCreated": {
+        "#attributes": {
+          "SystemTime": "2017-07-12T17:16:28.214161Z"
+        }
+      },
+      "EventRecordID": 1,
+      "Channel": "System",
+      "Computer": "WIN-P4SIAA0SQCO",
+      "Security": null
+    },
+    "EventData": {
+      "Data": {
+        "#text": [
+          "10.00.",
+          "15063",
+          "",
+          "Multiprocessor Free",
+          "0"
+        ]
+      },
+      "Binary": null
+    }
+  }
+}
