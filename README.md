@@ -447,6 +447,10 @@ cd /mnt/d/harfile/OshoosiClaw
 OSOOSI_SECURE_RUNTIME=openshell ./target/release/osoosi start --sandbox --sandbox-name my-agent-sandbox
 ```
 
+The Windows launcher auto-discovers the current drive letter and climbs from
+`target\release` back to the repository root before converting the path to
+WSL's `/mnt/<drive>/...` format.
+
 ### `grant-access` — One-Time System Setup
 
 ```powershell

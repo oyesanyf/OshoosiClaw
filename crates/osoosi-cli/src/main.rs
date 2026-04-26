@@ -631,7 +631,8 @@ fn start_inside_wsl(
     deploy_gateway: bool,
 ) -> anyhow::Result<()> {
     let cwd = std::env::current_dir()?;
-    let wsl_cwd = windows_path_to_wsl(&cwd)?;
+    let repo_root = find_repo_root_for_wsl(&cwd);
+    let wsl_cwd = windows_path_to_wsl(&repo_root)?;
     let mut args = vec!["start".to_string()];
     if sandbox {
         args.push("--sandbox".to_string());
@@ -689,12 +690,31 @@ fn start_inside_wsl(
 }
 
 #[cfg(windows)]
+fn find_repo_root_for_wsl(start: &Path) -> PathBuf {
+    for dir in start.ancestors() {
+        if dir.join("Cargo.toml").is_file() && dir.join("crates").is_dir() {
+            return dir.to_path_buf();
+        }
+        if dir.join("osoosi.toml").is_file() && dir.join("target").is_dir() {
+            return dir.to_path_buf();
+        }
+    }
+    start.to_path_buf()
+}
+
+#[cfg(windows)]
 fn windows_path_to_wsl(path: &Path) -> anyhow::Result<String> {
-    let s = path
+    let mut s = path
         .canonicalize()
         .unwrap_or_else(|_| path.to_path_buf())
         .to_string_lossy()
         .replace('\\', "/");
+    if let Some(rest) = s.strip_prefix("//?/") {
+        s = rest.to_string();
+    }
+    if let Some(rest) = s.strip_prefix("//./") {
+        s = rest.to_string();
+    }
     let bytes = s.as_bytes();
     if bytes.len() >= 3 && bytes[1] == b':' && bytes[2] == b'/' {
         let drive = (bytes[0] as char).to_ascii_lowercase();
