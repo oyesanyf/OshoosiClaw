@@ -27,16 +27,32 @@ fn save_blocked_rule(target: BlockedTarget) {
         .ok()
         .and_then(|s| serde_json::from_str(&s).ok())
         .unwrap_or_default();
-    
+
     // Avoid duplicates
     match &target {
         BlockedTarget::Program { path: p } => {
-            if rules.iter().any(|r| if let BlockedTarget::Program { path: ep } = r { ep == p } else { false }) {
+            if rules.iter().any(|r| {
+                if let BlockedTarget::Program { path: ep } = r {
+                    ep == p
+                } else {
+                    false
+                }
+            }) {
                 return;
             }
         }
         BlockedTarget::DnsIps { prefix: pr, ips: i } => {
-            if rules.iter().any(|r| if let BlockedTarget::DnsIps { prefix: epr, ips: ei } = r { epr == pr && ei == i } else { false }) {
+            if rules.iter().any(|r| {
+                if let BlockedTarget::DnsIps {
+                    prefix: epr,
+                    ips: ei,
+                } = r
+                {
+                    epr == pr && ei == i
+                } else {
+                    false
+                }
+            }) {
                 return;
             }
         }
@@ -86,7 +102,10 @@ pub fn restore_autoblock_rules() -> Result<usize> {
         }
     }
     if count > 0 {
-        tracing::info!("Restored {} firewall block rule(s) from persistence store.", count);
+        tracing::info!(
+            "Restored {} firewall block rule(s) from persistence store.",
+            count
+        );
     }
     Ok(count)
 }
@@ -98,7 +117,9 @@ fn firewall_allowlist_path() -> std::path::PathBuf {
 }
 
 fn firewall_allowlist_url() -> Option<String> {
-    std::env::var("OSOOSI_FIREWALL_ALLOWLIST_URL").ok().filter(|s| !s.trim().is_empty())
+    std::env::var("OSOOSI_FIREWALL_ALLOWLIST_URL")
+        .ok()
+        .filter(|s| !s.trim().is_empty())
 }
 
 fn firewall_allowlist_auto_update_enabled() -> bool {
@@ -127,7 +148,10 @@ pub async fn refresh_firewall_allowlist() {
     if firewall_allowlist_auto_update_enabled() {
         if let Some(url) = firewall_allowlist_url() {
             if let Err(e) = fetch_and_save_allowlist(&url, &path).await {
-                tracing::warn!("Firewall allowlist auto-update failed: {} (using existing file)", e);
+                tracing::warn!(
+                    "Firewall allowlist auto-update failed: {} (using existing file)",
+                    e
+                );
             }
         }
     }
@@ -136,7 +160,10 @@ pub async fn refresh_firewall_allowlist() {
         if let Ok(mut guard) = FIREWALL_ALLOWLIST.write() {
             *guard = Some(allowlist.clone());
         }
-        tracing::info!("Firewall allowlist loaded: {} program(s) (e.g. git.exe, docker) will not be blocked)", allowlist.len());
+        tracing::info!(
+            "Firewall allowlist loaded: {} program(s) (e.g. git.exe, docker) will not be blocked)",
+            allowlist.len()
+        );
     }
 }
 
@@ -234,17 +261,27 @@ pub fn clear_firewall_persistence() -> Result<()> {
 
 /// Open ports required for Oshoosi mesh/control traffic and dashboard access.
 pub fn open_mesh_ports() -> Result<()> {
-    let ports = [("Osoosi-Mesh", 9000_u16), ("Osoosi-Mesh-Alt", 9876_u16), ("Osoosi-Dashboard", 3030_u16)];
+    let ports = [
+        ("Osoosi-Mesh", 9000_u16),
+        ("Osoosi-Mesh-Alt", 9876_u16),
+        ("Osoosi-Dashboard", 3030_u16),
+    ];
     #[cfg(target_os = "windows")]
     {
         for (name, port) in ports {
             let _ = Command::new("netsh")
                 .args([
-                    "advfirewall", "firewall", "add", "rule",
+                    "advfirewall",
+                    "firewall",
+                    "add",
+                    "rule",
                     &format!("name={}", name),
-                    "dir=in", "action=allow", "protocol=TCP",
+                    "dir=in",
+                    "action=allow",
+                    "protocol=TCP",
                     &format!("localport={}", port),
-                    "enable=yes", "profile=any"
+                    "enable=yes",
+                    "profile=any",
                 ])
                 .status();
         }
@@ -254,9 +291,13 @@ pub fn open_mesh_ports() -> Result<()> {
         for (_, port) in ports {
             let port_spec = format!("{}/tcp", port);
             let port_str = port.to_string();
-            let _ = Command::new("sudo").args(["ufw", "allow", &port_spec]).status();
             let _ = Command::new("sudo")
-                .args(["iptables", "-I", "INPUT", "-p", "tcp", "--dport", &port_str, "-j", "ACCEPT"])
+                .args(["ufw", "allow", &port_spec])
+                .status();
+            let _ = Command::new("sudo")
+                .args([
+                    "iptables", "-I", "INPUT", "-p", "tcp", "--dport", &port_str, "-j", "ACCEPT",
+                ])
                 .status();
         }
     }
@@ -306,7 +347,7 @@ pub fn tarpit_process_network(process_id: Option<u32>, image_path: Option<&str>)
     {
         let image = image_path.ok_or_else(|| anyhow!("Tarpit requires image path on Windows"))?;
         let name = format!("Osoosi-Tarpit-{:x}", process_id.unwrap_or(0));
-        
+
         // Use Windows QoS Policy to throttle the app to 8 bits/second
         let output = Command::new("powershell")
             .args([
@@ -316,9 +357,15 @@ pub fn tarpit_process_network(process_id: Option<u32>, image_path: Option<&str>)
             .output()?;
 
         if !output.status.success() {
-            return Err(anyhow!("Failed to apply QoS tarpit: {}", String::from_utf8_lossy(&output.stderr)));
+            return Err(anyhow!(
+                "Failed to apply QoS tarpit: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
-        Ok(format!("Ghost Tarpit active for {}: network limited to 8bps", image))
+        Ok(format!(
+            "Ghost Tarpit active for {}: network limited to 8bps",
+            image
+        ))
     }
 
     #[cfg(target_os = "linux")]
@@ -335,7 +382,10 @@ pub fn tarpit_process_network(process_id: Option<u32>, image_path: Option<&str>)
     }
 }
 
-pub fn block_dns_destinations(query_name: Option<&str>, query_results: Option<&str>) -> Result<String> {
+pub fn block_dns_destinations(
+    query_name: Option<&str>,
+    query_results: Option<&str>,
+) -> Result<String> {
     let mut ips = BTreeSet::<IpAddr>::new();
 
     if let Some(qr) = query_results {
@@ -385,7 +435,9 @@ pub fn block_dns_destinations(query_name: Option<&str>, query_results: Option<&s
     #[cfg(target_os = "macos")]
     {
         let _ = targets;
-        Err(anyhow!("macOS DNS firewall auto-block is not implemented yet"))
+        Err(anyhow!(
+            "macOS DNS firewall auto-block is not implemented yet"
+        ))
     }
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
@@ -491,7 +543,10 @@ fn block_windows_program(image_path: Option<&str>) -> Result<String> {
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            let err_msg = if stderr.contains("elevation") || stderr.contains("administrator") || stderr.contains("0x80070005") {
+            let err_msg = if stderr.contains("elevation")
+                || stderr.contains("administrator")
+                || stderr.contains("0x80070005")
+            {
                 "Requires Administrator. Run agent as Administrator to apply firewall blocks."
             } else {
                 stderr.trim()
@@ -504,7 +559,9 @@ fn block_windows_program(image_path: Option<&str>) -> Result<String> {
     add_rule(&out_rule, "out")?;
     add_rule(&in_rule, "in")?;
 
-    save_blocked_rule(BlockedTarget::Program { path: image.to_string() });
+    save_blocked_rule(BlockedTarget::Program {
+        path: image.to_string(),
+    });
 
     Ok(format!(
         "Windows firewall block rules applied for program '{}'",
@@ -546,7 +603,10 @@ fn block_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<String> 
             .status();
     }
 
-    save_blocked_rule(BlockedTarget::DnsIps { prefix: prefix.to_string(), ips: targets.to_vec() });
+    save_blocked_rule(BlockedTarget::DnsIps {
+        prefix: prefix.to_string(),
+        ips: targets.to_vec(),
+    });
 
     Ok(format!(
         "Windows firewall DNS destination block applied for {} IP(s)",
@@ -661,20 +721,8 @@ fn block_linux_process_uid(process_id: Option<u32>) -> Result<String> {
             .status();
         let _ = Command::new("nft")
             .args([
-                "add",
-                "chain",
-                "inet",
-                "osoosi",
-                "output",
-                "{",
-                "type",
-                "filter",
-                "hook",
-                "output",
-                "priority",
-                "0",
-                ";",
-                "}",
+                "add", "chain", "inet", "osoosi", "output", "{", "type", "filter", "hook",
+                "output", "priority", "0", ";", "}",
             ])
             .status();
         let status = Command::new("nft")
@@ -733,34 +781,14 @@ fn block_linux_remote_ips(targets: &[String]) -> Result<String> {
             .status();
         let _ = Command::new("nft")
             .args([
-                "add",
-                "chain",
-                "inet",
-                "osoosi",
-                "output",
-                "{",
-                "type",
-                "filter",
-                "hook",
-                "output",
-                "priority",
-                "0",
-                ";",
-                "}",
+                "add", "chain", "inet", "osoosi", "output", "{", "type", "filter", "hook",
+                "output", "priority", "0", ";", "}",
             ])
             .status();
         for ip in targets {
             let status = Command::new("nft")
                 .args([
-                    "add",
-                    "rule",
-                    "inet",
-                    "osoosi",
-                    "output",
-                    "ip",
-                    "daddr",
-                    ip,
-                    "drop",
+                    "add", "rule", "inet", "osoosi", "output", "ip", "daddr", ip, "drop",
                 ])
                 .status()?;
             if !status.success() {

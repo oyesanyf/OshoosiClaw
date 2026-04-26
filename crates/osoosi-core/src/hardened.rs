@@ -11,9 +11,9 @@
 //! 4. **Hardware Egress Filtering (DPU)** — Detects NVIDIA BlueField or other
 //!    SmartNICs and configures hardware-level egress rules.
 
-use std::path::{Path, PathBuf};
-use tracing::{info, warn, debug};
 use sha2::Sha256;
+use std::path::{Path, PathBuf};
+use tracing::{debug, info, warn};
 
 // ============================================================================
 // 1. Confidential Computing (TEE) Detection & Memory Shield
@@ -61,10 +61,18 @@ pub fn detect_tee() -> TeeStatus {
     }
 
     let mut features = Vec::new();
-    if status.sgx_available { features.push("Intel SGX"); }
-    if status.sev_available { features.push("AMD SEV"); }
-    if status.trustzone_available { features.push("ARM TrustZone"); }
-    if status.confidential_vm { features.push("Confidential VM"); }
+    if status.sgx_available {
+        features.push("Intel SGX");
+    }
+    if status.sev_available {
+        features.push("AMD SEV");
+    }
+    if status.trustzone_available {
+        features.push("ARM TrustZone");
+    }
+    if status.confidential_vm {
+        features.push("Confidential VM");
+    }
 
     status.description = if features.is_empty() {
         "No hardware TEE detected. Consider deploying on SGX/SEV-capable hardware.".to_string()
@@ -90,7 +98,11 @@ fn detect_sgx() -> bool {
     {
         // Check for SGX driver via registry or device
         if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", "Get-WmiObject Win32_Processor | Select-Object -ExpandProperty Caption"])
+            .args([
+                "-NoProfile",
+                "-Command",
+                "Get-WmiObject Win32_Processor | Select-Object -ExpandProperty Caption",
+            ])
             .output()
         {
             let caption = String::from_utf8_lossy(&output.stdout).to_lowercase();
@@ -207,8 +219,10 @@ pub fn detect_tpm() -> TpmStatus {
     }
 
     status.description = if status.available {
-        format!("TPM {} detected. Hardware attestation available.",
-            status.version.as_deref().unwrap_or("2.0"))
+        format!(
+            "TPM {} detected. Hardware attestation available.",
+            status.version.as_deref().unwrap_or("2.0")
+        )
     } else {
         "No TPM detected. Audit attestation will use software-only signing.".to_string()
     };
@@ -234,14 +248,29 @@ pub fn tpm_attest_audit_entry(event_type: &str, data_hash: &str) -> Option<Strin
         // Use tpm2-tools to create a quote
         let nonce = &data_hash[..16]; // Use part of the hash as nonce
         let result = std::process::Command::new("tpm2_quote")
-            .args(["-c", "0x81010001", "-l", "sha256:0,1,2", "-q", nonce, "-m", "/tmp/osoosi_quote.msg", "-s", "/tmp/osoosi_quote.sig"])
+            .args([
+                "-c",
+                "0x81010001",
+                "-l",
+                "sha256:0,1,2",
+                "-q",
+                nonce,
+                "-m",
+                "/tmp/osoosi_quote.msg",
+                "-s",
+                "/tmp/osoosi_quote.sig",
+            ])
             .output();
 
         match result {
             Ok(output) if output.status.success() => {
                 if let Ok(sig) = std::fs::read("/tmp/osoosi_quote.sig") {
                     let sig_hex = hex::encode(&sig);
-                    info!("TPM attestation created for {}: sig={}…", event_type, &sig_hex[..16]);
+                    info!(
+                        "TPM attestation created for {}: sig={}…",
+                        event_type,
+                        &sig_hex[..16]
+                    );
                     // Cleanup
                     let _ = std::fs::remove_file("/tmp/osoosi_quote.msg");
                     let _ = std::fs::remove_file("/tmp/osoosi_quote.sig");
@@ -283,7 +312,8 @@ fn software_attest(event_type: &str, data_hash: &str) -> Option<String> {
     type HmacSha256 = Hmac<Sha256>;
 
     // Use a machine-specific key derived from hostname + OS info
-    let machine_id = format!("{}:{}:{}", 
+    let machine_id = format!(
+        "{}:{}:{}",
         hostname::get().unwrap_or_default().to_string_lossy(),
         std::env::consts::OS,
         std::env::consts::ARCH
@@ -318,7 +348,7 @@ impl Default for MtdConfig {
     fn default() -> Self {
         Self {
             randomize_ports: true,
-            rotate_db_path: false,  // Disabled by default (requires migration)
+            rotate_db_path: false, // Disabled by default (requires migration)
             randomize_workspace: true,
             rotation_interval_secs: 3600, // 1 hour
         }
@@ -368,10 +398,13 @@ pub fn mtd_shuffle_heap() {
 /// Start the MTD rotation loop (runs as a background task).
 pub fn start_mtd_loop(config: MtdConfig) {
     tokio::spawn(async move {
-        info!("Moving Target Defense active (rotation interval: {}s)", config.rotation_interval_secs);
-        let mut interval = tokio::time::interval(
-            std::time::Duration::from_secs(config.rotation_interval_secs)
+        info!(
+            "Moving Target Defense active (rotation interval: {}s)",
+            config.rotation_interval_secs
         );
+        let mut interval = tokio::time::interval(std::time::Duration::from_secs(
+            config.rotation_interval_secs,
+        ));
 
         loop {
             interval.tick().await;
@@ -415,7 +448,7 @@ pub fn detect_dpu() -> DpuStatus {
     {
         // BlueField detection via PCI device
         if let Ok(output) = std::process::Command::new("lspci")
-            .args(["-d", "15b3:"])  // Mellanox/NVIDIA vendor ID
+            .args(["-d", "15b3:"]) // Mellanox/NVIDIA vendor ID
             .output()
         {
             let stdout = String::from_utf8_lossy(&output.stdout);
@@ -431,8 +464,8 @@ pub fn detect_dpu() -> DpuStatus {
                     let fw_out = String::from_utf8_lossy(&fw.stdout);
                     for line in fw_out.lines() {
                         if line.contains("FW Version") {
-                            status.firmware_version = line.split(':').nth(1)
-                                .map(|s| s.trim().to_string());
+                            status.firmware_version =
+                                line.split(':').nth(1).map(|s| s.trim().to_string());
                             break;
                         }
                     }
@@ -472,8 +505,10 @@ pub fn detect_dpu() -> DpuStatus {
     }
 
     status.description = if status.bluefield_detected {
-        format!("NVIDIA BlueField DPU detected (fw: {}). Hardware egress filtering available.",
-            status.firmware_version.as_deref().unwrap_or("unknown"))
+        format!(
+            "NVIDIA BlueField DPU detected (fw: {}). Hardware egress filtering available.",
+            status.firmware_version.as_deref().unwrap_or("unknown")
+        )
     } else if status.smartnic_detected {
         "SmartNIC detected. Hardware-accelerated networking available.".to_string()
     } else {
@@ -496,7 +531,7 @@ pub struct HardenedSecurityStatus {
     pub dpu: DpuStatus,
     pub mtd_enabled: bool,
     pub config_integrity_ok: bool,
-    pub security_score: u8,  // 0-100
+    pub security_score: u8, // 0-100
     pub recommendations: Vec<String>,
 }
 
@@ -513,21 +548,31 @@ pub fn assess_security() -> HardenedSecurityStatus {
 
     // Calculate security score
     let mut score: u8 = 30; // Base score (software protections)
-    if tee.sgx_available || tee.sev_available || tee.confidential_vm { score += 20; }
-    if tpm.available { score += 20; }
-    if dpu.bluefield_detected { score += 20; }
-    if config_integrity_ok { score += 10; }
+    if tee.sgx_available || tee.sev_available || tee.confidential_vm {
+        score += 20;
+    }
+    if tpm.available {
+        score += 20;
+    }
+    if dpu.bluefield_detected {
+        score += 20;
+    }
+    if config_integrity_ok {
+        score += 10;
+    }
 
     // Generate recommendations
     let mut recommendations = Vec::new();
     if !tee.sgx_available && !tee.sev_available {
-        recommendations.push("Deploy on SGX/SEV-capable hardware for memory encryption".to_string());
+        recommendations
+            .push("Deploy on SGX/SEV-capable hardware for memory encryption".to_string());
     }
     if !tpm.available {
         recommendations.push("Enable TPM 2.0 for hardware-backed audit attestation".to_string());
     }
     if !dpu.bluefield_detected {
-        recommendations.push("Consider NVIDIA BlueField DPU for hardware egress filtering".to_string());
+        recommendations
+            .push("Consider NVIDIA BlueField DPU for hardware egress filtering".to_string());
     }
     if !config_integrity_ok {
         recommendations.push(format!("Re-sign tampered config files: {:?}", tampered));
@@ -551,20 +596,53 @@ pub fn print_security_assessment() {
     println!("╔══════════════════════════════════════════════════╗");
     println!("║   OpenỌ̀ṣọ́ọ̀sì Hardened Security Assessment    ║");
     println!("╠══════════════════════════════════════════════════╣");
-    println!("║ Security Score: {}/100                          ║", status.security_score);
+    println!(
+        "║ Security Score: {}/100                          ║",
+        status.security_score
+    );
     println!("╠══════════════════════════════════════════════════╣");
     println!("║ Layer 1: WASM Action Vault     ✓ Active         ║");
-    println!("║ Layer 2: OpenShell Sandbox      {}              ║",
-        if crate::openshell::OpenShellManager::new().is_available() { "✓ Available" } else { "○ Install  " });
-    println!("║ Layer 3: Memory Shield (TEE)    {}              ║",
-        if status.tee.sgx_available || status.tee.sev_available { "✓ Hardware " } else { "○ Software " });
-    println!("║ Layer 4: Trust Anchor (TPM)     {}              ║",
-        if status.tpm.available { "✓ Hardware " } else { "○ Software " });
-    println!("║ Layer 5: Network Gate (DPU)     {}              ║",
-        if status.dpu.bluefield_detected { "✓ Hardware " } else { "○ Software " });
+    println!(
+        "║ Layer 2: OpenShell Sandbox      {}              ║",
+        if crate::openshell::OpenShellManager::new().is_available() {
+            "✓ Available"
+        } else {
+            "○ Install  "
+        }
+    );
+    println!(
+        "║ Layer 3: Memory Shield (TEE)    {}              ║",
+        if status.tee.sgx_available || status.tee.sev_available {
+            "✓ Hardware "
+        } else {
+            "○ Software "
+        }
+    );
+    println!(
+        "║ Layer 4: Trust Anchor (TPM)     {}              ║",
+        if status.tpm.available {
+            "✓ Hardware "
+        } else {
+            "○ Software "
+        }
+    );
+    println!(
+        "║ Layer 5: Network Gate (DPU)     {}              ║",
+        if status.dpu.bluefield_detected {
+            "✓ Hardware "
+        } else {
+            "○ Software "
+        }
+    );
     println!("║ Moving Target Defense           ✓ Active         ║");
-    println!("║ Config Integrity                {}              ║",
-        if status.config_integrity_ok { "✓ Verified " } else { "✗ TAMPERED " });
+    println!(
+        "║ Config Integrity                {}              ║",
+        if status.config_integrity_ok {
+            "✓ Verified "
+        } else {
+            "✗ TAMPERED "
+        }
+    );
     println!("╚══════════════════════════════════════════════════╝");
 
     if !status.recommendations.is_empty() {

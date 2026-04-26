@@ -1,16 +1,16 @@
 //! Static Analyzer for OpenỌ̀ṣọ́ọ̀sì
-//! 
-//! Integrates multiple tools (CAPA, FLOSS) and LLM-based reasoning to identify 
+//!
+//! Integrates multiple tools (CAPA, FLOSS) and LLM-based reasoning to identify
 //! suspicious behaviors and hidden artifacts in binary files.
 
-use std::path::{Path, PathBuf};
-use std::sync::Arc;
+use osoosi_types::ThreatSignature;
+use regex::Regex;
+use serde_json::Value;
 use std::fs::File;
 use std::io::Read;
-use tracing::{info, debug};
-use osoosi_types::ThreatSignature;
-use serde_json::Value;
-use regex::Regex;
+use std::path::{Path, PathBuf};
+use std::sync::Arc;
+use tracing::{debug, info};
 
 pub struct StaticAnalyzer {
     /// Path to the 'capa' executable
@@ -28,7 +28,10 @@ pub struct StaticAnalyzer {
 }
 
 impl StaticAnalyzer {
-    pub fn new(_memory: Arc<osoosi_memory::MemoryStore>, executor: Arc<dyn osoosi_types::SecuredExecutor>) -> Self {
+    pub fn new(
+        _memory: Arc<osoosi_memory::MemoryStore>,
+        executor: Arc<dyn osoosi_types::SecuredExecutor>,
+    ) -> Self {
         Self {
             capa_path: osoosi_types::resolve_capa_path(),
             rules_path: osoosi_types::resolve_capa_rules_dir(),
@@ -54,18 +57,26 @@ impl StaticAnalyzer {
         }
 
         // Calculate hash first for caching
-        let hash = self.calculate_sha256(file_path).unwrap_or_else(|_| "unknown".to_string());
+        let hash = self
+            .calculate_sha256(file_path)
+            .unwrap_or_else(|_| "unknown".to_string());
         if hash != "unknown" {
             if let Some(cached) = self.analysis_cache.get(&hash) {
                 return Ok(cached.clone());
             }
         }
 
-        info!("Static Analyzer: Running multi-tool analysis on suspicious file: {:?}", file_path);
+        info!(
+            "Static Analyzer: Running multi-tool analysis on suspicious file: {:?}",
+            file_path
+        );
 
         // 0. Calculate Shannon Entropy
         let entropy = self.calculate_entropy(file_path).unwrap_or(0.0);
-        debug!("Static Analyzer: File {:?} entropy: {:.2}", file_path, entropy);
+        debug!(
+            "Static Analyzer: File {:?} entropy: {:.2}",
+            file_path, entropy
+        );
 
         // 1-5. Parallel Analysis Layer (CAPA, FLOSS, Falcon, Xori, DiE)
         // Spawning these in parallel reduces sequential 'openshell sandbox connect' latency.
@@ -79,7 +90,7 @@ impl StaticAnalyzer {
 
         let capa_result = capa_res?;
         let floss_artifacts = floss_res?;
-        
+
         let mut signature = if let Some(sig) = capa_result {
             sig
         } else {
@@ -94,8 +105,8 @@ impl StaticAnalyzer {
         }
 
         if let Ok(Some(falcon_sig)) = falcon_res {
-             signature.confidence = (signature.confidence + 0.2).min(0.99);
-             signature.add_reason(format!("Falcon IR: {}", falcon_sig));
+            signature.confidence = (signature.confidence + 0.2).min(0.99);
+            signature.add_reason(format!("Falcon IR: {}", falcon_sig));
         }
 
         if let Ok(Some(xori_sig)) = xori_res {
@@ -108,14 +119,23 @@ impl StaticAnalyzer {
         }
 
         if signature.confidence > 0.3 || !floss_artifacts.is_empty() || entropy > 7.2 {
-            signature.process_name = file_path.file_name().and_then(|n| n.to_str()).map(String::from);
-            
+            signature.process_name = file_path
+                .file_name()
+                .and_then(|n| n.to_str())
+                .map(String::from);
+
             // 6. Entropy Adjustment
             if entropy > 7.5 {
-                signature.add_reason(format!("High Entropy ({:.2}): Binary likely packed or encrypted", entropy));
+                signature.add_reason(format!(
+                    "High Entropy ({:.2}): Binary likely packed or encrypted",
+                    entropy
+                ));
                 signature.confidence = (signature.confidence + 0.25).min(0.99);
             } else if entropy < 6.5 {
-                signature.add_reason(format!("Low Entropy ({:.2}): Binary likely not obfuscated", entropy));
+                signature.add_reason(format!(
+                    "Low Entropy ({:.2}): Binary likely not obfuscated",
+                    entropy
+                ));
                 signature.confidence *= 0.8; // Reward low entropy (suppress)
             }
 
@@ -123,7 +143,10 @@ impl StaticAnalyzer {
             if let Ok(Some(clam_sig)) = self.run_clamav(file_path).await {
                 signature.confidence = (signature.confidence + 0.5).min(1.0);
                 signature.add_reason(format!("ClamAV Detection: {}", clam_sig));
-                info!("Static Analyzer: ClamAV voted MALICIOUS for {:?}", file_path);
+                info!(
+                    "Static Analyzer: ClamAV voted MALICIOUS for {:?}",
+                    file_path
+                );
             } else {
                 // If ClamAV says it's clean, slightly reduce confidence (unless it's an exploit)
                 signature.confidence *= 0.9;
@@ -150,13 +173,15 @@ impl StaticAnalyzer {
     }
 
     fn calculate_sha256(&self, path: &Path) -> anyhow::Result<String> {
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut file = File::open(path)?;
         let mut hasher = Sha256::new();
         let mut buffer = [0u8; 8192];
         loop {
             let n = file.read(&mut buffer)?;
-            if n == 0 { break; }
+            if n == 0 {
+                break;
+            }
             hasher.update(&buffer[..n]);
         }
         Ok(format!("{:x}", hasher.finalize()))
@@ -178,7 +203,13 @@ impl StaticAnalyzer {
             let stdout = String::from_utf8_lossy(&output.stdout);
             // Example output: /path/to/file: Win.Trojan.Agent-12345 FOUND
             if let Some(detection) = stdout.lines().find(|l| l.contains("FOUND")) {
-                let sig_name = detection.split(':').last().unwrap_or("Unknown Malware").replace("FOUND", "").trim().to_string();
+                let sig_name = detection
+                    .split(':')
+                    .last()
+                    .unwrap_or("Unknown Malware")
+                    .replace("FOUND", "")
+                    .trim()
+                    .to_string();
                 return Ok(Some(sig_name));
             }
             return Ok(Some("Generic Malware Signature".to_string()));
@@ -220,7 +251,11 @@ impl StaticAnalyzer {
             c
         } else {
             let mut c = std::process::Command::new("python");
-            c.arg("-m").arg("capa.main").arg("--json").arg("--rules").arg(&self.rules_path);
+            c.arg("-m")
+                .arg("capa.main")
+                .arg("--json")
+                .arg("--rules")
+                .arg(&self.rules_path);
             if self.signatures_path.exists() {
                 c.arg("--signatures").arg(&self.signatures_path);
             }
@@ -242,7 +277,10 @@ impl StaticAnalyzer {
             for (rule_name, detail) in rules {
                 if let Some(meta) = detail.get("meta") {
                     let namespace = meta.get("namespace").and_then(|v| v.as_str()).unwrap_or("");
-                    if namespace.starts_with("persistence") || namespace.starts_with("c2") || namespace.starts_with("anti-analysis") {
+                    if namespace.starts_with("persistence")
+                        || namespace.starts_with("c2")
+                        || namespace.starts_with("anti-analysis")
+                    {
                         signature.add_reason(format!("Capability: {} ({})", rule_name, namespace));
                         signature.confidence += 0.15;
                         count += 1;
@@ -274,9 +312,10 @@ impl StaticAnalyzer {
 
         let mut artifacts = Vec::new();
         let json: Value = serde_json::from_slice(&output.stdout)?;
-        
+
         let ip_regex = Regex::new(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})").unwrap();
-        let domain_regex = Regex::new(r"(?i)\b[a-z0-9\.-]+\.(com|org|net|xyz|ru|cn|top|icu)\b").unwrap();
+        let domain_regex =
+            Regex::new(r"(?i)\b[a-z0-9\.-]+\.(com|org|net|xyz|ru|cn|top|icu)\b").unwrap();
 
         if let Some(strings) = json.get("strings").and_then(|s| s.as_object()) {
             for value in strings.values() {
@@ -299,21 +338,36 @@ impl StaticAnalyzer {
         Ok(artifacts)
     }
 
-    async fn get_llm_score(&self, signature: &ThreatSignature, artifacts: &[String]) -> Option<f32> {
+    async fn get_llm_score(
+        &self,
+        signature: &ThreatSignature,
+        artifacts: &[String],
+    ) -> Option<f32> {
         // This will be integrated with osoosi-behavioral's SmolLM engine
         // For now, we return a heuristic score based on findings
         let mut score: f32 = 0.0;
-        if signature.reason.as_ref()?.contains("c2") { score += 0.4; }
-        if signature.reason.as_ref()?.contains("persistence") { score += 0.3; }
-        if artifacts.iter().any(|a| a.contains("IP:") || a.contains("Domain:")) { score += 0.2; }
-        
+        if signature.reason.as_ref()?.contains("c2") {
+            score += 0.4;
+        }
+        if signature.reason.as_ref()?.contains("persistence") {
+            score += 0.3;
+        }
+        if artifacts
+            .iter()
+            .any(|a| a.contains("IP:") || a.contains("Domain:"))
+        {
+            score += 0.2;
+        }
+
         Some(score.min(1.0))
     }
 
     async fn run_falcon(&self, _file_path: &Path) -> anyhow::Result<Option<String>> {
         // use falcon::loader::Elf; or Pe;
         // In this implementation, we simulate the formal analysis.
-        Ok(Some("Detected potential obfuscated control flow in entry point.".to_string()))
+        Ok(Some(
+            "Detected potential obfuscated control flow in entry point.".to_string(),
+        ))
     }
 
     async fn run_xori(&self, file_path: &Path) -> anyhow::Result<Option<String>> {
@@ -323,7 +377,10 @@ impl StaticAnalyzer {
         }
 
         let mut cmd = std::process::Command::new(&xori_path);
-        cmd.arg("-f").arg(file_path).arg("-c").arg(xori_path.parent().unwrap().join("xori.json"));
+        cmd.arg("-f")
+            .arg(file_path)
+            .arg("-c")
+            .arg(xori_path.parent().unwrap().join("xori.json"));
 
         let output = self.executor.execute(cmd).await?;
         if !output.status.success() {
@@ -332,9 +389,18 @@ impl StaticAnalyzer {
 
         // Xori output is usually a large JSON/text dump. We look for interesting capabilities.
         let text = String::from_utf8_lossy(&output.stdout);
-        if text.contains("InternetOpen") || text.contains("HttpSendRequest") || text.contains("ShellExecute") {
-             return Ok(Some(format!("Xori identified network/process execution capabilities: {}", 
-                if text.contains("Http") { "C2/Exfiltration" } else { "Persistence" })));
+        if text.contains("InternetOpen")
+            || text.contains("HttpSendRequest")
+            || text.contains("ShellExecute")
+        {
+            return Ok(Some(format!(
+                "Xori identified network/process execution capabilities: {}",
+                if text.contains("Http") {
+                    "C2/Exfiltration"
+                } else {
+                    "Persistence"
+                }
+            )));
         }
 
         Ok(None)
@@ -346,8 +412,10 @@ impl StaticAnalyzer {
         // if let Some(best) = detections.first() {
         //     return Ok(Some(format!("DiE Signature: {} ({})", best.name, best.version)));
         // }
-        
-        Ok(Some("Detect It Easy: Identified potential packer (UPX 3.96)".to_string()))
+
+        Ok(Some(
+            "Detect It Easy: Identified potential packer (UPX 3.96)".to_string(),
+        ))
     }
 
     /// Calculate Shannon Entropy of a file to detect packing/encryption.
@@ -355,7 +423,7 @@ impl StaticAnalyzer {
         let mut file = File::open(path)?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;
-        
+
         if buffer.is_empty() {
             return Ok(0.0);
         }

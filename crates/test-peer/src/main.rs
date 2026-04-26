@@ -17,11 +17,11 @@
 use chrono::Utc;
 use futures::StreamExt;
 use libp2p::{
-    gossipsub, mdns, noise, identify, kad,
+    gossipsub, identify, kad, mdns,
     multiaddr::Protocol,
-    Multiaddr, PeerId,
+    noise,
     swarm::{NetworkBehaviour, SwarmEvent},
-    tcp, yamux,
+    tcp, yamux, Multiaddr, PeerId,
 };
 use serde::{Deserialize, Serialize};
 use std::collections::HashSet;
@@ -57,7 +57,9 @@ async fn main() -> anyhow::Result<()> {
         .init();
 
     let args: Vec<String> = std::env::args().collect();
-    let bootstrap_addr = args.iter().position(|a| a == "--bootstrap")
+    let bootstrap_addr = args
+        .iter()
+        .position(|a| a == "--bootstrap")
         .and_then(|i| args.get(i + 1))
         .cloned();
 
@@ -99,10 +101,8 @@ async fn main() -> anyhow::Result<()> {
                 gossipsub_config,
             )?;
 
-            let mdns = mdns::tokio::Behaviour::new(
-                mdns::Config::default(),
-                key.public().to_peer_id(),
-            )?;
+            let mdns =
+                mdns::tokio::Behaviour::new(mdns::Config::default(), key.public().to_peer_id())?;
 
             let identify = identify::Behaviour::new(identify::Config::new(
                 "/osoosi/1.0.0".into(),
@@ -114,7 +114,12 @@ async fn main() -> anyhow::Result<()> {
                 kad::store::MemoryStore::new(key.public().to_peer_id()),
             );
 
-            Ok(TestPeerBehavior { gossipsub, mdns, identify, kademlia })
+            Ok(TestPeerBehavior {
+                gossipsub,
+                mdns,
+                identify,
+                kademlia,
+            })
         })?
         .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
         .build();
@@ -128,9 +133,18 @@ async fn main() -> anyhow::Result<()> {
     let malware_topic = gossipsub::IdentTopic::new("osoosi-malware-samples");
 
     swarm.behaviour_mut().gossipsub.subscribe(&threat_topic)?;
-    swarm.behaviour_mut().gossipsub.subscribe(&consensus_topic)?;
-    swarm.behaviour_mut().gossipsub.subscribe(&peer_announce_topic)?;
-    swarm.behaviour_mut().gossipsub.subscribe(&ghost_shard_topic)?;
+    swarm
+        .behaviour_mut()
+        .gossipsub
+        .subscribe(&consensus_topic)?;
+    swarm
+        .behaviour_mut()
+        .gossipsub
+        .subscribe(&peer_announce_topic)?;
+    swarm
+        .behaviour_mut()
+        .gossipsub
+        .subscribe(&ghost_shard_topic)?;
     swarm.behaviour_mut().gossipsub.subscribe(&intel_topic)?;
     swarm.behaviour_mut().gossipsub.subscribe(&malware_topic)?;
 
@@ -146,7 +160,10 @@ async fn main() -> anyhow::Result<()> {
         if let Ok(maddr) = addr.parse::<Multiaddr>() {
             if let Some(Protocol::P2p(peer_id)) = maddr.iter().last() {
                 swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
-                swarm.behaviour_mut().kademlia.add_address(&peer_id, maddr.clone());
+                swarm
+                    .behaviour_mut()
+                    .kademlia
+                    .add_address(&peer_id, maddr.clone());
             }
             swarm.dial(maddr)?;
         }

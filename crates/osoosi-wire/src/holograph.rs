@@ -1,4 +1,4 @@
-use osoosi_types::{GhostShardData, DeceptionType};
+use osoosi_types::{DeceptionType, GhostShardData};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
 use tracing::info;
@@ -26,7 +26,10 @@ impl HolographEngine {
 
         let mut guard = self.shards.write().unwrap();
         let attacker = shard.attacker_ip.clone();
-        guard.entry(shard.attacker_ip.clone()).or_default().push(shard);
+        guard
+            .entry(shard.attacker_ip.clone())
+            .or_default()
+            .push(shard);
         info!("HDS: Shard activated locally for attacker {}.", attacker);
     }
 

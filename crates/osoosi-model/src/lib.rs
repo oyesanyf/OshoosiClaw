@@ -5,11 +5,11 @@
 //!
 //! Also provides a malware detection system (PE analysis + ML + signatures).
 
-mod train;
+pub mod malconv;
 pub mod malware;
 pub mod nsrl;
-pub mod malconv;
+mod train;
 
-pub use train::{ThreatModel, ModelConfig};
-pub use malware::{MalwareScanner, MalwareScanResult, MalwareScannerStats};
-pub use malconv::{MalConv, preprocess_binary, preprocess_bytes};
+pub use malconv::{preprocess_binary, preprocess_bytes, MalConv};
+pub use malware::{MalwareScanResult, MalwareScanner, MalwareScannerStats};
+pub use train::{ModelConfig, ThreatModel};

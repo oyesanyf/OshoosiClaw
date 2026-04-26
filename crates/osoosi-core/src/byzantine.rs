@@ -332,7 +332,11 @@ mod tests {
 
     #[test]
     fn three_optimal_unweighted_passes() {
-        let msgs = vec![vote("a", PolicyHealthStatus::Optimal), vote("b", PolicyHealthStatus::Optimal), vote("c", PolicyHealthStatus::Optimal)];
+        let msgs = vec![
+            vote("a", PolicyHealthStatus::Optimal),
+            vote("b", PolicyHealthStatus::Optimal),
+            vote("c", PolicyHealthStatus::Optimal),
+        ];
         let p = BftConsensusParams {
             small_mesh_participating_max: 10,
             weighted_vote_threshold: 2.0 / 3.0,
@@ -383,12 +387,7 @@ mod tests {
         let mut msgs = Vec::new();
         for id in ["x", "y", "z"] {
             let n = mine_vote_work_nonce(id, "KB9", bits).expect("mine");
-            msgs.push(vote_full(
-                id,
-                PolicyHealthStatus::Optimal,
-                "KB9",
-                Some(&n),
-            ));
+            msgs.push(vote_full(id, PolicyHealthStatus::Optimal, "KB9", Some(&n)));
         }
         let mut p = BftConsensusParams {
             small_mesh_participating_max: 10,

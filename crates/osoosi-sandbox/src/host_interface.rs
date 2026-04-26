@@ -13,9 +13,7 @@ use serde::{Deserialize, Serialize};
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum HostCall {
     /// host_scan_file(bytes) -> MalwareScanResult
-    ScanFile {
-        bytes: Vec<u8>,
-    },
+    ScanFile { bytes: Vec<u8> },
     /// host_fetch_url(url) -> Response
     FetchUrl {
         url: String,
@@ -29,19 +27,11 @@ pub enum HostCall {
         requires_approval: bool,
     },
     /// host_read_db(query) -> Rows
-    ReadDb {
-        query: String,
-        params: Vec<String>,
-    },
+    ReadDb { query: String, params: Vec<String> },
     /// host_send_mesh(topic, data) -> ()
-    SendMesh {
-        topic: String,
-        data: Vec<u8>,
-    },
+    SendMesh { topic: String, data: Vec<u8> },
     /// host_write_audit(entry) -> Hash
-    WriteAudit {
-        entry: serde_json::Value,
-    },
+    WriteAudit { entry: serde_json::Value },
     /// Query threat intelligence (KEV/NVD/OTX).
     QueryThreatIntel {
         indicator: String,
@@ -59,10 +49,7 @@ pub enum HostResponse {
         confidence: f64,
     },
     /// Response (HTTP)
-    HttpResponse {
-        status: u16,
-        body: String,
-    },
+    HttpResponse { status: u16, body: String },
     /// Output (Command)
     CommandOutput {
         exit_code: i32,
@@ -70,28 +57,20 @@ pub enum HostResponse {
         stderr: String,
     },
     /// Rows (Database)
-    DbRows {
-        rows: Vec<serde_json::Value>,
-    },
+    DbRows { rows: Vec<serde_json::Value> },
     /// Hash (Audit/Mesh Ack)
     Hash(String),
     /// Acknowledgment (General)
-    Ack {
-        id: String,
-    },
+    Ack { id: String },
     /// Threat intel query result.
     ThreatIntelResult {
         found: bool,
         data: serde_json::Value,
     },
     /// Error response.
-    Error {
-        message: String,
-    },
+    Error { message: String },
     /// Action queued for human approval.
-    PendingApproval {
-        approval_id: String,
-    },
+    PendingApproval { approval_id: String },
 }
 
 /// Metadata attached to every host call for auditing.

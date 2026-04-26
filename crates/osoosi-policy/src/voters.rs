@@ -2,14 +2,15 @@ use crate::engine::{ThreatVoter, VoteResult};
 use osoosi_types::{SysmonEvent, SysmonEventId};
 use std::sync::Arc;
 
-
 /// Semantic Intent Voter (Algorithm 2)
 pub struct SemanticVoter {
     pub engine: crate::semantic::SemanticEngine,
 }
 
 impl ThreatVoter for SemanticVoter {
-    fn name(&self) -> String { "SemanticIntent".to_string() }
+    fn name(&self) -> String {
+        "SemanticIntent".to_string()
+    }
     fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         if let Some(cmd_line) = event.data.get("CommandLine").and_then(|c| c.as_str()) {
             let drift = self.engine.verify_intent(cmd_line);
@@ -32,7 +33,9 @@ pub struct OtxVoter {
 }
 
 impl ThreatVoter for OtxVoter {
-    fn name(&self) -> String { "OTX-C2".to_string() }
+    fn name(&self) -> String {
+        "OTX-C2".to_string()
+    }
     fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         let guard = self.indicators.read().ok()?;
         let hit = crate::otx_connection::otx_match_sysmon_event(&guard, &self.memory, event);
@@ -51,7 +54,9 @@ pub struct SigmaVoter {
 }
 
 impl ThreatVoter for SigmaVoter {
-    fn name(&self) -> String { "Sigma".to_string() }
+    fn name(&self) -> String {
+        "Sigma".to_string()
+    }
     fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         if let Ok(guard) = self.engine.read() {
             let matches = guard.check(event);
@@ -59,7 +64,11 @@ impl ThreatVoter for SigmaVoter {
                 let rule = &matches[0];
                 return Some(VoteResult {
                     confidence: if rule.level == "critical" { 0.95 } else { 0.85 },
-                    reason: format!("Sigma Rule [{}]: {}", rule.title, rule.description.as_deref().unwrap_or("No description")),
+                    reason: format!(
+                        "Sigma Rule [{}]: {}",
+                        rule.title,
+                        rule.description.as_deref().unwrap_or("No description")
+                    ),
                     weight: 0.8,
                 });
             }
@@ -74,19 +83,35 @@ pub struct GemmaVoter {
 }
 
 impl ThreatVoter for GemmaVoter {
-    fn name(&self) -> String { "Gemma4-LLM".to_string() }
+    fn name(&self) -> String {
+        "Gemma4-LLM".to_string()
+    }
     fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
-        let cmd_line = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("unknown");
-        let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let cmd_line = event
+            .data
+            .get("CommandLine")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let image = event
+            .data
+            .get("Image")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
         let version = event.product_version.as_deref().unwrap_or("unknown");
-        
-        let summary = format!("Process Create: image={} version={} cmdline={}", image, version, cmd_line);
-        
+
+        let summary = format!(
+            "Process Create: image={} version={} cmdline={}",
+            image, version, cmd_line
+        );
+
         match self.analyzer.reason_about_attack(&summary) {
             Ok(reasoning) => {
                 // Heuristic: if reasoning contains "malicious", "attack", or "suspicious"
                 let r_lower = reasoning.to_lowercase();
-                if r_lower.contains("malicious") || r_lower.contains("attack") || r_lower.contains("suspicious") {
+                if r_lower.contains("malicious")
+                    || r_lower.contains("attack")
+                    || r_lower.contains("suspicious")
+                {
                     return Some(VoteResult {
                         confidence: 0.9,
                         reason: format!("Gemma 4 Reasoning: {}", reasoning),
@@ -110,10 +135,7 @@ fn sha1_from_sysmon_hashes(event: &SysmonEvent) -> Option<String> {
     let hashes = event.data.get("Hashes")?.as_str()?;
     for part in hashes.split(',') {
         let p = part.trim();
-        if let Some(rest) = p
-            .strip_prefix("SHA1=")
-            .or_else(|| p.strip_prefix("SHA1:"))
-        {
+        if let Some(rest) = p.strip_prefix("SHA1=").or_else(|| p.strip_prefix("SHA1:")) {
             return Some(rest.trim().to_ascii_lowercase());
         }
     }
@@ -121,15 +143,12 @@ fn sha1_from_sysmon_hashes(event: &SysmonEvent) -> Option<String> {
 }
 
 impl ThreatVoter for NsrlVoter {
-    fn name(&self) -> String { "NSRL-Veto".to_string() }
+    fn name(&self) -> String {
+        "NSRL-Veto".to_string()
+    }
     fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         let sha1 = sha1_from_sysmon_hashes(event)?;
-        if self
-            .cache
-            .get(&sha1)
-            .map(|e| *e.value())
-            .unwrap_or(false)
-        {
+        if self.cache.get(&sha1).map(|e| *e.value()).unwrap_or(false) {
             return Some(vote_result_nsrl_veto());
         }
         if self.memory.is_nsrl_known_good(&sha1).unwrap_or(false) {
@@ -154,7 +173,9 @@ pub struct YaraXMemoryVoter {
 }
 
 impl ThreatVoter for YaraXMemoryVoter {
-    fn name(&self) -> String { "YaraX-Memory".to_string() }
+    fn name(&self) -> String {
+        "YaraX-Memory".to_string()
+    }
     fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         #[cfg(target_os = "windows")]
         {
@@ -170,7 +191,8 @@ impl ThreatVoter for YaraXMemoryVoter {
                         if results.matching_rules().count() > 0 {
                             return Some(VoteResult {
                                 confidence: 0.98,
-                                reason: "Yara-X: Detected C2 beacon pattern in process memory".to_string(),
+                                reason: "Yara-X: Detected C2 beacon pattern in process memory"
+                                    .to_string(),
                                 weight: 1.0,
                             });
                         }
@@ -218,11 +240,7 @@ fn kev_requires_exact_version(event: &SysmonEvent, full_path: &str) -> bool {
 /// Set `OSOOSI_KEV_QUIET_SYSTEM_TOOLS=0` to restore KEV on those events. **NetworkConnect / DNS / Image** still evaluated.
 fn kev_quiet_benign_process_lifecycle(path: &str, stem: &str) -> bool {
     if std::env::var("OSOOSI_KEV_QUIET_SYSTEM_TOOLS")
-        .map(|v| {
-            v == "0"
-                || v.eq_ignore_ascii_case("false")
-                || v.eq_ignore_ascii_case("off")
-        })
+        .map(|v| v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("off"))
         .unwrap_or(false)
     {
         return false;
@@ -283,7 +301,9 @@ pub struct KevVoter {
 }
 
 impl ThreatVoter for KevVoter {
-    fn name(&self) -> String { "CISA-KEV".to_string() }
+    fn name(&self) -> String {
+        "CISA-KEV".to_string()
+    }
     fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         let full_path = event.data.get("Image").and_then(|v| v.as_str())?;
         let stem = std::path::Path::new(full_path)
@@ -320,13 +340,14 @@ impl ThreatVoter for KevVoter {
                 // VERSION-AWARE LOGIC: If we have a resolved product version, and it looks like a modern/patched version,
                 // we down-rank the confidence significantly.
                 let mut confidence = if is_known_good { 0.45 } else { 0.85 };
-                let exact_version = event
-                    .product_version
-                    .as_deref()
-                    .map(str::trim)
-                    .filter(|version| {
-                        !version.is_empty() && !version.eq_ignore_ascii_case("unknown")
-                    });
+                let exact_version =
+                    event
+                        .product_version
+                        .as_deref()
+                        .map(str::trim)
+                        .filter(|version| {
+                            !version.is_empty() && !version.eq_ignore_ascii_case("unknown")
+                        });
                 if kev_requires_exact_version(event, full_path) && exact_version.is_none() {
                     return None;
                 }
@@ -371,4 +392,3 @@ impl ThreatVoter for KevVoter {
         None
     }
 }
-

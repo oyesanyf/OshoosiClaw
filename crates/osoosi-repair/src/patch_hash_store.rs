@@ -1,12 +1,12 @@
 //! Patch file hash store for legitimacy verification.
 //! Tracks SHA256 of known-good patch files so we can reject tampered or illegitimate patches.
 
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashMap;
 use std::path::{Path, PathBuf};
 use std::sync::RwLock;
-use sha2::{Sha256, Digest};
 
 /// Single entry in the patch hash store.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -48,7 +48,10 @@ impl PatchHashStore {
         let content = std::fs::read_to_string(path)?;
         let entries: Vec<PatchHashEntry> = serde_json::from_str(&content)
             .map_err(|e| anyhow!("Failed to parse patch hash store: {}", e))?;
-        let mut map = self.entries.write().map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+        let mut map = self
+            .entries
+            .write()
+            .map_err(|e| anyhow!("Lock poisoned: {}", e))?;
         for e in entries {
             map.insert(Self::key(&e.component, &e.version), e);
         }
@@ -85,7 +88,13 @@ impl PatchHashStore {
     }
 
     /// Record a patch file hash after successful apply (for future verification).
-    pub fn record(&self, component: &str, version: &str, sha256: &str, source_url: Option<&str>) -> Result<()> {
+    pub fn record(
+        &self,
+        component: &str,
+        version: &str,
+        sha256: &str,
+        source_url: Option<&str>,
+    ) -> Result<()> {
         let key = Self::key(component, version);
         let entry = PatchHashEntry {
             component: component.to_string(),
@@ -95,7 +104,10 @@ impl PatchHashStore {
             recorded_at: chrono::Utc::now().to_rfc3339(),
         };
         {
-            let mut guard = self.entries.write().map_err(|e| anyhow!("Lock poisoned: {}", e))?;
+            let mut guard = self
+                .entries
+                .write()
+                .map_err(|e| anyhow!("Lock poisoned: {}", e))?;
             guard.insert(key, entry);
         }
         self.save_to_disk()

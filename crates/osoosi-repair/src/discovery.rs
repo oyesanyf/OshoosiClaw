@@ -2,8 +2,8 @@
 //!
 //! Executes native OS commands to identify missing security patches.
 
+use anyhow::{anyhow, Result};
 use osoosi_types::{PatchMetadata, PatchSeverity};
-use anyhow::{Result, anyhow};
 use std::process::Command;
 use tracing::{info, warn};
 
@@ -74,12 +74,21 @@ try {
 "#;
 
         let output = Command::new("powershell")
-            .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", ps_script])
+            .args([
+                "-NoProfile",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                ps_script,
+            ])
             .output()?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!("Windows Update query failed: {}. Falling back to WMI baseline.", stderr.trim());
+            warn!(
+                "Windows Update query failed: {}. Falling back to WMI baseline.",
+                stderr.trim()
+            );
             // Return empty instead of crashing the whole engine, or implement WMI fallback here
             return Ok(vec![]);
         }
@@ -90,7 +99,10 @@ try {
         }
 
         let patches = Self::parse_windows_updates_json(&json_str)?;
-        info!("Windows discovery: {} pending updates found.", patches.len());
+        info!(
+            "Windows discovery: {} pending updates found.",
+            patches.len()
+        );
         Ok(patches)
     }
 
@@ -111,8 +123,16 @@ try {
         let mut skipped_non_kb: usize = 0;
         for item in items {
             let obj = item.as_object().ok_or_else(|| anyhow!("Expected object"))?;
-            let title = obj.get("Title").and_then(|v| v.as_str()).unwrap_or("Unknown").to_string();
-            let desc = obj.get("Description").and_then(|v| v.as_str()).unwrap_or("").to_string();
+            let title = obj
+                .get("Title")
+                .and_then(|v| v.as_str())
+                .unwrap_or("Unknown")
+                .to_string();
+            let desc = obj
+                .get("Description")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
             let kb = obj
                 .get("KB")
                 .and_then(|v| v.as_str())
@@ -179,7 +199,10 @@ try {
             .output()?;
 
         if !output.status.success() {
-            return Err(anyhow!("apt-get upgrade failed: {}", String::from_utf8_lossy(&output.stderr)));
+            return Err(anyhow!(
+                "apt-get upgrade failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -205,9 +228,9 @@ try {
                             severity: PatchSeverity::Medium,
                             component: name.to_string(),
                             version: "latest".to_string(),
-                download_url: None,
-                expected_sha256: None,
-            });
+                            download_url: None,
+                            expected_sha256: None,
+                        });
                     }
                 }
                 break;
@@ -232,9 +255,9 @@ try {
                                 severity: PatchSeverity::Medium,
                                 component: pkg.to_string(),
                                 version: "latest".to_string(),
-                download_url: None,
-                expected_sha256: None,
-            });
+                                download_url: None,
+                                expected_sha256: None,
+                            });
                         }
                     }
                 }
@@ -253,7 +276,10 @@ try {
             .output()?;
 
         if !output.status.success() {
-            return Err(anyhow!("dnf updateinfo failed: {}", String::from_utf8_lossy(&output.stderr)));
+            return Err(anyhow!(
+                "dnf updateinfo failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -280,17 +306,15 @@ try {
                     severity,
                     component: pkg.to_string(),
                     version: advisory.to_string(),
-                download_url: None,
-                expected_sha256: None,
-            });
+                    download_url: None,
+                    expected_sha256: None,
+                });
             }
         }
 
         if patches.is_empty() {
             // Fallback: dnf check-update
-            let out = Command::new("dnf")
-                .args(["check-update"])
-                .output()?;
+            let out = Command::new("dnf").args(["check-update"]).output()?;
             if out.status.code() == Some(100) {
                 let s = String::from_utf8_lossy(&out.stdout);
                 for line in s.lines() {
@@ -302,15 +326,18 @@ try {
                             severity: PatchSeverity::Medium,
                             component: pkg.to_string(),
                             version: "latest".to_string(),
-                download_url: None,
-                expected_sha256: None,
-            });
+                            download_url: None,
+                            expected_sha256: None,
+                        });
                     }
                 }
             }
         }
 
-        info!("Dnf discovery: {} security/updatable packages", patches.len());
+        info!(
+            "Dnf discovery: {} security/updatable packages",
+            patches.len()
+        );
         Ok(patches)
     }
 
@@ -321,7 +348,10 @@ try {
             .output()?;
 
         if !output.status.success() {
-            return Err(anyhow!("yum updateinfo failed: {}", String::from_utf8_lossy(&output.stderr)));
+            return Err(anyhow!(
+                "yum updateinfo failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -348,9 +378,9 @@ try {
                     severity,
                     component: pkg.to_string(),
                     version: advisory.to_string(),
-                download_url: None,
-                expected_sha256: None,
-            });
+                    download_url: None,
+                    expected_sha256: None,
+                });
             }
         }
 
@@ -361,12 +391,13 @@ try {
     #[cfg(target_os = "linux")]
     fn discover_pacman(&self) -> Result<Vec<PatchMetadata>> {
         info!("Querying pacman for updates...");
-        let output = Command::new("pacman")
-            .args(["-Qu"])
-            .output()?;
+        let output = Command::new("pacman").args(["-Qu"]).output()?;
 
         if !output.status.success() && output.status.code() != Some(1) {
-            return Err(anyhow!("pacman -Qu failed: {}", String::from_utf8_lossy(&output.stderr)));
+            return Err(anyhow!(
+                "pacman -Qu failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -380,9 +411,9 @@ try {
                     severity: PatchSeverity::Medium,
                     component: pkg.to_string(),
                     version: "latest".to_string(),
-                download_url: None,
-                expected_sha256: None,
-            });
+                    download_url: None,
+                    expected_sha256: None,
+                });
             }
         }
         info!("Pacman discovery: {} upgradable packages", patches.len());
@@ -397,7 +428,10 @@ try {
             .output()?;
 
         if !output.status.success() && output.status.code() != Some(101) {
-            return Err(anyhow!("zypper list-updates failed: {}", String::from_utf8_lossy(&output.stderr)));
+            return Err(anyhow!(
+                "zypper list-updates failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -419,32 +453,34 @@ try {
                             severity: PatchSeverity::Medium,
                             component: pkg.to_string(),
                             version: "latest".to_string(),
-                download_url: None,
-                expected_sha256: None,
-            });
+                            download_url: None,
+                            expected_sha256: None,
+                        });
                     }
                 }
             }
         }
 
         if patches.is_empty() {
-            let out = Command::new("zypper")
-                .args(["lu"])
-                .output()?;
+            let out = Command::new("zypper").args(["lu"]).output()?;
             if out.status.code() == Some(101) {
                 let s = String::from_utf8_lossy(&out.stdout);
                 for line in s.lines() {
                     let pkg = line.split_whitespace().next().unwrap_or("");
-                    if !pkg.is_empty() && !pkg.starts_with("S") && !pkg.starts_with("--") && pkg != "v" {
+                    if !pkg.is_empty()
+                        && !pkg.starts_with("S")
+                        && !pkg.starts_with("--")
+                        && pkg != "v"
+                    {
                         patches.push(PatchMetadata {
                             cve_id: format!("zypper:{}", pkg),
                             description: format!("Update for {}", pkg),
                             severity: PatchSeverity::Medium,
                             component: pkg.to_string(),
                             version: "latest".to_string(),
-                download_url: None,
-                expected_sha256: None,
-            });
+                            download_url: None,
+                            expected_sha256: None,
+                        });
                     }
                 }
             }
@@ -456,12 +492,13 @@ try {
     #[cfg(target_os = "linux")]
     fn discover_apk(&self) -> Result<Vec<PatchMetadata>> {
         info!("Querying apk for updates...");
-        let output = Command::new("apk")
-            .args(["upgrade", "-s"])
-            .output()?;
+        let output = Command::new("apk").args(["upgrade", "-s"]).output()?;
 
         if !output.status.success() {
-            return Err(anyhow!("apk upgrade -s failed: {}", String::from_utf8_lossy(&output.stderr)));
+            return Err(anyhow!(
+                "apk upgrade -s failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -482,9 +519,9 @@ try {
                         severity: PatchSeverity::Medium,
                         component: pkg.to_string(),
                         version: "latest".to_string(),
-                download_url: None,
-                expected_sha256: None,
-            });
+                        download_url: None,
+                        expected_sha256: None,
+                    });
                 }
             }
         }
@@ -496,12 +533,13 @@ try {
     fn discover_macos(&self) -> Result<Vec<PatchMetadata>> {
         info!("Querying macOS softwareupdate for missing patches...");
 
-        let output = Command::new("softwareupdate")
-            .args(["-l"])
-            .output()?;
+        let output = Command::new("softwareupdate").args(["-l"]).output()?;
 
         if !output.status.success() {
-            return Err(anyhow!("softwareupdate failed: {}", String::from_utf8_lossy(&output.stderr)));
+            return Err(anyhow!(
+                "softwareupdate failed: {}",
+                String::from_utf8_lossy(&output.stderr)
+            ));
         }
 
         let stdout = String::from_utf8_lossy(&output.stdout);
@@ -510,7 +548,8 @@ try {
 
         for line in stdout.lines() {
             let trimmed = line.trim();
-            if (trimmed.starts_with('*') || trimmed.starts_with('-')) && trimmed.contains("Label:") {
+            if (trimmed.starts_with('*') || trimmed.starts_with('-')) && trimmed.contains("Label:")
+            {
                 let label = trimmed
                     .split("Label:")
                     .nth(1)
@@ -539,9 +578,9 @@ try {
                     severity: PatchSeverity::High,
                     component: current_label.clone(),
                     version: current_label.clone(),
-                download_url: None,
-                expected_sha256: None,
-            });
+                    download_url: None,
+                    expected_sha256: None,
+                });
                 current_label.clear();
             }
         }

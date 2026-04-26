@@ -11,7 +11,7 @@ use std::net::{SocketAddr, TcpStream};
 use std::process::Command;
 use std::time::Duration;
 use sysinfo::Networks;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 /// A host discovered through any discovery method.
 #[derive(Debug, Clone)]
@@ -69,7 +69,9 @@ impl RouteScraper {
 
                 for line in stdout.lines() {
                     let trimmed = line.trim();
-                    if trimmed.is_empty() { continue; }
+                    if trimmed.is_empty() {
+                        continue;
+                    }
 
                     if trimmed.starts_with("Interface:") {
                         current_interface = trimmed
@@ -88,7 +90,9 @@ impl RouteScraper {
                         let mac = parts[1];
                         let entry_type = parts[2];
 
-                        if (ip.starts_with("192.") || ip.starts_with("10.") || ip.starts_with("172."))
+                        if (ip.starts_with("192.")
+                            || ip.starts_with("10.")
+                            || ip.starts_with("172."))
                             && (entry_type.eq_ignore_ascii_case("dynamic")
                                 || entry_type.eq_ignore_ascii_case("static"))
                         {
@@ -117,7 +121,9 @@ impl RouteScraper {
                         let dev = if parts.len() > 2 { parts[2] } else { "unknown" };
                         let mac = if parts.len() > 4 { parts[4] } else { "unknown" };
                         let state = parts.last().unwrap_or(&"UNKNOWN");
-                        if !state.eq_ignore_ascii_case("FAILED") && !state.eq_ignore_ascii_case("INCOMPLETE") {
+                        if !state.eq_ignore_ascii_case("FAILED")
+                            && !state.eq_ignore_ascii_case("INCOMPLETE")
+                        {
                             hosts.push(DiscoveredHost {
                                 ip: ip.to_string(),
                                 mac: Some(mac.to_string()),
@@ -142,7 +148,8 @@ impl RouteScraper {
                         let parts: Vec<&str> = line.split_whitespace().collect();
                         let mac = parts.get(3).map(|&m| m.to_string());
                         // Interface is typically after "on"
-                        let iface = parts.iter()
+                        let iface = parts
+                            .iter()
                             .position(|&p| p == "on")
                             .and_then(|i| parts.get(i + 1))
                             .unwrap_or(&"unknown")
@@ -188,7 +195,9 @@ impl RouteScraper {
                     if trimmed.contains("Persistent Routes") {
                         in_table = false;
                     }
-                    if !in_table { continue; }
+                    if !in_table {
+                        continue;
+                    }
 
                     let parts: Vec<&str> = trimmed.split_whitespace().collect();
                     // Destination  Netmask  Gateway  Interface  Metric
@@ -212,14 +221,18 @@ impl RouteScraper {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 for line in stdout.lines() {
                     let parts: Vec<&str> = line.split_whitespace().collect();
-                    if parts.is_empty() { continue; }
+                    if parts.is_empty() {
+                        continue;
+                    }
                     let dest = parts[0];
-                    let gateway = parts.iter()
+                    let gateway = parts
+                        .iter()
                         .position(|&p| p == "via")
                         .and_then(|i| parts.get(i + 1))
                         .unwrap_or(&"0.0.0.0")
                         .to_string();
-                    let iface = parts.iter()
+                    let iface = parts
+                        .iter()
                         .position(|&p| p == "dev")
                         .and_then(|i| parts.get(i + 1))
                         .unwrap_or(&"unknown")
@@ -241,8 +254,13 @@ impl RouteScraper {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let mut in_table = false;
                 for line in stdout.lines() {
-                    if line.contains("Destination") { in_table = true; continue; }
-                    if !in_table { continue; }
+                    if line.contains("Destination") {
+                        in_table = true;
+                        continue;
+                    }
+                    if !in_table {
+                        continue;
+                    }
                     let parts: Vec<&str> = line.split_whitespace().collect();
                     if parts.len() >= 4 {
                         routes.push(RouteEntry {
@@ -294,18 +312,25 @@ impl RouteScraper {
             let stdout = String::from_utf8_lossy(&output.stdout);
             for line in stdout.lines() {
                 let ip = line.trim();
-                if ip.is_empty() || ip == "127.0.0.1" || ip == "::1" { continue; }
-                hosts.entry(ip.to_string()).or_insert_with(|| DiscoveredHost {
-                    ip: ip.to_string(),
-                    mac: None,
-                    interface: "sysmon-event3".to_string(),
-                    is_osoosi_peer: false,
-                });
+                if ip.is_empty() || ip == "127.0.0.1" || ip == "::1" {
+                    continue;
+                }
+                hosts
+                    .entry(ip.to_string())
+                    .or_insert_with(|| DiscoveredHost {
+                        ip: ip.to_string(),
+                        mac: None,
+                        interface: "sysmon-event3".to_string(),
+                        is_osoosi_peer: false,
+                    });
             }
         }
 
         let result: Vec<DiscoveredHost> = hosts.into_values().collect();
-        info!("Sysmon Event ID 3 passive discovery: {} unique remote IPs", result.len());
+        info!(
+            "Sysmon Event ID 3 passive discovery: {} unique remote IPs",
+            result.len()
+        );
         result
     }
 
@@ -340,17 +365,15 @@ impl RouteScraper {
         for host in hosts.iter_mut() {
             let addr = format!("{}:{}", host.ip, port);
             match addr.parse::<SocketAddr>() {
-                Ok(sock_addr) => {
-                    match TcpStream::connect_timeout(&sock_addr, timeout) {
-                        Ok(_) => {
-                            host.is_osoosi_peer = true;
-                            info!("OshoosiClaw peer discovered: {}", host.ip);
-                        }
-                        Err(_) => {
-                            debug!("No OshoosiClaw peer at {}", host.ip);
-                        }
+                Ok(sock_addr) => match TcpStream::connect_timeout(&sock_addr, timeout) {
+                    Ok(_) => {
+                        host.is_osoosi_peer = true;
+                        info!("OshoosiClaw peer discovered: {}", host.ip);
                     }
-                }
+                    Err(_) => {
+                        debug!("No OshoosiClaw peer at {}", host.ip);
+                    }
+                },
                 Err(_) => {}
             }
         }

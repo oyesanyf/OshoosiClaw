@@ -12,8 +12,8 @@
 //! - **Windows**: Uses `TBS.dll` (TPM Base Services) via PowerShell
 //! - **Fallback**: Software-only HMAC attestation when no TPM is present
 
-use sha2::{Sha256, Digest};
-use tracing::{info, warn, debug, error};
+use sha2::{Digest, Sha256};
+use tracing::{debug, error, info, warn};
 
 /// PCR index used for application audit logs.
 /// PCR 16 is typically designated for debug/application use.
@@ -42,12 +42,17 @@ pub fn extend_audit_to_tpm(event_type: &str, data_hash: &str) -> AttestationResu
     let hash_hex = hex::encode(&hash_bytes);
 
     // Skip TPM if requested or if we're on Windows and not in forced mode (avoiding slow process spawns)
-    let skip_tpm = std::env::var("OSOOSI_NO_TPM").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
-    
+    let skip_tpm = std::env::var("OSOOSI_NO_TPM")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
     // On Windows, the current PS-based approach is too slow for high-throughput audit logs.
     // We skip it by default unless OSOOSI_FORCE_TPM is set.
     #[cfg(target_os = "windows")]
-    let skip_tpm = skip_tpm || !std::env::var("OSOOSI_FORCE_TPM").map(|v| v == "1").unwrap_or(false);
+    let skip_tpm = skip_tpm
+        || !std::env::var("OSOOSI_FORCE_TPM")
+            .map(|v| v == "1")
+            .unwrap_or(false);
 
     if !skip_tpm {
         // Try hardware TPM first
@@ -167,7 +172,11 @@ fn try_tpm_extend(hash_hex: &str) -> Option<AttestationResult> {
 
         match result {
             Ok(output) if output.status.success() => {
-                info!("TPM PCR{} extended with audit hash: {}…", AUDIT_PCR_INDEX, &hash_hex[..16]);
+                info!(
+                    "TPM PCR{} extended with audit hash: {}…",
+                    AUDIT_PCR_INDEX,
+                    &hash_hex[..16]
+                );
                 return Some(AttestationResult {
                     hardware_backed: true,
                     pcr_index: Some(AUDIT_PCR_INDEX),
@@ -176,7 +185,10 @@ fn try_tpm_extend(hash_hex: &str) -> Option<AttestationResult> {
                 });
             }
             Ok(output) => {
-                debug!("tpm2_pcrextend failed: {}", String::from_utf8_lossy(&output.stderr));
+                debug!(
+                    "tpm2_pcrextend failed: {}",
+                    String::from_utf8_lossy(&output.stderr)
+                );
             }
             Err(e) => {
                 debug!("tpm2_pcrextend not available: {}", e);
@@ -202,7 +214,8 @@ fn try_tpm_extend(hash_hex: &str) -> Option<AttestationResult> {
                 Write-Output 'FAIL'
             }}
             "#,
-            &hash_hex[..4], hash_hex
+            &hash_hex[..4],
+            hash_hex
         );
 
         if let Ok(output) = std::process::Command::new("powershell")

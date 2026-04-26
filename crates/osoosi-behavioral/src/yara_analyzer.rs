@@ -1,7 +1,7 @@
-use std::path::{Path, PathBuf};
-use yara_x::{Scanner, Compiler};
-use tracing::{info, warn, debug};
 use osoosi_types::ThreatSignature;
+use std::path::{Path, PathBuf};
+use tracing::{debug, info, warn};
+use yara_x::{Compiler, Scanner};
 
 pub struct YaraAnalyzer {
     rules_dir: PathBuf,
@@ -29,7 +29,11 @@ impl YaraAnalyzer {
             for entry in walkdir::WalkDir::new(&self.rules_dir)
                 .into_iter()
                 .filter_map(|e| e.ok())
-                .filter(|e| e.path().extension().map_or(false, |ext| ext == "yar" || ext == "yara")) 
+                .filter(|e| {
+                    e.path()
+                        .extension()
+                        .map_or(false, |ext| ext == "yar" || ext == "yara")
+                })
             {
                 if let Ok(content) = std::fs::read_to_string(entry.path()) {
                     if let Err(e) = compiler.add_source(content.as_str()) {
@@ -48,10 +52,10 @@ impl YaraAnalyzer {
 
         let rules = compiler.build();
         let mut scanner = Scanner::new(&rules);
-        
+
         let file_data = std::fs::read(path)?;
         let scan_results = scanner.scan(&file_data)?;
-        
+
         let mut matches = Vec::new();
         for m in scan_results.matching_rules() {
             matches.push(m.identifier().to_string());

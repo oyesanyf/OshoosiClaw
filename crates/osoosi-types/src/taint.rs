@@ -57,7 +57,11 @@ pub struct TaintedValue {
 }
 
 impl TaintedValue {
-    pub fn new(value: impl Into<String>, labels: HashSet<TaintLabel>, source: impl Into<String>) -> Self {
+    pub fn new(
+        value: impl Into<String>,
+        labels: HashSet<TaintLabel>,
+        source: impl Into<String>,
+    ) -> Self {
         Self {
             value: value.into(),
             labels,

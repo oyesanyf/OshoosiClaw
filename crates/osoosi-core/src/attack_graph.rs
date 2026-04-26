@@ -46,10 +46,7 @@ pub fn build_attack_graph(
         }
         match entry.event_type.as_str() {
             "TELEMETRY_INGESTED" => {
-                let ev_data = entry
-                    .data
-                    .get("data")
-                    .and_then(|v| v.as_object());
+                let ev_data = entry.data.get("data").and_then(|v| v.as_object());
                 if let Some(data) = ev_data {
                     let computer = entry
                         .data
@@ -106,10 +103,8 @@ pub fn build_attack_graph(
                         let domain = query.trim_end_matches('.').to_string();
                         if !domain.is_empty() {
                             nodes.insert(domain.clone());
-                            node_labels.insert(
-                                domain.clone(),
-                                (domain.clone(), "domain".to_string()),
-                            );
+                            node_labels
+                                .insert(domain.clone(), (domain.clone(), "domain".to_string()));
                             edges.push(json!({
                                 "from": proc_name,
                                 "to": domain,
@@ -133,9 +128,16 @@ pub fn build_attack_graph(
                         .and_then(|v| v.as_str())
                         .unwrap_or("")
                         .to_string();
-                    let conf = data.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                    let conf = data
+                        .get("confidence")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.0);
                     let threat_id = format!("threat:{}", entry.timestamp.timestamp_millis());
-                    let predicted = data.get("predicted_next").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let predicted = data
+                        .get("predicted_next")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("")
+                        .to_string();
                     let reason = data.get("reason").and_then(|v| v.as_str()).unwrap_or("");
                     nodes.insert(proc.clone());
                     nodes.insert(threat_id.clone());
@@ -143,7 +145,11 @@ pub fn build_attack_graph(
                     node_labels.insert(
                         threat_id.clone(),
                         (
-                            format!("{} ({:.0}%)", if cve.is_empty() { "Threat" } else { &cve }, conf * 100.0),
+                            format!(
+                                "{} ({:.0}%)",
+                                if cve.is_empty() { "Threat" } else { &cve },
+                                conf * 100.0
+                            ),
                             "threat".to_string(),
                         ),
                     );
@@ -163,7 +169,10 @@ pub fn build_attack_graph(
                     if !predicted.is_empty() {
                         let pred_id = format!("pred:{}", entry.timestamp.timestamp_millis());
                         nodes.insert(pred_id.clone());
-                        node_labels.insert(pred_id.clone(), (predicted.clone(), "predicted".to_string()));
+                        node_labels.insert(
+                            pred_id.clone(),
+                            (predicted.clone(), "predicted".to_string()),
+                        );
                         edges.push(json!({
                             "from": threat_id,
                             "to": pred_id,
@@ -185,10 +194,7 @@ pub fn build_attack_graph(
                         .to_string();
                     let resp_id = format!("resp:{}", entry.timestamp.timestamp_millis());
                     nodes.insert(resp_id.clone());
-                    node_labels.insert(
-                        resp_id.clone(),
-                        (action.clone(), "response".to_string()),
-                    );
+                    node_labels.insert(resp_id.clone(), (action.clone(), "response".to_string()));
                     if let Some(pid) = data.get("pid").and_then(|v| v.as_u64()) {
                         let proc_node = format!("pid:{}", pid);
                         nodes.insert(proc_node.clone());

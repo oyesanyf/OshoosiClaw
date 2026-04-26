@@ -2,16 +2,16 @@
 //!
 //! Dynamically scales telemetry fidelity based on system resources and detection activity.
 
-use sysinfo::System;
 use std::sync::Arc;
+use sysinfo::System;
 use tokio::sync::RwLock;
 use tracing::{info, warn};
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TelemetryMode {
-    Silent,   // Minimal events (Process creation only)
-    Normal,   // Standard EDR profile
-    Burst,    // Full fidelity (Network, Registry, FileSystem, DLLs)
+    Silent, // Minimal events (Process creation only)
+    Normal, // Standard EDR profile
+    Burst,  // Full fidelity (Network, Registry, FileSystem, DLLs)
 }
 
 pub struct TelemetryController {
@@ -43,7 +43,7 @@ impl TelemetryController {
     async fn run_adaptation_check(&self) -> anyhow::Result<()> {
         let mut sys = self.sys.write().await;
         sys.refresh_cpu();
-        
+
         let cpu_usage = sys.global_cpu_info().cpu_usage();
         let mut current_mode = self.current_mode.write().await;
 
@@ -52,7 +52,10 @@ impl TelemetryController {
             *current_mode = TelemetryMode::Silent;
             self.apply_telemetry_profile(TelemetryMode::Silent).await?;
         } else if cpu_usage < 40.0 && *current_mode == TelemetryMode::Silent {
-            info!("ADAPTIVE TELEMETRY: CPU load stabilized ({:.1}%). Restoring NORMAL mode.", cpu_usage);
+            info!(
+                "ADAPTIVE TELEMETRY: CPU load stabilized ({:.1}%). Restoring NORMAL mode.",
+                cpu_usage
+            );
             *current_mode = TelemetryMode::Normal;
             self.apply_telemetry_profile(TelemetryMode::Normal).await?;
         }

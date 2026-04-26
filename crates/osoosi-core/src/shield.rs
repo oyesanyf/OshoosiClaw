@@ -1,6 +1,6 @@
 //! Shielded Execution Layer for OpenỌ̀ṣọ́ọ̀sì.
 //!
-//! Provides defense-in-depth by wrapping high-risk logic in secondary 
+//! Provides defense-in-depth by wrapping high-risk logic in secondary
 //! security layers: SSRF protection, Taint gates, and WASM logic.
 
 use osoosi_types::{SysmonEvent, TaintLabel, TaintSink};
@@ -30,7 +30,7 @@ impl ShieldLayer {
     pub fn verify_taint_flow(&self, event: &SysmonEvent, sink: &TaintSink) -> bool {
         // Derive labels from event metadata
         let mut labels = HashSet::new();
-        
+
         // Example logic: if it's a network event from an untrusted IP
         if let Some(ip) = event.data.get("DestinationIp").and_then(|v| v.as_str()) {
             if self.is_suspicious_ip(ip) {
@@ -47,7 +47,10 @@ impl ShieldLayer {
 
         for label in labels {
             if sink.blocked_labels.contains(&label) {
-                warn!("Shield Violation: Taint label '{}' blocked by sink '{}'", label, sink.name);
+                warn!(
+                    "Shield Violation: Taint label '{}' blocked by sink '{}'",
+                    label, sink.name
+                );
                 return false;
             }
         }
@@ -56,9 +59,16 @@ impl ShieldLayer {
 
     /// Verify an outbound URL against SSRF protection policies.
     pub fn verify_outbound_url(&self, url: &str) -> bool {
-        if !self.ssrf_enabled { return true; }
+        if !self.ssrf_enabled {
+            return true;
+        }
 
-        let blocked = ["localhost", "127.0.0.1", "169.254.169.254", "metadata.google.internal"];
+        let blocked = [
+            "localhost",
+            "127.0.0.1",
+            "169.254.169.254",
+            "metadata.google.internal",
+        ];
         for b in blocked {
             if url.contains(b) {
                 warn!("Shield Violation: SSRF attempt to '{}' blocked", url);
@@ -70,6 +80,6 @@ impl ShieldLayer {
 
     fn is_suspicious_ip(&self, ip: &str) -> bool {
         // Placeholder for real blocklist check
-        ip.starts_with("45.") || ip.starts_with("185.") 
+        ip.starts_with("45.") || ip.starts_with("185.")
     }
 }

@@ -5,11 +5,11 @@
 //! Linux: Sysmon for Linux
 //! macOS: Endpoint Security Framework
 
+use osoosi_types::SecuredExecutor;
 use std::path::Path;
 use std::process::Command;
-use tracing::{info, warn};
 use std::sync::Arc;
-use osoosi_types::SecuredExecutor;
+use tracing::{info, warn};
 
 /// Opt-in: download MalConv / SmolLM2 from `oyesanyf/OshoosiClaw-Weights` during provisioning. Default **off** — that bundle often 404s unless you publish it.
 fn use_bundled_hf_weights() -> bool {
@@ -63,7 +63,9 @@ impl AgentProvisioner {
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
-            Err(anyhow::anyhow!("Unsupported operating system for automated provisioning."))
+            Err(anyhow::anyhow!(
+                "Unsupported operating system for automated provisioning."
+            ))
         }
     }
 
@@ -114,7 +116,7 @@ impl AgentProvisioner {
     /// Provision Firewall rules for the Oshoosi Mesh.
     pub async fn provision_firewall(&self) -> anyhow::Result<()> {
         info!("Provisioning firewall rules for mesh networking...");
-        
+
         #[cfg(target_os = "windows")]
         {
             // Mesh Port: 9000 (libp2p), Dashboard Port: 3000
@@ -123,7 +125,7 @@ impl AgentProvisioner {
                 let check_cmd = format!("netsh advfirewall firewall show rule name='{}'", name);
                 let mut check = Command::new("powershell");
                 check.args(["-NoProfile", "-Command", &check_cmd]);
-                
+
                 if !self.executor.execute(check).await?.status.success() {
                     info!("Adding firewall rule: {} (Port {})...", name, port);
                     let add_cmd = format!(
@@ -171,15 +173,26 @@ impl AgentProvisioner {
         }
 
         info!("OpenSSL not found. Attempting non-interactive install via winget...");
-        
+
         // IDs to try in order
-        let ids = ["ShiningLight.OpenSSL", "ShiningLight.OpenSSL.PostgreSQL", "OpenSSL.OpenSSL"];
-        
+        let ids = [
+            "ShiningLight.OpenSSL",
+            "ShiningLight.OpenSSL.PostgreSQL",
+            "OpenSSL.OpenSSL",
+        ];
+
         for id in ids {
             info!("Attempting winget install: {}...", id);
             let mut cmd = Command::new("winget");
-            cmd.args(["install", "--id", id, "--silent", "--accept-package-agreements", "--accept-source-agreements"]);
-            
+            cmd.args([
+                "install",
+                "--id",
+                id,
+                "--silent",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+            ]);
+
             // We use executor.execute here
             match self.executor.execute(cmd).await {
                 Ok(output) => {
@@ -193,28 +206,57 @@ impl AgentProvisioner {
                 Err(_) => {}
             }
         }
-        
+
         // 2. Fallback to direct download from slproweb.com
         info!("OpenSSL winget entries failed. Using direct download from slproweb.com...");
-        
+
         let urls = [
-            ("Win64 Full EXE", "https://slproweb.com/download/Win64OpenSSL-4_0_0.exe"),
-            ("Win64 Full MSI", "https://slproweb.com/download/Win64OpenSSL-4_0_0.msi"),
-            ("Win32 Light MSI", "https://slproweb.com/download/Win32OpenSSL_Light-4_0_0.msi"),
-            ("Win32 Light EXE", "https://slproweb.com/download/Win32OpenSSL_Light-4_0_0.exe"),
+            (
+                "Win64 Full EXE",
+                "https://slproweb.com/download/Win64OpenSSL-4_0_0.exe",
+            ),
+            (
+                "Win64 Full MSI",
+                "https://slproweb.com/download/Win64OpenSSL-4_0_0.msi",
+            ),
+            (
+                "Win32 Light MSI",
+                "https://slproweb.com/download/Win32OpenSSL_Light-4_0_0.msi",
+            ),
+            (
+                "Win32 Light EXE",
+                "https://slproweb.com/download/Win32OpenSSL_Light-4_0_0.exe",
+            ),
         ];
 
         for (name, url) in urls {
             info!("Attempting direct download of {}: {}...", name, url);
             let is_msi = url.ends_with(".msi");
-            let installer_path = std::env::temp_dir().join(if is_msi { "openssl.msi" } else { "openssl.exe" });
-            
-            if self.download_with_resume(url, &installer_path).await.is_ok() {
+            let installer_path =
+                std::env::temp_dir().join(if is_msi { "openssl.msi" } else { "openssl.exe" });
+
+            if self
+                .download_with_resume(url, &installer_path)
+                .await
+                .is_ok()
+            {
                 info!("OpenSSL {} downloaded. Running silent setup...", name);
                 let res = if is_msi {
-                    self.exec_with_retry("msiexec", &["/i", &installer_path.to_string_lossy(), "/qn", "/norestart"], &format!("OpenSSL {} Installation", name), 2).await
+                    self.exec_with_retry(
+                        "msiexec",
+                        &["/i", &installer_path.to_string_lossy(), "/qn", "/norestart"],
+                        &format!("OpenSSL {} Installation", name),
+                        2,
+                    )
+                    .await
                 } else {
-                    self.exec_with_retry(&installer_path.to_string_lossy(), &["/verysilent", "/sp-", "/suppressmsgboxes", "/norestart"], &format!("OpenSSL {} Installation", name), 2).await
+                    self.exec_with_retry(
+                        &installer_path.to_string_lossy(),
+                        &["/verysilent", "/sp-", "/suppressmsgboxes", "/norestart"],
+                        &format!("OpenSSL {} Installation", name),
+                        2,
+                    )
+                    .await
                 };
 
                 if res.is_ok() {
@@ -226,7 +268,10 @@ impl AgentProvisioner {
                         verify_cmd.arg("version");
                         if let Ok(output) = self.executor.execute(verify_cmd).await {
                             if output.status.success() {
-                                info!("Validated OpenSSL: {}", String::from_utf8_lossy(&output.stdout).trim());
+                                info!(
+                                    "Validated OpenSSL: {}",
+                                    String::from_utf8_lossy(&output.stdout).trim()
+                                );
                                 return Ok(());
                             }
                         }
@@ -244,7 +289,13 @@ impl AgentProvisioner {
     }
 
     /// Helper to execute a command with a specified number of retries.
-    async fn exec_with_retry(&self, program: &str, args: &[&str], name: &str, retries: usize) -> anyhow::Result<()> {
+    async fn exec_with_retry(
+        &self,
+        program: &str,
+        args: &[&str],
+        name: &str,
+        retries: usize,
+    ) -> anyhow::Result<()> {
         let mut last_error = None;
         for i in 1..=retries {
             if i > 1 {
@@ -255,18 +306,29 @@ impl AgentProvisioner {
             cmd.args(args);
             match self.executor.execute(cmd).await {
                 Ok(output) if output.status.success() => return Ok(()),
-                Ok(output) => last_error = Some(anyhow::anyhow!("Command '{}' failed with status: {}", name, output.status)),
-                Err(e) => last_error = Some(anyhow::anyhow!("Execution error for '{}': {}", name, e)),
+                Ok(output) => {
+                    last_error = Some(anyhow::anyhow!(
+                        "Command '{}' failed with status: {}",
+                        name,
+                        output.status
+                    ))
+                }
+                Err(e) => {
+                    last_error = Some(anyhow::anyhow!("Execution error for '{}': {}", name, e))
+                }
             }
         }
-        Err(last_error.unwrap_or_else(|| anyhow::anyhow!("Failed {} after {} retries", name, retries)))
+        Err(last_error
+            .unwrap_or_else(|| anyhow::anyhow!("Failed {} after {} retries", name, retries)))
     }
 
     #[cfg(target_os = "windows")]
     async fn command_exists_win(&self, cmd: &str) -> bool {
         let mut check_cmd = Command::new("where");
         check_cmd.arg(cmd);
-        self.executor.execute(check_cmd).await
+        self.executor
+            .execute(check_cmd)
+            .await
             .map(|o| o.status.success())
             .unwrap_or(false)
     }
@@ -281,7 +343,9 @@ impl AgentProvisioner {
         {
             let mut check_cmd = Command::new("which");
             check_cmd.arg(cmd);
-            self.executor.execute(check_cmd).await
+            self.executor
+                .execute(check_cmd)
+                .await
                 .map(|o| o.status.success())
                 .unwrap_or(false)
         }
@@ -297,10 +361,28 @@ impl AgentProvisioner {
         warn!("OpenSSL not found. Attempting Linux package installation...");
         let candidates: &[(&str, &[&str])] = &[
             ("sudo", &["apt-get", "update"]),
-            ("sudo", &["apt-get", "install", "-y", "openssl", "libssl-dev"]),
-            ("sudo", &["dnf", "install", "-y", "openssl", "openssl-devel"]),
-            ("sudo", &["yum", "install", "-y", "openssl", "openssl-devel"]),
-            ("sudo", &["zypper", "--non-interactive", "install", "openssl", "libopenssl-devel"]),
+            (
+                "sudo",
+                &["apt-get", "install", "-y", "openssl", "libssl-dev"],
+            ),
+            (
+                "sudo",
+                &["dnf", "install", "-y", "openssl", "openssl-devel"],
+            ),
+            (
+                "sudo",
+                &["yum", "install", "-y", "openssl", "openssl-devel"],
+            ),
+            (
+                "sudo",
+                &[
+                    "zypper",
+                    "--non-interactive",
+                    "install",
+                    "openssl",
+                    "libopenssl-devel",
+                ],
+            ),
         ];
 
         for (bin, args) in candidates {
@@ -324,7 +406,11 @@ impl AgentProvisioner {
 
     #[cfg(target_os = "macos")]
     async fn provision_macos_openssl(&self) -> anyhow::Result<()> {
-        if self.command_exists("openssl").await || self.command_exists("/usr/local/opt/openssl/bin/openssl").await {
+        if self.command_exists("openssl").await
+            || self
+                .command_exists("/usr/local/opt/openssl/bin/openssl")
+                .await
+        {
             info!("OpenSSL already available on macOS.");
             return Ok(());
         }
@@ -353,30 +439,37 @@ impl AgentProvisioner {
     #[cfg(target_os = "windows")]
     async fn provision_windows(&self) -> anyhow::Result<()> {
         info!("Provisioning Windows telemetry (Sysmon)...");
-        
+
         let config_dir = Path::new("config");
         if !config_dir.exists() {
             let _ = std::fs::create_dir_all(config_dir);
         }
-        
+
         let full_fidelity_cfg = config_dir.join("sysmon-immune-system.xml");
         let xml = self.generate_sysmon_xml(&[]);
-        
-        if let Err(e) = std::fs::write(&full_fidelity_cfg, xml) {
-            warn!("Failed to write Full Fidelity Sysmon config: {}. Falling back to default.", e);
+
+        let cfg_path = if let Err(e) = std::fs::write(&full_fidelity_cfg, &xml) {
+            warn!("Failed to write Full Fidelity Sysmon config under config/: {}. Using embedded temp config.", e);
+            let temp_cfg = std::env::temp_dir().join("osoosi-sysmon-immune-system.xml");
+            std::fs::write(&temp_cfg, xml)?;
+            temp_cfg
         } else {
             info!("Generated Full Fidelity 'Immune System' Sysmon configuration.");
-        }
+            full_fidelity_cfg
+        };
 
-        self.ensure_windows_sysmon(Some(&full_fidelity_cfg)).await
+        self.ensure_windows_sysmon(Some(&cfg_path)).await
     }
 
     #[cfg(target_os = "windows")]
-    pub async fn apply_blocking_rules(&self, rules: &[osoosi_types::BlockingRule]) -> anyhow::Result<()> {
+    pub async fn apply_blocking_rules(
+        &self,
+        rules: &[osoosi_types::BlockingRule],
+    ) -> anyhow::Result<()> {
         let xml = self.generate_sysmon_xml(rules);
         let config_path = Path::new("config").join("sysmon-blocking.xml");
         std::fs::write(&config_path, xml)?;
-        
+
         let binary = self.ensure_sysmon_binary().await?;
         let mut cmd = Command::new(&binary);
         cmd.args(["-accepteula", "-c", config_path.to_str().unwrap()]);
@@ -395,7 +488,8 @@ impl AgentProvisioner {
             info!("Sysmon is already active.");
             if let Some(cfg) = config_path {
                 info!("Updating Sysmon config from {}...", cfg.display());
-                self.run_sysmon_with_repair(&binary, &["-accepteula", "-c"], Some(cfg)).await?;
+                self.run_sysmon_with_repair(&binary, &["-accepteula", "-c"], Some(cfg))
+                    .await?;
                 info!("Sysmon config updated successfully.");
             }
             return Ok(());
@@ -424,10 +518,10 @@ impl AgentProvisioner {
                     .run_sysmon_with_repair(&binary, &["-accepteula", "-c"], Some(cfg))
                     .await
                     .is_ok()
-                {
-                    info!("Sysmon installed and config applied successfully.");
-                    return Ok(());
-                }
+            {
+                info!("Sysmon installed and config applied successfully.");
+                return Ok(());
+            }
         } else if self
             .run_sysmon_with_repair(&binary, &["-accepteula", "-i"], None)
             .await
@@ -447,7 +541,8 @@ impl AgentProvisioner {
         args: &[&str],
         cfg: Option<&Path>,
     ) -> anyhow::Result<()> {
-        self.run_sysmon_with_repair_once(binary, args, cfg, true).await
+        self.run_sysmon_with_repair_once(binary, args, cfg, true)
+            .await
     }
 
     #[cfg(target_os = "windows")]
@@ -460,7 +555,7 @@ impl AgentProvisioner {
     ) -> anyhow::Result<()> {
         let mut current_allow_repair = allow_repair;
         let current_args = args;
-        
+
         loop {
             let mut cmd = Command::new(binary);
             cmd.args(current_args);
@@ -473,17 +568,22 @@ impl AgentProvisioner {
             }
 
             let mut combined = String::new();
-            
+
             fn decode_utf16_or_8(bytes: &[u8]) -> String {
                 if bytes.len() >= 2 && bytes.iter().step_by(2).skip(1).all(|&b| b == 0) {
                     // Likely UTF-16LE with nulls
-                    let u16_data: Vec<u16> = bytes.chunks_exact(2)
+                    let u16_data: Vec<u16> = bytes
+                        .chunks_exact(2)
                         .map(|c| u16::from_le_bytes([c[0], c[1]]))
                         .collect();
                     String::from_utf16_lossy(&u16_data)
                 } else if bytes.contains(&0) {
                     // Try a simpler null-skip if it's just weirdly encoded
-                    bytes.iter().filter(|&&b| b != 0).map(|&b| b as char).collect()
+                    bytes
+                        .iter()
+                        .filter(|&&b| b != 0)
+                        .map(|&b| b as char)
+                        .collect()
                 } else {
                     String::from_utf8_lossy(bytes).to_string()
                 }
@@ -495,7 +595,9 @@ impl AgentProvisioner {
             let combined_lc = combined.to_ascii_lowercase();
 
             // SUCCESS OVERRIDE: If output indicates success, don't treat non-zero exit as failure
-            if combined_lc.contains("loading configuration file") || combined_lc.contains("configuration updated") {
+            if combined_lc.contains("loading configuration file")
+                || combined_lc.contains("configuration updated")
+            {
                 info!("Sysmon reports configuration updated/loaded successfully.");
                 return Ok(());
             }
@@ -514,7 +616,10 @@ impl AgentProvisioner {
                 continue;
             }
 
-            return Err(anyhow::anyhow!("Sysmon command failed: {}", combined.trim()));
+            return Err(anyhow::anyhow!(
+                "Sysmon command failed: {}",
+                combined.trim()
+            ));
         }
     }
 
@@ -527,7 +632,11 @@ impl AgentProvisioner {
 
     #[cfg(target_os = "windows")]
     async fn sysmon_service_active(&self) -> bool {
-        let svc = if Self::is_64bit_os() { "Sysmon64" } else { "Sysmon" };
+        let svc = if Self::is_64bit_os() {
+            "Sysmon64"
+        } else {
+            "Sysmon"
+        };
         let mut cmd = Command::new("sc");
         cmd.args(["query", svc]);
         let output = self.executor.execute(cmd).await;
@@ -589,11 +698,25 @@ impl AgentProvisioner {
         );
 
         let zip_path = Path::new("Sysmon.zip");
-        self.download_with_resume("https://download.sysinternals.com/files/Sysmon.zip", zip_path).await?;
+        self.download_with_resume(
+            "https://download.sysinternals.com/files/Sysmon.zip",
+            zip_path,
+        )
+        .await?;
 
         info!("Extracting Sysmon...");
-        let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '.' -Force; Remove-Item '{}'", zip_path.display(), zip_path.display());
-        self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "Sysmon Extraction", 2).await?;
+        let cmd_str = format!(
+            "Expand-Archive -Path '{}' -DestinationPath '.' -Force; Remove-Item '{}'",
+            zip_path.display(),
+            zip_path.display()
+        );
+        self.exec_with_retry(
+            "powershell",
+            &["-NoProfile", "-NonInteractive", "-Command", &cmd_str],
+            "Sysmon Extraction",
+            2,
+        )
+        .await?;
         info!("Sysmon downloaded and extracted successfully.");
 
         if required_path.exists() {
@@ -615,7 +738,8 @@ impl AgentProvisioner {
             return Ok(());
         }
 
-        let version = std::env::var("OSOOSI_CLAMAV_VERSION").unwrap_or_else(|_| "1.5.2".to_string());
+        let version =
+            std::env::var("OSOOSI_CLAMAV_VERSION").unwrap_or_else(|_| "1.5.2".to_string());
         let arch_flavor = if cfg!(target_arch = "aarch64") {
             "win.arm64"
         } else if cfg!(target_arch = "x86") {
@@ -632,10 +756,17 @@ impl AgentProvisioner {
         let installer_path_str = installer_path.to_string_lossy().to_string();
 
         info!("ClamAV not found. Downloading installer from official ClamAV downloads...");
-        self.download_with_resume(&download_url, &installer_path).await?;
+        self.download_with_resume(&download_url, &installer_path)
+            .await?;
 
         info!("Installing ClamAV silently...");
-        self.exec_with_retry("msiexec", &["/i", &installer_path_str, "/qn", "/norestart"], "ClamAV Installation", 2).await?;
+        self.exec_with_retry(
+            "msiexec",
+            &["/i", &installer_path_str, "/qn", "/norestart"],
+            "ClamAV Installation",
+            2,
+        )
+        .await?;
 
         let _ = std::fs::remove_file(&installer_path);
 
@@ -675,7 +806,10 @@ impl AgentProvisioner {
     async fn provision_linux(&self) -> anyhow::Result<()> {
         info!("Provisioning Linux telemetry (Sysmon for Linux)...");
         let default_cfg = Path::new("config").join("sysmonconfig-export.xml");
-        let config = default_cfg.as_path().is_file().then_some(default_cfg.as_path());
+        let config = default_cfg
+            .as_path()
+            .is_file()
+            .then_some(default_cfg.as_path());
 
         if !self.linux_sysmon_installed().await {
             self.install_linux_sysmon_package().await?;
@@ -699,7 +833,10 @@ impl AgentProvisioner {
     async fn linux_sysmon_installed(&self) -> bool {
         let mut check_cmd = Command::new("sh");
         check_cmd.args(["-c", "command -v sysmon >/dev/null 2>&1"]);
-        let has_sysmon_cmd = self.executor.execute(check_cmd).await
+        let has_sysmon_cmd = self
+            .executor
+            .execute(check_cmd)
+            .await
             .map(|s| s.status.success())
             .unwrap_or(false);
         let has_opt_sysmon = Path::new("/opt/sysmon/sysmon").exists();
@@ -710,7 +847,10 @@ impl AgentProvisioner {
     async fn install_linux_sysmon_package(&self) -> anyhow::Result<()> {
         warn!("Sysmon for Linux not found. Attempting package installation...");
         if let Err(e) = self.setup_linux_microsoft_repo().await {
-            warn!("Microsoft Linux repo bootstrap failed (continuing anyway): {}", e);
+            warn!(
+                "Microsoft Linux repo bootstrap failed (continuing anyway): {}",
+                e
+            );
         }
 
         // Try known package managers and common package names.
@@ -722,8 +862,14 @@ impl AgentProvisioner {
             ("sudo", &["dnf", "install", "-y", "sysmon"]),
             ("sudo", &["yum", "install", "-y", "sysmonforlinux"]),
             ("sudo", &["yum", "install", "-y", "sysmon"]),
-            ("sudo", &["zypper", "--non-interactive", "install", "sysmonforlinux"]),
-            ("sudo", &["zypper", "--non-interactive", "install", "sysmon"]),
+            (
+                "sudo",
+                &["zypper", "--non-interactive", "install", "sysmonforlinux"],
+            ),
+            (
+                "sudo",
+                &["zypper", "--non-interactive", "install", "sysmon"],
+            ),
         ];
 
         for (bin, args) in candidates {
@@ -731,7 +877,11 @@ impl AgentProvisioner {
             cmd.args(*args);
             if let Ok(output) = self.executor.execute(cmd).await {
                 if output.status.success() && self.linux_sysmon_installed().await {
-                    info!("Installed Sysmon for Linux using: {} {}", bin, args.join(" "));
+                    info!(
+                        "Installed Sysmon for Linux using: {} {}",
+                        bin,
+                        args.join(" ")
+                    );
                     return Ok(());
                 }
             }
@@ -761,7 +911,9 @@ impl AgentProvisioner {
                 ]);
                 let status = self.executor.execute(bootstrap_cmd).await?.status;
                 if !status.success() {
-                    return Err(anyhow::anyhow!("Failed to bootstrap Microsoft apt repository."));
+                    return Err(anyhow::anyhow!(
+                        "Failed to bootstrap Microsoft apt repository."
+                    ));
                 }
             }
             let mut update_cmd = Command::new("sudo");
@@ -784,7 +936,9 @@ impl AgentProvisioner {
                 ]);
                 let status = self.executor.execute(bootstrap_cmd).await?.status;
                 if !status.success() {
-                    return Err(anyhow::anyhow!("Failed to bootstrap Microsoft yum/dnf repository."));
+                    return Err(anyhow::anyhow!(
+                        "Failed to bootstrap Microsoft yum/dnf repository."
+                    ));
                 }
             }
             if self.command_exists("dnf").await {
@@ -808,7 +962,9 @@ impl AgentProvisioner {
     async fn command_exists(&self, cmd: &str) -> bool {
         let mut check_cmd = Command::new("sh");
         check_cmd.args(["-c", &format!("command -v {} >/dev/null 2>&1", cmd)]);
-        self.executor.execute(check_cmd).await
+        self.executor
+            .execute(check_cmd)
+            .await
             .map(|s| s.status.success())
             .unwrap_or(false)
     }
@@ -843,10 +999,16 @@ impl AgentProvisioner {
         warn!("ClamAV not found. Attempting Linux package installation...");
         let candidates: &[(&str, &[&str])] = &[
             ("sudo", &["apt-get", "update"]),
-            ("sudo", &["apt-get", "install", "-y", "clamav", "clamav-daemon"]),
+            (
+                "sudo",
+                &["apt-get", "install", "-y", "clamav", "clamav-daemon"],
+            ),
             ("sudo", &["dnf", "install", "-y", "clamav", "clamav-update"]),
             ("sudo", &["yum", "install", "-y", "clamav", "clamav-update"]),
-            ("sudo", &["zypper", "--non-interactive", "install", "clamav"]),
+            (
+                "sudo",
+                &["zypper", "--non-interactive", "install", "clamav"],
+            ),
         ];
 
         for (bin, args) in candidates {
@@ -902,19 +1064,28 @@ impl AgentProvisioner {
     }
 
     /// Legacy support for explicit Sysmon installation (Windows only)
-    pub async fn install<P: AsRef<Path>>(&self, binary_path: P, config_path: Option<P>) -> anyhow::Result<()> {
+    pub async fn install<P: AsRef<Path>>(
+        &self,
+        binary_path: P,
+        config_path: Option<P>,
+    ) -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         {
             let binary = binary_path.as_ref();
             if !binary.exists() {
-                return Err(anyhow::anyhow!("Specified binary {:?} does not exist.", binary));
+                return Err(anyhow::anyhow!(
+                    "Specified binary {:?} does not exist.",
+                    binary
+                ));
             }
             let already_installed = self.sysmon_service_active().await;
             let cfg_ref = config_path.as_ref().map(|c| c.as_ref());
             if already_installed {
-                self.run_sysmon_with_repair(binary, &["-accepteula", "-c"], cfg_ref).await
+                self.run_sysmon_with_repair(binary, &["-accepteula", "-c"], cfg_ref)
+                    .await
             } else {
-                self.run_sysmon_with_repair(binary, &["-accepteula", "-i"], cfg_ref).await
+                self.run_sysmon_with_repair(binary, &["-accepteula", "-i"], cfg_ref)
+                    .await
             }
         }
         #[cfg(not(target_os = "windows"))]
@@ -924,11 +1095,10 @@ impl AgentProvisioner {
         }
     }
 
-
     /// Provision FLOSS (FLARE Obfuscated String Solver) for deobfuscating malware strings.
     pub async fn provision_floss(&self) -> anyhow::Result<()> {
         let version = "3.1.1";
-        
+
         #[cfg(target_os = "windows")]
         {
             let floss_exe = osoosi_types::resolve_floss_path();
@@ -938,24 +1108,36 @@ impl AgentProvisioner {
             }
 
             let url = format!("https://github.com/mandiant/flare-floss/releases/download/v{}/floss-v{}-windows.zip", version, version);
-            let target_dir = floss_exe.parent().unwrap_or(&osoosi_types::resolve_tools_dir().join("floss")).to_path_buf();
+            let target_dir = floss_exe
+                .parent()
+                .unwrap_or(&osoosi_types::resolve_tools_dir().join("floss"))
+                .to_path_buf();
             let target_dir_str = target_dir.to_string_lossy();
 
-             info!("FLOSS not found. Downloading v{} for Windows...", version);
-             let zip_path = target_dir.join("floss.zip");
-             
-             tokio::fs::create_dir_all(&target_dir).await?;
-             self.download_with_resume(&url, &zip_path).await?;
+            info!("FLOSS not found. Downloading v{} for Windows...", version);
+            let zip_path = target_dir.join("floss.zip");
+
+            tokio::fs::create_dir_all(&target_dir).await?;
+            self.download_with_resume(&url, &zip_path).await?;
 
             info!("Extracting FLOSS...");
             let ps_cmd = format!(
-                 "New-Item -ItemType Directory -Force -Path '{}' | Out-Null; \
+                "New-Item -ItemType Directory -Force -Path '{}' | Out-Null; \
                   Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
                   Remove-Item '{}'",
-                 target_dir_str, zip_path.to_string_lossy(), target_dir_str, zip_path.to_string_lossy()
+                target_dir_str,
+                zip_path.to_string_lossy(),
+                target_dir_str,
+                zip_path.to_string_lossy()
             );
 
-            self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &ps_cmd], "FLOSS Extraction", 2).await?;
+            self.exec_with_retry(
+                "powershell",
+                &["-NoProfile", "-NonInteractive", "-Command", &ps_cmd],
+                "FLOSS Extraction",
+                2,
+            )
+            .await?;
             Ok(())
         }
 
@@ -966,9 +1148,12 @@ impl AgentProvisioner {
                 return Ok(());
             }
 
-            let url = format!("https://github.com/mandiant/flare-floss/releases/download/v{}/floss-v{}-linux.zip", version, version);
+            let url = format!(
+                "https://github.com/mandiant/flare-floss/releases/download/v{}/floss-v{}-linux.zip",
+                version, version
+            );
             info!("FLOSS not found. Downloading v{} for Linux...", version);
-            
+
             let status = Command::new("sh").args(["-c", &format!(
                 "curl -L -o /tmp/floss.zip {} && sudo unzip -o /tmp/floss.zip -d /usr/local/bin && sudo chmod +x /usr/local/bin/floss && rm /tmp/floss.zip",
                 url
@@ -989,9 +1174,12 @@ impl AgentProvisioner {
                 return Ok(());
             }
 
-            let url = format!("https://github.com/mandiant/flare-floss/releases/download/v{}/floss-v{}-macos.zip", version, version);
+            let url = format!(
+                "https://github.com/mandiant/flare-floss/releases/download/v{}/floss-v{}-macos.zip",
+                version, version
+            );
             info!("FLOSS not found. Downloading v{} for macOS...", version);
-            
+
             let status = Command::new("sh").args(["-c", &format!(
                  "curl -L -o /tmp/floss.zip {} && unzip -o /tmp/floss.zip -d /usr/local/bin && chmod +x /usr/local/bin/floss && rm /tmp/floss.zip",
                  url
@@ -1007,7 +1195,9 @@ impl AgentProvisioner {
 
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
-            Err(anyhow::anyhow!("FLOSS provisioning not supported on this platform."))
+            Err(anyhow::anyhow!(
+                "FLOSS provisioning not supported on this platform."
+            ))
         }
     }
 
@@ -1019,7 +1209,10 @@ impl AgentProvisioner {
         #[cfg(target_os = "windows")]
         {
             let exe_path = osoosi_types::resolve_hollows_hunter_path();
-            let target_dir = exe_path.parent().unwrap_or(&osoosi_types::resolve_tools_dir().join("hollows_hunter")).to_path_buf();
+            let target_dir = exe_path
+                .parent()
+                .unwrap_or(&osoosi_types::resolve_tools_dir().join("hollows_hunter"))
+                .to_path_buf();
 
             if exe_path.exists() {
                 info!("HollowsHunter already available at {}.", exe_path.display());
@@ -1031,15 +1224,28 @@ impl AgentProvisioner {
                 version
             );
 
-             info!("HollowsHunter not found. Downloading v{} for Windows (64-bit)...", version);
-             let zip_path = target_dir.join("hh.zip");
-             
-             tokio::fs::create_dir_all(&target_dir).await?;
-             self.download_with_resume(&url, &zip_path).await?;
+            info!(
+                "HollowsHunter not found. Downloading v{} for Windows (64-bit)...",
+                version
+            );
+            let zip_path = target_dir.join("hh.zip");
+
+            tokio::fs::create_dir_all(&target_dir).await?;
+            self.download_with_resume(&url, &zip_path).await?;
 
             info!("Extracting HollowsHunter...");
-            let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", zip_path.display(), target_dir.display());
-            self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "HollowsHunter Extraction", 2).await?;
+            let cmd_str = format!(
+                "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                zip_path.display(),
+                target_dir.display()
+            );
+            self.exec_with_retry(
+                "powershell",
+                &["-NoProfile", "-NonInteractive", "-Command", &cmd_str],
+                "HollowsHunter Extraction",
+                2,
+            )
+            .await?;
             Ok(())
         }
 
@@ -1063,7 +1269,9 @@ impl AgentProvisioner {
 
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
-            Err(anyhow::anyhow!("HollowsHunter provisioning not supported on this platform."))
+            Err(anyhow::anyhow!(
+                "HollowsHunter provisioning not supported on this platform."
+            ))
         }
     }
 
@@ -1072,7 +1280,10 @@ impl AgentProvisioner {
         #[cfg(target_os = "windows")]
         {
             let exe_path = osoosi_types::resolve_ngrep_path();
-            let target_dir = exe_path.parent().unwrap_or(&osoosi_types::resolve_tools_dir().join("ngrep")).to_path_buf();
+            let target_dir = exe_path
+                .parent()
+                .unwrap_or(&osoosi_types::resolve_tools_dir().join("ngrep"))
+                .to_path_buf();
 
             if exe_path.exists() {
                 info!("ngrep already available at {}.", exe_path.display());
@@ -1085,15 +1296,25 @@ impl AgentProvisioner {
                 version
             );
 
-             info!("ngrep not found. Downloading v{} for Windows...", version);
-             let zip_path = target_dir.join("ngrep.zip");
-             
-             tokio::fs::create_dir_all(&target_dir).await?;
-             self.download_with_resume(&url, &zip_path).await?;
+            info!("ngrep not found. Downloading v{} for Windows...", version);
+            let zip_path = target_dir.join("ngrep.zip");
+
+            tokio::fs::create_dir_all(&target_dir).await?;
+            self.download_with_resume(&url, &zip_path).await?;
 
             info!("Extracting ngrep...");
-            let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", zip_path.display(), target_dir.display());
-            self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "ngrep Extraction", 2).await?;
+            let cmd_str = format!(
+                "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                zip_path.display(),
+                target_dir.display()
+            );
+            self.exec_with_retry(
+                "powershell",
+                &["-NoProfile", "-NonInteractive", "-Command", &cmd_str],
+                "ngrep Extraction",
+                2,
+            )
+            .await?;
             Ok(())
         }
         #[cfg(not(target_os = "windows"))]
@@ -1107,9 +1328,12 @@ impl AgentProvisioner {
         #[cfg(target_os = "windows")]
         {
             // Check if npcap is likely installed by looking for the driver or dll
-            let system32 = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
-            let wpcap_dll = std::path::Path::new(&system32).join("System32").join("wpcap.dll");
-            
+            let system32 =
+                std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
+            let wpcap_dll = std::path::Path::new(&system32)
+                .join("System32")
+                .join("wpcap.dll");
+
             if wpcap_dll.exists() {
                 info!("Npcap (or WinPcap) detected via wpcap.dll. Skipping install.");
                 return Ok(());
@@ -1123,9 +1347,20 @@ impl AgentProvisioner {
 
             info!("Installing Npcap silently (requires Elevation)...");
             // /S = Silent, /admin_only=1, /dot11_support=0, /loopback_support=1
-            self.exec_with_retry(installer_path.to_str().unwrap(), &["/S", "/admin_only=1", "/dot11_support=0", "/loopback_support=1"], "Npcap Installation", 2).await?;
+            self.exec_with_retry(
+                installer_path.to_str().unwrap(),
+                &[
+                    "/S",
+                    "/admin_only=1",
+                    "/dot11_support=0",
+                    "/loopback_support=1",
+                ],
+                "Npcap Installation",
+                2,
+            )
+            .await?;
             let _ = std::fs::remove_file(&installer_path);
-            
+
             info!("Npcap installed successfully.");
             Ok(())
         }
@@ -1162,7 +1397,7 @@ impl AgentProvisioner {
                     }
                 }
             }
-            
+
             // Fallback to cargo install
             if self.command_exists("cargo").await {
                 info!("Package managers failed. Attempting cargo install sniffglue...");
@@ -1201,7 +1436,9 @@ impl AgentProvisioner {
         }
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
         {
-             Err(anyhow::anyhow!("sniffglue provisioning not supported on this platform."))
+            Err(anyhow::anyhow!(
+                "sniffglue provisioning not supported on this platform."
+            ))
         }
     }
 
@@ -1247,14 +1484,21 @@ impl AgentProvisioner {
             // Only download if the subfolder is empty
             if let Ok(entries) = std::fs::read_dir(&target_sub_dir) {
                 if entries.filter_map(|e| e.ok()).count() > 1 {
-                    info!("YARA rules for '{}' already present at {}.", name, target_sub_dir.display());
+                    info!(
+                        "YARA rules for '{}' already present at {}.",
+                        name,
+                        target_sub_dir.display()
+                    );
                     continue;
                 }
             }
 
-            info!("YARA rules for '{}' missing. Downloading from {}...", name, url);
+            info!(
+                "YARA rules for '{}' missing. Downloading from {}...",
+                name, url
+            );
             let zip_path = target_sub_dir.join(format!("{}_temp.zip", name));
-            
+
             // Use resumable downloader
             self.download_with_resume(url, &zip_path).await?;
 
@@ -1276,33 +1520,47 @@ impl AgentProvisioner {
                      Remove-Item -Recurse -Force '{}'",
                      tmp_extract.to_string_lossy(), tmp_extract.to_string_lossy(), zip_path.to_string_lossy(), tmp_extract.to_string_lossy(), tmp_extract.to_string_lossy(), target_sub_dir.to_string_lossy(), tmp_extract.to_string_lossy(), target_sub_dir.to_string_lossy(), tmp_extract.to_string_lossy()
                 );
-                
-                self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &ps_cmd], &format!("Extract YARA {}", name), 2).await?;
+
+                self.exec_with_retry(
+                    "powershell",
+                    &["-NoProfile", "-NonInteractive", "-Command", &ps_cmd],
+                    &format!("Extract YARA {}", name),
+                    2,
+                )
+                .await?;
             }
             #[cfg(not(target_os = "windows"))]
             {
-                 let sh_cmd = format!(
+                let sh_cmd = format!(
                     "unzip -o {} -d {} && cp -r {}/*/* {}/ && rm -rf {}",
-                    zip_path.to_string_lossy(), tmp_extract.to_string_lossy(), tmp_extract.to_string_lossy(), target_sub_dir.to_string_lossy(), tmp_extract.to_string_lossy()
+                    zip_path.to_string_lossy(),
+                    tmp_extract.to_string_lossy(),
+                    tmp_extract.to_string_lossy(),
+                    target_sub_dir.to_string_lossy(),
+                    tmp_extract.to_string_lossy()
                 );
                 let mut cmd = Command::new("sh");
                 cmd.args(["-c", &sh_cmd]);
                 let _ = self.executor.execute(cmd).await;
             }
             let _ = std::fs::remove_file(&zip_path);
-            
+
             // Sanitize rules after extraction to remove incompatibilities
             let _ = self.sanitize_yara_rules(&target_sub_dir);
         }
-        
+
         info!("Finalizing YARA rules (sanitizing for compatibility)...");
         let _ = self.sanitize_yara_rules(yara_base_dir);
-        
+
         Ok(())
     }
 
     /// Download a file with support for resuming partial downloads (HTTP Range).
-    pub async fn download_with_resume(&self, url: &str, dest: &std::path::Path) -> anyhow::Result<()> {
+    pub async fn download_with_resume(
+        &self,
+        url: &str,
+        dest: &std::path::Path,
+    ) -> anyhow::Result<()> {
         self.executor.download(url, dest, true).await
     }
 
@@ -1313,20 +1571,25 @@ impl AgentProvisioner {
             // Resolve to absolute path for exclusion
             let full_path = std::env::current_dir()?.join(path);
             let path_str = full_path.to_string_lossy();
-            
+
             info!("Adding Windows Defender exclusion for: {}...", path_str);
-            let ps_cmd = format!("Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue", path_str);
-            
+            let ps_cmd = format!(
+                "Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue",
+                path_str
+            );
+
             let mut cmd = Command::new("powershell");
             cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd]);
             let status = self.executor.execute(cmd).await?.status;
-            
+
             if status.success() {
                 info!("Windows Defender exclusion added successfully.");
                 Ok(())
             } else {
                 warn!("Failed to add Defender exclusion. This typically requires Administrator privileges.");
-                Err(anyhow::anyhow!("Defender exclusion failed (check privileges)."))
+                Err(anyhow::anyhow!(
+                    "Defender exclusion failed (check privileges)."
+                ))
             }
         }
         #[cfg(not(target_os = "windows"))]
@@ -1336,23 +1599,31 @@ impl AgentProvisioner {
         }
     }
 
-
     /// Sanitize YARA rules to prevent compilation errors (androguard imports, type mismatches, missing includes).
     pub fn sanitize_yara_rules(&self, dir: &std::path::Path) -> anyhow::Result<()> {
         let mut seen_rules = std::collections::HashSet::new();
         self.sanitize_yara_rules_internal(dir, &mut seen_rules)
     }
 
-    fn sanitize_yara_rules_internal(&self, dir: &std::path::Path, seen_rules: &mut std::collections::HashSet<String>) -> anyhow::Result<()> {
+    fn sanitize_yara_rules_internal(
+        &self,
+        dir: &std::path::Path,
+        seen_rules: &mut std::collections::HashSet<String>,
+    ) -> anyhow::Result<()> {
         use std::path::Path;
-        if !dir.exists() { return Ok(()); }
+        if !dir.exists() {
+            return Ok(());
+        }
 
         for entry in std::fs::read_dir(dir)? {
             let entry = entry?;
             let path = entry.path();
             if path.is_dir() {
                 let _ = self.sanitize_yara_rules_internal(&path, seen_rules);
-            } else if path.extension().map_or(false, |e| e == "yar" || e == "yara") {
+            } else if path
+                .extension()
+                .map_or(false, |e| e == "yar" || e == "yara")
+            {
                 // Use lossy reading to handle potential encoding issues in malware rules
                 if let Ok(bytes) = std::fs::read(&path) {
                     let raw_content = String::from_utf8_lossy(&bytes);
@@ -1360,20 +1631,40 @@ impl AgentProvisioner {
                     let content = raw_content.replace("*\\/", "*/");
                     let content_lower = content.to_lowercase();
 
-                    let has_andro = content_lower.contains("import \"androguard\"") || content_lower.contains("import 'androguard'");
-                    let has_crash = content.contains("pe.exports(\"Crash\")") && content.contains("& pe.characteristics");
-                    let has_include = content.contains("include \"") || content.contains("include '");
-                    let has_empty_regex = (content.contains("|/") || content.contains("| /")) && content.contains('=');
+                    let has_andro = content_lower.contains("import \"androguard\"")
+                        || content_lower.contains("import 'androguard'");
+                    let has_crash = content.contains("pe.exports(\"Crash\")")
+                        && content.contains("& pe.characteristics");
+                    let has_include =
+                        content.contains("include \"") || content.contains("include '");
+                    let has_empty_regex = (content.contains("|/") || content.contains("| /"))
+                        && content.contains('=');
                     let has_backslash = content.contains('\\');
-                    let has_unclosed_repetition = content.contains("?{") || content.contains("? {") || content.contains("?  {");
-                    let has_unk_identifier = (content.contains("filename") || content.contains("filetype")) && (content.contains("==") || content.contains("!="));
-                    let has_duplicate_maze = path.to_string_lossy().contains("RANSOM_Maze.yar") && content.matches("rule Maze").count() > 1;
+                    let has_unclosed_repetition = content.contains("?{")
+                        || content.contains("? {")
+                        || content.contains("?  {");
+                    let has_unk_identifier = (content.contains("filename")
+                        || content.contains("filetype"))
+                        && (content.contains("==") || content.contains("!="));
+                    let has_duplicate_maze = path.to_string_lossy().contains("RANSOM_Maze.yar")
+                        && content.matches("rule Maze").count() > 1;
                     let has_broken_comment = raw_content.contains("*\\/");
 
-                    if has_andro || has_crash || has_include || has_empty_regex || has_backslash || has_unclosed_repetition || has_duplicate_maze || has_unk_identifier || has_broken_comment {
+                    if has_andro
+                        || has_crash
+                        || has_include
+                        || has_empty_regex
+                        || has_backslash
+                        || has_unclosed_repetition
+                        || has_duplicate_maze
+                        || has_unk_identifier
+                        || has_broken_comment
+                    {
                         let mut lines = Vec::new();
                         let mut changed = false;
-                        if has_broken_comment { changed = true; }
+                        if has_broken_comment {
+                            changed = true;
+                        }
                         let mut maze_count = 0;
                         let parent = path.parent().unwrap_or(Path::new("."));
 
@@ -1389,15 +1680,27 @@ impl AgentProvisioner {
                             let lower = trimmed.to_lowercase();
 
                             // 1. Disable androguard imports
-                            if (trimmed.starts_with("import") || trimmed.starts_with("//import")) && trimmed.contains("androguard") {
+                            if (trimmed.starts_with("import") || trimmed.starts_with("//import"))
+                                && trimmed.contains("androguard")
+                            {
                                 new_line = format!("// {}", line);
                                 changed = true;
                             }
                             // 2. Fix APT_CrashOverride.yar type mismatch (boolean & int)
-                            else if (line.contains("pe.exports(\"Crash\")") || line.contains("pe.exports(\"crash\")")) && line.contains("& pe.characteristics") {
-                                new_line = line.replace("pe.exports(\"Crash\")", "pe.exports(\"Crash\") != false")
-                                              .replace("pe.exports(\"crash\")", "pe.exports(\"crash\") != false")
-                                              .replace("& pe.characteristics", "and pe.characteristics != 0");
+                            else if (line.contains("pe.exports(\"Crash\")")
+                                || line.contains("pe.exports(\"crash\")"))
+                                && line.contains("& pe.characteristics")
+                            {
+                                new_line = line
+                                    .replace(
+                                        "pe.exports(\"Crash\")",
+                                        "pe.exports(\"Crash\") != false",
+                                    )
+                                    .replace(
+                                        "pe.exports(\"crash\")",
+                                        "pe.exports(\"crash\") != false",
+                                    )
+                                    .replace("& pe.characteristics", "and pe.characteristics != 0");
                                 changed = true;
                             }
                             // 3. Fix missing includes
@@ -1408,7 +1711,10 @@ impl AgentProvisioner {
                                     let inc_path_str = parts[1];
                                     let inc_path = parent.join(inc_path_str);
                                     if !inc_path.exists() {
-                                        let alt_path = parent.parent().unwrap_or(Path::new(".")).join(inc_path_str);
+                                        let alt_path = parent
+                                            .parent()
+                                            .unwrap_or(Path::new("."))
+                                            .join(inc_path_str);
                                         if !alt_path.exists() {
                                             new_line = format!("// {}", line);
                                             changed = true;
@@ -1417,17 +1723,23 @@ impl AgentProvisioner {
                                 }
                             }
                             // 4. Fix empty regex matches
-                            else if (trimmed.contains("|/") || trimmed.contains("| /")) && trimmed.contains('=') && trimmed.contains('/') {
+                            else if (trimmed.contains("|/") || trimmed.contains("| /"))
+                                && trimmed.contains('=')
+                                && trimmed.contains('/')
+                            {
                                 if let Some(idx) = new_line.find("|/") {
-                                    new_line.replace_range(idx..idx+1, "");
+                                    new_line.replace_range(idx..idx + 1, "");
                                     changed = true;
                                 } else if let Some(idx) = new_line.find("| /") {
-                                    new_line.replace_range(idx..idx+1, "");
+                                    new_line.replace_range(idx..idx + 1, "");
                                     changed = true;
                                 }
                             }
                             // 5. Fix unclosed counted repetition
-                            else if trimmed.contains('/') && trimmed.contains('=') && (trimmed.contains("?{") || trimmed.contains("? {")) {
+                            else if trimmed.contains('/')
+                                && trimmed.contains('=')
+                                && (trimmed.contains("?{") || trimmed.contains("? {"))
+                            {
                                 if new_line.contains("?{") {
                                     new_line = new_line.replace("?{", "?\\{");
                                     changed = true;
@@ -1437,8 +1749,15 @@ impl AgentProvisioner {
                                 }
                             }
                             // 6. Comment out unknown identifiers (filename, filetype, filepath, extension)
-                            else if (lower.contains("filename") || lower.contains("filetype") || lower.contains("filepath") || lower.contains("extension"))
-                                     && (lower.contains("==") || lower.contains("!=") || lower.contains("matches") || lower.contains("contains")) {
+                            else if (lower.contains("filename")
+                                || lower.contains("filetype")
+                                || lower.contains("filepath")
+                                || lower.contains("extension"))
+                                && (lower.contains("==")
+                                    || lower.contains("!=")
+                                    || lower.contains("matches")
+                                    || lower.contains("contains"))
+                            {
                                 new_line = format!("// {}", line);
                                 changed = true;
                             }
@@ -1455,10 +1774,13 @@ impl AgentProvisioner {
                             if trimmed.contains('\\') && !new_line.trim().starts_with("//") {
                                 // Fix hex string delimiters: \{ ... \} → { ... }
                                 if new_line.contains("= \\{") || new_line.contains("=\\{") {
-                                    new_line = new_line.replace("= \\{", "= {").replace("=\\{", "={");
+                                    new_line =
+                                        new_line.replace("= \\{", "= {").replace("=\\{", "={");
                                     changed = true;
                                 }
-                                if new_line.contains("\\}") && (new_line.contains("= {") || new_line.contains("={")) {
+                                if new_line.contains("\\}")
+                                    && (new_line.contains("= {") || new_line.contains("={"))
+                                {
                                     new_line = new_line.replace("\\}", "}");
                                     changed = true;
                                 }
@@ -1468,12 +1790,42 @@ impl AgentProvisioner {
                                 let mut esc_changed = false;
                                 while i < chars.len() {
                                     if chars[i] == '\\' && i + 1 < chars.len() {
-                                        let next = chars[i+1];
-                                        let valid = matches!(next,
-                                            'n' | 'r' | 't' | '\\' | '\"' | '\'' | 'x' | 'u' | 'U'
-                                            | 'd' | 'w' | 's' | 'D' | 'W' | 'S' | 'b' | 'B'
-                                            | '0'..='9' | '$' | '^' | '*' | '+' | '?' | '(' | ')'
-                                            | '[' | ']' | '{' | '}' | '|' | '.' | '/' | ' '
+                                        let next = chars[i + 1];
+                                        let valid = matches!(
+                                            next,
+                                            'n' | 'r'
+                                                | 't'
+                                                | '\\'
+                                                | '\"'
+                                                | '\''
+                                                | 'x'
+                                                | 'u'
+                                                | 'U'
+                                                | 'd'
+                                                | 'w'
+                                                | 's'
+                                                | 'D'
+                                                | 'W'
+                                                | 'S'
+                                                | 'b'
+                                                | 'B'
+                                                | '0'
+                                                ..='9'
+                                                    | '$'
+                                                    | '^'
+                                                    | '*'
+                                                    | '+'
+                                                    | '?'
+                                                    | '('
+                                                    | ')'
+                                                    | '['
+                                                    | ']'
+                                                    | '{'
+                                                    | '}'
+                                                    | '|'
+                                                    | '.'
+                                                    | '/'
+                                                    | ' '
                                         );
                                         if !valid {
                                             fixed.push('\\');
@@ -1502,10 +1854,16 @@ impl AgentProvisioner {
                                 let parts: Vec<&str> = trimmed.split_whitespace().collect();
                                 for (idx, part) in parts.iter().enumerate() {
                                     if *part == "rule" && idx + 1 < parts.len() {
-                                        let rule_name = parts[idx+1].trim_end_matches('{').split(':').next().unwrap_or("").trim();
+                                        let rule_name = parts[idx + 1]
+                                            .trim_end_matches('{')
+                                            .split(':')
+                                            .next()
+                                            .unwrap_or("")
+                                            .trim();
                                         if seen_rules.contains(rule_name) {
                                             let new_rule_name = format!("{}_Duplicate", rule_name);
-                                            new_line = new_line.replacen(rule_name, &new_rule_name, 1);
+                                            new_line =
+                                                new_line.replacen(rule_name, &new_rule_name, 1);
                                             changed = true;
                                         } else {
                                             seen_rules.insert(rule_name.to_string());
@@ -1539,7 +1897,10 @@ impl AgentProvisioner {
         #[cfg(not(target_os = "windows"))]
         let capa_bin = capa_dir.join("capa");
 
-        if rules_dir.exists() && sigs_dir.exists() && (capa_bin.exists() || self.command_exists("capa").await) {
+        if rules_dir.exists()
+            && sigs_dir.exists()
+            && (capa_bin.exists() || self.command_exists("capa").await)
+        {
             info!("CAPA dependencies already provisioned.");
             return Ok(());
         }
@@ -1553,40 +1914,77 @@ impl AgentProvisioner {
         // 1. Download Binary if missing
         if !capa_bin.exists() && !self.command_exists("capa").await {
             info!("Downloading CAPA binary (v{})...", version);
-            
+
             #[cfg(target_os = "windows")]
-            let url = format!("https://github.com/mandiant/capa/releases/download/v{}/capa-v{}-windows.zip", version, version);
-            
+            let url = format!(
+                "https://github.com/mandiant/capa/releases/download/v{}/capa-v{}-windows.zip",
+                version, version
+            );
+
             #[cfg(target_os = "linux")]
             let url = {
-                let arch = if std::env::consts::ARCH == "aarch64" { "-arm64" } else { "" };
-                format!("https://github.com/mandiant/capa/releases/download/v{}/capa-v{}-linux{}.zip", version, version, arch)
+                let arch = if std::env::consts::ARCH == "aarch64" {
+                    "-arm64"
+                } else {
+                    ""
+                };
+                format!(
+                    "https://github.com/mandiant/capa/releases/download/v{}/capa-v{}-linux{}.zip",
+                    version, version, arch
+                )
             };
-            
+
             #[cfg(target_os = "macos")]
             let url = {
-                let arch = if std::env::consts::ARCH == "aarch64" { "-arm64" } else { "" };
-                format!("https://github.com/mandiant/capa/releases/download/v{}/capa-v{}-macos{}.zip", version, version, arch)
+                let arch = if std::env::consts::ARCH == "aarch64" {
+                    "-arm64"
+                } else {
+                    ""
+                };
+                format!(
+                    "https://github.com/mandiant/capa/releases/download/v{}/capa-v{}-macos{}.zip",
+                    version, version, arch
+                )
             };
-            
+
             let zip_path = capa_dir.join("capa_bin.zip");
-            
+
             // Add AV exclusion on Windows before downloading
             #[cfg(target_os = "windows")]
             {
                 let exclusion_path = capa_dir.to_string_lossy();
-                let ps_cmd = format!("Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue", exclusion_path);
-                let _ = self.exec_with_retry("powershell", &["-NoProfile", "-Command", &ps_cmd], "AV Exclusion", 1).await;
+                let ps_cmd = format!(
+                    "Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue",
+                    exclusion_path
+                );
+                let _ = self
+                    .exec_with_retry(
+                        "powershell",
+                        &["-NoProfile", "-Command", &ps_cmd],
+                        "AV Exclusion",
+                        1,
+                    )
+                    .await;
             }
 
             self.download_with_resume(&url, &zip_path).await?;
-            
+
             info!("Extracting CAPA binary...");
             #[cfg(target_os = "windows")]
             {
-                let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", zip_path.display(), capa_dir.display());
-                self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "CAPA Binary Extraction", 2).await?;
-                
+                let cmd_str = format!(
+                    "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                    zip_path.display(),
+                    capa_dir.display()
+                );
+                self.exec_with_retry(
+                    "powershell",
+                    &["-NoProfile", "-NonInteractive", "-Command", &cmd_str],
+                    "CAPA Binary Extraction",
+                    2,
+                )
+                .await?;
+
                 // RESILIENCE: Check if extracted into a subfolder and move it out
                 let subfolder = capa_dir.join(format!("capa-v{}-windows", version));
                 if subfolder.exists() {
@@ -1599,16 +1997,29 @@ impl AgentProvisioner {
             }
             #[cfg(not(target_os = "windows"))]
             {
-                let cmd_str = format!("unzip -o '{}' -d '{}'", zip_path.display(), capa_dir.display());
+                let cmd_str = format!(
+                    "unzip -o '{}' -d '{}'",
+                    zip_path.display(),
+                    capa_dir.display()
+                );
                 let mut cmd = std::process::Command::new("sh");
                 cmd.args(["-c", &cmd_str]);
                 let _ = self.executor.execute(cmd).await;
-                
+
                 // RESILIENCE: Handle subfolder extraction on Linux/Mac
-                let os_name = if cfg!(target_os = "macos") { "macos" } else { "linux" };
-                let arch_suffix = if std::env::consts::ARCH == "aarch64" { "-arm64" } else { "" };
-                let subfolder = capa_dir.join(format!("capa-v{}-{}{}", version, os_name, arch_suffix));
-                
+                let os_name = if cfg!(target_os = "macos") {
+                    "macos"
+                } else {
+                    "linux"
+                };
+                let arch_suffix = if std::env::consts::ARCH == "aarch64" {
+                    "-arm64"
+                } else {
+                    ""
+                };
+                let subfolder =
+                    capa_dir.join(format!("capa-v{}-{}{}", version, os_name, arch_suffix));
+
                 if subfolder.exists() {
                     let sub_bin = subfolder.join("capa");
                     if sub_bin.exists() {
@@ -1616,8 +2027,10 @@ impl AgentProvisioner {
                     }
                     let _ = std::fs::remove_dir_all(subfolder);
                 }
-                
-                let _ = std::process::Command::new("chmod").args(["+x", &capa_bin.to_string_lossy()]).status();
+
+                let _ = std::process::Command::new("chmod")
+                    .args(["+x", &capa_bin.to_string_lossy()])
+                    .status();
             }
             let _ = std::fs::remove_file(&zip_path);
         }
@@ -1626,32 +2039,49 @@ impl AgentProvisioner {
         if !rules_dir.exists() {
             info!("Downloading CAPA rules (v{})...", version);
             let rules_zip = capa_dir.join("rules.zip");
-            let rules_url = format!("https://github.com/mandiant/capa-rules/archive/refs/tags/v{}.zip", version);
-            
+            let rules_url = format!(
+                "https://github.com/mandiant/capa-rules/archive/refs/tags/v{}.zip",
+                version
+            );
+
             self.download_with_resume(&rules_url, &rules_zip).await?;
-            
+
             info!("Extracting CAPA rules...");
             let temp_extract = capa_dir.join("temp_rules");
             let _ = std::fs::create_dir_all(&temp_extract);
-            
+
             #[cfg(target_os = "windows")]
             {
-                let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", rules_zip.display(), temp_extract.display());
-                self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "CAPA Rules Extraction", 2).await?;
+                let cmd_str = format!(
+                    "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                    rules_zip.display(),
+                    temp_extract.display()
+                );
+                self.exec_with_retry(
+                    "powershell",
+                    &["-NoProfile", "-NonInteractive", "-Command", &cmd_str],
+                    "CAPA Rules Extraction",
+                    2,
+                )
+                .await?;
             }
             #[cfg(not(target_os = "windows"))]
             {
-                let cmd_str = format!("unzip -o '{}' -d '{}'", rules_zip.display(), temp_extract.display());
+                let cmd_str = format!(
+                    "unzip -o '{}' -d '{}'",
+                    rules_zip.display(),
+                    temp_extract.display()
+                );
                 let mut cmd = std::process::Command::new("sh");
                 cmd.args(["-c", &cmd_str]);
                 let _ = self.executor.execute(cmd).await;
             }
-            
+
             let source = temp_extract.join(format!("capa-rules-{}", version));
             if source.exists() {
                 let _ = std::fs::rename(source, &rules_dir);
             }
-            
+
             let _ = std::fs::remove_file(&rules_zip);
             let _ = std::fs::remove_dir_all(&temp_extract);
         }
@@ -1661,24 +2091,38 @@ impl AgentProvisioner {
             info!("Downloading CAPA signatures...");
             let sigs_zip = capa_dir.join("sigs.zip");
             let sigs_url = "https://github.com/mandiant/capa/releases/download/v2.0.0/sigs.zip";
-            
+
             if self.download_with_resume(sigs_url, &sigs_zip).await.is_ok() {
                 info!("Extracting CAPA signatures...");
                 let _ = std::fs::create_dir_all(&sigs_dir);
-                
+
                 #[cfg(target_os = "windows")]
                 {
-                    let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", sigs_zip.display(), sigs_dir.display());
-                    self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "CAPA Signatures Extraction", 2).await?;
+                    let cmd_str = format!(
+                        "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                        sigs_zip.display(),
+                        sigs_dir.display()
+                    );
+                    self.exec_with_retry(
+                        "powershell",
+                        &["-NoProfile", "-NonInteractive", "-Command", &cmd_str],
+                        "CAPA Signatures Extraction",
+                        2,
+                    )
+                    .await?;
                 }
                 #[cfg(not(target_os = "windows"))]
                 {
-                    let cmd_str = format!("unzip -o '{}' -d '{}'", sigs_zip.display(), sigs_dir.display());
+                    let cmd_str = format!(
+                        "unzip -o '{}' -d '{}'",
+                        sigs_zip.display(),
+                        sigs_dir.display()
+                    );
                     let mut cmd = std::process::Command::new("sh");
                     cmd.args(["-c", &cmd_str]);
                     let _ = self.executor.execute(cmd).await;
                 }
-                
+
                 let _ = std::fs::remove_file(&sigs_zip);
             }
         }
@@ -1691,7 +2135,8 @@ impl AgentProvisioner {
     /// Default: **no** download — the historical Hugging Face bundle URL often 404s. Set
     /// `OSOOSI_USE_BUNDLED_HF_WEIGHTS=1` to attempt `oyesanyf/OshoosiClaw-Weights`, or place `malconv.safetensors` under `models/malware/`.
     pub async fn provision_malconv_weights(&self) -> anyhow::Result<()> {
-        let models_dir = std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
+        let models_dir =
+            std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
         let malconv_dir = Path::new(&models_dir).join("malware");
         let weight_path = malconv_dir.join("malconv.safetensors");
 
@@ -1717,7 +2162,8 @@ impl AgentProvisioner {
     /// SmolLM2 ONNX + tokenizer. Same opt-in as [`provision_malconv_weights`]: no HF hit unless
     /// `OSOOSI_USE_BUNDLED_HF_WEIGHTS=1` (or files already on disk / use `ensure_ai_models` public Hub paths).
     pub async fn provision_behavioral_model(&self) -> anyhow::Result<()> {
-        let models_dir = std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
+        let models_dir =
+            std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
         let smollm_dir = Path::new(&models_dir).join("smollm");
         let model_path = smollm_dir.join("smollm2-135m-it.onnx");
         let tokenizer_path = smollm_dir.join("tokenizer.json");
@@ -1741,7 +2187,8 @@ impl AgentProvisioner {
             self.download_with_resume(model_url, &model_path).await?;
         }
         if !tokenizer_path.exists() {
-            self.download_with_resume(tokenizer_url, &tokenizer_path).await?;
+            self.download_with_resume(tokenizer_url, &tokenizer_path)
+                .await?;
         }
 
         info!("Behavioral model weights provisioned successfully.");
@@ -1777,20 +2224,36 @@ impl AgentProvisioner {
         // Extraction logic similar to CAPA
         #[cfg(target_os = "windows")]
         {
-            let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", zip_path.display(), hayabusa_dir.display());
-            self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "Hayabusa Extraction", 2).await?;
+            let cmd_str = format!(
+                "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                zip_path.display(),
+                hayabusa_dir.display()
+            );
+            self.exec_with_retry(
+                "powershell",
+                &["-NoProfile", "-NonInteractive", "-Command", &cmd_str],
+                "Hayabusa Extraction",
+                2,
+            )
+            .await?;
         }
         #[cfg(not(target_os = "windows"))]
         {
             let _ = std::fs::create_dir_all(&hayabusa_dir);
-            let cmd_str = format!("unzip -o '{}' -d '{}'", zip_path.display(), hayabusa_dir.display());
+            let cmd_str = format!(
+                "unzip -o '{}' -d '{}'",
+                zip_path.display(),
+                hayabusa_dir.display()
+            );
             let mut cmd = std::process::Command::new("sh");
             cmd.args(["-c", &cmd_str]);
             let _ = self.executor.execute(cmd).await;
-            let _ = std::process::Command::new("chmod").args(["+x", &hayabusa_bin.to_string_lossy()]).status();
+            let _ = std::process::Command::new("chmod")
+                .args(["+x", &hayabusa_bin.to_string_lossy()])
+                .status();
         }
         let _ = std::fs::remove_file(&zip_path);
-        
+
         info!("Hayabusa provisioned successfully.");
         Ok(())
     }
@@ -1818,22 +2281,42 @@ impl AgentProvisioner {
         #[cfg(target_os = "macos")]
         let url = format!("https://github.com/WithSecureLabs/chainsaw/releases/download/v{}/chainsaw_x86_64-apple-darwin.tar.gz", version);
 
-        let pkg_path = tools_dir.join(if cfg!(target_os = "windows") { "chainsaw.zip" } else { "chainsaw.tar.gz" });
+        let pkg_path = tools_dir.join(if cfg!(target_os = "windows") {
+            "chainsaw.zip"
+        } else {
+            "chainsaw.tar.gz"
+        });
         self.download_with_resume(&url, &pkg_path).await?;
 
         #[cfg(target_os = "windows")]
         {
-            let cmd_str = format!("Expand-Archive -Path '{}' -DestinationPath '{}' -Force", pkg_path.display(), chainsaw_dir.display());
-            self.exec_with_retry("powershell", &["-NoProfile", "-NonInteractive", "-Command", &cmd_str], "Chainsaw Extraction", 2).await?;
+            let cmd_str = format!(
+                "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
+                pkg_path.display(),
+                chainsaw_dir.display()
+            );
+            self.exec_with_retry(
+                "powershell",
+                &["-NoProfile", "-NonInteractive", "-Command", &cmd_str],
+                "Chainsaw Extraction",
+                2,
+            )
+            .await?;
         }
         #[cfg(not(target_os = "windows"))]
         {
             let _ = std::fs::create_dir_all(&chainsaw_dir);
-            let cmd_str = format!("tar -xzf '{}' -C '{}'", pkg_path.display(), chainsaw_dir.display());
+            let cmd_str = format!(
+                "tar -xzf '{}' -C '{}'",
+                pkg_path.display(),
+                chainsaw_dir.display()
+            );
             let mut cmd = std::process::Command::new("sh");
             cmd.args(["-c", &cmd_str]);
             let _ = self.executor.execute(cmd).await;
-            let _ = std::process::Command::new("chmod").args(["+x", &chainsaw_bin.to_string_lossy()]).status();
+            let _ = std::process::Command::new("chmod")
+                .args(["+x", &chainsaw_bin.to_string_lossy()])
+                .status();
         }
         let _ = std::fs::remove_file(&pkg_path);
 
@@ -1855,18 +2338,17 @@ impl AgentProvisioner {
             return Ok(());
         }
 
-        // Xori is often built from source or provided as a crate, 
-        // but for this agent we'll attempt to download a pre-built binary if available 
+        // Xori is often built from source or provided as a crate,
+        // but for this agent we'll attempt to download a pre-built binary if available
         // or just log that it needs manual setup if not found.
         info!("Provisioning Xori...");
         // Placeholder for Xori binary download logic
         // For now, we'll create the directory to signify intent.
         let _ = std::fs::create_dir_all(&xori_dir);
-        
+
         info!("Xori directory prepared. (Binary download pending official release availability).");
         Ok(())
     }
-
 }
 
 /// Full-fidelity Sysmon configuration: for each event class, `onmatch="exclude"` with **no** filter
@@ -1876,7 +2358,8 @@ impl AgentProvisioner {
 /// **Do not** replace this with reduced EventFiltering: the adaptive controller must not rewrite
 /// Sysmon with partial profiles, or most event IDs stop flowing.
 pub fn full_fidelity_sysmon_xml(rules: &[osoosi_types::BlockingRule]) -> String {
-    let mut xml = String::from(r#"<Sysmon schemaversion="4.82">
+    let mut xml = String::from(
+        r#"<Sysmon schemaversion="4.82">
   <HashAlgorithms>*</HashAlgorithms>
   <CheckRevocation/>
   <DnsLookup/>
@@ -1909,7 +2392,8 @@ pub fn full_fidelity_sysmon_xml(rules: &[osoosi_types::BlockingRule]) -> String 
     <FileBlockShredding onmatch="exclude" />
     <SysmonServiceState onmatch="exclude" />
     <SysmonConfigChange onmatch="exclude" />
-"#);
+"#,
+    );
 
     for rule in rules {
         match rule.kind {

@@ -4,26 +4,30 @@
 //! Linux journald/syslog, and macOS unified log into behavioral sentences for
 //! SecureBERT-style classification. Supports continual training via labeled feedback.
 
-mod log_reader;
-mod sentence;
-mod classifier;
-pub mod feedback;
-mod colog;
-mod reasoning;
 mod analyzer;
-pub mod llm_engine;
-mod process_tree;
-pub mod forensics;
-pub mod yara_analyzer;
+mod classifier;
+mod colog;
 pub mod ebpf_monitor;
+pub mod feedback;
+pub mod forensics;
+pub mod llm_engine;
+mod log_reader;
+mod process_tree;
+mod reasoning;
+mod sentence;
+pub mod privacy_voter;
+pub mod yara_analyzer;
 
-pub use log_reader::{BehavioralLogReader, LogEvent};
-pub use sentence::event_to_behavioral_sentence;
+
+pub use analyzer::{AnalysisMode, BehavioralAnalyzer, InvestigativePrompt};
 pub use classifier::{BehavioralClassifier, BehavioralResult};
-pub use feedback::{FeedbackStore, LabeledSample};
-pub use analyzer::{BehavioralAnalyzer, AnalysisMode, InvestigativePrompt};
-pub use process_tree::{ProcessTreeEmbedder, ProcessRelationship};
-pub use llm_engine::{SmolLMAnalyzer, Gemma4Analyzer};
-pub use forensics::{PacketForensics, TriageResult};
-pub use yara_analyzer::YaraAnalyzer;
 pub use ebpf_monitor::EbpfMonitor;
+pub use feedback::{FeedbackStore, LabeledSample};
+pub use forensics::{PacketForensics, TriageResult};
+pub use llm_engine::{Gemma4Analyzer, SmolLMAnalyzer};
+pub use log_reader::{BehavioralLogReader, LogEvent};
+pub use process_tree::{ProcessRelationship, ProcessTreeEmbedder};
+pub use sentence::event_to_behavioral_sentence;
+pub use privacy_voter::PrivacyVoter;
+pub use yara_analyzer::YaraAnalyzer;
+

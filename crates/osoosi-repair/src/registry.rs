@@ -1,6 +1,6 @@
+use anyhow::{anyhow, Result};
 use std::process::Command;
 use tracing::{info, warn};
-use anyhow::{Result, anyhow};
 
 /// Registry persistence remediator.
 /// Targeted at common 'Run' keys and 'Services' created by malware.
@@ -12,7 +12,9 @@ impl RegistryRemediator {
     pub fn remediate_process_persistence(image_path: &str) -> Result<Vec<String>> {
         #[cfg(not(target_os = "windows"))]
         {
-            return Ok(vec!["Registry remediation only supported on Windows".to_string()]);
+            return Ok(vec![
+                "Registry remediation only supported on Windows".to_string()
+            ]);
         }
 
         #[cfg(target_os = "windows")]
@@ -38,7 +40,7 @@ impl RegistryRemediator {
             for key in run_keys {
                 match Self::find_and_delete_value(key, image_path) {
                     Ok(Some(val)) => changes.push(format!("Removed {} from {}", val, key)),
-                    Ok(None) => {},
+                    Ok(None) => {}
                     Err(e) => warn!("Failed to scan registry key {}: {}", key, e),
                 }
             }
@@ -47,14 +49,17 @@ impl RegistryRemediator {
             // We look for services whose ImagePath contains our target image.
             match Self::find_and_disable_service(image_path) {
                 Ok(Some(svc)) => changes.push(format!("Disabled malicious service: {}", svc)),
-                Ok(None) => {},
+                Ok(None) => {}
                 Err(e) => warn!("Failed to scan services for {}: {}", image_path, e),
             }
 
             if changes.is_empty() {
                 info!("No registry persistence found for {}", image_path);
             } else {
-                info!("Registry remediation complete for {}: {:?}", image_path, changes);
+                info!(
+                    "Registry remediation complete for {}: {:?}",
+                    image_path, changes
+                );
             }
 
             Ok(changes)
@@ -84,7 +89,10 @@ impl RegistryRemediator {
 
         // Delete the identified values
         for val_name in stdout.lines() {
-            let del_script = format!("Remove-ItemProperty -Path 'Registry::{}' -Name '{}' -Force", key, val_name);
+            let del_script = format!(
+                "Remove-ItemProperty -Path 'Registry::{}' -Name '{}' -Force",
+                key, val_name
+            );
             let _ = Command::new("powershell")
                 .args(["-NoProfile", "-NonInteractive", "-Command", &del_script])
                 .status();
@@ -116,9 +124,7 @@ impl RegistryRemediator {
 
         // Disable and stop the identified services
         for svc_name in stdout.lines() {
-            let _ = Command::new("sc.exe")
-                .args(["stop", svc_name])
-                .status();
+            let _ = Command::new("sc.exe").args(["stop", svc_name]).status();
             let _ = Command::new("sc.exe")
                 .args(["config", svc_name, "start=", "disabled"])
                 .status();

@@ -25,11 +25,11 @@
 //! - The random exponents prevent correlation attacks
 //! - Resistant to semi-honest adversaries
 
-use sha2::{Sha256, Digest};
 use rand::Rng;
-use serde::{Serialize, Deserialize};
-use tracing::{info, debug};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::collections::HashSet;
+use tracing::{debug, info};
 
 /// A safe prime for the DH-PSI protocol.
 /// In production, use a larger (2048-bit) safe prime.
@@ -77,7 +77,11 @@ pub fn create_psi_session(our_iocs: &[String]) -> (PsiSession, BlindedSet) {
     let secret: u128 = rng.gen_range(2..PSI_PRIME - 1);
     let session_id = format!("psi-{}", hex::encode(&secret.to_le_bytes()[..4]));
 
-    debug!("PSI session {} created with {} IoCs", session_id, our_iocs.len());
+    debug!(
+        "PSI session {} created with {} IoCs",
+        session_id,
+        our_iocs.len()
+    );
 
     // Blind our IoCs: H(ioc)^secret mod p
     let blinded_values: Vec<Vec<u8>> = our_iocs
@@ -109,10 +113,7 @@ pub fn create_psi_session(our_iocs: &[String]) -> (PsiSession, BlindedSet) {
 /// 1. Raise peer's blinded values to our secret: `(H(ioc)^b)^a = H(ioc)^(ab)`
 /// 2. Return these doubly-blinded values to the peer
 /// 3. Also doubly-blind our own set for final matching
-pub fn process_peer_blinded_set(
-    session: &mut PsiSession,
-    peer_blinded: &BlindedSet,
-) -> BlindedSet {
+pub fn process_peer_blinded_set(session: &mut PsiSession, peer_blinded: &BlindedSet) -> BlindedSet {
     // Doubly-blind the peer's values: (H(ioc)^b)^a mod p
     let peer_doubly_blinded: Vec<Vec<u8>> = peer_blinded
         .values
@@ -227,7 +228,9 @@ fn hash_to_group(input: &str) -> u128 {
 }
 
 fn mod_pow(mut base: u128, mut exp: u128, modulus: u128) -> u128 {
-    if modulus == 1 { return 0; }
+    if modulus == 1 {
+        return 0;
+    }
     let mut result: u128 = 1;
     base %= modulus;
     while exp > 0 {

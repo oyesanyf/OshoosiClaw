@@ -1,11 +1,11 @@
 //! Environment-Keyed Honeytokens (HDS Traps).
 //!
-//! Deploys dynamic trap files that are uniquely keyed to the asset ID. 
+//! Deploys dynamic trap files that are uniquely keyed to the asset ID.
 //! Any access to these files triggers a high-confidence autonomy flag.
 
+use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::info;
-use std::fs;
 
 pub struct HoneytokenManager {
     pub base_path: PathBuf,
@@ -14,14 +14,17 @@ pub struct HoneytokenManager {
 
 impl HoneytokenManager {
     pub fn new(base_path: PathBuf, asset_id: String) -> Self {
-        Self { base_path, asset_id }
+        Self {
+            base_path,
+            asset_id,
+        }
     }
 
     /// Deploy a deception honeytoken (e.g. 'backup_credentials.txt').
     /// The file content is keyed to the asset_id to track exfiltration.
     pub fn deploy_trap(&self, name: &str) -> anyhow::Result<PathBuf> {
         let trap_path = self.base_path.join(name);
-        
+
         // Environment-keyed payload: Includes asset ID and a unique canary string.
         let payload = format!(
             "--- OSOOSI DECEPTION LAYER ---\n\
@@ -38,20 +41,20 @@ impl HoneytokenManager {
 
         fs::write(&trap_path, payload)?;
         info!("DECEPTION: Deployed honeytoken trap at {:?}", trap_path);
-        
+
         Ok(trap_path)
     }
 
     /// Clean up deployed traps.
     pub fn cleanup_traps(&self) -> anyhow::Result<()> {
         if self.base_path.exists() {
-             for entry in fs::read_dir(&self.base_path)? {
-                 let entry = entry?;
-                 let path = entry.path();
-                 if path.is_file() {
-                      let _ = fs::remove_file(path);
-                 }
-             }
+            for entry in fs::read_dir(&self.base_path)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_file() {
+                    let _ = fs::remove_file(path);
+                }
+            }
         }
         Ok(())
     }

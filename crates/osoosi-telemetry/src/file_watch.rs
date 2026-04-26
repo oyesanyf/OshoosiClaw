@@ -2,15 +2,15 @@
 //!
 //! Uses the `notify` crate to detect file creations and modifications.
 
-use std::path::Path;
-use std::sync::Arc;
-use notify::{Watcher, RecursiveMode, Event, EventKind};
-use tokio::sync::mpsc;
-use tracing::{info, error, debug, warn};
-use std::time::Duration;
 use crate::hash::calculate_blake3_hash;
 use chrono::Utc;
-use sysinfo::{System, Pid};
+use notify::{Event, EventKind, RecursiveMode, Watcher};
+use std::path::Path;
+use std::sync::Arc;
+use std::time::Duration;
+use sysinfo::{Pid, System};
+use tokio::sync::mpsc;
+use tracing::{debug, error, info, warn};
 
 /// Files and paths to skip: SQLite ephemeral, OpenỌ̀ṣọ́ọ̀sì's own data, common noisy dirs, and user exclusions.
 fn should_skip_path(path: &Path, osoosi_dir: &Path, exclude_paths: &[String]) -> bool {
@@ -18,16 +18,22 @@ fn should_skip_path(path: &Path, osoosi_dir: &Path, exclude_paths: &[String]) ->
     let s_lower = s.to_lowercase();
 
     // SQLite ephemeral files
-    if s_lower.ends_with("-journal") || s_lower.ends_with(".db-journal")
-        || s_lower.ends_with("-wal") || s_lower.ends_with(".db-wal")
-        || s_lower.ends_with("-shm") || s_lower.ends_with(".db-shm")
+    if s_lower.ends_with("-journal")
+        || s_lower.ends_with(".db-journal")
+        || s_lower.ends_with("-wal")
+        || s_lower.ends_with(".db-wal")
+        || s_lower.ends_with("-shm")
+        || s_lower.ends_with(".db-shm")
     {
         return true;
     }
 
     // OpenỌ̀ṣọ́ọ̀sì's own files (self-writes cause feedback loop)
     // Check for both the exact name and common log rotation patterns (.log.2026-04-23, .log.1, etc)
-    if s_lower.contains("osoosi.db") || s_lower.contains("osoosi.log") || s_lower.contains("osoosi_core.log") {
+    if s_lower.contains("osoosi.db")
+        || s_lower.contains("osoosi.log")
+        || s_lower.contains("osoosi_core.log")
+    {
         return true;
     }
 
@@ -39,7 +45,10 @@ fn should_skip_path(path: &Path, osoosi_dir: &Path, exclude_paths: &[String]) ->
     }
 
     // Belt-and-suspenders: also check via string prefix (case-insensitive on Windows)
-    let dir_str = osoosi_dir.to_string_lossy().to_lowercase().replace("\\\\?\\", "");
+    let dir_str = osoosi_dir
+        .to_string_lossy()
+        .to_lowercase()
+        .replace("\\\\?\\", "");
     let s_clean = s_lower.replace("\\\\?\\", "");
     if s_clean.starts_with(&dir_str) {
         return true;
@@ -47,8 +56,7 @@ fn should_skip_path(path: &Path, osoosi_dir: &Path, exclude_paths: &[String]) ->
 
     // Registry transaction logs (always locked by Windows)
     let fname = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
-    if fname.starts_with("ntuser.dat.LOG") || fname.starts_with("usrclass.dat.LOG")
-    {
+    if fname.starts_with("ntuser.dat.LOG") || fname.starts_with("usrclass.dat.LOG") {
         return true;
     }
 
@@ -56,9 +64,16 @@ fn should_skip_path(path: &Path, osoosi_dir: &Path, exclude_paths: &[String]) ->
     for segment in path.components() {
         let seg = segment.as_os_str().to_string_lossy().to_lowercase();
         match seg.as_ref() {
-            ".git" | "node_modules" | "target" | "__pycache__"
-            | "$recycle.bin" | "system volume information" | ".trash"
-            | "appdata" | "windows" | "programdata" => return true,
+            ".git"
+            | "node_modules"
+            | "target"
+            | "__pycache__"
+            | "$recycle.bin"
+            | "system volume information"
+            | ".trash"
+            | "appdata"
+            | "windows"
+            | "programdata" => return true,
             _ => {}
         }
     }
@@ -98,14 +113,17 @@ pub struct FileChangeEvent {
 
 impl FileWatcher {
     /// Create a new file watcher. Pass `Some(memory)` to persist unhashable paths to a skip list.
-    pub fn new(memory: Option<Arc<osoosi_memory::MemoryStore>>, exclude_paths: Vec<String>) -> anyhow::Result<(Self, mpsc::Receiver<anyhow::Result<FileChangeEvent>>)> {
+    pub fn new(
+        memory: Option<Arc<osoosi_memory::MemoryStore>>,
+        exclude_paths: Vec<String>,
+    ) -> anyhow::Result<(Self, mpsc::Receiver<anyhow::Result<FileChangeEvent>>)> {
         let (tx, rx) = mpsc::channel(100);
         let rt = tokio::runtime::Handle::current();
         let install_dir = osoosi_install_dir();
         let excludes = exclude_paths.clone();
         let trap_paths = Arc::new(dashmap::DashSet::new());
         let traps = trap_paths.clone();
-        
+
         // Notify watcher callback
         let watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
             match res {
@@ -115,7 +133,7 @@ impl FileWatcher {
                             if !path.is_file() || should_skip_path(&path, &install_dir, &excludes) {
                                 continue;
                             }
-                            
+
                             let path_str = path.to_string_lossy().to_string();
 
                             // IMMEDIATE TRAP DETECTION
@@ -135,41 +153,57 @@ impl FileWatcher {
                             let kind = event.kind;
                             let path_for_hash = path.clone();
                             let memory_for_error = memory.clone();
-                            
+
                             rt.spawn(async move {
                                 match calculate_blake3_hash(&path_for_hash).await {
                                     Ok(hash) => {
-                                        let _ = tx.send(Ok(FileChangeEvent {
-                                            path: path_str,
-                                            hash,
-                                            kind,
-                                        })).await;
+                                        let _ = tx
+                                            .send(Ok(FileChangeEvent {
+                                                path: path_str,
+                                                hash,
+                                                kind,
+                                            }))
+                                            .await;
                                     }
                                     Err(e) => {
                                         let err_str = e.to_string();
-                                        let is_not_found = e.downcast_ref::<std::io::Error>()
+                                        let is_not_found = e
+                                            .downcast_ref::<std::io::Error>()
                                             .map(|io| io.kind() == std::io::ErrorKind::NotFound)
                                             .unwrap_or(false)
                                             || err_str.contains("cannot find")
                                             || err_str.contains("No such file");
-                                        let is_locked = err_str.contains("being used by another process")
+                                        let is_locked = err_str
+                                            .contains("being used by another process")
                                             || err_str.contains("Permission denied")
                                             || err_str.contains("Access is denied")
                                             || err_str.contains("os error 32");
                                         if is_not_found {
-                                            debug!("Skipped hashing (file gone): {:?}", path_for_hash);
+                                            debug!(
+                                                "Skipped hashing (file gone): {:?}",
+                                                path_for_hash
+                                            );
                                         } else if is_locked {
                                             if let Some(ref mem) = memory_for_error {
                                                 let _ = mem.add_file_to_skip_list(
                                                     &path_for_hash.to_string_lossy(),
                                                     &err_str,
                                                 );
-                                                debug!("Added to skip list (locked): {}", path_for_hash.to_string_lossy());
+                                                debug!(
+                                                    "Added to skip list (locked): {}",
+                                                    path_for_hash.to_string_lossy()
+                                                );
                                             } else {
-                                                error!("Failed to hash file {:?}: {}", path_for_hash, e);
+                                                error!(
+                                                    "Failed to hash file {:?}: {}",
+                                                    path_for_hash, e
+                                                );
                                             }
                                         } else {
-                                            error!("Failed to hash file {:?}: {}", path_for_hash, e);
+                                            error!(
+                                                "Failed to hash file {:?}: {}",
+                                                path_for_hash, e
+                                            );
                                         }
                                     }
                                 }
@@ -183,25 +217,35 @@ impl FileWatcher {
             }
         })?;
 
-        Ok((Self {
-            watcher,
-            trap_paths,
-        }, rx))
+        Ok((
+            Self {
+                watcher,
+                trap_paths,
+            },
+            rx,
+        ))
     }
 
     pub fn watch<P: AsRef<Path>>(&mut self, path: P) -> anyhow::Result<()> {
         info!("Starting watch on: {:?}", path.as_ref());
-        self.watcher.watch(path.as_ref(), RecursiveMode::Recursive)?;
+        self.watcher
+            .watch(path.as_ref(), RecursiveMode::Recursive)?;
         Ok(())
     }
 }
 
-
 /// Run a background task on startup to build a baseline hash table of every file in the watch paths.
 /// This hashes the entire filesystem from the specified roots and stores it in SQLite
 /// so we can understand file changes and verify updates/patches.
-pub async fn build_os_file_hash_baseline(paths: Vec<String>, memory: Arc<osoosi_memory::MemoryStore>, exclude_paths: Vec<String>) {
-    info!("Starting background hash of all files in watch paths: {}", paths.join(", "));
+pub async fn build_os_file_hash_baseline(
+    paths: Vec<String>,
+    memory: Arc<osoosi_memory::MemoryStore>,
+    exclude_paths: Vec<String>,
+) {
+    info!(
+        "Starting background hash of all files in watch paths: {}",
+        paths.join(", ")
+    );
     let _ = memory.set_repair_status("baseline_status", "running");
     let _ = memory.set_repair_status("baseline_start", &Utc::now().to_rfc3339());
     let _ = memory.set_repair_status("baseline_count", "0");
@@ -216,12 +260,11 @@ pub async fn build_os_file_hash_baseline(paths: Vec<String>, memory: Arc<osoosi_
             for entry in walkdir::WalkDir::new(&root)
                 .into_iter()
                 .filter_entry(|e| !should_skip_path(e.path(), &install_dir, &exclude_paths))
-                .filter_map(|e| e.ok()) 
+                .filter_map(|e| e.ok())
             {
-                if entry.file_type().is_file()
-                    && tx.blocking_send(entry.into_path()).is_err() {
-                        return;
-                    }
+                if entry.file_type().is_file() && tx.blocking_send(entry.into_path()).is_err() {
+                    return;
+                }
             }
         }
     });
@@ -231,10 +274,12 @@ pub async fn build_os_file_hash_baseline(paths: Vec<String>, memory: Arc<osoosi_
     let mut last_report = std::time::Instant::now();
     let mut sys = System::new_all();
     let self_pid = Pid::from(std::process::id() as usize);
-    
+
     // Dynamic throttling parameters
     let mut current_concurrency = std::env::var("OSOOSI_BASELINE_CONCURRENCY")
-        .ok().and_then(|s| s.parse().ok()).unwrap_or(20); // Lowered default
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20); // Lowered default
     let min_concurrency = 1;
     let _target_cpu_usage = 40.0; // Don't use more than 40% of a single core for hashing if global load is high
 
@@ -244,7 +289,7 @@ pub async fn build_os_file_hash_baseline(paths: Vec<String>, memory: Arc<osoosi_
             sys.refresh_all();
             let total_cpu = sys.global_cpu_info().cpu_usage();
             let process_cpu = sys.process(self_pid).map(|p| p.cpu_usage()).unwrap_or(0.0);
-            
+
             // If system is heavily loaded or we are exceeding our own "fair share"
             if total_cpu > 70.0 || process_cpu > 50.0 {
                 current_concurrency = (current_concurrency / 2).max(min_concurrency);
@@ -269,7 +314,7 @@ pub async fn build_os_file_hash_baseline(paths: Vec<String>, memory: Arc<osoosi_
         let mem = memory.clone();
         let path_str = path.to_string_lossy().to_string();
         let count_ptr = hashed_count.clone();
-        
+
         // Skip files that previously errored out
         if mem.is_file_in_skip_list(&path_str).unwrap_or(false) {
             continue;
@@ -280,16 +325,17 @@ pub async fn build_os_file_hash_baseline(paths: Vec<String>, memory: Arc<osoosi_
             let res = tokio::task::spawn_blocking(move || {
                 let data = std::fs::read(&path)?;
                 Ok::<String, anyhow::Error>(blake3::hash(&data).to_hex().to_string())
-            }).await;
+            })
+            .await;
 
             match res {
                 Ok(Ok(hash)) => {
                     let _ = mem.update_file_hash(&path_str, &hash);
                     let current = count_ptr.fetch_add(1, std::sync::atomic::Ordering::Relaxed) + 1;
                     debug!("Baselined: {} -> {}", path_str, hash);
-                    
+
                     if current % 1000 == 0 {
-                         info!("File baseline progress: {} files hashed", current);
+                        info!("File baseline progress: {} files hashed", current);
                     }
                 }
                 Ok(Err(e)) => {
@@ -324,5 +370,8 @@ pub async fn build_os_file_hash_baseline(paths: Vec<String>, memory: Arc<osoosi_
     let _ = memory.set_repair_status("baseline_count", &final_count.to_string());
     let _ = memory.set_repair_status("baseline_status", "finished");
     let _ = memory.set_repair_status("baseline_end", &Utc::now().to_rfc3339());
-    info!("Finished building baseline hash table: {} files total.", final_count);
+    info!(
+        "Finished building baseline hash table: {} files total.",
+        final_count
+    );
 }

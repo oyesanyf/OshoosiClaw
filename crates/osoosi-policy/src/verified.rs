@@ -126,7 +126,10 @@ pub fn is_agent_binary(process_name: &str) -> bool {
 }
 
 /// Verify that a scan result correctly excludes agent binaries.
-pub fn verify_self_exclusion(process_name: &str, scan_result: Option<&osoosi_types::ThreatSignature>) -> bool {
+pub fn verify_self_exclusion(
+    process_name: &str,
+    scan_result: Option<&osoosi_types::ThreatSignature>,
+) -> bool {
     if is_agent_binary(process_name) {
         let valid = scan_result.is_none();
         debug_assert!(
@@ -188,7 +191,10 @@ pub fn verify_monotonic_escalation(previous: &ResponseAction, next: &ResponseAct
     debug_assert!(
         valid,
         "FORMAL VIOLATION: de-escalation from {:?} (sev {}) to {:?} (sev {})",
-        previous, action_severity(previous), next, action_severity(next)
+        previous,
+        action_severity(previous),
+        next,
+        action_severity(next)
     );
     valid
 }
@@ -231,8 +237,17 @@ mod tests {
 
     #[test]
     fn test_monotonic_escalation() {
-        assert!(verify_monotonic_escalation(&ResponseAction::Alert, &ResponseAction::Tarpit));
-        assert!(verify_monotonic_escalation(&ResponseAction::Alert, &ResponseAction::Alert));
-        assert!(!verify_monotonic_escalation(&ResponseAction::Isolate, &ResponseAction::Alert));
+        assert!(verify_monotonic_escalation(
+            &ResponseAction::Alert,
+            &ResponseAction::Tarpit
+        ));
+        assert!(verify_monotonic_escalation(
+            &ResponseAction::Alert,
+            &ResponseAction::Alert
+        ));
+        assert!(!verify_monotonic_escalation(
+            &ResponseAction::Isolate,
+            &ResponseAction::Alert
+        ));
     }
 }

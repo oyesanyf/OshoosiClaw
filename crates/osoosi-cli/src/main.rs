@@ -1,16 +1,16 @@
 use clap::{Parser, Subcommand};
-use osoosi_core::{EdrOrchestrator, secured_executor::DirectExecutor};
-use osoosi_types::SecuredExecutor;
+use osoosi_core::{secured_executor::DirectExecutor, EdrOrchestrator};
 use osoosi_policy::ThreatFeedFetcher;
+use osoosi_types::SecuredExecutor;
 
+use hf_hub::api::tokio::ApiBuilder;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::{info, error, warn};
+use tracing::{error, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, EnvFilter};
-use hf_hub::api::tokio::ApiBuilder;
 
 /// Fast `ATTACH`+`INSERT…SELECT` into the agent DB; on failure, fall back to loading all rows in Rust.
 async fn import_nsrl_with_fallback(
@@ -187,13 +187,19 @@ pub enum SandboxAction {
     /// Deploy gateway
     DeployGateway,
     /// Create sandbox
-    Create { name: String, policy: Option<String> },
+    Create {
+        name: String,
+        policy: Option<String>,
+    },
     /// Connect to sandbox
     Connect { name: String },
     /// Destroy sandbox
     Destroy { name: String },
     /// Apply policy to sandbox
-    ApplyPolicy { name: String, policy: Option<String> },
+    ApplyPolicy {
+        name: String,
+        policy: Option<String>,
+    },
     /// Stream logs from sandbox
     Logs { name: String },
 }
@@ -260,7 +266,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         let executor = Arc::new(DirectExecutor::new());
         let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
         if let Err(e) = provisioner.provision_telemetry().await {
-            warn!("Automated provisioning encountered issues: {}. Continuing startup...", e);
+            warn!(
+                "Automated provisioning encountered issues: {}. Continuing startup...",
+                e
+            );
         }
         let _ = ensure_ai_models().await;
         let _ = osoosi_core::firewall::open_mesh_ports();
@@ -270,16 +279,22 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         tokio::spawn(async move {
             info!("Startup provisioning is running in the background so Sysmon ingestion can begin immediately.");
             if let Err(e) = provisioner.provision_telemetry().await {
-                warn!("Background provisioning encountered issues: {}. Agent monitoring continues.", e);
+                warn!(
+                    "Background provisioning encountered issues: {}. Agent monitoring continues.",
+                    e
+                );
             }
             let _ = ensure_ai_models().await;
         });
         let _ = osoosi_core::firewall::open_mesh_ports();
     }
-    
+
     let suppress_ml_warning = is_granting || is_bootstrapping;
     if let Err(e) = init_ort(suppress_ml_warning).await {
-        error!("Failed to initialize ONNX Runtime: {}. AI features will be disabled.", e);
+        error!(
+            "Failed to initialize ONNX Runtime: {}. AI features will be disabled.",
+            e
+        );
         // CRITICAL: Disable ORT globally for this process to prevent downstream panics
         std::env::set_var("OSOOSI_NO_ORT", "1");
     }
@@ -299,7 +314,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             let with_dashboard = dashboard && !no_dashboard;
 
             if wsl {
-                return start_inside_wsl(with_dashboard, start_in_sandbox, &sandbox_name, sandbox_deploy_gateway);
+                return start_inside_wsl(
+                    with_dashboard,
+                    start_in_sandbox,
+                    &sandbox_name,
+                    sandbox_deploy_gateway,
+                );
             }
 
             if start_in_sandbox {
@@ -377,7 +397,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
 
             let nsrl_orch = orchestrator.clone();
-            
+
             // Background thread to download/populate NSRL if empty
             tokio::spawn(async move {
                 let nsrl_count = nsrl_orch.memory().nsrl_record_count().unwrap_or(0);
@@ -392,7 +412,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                     match fetcher.download_nsrl_streaming(&nsrl_dir).await {
                         Ok(db_path) => {
                             info!("[NSRL Background] Download complete at {:?}. Importing (fast path when possible)...", db_path);
-                            import_nsrl_with_fallback(&nsrl_orch.memory(), db_path.as_path(), &fetcher).await;
+                            import_nsrl_with_fallback(
+                                &nsrl_orch.memory(),
+                                db_path.as_path(),
+                                &fetcher,
+                            )
+                            .await;
                         }
                         Err(e) => error!("[NSRL Background] Failed to download NSRL: {}", e),
                     }
@@ -403,13 +428,14 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             });
 
             info!("Starting OpenỌ̀ṣọ́ọ̀sì Security Agent...");
-            
+
             // 2. [NEW] Ensure Firewall rules are applied on startup (User Request)
-            let provisioner = osoosi_telemetry::AgentProvisioner::new(orchestrator.secured_executor());
+            let provisioner =
+                osoosi_telemetry::AgentProvisioner::new(orchestrator.secured_executor());
             if let Err(e) = provisioner.provision_firewall().await {
                 warn!("Warning: Failed to verify/apply firewall rules: {}. Mesh connectivity may be degraded.", e);
             }
-            
+
             // Start components
             orchestrator.start_maintenance_loop();
             orchestrator.start_cybershield_monitor();
@@ -419,15 +445,23 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             orchestrator.start_fetcher_loop().await;
             orchestrator.start_model_training_loop(60).await;
 
-            let watch_paths = osoosi_types::load_watch_paths_from_config().unwrap_or_else(osoosi_types::all_physical_drive_paths);
+            let watch_paths = osoosi_types::load_watch_paths_from_config()
+                .unwrap_or_else(osoosi_types::all_physical_drive_paths);
             let paths_refs: Vec<&str> = watch_paths.iter().map(String::as_str).collect();
             let _ = orchestrator.start_file_watcher_paths(&paths_refs).await;
 
-            let event_source = if cfg!(windows) { "Microsoft-Windows-Sysmon/Operational".to_string() } else { "default".to_string() };
+            let event_source = if cfg!(windows) {
+                "Microsoft-Windows-Sysmon/Operational".to_string()
+            } else {
+                "default".to_string()
+            };
             orchestrator.start_host_event_loop(&event_source, 1).await;
 
-            info!("OpenỌ̀ṣọ́ọ̀sì Agent is live and monitoring (Total startup: {:?}).", start_instant.elapsed());
-            
+            info!(
+                "OpenỌ̀ṣọ́ọ̀sì Agent is live and monitoring (Total startup: {:?}).",
+                start_instant.elapsed()
+            );
+
             wait_for_shutdown().await;
             info!("Shutting down OpenỌ̀ṣọ́ọ̀sì Agent...");
             let _ = osoosi_core::firewall::remove_all_autoblock_rules();
@@ -436,7 +470,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             println!("Oshoosi Status: Active");
             println!("Node ID: {}", uuid::Uuid::new_v4());
         }
-        Some(Commands::Provision { binary: _, config: _ }) => {
+        Some(Commands::Provision {
+            binary: _,
+            config: _,
+        }) => {
             use osoosi_telemetry::AgentProvisioner;
             info!("Provisioning Oshoosi dependencies...");
             let executor = osoosi_core::secured_executor::get_best_executor().await;
@@ -455,7 +492,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             let mut current_port = port;
             let mut bound: Option<u16> = None;
             while current_port <= port + 10 {
-                match osoosi_dashboard::spawn_dashboard_with_backend(current_port, None, None).await {
+                match osoosi_dashboard::spawn_dashboard_with_backend(current_port, None, None).await
+                {
                     Ok(p) => {
                         info!("Dashboard started on port {}", p);
                         bound = Some(p);
@@ -508,7 +546,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                             fetcher.download_nsrl_streaming(&temp_dir).await?
                         }
                     };
-                    import_nsrl_with_fallback(&orchestrator.memory(), db_path.as_path(), &fetcher).await;
+                    import_nsrl_with_fallback(&orchestrator.memory(), db_path.as_path(), &fetcher)
+                        .await;
                     info!("NSRL import finished (see logs for row counts).");
                 }
             }
@@ -517,7 +556,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             // `handle_grant_access()` already ran when `is_granting` (top of `async_main`).
         }
         Some(Commands::CheckAccess) => {
-            println!("Oshoosi Privilege Check (platform: {})", osoosi_core::privilege::current_platform());
+            println!(
+                "Oshoosi Privilege Check (platform: {})",
+                osoosi_core::privilege::current_platform()
+            );
             let status = osoosi_core::privilege::check_privileges();
             println!("Elevated/Root:      {}", status.is_elevated);
             println!("Can read events:    {}", status.can_read_events);
@@ -541,13 +583,27 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             let manager = OpenShellManager::new();
             match action {
                 SandboxAction::Status => println!("Status: {:?}", manager.status()),
-                SandboxAction::Install => { let _ = OpenShellManager::install(); }
-                SandboxAction::DeployGateway => { let _ = manager.deploy_gateway(); }
-                SandboxAction::Create { name, policy: _ } => { let _ = manager.create_sandbox(Some(&name), &[]); }
-                SandboxAction::Connect { name } => { let _ = manager.connect_sandbox(Some(&name)); }
-                SandboxAction::Destroy { name } => { let _ = manager.destroy_sandbox(Some(&name)); }
-                SandboxAction::ApplyPolicy { name, policy } => { let _ = manager.apply_policy(Some(&name), policy.as_ref().map(Path::new)); }
-                SandboxAction::Logs { name } => { manager.stream_logs(Some(&name)); }
+                SandboxAction::Install => {
+                    let _ = OpenShellManager::install();
+                }
+                SandboxAction::DeployGateway => {
+                    let _ = manager.deploy_gateway();
+                }
+                SandboxAction::Create { name, policy: _ } => {
+                    let _ = manager.create_sandbox(Some(&name), &[]);
+                }
+                SandboxAction::Connect { name } => {
+                    let _ = manager.connect_sandbox(Some(&name));
+                }
+                SandboxAction::Destroy { name } => {
+                    let _ = manager.destroy_sandbox(Some(&name));
+                }
+                SandboxAction::ApplyPolicy { name, policy } => {
+                    let _ = manager.apply_policy(Some(&name), policy.as_ref().map(Path::new));
+                }
+                SandboxAction::Logs { name } => {
+                    manager.stream_logs(Some(&name));
+                }
             }
         }
         Some(Commands::SecurityStatus) => {
@@ -565,14 +621,22 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             println!("Oshoosi Sherpa Discovery (Route Scraping)...");
             let scraper = osoosi_telemetry::discovery::RouteScraper::new();
             let hosts = scraper.scrape_arp();
-            
+
             if hosts.is_empty() {
                 println!("No adjacent hosts discovered in ARP cache.");
             } else {
-                println!("{:<15} {:<20} {:<15}", "IP Address", "MAC Address", "Interface");
+                println!(
+                    "{:<15} {:<20} {:<15}",
+                    "IP Address", "MAC Address", "Interface"
+                );
                 println!("{:-<50}", "");
                 for host in hosts {
-                    println!("{:<15} {:<20} {:<15}", host.ip, host.mac.clone().unwrap_or_else(|| "unknown".to_owned()), host.interface);
+                    println!(
+                        "{:<15} {:<20} {:<15}",
+                        host.ip,
+                        host.mac.clone().unwrap_or_else(|| "unknown".to_owned()),
+                        host.interface
+                    );
                 }
             }
         }
@@ -581,7 +645,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             if verify {
                 let ok = orchestrator.verify_merkle_trail();
                 if ok {
-                    println!("✓ Merkle Trail integrity verified. Root Hash: {}", orchestrator.audit().root());
+                    println!(
+                        "✓ Merkle Trail integrity verified. Root Hash: {}",
+                        orchestrator.audit().root()
+                    );
                 } else {
                     println!("✗ Merkle Trail COMPROMISED! Integrity check failed.");
                     std::process::exit(1);
@@ -589,24 +656,33 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             } else {
                 let mut entries = orchestrator.list_merkle_trail();
                 entries.sort_by(|a, b| b.timestamp.cmp(&a.timestamp)); // Latest first
-                
+
                 let display_limit = limit.unwrap_or(20);
                 println!("{:<20} {:<20} {:<50}", "Timestamp", "Event Type", "Summary");
                 println!("{:-<90}", "");
-                
+
                 for entry in entries.iter().take(display_limit) {
                     let summary = match entry.event_type.as_str() {
                         "THREAT_DETECTED" => {
-                            let proc = entry.data.get("process_name").and_then(|v| v.as_str()).unwrap_or("?");
+                            let proc = entry
+                                .data
+                                .get("process_name")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("?");
                             format!("Threat: {}", proc)
                         }
                         "repair" => {
-                            let event = entry.data.get("event").and_then(|v| v.as_str()).unwrap_or("patch");
+                            let event = entry
+                                .data
+                                .get("event")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("patch");
                             format!("Repair: {}", event)
                         }
                         _ => entry.event_type.clone(),
                     };
-                    println!("{:<20} {:<20} {:<50}", 
+                    println!(
+                        "{:<20} {:<20} {:<50}",
                         entry.timestamp.format("%H:%M:%S").to_string(),
                         entry.event_type,
                         summary.chars().take(50).collect::<String>()
@@ -687,7 +763,10 @@ fn start_inside_wsl(
     if status.success() {
         Ok(())
     } else {
-        Err(anyhow::anyhow!("WSL Oshoosi start failed with status {}", status))
+        Err(anyhow::anyhow!(
+            "WSL Oshoosi start failed with status {}",
+            status
+        ))
     }
 }
 
@@ -760,9 +839,16 @@ fn wsl_has_distro() -> anyhow::Result<bool> {
 
 #[cfg(windows)]
 fn provision_wsl_optional_component() -> anyhow::Result<()> {
-    let script = "Start-Process -Verb RunAs -FilePath wsl.exe -ArgumentList '--install --no-distribution'";
+    let script =
+        "Start-Process -Verb RunAs -FilePath wsl.exe -ArgumentList '--install --no-distribution'";
     let status = std::process::Command::new("powershell.exe")
-        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
+        .args([
+            "-NoProfile",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            script,
+        ])
         .status()?;
     if status.success() {
         Ok(())
@@ -782,7 +868,10 @@ fn provision_ubuntu_distro() -> anyhow::Result<()> {
     if status.success() {
         Ok(())
     } else {
-        Err(anyhow::anyhow!("Ubuntu WSL provisioning failed: {}", status))
+        Err(anyhow::anyhow!(
+            "Ubuntu WSL provisioning failed: {}",
+            status
+        ))
     }
 }
 
@@ -793,7 +882,9 @@ fn start_inside_wsl(
     _sandbox_name: &str,
     _deploy_gateway: bool,
 ) -> anyhow::Result<()> {
-    Err(anyhow::anyhow!("--wsl is only supported when launching from Windows"))
+    Err(anyhow::anyhow!(
+        "--wsl is only supported when launching from Windows"
+    ))
 }
 
 #[cfg(windows)]
@@ -843,85 +934,110 @@ async fn handle_grant_access() -> anyhow::Result<()> {
     {
         let executor = osoosi_core::secured_executor::get_best_executor().await;
         let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
-        
+
         info!("GrantAccess pre-step: ensuring Sysmon telemetry is provisioned...");
         if let Err(e) = provisioner.provision_telemetry().await {
-             warn!("Warning: Failed to provision telemetry: {}", e);
+            warn!("Warning: Failed to provision telemetry: {}", e);
         }
 
         info!("GrantAccess pre-step: ensuring ML models are provisioned...");
         if let Err(e) = ensure_ai_models().await {
-             warn!("Warning: Failed to provision AI models: {}", e);
+            warn!("Warning: Failed to provision AI models: {}", e);
         }
 
         info!("GrantAccess pre-step: ensuring ClamAV is provisioned...");
         if let Err(e) = provisioner.provision_clamav().await {
-             warn!("Warning: Failed to provision ClamAV: {}", e);
+            warn!("Warning: Failed to provision ClamAV: {}", e);
         }
 
         info!("GrantAccess pre-step: ensuring OpenSSL is provisioned and validated...");
         if let Err(e) = provisioner.provision_openssl().await {
-             warn!("Warning: Failed to provision OpenSSL: {}", e);
+            warn!("Warning: Failed to provision OpenSSL: {}", e);
         } else {
-             // USER REQUEST: Validate it is used to sign stuff
-             info!("Validating OpenSSL signing capabilities...");
-             let test_file = std::env::temp_dir().join("osoosi_sign_test.txt");
-             let test_sig = std::env::temp_dir().join("osoosi_sign_test.sig");
-             let _ = std::fs::write(&test_file, "Oshoosi OpenSSL Validation");
-             
-             let mut gen_key = tokio::process::Command::new("openssl");
-             gen_key.args(["genrsa", "-out", "test_priv.pem", "2048"]);
-             
-             let mut sign_cmd = tokio::process::Command::new("openssl");
-             sign_cmd.args(["dgst", "-sha256", "-sign", "test_priv.pem", "-out", &test_sig.to_string_lossy(), &test_file.to_string_lossy()]);
-             
-             let mut verify_cmd = tokio::process::Command::new("openssl");
-             verify_cmd.args(["dgst", "-sha256", "-verify", "test_pub.pem", "-signature", &test_sig.to_string_lossy(), &test_file.to_string_lossy()]);
-             
-             // Extract public key first
-             let mut pub_cmd = tokio::process::Command::new("openssl");
-             pub_cmd.args(["rsa", "-in", "test_priv.pem", "-pubout", "-out", "test_pub.pem"]);
+            // USER REQUEST: Validate it is used to sign stuff
+            info!("Validating OpenSSL signing capabilities...");
+            let test_file = std::env::temp_dir().join("osoosi_sign_test.txt");
+            let test_sig = std::env::temp_dir().join("osoosi_sign_test.sig");
+            let _ = std::fs::write(&test_file, "Oshoosi OpenSSL Validation");
 
-             let success = async {
-                 let _ = gen_key.status().await;
-                 let _ = pub_cmd.status().await;
-                 let s = sign_cmd.status().await?.success();
-                 Ok::<bool, anyhow::Error>(s)
-             }.await.unwrap_or(false);
+            let mut gen_key = tokio::process::Command::new("openssl");
+            gen_key.args(["genrsa", "-out", "test_priv.pem", "2048"]);
 
-             if success {
-                 info!("✓ OpenSSL Signing Validation: SUCCESS");
-             } else {
-                 warn!("! OpenSSL Signing Validation: FAILED");
-             }
-             let _ = std::fs::remove_file("test_priv.pem");
-             let _ = std::fs::remove_file("test_pub.pem");
-             let _ = std::fs::remove_file(&test_file);
-             let _ = std::fs::remove_file(&test_sig);
+            let mut sign_cmd = tokio::process::Command::new("openssl");
+            sign_cmd.args([
+                "dgst",
+                "-sha256",
+                "-sign",
+                "test_priv.pem",
+                "-out",
+                &test_sig.to_string_lossy(),
+                &test_file.to_string_lossy(),
+            ]);
+
+            let mut verify_cmd = tokio::process::Command::new("openssl");
+            verify_cmd.args([
+                "dgst",
+                "-sha256",
+                "-verify",
+                "test_pub.pem",
+                "-signature",
+                &test_sig.to_string_lossy(),
+                &test_file.to_string_lossy(),
+            ]);
+
+            // Extract public key first
+            let mut pub_cmd = tokio::process::Command::new("openssl");
+            pub_cmd.args([
+                "rsa",
+                "-in",
+                "test_priv.pem",
+                "-pubout",
+                "-out",
+                "test_pub.pem",
+            ]);
+
+            let success = async {
+                let _ = gen_key.status().await;
+                let _ = pub_cmd.status().await;
+                let s = sign_cmd.status().await?.success();
+                Ok::<bool, anyhow::Error>(s)
+            }
+            .await
+            .unwrap_or(false);
+
+            if success {
+                info!("✓ OpenSSL Signing Validation: SUCCESS");
+            } else {
+                warn!("! OpenSSL Signing Validation: FAILED");
+            }
+            let _ = std::fs::remove_file("test_priv.pem");
+            let _ = std::fs::remove_file("test_pub.pem");
+            let _ = std::fs::remove_file(&test_file);
+            let _ = std::fs::remove_file(&test_sig);
         }
 
         info!("GrantAccess pre-step: ensuring FLOSS is provisioned...");
         if let Err(e) = provisioner.provision_floss().await {
-             warn!("Warning: Failed to provision FLOSS: {}", e);
+            warn!("Warning: Failed to provision FLOSS: {}", e);
         }
 
         info!("GrantAccess pre-step: ensuring HollowsHunter is provisioned...");
         if let Err(e) = provisioner.provision_hollows_hunter().await {
-             warn!("Warning: Failed to provision HollowsHunter: {}", e);
+            warn!("Warning: Failed to provision HollowsHunter: {}", e);
         }
 
         info!("GrantAccess pre-step: ensuring Network Tooling (ngrep/sniffglue) is provisioned...");
         let _ = provisioner.provision_npcap().await; // Driver first
         if let Err(e) = provisioner.provision_ngrep().await {
-             warn!("Warning: Failed to provision ngrep: {}", e);
+            warn!("Warning: Failed to provision ngrep: {}", e);
         }
         if let Err(e) = provisioner.provision_sniffglue().await {
-             warn!("Warning: Failed to provision sniffglue: {}", e);
+            warn!("Warning: Failed to provision sniffglue: {}", e);
         }
 
         info!("GrantAccess pre-step: ensuring CAPA is provisioned...");
         if let Err(e) = provisioner.provision_capa().await {
-             warn!("Warning: Failed to provision CAPA: {}", e);
+            warn!("Warning: Failed to provision CAPA: {}", e);
         }
 
         info!("GrantAccess pre-step: ensuring YARA rules are provisioned...");
@@ -934,7 +1050,10 @@ async fn handle_grant_access() -> anyhow::Result<()> {
                     info!("YARA rules provisioned via OpenShell: {}", result.message);
                     let _ = provisioner.provision_yara_rules_with_sandbox(true).await;
                 } else {
-                    warn!("OpenShell YARA provisioning failed: {}. Falling back to direct.", result.message);
+                    warn!(
+                        "OpenShell YARA provisioning failed: {}. Falling back to direct.",
+                        result.message
+                    );
                     if let Err(e) = provisioner.provision_yara_rules().await {
                         warn!("Warning: Failed to provision YARA rules: {}", e);
                     }
@@ -946,14 +1065,13 @@ async fn handle_grant_access() -> anyhow::Result<()> {
             }
         }
 
-
         #[cfg(target_os = "windows")]
         {
             info!("GrantAccess pre-step: adding Antivirus exclusions for the YARA folder...");
             let _ = provisioner.add_defender_exclusion(Path::new("yara")).await;
         }
     }
-    
+
     match setup_firewall().await {
         Ok(_) => println!("[+] Firewall configured."),
         Err(e) => println!("[!] Firewall failed: {}", e),
@@ -966,7 +1084,7 @@ async fn handle_grant_access() -> anyhow::Result<()> {
         println!("Result: FAILED/PARTIAL");
         println!("\n[!] CRITICAL: Automated permission grant failed.");
         println!("[!] Please perform the following manual steps to enable agent monitoring:");
-        
+
         #[cfg(target_os = "windows")]
         {
             println!("  1. Run PowerShell as Administrator.");
@@ -974,7 +1092,7 @@ async fn handle_grant_access() -> anyhow::Result<()> {
             println!("  3. Run: wevtutil sl Microsoft-Windows-Sysmon/Operational /ca:\"O:BAG:SYD:(A;;0x1;;;BA)(A;;0x1;;;S-1-5-32-573)(A;;0x1;;;$sid)\"");
             println!("  4. If Sysmon is missing, install it: 'winget install Microsoft.Sysmon'");
         }
-        
+
         #[cfg(target_os = "linux")]
         {
             println!("  1. Run 'sudo usermod -aG adm,syslog,systemd-journal $USER'");
@@ -1000,12 +1118,13 @@ async fn handle_grant_access() -> anyhow::Result<()> {
     Ok(())
 }
 
-
 async fn setup_firewall() -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     {
         let ps_cmd = "New-NetFirewallRule -DisplayName 'OpenOshoosi-Allow' -Direction Inbound -LocalPort 9000,9876,3030,8080 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue";
-        let _ = std::process::Command::new("powershell").args(&["-Command", ps_cmd]).output()?;
+        let _ = std::process::Command::new("powershell")
+            .args(&["-Command", ps_cmd])
+            .output()?;
     }
     osoosi_core::firewall::open_mesh_ports()?;
     Ok(())
@@ -1032,7 +1151,10 @@ fn escape_ps_literal(path: &str) -> String {
 }
 
 async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
-    if std::env::var("OSOOSI_NO_ORT").map(|v| v == "1").unwrap_or(false) {
+    if std::env::var("OSOOSI_NO_ORT")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
         return Ok(());
     }
 
@@ -1052,7 +1174,14 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
             {
                 use std::process::Command;
                 let output = Command::new("powershell")
-                    .args(["-NoProfile", "-Command", &format!("(Get-Item '{}').VersionInfo.ProductVersion", dll_path.to_string_lossy())])
+                    .args([
+                        "-NoProfile",
+                        "-Command",
+                        &format!(
+                            "(Get-Item '{}').VersionInfo.ProductVersion",
+                            dll_path.to_string_lossy()
+                        ),
+                    ])
                     .output();
                 if let Ok(out) = output {
                     let v_str = String::from_utf8_lossy(&out.stdout).trim().to_string();
@@ -1064,16 +1193,22 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
             }
         }
 
-        info!("Attempting to initialize ONNX Runtime (target version: {})...", version);
-        
+        info!(
+            "Attempting to initialize ONNX Runtime (target version: {})...",
+            version
+        );
+
         if !dll_path.exists() {
             info!("📥 Downloading ONNX Runtime v{}...", version);
             let zip_path = "ort_tmp.zip";
             let tmp_dir = "ort_extract";
-            
+
             let executor = DirectExecutor::new();
             if let Err(e) = executor.download(url, Path::new(zip_path), false).await {
-                warn!("Failed to download ORT v{}: {}. Trying next version...", version, e);
+                warn!(
+                    "Failed to download ORT v{}: {}. Trying next version...",
+                    version, e
+                );
                 continue;
             }
 
@@ -1087,7 +1222,7 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
                  Remove-Item -LiteralPath '{zip_q}' -Force -ErrorAction SilentlyContinue; \
                  Remove-Item -LiteralPath '{tmp_q}' -Recurse -Force -ErrorAction SilentlyContinue",
             );
-            
+
             let _ = std::process::Command::new("powershell")
                 .args(&["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
                 .output();
@@ -1098,10 +1233,7 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
         }
 
         // 2. Initialize with a guard to prevent the library's internal panics from crashing the app
-        let init_result = std::panic::catch_unwind(|| {
-            ort::init()
-                .commit()
-        });
+        let init_result = std::panic::catch_unwind(|| ort::init().commit());
 
         match init_result {
             Ok(Ok(_)) => {
@@ -1110,7 +1242,10 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
                 break;
             }
             _ => {
-                warn!("⚠️ ONNX Runtime v{} failed to initialize or panicked. Trying fallback...", version);
+                warn!(
+                    "⚠️ ONNX Runtime v{} failed to initialize or panicked. Trying fallback...",
+                    version
+                );
                 if dll_path.exists() {
                     let _ = fs::remove_file(&dll_path);
                 }
@@ -1125,10 +1260,9 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
         std::env::set_var("OSOOSI_NO_ORT", "1");
         anyhow::bail!("All ONNX Runtime initialization attempts failed.");
     }
-    
+
     Ok(())
 }
-
 
 /// Helper to find a script (e.g. sanitize_yara.py) by searching upward from EXE and CWD.
 fn resolve_script_path(script_name: &str) -> Option<PathBuf> {
@@ -1136,10 +1270,14 @@ fn resolve_script_path(script_name: &str) -> Option<PathBuf> {
         let mut dir = exe_path.parent();
         while let Some(d) = dir {
             let candidate = d.join(script_name);
-            if candidate.exists() { return Some(candidate); }
+            if candidate.exists() {
+                return Some(candidate);
+            }
             // Also check 'scripts/' subdirectory
             let candidate_scripts = d.join("scripts").join(script_name);
-            if candidate_scripts.exists() { return Some(candidate_scripts); }
+            if candidate_scripts.exists() {
+                return Some(candidate_scripts);
+            }
             dir = d.parent();
         }
     }
@@ -1147,9 +1285,13 @@ fn resolve_script_path(script_name: &str) -> Option<PathBuf> {
         let mut dir = Some(cwd.as_path());
         while let Some(d) = dir {
             let candidate = d.join(script_name);
-            if candidate.exists() { return Some(candidate); }
+            if candidate.exists() {
+                return Some(candidate);
+            }
             let candidate_scripts = d.join("scripts").join(script_name);
-            if candidate_scripts.exists() { return Some(candidate_scripts); }
+            if candidate_scripts.exists() {
+                return Some(candidate_scripts);
+            }
             dir = d.parent();
         }
     }
@@ -1188,13 +1330,8 @@ fn resolve_log_directory() -> PathBuf {
 
 fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::WorkerGuard> {
     let log_dir = resolve_log_directory();
-    fs::create_dir_all(&log_dir).map_err(|e| {
-        anyhow::anyhow!(
-            "Cannot create log directory {}: {}",
-            log_dir.display(),
-            e
-        )
-    })?;
+    fs::create_dir_all(&log_dir)
+        .map_err(|e| anyhow::anyhow!("Cannot create log directory {}: {}", log_dir.display(), e))?;
     let file_appender = tracing_appender::rolling::daily(&log_dir, "osoosi.log");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
     // Default: WARN when not in --debug. Always allow `target=consensus` at info so
@@ -1209,8 +1346,10 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
         .add_directive(level.into())
         .add_directive("consensus=info".parse().expect("static directive"));
     let console_layer = fmt::Layer::default().with_writer(std::io::stdout);
-    let file_layer = fmt::Layer::default().with_writer(non_blocking).with_ansi(false);
-    
+    let file_layer = fmt::Layer::default()
+        .with_writer(non_blocking)
+        .with_ansi(false);
+
     tracing_subscriber::registry()
         .with(filter)
         .with(console_layer)
@@ -1227,18 +1366,22 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
 fn run_yara_sanitizer() {
     info!("Running automated YARA rule sanitization (pre-scan cleanup)...");
     let script_name = "sanitize_yara.py";
-    
+
     if let Some(script_path) = resolve_script_path(script_name) {
         info!("Found YARA sanitization script at {:?}", script_path);
         let py = std::env::var("OSOOSI_PYTHON").unwrap_or_else(|_| {
-            if cfg!(windows) { "python.exe".to_string() } else { "python3".to_string() }
+            if cfg!(windows) {
+                "python.exe".to_string()
+            } else {
+                "python3".to_string()
+            }
         });
-        
+
         match std::process::Command::new(&py)
             .arg(&script_path)
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null())
-            .status() 
+            .status()
         {
             Ok(status) if status.success() => info!("YARA sanitization completed successfully."),
             Ok(status) => warn!("YARA sanitization script exited with status: {} (Check if 'yara-python' or 'plyara' is needed)", status),
@@ -1249,8 +1392,9 @@ fn run_yara_sanitizer() {
     }
 }
 
-
-fn open_browser(url: &str) { let _ = webbrowser::open(url); }
+fn open_browser(url: &str) {
+    let _ = webbrowser::open(url);
+}
 
 fn set_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
@@ -1260,18 +1404,27 @@ fn set_panic_hook() {
 
 #[cfg(unix)]
 async fn wait_for_shutdown() {
-    let mut sigterm = tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
+    let mut sigterm =
+        tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
     tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = sigterm.recv() => {} }
 }
 
 #[cfg(windows)]
-async fn wait_for_shutdown() { let _ = tokio::signal::ctrl_c().await; }
+async fn wait_for_shutdown() {
+    let _ = tokio::signal::ctrl_c().await;
+}
 async fn ensure_ai_models() -> anyhow::Result<()> {
-    if std::env::var("OSOOSI_NO_AI").map(|v| v == "1").unwrap_or(false) {
+    if std::env::var("OSOOSI_NO_AI")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
         return Ok(());
     }
 
-    info!("Verifying AI models in {}...", osoosi_types::resolve_models_dir().display());
+    info!(
+        "Verifying AI models in {}...",
+        osoosi_types::resolve_models_dir().display()
+    );
     ensure_ollama_model().await;
 
     let models_dir = osoosi_types::resolve_models_dir();
@@ -1283,17 +1436,19 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
 
     // Use tokio-enabled API builder with optional HF_TOKEN
     let api = {
-        let mut builder = ApiBuilder::new()
-            .with_cache_dir(models_dir.to_path_buf());
-        
+        let mut builder = ApiBuilder::new().with_cache_dir(models_dir.to_path_buf());
+
         if let Ok(token) = std::env::var("HF_TOKEN") {
             builder = builder.with_token(Some(token));
         }
-        
+
         match builder.build() {
             Ok(api) => api,
             Err(e) => {
-                warn!("Failed to initialize HuggingFace API: {}. AI features might be degraded.", e);
+                warn!(
+                    "Failed to initialize HuggingFace API: {}. AI features might be degraded.",
+                    e
+                );
                 return Ok(());
             }
         }
@@ -1335,7 +1490,10 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
             match gemma_repo.get(filename).await {
                 Ok(downloaded) => {
                     if fs::copy(downloaded, &gemma_model_dest).is_ok() {
-                        info!("Gemma 4 ONNX decoder saved from {} ({}) as model.onnx.", gemma_repo_name, filename);
+                        info!(
+                            "Gemma 4 ONNX decoder saved from {} ({}) as model.onnx.",
+                            gemma_repo_name, filename
+                        );
                         break;
                     }
                 }
@@ -1351,47 +1509,50 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
         );
     }
 
-    if std::env::var("OSOOSI_ENABLE_SMOLLM").map(|v| v == "1").unwrap_or(false) {
-    let smollm_dir = models_dir.join("smollm");
-    let _ = fs::create_dir_all(&smollm_dir);
+    if std::env::var("OSOOSI_ENABLE_SMOLLM")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        let smollm_dir = models_dir.join("smollm");
+        let _ = fs::create_dir_all(&smollm_dir);
 
-    // Optional legacy SmolLM bootstrap. Disabled by default; Gemma 4 is primary.
-    // 1. SmolLM2-135M-Instruct (Native)
-    let smollm_repo = api.model("HuggingFaceTB/SmolLM2-135M-Instruct".to_string());
-    let smollm_files = ["model.safetensors", "tokenizer.json", "config.json"];
-    for file in smollm_files {
-        let dest = smollm_dir.join(file);
-        if !dest.exists() {
-            info!("📥 Downloading SmolLM component: {}...", file);
-            match smollm_repo.get(file).await {
-                Ok(downloaded) => {
-                    let _ = fs::copy(downloaded, dest);
-                },
-                Err(e) => warn!("Failed to download {}: {}", file, e),
-            }
-        }
-    }
-
-    // 2. SmolLM2-135M-Instruct (ONNX)
-    let smollm_onnx_repo = api.model("onnx-community/SmolLM2-135M-Instruct".to_string());
-    let smollm_onnx_dest = smollm_dir.join("smollm2-135m-it.onnx");
-    if !smollm_onnx_dest.exists() {
-        info!("📥 Downloading SmolLM component: smollm2-135m-it.onnx...");
-        // Try various names
-        for filename in ["model.onnx", "smollm2-135m-it.onnx", "onnx/model.onnx"] {
-            match smollm_onnx_repo.get(filename).await {
-                Ok(downloaded) => {
-                    if fs::copy(downloaded, &smollm_onnx_dest).is_ok() {
-                        info!("✅ SmolLM ONNX model saved.");
-                        break;
+        // Optional legacy SmolLM bootstrap. Disabled by default; Gemma 4 is primary.
+        // 1. SmolLM2-135M-Instruct (Native)
+        let smollm_repo = api.model("HuggingFaceTB/SmolLM2-135M-Instruct".to_string());
+        let smollm_files = ["model.safetensors", "tokenizer.json", "config.json"];
+        for file in smollm_files {
+            let dest = smollm_dir.join(file);
+            if !dest.exists() {
+                info!("📥 Downloading SmolLM component: {}...", file);
+                match smollm_repo.get(file).await {
+                    Ok(downloaded) => {
+                        let _ = fs::copy(downloaded, dest);
                     }
-                },
-                Err(_) => continue,
+                    Err(e) => warn!("Failed to download {}: {}", file, e),
+                }
             }
         }
-    }
 
-    // 3. MalConv — Candle-compatible `.safetensors` only. cycloevan/malconv on HF is Keras/TF (see model card), not an inference endpoint.
+        // 2. SmolLM2-135M-Instruct (ONNX)
+        let smollm_onnx_repo = api.model("onnx-community/SmolLM2-135M-Instruct".to_string());
+        let smollm_onnx_dest = smollm_dir.join("smollm2-135m-it.onnx");
+        if !smollm_onnx_dest.exists() {
+            info!("📥 Downloading SmolLM component: smollm2-135m-it.onnx...");
+            // Try various names
+            for filename in ["model.onnx", "smollm2-135m-it.onnx", "onnx/model.onnx"] {
+                match smollm_onnx_repo.get(filename).await {
+                    Ok(downloaded) => {
+                        if fs::copy(downloaded, &smollm_onnx_dest).is_ok() {
+                            info!("✅ SmolLM ONNX model saved.");
+                            break;
+                        }
+                    }
+                    Err(_) => continue,
+                }
+            }
+        }
+
+        // 3. MalConv — Candle-compatible `.safetensors` only. cycloevan/malconv on HF is Keras/TF (see model card), not an inference endpoint.
     }
 
     let ai_cfg = osoosi_types::load_ai_config();
@@ -1422,7 +1583,10 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
         'malconv_hf: for repo_name in malconv_repos {
             let repo = api.model(repo_name.to_string());
             for file in malconv_files {
-                info!("📥 Verifying MalConv AI component: `{}` / `{}`...", repo_name, file);
+                info!(
+                    "📥 Verifying MalConv AI component: `{}` / `{}`...",
+                    repo_name, file
+                );
                 match repo.get(file).await {
                     Ok(downloaded) => {
                         if fs::copy(downloaded, &malconv_dest).is_ok() {
@@ -1443,56 +1607,84 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
 }
 
 async fn ensure_ollama_model() {
-    let model = std::env::var("OSOOSI_OLLAMA_MODEL")
+    let preferred = std::env::var("OSOOSI_OLLAMA_MODEL")
         .or_else(|_| std::env::var("OSOOSI_REASONING_MODEL"))
         .unwrap_or_else(|_| "gemma4:e4b".to_string());
 
-    let version = tokio::process::Command::new("ollama")
-        .arg("--version")
-        .output()
-        .await;
-    let Ok(version) = version else {
+    if !ollama_available().await {
+        install_ollama_best_effort().await;
+    }
+
+    if !ollama_available().await {
         warn!(
-            "Ollama not found on PATH. Local Gemma reasoning will use ONNX/SmolLM files if present; otherwise AI reasoning voters stay silent."
+            "Ollama not available after provisioning attempt. Gemma 4 ONNX files will be used if present; reasoning voters stay silent otherwise."
         );
         return;
     };
 
-    if !version.status.success() {
-        warn!("Ollama command exists but did not run successfully; skipping Ollama model provisioning.");
-        return;
+    info!("Ollama detected. Ensuring a local Gemma reasoning model is available...");
+    let list = tokio::process::Command::new("ollama")
+        .arg("list")
+        .output()
+        .await;
+    let list_stdout = list
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out.stdout).to_string())
+        .unwrap_or_default();
+
+    let mut candidates = vec![preferred.clone()];
+    for fallback in ["gemma4:e4b", "gemma4:4b", "gemma3:4b", "gemma2:9b"] {
+        if !candidates.iter().any(|m| m == fallback) {
+            candidates.push(fallback.to_string());
+        }
     }
 
-    info!("Ollama detected. Ensuring local reasoning model '{}' is available...", model);
-    let list = tokio::process::Command::new("ollama").arg("list").output().await;
-    let already_present = list
-        .ok()
-        .map(|out| String::from_utf8_lossy(&out.stdout).contains(&model))
-        .unwrap_or(false);
+    let mut selected = candidates
+        .iter()
+        .find(|model| list_stdout.contains(model.as_str()))
+        .cloned();
 
-    if !already_present {
-        match tokio::process::Command::new("ollama")
-            .args(["pull", &model])
-            .status()
-            .await
-        {
-            Ok(status) if status.success() => info!("Ollama model '{}' provisioned.", model),
-            Ok(status) => {
-                warn!("ollama pull {} exited with status {}. ONNX/SmolLM fallback remains available.", model, status);
-                return;
-            }
-            Err(e) => {
-                warn!("Failed to run ollama pull {}: {}. ONNX/SmolLM fallback remains available.", model, e);
-                return;
+    if selected.is_none() {
+        for model in &candidates {
+            match tokio::process::Command::new("ollama")
+                .args(["pull", model])
+                .status()
+                .await
+            {
+                Ok(status) if status.success() => {
+                    info!("Ollama model '{}' provisioned.", model);
+                    selected = Some(model.clone());
+                    break;
+                }
+                Ok(status) => {
+                    warn!(
+                        "ollama pull {} exited with status {}; trying next Gemma fallback.",
+                        model, status
+                    );
+                }
+                Err(e) => {
+                    warn!(
+                        "Failed to run ollama pull {}: {}; trying next Gemma fallback.",
+                        model, e
+                    );
+                }
             }
         }
     }
+
+    let Some(model) = selected else {
+        warn!("No Ollama Gemma model could be provisioned. Gemma ONNX fallback remains available.");
+        return;
+    };
 
     if std::env::var("OSOOSI_REASONING_BACKEND").is_err() {
         std::env::set_var("OSOOSI_REASONING_BACKEND", "api");
     }
     if std::env::var("OSOOSI_REASONING_URL").is_err() {
-        std::env::set_var("OSOOSI_REASONING_URL", "http://127.0.0.1:11434/v1/chat/completions");
+        std::env::set_var(
+            "OSOOSI_REASONING_URL",
+            "http://127.0.0.1:11434/v1/chat/completions",
+        );
     }
     if std::env::var("OSOOSI_REASONING_KEY").is_err() {
         std::env::set_var("OSOOSI_REASONING_KEY", "ollama");
@@ -1506,5 +1698,79 @@ async fn ensure_ollama_model() {
     }
     if std::env::var("OSOOSI_OPENAI_MODEL").is_err() {
         std::env::set_var("OSOOSI_OPENAI_MODEL", &model);
+    }
+}
+
+async fn ollama_available() -> bool {
+    tokio::process::Command::new("ollama")
+        .arg("--version")
+        .status()
+        .await
+        .map(|status| status.success())
+        .unwrap_or(false)
+}
+
+async fn install_ollama_best_effort() {
+    if std::env::var("OSOOSI_SKIP_OLLAMA_INSTALL")
+        .map(|v| v == "1")
+        .unwrap_or(false)
+    {
+        return;
+    }
+
+    info!("Ollama not found. Attempting best-effort local Ollama installation...");
+
+    #[cfg(target_os = "windows")]
+    {
+        let winget = tokio::process::Command::new("winget")
+            .args([
+                "install",
+                "--id",
+                "Ollama.Ollama",
+                "-e",
+                "--accept-package-agreements",
+                "--accept-source-agreements",
+            ])
+            .status()
+            .await;
+        match winget {
+            Ok(status) if status.success() => info!("Ollama installed with winget."),
+            Ok(status) => warn!("winget Ollama install exited with status {}.", status),
+            Err(e) => warn!(
+                "winget not available or failed to start for Ollama install: {}",
+                e
+            ),
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let brew = tokio::process::Command::new("brew")
+            .args(["install", "ollama"])
+            .status()
+            .await;
+        match brew {
+            Ok(status) if status.success() => info!("Ollama installed with Homebrew."),
+            Ok(status) => warn!("brew Ollama install exited with status {}.", status),
+            Err(e) => warn!(
+                "Homebrew not available or failed to start for Ollama install: {}",
+                e
+            ),
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let shell = tokio::process::Command::new("sh")
+            .args(["-c", "curl -fsSL https://ollama.com/install.sh | sh"])
+            .status()
+            .await;
+        match shell {
+            Ok(status) if status.success() => {
+                info!("Ollama installed with official Linux installer.")
+            }
+            Ok(status) => warn!("Ollama Linux installer exited with status {}.", status),
+            Err(e) => warn!("Failed to start Ollama Linux installer: {}", e),
+        }
     }
 }

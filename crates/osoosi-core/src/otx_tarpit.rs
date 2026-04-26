@@ -52,7 +52,11 @@ pub fn try_apply_process_network_qostarpit(
     if !(reason_indicates_otx(signature) || event_warrants_process_network_shaping(event)) {
         return None;
     }
-    let pid = event.data.get("ProcessId").and_then(|p| p.as_u64()).map(|v| v as u32);
+    let pid = event
+        .data
+        .get("ProcessId")
+        .and_then(|p| p.as_u64())
+        .map(|v| v as u32);
     let image = event
         .data
         .get("Image")

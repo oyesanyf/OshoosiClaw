@@ -7,9 +7,9 @@
 //! - Query table restrictions
 //! - Per-session rate limiting
 
-use std::collections::HashSet;
 use blake3::Hasher;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
 
 /// Security configuration for the WASM sandbox.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -116,7 +116,10 @@ impl SandboxSecurityConfig {
                 .unwrap_or(&prog);
             for allowed in &self.command_whitelist {
                 let a = to_ascii_lower(allowed.trim());
-                if basename == a || prog.ends_with(&format!("\\{}", a)) || prog.ends_with(&format!("/{}", a)) {
+                if basename == a
+                    || prog.ends_with(&format!("\\{}", a))
+                    || prog.ends_with(&format!("/{}", a))
+                {
                     return true;
                 }
             }
@@ -162,14 +165,14 @@ fn extract_host_from_url(url: &str) -> String {
     } else {
         return String::new();
     };
-        to_ascii_lower(
-            rest.split('/')
-                .next()
-                .unwrap_or(rest)
-                .split(':')
-                .next()
-                .unwrap_or(rest),
-        )
+    to_ascii_lower(
+        rest.split('/')
+            .next()
+            .unwrap_or(rest)
+            .split(':')
+            .next()
+            .unwrap_or(rest),
+    )
 }
 
 fn to_ascii_lower(s: &str) -> String {

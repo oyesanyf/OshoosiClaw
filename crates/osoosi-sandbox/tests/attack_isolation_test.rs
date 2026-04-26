@@ -13,9 +13,9 @@ async fn test_wasm_traps_attack() {
     let audit = Arc::new(AuditTrail::new());
     let memory = Arc::new(MemoryStore::new(":memory:").unwrap());
     let scanner = Arc::new(MalwareScanner::new(std::path::Path::new("dummy.json")));
-    
+
     let executor = SandboxExecutor::new(audit, memory, scanner).unwrap();
-    
+
     // Malicious WASM module that reads DB then tries to exfiltrate via network,
     // and finally attempts a destructive OS command.
     let wat = r#"
@@ -50,7 +50,7 @@ async fn test_wasm_traps_attack() {
             )
         )
     "#;
-    
+
     let wasm_bytes = wat::parse_str(wat).expect("Failed to parse WAT");
 
     let config = SandboxConfig {
@@ -62,13 +62,25 @@ async fn test_wasm_traps_attack() {
         security_config: SandboxSecurityConfig::default(),
     };
 
-    let result = executor.run_script(&wasm_bytes, config, HashSet::new()).await.unwrap();
+    let result = executor
+        .run_script(&wasm_bytes, config, HashSet::new())
+        .await
+        .unwrap();
 
     // Assertion: The agent's SandboxResult should flag this sequence as CRITICAL
-    assert_eq!(result.triage_level, "CRITICAL", "The behavior must be detected as critical exfiltration");
-    assert!(result.suspicious_sequence, "The syscall sequence is highly suspicious");
-    assert_eq!(result.syscall_count, 3, "The sandbox must meter all 3 syscalls");
-    
+    assert_eq!(
+        result.triage_level, "CRITICAL",
+        "The behavior must be detected as critical exfiltration"
+    );
+    assert!(
+        result.suspicious_sequence,
+        "The syscall sequence is highly suspicious"
+    );
+    assert_eq!(
+        result.syscall_count, 3,
+        "The sandbox must meter all 3 syscalls"
+    );
+
     // Output forensic story showing the trap working
     println!("Forensic Story Generated:\n{}", result.forensic_story);
 }
@@ -79,9 +91,9 @@ async fn test_clean_script() {
     let audit = Arc::new(AuditTrail::new());
     let memory = Arc::new(MemoryStore::new(":memory:").unwrap());
     let scanner = Arc::new(MalwareScanner::new(std::path::Path::new("dummy.json")));
-    
+
     let executor = SandboxExecutor::new(audit, memory, scanner).unwrap();
-    
+
     // Benign WASM module
     let wat = r#"
         (module
@@ -90,9 +102,9 @@ async fn test_clean_script() {
             )
         )
     "#;
-    
+
     let wasm_bytes = wat::parse_str(wat).unwrap();
-    
+
     let config = SandboxConfig {
         max_fuel: 1_000_000,
         memory_limit_bytes: 50 * 1024 * 1024,
@@ -102,7 +114,10 @@ async fn test_clean_script() {
         security_config: SandboxSecurityConfig::default(),
     };
 
-    let result = executor.run_script(&wasm_bytes, config, HashSet::new()).await.unwrap();
+    let result = executor
+        .run_script(&wasm_bytes, config, HashSet::new())
+        .await
+        .unwrap();
 
     assert_eq!(result.triage_level, "INFO");
     assert!(!result.suspicious_sequence);

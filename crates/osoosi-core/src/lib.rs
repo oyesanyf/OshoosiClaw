@@ -5,69 +5,76 @@
 pub mod attack_graph;
 pub mod backup;
 pub mod baseline;
+pub mod browser_guard;
+pub mod canary;
+pub mod config_integrity;
 pub mod firewall;
-pub mod software_replacement;
 pub mod forensics;
+pub mod gossip;
+pub mod hardened;
+pub mod hybrid_runtime;
+pub mod landlock;
+pub mod openshell;
+pub mod pii;
 pub mod privilege;
 pub mod quarantine;
+pub mod relativistic;
+pub mod shield;
+pub mod software_replacement;
+pub mod static_analyzer;
+pub mod system_check;
+pub mod tool_paths;
 pub mod triage;
 pub mod version_utils;
-pub mod gossip;
-pub mod yara_gen;
-pub mod shield;
-pub mod relativistic;
-pub mod system_check;
-pub mod pii;
-pub mod openshell;
-pub mod tool_paths;
-pub mod config_integrity;
-pub mod hardened;
-pub mod landlock;
 pub mod watchdog;
-pub mod canary;
-pub mod browser_guard;
-pub mod static_analyzer;
-pub mod hybrid_runtime;
+pub mod yara_gen;
 pub use hybrid_runtime::{
     init_hybrid_concurrency, max_blocking_threads, rayon_thread_count, run_on_rayon, spawn_rayon,
     tokio_worker_threads,
 };
-pub mod voters;
-pub mod secured_executor;
-pub mod remediation;
 pub mod adaptive;
+pub mod blocking_manager;
 pub mod byzantine;
 pub mod causal_ai;
-pub mod self_healing;
 pub mod correlator;
-pub mod blocking_manager;
 pub mod otx_tarpit;
+pub mod remediation;
+pub mod secured_executor;
+pub mod self_healing;
+pub mod voters;
 
+use osoosi_audit::AuditTrail;
+use osoosi_memory::MemoryStore;
+use osoosi_policy::{PolicyEngine, ThreatFeedFetcher};
+use osoosi_runtime::DeceptionManager;
+use osoosi_telemetry::SysmonParser;
+use osoosi_types::{
+    load_runtime_config, resolve_nvd_api_key, resolve_otx_api_key, SecuredExecutor, SysmonEvent,
+    SysmonEventId,
+};
+use osoosi_wire::{JoinGate, MeshCommand, MeshNode};
 use std::collections::{HashMap, HashSet};
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::sync::Once;
 use std::time::{Duration, Instant};
-use osoosi_memory::MemoryStore;
-use osoosi_telemetry::SysmonParser;
-use osoosi_policy::{PolicyEngine, ThreatFeedFetcher};
-use osoosi_wire::{MeshNode, MeshCommand, JoinGate};
-use osoosi_runtime::DeceptionManager;
-use osoosi_types::{
-    load_runtime_config, resolve_nvd_api_key, resolve_otx_api_key, SecuredExecutor, SysmonEvent,
-    SysmonEventId,
-};
-use osoosi_audit::AuditTrail;
 
 static OTX_FEED_KEY_SOURCE_LOG: Once = Once::new();
 static OTX_FEED_DISABLED_LOG: Once = Once::new();
+use osoosi_model::{MalwareScanner, ModelConfig, ThreatModel};
 use osoosi_repair::PatchEngine;
 use osoosi_trust::TrustManager;
-use osoosi_model::{ThreatModel, ModelConfig, MalwareScanner};
-use tracing::{debug, info, warn, error};
+use tracing::{debug, error, info, warn};
 
 /// Repair status tuple: (last_cve, last_state, last_sig, last_at, pending_count, last_error).
-pub type RepairStatus = (Option<String>, Option<String>, Option<String>, Option<String>, u32, Option<String>);
+pub type RepairStatus = (
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    Option<String>,
+    u32,
+    Option<String>,
+);
 
 fn is_trusted_operational_image(image_path: &str) -> bool {
     let path = image_path.to_ascii_lowercase();
@@ -119,7 +126,10 @@ fn is_trusted_operational_image(image_path: &str) -> bool {
 }
 
 fn should_skip_file_malware_scan(path: &std::path::Path) -> bool {
-    let path_lc = path.to_string_lossy().replace('/', "\\").to_ascii_lowercase();
+    let path_lc = path
+        .to_string_lossy()
+        .replace('/', "\\")
+        .to_ascii_lowercase();
     if path_lc.contains("\\.codex\\")
         || path_lc.contains("\\.gemini\\")
         || path_lc.contains("\\antigravity\\brain\\")
@@ -190,7 +200,7 @@ fn try_build_c2_yara_voter() -> Option<osoosi_policy::voters::YaraXMemoryVoter> 
             let mut compiler = yara_x::Compiler::new();
             compiler
                 .add_source(
-                r#"
+                    r#"
             rule C2_Beacon_Generic {
                 strings:
                     $mz = { 4D 5A }
@@ -248,7 +258,11 @@ pub struct EdrOrchestrator {
     trust: Arc<TrustManager>,
     watcher: Arc<tokio::sync::Mutex<osoosi_telemetry::FileWatcher>>,
     /// Receiver for file system events. Taken by the monitor loop.
-    file_event_rx: Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::Receiver<anyhow::Result<osoosi_telemetry::FileChangeEvent>>>>>,
+    file_event_rx: Arc<
+        tokio::sync::Mutex<
+            Option<tokio::sync::mpsc::Receiver<anyhow::Result<osoosi_telemetry::FileChangeEvent>>>,
+        >,
+    >,
     /// Repair Engine: Patch discovery and application
     patch_engine: Arc<PatchEngine>,
     /// Local model trained on self + peer data (stored in models/)
@@ -260,7 +274,8 @@ pub struct EdrOrchestrator {
     /// Behavioral baseline for anomaly detection
     baseline: Arc<crate::baseline::BehavioralBaseline>,
     /// Policy Consensus tracking (Mesh-validated patches)
-    policy_consensus: Arc<tokio::sync::Mutex<HashMap<String, Vec<osoosi_types::PolicyConsensusMessage>>>>,
+    policy_consensus:
+        Arc<tokio::sync::Mutex<HashMap<String, Vec<osoosi_types::PolicyConsensusMessage>>>>,
     /// Approval Queue for high-stakes autonomous actions
     approval_queue: Arc<tokio::sync::Mutex<Vec<osoosi_sandbox::ApprovalRequest>>>,
     /// Sandbox Executor for isolated tool execution
@@ -361,10 +376,7 @@ impl EdrOrchestrator {
     }
 
     fn dns_domain_candidates(query_name: &str) -> Vec<String> {
-        let normalized = query_name
-            .trim()
-            .trim_end_matches('.')
-            .to_ascii_lowercase();
+        let normalized = query_name.trim().trim_end_matches('.').to_ascii_lowercase();
         let labels: Vec<&str> = normalized.split('.').filter(|s| !s.is_empty()).collect();
         if labels.len() < 2 {
             return Vec::new();
@@ -440,7 +452,10 @@ impl EdrOrchestrator {
         let mut max_hits = 0u64;
 
         for domain in Self::dns_domain_candidates(query_name) {
-            let url = format!("https://otx.alienvault.com/api/v1/indicators/domain/{}/general", domain);
+            let url = format!(
+                "https://otx.alienvault.com/api/v1/indicators/domain/{}/general",
+                domain
+            );
             let mut req = client.get(&url);
             if let Some(ref k) = api_key {
                 req = req.header("X-OTX-API-KEY", k);
@@ -464,7 +479,10 @@ impl EdrOrchestrator {
         Ok(max_hits)
     }
 
-    async fn analyze_dns_query_risk(&self, event: &SysmonEvent) -> Option<osoosi_types::ThreatSignature> {
+    async fn analyze_dns_query_risk(
+        &self,
+        event: &SysmonEvent,
+    ) -> Option<osoosi_types::ThreatSignature> {
         let query_name = event
             .data
             .get("QueryName")
@@ -480,11 +498,17 @@ impl EdrOrchestrator {
         let age_days = match self.lookup_domain_age_days(query_name).await {
             Ok(Some(days)) => days,
             Ok(None) => {
-                debug!("DNS enrichment: no RDAP registration date for {}", query_name);
+                debug!(
+                    "DNS enrichment: no RDAP registration date for {}",
+                    query_name
+                );
                 return None;
             }
             Err(e) => {
-                debug!("DNS enrichment: domain age lookup failed for {}: {}", query_name, e);
+                debug!(
+                    "DNS enrichment: domain age lookup failed for {}: {}",
+                    query_name, e
+                );
                 return None;
             }
         };
@@ -502,7 +526,10 @@ impl EdrOrchestrator {
             .and_then(|p| std::path::Path::new(p).file_name())
             .and_then(|n| n.to_str())
             .map(String::from);
-        sig.cve_id = Some(format!("DNS-NEW-DOMAIN:{}", query_name.to_ascii_lowercase()));
+        sig.cve_id = Some(format!(
+            "DNS-NEW-DOMAIN:{}",
+            query_name.to_ascii_lowercase()
+        ));
 
         if otx_hits > 0 {
             sig.confidence = 0.92;
@@ -527,17 +554,22 @@ impl EdrOrchestrator {
         // Ensures hybrid Tokio+Rayon is wired even when the agent is not started via `osoosi` CLI (tests, embedders).
         crate::init_hybrid_concurrency();
         let runtime_config = load_runtime_config();
-        
-        let host_executor: Arc<dyn SecuredExecutor> = Arc::new(crate::secured_executor::DirectExecutor::new());
-        let task_executor: Arc<dyn SecuredExecutor> = if runtime_config.secure_runtime.as_deref() == Some("openshell") {
-            info!("Initializing OpenShell sandboxed task executor (Sandbox: {})...", runtime_config.openshell_sandbox);
-            Arc::new(crate::secured_executor::OpenShellExecutor::new(
-                &runtime_config.openshell_sandbox,
-                runtime_config.openshell_policy.as_deref(),
-            ))
-        } else {
-            Arc::new(crate::secured_executor::DirectExecutor::new())
-        };
+
+        let host_executor: Arc<dyn SecuredExecutor> =
+            Arc::new(crate::secured_executor::DirectExecutor::new());
+        let task_executor: Arc<dyn SecuredExecutor> =
+            if runtime_config.secure_runtime.as_deref() == Some("openshell") {
+                info!(
+                    "Initializing OpenShell sandboxed task executor (Sandbox: {})...",
+                    runtime_config.openshell_sandbox
+                );
+                Arc::new(crate::secured_executor::OpenShellExecutor::new(
+                    &runtime_config.openshell_sandbox,
+                    runtime_config.openshell_policy.as_deref(),
+                ))
+            } else {
+                Arc::new(crate::secured_executor::DirectExecutor::new())
+            };
 
         let memory = Arc::new(MemoryStore::new(&runtime_config.db_path)?);
         register_internal_assets(&memory);
@@ -550,18 +582,19 @@ impl EdrOrchestrator {
             policy_init.load_sigma_rules(std::path::Path::new(&sigma_dir));
             debug!("Sigma rule loading took {:?}", start.elapsed());
         });
-        let mesh = Arc::new(tokio::sync::Mutex::new(Some(MeshNode::new(memory.clone()).await?)));
+        let mesh = Arc::new(tokio::sync::Mutex::new(Some(
+            MeshNode::new(memory.clone()).await?,
+        )));
         let mesh_command_tx = Arc::new(tokio::sync::Mutex::new(None));
         let response = Arc::new(DeceptionManager::new());
         let audit = Arc::new(AuditTrail::new());
-        
 
-        
         // 2. Initialize Trust Manager
         let trust = Arc::new(TrustManager::new(host_executor.clone())?);
 
         let exclude_paths = osoosi_types::load_exclude_paths_from_config();
-        let (watcher_obj, file_rx) = osoosi_telemetry::FileWatcher::new(Some(memory.clone()), exclude_paths)?;
+        let (watcher_obj, file_rx) =
+            osoosi_telemetry::FileWatcher::new(Some(memory.clone()), exclude_paths)?;
         let watcher = Arc::new(tokio::sync::Mutex::new(watcher_obj));
         let file_event_rx = Arc::new(tokio::sync::Mutex::new(Some(file_rx)));
         let mesh_peer_count = Arc::new(AtomicU32::new(0));
@@ -583,45 +616,69 @@ impl EdrOrchestrator {
         let threat_model = Arc::new(tokio::sync::RwLock::new(ThreatModel::new(model_config)));
 
         let malware_model_path = osoosi_types::resolve_models_dir()
-            .join("malware").join("malware_model.onnx");
+            .join("malware")
+            .join("malware_model.onnx");
         let malware_scanner = Arc::new(MalwareScanner::new(&malware_model_path));
         let triage_store = crate::triage::new_triage_store();
         let baseline = Arc::new(crate::baseline::BehavioralBaseline::new());
-        let sandbox = Arc::new(osoosi_sandbox::SandboxExecutor::new(audit.clone(), memory.clone(), malware_scanner.clone())?);
+        let sandbox = Arc::new(osoosi_sandbox::SandboxExecutor::new(
+            audit.clone(),
+            memory.clone(),
+            malware_scanner.clone(),
+        )?);
         let approval_queue = Arc::new(tokio::sync::Mutex::new(Vec::new()));
         let shield = Arc::new(crate::shield::ShieldLayer::new());
         let node_id = trust.did().to_string();
-        let holograph = Arc::new(osoosi_wire::holograph::HolographEngine::new(node_id.clone()));
+        let holograph = Arc::new(osoosi_wire::holograph::HolographEngine::new(
+            node_id.clone(),
+        ));
         let relativistic = Arc::new(crate::relativistic::RelativisticGuard::new());
         let behavioral_classifier = Arc::new(osoosi_behavioral::BehavioralClassifier::new().await);
         let behavioral_analyzer = Arc::new(osoosi_behavioral::BehavioralAnalyzer::new());
         let pii_classifier = Arc::new(crate::pii::PiiClassifier::new());
-        let browser_guard = Arc::new(crate::browser_guard::BrowserGuard::new(memory.clone(), audit.clone()));
-        let static_analyzer = Arc::new(crate::static_analyzer::StaticAnalyzer::new(memory.clone(), task_executor.clone()));
+        let browser_guard = Arc::new(crate::browser_guard::BrowserGuard::new(
+            memory.clone(),
+            audit.clone(),
+        ));
+        let static_analyzer = Arc::new(crate::static_analyzer::StaticAnalyzer::new(
+            memory.clone(),
+            task_executor.clone(),
+        ));
         let correlator = Arc::new(crate::correlator::EventCorrelator::new());
         let nsrl_cache = Arc::new(dashmap::DashMap::new());
         let remediation = Arc::new(crate::remediation::RemediationController::new());
         let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
         let storyteller = Arc::new(crate::forensics::ForensicStoryteller::new());
         let causal_ai = Arc::new(crate::causal_ai::CausalEngine::new());
-        let self_healing = Arc::new(crate::self_healing::SelfHealingEngine::new(audit.clone(), memory.clone()));
-        let ghost_nodes = Arc::new(osoosi_wire::GhostNodeManager::new(node_id, mesh_command_tx.clone()));
-        
-        let models_dir = std::path::PathBuf::from(std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string()));
+        let self_healing = Arc::new(crate::self_healing::SelfHealingEngine::new(
+            audit.clone(),
+            memory.clone(),
+        ));
+        let ghost_nodes = Arc::new(osoosi_wire::GhostNodeManager::new(
+            node_id,
+            mesh_command_tx.clone(),
+        ));
+
+        let models_dir = std::path::PathBuf::from(
+            std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string()),
+        );
         let smollm_dir = models_dir.join("smollm");
-        let behavioral_engine = if std::env::var("OSOOSI_ENABLE_SMOLLM").map(|v| v == "1").unwrap_or(false) {
+        let behavioral_engine = if std::env::var("OSOOSI_ENABLE_SMOLLM")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+        {
             match osoosi_behavioral::SmolLMAnalyzer::new(&smollm_dir) {
-            Ok(a) => {
-                info!("Native SmolLM analyzer loaded from {:?}.", smollm_dir);
-                Some(Arc::new(a))
-            }
-            Err(e) => {
-                warn!(
+                Ok(a) => {
+                    info!("Native SmolLM analyzer loaded from {:?}.", smollm_dir);
+                    Some(Arc::new(a))
+                }
+                Err(e) => {
+                    warn!(
                     "Native SmolLM analyzer unavailable: {}. Expect tokenizer.json, model.safetensors, and config.json under {:?} (Candle/LLaMA format). The agent continues with rules and optional ONNX path in BehavioralClassifier.",
                     e, smollm_dir
                 );
-                None
-            }
+                    None
+                }
             }
         } else {
             None
@@ -653,17 +710,19 @@ impl EdrOrchestrator {
             None
         };
 
-        let provisioner = Arc::new(osoosi_telemetry::AgentProvisioner::new(host_executor.clone()));
+        let provisioner = Arc::new(osoosi_telemetry::AgentProvisioner::new(
+            host_executor.clone(),
+        ));
         let blocking_manager = Arc::new(crate::blocking_manager::BlockingManager::new(provisioner));
         // Register Voters into Policy Engine for Multi-Detector Consensus
         policy.add_voter(Box::new(osoosi_policy::voters::SemanticVoter {
             engine: osoosi_policy::semantic::SemanticEngine::new(),
         }));
-        
+
         policy.add_voter(Box::new(osoosi_policy::voters::SigmaVoter {
             engine: policy.sigma_engine().clone(),
         }));
-        
+
         policy.add_voter(Box::new(osoosi_policy::voters::NsrlVoter {
             cache: nsrl_cache.clone(),
             memory: memory.clone(),
@@ -688,7 +747,7 @@ impl EdrOrchestrator {
         if let Some(voter) = try_build_c2_yara_voter() {
             policy.add_voter(Box::new(voter));
         }
-        
+
         // ClamAV Consensus Voter
         policy.add_voter(Box::new(crate::voters::ClamVoter {
             scanner: malware_scanner.clone(),
@@ -749,7 +808,7 @@ impl EdrOrchestrator {
     /// Start the P2P Mesh event loop. Returns the JoinGate to be shared with the Dashboard.
     pub async fn start_p2p_loop(&self) -> anyhow::Result<Arc<osoosi_wire::JoinGate>> {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
-        
+
         // Save the command sender so the orchestrator can broadcast messages to the mesh
         {
             let mut mesh_tx = self.mesh_command_tx.lock().await;
@@ -784,50 +843,58 @@ impl EdrOrchestrator {
             let orch_delta = orch.clone();
 
             tokio::spawn(async move {
-                mesh_node.run_loop(
-                    gate,
-                    rx,
-                    Some(peer_count),
-                    peer_rules,
-                    move |sig| {
-                        info!("Mesh Intelligence: External threat reported from {}: {:?}", sig.source_node, sig.reason);
-                        // Persist mesh threat so it shows in the dashboard
-                        if let Err(e) = orch_sig.memory.log_threat(&sig) {
-                            error!("Failed to persist mesh threat: {}", e);
-                        }
-                        orch_sig.audit.log("MESH_THREAT_RECEIVED", serde_json::json!({
-                            "source_node": sig.source_node,
-                            "threat_id": sig.id,
-                            "confidence": sig.confidence,
-                        }));
-                    },
-                    move |msg| {
-                        // Handle policy consensus messages
-                        if let osoosi_types::PolicyConsensusMessage::Vote(ref vote) = msg {
-                             let orch_clone = orch_msg.clone();
-                             let msg_clone = msg.clone();
-                             let voter_id = vote.voter_id.clone();
-                             tokio::spawn(async move {
-                                 let mut consensus = orch_clone.policy_consensus.lock().await;
-                                 consensus.entry(voter_id).or_default().push(msg_clone);
-                             });
-                        }
-                    },
-                    |_shard| {}, // Ghost shards - placeholder for future distributed storage
-                    |_intel| {}, // Global intel
-                    |_sample| {}, // Malware samples
-                    |_tarpit| {}, // Tarpit signals
-                    |_confidential| {}, // Confidential messages
-                    move |delta| {
-                        let orch_clone = orch_delta.clone();
-                        tokio::spawn(async move {
-                            let mut model = orch_clone.threat_model.write().await;
-                            model.merge_delta(&delta);
-                        });
-                    },
-                ).await;
+                mesh_node
+                    .run_loop(
+                        gate,
+                        rx,
+                        Some(peer_count),
+                        peer_rules,
+                        move |sig| {
+                            info!(
+                                "Mesh Intelligence: External threat reported from {}: {:?}",
+                                sig.source_node, sig.reason
+                            );
+                            // Persist mesh threat so it shows in the dashboard
+                            if let Err(e) = orch_sig.memory.log_threat(&sig) {
+                                error!("Failed to persist mesh threat: {}", e);
+                            }
+                            orch_sig.audit.log(
+                                "MESH_THREAT_RECEIVED",
+                                serde_json::json!({
+                                    "source_node": sig.source_node,
+                                    "threat_id": sig.id,
+                                    "confidence": sig.confidence,
+                                }),
+                            );
+                        },
+                        move |msg| {
+                            // Handle policy consensus messages
+                            if let osoosi_types::PolicyConsensusMessage::Vote(ref vote) = msg {
+                                let orch_clone = orch_msg.clone();
+                                let msg_clone = msg.clone();
+                                let voter_id = vote.voter_id.clone();
+                                tokio::spawn(async move {
+                                    let mut consensus = orch_clone.policy_consensus.lock().await;
+                                    consensus.entry(voter_id).or_default().push(msg_clone);
+                                });
+                            }
+                        },
+                        |_shard| {}, // Ghost shards - placeholder for future distributed storage
+                        |_intel| {}, // Global intel
+                        |_sample| {}, // Malware samples
+                        |_tarpit| {}, // Tarpit signals
+                        |_confidential| {}, // Confidential messages
+                        move |delta| {
+                            let orch_clone = orch_delta.clone();
+                            tokio::spawn(async move {
+                                let mut model = orch_clone.threat_model.write().await;
+                                model.merge_delta(&delta);
+                            });
+                        },
+                    )
+                    .await;
             });
-            
+
             // Start periodic peer announce heartbeat
             let orch_announce = self.clone();
             tokio::spawn(async move {
@@ -844,7 +911,9 @@ impl EdrOrchestrator {
                     };
                     let tx_guard = orch_announce.mesh_command_tx.lock().await;
                     if let Some(ref tx) = *tx_guard {
-                        let _ = tx.send(osoosi_wire::MeshCommand::PublishPeerAnnounce(ann)).await;
+                        let _ = tx
+                            .send(osoosi_wire::MeshCommand::PublishPeerAnnounce(ann))
+                            .await;
                     }
                 }
             });
@@ -860,7 +929,7 @@ impl EdrOrchestrator {
         let orchestrator = self.clone();
         tokio::spawn(async move {
             info!("Starting Rule Maintenance Loop (YARA, Sigma, ClamAV)...");
-            
+
             // 1. YARA Update (Core Forge + Agentic Discovery) - offload to blocking pool
             tokio::task::spawn_blocking(|| {
                 osoosi_model::malware::MalwareScanner::update_yara_rules_on_startup();
@@ -872,10 +941,13 @@ impl EdrOrchestrator {
                 info!("Running periodic rule maintenance...");
 
                 // 2. Sigma Rule Refresh - offload to blocking pool
-                let sigma_dir = std::env::var("OSOOSI_SIGMA_DIR").unwrap_or_else(|_| "sigma".to_string());
+                let sigma_dir =
+                    std::env::var("OSOOSI_SIGMA_DIR").unwrap_or_else(|_| "sigma".to_string());
                 let orch_clone = orchestrator.clone();
                 tokio::task::spawn_blocking(move || {
-                    orch_clone.policy.load_sigma_rules(std::path::Path::new(&sigma_dir));
+                    orch_clone
+                        .policy
+                        .load_sigma_rules(std::path::Path::new(&sigma_dir));
                 });
 
                 // 3. ClamAV Health Check / Update
@@ -885,11 +957,11 @@ impl EdrOrchestrator {
                         let _ = std::process::Command::new("freshclam").status();
                     });
                 }
-                
+
                 #[cfg(not(target_os = "windows"))]
                 {
                     tokio::task::spawn_blocking(|| {
-                         let _ = std::process::Command::new("freshclam").status();
+                        let _ = std::process::Command::new("freshclam").status();
                     });
                 }
             }
@@ -907,40 +979,43 @@ impl EdrOrchestrator {
 
             // Auto-start browser auditor alongside cybershield
             orchestrator.start_browser_auditor();
-            
+
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             loop {
                 interval.tick().await;
                 sys.refresh_all();
-                
+
                 let total_memory = sys.total_memory();
                 let memory_threshold = total_memory / 2; // 50%
                 let my_pid = Pid::from(std::process::id() as usize);
-                
+
                 for (pid, process) in sys.processes() {
                     if *pid == my_pid {
                         continue; // NEVER scan self
                     }
-                    
+
                     let process_name = process.name();
                     // EXEMPTIONS: Critical system processes that legitimately spike during maintenance/updates
-                    if process_name == "MsMpEng.exe" || process_name == "TrustedInstaller.exe" || process_name == "TiWorker.exe" {
-                        continue; 
+                    if process_name == "MsMpEng.exe"
+                        || process_name == "TrustedInstaller.exe"
+                        || process_name == "TiWorker.exe"
+                    {
+                        continue;
                     }
 
                     let cpu_usage = process.cpu_usage();
                     let memory_usage = process.memory();
-                    
+
                     // Higher thresholds for alerting (3.0 cores CPU, 50% RAM)
                     if cpu_usage > 300.0 || memory_usage > memory_threshold {
                         let process_name = process.name();
                         let exe_path = process.exe();
-                        
+
                         warn!(
                             "CyberShield Insight: Process {} (PID {}) exceeds resource thresholds (CPU: {:.1}%, Mem: {}KB).",
                             process_name, pid, cpu_usage, memory_usage / 1024
                         );
-                        
+
                         // Analyze the image path immediately using the CEREBUS-enhanced MalwareScanner
                         if let Some(path) = exe_path {
                             let path_str = path.to_string_lossy();
@@ -958,17 +1033,20 @@ impl EdrOrchestrator {
                             }
                             if let Some(result) = orchestrator.malware_scanner.scan_file(path) {
                                 if result.clam_detected == Some(false) {
-                                    orchestrator.audit.log("CLAMAV_CLEAN", serde_json::json!({
-                                        "file_path": result.file_path,
-                                        "context": "CyberShield",
-                                        "process_name": process_name,
-                                        "action": "allowed",
-                                    }));
+                                    orchestrator.audit.log(
+                                        "CLAMAV_CLEAN",
+                                        serde_json::json!({
+                                            "file_path": result.file_path,
+                                            "context": "CyberShield",
+                                            "process_name": process_name,
+                                            "action": "allowed",
+                                        }),
+                                    );
                                     continue; // ClamAV says clean — let it go
                                 }
                                 if result.is_malware {
                                     warn!("CyberShield INTERCEPTION: High-resource process {} is MALICIOUS. Triggering active response.", process_name);
-                                    
+
                                     // NEW: Holographic Deception Sharding (HDS) activation
                                     // Calculate "fake" attacker IP (prototype uses local loopback for testing)
                                     let _ = orchestrator.activate_mesh_hologram("127.0.0.1").await;
@@ -977,7 +1055,11 @@ impl EdrOrchestrator {
                                     let pid_str = pid.to_string();
                                     #[cfg(target_os = "windows")]
                                     let _ = std::process::Command::new("powershell")
-                                        .args(["-NoProfile", "-Command", &format!("Suspend-Process -Id {}", pid_str)])
+                                        .args([
+                                            "-NoProfile",
+                                            "-Command",
+                                            &format!("Suspend-Process -Id {}", pid_str),
+                                        ])
                                         .status();
                                 }
                             }
@@ -1000,7 +1082,10 @@ impl EdrOrchestrator {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(10);
-            info!("Behavioral detector active (System/App logs, interval: {}s)", interval_secs);
+            info!(
+                "Behavioral detector active (System/App logs, interval: {}s)",
+                interval_secs
+            );
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
             loop {
                 interval.tick().await;
@@ -1011,22 +1096,26 @@ impl EdrOrchestrator {
                             let colog_score = analyzer.autonomous_check(&event);
                             if colog_score > 0.7 {
                                 warn!("COLOG ANOMALY: Sequence deviation detected (score={:.2}) for source {}", colog_score, event.source);
-                                orchestrator.audit.log("COLOG_ANOMALY", serde_json::json!({
-                                    "source": event.source,
-                                    "score": colog_score,
-                                    "event_id": event.event_id,
-                                    "data": event.data.get("Message"),
-                                }));
+                                orchestrator.audit.log(
+                                    "COLOG_ANOMALY",
+                                    serde_json::json!({
+                                        "source": event.source,
+                                        "score": colog_score,
+                                        "event_id": event.event_id,
+                                        "data": event.data.get("Message"),
+                                    }),
+                                );
                             }
 
                             // Layer 2: SecureBERT / Rule-based Classification
                             let result = classifier.classify(&event).await;
                             if result.is_suspicious {
-                                let should_log = match orchestrator.behavioral_debouncer.get(&result.reason) {
-                                    Some(last) => last.elapsed() > Duration::from_secs(300),
-                                    None => true,
-                                };
-                                
+                                let should_log =
+                                    match orchestrator.behavioral_debouncer.get(&result.reason) {
+                                        Some(last) => last.elapsed() > Duration::from_secs(300),
+                                        None => true,
+                                    };
+
                                 if should_log {
                                     warn!(
                                         "BEHAVIORAL ALERT: {} (score={:.2}, reason={})",
@@ -1034,17 +1123,22 @@ impl EdrOrchestrator {
                                         result.score,
                                         result.reason
                                     );
-                                    orchestrator.behavioral_debouncer.insert(result.reason.clone(), Instant::now());
+                                    orchestrator
+                                        .behavioral_debouncer
+                                        .insert(result.reason.clone(), Instant::now());
                                 }
-                                
-                                orchestrator.audit.log("BEHAVIORAL_ALERT", serde_json::json!({
-                                    "sentence": result.sentence,
-                                    "score": result.score,
-                                    "reason": result.reason,
-                                    "event_id": result.event_id,
-                                    "source": result.source,
-                                    "timestamp": chrono::Utc::now(),
-                                }));
+
+                                orchestrator.audit.log(
+                                    "BEHAVIORAL_ALERT",
+                                    serde_json::json!({
+                                        "sentence": result.sentence,
+                                        "score": result.score,
+                                        "reason": result.reason,
+                                        "event_id": result.event_id,
+                                        "source": result.source,
+                                        "timestamp": chrono::Utc::now(),
+                                    }),
+                                );
                             }
                         }
                     }
@@ -1064,7 +1158,8 @@ impl EdrOrchestrator {
     /// Start watching multiple directories. Active real-time monitoring.
     pub async fn start_file_watcher_paths(&self, paths: &[&str]) -> anyhow::Result<()> {
         {
-            let mut watcher: tokio::sync::MutexGuard<osoosi_telemetry::FileWatcher> = self.watcher.lock().await;
+            let mut watcher: tokio::sync::MutexGuard<osoosi_telemetry::FileWatcher> =
+                self.watcher.lock().await;
             for path in paths {
                 if let Err(e) = watcher.watch(path) {
                     tracing::warn!("Could not watch {}: {}", path, e);
@@ -1073,14 +1168,22 @@ impl EdrOrchestrator {
                 }
             }
         }
-        info!("File Change Monitor is active ({} paths registered).", paths.len());
-        
+        info!(
+            "File Change Monitor is active ({} paths registered).",
+            paths.len()
+        );
+
         // Start background OS file baseline hash on startup
         let baseline_memory = self.memory.clone();
         let baseline_paths: Vec<String> = paths.iter().map(|&s| s.to_string()).collect();
         let baseline_excludes = osoosi_types::load_exclude_paths_from_config();
         tokio::spawn(async move {
-            osoosi_telemetry::build_os_file_hash_baseline(baseline_paths, baseline_memory, baseline_excludes).await;
+            osoosi_telemetry::build_os_file_hash_baseline(
+                baseline_paths,
+                baseline_memory,
+                baseline_excludes,
+            )
+            .await;
         });
 
         let orchestrator = self.clone();
@@ -1094,49 +1197,63 @@ impl EdrOrchestrator {
                 info!("File Monitor: Real-time event loop started.");
                 while let Some(res) = rx.recv().await {
                     if let Ok(event) = res {
-                    info!("File change detected: {} (Hash: {})", event.path, event.hash);
-                    let _ = orchestrator.memory.update_file_hash(&event.path, &event.hash);
-                    if let Ok(Some(verdict)) = orchestrator.memory.get_ai_override(&event.hash) {
-                        if verdict {
-                            warn!("File Monitor: local ledger marks {} as malicious; escalating without model scan.", event.path);
-                        } else {
-                            info!("File Monitor: local ledger allows {}; skipping AI scan.", event.path);
-                            continue;
-                        }
-                    }
-
-                    // Magika pre-filter: only executable/scannable files go to the full scanner
-                    let path = std::path::Path::new(&event.path);
-                    if should_skip_file_malware_scan(path)
-                        || orchestrator
+                        info!(
+                            "File change detected: {} (Hash: {})",
+                            event.path, event.hash
+                        );
+                        let _ = orchestrator
                             .memory
-                            .is_internal_asset_path(&event.path)
-                            .unwrap_or(false)
-                    {
-                        debug!("File Monitor: skipping non-malware asset {}", event.path);
-                        continue;
-                    }
-                    if let Some(result) = orchestrator.malware_scanner.scan_file(path) {
-                        // 1. ClamAV says clean → let it go (trust ClamAV over ML/signatures)
-                        if result.clam_detected == Some(false) {
-                            info!("ClamAV clean: {} — allowing (no action)", result.file_path);
-                            orchestrator.audit.log("CLAMAV_CLEAN", serde_json::json!({
-                                "file_path": result.file_path,
-                                "magika_label": result.magika_label,
-                                "combined_score": result.combined_score,
-                                "action": "allowed",
-                            }));
-                            continue;
+                            .update_file_hash(&event.path, &event.hash);
+                        if let Ok(Some(verdict)) = orchestrator.memory.get_ai_override(&event.hash)
+                        {
+                            if verdict {
+                                warn!("File Monitor: local ledger marks {} as malicious; escalating without model scan.", event.path);
+                            } else {
+                                info!(
+                                    "File Monitor: local ledger allows {}; skipping AI scan.",
+                                    event.path
+                                );
+                                continue;
+                            }
                         }
 
-                        // 2. Trigger Deep Static Analysis (CAPA, FLOSS, Falcon) for suspicious files or executables
-                        let is_executable = result.magika_label.contains("exe") || result.magika_label.contains("pe") || result.magika_label.contains("elf");
-                        if result.combined_score > 0.5 || is_executable {
-                            let analyzer = orchestrator.static_analyzer.clone();
-                            let path_buf = path.to_path_buf();
-                            let orch_clone = orchestrator.clone();
-                            tokio::spawn(async move {
-                                match analyzer.analyze_file(&path_buf).await {
+                        // Magika pre-filter: only executable/scannable files go to the full scanner
+                        let path = std::path::Path::new(&event.path);
+                        if should_skip_file_malware_scan(path)
+                            || orchestrator
+                                .memory
+                                .is_internal_asset_path(&event.path)
+                                .unwrap_or(false)
+                        {
+                            debug!("File Monitor: skipping non-malware asset {}", event.path);
+                            continue;
+                        }
+                        if let Some(result) = orchestrator.malware_scanner.scan_file(path) {
+                            // 1. ClamAV says clean → let it go (trust ClamAV over ML/signatures)
+                            if result.clam_detected == Some(false) {
+                                info!("ClamAV clean: {} — allowing (no action)", result.file_path);
+                                orchestrator.audit.log(
+                                    "CLAMAV_CLEAN",
+                                    serde_json::json!({
+                                        "file_path": result.file_path,
+                                        "magika_label": result.magika_label,
+                                        "combined_score": result.combined_score,
+                                        "action": "allowed",
+                                    }),
+                                );
+                                continue;
+                            }
+
+                            // 2. Trigger Deep Static Analysis (CAPA, FLOSS, Falcon) for suspicious files or executables
+                            let is_executable = result.magika_label.contains("exe")
+                                || result.magika_label.contains("pe")
+                                || result.magika_label.contains("elf");
+                            if result.combined_score > 0.5 || is_executable {
+                                let analyzer = orchestrator.static_analyzer.clone();
+                                let path_buf = path.to_path_buf();
+                                let orch_clone = orchestrator.clone();
+                                tokio::spawn(async move {
+                                    match analyzer.analyze_file(&path_buf).await {
                                     Ok(Some(deep_sig)) => {
                                         warn!("DEEP ANALYSIS IDENTIFIED THREAT (CAPA/FLOSS): {} - confidence {:.2}", deep_sig.id, deep_sig.confidence);
                                         let _ = orch_clone.memory.log_threat(&deep_sig);
@@ -1149,82 +1266,132 @@ impl EdrOrchestrator {
                                     Ok(None) => debug!("Deep analysis complete: no additional threats found for {:?}", path_buf),
                                     Err(e) => error!("Deep static analysis failed for {:?}: {}", path_buf, e),
                                 }
-                            });
-                        }
+                                });
+                            }
 
-                        if result.is_malware {
-                            warn!(
+                            if result.is_malware {
+                                warn!(
                                 "MALWARE DETECTED: {} (magika={}, type={}, ml={:.2}, sig={:.2}, combined={:.2})",
                                 result.file_path, result.magika_label, result.malware_type,
                                 result.ml_score, result.signature_score, result.combined_score
                             );
-                            // Broadcast to mesh for distributed EMBER training (PE samples with features)
-                            if let Some(ref features) = result.features {
-                                let autonomy = osoosi_types::load_autonomy_config();
-                                if result.combined_score >= autonomy.quarantine_confidence_threshold as f64 {
-                                    let sample = osoosi_types::MalwareSample {
-                                        source_node: orchestrator.trust.did().to_string(),
-                                        file_hash: result.file_hash.clone(),
-                                        label: 0, // malware
-                                        features: features.clone(),
-                                        feature_version: "legacy".to_string(),
-                                        timestamp: chrono::Utc::now(),
-                                    };
-                                    if let Some(ref tx) = *orchestrator.mesh_command_tx.lock().await {
-                                        let _ = tx.try_send(osoosi_wire::MeshCommand::BroadcastMalwareSample(sample));
+                                // Broadcast to mesh for distributed EMBER training (PE samples with features)
+                                if let Some(ref features) = result.features {
+                                    let autonomy = osoosi_types::load_autonomy_config();
+                                    if result.combined_score
+                                        >= autonomy.quarantine_confidence_threshold as f64
+                                    {
+                                        let sample = osoosi_types::MalwareSample {
+                                            source_node: orchestrator.trust.did().to_string(),
+                                            file_hash: result.file_hash.clone(),
+                                            label: 0, // malware
+                                            features: features.clone(),
+                                            feature_version: "legacy".to_string(),
+                                            timestamp: chrono::Utc::now(),
+                                        };
+                                        if let Some(ref tx) =
+                                            *orchestrator.mesh_command_tx.lock().await
+                                        {
+                                            let _ = tx.try_send(
+                                                osoosi_wire::MeshCommand::BroadcastMalwareSample(
+                                                    sample,
+                                                ),
+                                            );
+                                        }
                                     }
                                 }
-                            }
-                            orchestrator.audit.log("MALWARE_DETECTED", serde_json::json!({
-                                "file_path": result.file_path,
-                                "file_hash": result.file_hash,
-                                "magika_label": result.magika_label,
-                                "malware_type": result.malware_type,
-                                "ml_score": result.ml_score,
-                                "signature_score": result.signature_score,
-                                "combined_score": result.combined_score,
-                                "evasion": result.evasion_indicators,
-                            }));
+                                orchestrator.audit.log(
+                                    "MALWARE_DETECTED",
+                                    serde_json::json!({
+                                        "file_path": result.file_path,
+                                        "file_hash": result.file_hash,
+                                        "magika_label": result.magika_label,
+                                        "malware_type": result.malware_type,
+                                        "ml_score": result.ml_score,
+                                        "signature_score": result.signature_score,
+                                        "combined_score": result.combined_score,
+                                        "evasion": result.evasion_indicators,
+                                    }),
+                                );
 
-                            // Autonomous: try search-and-replace first, then quarantine
-                            let autonomy = osoosi_types::load_autonomy_config();
-                            let path_excluded = autonomy.quarantine_exclude_paths.iter()
-                                .any(|p| result.file_path.contains(p));
-                            let should_quarantine = !path_excluded
-                                && autonomy.auto_quarantine_malware
-                                && (result.combined_score >= autonomy.quarantine_confidence_threshold as f64
-                                    || result.clam_detected == Some(true)
-                                    || result.malware_type.contains("EICAR"));
-                            if path_excluded && result.is_malware {
-                                info!("Malware in excluded path (cloud sync temp?): {} — alert only, no quarantine", result.file_path);
-                            } else if autonomy.auto_replace_malware_binaries && should_quarantine {
-                                // Search for vuln-free version and replace (no hardcoded URLs)
-                                if let Some(download_url) = crate::software_replacement::resolve_replacement_url(&result.file_path).await {
-                                    match orchestrator.patch_engine.remediate_file(&result.file_path, &download_url).await {
-                                        Ok(backup) => {
-                                            info!("Replaced compromised binary {} with clean version from {} (backup: {:?})", result.file_path, download_url, backup);
-                                            orchestrator.audit.log("MALWARE_REPLACED", serde_json::json!({
-                                                "file_path": result.file_path,
-                                                "download_url": download_url,
-                                                "backup": backup.to_string_lossy(),
-                                            }));
-                                        }
-                                        Err(e) => {
-                                            warn!("Search-and-replace failed for {}: {}. Falling back to quarantine.", result.file_path, e);
-                                            if let Err(qe) = crate::quarantine::quarantine_file(&result.file_path, &autonomy.quarantine_path) {
-                                                error!("Failed to quarantine malware file {}: {}", result.file_path, qe);
-                                            } else {
-                                                info!("Quarantined malware: {} -> {} (conf={:.2})", result.file_path, autonomy.quarantine_path, result.combined_score);
+                                // Autonomous: try search-and-replace first, then quarantine
+                                let autonomy = osoosi_types::load_autonomy_config();
+                                let path_excluded = autonomy
+                                    .quarantine_exclude_paths
+                                    .iter()
+                                    .any(|p| result.file_path.contains(p));
+                                let should_quarantine = !path_excluded
+                                    && autonomy.auto_quarantine_malware
+                                    && (result.combined_score
+                                        >= autonomy.quarantine_confidence_threshold as f64
+                                        || result.clam_detected == Some(true)
+                                        || result.malware_type.contains("EICAR"));
+                                if path_excluded && result.is_malware {
+                                    info!("Malware in excluded path (cloud sync temp?): {} — alert only, no quarantine", result.file_path);
+                                } else if autonomy.auto_replace_malware_binaries
+                                    && should_quarantine
+                                {
+                                    // Search for vuln-free version and replace (no hardcoded URLs)
+                                    if let Some(download_url) =
+                                        crate::software_replacement::resolve_replacement_url(
+                                            &result.file_path,
+                                        )
+                                        .await
+                                    {
+                                        match orchestrator
+                                            .patch_engine
+                                            .remediate_file(&result.file_path, &download_url)
+                                            .await
+                                        {
+                                            Ok(backup) => {
+                                                info!("Replaced compromised binary {} with clean version from {} (backup: {:?})", result.file_path, download_url, backup);
+                                                orchestrator.audit.log(
+                                                    "MALWARE_REPLACED",
+                                                    serde_json::json!({
+                                                        "file_path": result.file_path,
+                                                        "download_url": download_url,
+                                                        "backup": backup.to_string_lossy(),
+                                                    }),
+                                                );
+                                            }
+                                            Err(e) => {
+                                                warn!("Search-and-replace failed for {}: {}. Falling back to quarantine.", result.file_path, e);
+                                                if let Err(qe) = crate::quarantine::quarantine_file(
+                                                    &result.file_path,
+                                                    &autonomy.quarantine_path,
+                                                ) {
+                                                    error!(
+                                                        "Failed to quarantine malware file {}: {}",
+                                                        result.file_path, qe
+                                                    );
+                                                } else {
+                                                    info!("Quarantined malware: {} -> {} (conf={:.2})", result.file_path, autonomy.quarantine_path, result.combined_score);
+                                                }
                                             }
                                         }
+                                    } else if let Err(e) = crate::quarantine::quarantine_file(
+                                        &result.file_path,
+                                        &autonomy.quarantine_path,
+                                    ) {
+                                        error!(
+                                            "Failed to quarantine malware file {}: {}",
+                                            result.file_path, e
+                                        );
+                                    } else {
+                                        info!(
+                                            "Quarantined malware: {} -> {} (conf={:.2})",
+                                            result.file_path,
+                                            autonomy.quarantine_path,
+                                            result.combined_score
+                                        );
                                     }
-                                } else if let Err(e) = crate::quarantine::quarantine_file(&result.file_path, &autonomy.quarantine_path) {
-                                    error!("Failed to quarantine malware file {}: {}", result.file_path, e);
-                                } else {
-                                    info!("Quarantined malware: {} -> {} (conf={:.2})", result.file_path, autonomy.quarantine_path, result.combined_score);
-                                }
-                            } else if should_quarantine {
-                                    info!("Quarantined malware: {} -> {} (conf={:.2})", result.file_path, autonomy.quarantine_path, result.combined_score);
+                                } else if should_quarantine {
+                                    info!(
+                                        "Quarantined malware: {} -> {} (conf={:.2})",
+                                        result.file_path,
+                                        autonomy.quarantine_path,
+                                        result.combined_score
+                                    );
                                     orchestrator.audit.log("AUTONOMOUS_ACTION", serde_json::json!({
                                         "message": format!("Quarantined malicious file: {}", result.file_path),
                                         "details": {
@@ -1236,10 +1403,10 @@ impl EdrOrchestrator {
                                 } else if autonomy.auto_quarantine_malware && result.is_malware {
                                     info!("Malware detected but below quarantine threshold (conf={:.2} < {:.2}): alert only", result.combined_score, autonomy.quarantine_confidence_threshold);
                                 }
+                            }
                         }
                     }
                 }
-            }
             });
         }
         Ok(())
@@ -1247,16 +1414,28 @@ impl EdrOrchestrator {
 
     /// Start polling host security event logs (Windows Event Log, Linux auditd, macOS audit).
     /// Events are fed into the policy engine for protection.
-    pub async fn start_host_event_loop(&self, event_channel_or_path: &str, poll_interval_secs: u64) {
+    pub async fn start_host_event_loop(
+        &self,
+        event_channel_or_path: &str,
+        poll_interval_secs: u64,
+    ) {
         let channel = if event_channel_or_path.is_empty() {
             #[cfg(target_os = "windows")]
-            { "Microsoft-Windows-Sysmon/Operational".to_string() }
+            {
+                "Microsoft-Windows-Sysmon/Operational".to_string()
+            }
             #[cfg(target_os = "linux")]
-            { "default".to_string() }
+            {
+                "default".to_string()
+            }
             #[cfg(target_os = "macos")]
-            { "default".to_string() }
+            {
+                "default".to_string()
+            }
             #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-            { "default".to_string() }
+            {
+                "default".to_string()
+            }
         } else {
             event_channel_or_path.to_string()
         };
@@ -1320,7 +1499,10 @@ impl EdrOrchestrator {
                 });
             }
             Err(e) => {
-                error!("Could not create host event reader: {}. Host logs will not be monitored.", e);
+                error!(
+                    "Could not create host event reader: {}. Host logs will not be monitored.",
+                    e
+                );
             }
         }
     }
@@ -1332,7 +1514,10 @@ impl EdrOrchestrator {
         let mesh_tx = self.mesh_command_tx.clone();
         let trust = self.trust.clone();
         tokio::spawn(async move {
-            info!("Repair Engine started (interval: {}s, auto_apply: {})", interval_secs, auto_apply);
+            info!(
+                "Repair Engine started (interval: {}s, auto_apply: {})",
+                interval_secs, auto_apply
+            );
             loop {
                 match engine.run_discovery().await {
                     Ok(patches) => {
@@ -1345,7 +1530,10 @@ impl EdrOrchestrator {
                                 for patch in patches {
                                     match engine.apply_patch(patch).await {
                                         Ok(tx) => {
-                                            if matches!(tx.state, osoosi_types::PatchState::Committed) {
+                                            if matches!(
+                                                tx.state,
+                                                osoosi_types::PatchState::Committed
+                                            ) {
                                                 applied_count += 1;
                                                 // Broadcast successful local repair to the mesh
                                                 let vote = osoosi_types::PolicyConsensusMessage::Vote(osoosi_types::PolicyHealthVote {
@@ -1358,22 +1546,41 @@ impl EdrOrchestrator {
                                                 });
                                                 let tx_guard = mesh_tx.lock().await;
                                                 if let Some(ref tx_chan) = *tx_guard {
-                                                    let _ = tx_chan.send(MeshCommand::BroadcastConsensus(vote)).await;
+                                                    let _ = tx_chan
+                                                        .send(MeshCommand::BroadcastConsensus(vote))
+                                                        .await;
                                                 }
                                             }
-                                            let _ = memory.set_repair_status("last_cve", &tx.patch.cve_id);
-                                            let _ = memory.set_repair_status("last_state", &format!("{:?}", tx.state));
-                                            let _ = memory.set_repair_status("last_component", &tx.patch.component);
+                                            let _ = memory
+                                                .set_repair_status("last_cve", &tx.patch.cve_id);
+                                            let _ = memory.set_repair_status(
+                                                "last_state",
+                                                &format!("{:?}", tx.state),
+                                            );
+                                            let _ = memory.set_repair_status(
+                                                "last_component",
+                                                &tx.patch.component,
+                                            );
                                             if let Some(ref sid) = tx.snapshot_id {
-                                                let _ = memory.set_repair_status("last_snapshot_id", sid);
+                                                let _ = memory
+                                                    .set_repair_status("last_snapshot_id", sid);
                                             }
                                             let sig_short = if tx.transaction_id.len() >= 12 {
-                                                format!("0x{}...{}", &tx.transaction_id[..6], &tx.transaction_id[tx.transaction_id.len()-4..])
+                                                format!(
+                                                    "0x{}...{}",
+                                                    &tx.transaction_id[..6],
+                                                    &tx.transaction_id
+                                                        [tx.transaction_id.len() - 4..]
+                                                )
                                             } else {
                                                 tx.transaction_id.clone()
                                             };
-                                            let _ = memory.set_repair_status("last_sig", &sig_short);
-                                            let _ = memory.set_repair_status("last_at", &tx.started_at.to_rfc3339());
+                                            let _ =
+                                                memory.set_repair_status("last_sig", &sig_short);
+                                            let _ = memory.set_repair_status(
+                                                "last_at",
+                                                &tx.started_at.to_rfc3339(),
+                                            );
                                             let _ = memory.set_repair_status("last_error", "");
                                         }
                                         Err(e) => {
@@ -1386,13 +1593,15 @@ impl EdrOrchestrator {
                                             } else {
                                                 error!("Repair Engine apply failed: {}", e);
                                             }
-                                            let _ = memory.set_repair_status("last_state", "ApplyFailed");
+                                            let _ = memory
+                                                .set_repair_status("last_state", "ApplyFailed");
                                             let _ = memory.set_repair_status("last_error", &es);
                                         }
                                     }
                                 }
                                 let remaining = count.saturating_sub(applied_count);
-                                let _ = memory.set_repair_status("pending_count", &remaining.to_string());
+                                let _ = memory
+                                    .set_repair_status("pending_count", &remaining.to_string());
                             }
                         } else {
                             let _ = memory.set_repair_status("pending_count", "0");
@@ -1405,13 +1614,16 @@ impl EdrOrchestrator {
         });
     }
 
-
-
     /// Trigger one repair cycle (discovery + apply). Used by LLM agent.
-    pub async fn trigger_repair_cycle(&self, auto_apply: bool) -> anyhow::Result<serde_json::Value> {
+    pub async fn trigger_repair_cycle(
+        &self,
+        auto_apply: bool,
+    ) -> anyhow::Result<serde_json::Value> {
         let patches = self.patch_engine.run_discovery().await?;
         let count = patches.len();
-        let _ = self.memory.set_repair_status("pending_count", &count.to_string());
+        let _ = self
+            .memory
+            .set_repair_status("pending_count", &count.to_string());
         let mut applied = 0usize;
         if auto_apply && count > 0 {
             for patch in patches {
@@ -1420,22 +1632,28 @@ impl EdrOrchestrator {
                         if matches!(tx.state, osoosi_types::PatchState::Committed) {
                             applied += 1;
                             // Broadcast success to mesh
-                            let vote = osoosi_types::PolicyConsensusMessage::Vote(osoosi_types::PolicyHealthVote {
-                                policy_id: tx.patch.cve_id.clone(),
-                                voter_id: self.trust.did().id.clone(),
-                                status: osoosi_types::PolicyHealthStatus::Optimal,
-                                uptime_seconds: 0,
-                                timestamp: chrono::Utc::now(),
-                                work_nonce: None,
-                            });
+                            let vote = osoosi_types::PolicyConsensusMessage::Vote(
+                                osoosi_types::PolicyHealthVote {
+                                    policy_id: tx.patch.cve_id.clone(),
+                                    voter_id: self.trust.did().id.clone(),
+                                    status: osoosi_types::PolicyHealthStatus::Optimal,
+                                    uptime_seconds: 0,
+                                    timestamp: chrono::Utc::now(),
+                                    work_nonce: None,
+                                },
+                            );
                             let tx_guard = self.mesh_command_tx.lock().await;
                             if let Some(ref tx_chan) = *tx_guard {
                                 let _ = tx_chan.send(MeshCommand::BroadcastConsensus(vote)).await;
                             }
                         }
                         let _ = self.memory.set_repair_status("last_cve", &tx.patch.cve_id);
-                        let _ = self.memory.set_repair_status("last_state", &format!("{:?}", tx.state));
-                        let _ = self.memory.set_repair_status("last_component", &tx.patch.component);
+                        let _ = self
+                            .memory
+                            .set_repair_status("last_state", &format!("{:?}", tx.state));
+                        let _ = self
+                            .memory
+                            .set_repair_status("last_component", &tx.patch.component);
                         if let Some(ref sid) = tx.snapshot_id {
                             let _ = self.memory.set_repair_status("last_snapshot_id", sid);
                         }
@@ -1464,13 +1682,16 @@ impl EdrOrchestrator {
                 info!("Fetching latest threat intelligence feeds...");
                 match fetcher.fetch_kev().await {
                     Ok(kevs) => {
-                        info!("Successfully loaded {} known exploited vulnerabilities.", kevs.len());
+                        info!(
+                            "Successfully loaded {} known exploited vulnerabilities.",
+                            kevs.len()
+                        );
                         if let Err(e) = orch.memory.insert_kevs_batch(&kevs) {
                             error!("Failed to persist KEV batch: {} (will retry next cycle)", e);
                         } else {
                             info!("KEV batch persisted successfully.");
                         }
-                    },
+                    }
                     Err(e) => error!("Failed to fetch CISA KEV feed: {}", e),
                 }
 
@@ -1498,7 +1719,10 @@ impl EdrOrchestrator {
                                     error!("Failed to persist OTX indicators to SQLite: {}", e);
                                 }
                                 orch.policy.update_otx_indicators(indicators);
-                                info!("Successfully loaded {} OTX indicators (persisted to SQLite).", total);
+                                info!(
+                                    "Successfully loaded {} OTX indicators (persisted to SQLite).",
+                                    total
+                                );
                             }
                             Err(e) => error!("Failed to fetch OTX indicators: {}", e),
                         }
@@ -1517,7 +1741,10 @@ impl EdrOrchestrator {
                 match fetcher.fetch_nvd_cves(nvd_key.as_deref()).await {
                     Ok(cves) => {
                         if !cves.is_empty() {
-                            info!("Successfully loaded {} NVD vulnerability records.", cves.len());
+                            info!(
+                                "Successfully loaded {} NVD vulnerability records.",
+                                cves.len()
+                            );
                             if let Err(e) = orch.memory.insert_kevs_batch(&cves) {
                                 error!("Failed to persist NVD records: {}", e);
                             }
@@ -1543,13 +1770,19 @@ impl EdrOrchestrator {
         let mut queue = self.approval_queue.lock().await;
         if let Some(pos) = queue.iter().position(|r| r.id == id) {
             let req = queue.remove(pos);
-            info!("Approval processed: {} (action: {}, approved: {})", id, req.action, approved);
-            self.audit.log("APPROVAL_PROCESSED", serde_json::json!({
-                "id": id,
-                "action": req.action,
-                "approved": approved,
-                "timestamp": chrono::Utc::now(),
-            }));
+            info!(
+                "Approval processed: {} (action: {}, approved: {})",
+                id, req.action, approved
+            );
+            self.audit.log(
+                "APPROVAL_PROCESSED",
+                serde_json::json!({
+                    "id": id,
+                    "action": req.action,
+                    "approved": approved,
+                    "timestamp": chrono::Utc::now(),
+                }),
+            );
         } else {
             return Err(anyhow::anyhow!("Approval request not found: {}", id));
         }
@@ -1559,14 +1792,20 @@ impl EdrOrchestrator {
     /// Run an autonomous remediation script in the WASM sandbox.
     /// Performs yara-scanning of all generated files in the workspace.
     pub async fn run_isolated_action(
-        &self, 
-        wasm_bytes: &[u8], 
+        &self,
+        wasm_bytes: &[u8],
         config: osoosi_sandbox::SandboxConfig,
         taint_labels: std::collections::HashSet<osoosi_types::TaintLabel>,
     ) -> anyhow::Result<osoosi_sandbox::SandboxResult> {
-        info!("Running isolated action in WASM sandbox: max_fuel={}", config.max_fuel);
-        
-        let result = self.sandbox.run_script(wasm_bytes, config.clone(), taint_labels).await?;
+        info!(
+            "Running isolated action in WASM sandbox: max_fuel={}",
+            config.max_fuel
+        );
+
+        let result = self
+            .sandbox
+            .run_script(wasm_bytes, config.clone(), taint_labels)
+            .await?;
 
         // Register pending approvals in the global queue
         if !result.pending_approvals.is_empty() {
@@ -1593,12 +1832,19 @@ impl EdrOrchestrator {
                 }
                 if let Some(scan) = malware_scanner.scan_file(entry.path()) {
                     if scan.is_malware {
-                        warn!("MALWARE GENERATED IN SANDBOX: {} (type={})", entry.path().display(), scan.malware_type);
-                        audit.log("SANDBOX_MALWARE_DETECTED", serde_json::json!({
-                            "file_path": entry.path().to_string_lossy(),
-                            "malware_type": scan.malware_type,
-                            "confidence": scan.combined_score,
-                        }));
+                        warn!(
+                            "MALWARE GENERATED IN SANDBOX: {} (type={})",
+                            entry.path().display(),
+                            scan.malware_type
+                        );
+                        audit.log(
+                            "SANDBOX_MALWARE_DETECTED",
+                            serde_json::json!({
+                                "file_path": entry.path().to_string_lossy(),
+                                "malware_type": scan.malware_type,
+                                "confidence": scan.combined_score,
+                            }),
+                        );
                     }
                 }
             });
@@ -1607,20 +1853,25 @@ impl EdrOrchestrator {
         Ok(result)
     }
 
-    pub async fn process_telemetry(&self, mut event: osoosi_types::SysmonEvent) -> anyhow::Result<()> {
+    pub async fn process_telemetry(
+        &self,
+        mut event: osoosi_types::SysmonEvent,
+    ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
 
         // --- GLOBAL VERSION AWARENESS ---
         // Resolve and cache product version for the event's image to prevent false positives.
         if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
             let path = std::path::Path::new(image_path);
-            
+
             // Try cache first
             if let Ok(Some((_, _, Some(version)))) = self.memory.get_file_integrity(image_path) {
                 event.product_version = Some(version);
             } else {
                 // Resolve and update cache if it's a process create or image load
-                if event.event_id == osoosi_types::SysmonEventId::ProcessCreate || event.event_id == osoosi_types::SysmonEventId::ImageLoad {
+                if event.event_id == osoosi_types::SysmonEventId::ProcessCreate
+                    || event.event_id == osoosi_types::SysmonEventId::ImageLoad
+                {
                     if let Some(version) = version_utils::get_file_version_info(path) {
                         event.product_version = Some(version);
                         // Note: Full integrity upsert usually happens during static analysis or NSRL check,
@@ -1665,19 +1916,30 @@ impl EdrOrchestrator {
         .await?;
 
         if let Some(signature) = signature {
-            info!("Consensus Threat Identified: {} (Confidence: {:.2}, Detectors: {})", 
-                signature.id, signature.confidence, signature.detector_count);
-            
+            info!(
+                "Consensus Threat Identified: {} (Confidence: {:.2}, Detectors: {})",
+                signature.id, signature.confidence, signature.detector_count
+            );
+
             let _ = self.memory.log_threat(&signature);
             
+            // Real-time Global Immunization: Broadcast threat to the P2P mesh
+            let tx_guard = self.mesh_command_tx.lock().await;
+            if let Some(ref tx_chan) = *tx_guard {
+                let _ = tx_chan.send(MeshCommand::Broadcast(signature.clone())).await;
+            }
+
             // Audit log for tamper-evidence
-            self.audit.log("THREAT_DETECTED", serde_json::json!({
-                "id": signature.id,
-                "confidence": signature.confidence,
-                "detector_count": signature.detector_count,
-                "reason": signature.reason,
-                "action": signature.recommended_action,
-            }));
+            self.audit.log(
+                "THREAT_DETECTED",
+                serde_json::json!({
+                    "id": signature.id,
+                    "confidence": signature.confidence,
+                    "detector_count": signature.detector_count,
+                    "reason": signature.reason,
+                    "action": signature.recommended_action,
+                }),
+            );
 
             // 2. Autonomous Remediation Logic (same confidence gate as deep pipeline)
             let autonomy = osoosi_types::load_autonomy_config();
@@ -1695,24 +1957,24 @@ impl EdrOrchestrator {
             match effective_action {
                 ResponseAction::Isolate => {
                     if let Some(image) = event.data.get("Image").and_then(|v| v.as_str()) {
-                         warn!("AUTONOMOUS BLOCK: Consensus threshold met for {}. Applying FileBlockExecutable.", image);
-                         let rule = osoosi_types::BlockingRule {
-                             path: image.to_string(),
-                             kind: osoosi_types::BlockingKind::Executable,
-                         };
-                         // Apply dynamic Sysmon block
-                         let bm = self.blocking_manager.clone();
-                         tokio::spawn(async move {
-                             if let Err(e) = bm.add_rule(rule).await {
-                                 error!("Failed to apply autonomous block: {}", e);
-                             }
-                         });
-                         
-                         // Immediate termination
-                         if let Some(pid) = event.process_id() {
-                             warn!("Terminating suspicious process PID: {}", pid);
-                             let _ = self.remediation.kill_process_tree(pid as u32);
-                         }
+                        warn!("AUTONOMOUS BLOCK: Consensus threshold met for {}. Applying FileBlockExecutable.", image);
+                        let rule = osoosi_types::BlockingRule {
+                            path: image.to_string(),
+                            kind: osoosi_types::BlockingKind::Executable,
+                        };
+                        // Apply dynamic Sysmon block
+                        let bm = self.blocking_manager.clone();
+                        tokio::spawn(async move {
+                            if let Err(e) = bm.add_rule(rule).await {
+                                error!("Failed to apply autonomous block: {}", e);
+                            }
+                        });
+
+                        // Immediate termination
+                        if let Some(pid) = event.process_id() {
+                            warn!("Terminating suspicious process PID: {}", pid);
+                            let _ = self.remediation.kill_process_tree(pid as u32);
+                        }
                     }
                 }
                 action => {
@@ -1730,11 +1992,15 @@ impl EdrOrchestrator {
         }
 
         // Log telemetry entry to Merkle Audit Chain
-        self.audit.log("TELEMETRY_INGESTED", serde_json::to_value(&event)?);
+        self.audit
+            .log("TELEMETRY_INGESTED", serde_json::to_value(&event)?);
 
         // Log to console and log file with full forensic detail
         let event_name = format!("{:?}", event.event_id);
-        info!("PRO-FORENSIC [Sysmon ID={}]: {} | Data: {}", event.event_id as u32, event_name, event.data);
+        info!(
+            "PRO-FORENSIC [Sysmon ID={}]: {} | Data: {}",
+            event.event_id as u32, event_name, event.data
+        );
 
         // 10/10 Causal Engine: Ingest event into the Causal AI Attack Graph
         self.causal_ai.ingest_event(&event);
@@ -1746,8 +2012,8 @@ impl EdrOrchestrator {
         let correlated_sig = self.correlator.correlate_sysmon(&event).await;
 
         let mut signature: Option<osoosi_types::ThreatSignature> = correlated_sig;
-        
-        // 0. Bloom Filter "Known Malicious" Fast-Path: 
+
+        // 0. Bloom Filter "Known Malicious" Fast-Path:
         // Immediately flag hashes we've already identified as malicious across the mesh.
         if let Some(hashes) = event.data.get("Hashes").and_then(|h| h.as_str()) {
             for hash_part in hashes.split(',') {
@@ -1755,13 +2021,16 @@ impl EdrOrchestrator {
                 if parts.len() == 2 {
                     let hash_val = parts[1];
                     if self.memory.is_hash_known_malicious_fast(hash_val) {
-                        warn!("Bloom Filter HIT: Known malicious hash detected: {}", hash_val);
+                        warn!(
+                            "Bloom Filter HIT: Known malicious hash detected: {}",
+                            hash_val
+                        );
                         let mut sig = osoosi_types::ThreatSignature::new(event.computer.clone());
                         sig.confidence = 1.0;
                         sig.hash_blake3 = Some(hash_val.to_string());
                         sig.add_reason(format!("Bloom Filter: Hash {} matches a known malicious signature from the mesh", hash_val));
                         signature = Some(sig);
-                        break; 
+                        break;
                     }
                 }
             }
@@ -1769,10 +2038,13 @@ impl EdrOrchestrator {
 
         // 1. NSRL "Known Good" Fast-Path: Skip deep analysis for trusted binaries.
         // We use a three-tier check: In-Memory L1 -> Persistent L2 -> Authoritative DB L3.
-        if let Some(sha1) = event.data.get("Hashes").and_then(|h| h.as_str())
+        if let Some(sha1) = event
+            .data
+            .get("Hashes")
+            .and_then(|h| h.as_str())
             .and_then(|hashes| hashes.split(',').find(|s| s.starts_with("SHA1=")))
-            .map(|s| &s[5..]) {
-            
+            .map(|s| &s[5..])
+        {
             // Tier 1: In-memory session cache (Extremely fast)
             if let Some(is_good) = self.nsrl_cache.get(sha1) {
                 if *is_good {
@@ -1799,8 +2071,14 @@ impl EdrOrchestrator {
                     let version = event.product_version.as_deref();
                     let _ = self.memory.upsert_file_integrity(path, sha1, true, version);
                 }
-                info!("NSRL Bypass (DB Verified): {} -> Known Good.", 
-                    event.data.get("Image").and_then(|i| i.as_str()).unwrap_or("Unknown"));
+                info!(
+                    "NSRL Bypass (DB Verified): {} -> Known Good.",
+                    event
+                        .data
+                        .get("Image")
+                        .and_then(|i| i.as_str())
+                        .unwrap_or("Unknown")
+                );
                 return Ok(());
             }
         }
@@ -1808,12 +2086,18 @@ impl EdrOrchestrator {
         if signature.is_none() {
             signature = self.policy.scan_event(&event);
         }
-        
+
         if temporal_score > 0.6 {
-            warn!("Einstein Alert: Significant temporal dilation ({}) for event from {}.", temporal_score, event.computer);
+            warn!(
+                "Einstein Alert: Significant temporal dilation ({}) for event from {}.",
+                temporal_score, event.computer
+            );
             if let Some(ref mut sig) = signature {
                 sig.confidence = sig.confidence.max(temporal_score);
-                sig.add_reason(format!("Einstein Engine: Critical temporal anomaly detected (score: {:.2})", temporal_score));
+                sig.add_reason(format!(
+                    "Einstein Engine: Critical temporal anomaly detected (score: {:.2})",
+                    temporal_score
+                ));
             } else {
                 let mut sig = osoosi_types::ThreatSignature::new(event.computer.clone());
                 sig.confidence = temporal_score;
@@ -1824,19 +2108,33 @@ impl EdrOrchestrator {
         // Behavioral baselining: record and detect first-connection anomalies
         let baseline_anomaly = match event.event_id {
             SysmonEventId::NetworkConnect => {
-                let proc = event.data.get("Image").and_then(|i| i.as_str())
+                let proc = event
+                    .data
+                    .get("Image")
+                    .and_then(|i| i.as_str())
                     .and_then(|p| std::path::Path::new(p).file_name())
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown");
-                let dest = event.data.get("DestinationIp").and_then(|v| v.as_str()).unwrap_or("");
+                let dest = event
+                    .data
+                    .get("DestinationIp")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 self.baseline.record_network(&event.computer, proc, dest)
             }
             SysmonEventId::DnsQuery => {
-                let proc = event.data.get("Image").and_then(|i| i.as_str())
+                let proc = event
+                    .data
+                    .get("Image")
+                    .and_then(|i| i.as_str())
                     .and_then(|p| std::path::Path::new(p).file_name())
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown");
-                let query = event.data.get("QueryName").and_then(|v| v.as_str()).unwrap_or("");
+                let query = event
+                    .data
+                    .get("QueryName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 self.baseline.record_dns(&event.computer, proc, query)
             }
             _ => false,
@@ -1861,7 +2159,10 @@ impl EdrOrchestrator {
             } else {
                 let mut sig = osoosi_types::ThreatSignature::new(event.computer.clone());
                 sig.confidence = 0.4;
-                sig.process_name = event.data.get("Image").and_then(|i| i.as_str())
+                sig.process_name = event
+                    .data
+                    .get("Image")
+                    .and_then(|i| i.as_str())
                     .and_then(|p| std::path::Path::new(p).file_name())
                     .and_then(|n| n.to_str())
                     .map(String::from);
@@ -1876,18 +2177,30 @@ impl EdrOrchestrator {
                 .and_then(|p| std::path::Path::new(p).file_name())
                 .and_then(|n| n.to_str())
                 .map(String::from);
-            let cve = event.data.get("CveId").and_then(|c| c.as_str()).map(String::from);
+            let cve = event
+                .data
+                .get("CveId")
+                .and_then(|c| c.as_str())
+                .map(String::from);
             let model = self.threat_model.read().await;
             let score = model.infer(proc.as_deref(), cve.as_deref());
             if score >= 0.5 {
-                let is_fp = self.memory.is_false_positive_pattern(proc.as_deref(), None).unwrap_or(false);
-                let trusted_operational = image_path.map(is_trusted_operational_image).unwrap_or(false);
+                let is_fp = self
+                    .memory
+                    .is_false_positive_pattern(proc.as_deref(), None)
+                    .unwrap_or(false);
+                let trusted_operational = image_path
+                    .map(is_trusted_operational_image)
+                    .unwrap_or(false);
                 let version_known = event.product_version.as_deref().is_some_and(|v| {
                     let v = v.trim();
                     !v.is_empty() && !v.eq_ignore_ascii_case("unknown")
                 });
                 if is_fp {
-                    tracing::info!("ML threat model suppressed false positive pattern for process {:?}", proc);
+                    tracing::info!(
+                        "ML threat model suppressed false positive pattern for process {:?}",
+                        proc
+                    );
                 } else if trusted_operational && version_known && cve.is_none() && score < 0.90 {
                     tracing::info!(
                         "ML threat model downgraded version-known trusted binary {:?} score {:.2}; no threat emitted",
@@ -1899,10 +2212,17 @@ impl EdrOrchestrator {
                     sig.confidence = score;
                     sig.process_name = proc.clone();
                     sig.cve_id = cve.clone();
-                    sig.add_reason(format!("ML threat model: process {:?} / CVE {:?} scored {:.2}", proc, cve, score));
+                    sig.add_reason(format!(
+                        "ML threat model: process {:?} / CVE {:?} scored {:.2}",
+                        proc, cve, score
+                    ));
                     if let Some(ref p) = proc {
-                        if p.to_lowercase().contains("mimikatz") || p.to_lowercase().contains("lsass") {
-                            sig.set_predicted_next("Credential dumping or LSASS access may lead to lateral movement");
+                        if p.to_lowercase().contains("mimikatz")
+                            || p.to_lowercase().contains("lsass")
+                        {
+                            sig.set_predicted_next(
+                                "Credential dumping or LSASS access may lead to lateral movement",
+                            );
                         }
                     }
                     signature = Some(sig);
@@ -1912,56 +2232,67 @@ impl EdrOrchestrator {
 
         // --- SECOND-TIER: CAPA Analysis for Unknown Files --- (OPTIMIZED)
         if signature.is_none() {
-             if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
-                 let path = std::path::Path::new(image_path);
-                 // NSRL L1 cache is keyed by SHA-1 (not path), same as NsrlVoter
-                 let sha1_opt = event.data.get("Hashes").and_then(|h| h.as_str()).and_then(|hashes| {
-                     hashes
-                         .split(',')
-                         .find_map(|p| {
-                             let t = p.trim();
-                             t.strip_prefix("SHA1=")
-                                 .or_else(|| t.strip_prefix("SHA1:"))
-                                 .map(str::trim)
-                                 .map(|s| s.to_ascii_lowercase())
-                         })
-                 });
-                 let is_known = sha1_opt
-                     .as_ref()
-                     .map(|h| self.nsrl_cache.contains_key(h.as_str()))
-                     .unwrap_or(false)
-                     || sha1_opt
-                         .as_ref()
-                         .map(|h| self.memory.is_nsrl_known_good(h).unwrap_or(false))
-                         .unwrap_or(false);
-                 let is_system = osoosi_types::is_system_path(image_path);
-                 
-                 if !is_known && !is_system {
-                     let analyzer = self.static_analyzer.clone();
-                     let orch = self.clone();
-                     let ev = event.clone();
-                     let path_buf = path.to_path_buf();
-                     
-                     tokio::spawn(async move {
-                         match analyzer.analyze_file(&path_buf).await {
-                             Ok(Some(static_sig)) => {
-                                 warn!("Static Intelligence: Identified critical capabilities in unknown file: {:?}", path_buf);
-                                 if let Some(pid) = ev.process_id() {
-                                     if let Some(reason) = &static_sig.reason {
-                                         for r in reason.split(';') {
-                                             orch.correlator.add_static_finding(pid, &path_buf.to_string_lossy(), r.trim(), static_sig.confidence);
-                                         }
-                                     }
-                                 }
-                                 let _ = orch.handle_threat(&ev, static_sig).await;
-                             },
-                             Ok(None) => debug!("Static: No suspicious capabilities found for {:?}", path_buf),
-                             Err(e) => error!("Static analysis error for {:?}: {}", path_buf, e),
-                         }
-                     });
-                     return Ok(());
-                 }
-             }
+            if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
+                let path = std::path::Path::new(image_path);
+                // NSRL L1 cache is keyed by SHA-1 (not path), same as NsrlVoter
+                let sha1_opt =
+                    event
+                        .data
+                        .get("Hashes")
+                        .and_then(|h| h.as_str())
+                        .and_then(|hashes| {
+                            hashes.split(',').find_map(|p| {
+                                let t = p.trim();
+                                t.strip_prefix("SHA1=")
+                                    .or_else(|| t.strip_prefix("SHA1:"))
+                                    .map(str::trim)
+                                    .map(|s| s.to_ascii_lowercase())
+                            })
+                        });
+                let is_known = sha1_opt
+                    .as_ref()
+                    .map(|h| self.nsrl_cache.contains_key(h.as_str()))
+                    .unwrap_or(false)
+                    || sha1_opt
+                        .as_ref()
+                        .map(|h| self.memory.is_nsrl_known_good(h).unwrap_or(false))
+                        .unwrap_or(false);
+                let is_system = osoosi_types::is_system_path(image_path);
+
+                if !is_known && !is_system {
+                    let analyzer = self.static_analyzer.clone();
+                    let orch = self.clone();
+                    let ev = event.clone();
+                    let path_buf = path.to_path_buf();
+
+                    tokio::spawn(async move {
+                        match analyzer.analyze_file(&path_buf).await {
+                            Ok(Some(static_sig)) => {
+                                warn!("Static Intelligence: Identified critical capabilities in unknown file: {:?}", path_buf);
+                                if let Some(pid) = ev.process_id() {
+                                    if let Some(reason) = &static_sig.reason {
+                                        for r in reason.split(';') {
+                                            orch.correlator.add_static_finding(
+                                                pid,
+                                                &path_buf.to_string_lossy(),
+                                                r.trim(),
+                                                static_sig.confidence,
+                                            );
+                                        }
+                                    }
+                                }
+                                let _ = orch.handle_threat(&ev, static_sig).await;
+                            }
+                            Ok(None) => debug!(
+                                "Static: No suspicious capabilities found for {:?}",
+                                path_buf
+                            ),
+                            Err(e) => error!("Static analysis error for {:?}: {}", path_buf, e),
+                        }
+                    });
+                    return Ok(());
+                }
+            }
         }
 
         // --- THIRD-TIER: HollowsHunter Memory Forensics (Reactive to Sysmon ETW) ---
@@ -1975,7 +2306,9 @@ impl EdrOrchestrator {
             let should_memory_scan = match event.event_id {
                 SysmonEventId::ProcessAccess => {
                     // Check if target is lsass.exe (credential dumping)
-                    let target = event.data.get("TargetImage")
+                    let target = event
+                        .data
+                        .get("TargetImage")
                         .and_then(|v| v.as_str())
                         .unwrap_or("");
                     target.to_lowercase().contains("lsass.exe")
@@ -1988,44 +2321,55 @@ impl EdrOrchestrator {
             };
 
             if should_memory_scan {
-                let hh_path = osoosi_types::resolve_tool_path("hollows_hunter", "hollows_hunter.exe");
+                let hh_path =
+                    osoosi_types::resolve_tool_path("hollows_hunter", "hollows_hunter.exe");
                 if hh_path.exists() {
                     // Get the target PID for focused scanning
-                    let target_pid = event.data.get("TargetProcessId")
+                    let target_pid = event
+                        .data
+                        .get("TargetProcessId")
                         .or_else(|| event.data.get("SourceProcessId"))
                         .and_then(|v| v.as_str())
                         .or_else(|| event.data.get("ProcessId").and_then(|v| v.as_str()));
 
                     if let Some(pid) = target_pid {
-                        warn!("MEMORY FORENSICS: Sysmon {:?} triggered HollowsHunter scan on PID {}",
-                            event.event_id, pid);
-                        
+                        warn!(
+                            "MEMORY FORENSICS: Sysmon {:?} triggered HollowsHunter scan on PID {}",
+                            event.event_id, pid
+                        );
+
                         let hh_path_clone = hh_path.clone();
                         let pid_str = pid.to_string();
                         let pid_display = pid_str.clone();
                         let computer = event.computer.clone();
-                        
+
                         // Run HollowsHunter in a blocking task to avoid blocking the async loop
                         let hh_result = tokio::task::spawn_blocking(move || {
                             std::process::Command::new(&hh_path_clone)
                                 .args(["/pid", &pid_str, "/json", "/quiet", "/shellc", "/iat"])
                                 .output()
-                        }).await;
+                        })
+                        .await;
 
                         match hh_result {
                             Ok(Ok(output)) if output.status.success() => {
                                 let stdout = String::from_utf8_lossy(&output.stdout);
                                 // Parse HollowsHunter JSON output
-                                if let Ok(hh_json) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                                    let total_suspicious = hh_json.get("summary")
+                                if let Ok(hh_json) =
+                                    serde_json::from_str::<serde_json::Value>(&stdout)
+                                {
+                                    let total_suspicious = hh_json
+                                        .get("summary")
                                         .and_then(|s| s.get("replaced"))
                                         .and_then(|v| v.as_u64())
                                         .unwrap_or(0)
-                                        + hh_json.get("summary")
+                                        + hh_json
+                                            .get("summary")
                                             .and_then(|s| s.get("implanted"))
                                             .and_then(|v| v.as_u64())
                                             .unwrap_or(0)
-                                        + hh_json.get("summary")
+                                        + hh_json
+                                            .get("summary")
                                             .and_then(|s| s.get("hooks"))
                                             .and_then(|v| v.as_u64())
                                             .unwrap_or(0);
@@ -2033,27 +2377,41 @@ impl EdrOrchestrator {
                                     if total_suspicious > 0 {
                                         warn!("MEMORY FORENSICS ALERT: HollowsHunter found {} suspicious implants in PID {}",
                                             total_suspicious, pid_display);
-                                        
-                                        let mut mem_sig = osoosi_types::ThreatSignature::new(computer);
+
+                                        let mut mem_sig =
+                                            osoosi_types::ThreatSignature::new(computer);
                                         mem_sig.confidence = 0.95;
-                                        mem_sig.process_name = event.data.get("TargetImage")
+                                        mem_sig.process_name = event
+                                            .data
+                                            .get("TargetImage")
                                             .or_else(|| event.data.get("SourceImage"))
                                             .and_then(|v| v.as_str())
                                             .and_then(|p| std::path::Path::new(p).file_name())
                                             .and_then(|n| n.to_str())
                                             .map(String::from);
-                                        mem_sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                                        mem_sig.recommended_action =
+                                            osoosi_types::ResponseAction::Isolate;
                                         mem_sig.add_reason(format!(
                                             "HollowsHunter: {} in-memory implants detected (replaced/injected PEs, shellcode, hooks)",
                                             total_suspicious
                                         ));
 
                                         // Extract specific findings
-                                        if let Some(scanned) = hh_json.get("scanned").and_then(|s| s.as_array()) {
+                                        if let Some(scanned) =
+                                            hh_json.get("scanned").and_then(|s| s.as_array())
+                                        {
                                             for proc_info in scanned.iter().take(5) {
-                                                if let Some(name) = proc_info.get("name").and_then(|v| v.as_str()) {
-                                                    let replaced = proc_info.get("replaced").and_then(|v| v.as_u64()).unwrap_or(0);
-                                                    let implanted = proc_info.get("implanted").and_then(|v| v.as_u64()).unwrap_or(0);
+                                                if let Some(name) =
+                                                    proc_info.get("name").and_then(|v| v.as_str())
+                                                {
+                                                    let replaced = proc_info
+                                                        .get("replaced")
+                                                        .and_then(|v| v.as_u64())
+                                                        .unwrap_or(0);
+                                                    let implanted = proc_info
+                                                        .get("implanted")
+                                                        .and_then(|v| v.as_u64())
+                                                        .unwrap_or(0);
                                                     if replaced > 0 || implanted > 0 {
                                                         mem_sig.add_reason(format!(
                                                             "Process '{}': {} replaced modules, {} implanted",
@@ -2072,10 +2430,16 @@ impl EdrOrchestrator {
                                 }
                             }
                             Ok(Ok(output)) => {
-                                debug!("HollowsHunter exited with status {} for PID {}", output.status, pid_display);
+                                debug!(
+                                    "HollowsHunter exited with status {} for PID {}",
+                                    output.status, pid_display
+                                );
                             }
                             Ok(Err(e)) => {
-                                debug!("HollowsHunter execution failed for PID {}: {}", pid_display, e);
+                                debug!(
+                                    "HollowsHunter execution failed for PID {}: {}",
+                                    pid_display, e
+                                );
                             }
                             Err(e) => {
                                 debug!("HollowsHunter task join failed: {}", e);
@@ -2094,17 +2458,28 @@ impl EdrOrchestrator {
     }
 
     /// Internal helper to handle identified threats (broadcast, audit, remediation, triage).
-    async fn handle_threat(&self, event: &osoosi_types::SysmonEvent, signature: osoosi_types::ThreatSignature) -> anyhow::Result<()> {
+    async fn handle_threat(
+        &self,
+        event: &osoosi_types::SysmonEvent,
+        signature: osoosi_types::ThreatSignature,
+    ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
 
-        warn!("ALARM: Threat identified on node {}: {:?}", event.computer, signature);
+        warn!(
+            "ALARM: Threat identified on node {}: {:?}",
+            event.computer, signature
+        );
 
         // Log detection to Audit Trail (include image_path for dashboard display)
-        let mut audit_data = serde_json::to_value(&signature)?.as_object().cloned().unwrap_or_default();
+        let mut audit_data = serde_json::to_value(&signature)?
+            .as_object()
+            .cloned()
+            .unwrap_or_default();
         if let Some(img) = event.data.get("Image").and_then(|v| v.as_str()) {
             audit_data.insert("image_path".to_string(), serde_json::json!(img));
         }
-        self.audit.log("THREAT_DETECTED", serde_json::Value::Object(audit_data));
+        self.audit
+            .log("THREAT_DETECTED", serde_json::Value::Object(audit_data));
         let _ = self.memory.log_threat(&signature);
 
         if matches!(event.event_id, osoosi_types::SysmonEventId::DnsQuery)
@@ -2116,11 +2491,14 @@ impl EdrOrchestrator {
             match crate::firewall::block_dns_destinations(query_name, query_results) {
                 Ok(msg) => {
                     warn!("Firewall DNS auto-block applied: {}", msg);
-                    self.audit.log("RESPONSE_ACTION", serde_json::json!({
-                        "type": "FirewallDnsBlock",
-                        "query_name": query_name,
-                        "message": msg
-                    }));
+                    self.audit.log(
+                        "RESPONSE_ACTION",
+                        serde_json::json!({
+                            "type": "FirewallDnsBlock",
+                            "query_name": query_name,
+                            "message": msg
+                        }),
+                    );
                 }
                 Err(e) => {
                     warn!("Firewall DNS auto-block skipped/failed: {}", e);
@@ -2138,7 +2516,12 @@ impl EdrOrchestrator {
                     min_samples: 3,
                     sensitivity: 1.0,
                 };
-                let _ = tx.send(MeshCommand::BroadcastNoisyThreat(signature.clone(), dp_config)).await;
+                let _ = tx
+                    .send(MeshCommand::BroadcastNoisyThreat(
+                        signature.clone(),
+                        dp_config,
+                    ))
+                    .await;
 
                 // Phase 3: Shadow Chain (Distributed Audit Ledger)
                 let proof = self.audit.root();
@@ -2150,13 +2533,16 @@ impl EdrOrchestrator {
         if signature.confidence >= 0.8 {
             let _ = crate::yara_gen::generate_yara_from_threat(&signature);
         }
-        
+
         // 2. Dispatch Active Response based on Decision Matrix
         let autonomy = osoosi_types::load_autonomy_config();
         let mut effective_action = if signature.confidence >= autonomy.action_confidence_threshold {
             signature.recommended_action
         } else {
-            info!("Threat confidence {:.2} below action threshold {:.2}: downgrading to Alert", signature.confidence, autonomy.action_confidence_threshold);
+            info!(
+                "Threat confidence {:.2} below action threshold {:.2}: downgrading to Alert",
+                signature.confidence, autonomy.action_confidence_threshold
+            );
             ResponseAction::Alert
         };
 
@@ -2166,8 +2552,8 @@ impl EdrOrchestrator {
             if effective_action != ResponseAction::Alert {
                 if let Some(file_path) = event.data.get("Image").and_then(|i| i.as_str()) {
                     if crate::system_check::validate_windows_file_integrity(file_path).await {
-                         warn!("SFC SAFETY OVERRIDE: File {} verified as clean by Windows SFC. Downgrading action to Alert.", file_path);
-                         effective_action = ResponseAction::Alert;
+                        warn!("SFC SAFETY OVERRIDE: File {} verified as clean by Windows SFC. Downgrading action to Alert.", file_path);
+                        effective_action = ResponseAction::Alert;
                     }
                 }
             }
@@ -2176,31 +2562,48 @@ impl EdrOrchestrator {
         // Shield Layer: Verify action safety against Taint/SSRF policies
         let sink = match effective_action {
             ResponseAction::Tarpit => Some(osoosi_types::TaintSink::process_injection()),
-            ResponseAction::GhostTarpit | ResponseAction::Deception => Some(osoosi_types::TaintSink::deception()),
-            ResponseAction::Isolate => Some(osoosi_types::TaintSink::mesh_join()), 
+            ResponseAction::GhostTarpit | ResponseAction::Deception => {
+                Some(osoosi_types::TaintSink::deception())
+            }
+            ResponseAction::Isolate => Some(osoosi_types::TaintSink::mesh_join()),
             _ => None,
         };
 
         if let Some(sink) = sink {
             if !self.shield.verify_taint_flow(event, &sink) {
-                warn!("SHIELD BLOCK: Autonomous action {:?} blocked by taint policy", effective_action);
-                self.audit.log("SHIELD_BLOCKED", serde_json::json!({
-                    "action": format!("{:?}", effective_action),
-                    "reason": "Taint violation detected in Shield Layer"
-                }));
+                warn!(
+                    "SHIELD BLOCK: Autonomous action {:?} blocked by taint policy",
+                    effective_action
+                );
+                self.audit.log(
+                    "SHIELD_BLOCKED",
+                    serde_json::json!({
+                        "action": format!("{:?}", effective_action),
+                        "reason": "Taint violation detected in Shield Layer"
+                    }),
+                );
                 return Ok(());
             }
         }
 
         // Human-in-the-Loop check: high-impact actions may require approval
-        if signature.require_approval && signature.action_state == osoosi_types::ActionState::Pending {
-            info!("Action {:?} requires administrator approval. Queuing for review.", effective_action);
-            self.audit.log("ACTION_PENDING_APPROVAL", serde_json::json!({
-                "threat_id": signature.id,
-                "action": format!("{:?}", effective_action)
-            }));
+        if signature.require_approval
+            && signature.action_state == osoosi_types::ActionState::Pending
+        {
+            info!(
+                "Action {:?} requires administrator approval. Queuing for review.",
+                effective_action
+            );
+            self.audit.log(
+                "ACTION_PENDING_APPROVAL",
+                serde_json::json!({
+                    "threat_id": signature.id,
+                    "action": format!("{:?}", effective_action)
+                }),
+            );
         } else {
-            self.perform_action(event, &signature, effective_action).await?;
+            self.perform_action(event, &signature, effective_action)
+                .await?;
         }
 
         // LLM triage: add high-confidence threats for agent decision
@@ -2220,16 +2623,22 @@ impl EdrOrchestrator {
         Ok(())
     }
 
-
     /// Broadcast a tarpit signal to the mesh for a suspected attacker IP.
-    pub async fn broadcast_tarpit_signal(&self, target_ip: String, confidence: f32, attack_type: String) -> anyhow::Result<()> {
+    pub async fn broadcast_tarpit_signal(
+        &self,
+        target_ip: String,
+        confidence: f32,
+        attack_type: String,
+    ) -> anyhow::Result<()> {
         let signal = osoosi_wire::TarpitSignal {
             target_ip,
             confidence,
             attack_type,
         };
         if let Some(ref tx) = *self.mesh_command_tx.lock().await {
-            let _ = tx.send(osoosi_wire::MeshCommand::BroadcastTarpit(signal)).await;
+            let _ = tx
+                .send(osoosi_wire::MeshCommand::BroadcastTarpit(signal))
+                .await;
         }
         Ok(())
     }
@@ -2238,7 +2647,6 @@ impl EdrOrchestrator {
     pub fn trust(&self) -> Arc<TrustManager> {
         self.trust.clone()
     }
-
 
     /// Access the audit trail for dashboard queries.
     pub fn audit(&self) -> Arc<AuditTrail> {
@@ -2282,10 +2690,15 @@ impl EdrOrchestrator {
         let limit = 50;
         let mut results: Vec<serde_json::Value> = Vec::new();
 
-        let wants_threats = q_lower.contains("threat") || q_lower.contains("detect") || q_lower.contains("alarm");
-        let wants_malware = q_lower.contains("malware") || q_lower.contains("virus") || q_lower.contains("infected");
-        let wants_response = q_lower.contains("response") || q_lower.contains("action") || q_lower.contains("block");
-        let wants_traffic = q_lower.contains("dns") || q_lower.contains("network") || q_lower.contains("connect");
+        let wants_threats =
+            q_lower.contains("threat") || q_lower.contains("detect") || q_lower.contains("alarm");
+        let wants_malware = q_lower.contains("malware")
+            || q_lower.contains("virus")
+            || q_lower.contains("infected");
+        let wants_response =
+            q_lower.contains("response") || q_lower.contains("action") || q_lower.contains("block");
+        let wants_traffic =
+            q_lower.contains("dns") || q_lower.contains("network") || q_lower.contains("connect");
         let wants_all = !wants_threats && !wants_malware && !wants_response && !wants_traffic;
 
         let entries = self.audit.entries();
@@ -2294,26 +2707,55 @@ impl EdrOrchestrator {
                 || (wants_threats && entry.event_type == "THREAT_DETECTED")
                 || (wants_malware && entry.event_type == "MALWARE_DETECTED")
                 || (wants_response && entry.event_type == "RESPONSE_ACTION")
-                || (wants_traffic && entry.event_type == "TELEMETRY_INGESTED"
-                    && (entry.data.get("data").and_then(|d| d.get("DestinationIp")).is_some()
-                        || entry.data.get("data").and_then(|d| d.get("QueryName")).is_some()));
+                || (wants_traffic
+                    && entry.event_type == "TELEMETRY_INGESTED"
+                    && (entry
+                        .data
+                        .get("data")
+                        .and_then(|d| d.get("DestinationIp"))
+                        .is_some()
+                        || entry
+                            .data
+                            .get("data")
+                            .and_then(|d| d.get("QueryName"))
+                            .is_some()));
             if include {
                 let summary = match entry.event_type.as_str() {
                     "THREAT_DETECTED" => {
-                        let proc = entry.data.get("process_name").and_then(|v| v.as_str()).unwrap_or("?");
-                        let conf = entry.data.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                        let proc = entry
+                            .data
+                            .get("process_name")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?");
+                        let conf = entry
+                            .data
+                            .get("confidence")
+                            .and_then(|v| v.as_f64())
+                            .unwrap_or(0.0);
                         format!("Threat: {} (conf: {:.0}%)", proc, conf * 100.0)
                     }
                     "MALWARE_DETECTED" => {
-                        let fp = entry.data.get("file_path").and_then(|v| v.as_str()).unwrap_or("?");
+                        let fp = entry
+                            .data
+                            .get("file_path")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?");
                         format!("Malware: {}", fp.rsplit(['\\', '/']).next().unwrap_or(fp))
                     }
                     "RESPONSE_ACTION" => {
-                        let t = entry.data.get("type").and_then(|v| v.as_str()).unwrap_or("?");
+                        let t = entry
+                            .data
+                            .get("type")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("?");
                         format!("Response: {}", t)
                     }
                     "TELEMETRY_INGESTED" => {
-                        let ev = entry.data.get("event_id").and_then(|v| v.as_i64()).unwrap_or(0);
+                        let ev = entry
+                            .data
+                            .get("event_id")
+                            .and_then(|v| v.as_i64())
+                            .unwrap_or(0);
                         format!("Event {} ingested", ev)
                     }
                     _ => entry.event_type.clone(),
@@ -2339,35 +2781,51 @@ impl EdrOrchestrator {
 
     /// Apply LLM triage decision: override action for a pending threat.
     /// If agent chooses a more severe action (e.g. Isolate when we did Alert), applies it.
-    pub async fn triage_decide(&self, threat_id: &str, action: osoosi_types::ResponseAction) -> anyhow::Result<bool> {
+    pub async fn triage_decide(
+        &self,
+        threat_id: &str,
+        action: osoosi_types::ResponseAction,
+    ) -> anyhow::Result<bool> {
         let Some((_, entry)) = self.triage_store.remove(threat_id) else {
             return Ok(false);
         };
-        self.audit.log("TRIAGE_DECISION", serde_json::json!({
-            "threat_id": threat_id,
-            "agent_action": format!("{:?}", action),
-            "previously_applied": format!("{:?}", entry.applied_action),
-        }));
+        self.audit.log(
+            "TRIAGE_DECISION",
+            serde_json::json!({
+                "threat_id": threat_id,
+                "agent_action": format!("{:?}", action),
+                "previously_applied": format!("{:?}", entry.applied_action),
+            }),
+        );
         use osoosi_types::ResponseAction as RA;
         let needs_escalation = matches!(
             (entry.applied_action, action),
-            (RA::Alert, RA::Isolate | RA::GhostTarpit | RA::Tarpit | RA::Deception)
-            | (RA::Deception, RA::Isolate | RA::GhostTarpit | RA::Tarpit)
-            | (RA::Tarpit, RA::Isolate | RA::GhostTarpit)
-            | (RA::GhostTarpit, RA::Isolate)
+            (
+                RA::Alert,
+                RA::Isolate | RA::GhostTarpit | RA::Tarpit | RA::Deception
+            ) | (RA::Deception, RA::Isolate | RA::GhostTarpit | RA::Tarpit)
+                | (RA::Tarpit, RA::Isolate | RA::GhostTarpit)
+                | (RA::GhostTarpit, RA::Isolate)
         );
         if needs_escalation {
             if let Ok(event) = serde_json::from_value::<SysmonEvent>(entry.event.clone()) {
                 if crate::firewall::autoblock_enabled() {
-                    let pid = event.data.get("ProcessId").and_then(|p| p.as_u64()).map(|v| v as u32);
+                    let pid = event
+                        .data
+                        .get("ProcessId")
+                        .and_then(|p| p.as_u64())
+                        .map(|v| v as u32);
                     let image = event.data.get("Image").and_then(|i| i.as_str());
                     if let Ok(msg) = crate::firewall::block_process_network(pid, image) {
-                        self.audit.log("RESPONSE_ACTION", serde_json::json!({
-                            "type": "TriageEscalation",
-                            "threat_id": threat_id,
-                            "action": format!("{:?}", action),
-                            "message": msg,
-                        }));
+                        self.audit.log(
+                            "RESPONSE_ACTION",
+                            serde_json::json!({
+                                "type": "TriageEscalation",
+                                "threat_id": threat_id,
+                                "action": format!("{:?}", action),
+                                "message": msg,
+                            }),
+                        );
                     }
                 }
             }
@@ -2376,7 +2834,11 @@ impl EdrOrchestrator {
     }
 
     /// Analyze TrafficLLM-style prompt input using Rust traffic adapter.
-    pub fn analyze_traffic_prompt(&self, human_instruction: &str, traffic_data: &str) -> serde_json::Value {
+    pub fn analyze_traffic_prompt(
+        &self,
+        human_instruction: &str,
+        traffic_data: &str,
+    ) -> serde_json::Value {
         let result = osoosi_policy::analyze_prompt(human_instruction, traffic_data);
         serde_json::json!({
             "status": "success",
@@ -2402,7 +2864,10 @@ impl EdrOrchestrator {
             let Ok(event) = serde_json::from_value::<SysmonEvent>(entry.data.clone()) else {
                 continue;
             };
-            if matches!(event.event_id, SysmonEventId::NetworkConnect | SysmonEventId::DnsQuery) {
+            if matches!(
+                event.event_id,
+                SysmonEventId::NetworkConnect | SysmonEventId::DnsQuery
+            ) {
                 n += 1;
                 if n >= limit as u32 {
                     break;
@@ -2429,7 +2894,10 @@ impl EdrOrchestrator {
             let Ok(event) = serde_json::from_value::<SysmonEvent>(entry.data.clone()) else {
                 continue;
             };
-            let is_traffic = matches!(event.event_id, SysmonEventId::NetworkConnect | SysmonEventId::DnsQuery);
+            let is_traffic = matches!(
+                event.event_id,
+                SysmonEventId::NetworkConnect | SysmonEventId::DnsQuery
+            );
             if !is_traffic {
                 continue;
             }
@@ -2491,8 +2959,10 @@ impl EdrOrchestrator {
         if let Ok(known_peers) = memory.query_json(query, &[]) {
             for peer in known_peers {
                 let id = peer["node_id"].as_str().unwrap_or("?");
-                if id == self_id { continue; }
-                
+                if id == self_id {
+                    continue;
+                }
+
                 let score = peer["score"].as_f64().unwrap_or(0.5);
                 nodes.push(serde_json::json!({
                     "id": id,
@@ -2500,7 +2970,7 @@ impl EdrOrchestrator {
                     "group": if score < 0.3 { "threat" } else { "process" },
                     "title": format!("Node ID: {}\nReputation: {:.2}", id, score)
                 }));
-                
+
                 // For simplicity in the topology map, connect all known peers to self (star-like if p2p links unknown)
                 edges.push(serde_json::json!({
                     "from": self_id,
@@ -2522,7 +2992,14 @@ impl EdrOrchestrator {
     }
 
     /// Backup status for dashboard.
-    pub fn backup_status(&self) -> (Option<String>, Option<String>, Option<String>, Option<String>) {
+    pub fn backup_status(
+        &self,
+    ) -> (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        Option<String>,
+    ) {
         let memory = self.memory();
         let status = memory.get_backup_status("status").ok().flatten();
         let message = memory.get_backup_status("message").ok().flatten();
@@ -2532,17 +3009,50 @@ impl EdrOrchestrator {
     }
 
     /// Model training status for dashboard.
-    pub fn model_training_status(&self) -> (Option<String>, Option<String>, Option<String>, u32, u32, Option<String>) {
+    pub fn model_training_status(
+        &self,
+    ) -> (
+        Option<String>,
+        Option<String>,
+        Option<String>,
+        u32,
+        u32,
+        Option<String>,
+    ) {
         let memory = self.memory();
         let status = memory.get_model_training_status("status").ok().flatten();
-        let last_attempt = memory.get_model_training_status("last_attempt").ok().flatten();
-        let last_success = memory.get_model_training_status("last_success").ok().flatten();
-        let sample_count = memory.get_model_training_status("sample_count").ok().flatten()
-            .and_then(|s| s.parse().ok()).unwrap_or(0);
-        let feature_count = memory.get_model_training_status("feature_count").ok().flatten()
-            .and_then(|s| s.parse().ok()).unwrap_or(0);
-        let last_error = memory.get_model_training_status("last_error").ok().flatten();
-        (status, last_attempt, last_success, sample_count, feature_count, last_error)
+        let last_attempt = memory
+            .get_model_training_status("last_attempt")
+            .ok()
+            .flatten();
+        let last_success = memory
+            .get_model_training_status("last_success")
+            .ok()
+            .flatten();
+        let sample_count = memory
+            .get_model_training_status("sample_count")
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let feature_count = memory
+            .get_model_training_status("feature_count")
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let last_error = memory
+            .get_model_training_status("last_error")
+            .ok()
+            .flatten();
+        (
+            status,
+            last_attempt,
+            last_success,
+            sample_count,
+            feature_count,
+            last_error,
+        )
     }
 
     /// Repair Engine status for dashboard (last patch, pending count, last error).
@@ -2552,9 +3062,16 @@ impl EdrOrchestrator {
         let last_state = memory.get_repair_status("last_state").ok().flatten();
         let last_sig = memory.get_repair_status("last_sig").ok().flatten();
         let last_at = memory.get_repair_status("last_at").ok().flatten();
-        let pending: u32 = memory.get_repair_status("pending_count").ok().flatten()
-            .and_then(|s| s.parse().ok()).unwrap_or(0);
-        let last_error = memory.get_repair_status("last_error").ok().flatten()
+        let pending: u32 = memory
+            .get_repair_status("pending_count")
+            .ok()
+            .flatten()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(0);
+        let last_error = memory
+            .get_repair_status("last_error")
+            .ok()
+            .flatten()
             .filter(|s| !s.is_empty());
         (last_cve, last_state, last_sig, last_at, pending, last_error)
     }
@@ -2600,15 +3117,19 @@ impl EdrOrchestrator {
             timestamp: chrono::Utc::now(),
             source_node: self.trust.did().to_string(),
         };
-        
+
         info!("Broadcasting intelligence: {}", summary);
-        self.audit.log("INTEL_BROADCAST", serde_json::json!({
-            "summary": summary,
-            "source": "dashboard",
-        }));
+        self.audit.log(
+            "INTEL_BROADCAST",
+            serde_json::json!({
+                "summary": summary,
+                "source": "dashboard",
+            }),
+        );
 
         if let Some(ref tx) = *self.mesh_command_tx.lock().await {
-            tx.send(osoosi_wire::MeshCommand::BroadcastGlobalIntel(intel)).await
+            tx.send(osoosi_wire::MeshCommand::BroadcastGlobalIntel(intel))
+                .await
                 .map_err(|e| anyhow::anyhow!("Mesh channel closed: {}", e))
         } else {
             Err(anyhow::anyhow!("Mesh not active"))
@@ -2652,7 +3173,9 @@ impl EdrOrchestrator {
                 info!("Threat {} marked as false positive. Whitelisting and reverting active response...", threat_id);
 
                 if hash_blake3.as_deref().unwrap_or("").is_empty() {
-                    if let Some(path) = Self::feedback_file_path(process_name.as_deref(), file_path.as_deref()) {
+                    if let Some(path) =
+                        Self::feedback_file_path(process_name.as_deref(), file_path.as_deref())
+                    {
                         match Self::blake3_file_hex(&path) {
                             Ok(hash) => {
                                 info!("[FP] Resolved missing hash for '{}' as {}.", path, hash);
@@ -2663,7 +3186,10 @@ impl EdrOrchestrator {
                                     &source,
                                 );
                             }
-                            Err(e) => warn!("[FP] Could not hash '{}' for false-positive allowlist: {}", path, e),
+                            Err(e) => warn!(
+                                "[FP] Could not hash '{}' for false-positive allowlist: {}",
+                                path, e
+                            ),
                         }
                     }
                 }
@@ -2672,7 +3198,10 @@ impl EdrOrchestrator {
                 if let Some(ref hash) = hash_blake3 {
                     if !hash.is_empty() {
                         self.nsrl_cache.insert(hash.clone(), true);
-                        info!("[FP] Hash {} added to session NSRL bypass cache — will not re-alert.", hash);
+                        info!(
+                            "[FP] Hash {} added to session NSRL bypass cache — will not re-alert.",
+                            hash
+                        );
                     }
                 }
 
@@ -2680,7 +3209,10 @@ impl EdrOrchestrator {
                 if let Some(ref proc) = process_name {
                     if !proc.is_empty() {
                         self.nsrl_cache.insert(proc.clone(), true);
-                        info!("[FP] Process '{}' added to session NSRL bypass cache.", proc);
+                        info!(
+                            "[FP] Process '{}' added to session NSRL bypass cache.",
+                            proc
+                        );
                     }
                 }
 
@@ -2689,17 +3221,23 @@ impl EdrOrchestrator {
                 let _ = self.response.clear_ghost_files(traps_dir).await;
                 info!("[FP] Ghost files cleared from '{}'.", traps_dir);
 
-                self.audit.log("FALSE_POSITIVE_REMEDIATION", serde_json::json!({
-                    "threat_id": threat_id,
-                    "process_name": process_name,
-                    "hash_blake3": hash_blake3,
-                    "file_path": file_path,
-                    "action": "whitelisted_and_remediated",
-                }));
+                self.audit.log(
+                    "FALSE_POSITIVE_REMEDIATION",
+                    serde_json::json!({
+                        "threat_id": threat_id,
+                        "process_name": process_name,
+                        "hash_blake3": hash_blake3,
+                        "file_path": file_path,
+                        "action": "whitelisted_and_remediated",
+                    }),
+                );
 
                 Ok(())
             }
-            None => Err(anyhow::anyhow!("Threat '{}' not found in database", threat_id)),
+            None => Err(anyhow::anyhow!(
+                "Threat '{}' not found in database",
+                threat_id
+            )),
         }
     }
 
@@ -2708,23 +3246,33 @@ impl EdrOrchestrator {
         let source = self.trust.did().to_string();
         match self.memory.mark_threat_true_positive(threat_id, &source)? {
             Some((process_name, hash_blake3, file_path)) => {
-                info!("Threat {} confirmed as TRUE positive. Engaging tarpit and broadcasting...", threat_id);
+                info!(
+                    "Threat {} confirmed as TRUE positive. Engaging tarpit and broadcasting...",
+                    threat_id
+                );
 
                 // 1. Engage the serious network tarpit using the existing QoS helper.
-                let tarpit_target = Self::feedback_file_path(process_name.as_deref(), file_path.as_deref())
-                    .or_else(|| process_name.clone());
+                let tarpit_target =
+                    Self::feedback_file_path(process_name.as_deref(), file_path.as_deref())
+                        .or_else(|| process_name.clone());
                 if let Some(ref target) = tarpit_target {
                     match crate::firewall::tarpit_process_network(None, Some(target)) {
                         Ok(msg) => {
                             warn!("[TP] Serious tarpit engaged: {}", msg);
-                            self.audit.log("RESPONSE_ACTION", serde_json::json!({
-                                "type": "ConfirmedTruePositiveTarpit",
-                                "threat_id": threat_id,
-                                "image": target,
-                                "message": msg
-                            }));
+                            self.audit.log(
+                                "RESPONSE_ACTION",
+                                serde_json::json!({
+                                    "type": "ConfirmedTruePositiveTarpit",
+                                    "threat_id": threat_id,
+                                    "image": target,
+                                    "message": msg
+                                }),
+                            );
                         }
-                        Err(e) => warn!("[TP] Serious tarpit could not be applied for '{}': {}", target, e),
+                        Err(e) => warn!(
+                            "[TP] Serious tarpit could not be applied for '{}': {}",
+                            target, e
+                        ),
                     }
                 }
 
@@ -2737,14 +3285,17 @@ impl EdrOrchestrator {
                 }
 
                 // 3. Broadcast confirmed threat intelligence to the mesh
-                self.audit.log("TRUE_POSITIVE_CONFIRMED", serde_json::json!({
-                    "threat_id": threat_id,
-                    "process_name": process_name,
-                    "hash_blake3": hash_blake3,
-                    "file_path": file_path,
-                    "tarpit_target": tarpit_target,
-                    "action": "tarpit_engaged_and_intel_broadcast",
-                }));
+                self.audit.log(
+                    "TRUE_POSITIVE_CONFIRMED",
+                    serde_json::json!({
+                        "threat_id": threat_id,
+                        "process_name": process_name,
+                        "hash_blake3": hash_blake3,
+                        "file_path": file_path,
+                        "tarpit_target": tarpit_target,
+                        "action": "tarpit_engaged_and_intel_broadcast",
+                    }),
+                );
 
                 let summary = format!(
                     "CONFIRMED THREAT — Analyst Verified (node: {}): id={} proc={:?} hash={:?}. Tarpit engaged.",
@@ -2754,17 +3305,21 @@ impl EdrOrchestrator {
 
                 Ok(())
             }
-            None => Err(anyhow::anyhow!("Threat '{}' not found in database", threat_id)),
+            None => Err(anyhow::anyhow!(
+                "Threat '{}' not found in database",
+                threat_id
+            )),
         }
     }
-
 
     pub async fn start_mesh_with_join_gate(&self) -> anyhow::Result<Arc<JoinGate>> {
         let autonomy = osoosi_types::load_autonomy_config();
         let peer_rules = osoosi_types::load_peer_rules_config();
-        let master_node_pk = osoosi_types::load_mesh_listen_config_extended().master_node_public_key;
+        let master_node_pk =
+            osoosi_types::load_mesh_listen_config_extended().master_node_public_key;
         let (command_tx, command_rx) = tokio::sync::mpsc::channel(32);
-        let (peer_threat_tx, mut peer_threat_rx) = tokio::sync::mpsc::channel::<osoosi_types::ThreatSignature>(64);
+        let (peer_threat_tx, mut peer_threat_rx) =
+            tokio::sync::mpsc::channel::<osoosi_types::ThreatSignature>(64);
         let join_gate = Arc::new(JoinGate::new(
             self.memory.clone(),
             command_tx.clone(),
@@ -2780,13 +3335,19 @@ impl EdrOrchestrator {
 
         let mesh = {
             let mut guard = self.mesh.lock().await;
-            guard.take().ok_or_else(|| anyhow::anyhow!("Mesh already started or taken"))?
+            guard
+                .take()
+                .ok_or_else(|| anyhow::anyhow!("Mesh already started or taken"))?
         };
 
-        let (peer_consensus_tx, mut peer_consensus_rx) = tokio::sync::mpsc::channel::<osoosi_types::PolicyConsensusMessage>(64);
-        let (ghost_shard_tx, mut ghost_shard_rx) = tokio::sync::mpsc::channel::<osoosi_types::GhostShardData>(64);
-        let (peer_intel_tx, mut peer_intel_rx) = tokio::sync::mpsc::channel::<osoosi_types::GlobalIntelligence>(64);
-        let (malware_sample_tx, mut malware_sample_rx) = tokio::sync::mpsc::channel::<osoosi_types::MalwareSample>(256);
+        let (peer_consensus_tx, mut peer_consensus_rx) =
+            tokio::sync::mpsc::channel::<osoosi_types::PolicyConsensusMessage>(64);
+        let (ghost_shard_tx, mut ghost_shard_rx) =
+            tokio::sync::mpsc::channel::<osoosi_types::GhostShardData>(64);
+        let (peer_intel_tx, mut peer_intel_rx) =
+            tokio::sync::mpsc::channel::<osoosi_types::GlobalIntelligence>(64);
+        let (malware_sample_tx, mut malware_sample_rx) =
+            tokio::sync::mpsc::channel::<osoosi_types::MalwareSample>(256);
 
         let join_gate_clone = join_gate.clone();
         let peer_count = self.mesh_peer_count.clone();
@@ -2803,16 +3364,26 @@ impl EdrOrchestrator {
                 command_rx,
                 Some(peer_count),
                 peer_rules,
-                move |sig| { let _ = peer_tx.try_send(sig); },
-                move |m| { let _ = cons_tx.try_send(m); },
-                move |s| { let _ = ghost_tx.try_send(s); },
-                move |i| { let _ = intel_tx.try_send(i); },
-                move |s| { let _ = sample_tx.try_send(s); },
+                move |sig| {
+                    let _ = peer_tx.try_send(sig);
+                },
+                move |m| {
+                    let _ = cons_tx.try_send(m);
+                },
+                move |s| {
+                    let _ = ghost_tx.try_send(s);
+                },
+                move |i| {
+                    let _ = intel_tx.try_send(i);
+                },
+                move |s| {
+                    let _ = sample_tx.try_send(s);
+                },
                 move |t| {
                     if t.confidence >= autonomy_conf.action_confidence_threshold {
-                         if let Ok(addr) = t.target_ip.parse() {
-                             let _ = osoosi_wire::apply_socket_tarpit(addr);
-                         }
+                        if let Ok(addr) = t.target_ip.parse() {
+                            let _ = osoosi_wire::apply_socket_tarpit(addr);
+                        }
                     }
                 },
                 move |c| {
@@ -2837,7 +3408,9 @@ impl EdrOrchestrator {
             loop {
                 match orch_for_announce.get_status_for_announce().await {
                     Ok(status) => {
-                        let _ = announce_tx.send(MeshCommand::PublishPeerAnnounce(status)).await;
+                        let _ = announce_tx
+                            .send(MeshCommand::PublishPeerAnnounce(status))
+                            .await;
                     }
                     Err(e) => {
                         tracing::warn!("Failed to generate peer status for announcement: {}", e);
@@ -2850,20 +3423,30 @@ impl EdrOrchestrator {
         // Process Ghost Shards: HDS Algorithm Activation
         let holograph_orch = self.holograph.clone();
         tokio::spawn(async move {
-             while let Some(shard) = ghost_shard_rx.recv().await {
-                 holograph_orch.add_shard(shard);
-             }
+            while let Some(shard) = ghost_shard_rx.recv().await {
+                holograph_orch.add_shard(shard);
+            }
         });
 
         // Process Global Intelligence: Gossip Sleuth Defense Learning
         let policy_orch = self.policy.clone();
         tokio::spawn(async move {
             while let Some(intel) = peer_intel_rx.recv().await {
-                info!("Gossip: Received intelligence from peer {}: {}", intel.source_node, intel.summary);
+                info!(
+                    "Gossip: Received intelligence from peer {}: {}",
+                    intel.source_node, intel.summary
+                );
                 if let Some(defense) = intel.defense {
-                    info!("Gossip Learning: Automatically registering new defense rule for {}.", defense.cve_id);
+                    info!(
+                        "Gossip Learning: Automatically registering new defense rule for {}.",
+                        defense.cve_id
+                    );
                     // In a real implementation, we would parse defense.learned_rule and add to PolicyEngine
-                    policy_orch.register_temporary_rule(&defense.cve_id, &defense.learned_rule, defense.severity);
+                    policy_orch.register_temporary_rule(
+                        &defense.cve_id,
+                        &defense.learned_rule,
+                        defense.severity,
+                    );
                 }
             }
         });
@@ -2920,10 +3503,8 @@ impl EdrOrchestrator {
                             outcome.high_trust_endorsement,
                             outcome.pbft_max_faults
                         );
-                        let _ = memory_consensus.set_repair_status(
-                            &format!("mesh_bft_{}", policy_id),
-                            "validated",
-                        );
+                        let _ = memory_consensus
+                            .set_repair_status(&format!("mesh_bft_{}", policy_id), "validated");
                         for vid in &outcome.penalize_critical_voters {
                             if let Err(e) = join_gate_consensus.penalize_peer(
                                 vid,
@@ -2969,7 +3550,12 @@ impl EdrOrchestrator {
                 if let Err(e) = memory_malware.insert_malware_sample(&sample) {
                     error!("Failed to store mesh malware sample: {}", e);
                 } else {
-                    debug!("Stored malware sample from {} (hash={}, label={})", sample.source_node, &sample.file_hash[..sample.file_hash.len().min(12)], sample.label);
+                    debug!(
+                        "Stored malware sample from {} (hash={}, label={})",
+                        sample.source_node,
+                        &sample.file_hash[..sample.file_hash.len().min(12)],
+                        sample.label
+                    );
                 }
             }
         });
@@ -2979,35 +3565,49 @@ impl EdrOrchestrator {
 
     /// Start model training loop: aggregate self + peer data, train, save to models/.
     pub async fn start_model_training_loop(&self, interval_secs: u64) {
-        if std::env::var("OSOOSI_NO_AI").map(|v| v == "1").unwrap_or(false) {
+        if std::env::var("OSOOSI_NO_AI")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+        {
             info!("Skipping model training loop: AI features are disabled.");
             return;
         }
         let memory = self.memory.clone();
         let threat_model = self.threat_model.clone();
         tokio::spawn(async move {
-            info!("Model training loop started (interval: {}s, models in ./models/)", interval_secs);
+            info!(
+                "Model training loop started (interval: {}s, models in ./models/)",
+                interval_secs
+            );
             let _ = memory.set_model_training_status("status", "running");
             loop {
-                let _ = memory.set_model_training_status("last_attempt", &chrono::Utc::now().to_rfc3339());
+                let _ = memory
+                    .set_model_training_status("last_attempt", &chrono::Utc::now().to_rfc3339());
                 match memory.get_threats_for_training(500) {
                     Ok(samples) => {
-                        let _ = memory.set_model_training_status("sample_count", &samples.len().to_string());
+                        let _ = memory
+                            .set_model_training_status("sample_count", &samples.len().to_string());
                         if samples.is_empty() {
-                            let _ = memory.set_model_training_status("status", "waiting_for_samples");
+                            let _ =
+                                memory.set_model_training_status("status", "waiting_for_samples");
                             let _ = memory.set_model_training_status("last_error", "");
                         } else {
                             let mut model = threat_model.write().await;
                             if let Err(e) = model.train(&samples) {
                                 error!("Model training failed: {}", e);
                                 let _ = memory.set_model_training_status("status", "failed");
-                                let _ = memory.set_model_training_status("last_error", &e.to_string());
+                                let _ =
+                                    memory.set_model_training_status("last_error", &e.to_string());
                             } else {
                                 let w = model.weights();
                                 let _ = memory.set_model_training_status("status", "running");
-                                let _ = memory.set_model_training_status("feature_count", &w.features.len().to_string());
+                                let _ = memory.set_model_training_status(
+                                    "feature_count",
+                                    &w.features.len().to_string(),
+                                );
                                 if let Some(ref trained_at) = w.trained_at {
-                                    let _ = memory.set_model_training_status("last_success", trained_at);
+                                    let _ = memory
+                                        .set_model_training_status("last_success", trained_at);
                                 }
                                 let _ = memory.set_model_training_status("last_error", "");
                             }
@@ -3017,7 +3617,7 @@ impl EdrOrchestrator {
                         error!("Failed to get threats for training: {}", e);
                         let _ = memory.set_model_training_status("status", "failed");
                         let _ = memory.set_model_training_status("last_error", &e.to_string());
-                    },
+                    }
                 }
                 tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)).await;
             }
@@ -3025,7 +3625,9 @@ impl EdrOrchestrator {
     }
 
     /// Policy Consensus status for all policies tracked in the mesh.
-    pub async fn policy_consensus_status(&self) -> HashMap<String, Vec<osoosi_types::PolicyConsensusMessage>> {
+    pub async fn policy_consensus_status(
+        &self,
+    ) -> HashMap<String, Vec<osoosi_types::PolicyConsensusMessage>> {
         self.policy_consensus.lock().await.clone()
     }
 
@@ -3040,20 +3642,22 @@ impl EdrOrchestrator {
         use std::sync::atomic::Ordering;
         let peer_count = self.mesh_peer_count.load(Ordering::Relaxed);
         if peer_count == 0 {
-             warn!("HDS: Cannot activate sharding without mesh peers.");
-             return Ok(());
+            warn!("HDS: Cannot activate sharding without mesh peers.");
+            return Ok(());
         }
 
         let mesh_members = vec![self.trust.did().to_string()]; // Simplified for prototype
-        
+
         let ports = vec![22, 80, 443, 3306, 5432];
         let tx_guard = self.mesh_command_tx.lock().await;
         if let Some(ref tx) = *tx_guard {
             for port in ports {
                 let owner = osoosi_wire::holograph::HolographEngine::calculate_shard_assignment(
-                    attacker_ip, port, &mesh_members
+                    attacker_ip,
+                    port,
+                    &mesh_members,
                 );
-                
+
                 let shard = osoosi_types::GhostShardData {
                     attacker_ip: attacker_ip.to_string(),
                     virtual_port: port,
@@ -3064,18 +3668,25 @@ impl EdrOrchestrator {
                     },
                     shard_owner: owner,
                 };
-                
+
                 let _ = tx.try_send(osoosi_wire::MeshCommand::BroadcastGhostShard(shard));
             }
         }
-        
-        info!("HDS: Holographic Lattice deployed for attacker {}.", attacker_ip);
+
+        info!(
+            "HDS: Holographic Lattice deployed for attacker {}.",
+            attacker_ip
+        );
         Ok(())
     }
 
     /// Run AI Behavioral Analysis (Adapted from AIEventAnalyzer)
     /// This is a multi-platform (Win/Mac/Linux) investigative tool.
-    pub async fn run_behavioral_analysis(&self, mode: osoosi_behavioral::AnalysisMode, event_count: usize) -> anyhow::Result<Vec<osoosi_behavioral::InvestigativePrompt>> {
+    pub async fn run_behavioral_analysis(
+        &self,
+        mode: osoosi_behavioral::AnalysisMode,
+        event_count: usize,
+    ) -> anyhow::Result<Vec<osoosi_behavioral::InvestigativePrompt>> {
         let reader = osoosi_behavioral::BehavioralLogReader::new();
         let events = reader.poll_events()?; // Get latest logs across all sources
         let count = event_count.clamp(1, 50);
@@ -3084,12 +3695,18 @@ impl EdrOrchestrator {
         } else {
             &events
         };
-        
-        self.behavioral_analyzer.generate_investigative_prompts(mode, sample).await
+
+        self.behavioral_analyzer
+            .generate_investigative_prompts(mode, sample)
+            .await
     }
 
     /// Perform deep AI analysis on a specific behavioral lead.
-    pub async fn run_behavioral_deep_dive(&self, prompt: &str, event_count: usize) -> anyhow::Result<String> {
+    pub async fn run_behavioral_deep_dive(
+        &self,
+        prompt: &str,
+        event_count: usize,
+    ) -> anyhow::Result<String> {
         let reader = osoosi_behavioral::BehavioralLogReader::new();
         let events = reader.poll_events()?;
         let count = event_count.clamp(1, 50);
@@ -3099,7 +3716,9 @@ impl EdrOrchestrator {
             &events
         };
 
-        self.behavioral_analyzer.perform_deep_analysis(prompt, sample).await
+        self.behavioral_analyzer
+            .perform_deep_analysis(prompt, sample)
+            .await
     }
 
     pub async fn get_status_for_announce(&self) -> anyhow::Result<osoosi_types::PeerAnnounce> {
@@ -3107,9 +3726,9 @@ impl EdrOrchestrator {
         let repair_status = self.repair_status();
         let is_patched = repair_status.4 == 0; // pending_count == 0
         let (os_name, os_version, os_supported) = crate::system_check::get_os_info();
-        
+
         let mesh_config = osoosi_types::load_mesh_listen_config_extended();
-        
+
         Ok(PeerAnnounce {
             source_node: self.trust.did().id.clone(),
             is_patched,
@@ -3125,13 +3744,17 @@ impl EdrOrchestrator {
     pub fn start_browser_auditor(&self) {
         let guard = self.browser_guard.clone();
         let interval_env = std::env::var("OSOOSI_BROWSER_SCAN_INTERVAL");
-        let interval: u64 = interval_env.ok().and_then(|s| s.parse().ok()).unwrap_or(3600);
-        
+        let interval: u64 = interval_env
+            .ok()
+            .and_then(|s| s.parse().ok())
+            .unwrap_or(3600);
+
         let mesh_tx = self.mesh_command_tx.clone();
         let memory = self.memory.clone();
-        
+
         tokio::spawn(async move {
-            let mut interval_timer = tokio::time::interval(std::time::Duration::from_secs(interval));
+            let mut interval_timer =
+                tokio::time::interval(std::time::Duration::from_secs(interval));
             loop {
                 interval_timer.tick().await;
                 info!("BrowserGuard: Periodic sweep running...");
@@ -3140,12 +3763,12 @@ impl EdrOrchestrator {
                     // 1. Log locally to MemoryStore and AuditTrail
                     let _ = memory.log_threat(&threat);
                     warn!("ALARM: Browser Security Threat Identified: {:?}", threat);
-                    
+
                     // 2. Broadcast to mesh if high confidence
                     if threat.confidence > 0.8 {
-                         if let Some(ref tx) = *mesh_tx.lock().await {
-                             let _ = tx.send(osoosi_wire::MeshCommand::Broadcast(threat)).await;
-                         }
+                        if let Some(ref tx) = *mesh_tx.lock().await {
+                            let _ = tx.send(osoosi_wire::MeshCommand::Broadcast(threat)).await;
+                        }
                     }
                 }
             }
@@ -3158,29 +3781,41 @@ impl EdrOrchestrator {
     }
 
     /// Execute the recommended action for a threat.
-    pub async fn perform_action(&self, event: &osoosi_types::SysmonEvent, signature: &osoosi_types::ThreatSignature, action: osoosi_types::ResponseAction) -> anyhow::Result<()> {
-        use osoosi_types::ResponseAction;
+    pub async fn perform_action(
+        &self,
+        event: &osoosi_types::SysmonEvent,
+        signature: &osoosi_types::ThreatSignature,
+        action: osoosi_types::ResponseAction,
+    ) -> anyhow::Result<()> {
         use osoosi_runtime::TarpitManager;
-        
+        use osoosi_types::ResponseAction;
+
         match action {
             ResponseAction::Deception => {
                 let traps_path = &self.runtime_config.traps_path;
                 warn!("Action: Spawning Ghost Files (Deception Traps) in response to discovery behavior.");
                 self.response.spawn_ghost_files(traps_path).await?;
-                self.audit.log("RESPONSE_ACTION", serde_json::json!({"type": "GhostFiles", "path": traps_path}));
+                self.audit.log(
+                    "RESPONSE_ACTION",
+                    serde_json::json!({"type": "GhostFiles", "path": traps_path}),
+                );
             }
             ResponseAction::Tarpit => {
-                warn!("Action: Applying Resource Tarpit to PID (confidence {:.2})", signature.confidence);
+                warn!(
+                    "Action: Applying Resource Tarpit to PID (confidence {:.2})",
+                    signature.confidence
+                );
                 if let Some(pid) = event.data.get("ProcessId").and_then(|p| p.as_u64()) {
                     let tarpit = TarpitManager::new();
                     tarpit.apply_tarpit(pid as u32, 60).await;
-                    self.audit.log("RESPONSE_ACTION", serde_json::json!({"type": "Tarpit", "pid": pid}));
+                    self.audit.log(
+                        "RESPONSE_ACTION",
+                        serde_json::json!({"type": "Tarpit", "pid": pid}),
+                    );
                 }
-                if let Some(msg) = crate::otx_tarpit::try_apply_process_network_qostarpit(
-                    event,
-                    signature,
-                    action,
-                ) {
+                if let Some(msg) =
+                    crate::otx_tarpit::try_apply_process_network_qostarpit(event, signature, action)
+                {
                     warn!("OTX/Network reactive QoS: {}", msg);
                     self.audit.log(
                         "NETWORK_QOS_TARPIT",
@@ -3190,7 +3825,10 @@ impl EdrOrchestrator {
             }
             ResponseAction::GhostTarpit => {
                 let traps_path = &self.runtime_config.traps_path;
-                warn!("Action: Multi-tier Response (Ghost + Tarpit) active (confidence {:.2})", signature.confidence);
+                warn!(
+                    "Action: Multi-tier Response (Ghost + Tarpit) active (confidence {:.2})",
+                    signature.confidence
+                );
                 self.response.spawn_ghost_files(traps_path).await?;
                 if let Some(pid) = event.data.get("ProcessId").and_then(|p| p.as_u64()) {
                     let tarpit = TarpitManager::new();
@@ -3198,26 +3836,31 @@ impl EdrOrchestrator {
                     self.audit.log("RESPONSE_ACTION", serde_json::json!({"type": "GhostTarpit", "pid": pid, "ghost_path": traps_path}));
                 }
                 if crate::firewall::autoblock_enabled() {
-                    let pid = event.data.get("ProcessId").and_then(|p| p.as_u64()).map(|v| v as u32);
+                    let pid = event
+                        .data
+                        .get("ProcessId")
+                        .and_then(|p| p.as_u64())
+                        .map(|v| v as u32);
                     let image = event.data.get("Image").and_then(|i| i.as_str());
                     match crate::firewall::block_process_network(pid, image) {
                         Ok(msg) => {
                             warn!("Firewall auto-block applied: {}", msg);
-                            self.audit.log("RESPONSE_ACTION", serde_json::json!({
-                                "type": "FirewallBlock",
-                                "pid": pid,
-                                "image": image,
-                                "message": msg
-                            }));
+                            self.audit.log(
+                                "RESPONSE_ACTION",
+                                serde_json::json!({
+                                    "type": "FirewallBlock",
+                                    "pid": pid,
+                                    "image": image,
+                                    "message": msg
+                                }),
+                            );
                         }
                         Err(e) => warn!("Firewall auto-block failed: {}", e),
                     }
                 }
-                if let Some(msg) = crate::otx_tarpit::try_apply_process_network_qostarpit(
-                    event,
-                    signature,
-                    action,
-                ) {
+                if let Some(msg) =
+                    crate::otx_tarpit::try_apply_process_network_qostarpit(event, signature, action)
+                {
                     warn!("OTX/Network reactive QoS: {}", msg);
                     self.audit.log(
                         "NETWORK_QOS_TARPIT",
@@ -3227,30 +3870,42 @@ impl EdrOrchestrator {
             }
             ResponseAction::Alert => {
                 info!("Action: Logged and Alerted.");
-                self.audit.log("RESPONSE_ACTION", serde_json::json!({"type": "Alert"}));
+                self.audit
+                    .log("RESPONSE_ACTION", serde_json::json!({"type": "Alert"}));
             }
             ResponseAction::Isolate => {
                 warn!("Action: Targeted Process Block (confidence {:.2}) — blocking process network; full host isolation skipped for safety", signature.confidence);
                 self.audit.log("RESPONSE_ACTION", serde_json::json!({"type": "TargetedProcessBlock", "confidence": signature.confidence}));
-                
-                if let Some(pid) = event.data.get("ProcessId").and_then(|p| p.as_u64()).map(|v| v as u32) {
+
+                if let Some(pid) = event
+                    .data
+                    .get("ProcessId")
+                    .and_then(|p| p.as_u64())
+                    .map(|v| v as u32)
+                {
                     let image = event.data.get("Image").and_then(|i| i.as_str());
                     match crate::firewall::block_process_network(Some(pid), image) {
                         Ok(msg) => {
                             warn!("Targeted firewall block applied: {}", msg);
-                            self.audit.log("RESPONSE_ACTION", serde_json::json!({
-                                "type": "FirewallBlock",
-                                "pid": pid,
-                                "image": image,
-                                "message": msg
-                            }));
+                            self.audit.log(
+                                "RESPONSE_ACTION",
+                                serde_json::json!({
+                                    "type": "FirewallBlock",
+                                    "pid": pid,
+                                    "image": image,
+                                    "message": msg
+                                }),
+                            );
                         }
                         Err(e) => warn!("Targeted firewall block failed: {}", e),
                     }
                 }
             }
             ResponseAction::MemoryScan => {
-                warn!("Action: Deep Memory Forensics (HollowsHunter) active (confidence {:.2})", signature.confidence);
+                warn!(
+                    "Action: Deep Memory Forensics (HollowsHunter) active (confidence {:.2})",
+                    signature.confidence
+                );
                 if let Some(pid) = event.data.get("ProcessId").and_then(|p| p.as_u64()) {
                     #[cfg(target_os = "windows")]
                     {
@@ -3263,16 +3918,24 @@ impl EdrOrchestrator {
                 }
             }
             ResponseAction::RegistryRepair => {
-                warn!("Action: Registry Persistence Remediation active (confidence {:.2})", signature.confidence);
+                warn!(
+                    "Action: Registry Persistence Remediation active (confidence {:.2})",
+                    signature.confidence
+                );
                 if let Some(image) = event.data.get("Image").and_then(|i| i.as_str()) {
-                    match osoosi_repair::registry::RegistryRemediator::remediate_process_persistence(image) {
+                    match osoosi_repair::registry::RegistryRemediator::remediate_process_persistence(
+                        image,
+                    ) {
                         Ok(changes) => {
                             info!("Registry remediation complete for {}: {:?}", image, changes);
-                            self.audit.log("RESPONSE_ACTION", serde_json::json!({
-                                "type": "RegistryRepair",
-                                "image": image,
-                                "changes": changes
-                            }));
+                            self.audit.log(
+                                "RESPONSE_ACTION",
+                                serde_json::json!({
+                                    "type": "RegistryRepair",
+                                    "image": image,
+                                    "changes": changes
+                                }),
+                            );
                         }
                         Err(e) => warn!("Registry remediation failed for {}: {}", image, e),
                     }
@@ -3287,41 +3950,51 @@ impl EdrOrchestrator {
     pub async fn execute_memory_scan(&self, pid: u32) -> anyhow::Result<()> {
         let tools_dir = osoosi_types::resolve_tools_dir();
         let hh_exe = tools_dir.join("hollows_hunter").join("hollows_hunter.exe");
-        
+
         if !hh_exe.exists() {
             return Err(anyhow::anyhow!("HollowsHunter not found at {:?}", hh_exe));
         }
 
-        let scan_dir = std::env::current_dir()?.join("logs").join("memory_scans").join(format!("pid_{}", pid));
+        let scan_dir = std::env::current_dir()?
+            .join("logs")
+            .join("memory_scans")
+            .join(format!("pid_{}", pid));
         let _ = std::fs::create_dir_all(&scan_dir);
 
         info!("Starting memory scan for PID {} into {:?}", pid, scan_dir);
-        
+
         let output = std::process::Command::new(hh_exe)
             .args([
-                "/pid", &pid.to_string(),
-                "/dir", &scan_dir.to_string_lossy(),
-                "/json"
+                "/pid",
+                &pid.to_string(),
+                "/dir",
+                &scan_dir.to_string_lossy(),
+                "/json",
             ])
             .output()?;
 
         let stdout = String::from_utf8_lossy(&output.stdout);
         info!("Memory scan result: {}", stdout);
-        
-        self.audit.log("MEMORY_SCAN", serde_json::json!({
-            "pid": pid,
-            "scan_dir": scan_dir,
-            "success": output.status.success()
-        }));
+
+        self.audit.log(
+            "MEMORY_SCAN",
+            serde_json::json!({
+                "pid": pid,
+                "scan_dir": scan_dir,
+                "success": output.status.success()
+            }),
+        );
 
         Ok(())
     }
 
     /// Get an aggregate summary of the security state of the entire zone.
     pub async fn get_zone_summary(&self) -> serde_json::Value {
-        let peer_count = self.mesh_peer_count.load(std::sync::atomic::Ordering::Relaxed);
+        let peer_count = self
+            .mesh_peer_count
+            .load(std::sync::atomic::Ordering::Relaxed);
         let hardened_status = crate::hardened::assess_security();
-        
+
         serde_json::json!({
             "peer_count": peer_count,
             "security_score": hardened_status.security_score,
@@ -3344,8 +4017,11 @@ impl EdrOrchestrator {
         if let Some(pos) = queue.iter().position(|r| r.id == threat_id) {
             let request = queue.remove(pos);
             info!("Action approved: {} (ID: {})", request.action, threat_id);
-            self.audit.log("ACTION_APPROVED", serde_json::json!({"id": threat_id, "action": request.action}));
-            
+            self.audit.log(
+                "ACTION_APPROVED",
+                serde_json::json!({"id": threat_id, "action": request.action}),
+            );
+
             // In a real implementation, we would re-trigger the action here.
             // For now, we simulate success as the dashboard expects.
             Ok(())
@@ -3360,7 +4036,10 @@ impl EdrOrchestrator {
         if let Some(pos) = queue.iter().position(|r| r.id == threat_id) {
             let request = queue.remove(pos);
             info!("Action rejected: {} (ID: {})", request.action, threat_id);
-            self.audit.log("ACTION_REJECTED", serde_json::json!({"id": threat_id, "action": request.action}));
+            self.audit.log(
+                "ACTION_REJECTED",
+                serde_json::json!({"id": threat_id, "action": request.action}),
+            );
             Ok(())
         } else {
             anyhow::bail!("Pending action not found")

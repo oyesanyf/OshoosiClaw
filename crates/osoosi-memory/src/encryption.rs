@@ -21,7 +21,7 @@
 //!
 //! SQLCipher makes the `.db` file opaque without the key.
 
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 /// Generate or retrieve the database encryption key.
 ///
@@ -72,7 +72,7 @@ pub fn apply_encryption(conn: &rusqlite::Connection, key: &str) -> anyhow::Resul
         "PRAGMA cipher_page_size = 4096;
          PRAGMA kdf_iter = 256000;
          PRAGMA cipher_hmac_algorithm = HMAC_SHA256;
-         PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA256;"
+         PRAGMA cipher_kdf_algorithm = PBKDF2_HMAC_SHA256;",
     )?;
 
     // Verify the key works by reading from the DB
@@ -83,7 +83,10 @@ pub fn apply_encryption(conn: &rusqlite::Connection, key: &str) -> anyhow::Resul
         }
         Err(e) => {
             // If this fails, the key is wrong or DB is not encrypted
-            warn!("SQLCipher key verification failed: {}. DB may be unencrypted.", e);
+            warn!(
+                "SQLCipher key verification failed: {}. DB may be unencrypted.",
+                e
+            );
             Err(anyhow::anyhow!("Database encryption key mismatch: {}", e))
         }
     }
@@ -95,7 +98,10 @@ pub fn apply_encryption(conn: &rusqlite::Connection, key: &str) -> anyhow::Resul
 pub fn migrate_to_encrypted(db_path: &str, key: &str) -> anyhow::Result<()> {
     let tmp_path = format!("{}.encrypted", db_path);
 
-    info!("Migrating database to encrypted format: {} → {}", db_path, tmp_path);
+    info!(
+        "Migrating database to encrypted format: {} → {}",
+        db_path, tmp_path
+    );
 
     let conn = rusqlite::Connection::open(db_path)?;
 
@@ -116,7 +122,11 @@ pub fn migrate_to_encrypted(db_path: &str, key: &str) -> anyhow::Result<()> {
 }
 
 /// Re-key (change encryption password) on an existing encrypted database.
-pub fn rekey_database(conn: &rusqlite::Connection, old_key: &str, new_key: &str) -> anyhow::Result<()> {
+pub fn rekey_database(
+    conn: &rusqlite::Connection,
+    old_key: &str,
+    new_key: &str,
+) -> anyhow::Result<()> {
     conn.execute_batch(&format!("PRAGMA key = '{}';", old_key))?;
     conn.execute_batch(&format!("PRAGMA rekey = '{}';", new_key))?;
     info!("Database re-keyed successfully.");
@@ -157,8 +167,7 @@ fn try_tpm_key() -> Option<String> {
     #[cfg(target_os = "windows")]
     {
         // Try Windows DPAPI-protected key file
-        let key_path = dirs::data_local_dir()
-            .map(|d| d.join("OpenOsoosi").join("db.key"));
+        let key_path = dirs::data_local_dir().map(|d| d.join("OpenOsoosi").join("db.key"));
 
         if let Some(path) = key_path {
             if path.exists() {
@@ -175,7 +184,7 @@ fn try_tpm_key() -> Option<String> {
 }
 
 fn derive_machine_key() -> String {
-    use sha2::{Sha256, Digest};
+    use sha2::{Digest, Sha256};
 
     let hostname = hostname::get()
         .map(|h| h.to_string_lossy().to_string())

@@ -22,8 +22,8 @@
 //! For high-security: use 2048-bit keys.
 
 use rand::Rng;
-use serde::{Serialize, Deserialize};
-use tracing::{info, debug};
+use serde::{Deserialize, Serialize};
+use tracing::{debug, info};
 
 /// Paillier public key (shared with peers).
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -64,7 +64,9 @@ struct BigNum(#[allow(dead_code)] u128);
 
 impl BigNum {
     fn mod_pow(mut base: u128, mut exp: u128, modulus: u128) -> u128 {
-        if modulus == 1 { return 0; }
+        if modulus == 1 {
+            return 0;
+        }
         let mut result: u128 = 1;
         base %= modulus;
         while exp > 0 {
@@ -157,7 +159,10 @@ pub fn generate_keypair() -> (PaillierPublicKey, PaillierPrivateKey) {
         public_key: public_key.clone(),
     };
 
-    info!("Generated Paillier keypair (n = {} bits)", n.leading_zeros().wrapping_sub(128).wrapping_neg());
+    info!(
+        "Generated Paillier keypair (n = {} bits)",
+        n.leading_zeros().wrapping_sub(128).wrapping_neg()
+    );
     (public_key, private_key)
 }
 
@@ -262,14 +267,20 @@ pub fn aggregate_encrypted_counts(
     public_key: &PaillierPublicKey,
     encrypted_counts: &[EncryptedValue],
 ) -> EncryptedValue {
-    assert!(!encrypted_counts.is_empty(), "Need at least one encrypted count");
+    assert!(
+        !encrypted_counts.is_empty(),
+        "Need at least one encrypted count"
+    );
 
     let mut total = encrypted_counts[0].clone();
     for count in &encrypted_counts[1..] {
         total = add_encrypted(public_key, &total, count);
     }
 
-    debug!("Aggregated {} encrypted counts (homomorphic sum)", encrypted_counts.len());
+    debug!(
+        "Aggregated {} encrypted counts (homomorphic sum)",
+        encrypted_counts.len()
+    );
     total
 }
 
@@ -285,10 +296,9 @@ fn pad_to_16(bytes: &[u8]) -> [u8; 16] {
 fn generate_safe_prime(rng: &mut impl Rng) -> u128 {
     // Generate primes in a reasonable range for u128 arithmetic
     let small_primes: Vec<u64> = vec![
-        65537, 65539, 65543, 65551, 65557, 65563, 65579, 65581,
-        65587, 65599, 65609, 65617, 65629, 65633, 65647, 65651,
-        65657, 65677, 65687, 65699, 65701, 65707, 65713, 65717,
-        65719, 65729, 65731, 65761, 65777, 65789, 65809, 65827,
+        65537, 65539, 65543, 65551, 65557, 65563, 65579, 65581, 65587, 65599, 65609, 65617, 65629,
+        65633, 65647, 65651, 65657, 65677, 65687, 65699, 65701, 65707, 65713, 65717, 65719, 65729,
+        65731, 65761, 65777, 65789, 65809, 65827,
     ];
     small_primes[rng.gen_range(0..small_primes.len())] as u128
 }

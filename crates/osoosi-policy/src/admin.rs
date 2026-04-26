@@ -1,6 +1,6 @@
 //! Policy-as-Code for Administrative Elevation.
 //!
-//! Ensures that temporary admin grants are tied to a specific Merkle chain 
+//! Ensures that temporary admin grants are tied to a specific Merkle chain
 //! audit log and match a signed policy from quarantine_admin hosts.
 
 use osoosi_audit::AuditTrail;
@@ -27,18 +27,33 @@ impl AdminHardener {
     }
 
     /// Verify if an elevation request matches the signed policy.
-    pub fn verify_elevation_request(&self, user: &str, patch_hash: &str, provided_root: &str) -> bool {
+    pub fn verify_elevation_request(
+        &self,
+        user: &str,
+        patch_hash: &str,
+        provided_root: &str,
+    ) -> bool {
         info!("Hardening: Verifying admin elevation for user: {}", user);
 
         // 1. Check if user is in the allowed list
         if !self.policy.allowed_users.contains(&user.to_string()) {
-            warn!("Hardening: User {} is not authorized for elevation in current policy.", user);
+            warn!(
+                "Hardening: User {} is not authorized for elevation in current policy.",
+                user
+            );
             return false;
         }
 
         // 2. Verify patch hash matches the signed policy
-        if !self.policy.patch_hash_allowlist.contains(&patch_hash.to_string()) {
-            warn!("Hardening: Patch hash {} is not in the signed allowlist.", patch_hash);
+        if !self
+            .policy
+            .patch_hash_allowlist
+            .contains(&patch_hash.to_string())
+        {
+            warn!(
+                "Hardening: Patch hash {} is not in the signed allowlist.",
+                patch_hash
+            );
             return false;
         }
 
@@ -54,7 +69,10 @@ impl AdminHardener {
 
     /// Sign the action using TPM (Simulated for this implementation).
     pub fn sign_audit_log_with_tpm(&self, action: &str) -> anyhow::Result<String> {
-        info!("Hardening: Signing audit log entry '{}' using Hardware-Rooted Identity (TPM).", action);
+        info!(
+            "Hardening: Signing audit log entry '{}' using Hardware-Rooted Identity (TPM).",
+            action
+        );
         // In a real implementation, this would call into TCG TSS or similar
         let signature = format!("tpm-sig-{}-{}", action, uuid::Uuid::new_v4());
         Ok(signature)

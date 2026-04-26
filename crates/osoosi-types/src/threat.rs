@@ -2,8 +2,8 @@
 //!
 //! Used for active threat detection and automated patching/tarpitting.
 
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// Recommended autonomous response action.
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Default)]
@@ -92,8 +92,8 @@ pub struct ZeroDayDefense {
     pub cve_id: String,
     pub title: String,
     pub description: String,
-    pub severity: f32, // 0.0 - 1.0
-    pub learned_rule: String, // YARA or Sigma rule content
+    pub severity: f32,           // 0.0 - 1.0
+    pub learned_rule: String,    // YARA or Sigma rule content
     pub software_target: String, // e.g. "nginx", "openssl"
     pub date_learned: DateTime<Utc>,
 }
@@ -215,20 +215,20 @@ impl ThreatSignature {
     /// Sign the threat signature using a private key.
     pub fn sign(&mut self, signing_key: &ed25519_dalek::SigningKey) -> anyhow::Result<()> {
         use ed25519_dalek::Signer;
-        
+
         let data = self.to_signing_bytes()?;
         let signature = signing_key.sign(&data);
-        
+
         self.signature = Some(hex::encode(signature.to_bytes()));
         self.public_key = Some(hex::encode(signing_key.verifying_key().to_bytes()));
-        
+
         Ok(())
     }
 
     /// Verify the threat signature using its embedded public key and signature.
     pub fn verify(&self) -> bool {
-        use ed25519_dalek::{VerifyingKey, Signature, Verifier};
-        
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
         let (sig_hex, pk_hex) = match (&self.signature, &self.public_key) {
             (Some(s), Some(p)) => (s, p),
             _ => return false,

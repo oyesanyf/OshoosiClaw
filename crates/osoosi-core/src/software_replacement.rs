@@ -187,7 +187,8 @@ async fn resolve_github_release(
         .to_lowercase();
     for asset in assets {
         let name = asset.get("name").and_then(|n| n.as_str()).unwrap_or("");
-        let url = asset.get("browser_download_url")
+        let url = asset
+            .get("browser_download_url")
             .and_then(|u| u.as_str())
             .unwrap_or("");
         if url.is_empty() {
@@ -209,14 +210,16 @@ async fn resolve_github_release(
 
 /// Search for vuln-free version and return download URL. Resolves at runtime, no hardcoded URLs.
 pub async fn resolve_replacement_url(file_path: &str) -> Option<String> {
-    let basename = Path::new(file_path)
-        .file_name()
-        .and_then(|n| n.to_str())?;
+    let basename = Path::new(file_path).file_name().and_then(|n| n.to_str())?;
     let source = get_source_for_basename(basename)?;
     match resolve_source_to_url(basename, &source).await {
         Ok(Some(url)) => Some(url),
         Ok(None) => {
-            tracing::debug!("No download URL resolved for {} (source: {})", basename, source);
+            tracing::debug!(
+                "No download URL resolved for {} (source: {})",
+                basename,
+                source
+            );
             None
         }
         Err(e) => {

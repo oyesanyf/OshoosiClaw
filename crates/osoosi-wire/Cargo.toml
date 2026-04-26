@@ -13,7 +13,7 @@ chrono = { workspace = true }
 dashmap = { workspace = true }
 hex = { workspace = true }
 ed25519-dalek = { workspace = true }
-libp2p = { workspace = true, features = ["gossipsub", "mdns", "kad", "identify", "tcp", "noise", "yamux", "tokio", "macros", "dns", "quic"] }
+libp2p = { workspace = true, features = ["gossipsub", "mdns", "kad", "identify", "tcp", "noise", "yamux", "tokio", "macros", "dns", "quic", "autonat", "upnp"] }
 futures = { workspace = true }
 serde = { workspace = true }
 serde_json = { workspace = true }

@@ -10,18 +10,18 @@
 //! - SSRF protection
 //! - Merkle-audited decision logging
 
-use wasmtime::*;
 use osoosi_audit::AuditTrail;
+use osoosi_memory::MemoryStore;
+use osoosi_model::MalwareScanner;
 use std::path::PathBuf;
 use std::sync::Arc;
 use tokio::time::{Duration, Instant};
-use osoosi_memory::MemoryStore;
-use osoosi_model::MalwareScanner;
+use wasmtime::*;
 
 pub mod host_interface;
-pub mod native_host;
-pub mod memory_limiter;
 pub mod kill_switch;
+pub mod memory_limiter;
+pub mod native_host;
 pub mod security;
 
 pub use security::SandboxSecurityConfig;
@@ -109,16 +109,28 @@ pub struct SandboxExecutor {
 }
 
 impl SandboxExecutor {
-    pub fn new(audit: Arc<AuditTrail>, memory: Arc<MemoryStore>, malware_scanner: Arc<MalwareScanner>) -> anyhow::Result<Self> {
+    pub fn new(
+        audit: Arc<AuditTrail>,
+        memory: Arc<MemoryStore>,
+        malware_scanner: Arc<MalwareScanner>,
+    ) -> anyhow::Result<Self> {
         let mut config = Config::new();
         config.consume_fuel(true);
         config.epoch_interruption(true);
         config.async_support(true);
 
         let engine = Engine::new(&config)?;
-        let native_host = Arc::new(native_host::NativeHost::new(audit.clone(), memory, malware_scanner));
+        let native_host = Arc::new(native_host::NativeHost::new(
+            audit.clone(),
+            memory,
+            malware_scanner,
+        ));
 
-        Ok(Self { engine, audit, native_host })
+        Ok(Self {
+            engine,
+            audit,
+            native_host,
+        })
     }
 
     pub async fn run_script(
@@ -128,7 +140,10 @@ impl SandboxExecutor {
         taint_labels: std::collections::HashSet<osoosi_types::TaintLabel>,
     ) -> anyhow::Result<SandboxResult> {
         // 1. WASM provenance verification
-        config.security_config.verify_wasm_hash(wasm_bytes).map_err(|e| anyhow::anyhow!("{}", e))?;
+        config
+            .security_config
+            .verify_wasm_hash(wasm_bytes)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
 
         let mut linker: Linker<SandboxStore> = Linker::new(&self.engine);
 
@@ -139,234 +154,340 @@ impl SandboxExecutor {
         // --- The Syscall Boundary (oso_brain module) ---
 
         // host_scan_file(bytes_ptr, bytes_len) -> response_id (JSON)
-        linker.func_wrap_async("oso_brain", "host_scan_file", |mut caller: Caller<'_, SandboxStore>, (ptr, len): (u32, u32)| {
-            Box::new(async move {
-                let memory = caller.get_export("memory").and_then(|e: Extern| e.into_memory())
-                    .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
-                let data = memory.data(&caller);
-                let bytes = data.get(ptr as usize..(ptr + len) as usize)
-                    .ok_or_else(|| wasmtime::Error::msg("Out of bounds memory access"))?
-                    .to_vec();
-                let fuel = caller.get_fuel().unwrap_or(0);
+        linker.func_wrap_async(
+            "oso_brain",
+            "host_scan_file",
+            |mut caller: Caller<'_, SandboxStore>, (ptr, len): (u32, u32)| {
+                Box::new(async move {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e: Extern| e.into_memory())
+                        .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
+                    let data = memory.data(&caller);
+                    let bytes = data
+                        .get(ptr as usize..(ptr + len) as usize)
+                        .ok_or_else(|| wasmtime::Error::msg("Out of bounds memory access"))?
+                        .to_vec();
+                    let fuel = caller.get_fuel().unwrap_or(0);
 
-                let store = caller.data_mut();
-                if store.security_config.is_rate_limited(store.syscall_sequence.len()) {
-                    return Err(wasmtime::Error::msg("Rate limit: max host calls exceeded"));
-                }
-                store.syscall_sequence.push("host_scan_file".to_string());
-                
-                let call = host_interface::HostCall::ScanFile { bytes };
-                let envelope = host_interface::HostCallEnvelope {
-                    call_id: uuid::Uuid::new_v4().to_string(),
-                    caller_module: "wasm_brain".to_string(),
-                    call,
-                    fuel_remaining: fuel,
-                    taint_labels: store.taint_labels.iter().map(|l| format!("{:?}", l)).collect(),
-                    timestamp: chrono::Utc::now(),
-                };
-                
-                let _response = store.native_host.dispatch(envelope).await;
-                Ok(0u32)
-            }) as Box<dyn std::future::Future<Output = Result<u32, wasmtime::Error>> + Send + '_>
-        })?;
+                    let store = caller.data_mut();
+                    if store
+                        .security_config
+                        .is_rate_limited(store.syscall_sequence.len())
+                    {
+                        return Err(wasmtime::Error::msg("Rate limit: max host calls exceeded"));
+                    }
+                    store.syscall_sequence.push("host_scan_file".to_string());
+
+                    let call = host_interface::HostCall::ScanFile { bytes };
+                    let envelope = host_interface::HostCallEnvelope {
+                        call_id: uuid::Uuid::new_v4().to_string(),
+                        caller_module: "wasm_brain".to_string(),
+                        call,
+                        fuel_remaining: fuel,
+                        taint_labels: store
+                            .taint_labels
+                            .iter()
+                            .map(|l| format!("{:?}", l))
+                            .collect(),
+                        timestamp: chrono::Utc::now(),
+                    };
+
+                    let _response = store.native_host.dispatch(envelope).await;
+                    Ok(0u32)
+                })
+                    as Box<
+                        dyn std::future::Future<Output = Result<u32, wasmtime::Error>> + Send + '_,
+                    >
+            },
+        )?;
 
         // host_fetch_url(url_ptr, url_len) -> response_id (JSON)
-        linker.func_wrap_async("oso_brain", "host_fetch_url", |mut caller: Caller<'_, SandboxStore>, (ptr, len): (u32, u32)| {
-            Box::new(async move {
-                let memory = caller.get_export("memory").and_then(|e: Extern| e.into_memory())
-                    .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
-                let data = memory.data(&caller);
-                let url = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
-                    .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in URL"))?
-                    .to_string();
-                let fuel = caller.get_fuel().unwrap_or(0);
+        linker.func_wrap_async(
+            "oso_brain",
+            "host_fetch_url",
+            |mut caller: Caller<'_, SandboxStore>, (ptr, len): (u32, u32)| {
+                Box::new(async move {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e: Extern| e.into_memory())
+                        .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
+                    let data = memory.data(&caller);
+                    let url = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
+                        .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in URL"))?
+                        .to_string();
+                    let fuel = caller.get_fuel().unwrap_or(0);
 
-                let store = caller.data_mut();
-                if store.security_config.is_rate_limited(store.syscall_sequence.len()) {
-                    return Err(wasmtime::Error::msg("Rate limit: max host calls exceeded"));
-                }
-                if !store.security_config.is_url_allowed(&url) {
-                    return Err(wasmtime::Error::msg("URL not in allowlist"));
-                }
-                store.syscall_sequence.push(format!("host_fetch_url:{}", url));
-                
-                let call = host_interface::HostCall::FetchUrl { 
-                    url, 
-                    method: "GET".to_string(), 
-                    headers: Vec::new() 
-                };
-                let envelope = host_interface::HostCallEnvelope {
-                    call_id: uuid::Uuid::new_v4().to_string(),
-                    caller_module: "wasm_brain".to_string(),
-                    call,
-                    fuel_remaining: fuel,
-                    taint_labels: store.taint_labels.iter().map(|l| format!("{:?}", l)).collect(),
-                    timestamp: chrono::Utc::now(),
-                };
-                
-                let _response = store.native_host.dispatch(envelope).await;
-                Ok(0u32)
-            }) as Box<dyn std::future::Future<Output = Result<u32, wasmtime::Error>> + Send + '_>
-        })?;
+                    let store = caller.data_mut();
+                    if store
+                        .security_config
+                        .is_rate_limited(store.syscall_sequence.len())
+                    {
+                        return Err(wasmtime::Error::msg("Rate limit: max host calls exceeded"));
+                    }
+                    if !store.security_config.is_url_allowed(&url) {
+                        return Err(wasmtime::Error::msg("URL not in allowlist"));
+                    }
+                    store
+                        .syscall_sequence
+                        .push(format!("host_fetch_url:{}", url));
+
+                    let call = host_interface::HostCall::FetchUrl {
+                        url,
+                        method: "GET".to_string(),
+                        headers: Vec::new(),
+                    };
+                    let envelope = host_interface::HostCallEnvelope {
+                        call_id: uuid::Uuid::new_v4().to_string(),
+                        caller_module: "wasm_brain".to_string(),
+                        call,
+                        fuel_remaining: fuel,
+                        taint_labels: store
+                            .taint_labels
+                            .iter()
+                            .map(|l| format!("{:?}", l))
+                            .collect(),
+                        timestamp: chrono::Utc::now(),
+                    };
+
+                    let _response = store.native_host.dispatch(envelope).await;
+                    Ok(0u32)
+                })
+                    as Box<
+                        dyn std::future::Future<Output = Result<u32, wasmtime::Error>> + Send + '_,
+                    >
+            },
+        )?;
 
         // host_exec_command(cmd_ptr, cmd_len) -> response_id (JSON)
-        linker.func_wrap_async("oso_brain", "host_exec_command", |mut caller: Caller<'_, SandboxStore>, (ptr, len): (u32, u32)| {
-            Box::new(async move {
-                let memory = caller.get_export("memory").and_then(|e: Extern| e.into_memory())
-                    .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
-                let data = memory.data(&caller);
-                let cmd = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
-                    .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in command"))?
-                    .to_string();
-                let fuel = caller.get_fuel().unwrap_or(0);
+        linker.func_wrap_async(
+            "oso_brain",
+            "host_exec_command",
+            |mut caller: Caller<'_, SandboxStore>, (ptr, len): (u32, u32)| {
+                Box::new(async move {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e: Extern| e.into_memory())
+                        .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
+                    let data = memory.data(&caller);
+                    let cmd = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
+                        .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in command"))?
+                        .to_string();
+                    let fuel = caller.get_fuel().unwrap_or(0);
 
-                let program = cmd.split_whitespace().next().unwrap_or(&cmd).to_string();
-                let args = cmd.split_whitespace().skip(1).map(String::from).collect();
+                    let program = cmd.split_whitespace().next().unwrap_or(&cmd).to_string();
+                    let args = cmd.split_whitespace().skip(1).map(String::from).collect();
 
-                let store = caller.data_mut();
-                if store.security_config.is_rate_limited(store.syscall_sequence.len()) {
-                    return Err(wasmtime::Error::msg("Rate limit: max host calls exceeded"));
-                }
-                if !store.security_config.is_command_allowed(&program) {
-                    return Err(wasmtime::Error::msg("Command not in whitelist"));
-                }
-                store.syscall_sequence.push(format!("host_exec_command:{}", cmd));
-                
-                let call = host_interface::HostCall::ExecCommand { 
-                    program, 
-                    args, 
-                    requires_approval: true // Default to requiring approval for WASM brain commands
-                };
-                let envelope = host_interface::HostCallEnvelope {
-                    call_id: uuid::Uuid::new_v4().to_string(),
-                    caller_module: "wasm_brain".to_string(),
-                    call,
-                    fuel_remaining: fuel,
-                    taint_labels: store.taint_labels.iter().map(|l| format!("{:?}", l)).collect(),
-                    timestamp: chrono::Utc::now(),
-                };
-                
-                let _response = store.native_host.dispatch(envelope).await;
-                Ok(0u32)
-            }) as Box<dyn std::future::Future<Output = Result<u32, wasmtime::Error>> + Send + '_>
-        })?;
+                    let store = caller.data_mut();
+                    if store
+                        .security_config
+                        .is_rate_limited(store.syscall_sequence.len())
+                    {
+                        return Err(wasmtime::Error::msg("Rate limit: max host calls exceeded"));
+                    }
+                    if !store.security_config.is_command_allowed(&program) {
+                        return Err(wasmtime::Error::msg("Command not in whitelist"));
+                    }
+                    store
+                        .syscall_sequence
+                        .push(format!("host_exec_command:{}", cmd));
+
+                    let call = host_interface::HostCall::ExecCommand {
+                        program,
+                        args,
+                        requires_approval: true, // Default to requiring approval for WASM brain commands
+                    };
+                    let envelope = host_interface::HostCallEnvelope {
+                        call_id: uuid::Uuid::new_v4().to_string(),
+                        caller_module: "wasm_brain".to_string(),
+                        call,
+                        fuel_remaining: fuel,
+                        taint_labels: store
+                            .taint_labels
+                            .iter()
+                            .map(|l| format!("{:?}", l))
+                            .collect(),
+                        timestamp: chrono::Utc::now(),
+                    };
+
+                    let _response = store.native_host.dispatch(envelope).await;
+                    Ok(0u32)
+                })
+                    as Box<
+                        dyn std::future::Future<Output = Result<u32, wasmtime::Error>> + Send + '_,
+                    >
+            },
+        )?;
 
         // host_read_db(query_ptr, query_len) -> response_id
-        linker.func_wrap_async("oso_brain", "host_read_db", |mut caller: Caller<'_, SandboxStore>, (ptr, len): (u32, u32)| {
-            Box::new(async move {
-                let memory = caller.get_export("memory").and_then(|e: Extern| e.into_memory())
-                    .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
-                let data = memory.data(&caller);
-                let query = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
-                    .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in query"))?
-                    .to_string();
-                let fuel = caller.get_fuel().unwrap_or(0);
+        linker.func_wrap_async(
+            "oso_brain",
+            "host_read_db",
+            |mut caller: Caller<'_, SandboxStore>, (ptr, len): (u32, u32)| {
+                Box::new(async move {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e: Extern| e.into_memory())
+                        .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
+                    let data = memory.data(&caller);
+                    let query = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
+                        .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in query"))?
+                        .to_string();
+                    let fuel = caller.get_fuel().unwrap_or(0);
 
-                let store = caller.data_mut();
-                if store.security_config.is_rate_limited(store.syscall_sequence.len()) {
-                    return Err(wasmtime::Error::msg("Rate limit: max host calls exceeded"));
-                }
-                if !store.security_config.is_query_allowed(&query) {
-                    return Err(wasmtime::Error::msg("Query references disallowed table"));
-                }
-                store.syscall_sequence.push(format!("host_read_db:{}", query));
-                
-                let call = host_interface::HostCall::ReadDb { 
-                    query, 
-                    params: Vec::new() 
-                };
-                let envelope = host_interface::HostCallEnvelope {
-                    call_id: uuid::Uuid::new_v4().to_string(),
-                    caller_module: "wasm_brain".to_string(),
-                    call,
-                    fuel_remaining: fuel,
-                    taint_labels: store.taint_labels.iter().map(|l| format!("{:?}", l)).collect(),
-                    timestamp: chrono::Utc::now(),
-                };
-                
-                let _response = store.native_host.dispatch(envelope).await;
-                Ok(0u32)
-            }) as Box<dyn std::future::Future<Output = Result<u32, wasmtime::Error>> + Send + '_>
-        })?;
+                    let store = caller.data_mut();
+                    if store
+                        .security_config
+                        .is_rate_limited(store.syscall_sequence.len())
+                    {
+                        return Err(wasmtime::Error::msg("Rate limit: max host calls exceeded"));
+                    }
+                    if !store.security_config.is_query_allowed(&query) {
+                        return Err(wasmtime::Error::msg("Query references disallowed table"));
+                    }
+                    store
+                        .syscall_sequence
+                        .push(format!("host_read_db:{}", query));
+
+                    let call = host_interface::HostCall::ReadDb {
+                        query,
+                        params: Vec::new(),
+                    };
+                    let envelope = host_interface::HostCallEnvelope {
+                        call_id: uuid::Uuid::new_v4().to_string(),
+                        caller_module: "wasm_brain".to_string(),
+                        call,
+                        fuel_remaining: fuel,
+                        taint_labels: store
+                            .taint_labels
+                            .iter()
+                            .map(|l| format!("{:?}", l))
+                            .collect(),
+                        timestamp: chrono::Utc::now(),
+                    };
+
+                    let _response = store.native_host.dispatch(envelope).await;
+                    Ok(0u32)
+                })
+                    as Box<
+                        dyn std::future::Future<Output = Result<u32, wasmtime::Error>> + Send + '_,
+                    >
+            },
+        )?;
 
         // host_send_mesh(topic_ptr, topic_len, data_ptr, data_len) -> hash_id
-        linker.func_wrap_async("oso_brain", "host_send_mesh", |mut caller: Caller<'_, SandboxStore>, (t_ptr, t_len, d_ptr, d_len): (u32, u32, u32, u32)| {
-            Box::new(async move {
-                let memory = caller.get_export("memory").and_then(|e: Extern| e.into_memory())
-                    .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
-                let data = memory.data(&caller);
-                let topic = std::str::from_utf8(&data[t_ptr as usize..(t_ptr + t_len) as usize])
-                    .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in topic"))?
-                    .to_string();
-                let bytes = data.get(d_ptr as usize..(d_ptr + d_len) as usize)
-                    .ok_or_else(|| wasmtime::Error::msg("Out of bounds memory access"))?
-                    .to_vec();
-                let fuel = caller.get_fuel().unwrap_or(0);
+        linker.func_wrap_async(
+            "oso_brain",
+            "host_send_mesh",
+            |mut caller: Caller<'_, SandboxStore>,
+             (t_ptr, t_len, d_ptr, d_len): (u32, u32, u32, u32)| {
+                Box::new(async move {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e: Extern| e.into_memory())
+                        .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
+                    let data = memory.data(&caller);
+                    let topic =
+                        std::str::from_utf8(&data[t_ptr as usize..(t_ptr + t_len) as usize])
+                            .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in topic"))?
+                            .to_string();
+                    let bytes = data
+                        .get(d_ptr as usize..(d_ptr + d_len) as usize)
+                        .ok_or_else(|| wasmtime::Error::msg("Out of bounds memory access"))?
+                        .to_vec();
+                    let fuel = caller.get_fuel().unwrap_or(0);
 
-                let store = caller.data_mut();
-                if store.security_config.is_rate_limited(store.syscall_sequence.len()) {
-                    return Err(wasmtime::Error::msg("Rate limit: max host calls exceeded"));
-                }
-                store.syscall_sequence.push(format!("host_send_mesh:{}", topic));
-                
-                let call = host_interface::HostCall::SendMesh { 
-                    topic, 
-                    data: bytes 
-                };
-                let envelope = host_interface::HostCallEnvelope {
-                    call_id: uuid::Uuid::new_v4().to_string(),
-                    caller_module: "wasm_brain".to_string(),
-                    call,
-                    fuel_remaining: fuel,
-                    taint_labels: store.taint_labels.iter().map(|l| format!("{:?}", l)).collect(),
-                    timestamp: chrono::Utc::now(),
-                };
-                
-                let _response = store.native_host.dispatch(envelope).await;
-                Ok(0u32)
-            }) as Box<dyn std::future::Future<Output = Result<u32, wasmtime::Error>> + Send + '_>
-        })?;
+                    let store = caller.data_mut();
+                    if store
+                        .security_config
+                        .is_rate_limited(store.syscall_sequence.len())
+                    {
+                        return Err(wasmtime::Error::msg("Rate limit: max host calls exceeded"));
+                    }
+                    store
+                        .syscall_sequence
+                        .push(format!("host_send_mesh:{}", topic));
+
+                    let call = host_interface::HostCall::SendMesh { topic, data: bytes };
+                    let envelope = host_interface::HostCallEnvelope {
+                        call_id: uuid::Uuid::new_v4().to_string(),
+                        caller_module: "wasm_brain".to_string(),
+                        call,
+                        fuel_remaining: fuel,
+                        taint_labels: store
+                            .taint_labels
+                            .iter()
+                            .map(|l| format!("{:?}", l))
+                            .collect(),
+                        timestamp: chrono::Utc::now(),
+                    };
+
+                    let _response = store.native_host.dispatch(envelope).await;
+                    Ok(0u32)
+                })
+                    as Box<
+                        dyn std::future::Future<Output = Result<u32, wasmtime::Error>> + Send + '_,
+                    >
+            },
+        )?;
 
         // host_write_audit(entry_ptr, entry_len) -> hash_id
-        linker.func_wrap_async("oso_brain", "host_write_audit", |mut caller: Caller<'_, SandboxStore>, (ptr, len): (u32, u32)| {
-            Box::new(async move {
-                let memory = caller.get_export("memory").and_then(|e: Extern| e.into_memory())
-                    .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
-                let data = memory.data(&caller);
-                let entry_str = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
-                    .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in audit entry"))?
-                    .to_string();
-                let entry: serde_json::Value = serde_json::from_str(&entry_str)
-                    .map_err(|_| wasmtime::Error::msg("Invalid JSON in audit entry"))?;
-                let fuel = caller.get_fuel().unwrap_or(0);
+        linker.func_wrap_async(
+            "oso_brain",
+            "host_write_audit",
+            |mut caller: Caller<'_, SandboxStore>, (ptr, len): (u32, u32)| {
+                Box::new(async move {
+                    let memory = caller
+                        .get_export("memory")
+                        .and_then(|e: Extern| e.into_memory())
+                        .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
+                    let data = memory.data(&caller);
+                    let entry_str = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
+                        .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in audit entry"))?
+                        .to_string();
+                    let entry: serde_json::Value = serde_json::from_str(&entry_str)
+                        .map_err(|_| wasmtime::Error::msg("Invalid JSON in audit entry"))?;
+                    let fuel = caller.get_fuel().unwrap_or(0);
 
-                let store = caller.data_mut();
-                if store.security_config.is_rate_limited(store.syscall_sequence.len()) {
-                    return Err(wasmtime::Error::msg("Rate limit: max host calls exceeded"));
-                }
-                store.syscall_sequence.push(format!("host_write_audit:{}", entry_str));
-                
-                let call = host_interface::HostCall::WriteAudit { entry };
-                let envelope = host_interface::HostCallEnvelope {
-                    call_id: uuid::Uuid::new_v4().to_string(),
-                    caller_module: "wasm_brain".to_string(),
-                    call,
-                    fuel_remaining: fuel,
-                    taint_labels: store.taint_labels.iter().map(|l| format!("{:?}", l)).collect(),
-                    timestamp: chrono::Utc::now(),
-                };
-                
-                let _response = store.native_host.dispatch(envelope).await;
-                Ok(0u32)
-            }) as Box<dyn std::future::Future<Output = Result<u32, wasmtime::Error>> + Send + '_>
-        })?;
+                    let store = caller.data_mut();
+                    if store
+                        .security_config
+                        .is_rate_limited(store.syscall_sequence.len())
+                    {
+                        return Err(wasmtime::Error::msg("Rate limit: max host calls exceeded"));
+                    }
+                    store
+                        .syscall_sequence
+                        .push(format!("host_write_audit:{}", entry_str));
+
+                    let call = host_interface::HostCall::WriteAudit { entry };
+                    let envelope = host_interface::HostCallEnvelope {
+                        call_id: uuid::Uuid::new_v4().to_string(),
+                        caller_module: "wasm_brain".to_string(),
+                        call,
+                        fuel_remaining: fuel,
+                        taint_labels: store
+                            .taint_labels
+                            .iter()
+                            .map(|l| format!("{:?}", l))
+                            .collect(),
+                        timestamp: chrono::Utc::now(),
+                    };
+
+                    let _response = store.native_host.dispatch(envelope).await;
+                    Ok(0u32)
+                })
+                    as Box<
+                        dyn std::future::Future<Output = Result<u32, wasmtime::Error>> + Send + '_,
+                    >
+            },
+        )?;
 
         // --- Build the Tightened WASIp1 Context ---
 
         // Security Benefit: No host filesystem access, no inherited env, no stdout/stderr.
         // The WASM brain can ONLY talk to the host via the 'oso_brain' syscalls.
-        let wasi_p1 = wasmtime_wasi::WasiCtxBuilder::new()
-            .build_p1();
+        let wasi_p1 = wasmtime_wasi::WasiCtxBuilder::new().build_p1();
 
         let mut store = Store::new(
             &self.engine,
@@ -411,20 +532,27 @@ impl SandboxExecutor {
                 let is_suspicious = analyze_syscall_sequence(&store.data().syscall_sequence);
                 let duration_ms = start_time.elapsed().as_millis();
 
-                self.audit.log("sandbox_execution_success", serde_json::json!({
-                    "fuel_used": fuel_used,
-                    "duration_ms": duration_ms,
-                    "syscall_count": syscall_count,
-                    "suspicious_sequence": is_suspicious,
-                    "pending_approvals": store.data().pending_approvals.len(),
-                    "taint_labels": store.data().taint_labels,
-                }));
+                self.audit.log(
+                    "sandbox_execution_success",
+                    serde_json::json!({
+                        "fuel_used": fuel_used,
+                        "duration_ms": duration_ms,
+                        "syscall_count": syscall_count,
+                        "suspicious_sequence": is_suspicious,
+                        "pending_approvals": store.data().pending_approvals.len(),
+                        "taint_labels": store.data().taint_labels,
+                    }),
+                );
 
                 Ok(SandboxResult {
                     output: "Execution successful".to_string(),
                     pending_approvals: store.data().pending_approvals.clone(),
                     forensic_story: format!("Agent executed {} syscalls", syscall_count),
-                    triage_level: if is_suspicious { "CRITICAL".to_string() } else { "INFO".to_string() },
+                    triage_level: if is_suspicious {
+                        "CRITICAL".to_string()
+                    } else {
+                        "INFO".to_string()
+                    },
                     fuel_used,
                     duration_ms,
                     syscall_count,
@@ -433,11 +561,14 @@ impl SandboxExecutor {
             }
             Err(e) => {
                 let fuel_used = config.max_fuel - store.get_fuel().unwrap_or(0);
-                self.audit.log("sandbox_execution_failure", serde_json::json!({
-                    "error": e.to_string(),
-                    "fuel_used": fuel_used,
-                    "duration_ms": start_time.elapsed().as_millis(),
-                }));
+                self.audit.log(
+                    "sandbox_execution_failure",
+                    serde_json::json!({
+                        "error": e.to_string(),
+                        "fuel_used": fuel_used,
+                        "duration_ms": start_time.elapsed().as_millis(),
+                    }),
+                );
                 Err(e)
             }
         }

@@ -22,7 +22,7 @@
 
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 /// Watchdog configuration.
 #[derive(Debug, Clone)]
@@ -114,20 +114,24 @@ pub fn start_watchdog(config: WatchdogConfig) -> Arc<WatchdogState> {
 
     // Start USB serial kill-switch monitor if configured
     let usb_state = state.clone();
-    let usb_port = config.usb_serial_port.clone()
+    let usb_port = config
+        .usb_serial_port
+        .clone()
         .or_else(|| std::env::var("OSOOSI_USB_KILL_PORT").ok());
     if let Some(port) = usb_port {
         start_usb_kill_switch_monitor(port, config.usb_baud_rate, usb_state);
     }
 
-    use sysinfo::{System, Pid};
+    use sysinfo::{Pid, System};
     let mut sys = System::new_all();
     let s_pid = Pid::from(pid as usize);
     let num_cpus = sys.cpus().len().max(1) as f32;
 
     info!(
         "Watchdog: detected {} logical CPUs (sysinfo max={}%, normalized threshold={}%)",
-        num_cpus as u32, num_cpus * 100.0, config.cpu_threshold_percent
+        num_cpus as u32,
+        num_cpus * 100.0,
+        config.cpu_threshold_percent
     );
 
     tokio::spawn(async move {
@@ -135,16 +139,15 @@ pub fn start_watchdog(config: WatchdogConfig) -> Arc<WatchdogState> {
         sys.refresh_process(s_pid);
         tokio::time::sleep(std::time::Duration::from_secs(2)).await;
 
-        let mut interval = tokio::time::interval(
-            std::time::Duration::from_secs(config.poll_interval_seconds)
-        );
+        let mut interval =
+            tokio::time::interval(std::time::Duration::from_secs(config.poll_interval_seconds));
 
         loop {
             interval.tick().await;
 
             // 1. Refresh resources
             sys.refresh_process(s_pid);
-            
+
             let (raw_cpu, memory_bytes) = if let Some(p) = sys.process(s_pid) {
                 (p.cpu_usage(), p.memory())
             } else {
@@ -156,11 +159,12 @@ pub fn start_watchdog(config: WatchdogConfig) -> Arc<WatchdogState> {
             let normalized_cpu = raw_cpu / num_cpus;
 
             // 2. Store readings (normalized)
-            state_clone.current_cpu.store(
-                (normalized_cpu * 100.0) as u64,
-                Ordering::Relaxed,
-            );
-            state_clone.current_memory.store(memory_bytes, Ordering::Relaxed);
+            state_clone
+                .current_cpu
+                .store((normalized_cpu * 100.0) as u64, Ordering::Relaxed);
+            state_clone
+                .current_memory
+                .store(memory_bytes, Ordering::Relaxed);
 
             // 3. Check memory limit
             if memory_bytes > config.memory_limit_bytes {
@@ -179,10 +183,10 @@ pub fn start_watchdog(config: WatchdogConfig) -> Arc<WatchdogState> {
             // high CPU. The agent should only self-terminate on confirmed malicious
             // activity with absolute confidence, not on resource usage alone.
             if normalized_cpu > config.cpu_threshold_percent {
-                let count = state_clone.over_threshold_count.fetch_add(
-                    config.poll_interval_seconds,
-                    Ordering::Relaxed,
-                ) + config.poll_interval_seconds;
+                let count = state_clone
+                    .over_threshold_count
+                    .fetch_add(config.poll_interval_seconds, Ordering::Relaxed)
+                    + config.poll_interval_seconds;
 
                 // Log at INFO level every 30s, WARN if sustained > 2 minutes
                 if count > 120 {
@@ -212,13 +216,18 @@ pub fn start_watchdog(config: WatchdogConfig) -> Arc<WatchdogState> {
 /// operation (e.g., full disk scan, model training).
 /// The extension expires after `duration_secs`.
 pub fn grant_hitl_extension(state: &Arc<WatchdogState>, duration_secs: u64) {
-    info!("HITL extension granted for {}s (watchdog paused)", duration_secs);
+    info!(
+        "HITL extension granted for {}s (watchdog paused)",
+        duration_secs
+    );
     state.extension_granted.store(true, Ordering::Relaxed);
 
     let state_clone = state.clone();
     tokio::spawn(async move {
         tokio::time::sleep(std::time::Duration::from_secs(duration_secs)).await;
-        state_clone.extension_granted.store(false, Ordering::Relaxed);
+        state_clone
+            .extension_granted
+            .store(false, Ordering::Relaxed);
         info!("HITL extension expired. Watchdog resumed.");
     });
 }
@@ -263,16 +272,17 @@ fn trigger_kill(state: &WatchdogState, reason: &str) {
     #[cfg(target_os = "linux")]
     {
         let _ = std::process::Command::new("logger")
-            .args(["-p", "daemon.crit", &format!("osoosi-watchdog: kill-switch triggered: {}", reason)])
+            .args([
+                "-p",
+                "daemon.crit",
+                &format!("osoosi-watchdog: kill-switch triggered: {}", reason),
+            ])
             .status();
     }
 
     // Hard exit — this is intentionally process::exit, not panic
     std::process::exit(137); // 128 + SIGKILL(9)
 }
-
-
-
 
 // ============================================================================
 // USB Serial Kill-Switch
@@ -303,12 +313,11 @@ fn trigger_kill(state: &WatchdogState, reason: &str) {
 ///     }
 /// }
 /// ```
-fn start_usb_kill_switch_monitor(
-    port: String,
-    baud_rate: u32,
-    state: Arc<WatchdogState>,
-) {
-    info!("USB kill-switch: monitoring serial port {} @ {} baud", port, baud_rate);
+fn start_usb_kill_switch_monitor(port: String, baud_rate: u32, state: Arc<WatchdogState>) {
+    info!(
+        "USB kill-switch: monitoring serial port {} @ {} baud",
+        port, baud_rate
+    );
 
     std::thread::spawn(move || {
         // Use raw serial I/O (avoids adding serialport crate dependency)
@@ -337,9 +346,12 @@ fn start_usb_kill_switch_monitor(
                                     }
                                     "HEARTBEAT" => {
                                         // Device is alive — send status back
-                                        let cpu = state.current_cpu.load(Ordering::Relaxed) as f64 / 100.0;
-                                        let mem = state.current_memory.load(Ordering::Relaxed) / (1024 * 1024);
-                                        let status = format!("STATUS:CPU={:.1},MEM={}MB\n", cpu, mem);
+                                        let cpu = state.current_cpu.load(Ordering::Relaxed) as f64
+                                            / 100.0;
+                                        let mem = state.current_memory.load(Ordering::Relaxed)
+                                            / (1024 * 1024);
+                                        let status =
+                                            format!("STATUS:CPU={:.1},MEM={}MB\n", cpu, mem);
                                         let _ = write_serial(&mut port_handle, status.as_bytes());
                                     }
                                     other if !other.is_empty() => {
@@ -371,7 +383,10 @@ fn start_usb_kill_switch_monitor(
                 }
             }
             Err(e) => {
-                warn!("USB kill-switch: could not open {}: {}. Hardware kill-switch disabled.", port, e);
+                warn!(
+                    "USB kill-switch: could not open {}: {}. Hardware kill-switch disabled.",
+                    port, e
+                );
             }
         }
     });
@@ -392,11 +407,21 @@ type SerialHandle = std::fs::File;
 fn open_serial_port(port: &str, baud_rate: u32) -> anyhow::Result<SerialHandle> {
     // Configure via mode command first
     let _ = std::process::Command::new("mode")
-        .args([port, &format!("baud={}", baud_rate), "parity=n", "data=8", "stop=1"])
+        .args([
+            port,
+            &format!("baud={}", baud_rate),
+            "parity=n",
+            "data=8",
+            "stop=1",
+        ])
         .output();
 
     // Open as a file (Windows COM ports are file-like)
-    let path = if port.starts_with("\\\\") { port.to_string() } else { format!("\\\\.\\{}", port) };
+    let path = if port.starts_with("\\\\") {
+        port.to_string()
+    } else {
+        format!("\\\\.\\{}", port)
+    };
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
@@ -420,7 +445,10 @@ fn open_serial_port(port: &str, baud_rate: u32) -> anyhow::Result<SerialHandle> 
 
 #[cfg(not(any(target_os = "windows", target_os = "linux")))]
 fn open_serial_port(port: &str, _baud_rate: u32) -> anyhow::Result<SerialHandle> {
-    Err(anyhow::anyhow!("Serial port not supported on this platform: {}", port))
+    Err(anyhow::anyhow!(
+        "Serial port not supported on this platform: {}",
+        port
+    ))
 }
 
 fn read_serial(handle: &mut SerialHandle, buf: &mut [u8]) -> anyhow::Result<usize> {

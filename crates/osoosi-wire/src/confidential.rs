@@ -1,13 +1,13 @@
 //! Privacy-Preserving Collaborative Defense (TFHE).
 //!
-//! Uses Fully Homomorphic Encryption to allow peers to share and match IOCs 
+//! Uses Fully Homomorphic Encryption to allow peers to share and match IOCs
 //! and participate in reputation voting without revealing local state.
 
+use bincode;
+use serde::{Deserialize, Serialize};
 use tfhe::prelude::*;
 use tfhe::{generate_keys, ConfigBuilder, FheUint32};
-use serde::{Deserialize, Serialize};
 use tracing::info;
-use bincode;
 
 /// A message containing FHE-encrypted data for the mesh.
 #[derive(Serialize, Deserialize, Debug, Clone)]
@@ -32,7 +32,10 @@ impl ConfidentialOrchestrator {
     pub fn new() -> Self {
         let config = ConfigBuilder::default().build();
         let (client_key, server_key) = generate_keys(config);
-        Self { server_key, client_key }
+        Self {
+            server_key,
+            client_key,
+        }
     }
 
     /// Create an encrypted vote (1 = Agree, 0 = Disagree).
@@ -48,12 +51,12 @@ impl ConfidentialOrchestrator {
     pub fn tally_votes(&self, votes: Vec<Vec<u8>>) -> anyhow::Result<FheUint32> {
         let mut total = FheUint32::encrypt(0u32, &self.client_key); // In reality, server key doesn't encrypt
         tfhe::set_server_key(self.server_key.clone());
-        
+
         for v in votes {
             let encrypted_vote: FheUint32 = bincode::deserialize(&v)?;
             total = &total + &encrypted_vote;
         }
-        
+
         Ok(total)
     }
 
@@ -64,8 +67,8 @@ impl ConfidentialOrchestrator {
 }
 
 /// Confidential Indicator of Compromise (IOC).
-/// In a full implementation, this would use PSI (Private Set Intersection) 
-/// to allow matching local hashes against a global 'blacklist' without 
+/// In a full implementation, this would use PSI (Private Set Intersection)
+/// to allow matching local hashes against a global 'blacklist' without
 /// revealing either.
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct ConfidentialIOC {

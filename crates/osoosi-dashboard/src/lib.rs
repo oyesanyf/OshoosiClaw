@@ -1,18 +1,18 @@
 use axum::{
     extract::ConnectInfo,
     extract::{Path, Query, State},
-    routing::{get, post},
     http::HeaderMap,
+    routing::{get, post},
     Json, Router,
 };
+use serde::Deserialize;
+use serde_json::{json, Value};
 use std::net::SocketAddr;
+use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
-use serde::Deserialize;
-use serde_json::{json, Value};
-use std::path::PathBuf;
 
 /// Shared state for dashboard routes. When backend is set, uses real data.
 #[derive(Clone)]
@@ -78,9 +78,14 @@ pub fn resolve_dashboard_asset_dir() -> PathBuf {
         }
     }
 
-    for start in [std::env::current_dir().ok(), std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf()))]
-        .into_iter()
-        .flatten()
+    for start in [
+        std::env::current_dir().ok(),
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf())),
+    ]
+    .into_iter()
+    .flatten()
     {
         let mut dir = Some(start);
         for _ in 0..10 {
@@ -115,8 +120,14 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/pending-joins/:peer_id/allow", post(allow_peer))
         .route("/api/pending-joins/:peer_id/deny", post(deny_peer))
         .route("/api/quarantined-peers", get(get_quarantined_peers))
-        .route("/api/quarantined-peers/:peer_id/release", post(release_quarantined_peer))
-        .route("/api/quarantined-peers/:peer_id/false-positive", post(mark_quarantine_false_positive))
+        .route(
+            "/api/quarantined-peers/:peer_id/release",
+            post(release_quarantined_peer),
+        )
+        .route(
+            "/api/quarantined-peers/:peer_id/false-positive",
+            post(mark_quarantine_false_positive),
+        )
         .route("/api/repair-status", get(get_repair_status))
         .route("/api/backup-status", get(get_backup_status))
         .route("/api/malware-status", get(get_malware_status))
@@ -126,14 +137,23 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/privilege-status", get(get_privilege_status))
         .route("/api/activity", get(get_activity))
         .route("/api/traffic/conversation", post(post_traffic_conversation))
-        .route("/api/traffic/analyze-captured", get(get_traffic_analyze_captured))
+        .route(
+            "/api/traffic/analyze-captured",
+            get(get_traffic_analyze_captured),
+        )
         .route("/api/attack-graph", get(get_attack_graph))
         .route("/api/agent/context", get(get_agent_context))
         .route("/api/agent/trigger-patch", post(post_agent_trigger_patch))
         .route("/api/triage/decide", post(post_triage_decide))
         .route("/api/query", get(get_query))
-        .route("/api/threats/:threat_id/false-positive", post(post_threat_false_positive))
-        .route("/api/threats/:threat_id/true-positive", post(post_threat_true_positive))
+        .route(
+            "/api/threats/:threat_id/false-positive",
+            post(post_threat_false_positive),
+        )
+        .route(
+            "/api/threats/:threat_id/true-positive",
+            post(post_threat_true_positive),
+        )
         .route("/api/behavioral/feedback", post(post_behavioral_feedback))
         .route("/api/behavioral/analyze", get(get_behavioral_analyze))
         .route("/api/behavioral/deep-dive", post(post_behavioral_deep_dive))
@@ -185,10 +205,18 @@ pub async fn spawn_dashboard_with_backend(
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
     let listener = tokio::net::TcpListener::bind(addr).await?;
     let bound_port = listener.local_addr()?.port();
-    info!("OpenỌ̀ṣọ́ọ̀sì Dashboard listening on {} (local access: http://127.0.0.1:{})", addr, bound_port);
+    info!(
+        "OpenỌ̀ṣọ́ọ̀sì Dashboard listening on {} (local access: http://127.0.0.1:{})",
+        addr, bound_port
+    );
 
     tokio::spawn(async move {
-        if let Err(e) = axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await {
+        if let Err(e) = axum::serve(
+            listener,
+            app.into_make_service_with_connect_info::<SocketAddr>(),
+        )
+        .await
+        {
             tracing::error!("Dashboard server stopped: {}", e);
         }
     });
@@ -221,10 +249,17 @@ pub async fn start_dashboard_with_backend(
 
     let app = dashboard_router(state, asset_path);
     let addr = SocketAddr::from(([0, 0, 0, 0], port));
-    info!("OpenỌ̀ṣọ́ọ̀sì Dashboard listening on {} (local access: http://127.0.0.1:{})", addr, port);
+    info!(
+        "OpenỌ̀ṣọ́ọ̀sì Dashboard listening on {} (local access: http://127.0.0.1:{})",
+        addr, port
+    );
 
     let listener = tokio::net::TcpListener::bind(addr).await?;
-    axum::serve(listener, app.into_make_service_with_connect_info::<SocketAddr>()).await?;
+    axum::serve(
+        listener,
+        app.into_make_service_with_connect_info::<SocketAddr>(),
+    )
+    .await?;
 
     Ok(())
 }
@@ -236,7 +271,11 @@ async fn get_status(State(state): State<DashboardState>) -> Json<Value> {
             let uptime = orch.uptime();
             let uptime_str = format_uptime(uptime);
             let (_, _, _, _, pending, _) = orch.repair_status();
-            let repair = if pending > 0 { "Monitoring (patches pending)" } else { "Monitoring" };
+            let repair = if pending > 0 {
+                "Monitoring (patches pending)"
+            } else {
+                "Monitoring"
+            };
             let merkle_root = orch.audit().root();
             let chain_verified = orch.audit().verify();
             Json(json!({
@@ -291,7 +330,9 @@ async fn allow_peer(
             Ok(()) => Json(json!({"ok": true, "message": "Peer approved"})),
             Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
         },
-        None => Json(json!({"ok": false, "error": "Join gate not active (run agent with dashboard)"})),
+        None => {
+            Json(json!({"ok": false, "error": "Join gate not active (run agent with dashboard)"}))
+        }
     }
 }
 
@@ -304,7 +345,9 @@ async fn deny_peer(
             Ok(()) => Json(json!({"ok": true, "message": "Peer denied"})),
             Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
         },
-        None => Json(json!({"ok": false, "error": "Join gate not active (run agent with dashboard)"})),
+        None => {
+            Json(json!({"ok": false, "error": "Join gate not active (run agent with dashboard)"}))
+        }
     }
 }
 
@@ -332,7 +375,9 @@ async fn release_quarantined_peer(
             Ok(()) => Json(json!({"ok": true, "message": "Peer released from quarantine"})),
             Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
         },
-        None => Json(json!({"ok": false, "error": "Join gate not active (run agent with dashboard)"})),
+        None => {
+            Json(json!({"ok": false, "error": "Join gate not active (run agent with dashboard)"}))
+        }
     }
 }
 
@@ -347,10 +392,14 @@ async fn mark_quarantine_false_positive(
     }
     match &state.join_gate {
         Some(gate) => match gate.mark_false_positive(&peer_id) {
-            Ok(()) => Json(json!({"ok": true, "message": "Peer released and marked false positive"})),
+            Ok(()) => {
+                Json(json!({"ok": true, "message": "Peer released and marked false positive"}))
+            }
             Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
         },
-        None => Json(json!({"ok": false, "error": "Join gate not active (run agent with dashboard)"})),
+        None => {
+            Json(json!({"ok": false, "error": "Join gate not active (run agent with dashboard)"}))
+        }
     }
 }
 
@@ -378,8 +427,8 @@ fn authorize_quarantine_release(remote: SocketAddr, headers: &HeaderMap) -> Resu
         return Err("Unauthorized: invalid quarantine admin key".to_string());
     }
 
-    let allow_hosts = std::env::var("OSOOSI_QUARANTINE_ADMIN_HOSTS")
-        .unwrap_or_else(|_| cfg.hosts.join(","));
+    let allow_hosts =
+        std::env::var("OSOOSI_QUARANTINE_ADMIN_HOSTS").unwrap_or_else(|_| cfg.hosts.join(","));
     let allowed: Vec<String> = allow_hosts
         .split(',')
         .map(str::trim)
@@ -387,12 +436,18 @@ fn authorize_quarantine_release(remote: SocketAddr, headers: &HeaderMap) -> Resu
         .map(|s| s.to_string())
         .collect();
     if allowed.is_empty() {
-        return Err("Forbidden: remote quarantine release requires OSOOSI_QUARANTINE_ADMIN_HOSTS".to_string());
+        return Err(
+            "Forbidden: remote quarantine release requires OSOOSI_QUARANTINE_ADMIN_HOSTS"
+                .to_string(),
+        );
     }
 
     let remote_ip = remote.ip().to_string();
     if !allowed.iter().any(|h| h == &remote_ip) {
-        return Err(format!("Forbidden: host {} is not in admin allowlist", remote_ip));
+        return Err(format!(
+            "Forbidden: host {} is not in admin allowlist",
+            remote_ip
+        ));
     }
 
     Ok(())
@@ -401,10 +456,7 @@ fn authorize_quarantine_release(remote: SocketAddr, headers: &HeaderMap) -> Resu
 async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
-            let threats = orch
-                .memory()
-                .get_recent_threats(20)
-                .unwrap_or_default();
+            let threats = orch.memory().get_recent_threats(20).unwrap_or_default();
             if threats.is_empty() {
                 let entries = orch.audit().entries();
                 let mut seen = std::collections::HashSet::new();
@@ -414,7 +466,7 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                     .filter(|e| e.event_type == "THREAT_DETECTED")
                     .filter_map(|e| {
                         let d = e.data.as_object()?;
-                        
+
                         let cve_id = d.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
                         let process_name = d.get("process_name").and_then(|v| v.as_str()).unwrap_or("");
                         let source_node = d.get("source_node").and_then(|v| v.as_str()).unwrap_or("");
@@ -593,7 +645,8 @@ async fn get_attack_graph(
 async fn get_repair_status(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
-            let (last_cve, last_state, last_sig, last_at, pending, last_error) = orch.repair_status();
+            let (last_cve, last_state, last_sig, last_at, pending, last_error) =
+                orch.repair_status();
             let remediation_hint = last_error.as_ref().and_then(|e| {
                 if e.contains("Insufficient privilege") || e.contains("Administrator") || e.contains("root") {
                     #[cfg(target_os = "windows")]
@@ -666,12 +719,10 @@ async fn post_approve_action(
     Json(req): Json<ActionApprovalRequest>,
 ) -> Json<Value> {
     match &state.backend {
-        Some(orch) => {
-            match orch.approve_action(&req.threat_id).await {
-                Ok(_) => Json(json!({ "status": "success", "msg": "Action approved and executed" })),
-                Err(e) => Json(json!({ "status": "fail", "msg": e.to_string() })),
-            }
-        }
+        Some(orch) => match orch.approve_action(&req.threat_id).await {
+            Ok(_) => Json(json!({ "status": "success", "msg": "Action approved and executed" })),
+            Err(e) => Json(json!({ "status": "fail", "msg": e.to_string() })),
+        },
         None => Json(json!({ "status": "fail", "msg": "backend not active" })),
     }
 }
@@ -681,16 +732,13 @@ async fn post_reject_action(
     Json(req): Json<ActionApprovalRequest>,
 ) -> Json<Value> {
     match &state.backend {
-        Some(orch) => {
-            match orch.reject_action(&req.threat_id).await {
-                Ok(_) => Json(json!({ "status": "success", "msg": "Action rejected" })),
-                Err(e) => Json(json!({ "status": "fail", "msg": e.to_string() })),
-            }
-        }
+        Some(orch) => match orch.reject_action(&req.threat_id).await {
+            Ok(_) => Json(json!({ "status": "success", "msg": "Action rejected" })),
+            Err(e) => Json(json!({ "status": "fail", "msg": e.to_string() })),
+        },
         None => Json(json!({ "status": "fail", "msg": "backend not active" })),
     }
 }
-
 
 async fn get_consensus(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
@@ -747,7 +795,9 @@ async fn get_malware_status(State(state): State<DashboardState>) -> Json<Value> 
         Some(orch) => {
             let scanner = orch.malware_scanner();
             let stats = scanner.stats();
-            let clamav_clean_count = orch.audit().entries()
+            let clamav_clean_count = orch
+                .audit()
+                .entries()
                 .iter()
                 .filter(|e| e.event_type == "CLAMAV_CLEAN")
                 .count();
@@ -778,22 +828,26 @@ async fn get_malware_detections(State(state): State<DashboardState>) -> Json<Val
         Some(orch) => {
             let scanner = orch.malware_scanner();
             let detections = scanner.recent_detections();
-            let items: Vec<Value> = detections.iter().take(20).map(|d| {
-                json!({
-                    "file_path": d.file_path,
-                    "file_hash": d.file_hash,
-                    "magika_label": d.magika_label,
-                    "malware_type": d.malware_type,
-                    "ml_score": d.ml_score,
-                    "signature_score": d.signature_score,
-                    "combined_score": d.combined_score,
-                    "entropy": d.entropy,
-                    "evasion": d.evasion_indicators,
-                    "yara_available": d.yara_available,
-                    "yara_matches": d.yara_matches,
-                    "timestamp": d.timestamp,
+            let items: Vec<Value> = detections
+                .iter()
+                .take(20)
+                .map(|d| {
+                    json!({
+                        "file_path": d.file_path,
+                        "file_hash": d.file_hash,
+                        "magika_label": d.magika_label,
+                        "malware_type": d.malware_type,
+                        "ml_score": d.ml_score,
+                        "signature_score": d.signature_score,
+                        "combined_score": d.combined_score,
+                        "entropy": d.entropy,
+                        "evasion": d.evasion_indicators,
+                        "yara_available": d.yara_available,
+                        "yara_matches": d.yara_matches,
+                        "timestamp": d.timestamp,
+                    })
                 })
-            }).collect();
+                .collect();
             Json(Value::Array(items))
         }
         None => Json(json!([])),
@@ -804,7 +858,10 @@ async fn get_malware_mesh_samples(State(state): State<DashboardState>) -> Json<V
     match &state.backend {
         Some(orch) => {
             let memory = orch.memory();
-            match (memory.malware_sample_count(), memory.get_malware_samples(500)) {
+            match (
+                memory.malware_sample_count(),
+                memory.get_malware_samples(500),
+            ) {
                 (Ok(count), Ok(samples)) => Json(json!({
                     "count": count,
                     "samples": samples.iter().take(50).map(|s| json!({
@@ -855,7 +912,10 @@ async fn post_blocking_rule(
                 "shredding" => osoosi_types::BlockingKind::Shredding,
                 _ => return Json(json!({ "ok": false, "error": "Invalid blocking kind" })),
             };
-            let rule = osoosi_types::BlockingRule { path: req.path, kind };
+            let rule = osoosi_types::BlockingRule {
+                path: req.path,
+                kind,
+            };
             match orch.blocking_manager.add_rule(rule).await {
                 Ok(_) => Json(json!({ "ok": true, "message": "Blocking rule added" })),
                 Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
@@ -870,12 +930,10 @@ async fn post_blocking_unlock(
     Json(req): Json<UnlockRequest>,
 ) -> Json<Value> {
     match &state.backend {
-        Some(orch) => {
-            match orch.blocking_manager.remove_rule(&req.path).await {
-                Ok(_) => Json(json!({ "ok": true, "message": "Blocking rule removed (unlocked)" })),
-                Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
-            }
-        }
+        Some(orch) => match orch.blocking_manager.remove_rule(&req.path).await {
+            Ok(_) => Json(json!({ "ok": true, "message": "Blocking rule removed (unlocked)" })),
+            Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
+        },
         None => Json(json!({ "ok": false, "error": "Backend not active" })),
     }
 }
@@ -1078,12 +1136,12 @@ async fn post_threat_false_positive(
     Path(threat_id): Path<String>,
 ) -> Json<Value> {
     match &state.backend {
-        Some(orch) => {
-            match orch.handle_false_positive(&threat_id).await {
-                Ok(_) => Json(json!({"ok": true, "message": "Threat marked as false positive and remediated"})),
-                Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
-            }
-        }
+        Some(orch) => match orch.handle_false_positive(&threat_id).await {
+            Ok(_) => Json(
+                json!({"ok": true, "message": "Threat marked as false positive and remediated"}),
+            ),
+            Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+        },
         None => Json(json!({"ok": false, "error": "Backend not running"})),
     }
 }
@@ -1094,12 +1152,12 @@ async fn post_threat_true_positive(
     Path(threat_id): Path<String>,
 ) -> Json<Value> {
     match &state.backend {
-        Some(orch) => {
-            match orch.handle_true_positive(&threat_id).await {
-                Ok(_) => Json(json!({"ok": true, "message": "Threat confirmed as true positive and shared"})),
-                Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+        Some(orch) => match orch.handle_true_positive(&threat_id).await {
+            Ok(_) => {
+                Json(json!({"ok": true, "message": "Threat confirmed as true positive and shared"}))
             }
-        }
+            Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+        },
         None => Json(json!({"ok": false, "error": "Backend not running"})),
     }
 }
@@ -1140,7 +1198,11 @@ async fn get_behavioral_analyze(
             let mode = q.mode.unwrap_or(osoosi_behavioral::AnalysisMode::Analyze);
             // We need some recent events to analyze.
             let events = vec![]; // Placeholder, we should fetch from audit or log_reader.
-            match orch.analyzer().generate_investigative_prompts(mode, &events).await {
+            match orch
+                .analyzer()
+                .generate_investigative_prompts(mode, &events)
+                .await
+            {
                 Ok(prompts) => Json(json!({"ok": true, "prompts": prompts})),
                 Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
             }
@@ -1162,10 +1224,14 @@ async fn post_behavioral_deep_dive(
 ) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
-             // In current BehavioralAnalyzer, Deep Dive doesn't take context_samples directly in method call but in format_events.
-             // We'll adapt here to match method signature.
+            // In current BehavioralAnalyzer, Deep Dive doesn't take context_samples directly in method call but in format_events.
+            // We'll adapt here to match method signature.
             let events = vec![]; // Placeholder
-            match orch.analyzer().perform_deep_analysis(&req.prompt, &events).await {
+            match orch
+                .analyzer()
+                .perform_deep_analysis(&req.prompt, &events)
+                .await
+            {
                 Ok(r) => Json(json!({"ok": true, "report": r})),
                 Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
             }
@@ -1187,9 +1253,7 @@ async fn get_query(
     }
 }
 
-async fn post_agent_trigger_patch(
-    State(state): State<DashboardState>,
-) -> Json<Value> {
+async fn post_agent_trigger_patch(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
             orch.trigger_patch_discovery();
@@ -1211,7 +1275,9 @@ async fn post_triage_decide(
                 Err(_) => return Json(json!({"ok": false, "error": "Invalid action"})),
             };
             match orch.triage_decide(&req.threat_id, action).await {
-                Ok(result) => Json(json!({"ok": result, "message": if result { format!("Triage action {} applied", req.action) } else { "Threat not found or already triaged".to_string() }})),
+                Ok(result) => Json(
+                    json!({"ok": result, "message": if result { format!("Triage action {} applied", req.action) } else { "Threat not found or already triaged".to_string() }}),
+                ),
                 Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
             }
         }
@@ -1227,8 +1293,16 @@ async fn get_analyst_chat(State(state): State<DashboardState>) -> Json<Value> {
                 .rev()
                 .filter(|e| e.event_type == "AI_REASONING" || e.event_type == "AUTONOMOUS_ACTION")
                 .map(|e| {
-                    let author = if e.event_type == "AI_REASONING" { "Gemma 4 Cortex" } else { "Immune System" };
-                    let message = e.data.get("message").and_then(|v| v.as_str()).unwrap_or("...");
+                    let author = if e.event_type == "AI_REASONING" {
+                        "Gemma 4 Cortex"
+                    } else {
+                        "Immune System"
+                    };
+                    let message = e
+                        .data
+                        .get("message")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("...");
                     let details = e.data.get("details").cloned().unwrap_or(Value::Null);
                     json!({
                         "author": author,
@@ -1251,35 +1325,35 @@ async fn get_telemetry_timeseries(State(state): State<DashboardState>) -> Json<V
         Some(orch) => {
             let entries = orch.audit().entries();
             let mut buckets = std::collections::BTreeMap::new();
-            
+
             // Bucket events by minute for the last hour
             let now = chrono::Utc::now();
             let one_hour_ago = now - chrono::Duration::hours(1);
-            
+
             for entry in entries.iter().rev() {
                 if entry.timestamp < one_hour_ago {
                     break;
                 }
-                
+
                 // Only count actual Sysmon telemetry ingestion
                 if entry.event_type != "TELEMETRY_INGESTED" {
                     continue;
                 }
-                
+
                 // Format: YYYY-MM-DD HH:MM
                 let minute = entry.timestamp.format("%Y-%m-%d %H:%M").to_string();
                 let entry_count = buckets.entry(minute).or_insert(0u32);
                 *entry_count += 1;
             }
-            
+
             let mut labels = Vec::new();
             let mut data = Vec::new();
-            
+
             for (min, count) in buckets {
                 labels.push(min);
                 data.push(count);
             }
-            
+
             Json(json!({
                 "labels": labels,
                 "data": data

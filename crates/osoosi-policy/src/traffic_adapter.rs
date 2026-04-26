@@ -127,10 +127,7 @@ pub fn analyze(event: &SysmonEvent) -> Option<TrafficThreat> {
         return None;
     }
 
-    let tor_ports = parse_u16_set(
-        "OSOOSI_TRAFFIC_TOR_PORTS",
-        &[9001, 9030, 9050, 9051, 9150],
-    );
+    let tor_ports = parse_u16_set("OSOOSI_TRAFFIC_TOR_PORTS", &[9001, 9030, 9050, 9051, 9150]);
     let vpn_ports = parse_u16_set(
         "OSOOSI_TRAFFIC_VPN_PORTS",
         &[500, 4500, 1194, 1701, 1723, 51820],
@@ -141,7 +138,13 @@ pub fn analyze(event: &SysmonEvent) -> Option<TrafficThreat> {
     );
     let ddns_domains = parse_lower_set(
         "OSOOSI_TRAFFIC_DDNS_DOMAINS",
-        &["duckdns.org", "no-ip.org", "ddns.net", "hopto.org", "zapto.org"],
+        &[
+            "duckdns.org",
+            "no-ip.org",
+            "ddns.net",
+            "hopto.org",
+            "zapto.org",
+        ],
     );
     let lolbins = parse_lower_set(
         "OSOOSI_TRAFFIC_LOLBINS",
@@ -195,7 +198,8 @@ pub fn analyze(event: &SysmonEvent) -> Option<TrafficThreat> {
                 .and_then(|v| v.as_str())
                 .and_then(|s| s.parse::<u16>().ok())
                 .or_else(|| {
-                    event.data
+                    event
+                        .data
                         .get("DestinationPort")
                         .and_then(|v| v.as_u64())
                         .map(|v| v as u16)
@@ -281,7 +285,10 @@ pub fn analyze(event: &SysmonEvent) -> Option<TrafficThreat> {
                 reasons.push("query targets dynamic DNS infrastructure");
                 tag = "TRAFFIC:AAD".to_string();
             }
-            if c2_tokens.iter().any(|t| query.contains(t) || results.contains(t)) {
+            if c2_tokens
+                .iter()
+                .any(|t| query.contains(t) || results.contains(t))
+            {
                 score += 0.55;
                 reasons.push("query/results contain known C2 framework tokens");
                 tag = "TRAFFIC:MTD".to_string();
@@ -383,7 +390,10 @@ fn synthetic_event_from_packet_text(traffic_data: &str) -> SysmonEvent {
         map.insert("SourceIp".to_string(), json!(ip));
     }
 
-    if let Some(port) = extract_first_numeric(&lower, &["tcp.dstport", "udp.dstport", "dstport", "destinationport"]) {
+    if let Some(port) = extract_first_numeric(
+        &lower,
+        &["tcp.dstport", "udp.dstport", "dstport", "destinationport"],
+    ) {
         map.insert("DestinationPort".to_string(), json!(port.to_string()));
     }
 
@@ -443,17 +453,20 @@ fn extract_value_after_key(input: &str, key: &str) -> Option<String> {
 }
 
 fn extract_domain_candidate(input: &str) -> Option<String> {
-    for token in input
-        .split(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == '"' || c == '\'')
+    for token in
+        input.split(|c: char| c.is_whitespace() || c == ',' || c == ';' || c == '"' || c == '\'')
     {
         let t = token.trim().trim_matches('.');
         if t.len() < 4 {
             continue;
         }
-        if t.contains('.') && t.chars().all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
-            && !t.chars().all(|c| c.is_ascii_digit() || c == '.') {
-                return Some(t.to_string());
-            }
+        if t.contains('.')
+            && t.chars()
+                .all(|c| c.is_ascii_alphanumeric() || c == '.' || c == '-')
+            && !t.chars().all(|c| c.is_ascii_digit() || c == '.')
+        {
+            return Some(t.to_string());
+        }
     }
     None
 }

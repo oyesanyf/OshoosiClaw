@@ -1,8 +1,8 @@
 //! Lightweight Sigma-like rule evaluator for Sysmon events.
 //! Supports basic selection logic and conditions.
 
-use serde::{Deserialize, Serialize};
 use osoosi_types::SysmonEvent;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::info;
 
@@ -49,11 +49,14 @@ impl SigmaEngine {
         let mut count = 0;
         for entry in walkdir::WalkDir::new(dir)
             .into_iter()
-            .filter_map(|e| e.ok()) 
+            .filter_map(|e| e.ok())
         {
             if entry.file_type().is_file() {
                 let p = entry.path();
-                if p.extension().map(|e| e == "yml" || e == "yaml").unwrap_or(false) {
+                if p.extension()
+                    .map(|e| e == "yml" || e == "yaml")
+                    .unwrap_or(false)
+                {
                     if let Ok(content) = std::fs::read_to_string(p) {
                         if let Ok(rule) = serde_yaml::from_str::<SigmaRule>(&content) {
                             self.rules.push(rule);
@@ -92,7 +95,11 @@ impl SigmaEngine {
             let actual_val = if field_name == "EventID" {
                 Some(event.event_id as u32 as u64).map(|v| v.to_string())
             } else {
-                event.data.get(field_name).and_then(|v| v.as_str()).map(|s| s.to_string())
+                event
+                    .data
+                    .get(field_name)
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string())
             };
 
             let Some(val) = actual_val else {
@@ -117,7 +124,7 @@ impl SigmaEngine {
     fn match_single(&self, actual: &str, expected: &str, modifier: Option<&str>) -> bool {
         let actual_l = actual.to_lowercase();
         let expected_l = expected.to_lowercase();
-        
+
         match modifier {
             Some("contains") => actual_l.contains(&expected_l),
             Some("endswith") => actual_l.ends_with(&expected_l),

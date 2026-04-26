@@ -1,9 +1,9 @@
 //! Sysmon event extraction and parsing.
-//! 
+//!
 //! Reads Microsoft-Windows-Sysmon/Operational events.
 
+use chrono::{DateTime, Utc};
 use osoosi_types::{SysmonEvent, SysmonEventId};
-use chrono::Utc;
 use serde_json::json;
 use tracing::debug;
 
@@ -31,6 +31,7 @@ impl SysmonParser {
         let mut event_id: Option<u16> = None;
         let mut computer: String = "unknown".to_string();
         let mut event_data = serde_json::Map::new();
+        let mut timestamp = Utc::now();
 
         let mut buf = Vec::new();
         let mut current_tag = String::new();
@@ -39,19 +40,30 @@ impl SysmonParser {
         loop {
             match reader.read_event_into(&mut buf) {
                 Ok(Event::Start(ref e)) => {
-                    current_tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    current_tag = local_xml_name(e.name().as_ref());
                     if current_tag == "EventData" {
                         in_event_data = true;
                     }
                     if in_event_data && current_tag == "Data" {
-                        let name = e.attributes()
-                            .find(|a| a.as_ref().map(|attr| attr.key.as_ref() == b"Name").unwrap_or(false))
-                            .and_then(|a| a.ok())
-                            .map(|a| String::from_utf8_lossy(a.value.as_ref()).to_string());
-                        
+                        let name = data_name_attr(e);
+
                         if let Some(name) = name {
                             let text = reader.read_text(e.name())?;
                             event_data.insert(name, json!(text.to_string()));
+                        }
+                    }
+                }
+                Ok(Event::Empty(ref e)) => {
+                    let tag = local_xml_name(e.name().as_ref());
+                    if tag == "TimeCreated" {
+                        if let Some(system_time) = attr_value(e, b"SystemTime") {
+                            if let Ok(dt) = DateTime::parse_from_rfc3339(&system_time) {
+                                timestamp = dt.with_timezone(&Utc);
+                            }
+                        }
+                    } else if in_event_data && tag == "Data" {
+                        if let Some(name) = data_name_attr(e) {
+                            event_data.insert(name, json!(""));
                         }
                     }
                 }
@@ -67,7 +79,7 @@ impl SysmonParser {
                     }
                 }
                 Ok(Event::End(ref e)) => {
-                    let tag = String::from_utf8_lossy(e.name().as_ref()).to_string();
+                    let tag = local_xml_name(e.name().as_ref());
                     if tag == "EventData" {
                         in_event_data = false;
                     }
@@ -94,10 +106,33 @@ impl SysmonParser {
 
         Ok(SysmonEvent {
             event_id: event_id_typed,
-            timestamp: Utc::now(),
+            timestamp,
             computer,
             data: json!(event_data),
             product_version: None,
         })
     }
+}
+
+fn local_xml_name(name: &[u8]) -> String {
+    let raw = String::from_utf8_lossy(name);
+    raw.rsplit(':').next().unwrap_or(&raw).to_string()
+}
+
+fn attr_value(e: &quick_xml::events::BytesStart<'_>, wanted: &[u8]) -> Option<String> {
+    e.attributes()
+        .flatten()
+        .find(|attr| {
+            attr.key
+                .as_ref()
+                .rsplit(|b| *b == b':')
+                .next()
+                .unwrap_or(attr.key.as_ref())
+                == wanted
+        })
+        .map(|attr| String::from_utf8_lossy(attr.value.as_ref()).to_string())
+}
+
+fn data_name_attr(e: &quick_xml::events::BytesStart<'_>) -> Option<String> {
+    attr_value(e, b"Name")
 }

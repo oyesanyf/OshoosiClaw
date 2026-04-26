@@ -1,16 +1,16 @@
 //! Browser Security Guard for OpenỌ̀ṣọ́ọ̀sì
-//! 
+//!
 //! Implements multi-browser (Chrome, Edge, Firefox) security auditing:
 //! 1. Extension Reputation Scanning (OTX/NSRL check for extension IDs).
 //! 2. Secure Preference Integrity (checking for search engine hijacks).
 //! 3. Binary Integrity (hashing browser executables).
 
+use chrono::Utc;
+use osoosi_types::{ResponseAction, ThreatSignature};
+use serde_json::Value;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::{info, debug};
-use osoosi_types::{ThreatSignature, ResponseAction};
-use chrono::Utc;
-use serde_json::Value;
+use tracing::{debug, info};
 
 /// Detected browser profile details.
 #[derive(Debug, Clone)]
@@ -33,7 +33,10 @@ pub struct BrowserGuard {
 }
 
 impl BrowserGuard {
-    pub fn new(memory: Arc<osoosi_memory::MemoryStore>, _audit: Arc<osoosi_audit::AuditTrail>) -> Self {
+    pub fn new(
+        memory: Arc<osoosi_memory::MemoryStore>,
+        _audit: Arc<osoosi_audit::AuditTrail>,
+    ) -> Self {
         Self { memory }
     }
 
@@ -45,23 +48,26 @@ impl BrowserGuard {
 
         for profile in profiles {
             debug!("Auditing {} profile at {:?}", profile.name, profile.path);
-            
+
             // 1. Audit Extensions
             threats.extend(self.audit_extensions(&profile).await);
 
             // 2. Audit Search Engines (Hijack detection)
             threats.extend(self.audit_search_engines(&profile).await);
-            
+
             // 3. Audit Settings (Secure Preferences)
             threats.extend(self.audit_secure_preferences(&profile).await);
         }
 
         if !threats.is_empty() {
-            info!("BrowserGuard: Sweep complete. Identified {} potential browser threats.", threats.len());
+            info!(
+                "BrowserGuard: Sweep complete. Identified {} potential browser threats.",
+                threats.len()
+            );
         } else {
             debug!("BrowserGuard: Sweep complete. No browser threats identified.");
         }
-        
+
         threats
     }
 
@@ -74,25 +80,37 @@ impl BrowserGuard {
             let app_data = std::env::var("APPDATA").unwrap_or_default();
 
             // Chrome
-            let chrome_path = Path::new(&local_app_data).join("Google").join("Chrome").join("User Data");
+            let chrome_path = Path::new(&local_app_data)
+                .join("Google")
+                .join("Chrome")
+                .join("User Data");
             if chrome_path.exists() {
                 self.find_chrome_style_profiles(&chrome_path, BrowserType::Chrome, &mut profiles);
             }
 
             // Edge
-            let edge_path = Path::new(&local_app_data).join("Microsoft").join("Edge").join("User Data");
+            let edge_path = Path::new(&local_app_data)
+                .join("Microsoft")
+                .join("Edge")
+                .join("User Data");
             if edge_path.exists() {
                 self.find_chrome_style_profiles(&edge_path, BrowserType::Edge, &mut profiles);
             }
 
             // Brave
-            let brave_path = Path::new(&local_app_data).join("BraveSoftware").join("Brave-Browser").join("User Data");
+            let brave_path = Path::new(&local_app_data)
+                .join("BraveSoftware")
+                .join("Brave-Browser")
+                .join("User Data");
             if brave_path.exists() {
                 self.find_chrome_style_profiles(&brave_path, BrowserType::Brave, &mut profiles);
             }
 
             // Firefox
-            let firefox_path = Path::new(&app_data).join("Mozilla").join("Firefox").join("Profiles");
+            let firefox_path = Path::new(&app_data)
+                .join("Mozilla")
+                .join("Firefox")
+                .join("Profiles");
             if firefox_path.exists() {
                 if let Ok(entries) = std::fs::read_dir(firefox_path) {
                     for entry in entries.flatten() {
@@ -112,16 +130,20 @@ impl BrowserGuard {
         {
             // Simplified Linux detection (home dirs)
             let home = std::env::var("HOME").unwrap_or_default();
-            
+
             let chrome_path = Path::new(&home).join(".config").join("google-chrome");
-            if chrome_path.exists() { self.find_chrome_style_profiles(&chrome_path, BrowserType::Chrome, &mut profiles); }
+            if chrome_path.exists() {
+                self.find_chrome_style_profiles(&chrome_path, BrowserType::Chrome, &mut profiles);
+            }
 
             let firefox_path = Path::new(&home).join(".mozilla").join("firefox");
             if firefox_path.exists() {
                 // Parse profiles.ini (omitted for brevity, just scan dirs)
                 if let Ok(entries) = std::fs::read_dir(firefox_path) {
                     for entry in entries.flatten() {
-                        if entry.path().is_dir() && entry.file_name().to_string_lossy().contains('.') {
+                        if entry.path().is_dir()
+                            && entry.file_name().to_string_lossy().contains('.')
+                        {
                             profiles.push(BrowserProfile {
                                 name: entry.file_name().to_string_lossy().to_string(),
                                 path: entry.path(),
@@ -136,9 +158,20 @@ impl BrowserGuard {
         profiles
     }
 
-    fn find_chrome_style_profiles(&self, user_data_root: &Path, b_type: BrowserType, out: &mut Vec<BrowserProfile>) {
+    fn find_chrome_style_profiles(
+        &self,
+        user_data_root: &Path,
+        b_type: BrowserType,
+        out: &mut Vec<BrowserProfile>,
+    ) {
         // Chromiums use "Default", "Profile 1", "Profile 2", etc.
-        let candidates = ["Default", "Profile 1", "Profile 2", "Profile 3", "Profile 4"];
+        let candidates = [
+            "Default",
+            "Profile 1",
+            "Profile 2",
+            "Profile 3",
+            "Profile 4",
+        ];
         for name in candidates {
             let profile_path = user_data_root.join(name);
             if profile_path.exists() && profile_path.join("Preferences").exists() {
@@ -158,13 +191,17 @@ impl BrowserGuard {
             _ => profile.path.join("Extensions"), // Chromium
         };
 
-        if !extension_dir.exists() { return threats; }
+        if !extension_dir.exists() {
+            return threats;
+        }
 
         if let Ok(entries) = std::fs::read_dir(extension_dir) {
             for entry in entries.flatten() {
                 let id = entry.file_name().to_string_lossy().to_string();
                 // Browsers often use the hash/id of the extension as the dir name
-                if id.len() < 20 { continue; } // Skip small ones
+                if id.len() < 20 {
+                    continue;
+                } // Skip small ones
 
                 // Reputation Check: Has this extension ID been flagged in OTX?
                 // Cross-reference with our local reputation cache
@@ -192,13 +229,26 @@ impl BrowserGuard {
 
     async fn audit_search_engines(&self, profile: &BrowserProfile) -> Vec<ThreatSignature> {
         let mut threats = Vec::new();
-        if profile.browser_type == BrowserType::Firefox { return threats; } // Chromium focus for hijacks
+        if profile.browser_type == BrowserType::Firefox {
+            return threats;
+        } // Chromium focus for hijacks
 
         let pref_path = profile.path.join("Preferences");
         if let Ok(content) = std::fs::read_to_string(pref_path) {
             if let Ok(json) = serde_json::from_str::<Value>(&content) {
-                if let Some(url) = json.get("default_search_provider").and_then(|v| v.get("search_url")).and_then(|v| v.as_str()) {
-                    let suspicious_keywords = ["search-results", "pwned", "fast-search", "myway", "ask.com", "babylon"];
+                if let Some(url) = json
+                    .get("default_search_provider")
+                    .and_then(|v| v.get("search_url"))
+                    .and_then(|v| v.as_str())
+                {
+                    let suspicious_keywords = [
+                        "search-results",
+                        "pwned",
+                        "fast-search",
+                        "myway",
+                        "ask.com",
+                        "babylon",
+                    ];
                     for kw in suspicious_keywords {
                         if url.to_lowercase().contains(kw) {
                             threats.push(ThreatSignature {
@@ -221,34 +271,48 @@ impl BrowserGuard {
 
     async fn audit_secure_preferences(&self, profile: &BrowserProfile) -> Vec<ThreatSignature> {
         let mut threats = Vec::new();
-        if profile.browser_type == BrowserType::Firefox { return threats; }
+        if profile.browser_type == BrowserType::Firefox {
+            return threats;
+        }
 
         let secure_pref_path = profile.path.join("Secure Preferences");
-        if !secure_pref_path.exists() { return threats; }
+        if !secure_pref_path.exists() {
+            return threats;
+        }
 
         // Chromium's 'Secure Preferences' uses an HMAC to prevent out-of-process modification.
-        // If we detect the file was modified since our last scan but the HMAC is invalid, 
+        // If we detect the file was modified since our last scan but the HMAC is invalid,
         // it means an EDR-killer or browser-stealer tried to override settings.
-        
+
         // At this level, we just alert if we see suspicious keywords in the 'Secure Preferences' JSON
         // that shouldn't be there (ike unauthorized proxy settings).
         if let Ok(content) = std::fs::read_to_string(secure_pref_path) {
-             if let Ok(json) = serde_json::from_str::<Value>(&content) {
-                 if let Some(proxy) = json.get("proxy").and_then(|v| v.get("server")).and_then(|v| v.as_str()) {
-                     if !proxy.is_empty() {
-                         threats.push(ThreatSignature {
+            if let Ok(json) = serde_json::from_str::<Value>(&content) {
+                if let Some(proxy) = json
+                    .get("proxy")
+                    .and_then(|v| v.get("server"))
+                    .and_then(|v| v.as_str())
+                {
+                    if !proxy.is_empty() {
+                        threats.push(ThreatSignature {
                             id: uuid::Uuid::new_v4().to_string(),
-                            process_name: Some(format!("{:?} Proxy Settings", profile.browser_type)),
+                            process_name: Some(format!(
+                                "{:?} Proxy Settings",
+                                profile.browser_type
+                            )),
                             confidence: 0.7,
                             detected_at: Utc::now(),
                             source_node: "local-browser-guard".to_string(),
-                            reason: Some(format!("Suspicious Browser Proxy: {} is configured as a system proxy.", proxy)),
+                            reason: Some(format!(
+                                "Suspicious Browser Proxy: {} is configured as a system proxy.",
+                                proxy
+                            )),
                             recommended_action: ResponseAction::Alert,
                             ..Default::default()
-                         });
-                     }
-                 }
-             }
+                        });
+                    }
+                }
+            }
         }
 
         threats

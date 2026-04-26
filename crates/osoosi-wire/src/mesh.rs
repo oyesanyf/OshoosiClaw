@@ -1,23 +1,23 @@
 //! P2P Mesh Behavior (Gossipsub and mDNS).
 
 use super::join_gate::JoinGate;
+use super::MeshCommand;
 use futures::StreamExt;
 use libp2p::{
-    gossipsub, mdns, noise, identify, kad,
+    autonat, gossipsub, identify, kad, mdns,
     multiaddr::Protocol,
-    Multiaddr, PeerId,
+    noise,
     swarm::{NetworkBehaviour, SwarmEvent},
-    tcp, yamux,
+    tcp, upnp, yamux, Multiaddr, PeerId,
 };
-use super::MeshCommand;
-use osoosi_types::{ThreatSignature, PeerAnnounce, PeerRulesConfig, MalwareSample};
+use osoosi_types::{MalwareSample, PeerAnnounce, PeerRulesConfig, ThreatSignature};
+use serde::Serialize;
 use std::collections::HashSet;
 use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
-use serde::Serialize;
 use tokio::sync::mpsc;
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
 
 // Helper functions removed as they are now in osoosi_types::config
 
@@ -28,6 +28,8 @@ pub struct OsoosiBehavior {
     pub mdns: mdns::tokio::Behaviour,
     pub identify: identify::Behaviour,
     pub kademlia: kad::Behaviour<kad::store::MemoryStore>,
+    pub autonat: autonat::Behaviour,
+    pub upnp: upnp::tokio::Behaviour,
 }
 pub struct MeshNode {
     pub swarm: libp2p::Swarm<OsoosiBehavior>,
@@ -77,8 +79,11 @@ impl MeshNode {
                     gossipsub_config,
                 )?;
 
-                let mdns = mdns::tokio::Behaviour::new(mdns::Config::default(), key.public().to_peer_id())?;
-                
+                let mdns = mdns::tokio::Behaviour::new(
+                    mdns::Config::default(),
+                    key.public().to_peer_id(),
+                )?;
+
                 let identify = identify::Behaviour::new(identify::Config::new(
                     "/osoosi/1.0.0".into(),
                     key.public(),
@@ -89,32 +94,70 @@ impl MeshNode {
                     kad::store::MemoryStore::new(key.public().to_peer_id()),
                 );
 
-                Ok(OsoosiBehavior { gossipsub, mdns, identify, kademlia })
+                let autonat = autonat::Behaviour::new(
+                    key.public().to_peer_id(),
+                    autonat::Config::default(),
+                );
+
+                let upnp = upnp::tokio::Behaviour::default();
+
+                Ok(OsoosiBehavior {
+                    gossipsub,
+                    mdns,
+                    identify,
+                    kademlia,
+                    autonat,
+                    upnp,
+                })
             })?
             .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
             .build();
 
         let threat_topic = gossipsub::IdentTopic::new(format!("osoosi-threats-{}", zone));
         let consensus_topic = gossipsub::IdentTopic::new(format!("osoosi-consensus-{}", zone));
-        let peer_announce_topic = gossipsub::IdentTopic::new(format!("osoosi-peer-announce-{}", zone));
+        let peer_announce_topic =
+            gossipsub::IdentTopic::new(format!("osoosi-peer-announce-{}", zone));
         let ghost_shard_topic = gossipsub::IdentTopic::new(format!("osoosi-ghost-shards-{}", zone));
         let intel_topic = gossipsub::IdentTopic::new(format!("osoosi-intel-{}", zone));
-        let malware_sample_topic = gossipsub::IdentTopic::new(format!("osoosi-malware-samples-{}", zone));
+        let malware_sample_topic =
+            gossipsub::IdentTopic::new(format!("osoosi-malware-samples-{}", zone));
         let audit_proof_topic = gossipsub::IdentTopic::new(format!("osoosi-audit-proofs-{}", zone));
         let tarpit_topic = gossipsub::IdentTopic::new(format!("{}-{}", super::TARPIT_TOPIC, zone));
-        let confidential_topic = gossipsub::IdentTopic::new(format!("{}-{}", super::CONFIDENTIAL_TOPIC, zone));
+        let confidential_topic =
+            gossipsub::IdentTopic::new(format!("{}-{}", super::CONFIDENTIAL_TOPIC, zone));
         let model_delta_topic = gossipsub::IdentTopic::new(format!("osoosi-model-deltas-{}", zone));
 
         swarm.behaviour_mut().gossipsub.subscribe(&threat_topic)?;
-        swarm.behaviour_mut().gossipsub.subscribe(&consensus_topic)?;
-        swarm.behaviour_mut().gossipsub.subscribe(&peer_announce_topic)?;
-        swarm.behaviour_mut().gossipsub.subscribe(&ghost_shard_topic)?;
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&consensus_topic)?;
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&peer_announce_topic)?;
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&ghost_shard_topic)?;
         swarm.behaviour_mut().gossipsub.subscribe(&intel_topic)?;
-        swarm.behaviour_mut().gossipsub.subscribe(&malware_sample_topic)?;
-        swarm.behaviour_mut().gossipsub.subscribe(&audit_proof_topic)?;
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&malware_sample_topic)?;
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&audit_proof_topic)?;
         swarm.behaviour_mut().gossipsub.subscribe(&tarpit_topic)?;
-        swarm.behaviour_mut().gossipsub.subscribe(&confidential_topic)?;
-        swarm.behaviour_mut().gossipsub.subscribe(&model_delta_topic)?;
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&confidential_topic)?;
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&model_delta_topic)?;
 
         let mesh_config = osoosi_types::load_mesh_listen_config();
 
@@ -150,23 +193,34 @@ impl MeshNode {
 
                 if let Some(pid) = peer_id_opt {
                     swarm.behaviour_mut().gossipsub.add_explicit_peer(&pid);
-                    swarm.behaviour_mut().kademlia.add_address(&pid, maddr.clone());
+                    swarm
+                        .behaviour_mut()
+                        .kademlia
+                        .add_address(&pid, maddr.clone());
                 }
                 let _ = swarm.dial(maddr);
             }
         }
 
         // Set Kademlia to server mode to help others discover the network
-        swarm.behaviour_mut().kademlia.set_mode(Some(kad::Mode::Server));
+        swarm
+            .behaviour_mut()
+            .kademlia
+            .set_mode(Some(kad::Mode::Server));
         // Start bootstrapping the DHT if we have peers
-        if swarm.behaviour_mut().kademlia.kbuckets().any(|b| b.num_entries() > 0) {
+        if swarm
+            .behaviour_mut()
+            .kademlia
+            .kbuckets()
+            .any(|b| b.num_entries() > 0)
+        {
             let _ = swarm.behaviour_mut().kademlia.bootstrap();
         }
 
-        Ok(MeshNode { 
-            swarm, 
-            threat_topic, 
-            consensus_topic, 
+        Ok(MeshNode {
+            swarm,
+            threat_topic,
+            consensus_topic,
             peer_announce_topic,
             ghost_shard_topic,
             intel_topic,
@@ -221,8 +275,14 @@ impl MeshNode {
     {
         let mut quarantined: HashSet<PeerId> = HashSet::new();
         let mut approved: HashSet<PeerId> = HashSet::new();
+        let mut bootstrap_interval = tokio::time::interval(Duration::from_secs(60));
         loop {
             tokio::select! {
+                _ = bootstrap_interval.tick() => {
+                    // Zero-Config Discovery: Periodic DHT Bootstrap
+                    let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
+                    debug!("Oshoosi Mesh: Periodic Kademlia bootstrap triggered for autonomous discovery.");
+                }
                 Some(cmd) = command_rx.recv() => match cmd {
                     MeshCommand::ApprovePeer(pid) => {
                         self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&pid);
@@ -311,7 +371,7 @@ impl MeshNode {
                     }
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Gossipsub(gossipsub::Event::Message { propagation_source, message, .. })) => {
                         if quarantined.contains(&propagation_source) { continue; }
-                        
+
                         // REPUTATION FILTERING: Drop messages from untrusted peers at scale
                         let peer_reputation = self.memory.get_reputation_value(&propagation_source.to_string()).unwrap_or(0.5);
                         if peer_reputation < 0.1 {
@@ -390,6 +450,18 @@ impl MeshNode {
                             let addr = addresses.iter().next().map(|a| a.to_string());
                             let _ = join_gate.on_peer_discovered(peer, addr);
                         }
+                    }
+                    SwarmEvent::Behaviour(OsoosiBehaviorEvent::Autonat(autonat::Event::StatusChanged { old: _old, new })) => {
+                        info!("Oshoosi Mesh: NAT status changed to {:?}", new);
+                    }
+                    SwarmEvent::Behaviour(OsoosiBehaviorEvent::Upnp(upnp::Event::NewExternalAddr(addr))) => {
+                        info!("Oshoosi Mesh: UPnP opened external port at {}", addr);
+                    }
+                    SwarmEvent::Behaviour(OsoosiBehaviorEvent::Upnp(upnp::Event::GatewayNotFound)) => {
+                        debug!("Oshoosi Mesh: UPnP gateway not found (manual port forwarding might be needed).");
+                    }
+                    SwarmEvent::Behaviour(OsoosiBehaviorEvent::Upnp(upnp::Event::NonFatalError(e))) => {
+                        debug!("Oshoosi Mesh: UPnP non-fatal error: {}", e);
                     }
                     _ => {}
                 }

@@ -3,17 +3,17 @@
 //! Uses suspicious patterns to flag events. When SecureBERT ONNX model is available,
 //! inference can be added. Supports continual training via labeled feedback.
 
+use crate::llm_engine::SmolLMAnalyzer;
 use crate::{event_to_behavioral_sentence, feedback::FeedbackStore, LogEvent};
 use ort::session::{builder::SessionBuilder, Session};
 use ort::value::Value;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
+use std::sync::Arc;
 use std::sync::Mutex;
 use tokenizers::Tokenizer;
 use tracing::{debug, info, warn};
-use std::sync::Arc;
-use crate::llm_engine::SmolLMAnalyzer;
 
 /// Result of behavioral classification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -41,18 +41,21 @@ pub struct BehavioralClassifier {
 impl BehavioralClassifier {
     pub async fn new() -> Self {
         let suspicious_patterns = Self::build_suspicious_patterns();
-        let models_dir = std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
+        let models_dir =
+            std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
         let _behavioral_dir = Path::new(&models_dir).join("behavioral");
-        
-        let feedback_path = std::env::var("OSOOSI_DATA_DIR")
-            .unwrap_or_else(|_| "data".to_string());
+
+        let feedback_path = std::env::var("OSOOSI_DATA_DIR").unwrap_or_else(|_| "data".to_string());
         let _ = std::fs::create_dir_all(&feedback_path);
         let feedback_db = Path::new(&feedback_path).join("behavioral_learning.db");
-        
+
         let feedback = match FeedbackStore::new(&feedback_db) {
             Ok(fs) => Some(fs),
             Err(e) => {
-                warn!("Failed to initialize behavioral feedback store at {:?}: {}", feedback_db, e);
+                warn!(
+                    "Failed to initialize behavioral feedback store at {:?}: {}",
+                    feedback_db, e
+                );
                 None
             }
         };
@@ -61,11 +64,19 @@ impl BehavioralClassifier {
         let model_path = smollm_dir.join("smollm2-135m-it.onnx");
         let tokenizer_path = smollm_dir.join("tokenizer.json");
 
-        let no_ai = std::env::var("OSOOSI_NO_AI").map(|v| v == "1").unwrap_or(false);
-        let no_ort = std::env::var("OSOOSI_NO_ORT").map(|v| v == "1").unwrap_or(false);
-        let (model, tokenizer) = if !no_ai && !no_ort && model_path.exists() && tokenizer_path.exists() {
+        let no_ai = std::env::var("OSOOSI_NO_AI")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        let no_ort = std::env::var("OSOOSI_NO_ORT")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        let (model, tokenizer) = if !no_ai
+            && !no_ort
+            && model_path.exists()
+            && tokenizer_path.exists()
+        {
             info!("Loading SmolLM2-135M-Instruct model from {:?}", model_path);
-            
+
             // Second layer of protection: catch panics during session creation
             let model_path_thread = model_path.clone();
             let session_res = std::panic::catch_unwind(move || {
@@ -75,9 +86,9 @@ impl BehavioralClassifier {
                     Ok(session)
                 })()
             });
-            
+
             let tok = Tokenizer::from_file(&tokenizer_path);
-            
+
             match (session_res, tok) {
                 (Ok(Ok(s)), Ok(t)) => (Some(Mutex::new(s)), Some(t)),
                 (Ok(Err(e)), _) => {
@@ -109,7 +120,9 @@ impl BehavioralClassifier {
 
         let smollm = if !no_ai
             && model.is_none()
-            && std::env::var("OSOOSI_ENABLE_SMOLLM").map(|v| v == "1").unwrap_or(false)
+            && std::env::var("OSOOSI_ENABLE_SMOLLM")
+                .map(|v| v == "1")
+                .unwrap_or(false)
         {
             // Attempt to load native SmolLM2 if available (fallback)
             let smollm_dir = Path::new(&models_dir).join("smollm");
@@ -119,7 +132,10 @@ impl BehavioralClassifier {
                     Some(Arc::new(s))
                 }
                 Err(e) => {
-                    warn!("Native SmolLM fallback unavailable: {}. Using Rule-based + OpenAI.", e);
+                    warn!(
+                        "Native SmolLM fallback unavailable: {}. Using Rule-based + OpenAI.",
+                        e
+                    );
                     None
                 }
             }
@@ -198,7 +214,11 @@ impl BehavioralClassifier {
         // 1. Check feedback (continual learning)
         if let Some(ref fb) = self.feedback {
             if let Ok(Some(label)) = fb.get_feedback(sentence) {
-                return (label, if label { 1.0 } else { 0.0 }, "Feedback matched".to_string());
+                return (
+                    label,
+                    if label { 1.0 } else { 0.0 },
+                    "Feedback matched".to_string(),
+                );
             }
         }
 
@@ -210,14 +230,21 @@ impl BehavioralClassifier {
         if lower.contains("session established") && lower.contains("from local") {
             return (false, 0.1, "Common benign local session".to_string());
         }
-        if lower.contains("process started") && (lower.contains("git.exe") || lower.contains("conhost.exe") || lower.contains("cargo.exe")) {
+        if lower.contains("process started")
+            && (lower.contains("git.exe")
+                || lower.contains("conhost.exe")
+                || lower.contains("cargo.exe"))
+        {
             return (false, 0.05, "Trusted development process".to_string());
         }
 
         // 2. Rule-based checks (IOAs)
         for re in &self.suspicious_patterns {
             if re.is_match(sentence) {
-                let snippet = re.find(sentence).map(|m| m.as_str().to_string()).unwrap_or_default();
+                let snippet = re
+                    .find(sentence)
+                    .map(|m| m.as_str().to_string())
+                    .unwrap_or_default();
                 max_score = max_score.max(0.85);
                 reasons.push(format!("Pattern match: {}", snippet));
             }
@@ -231,7 +258,9 @@ impl BehavioralClassifier {
 
         // Process names often abused
         let lower = sentence.to_lowercase();
-        for proc in ["mshta", "cscript", "wscript", "cmstp", "regsvr32", "rundll32", "msiexec"] {
+        for proc in [
+            "mshta", "cscript", "wscript", "cmstp", "regsvr32", "rundll32", "msiexec",
+        ] {
             if lower.contains(proc) && (lower.contains("http") || lower.contains("\\\\")) {
                 max_score = max_score.max(0.75);
                 reasons.push(format!("Suspicious process {} with network/UNC path", proc));
@@ -241,19 +270,18 @@ impl BehavioralClassifier {
         // 3. Model inference (SecureBERT)
         if let (Some(ref model_mutex), Some(ref tokenizer)) = (&self.model, &self.tokenizer) {
             match model_mutex.lock() {
-                Ok(mut model) => {
-                    match self.infer(sentence, &mut model, tokenizer) {
-                        Ok(bert_score) => {
-                            max_score = max_score.max(bert_score);
-                            if bert_score >= 0.7 {
-                                reasons.push(format!("SecureBERT predictive analysis: {:.2}", bert_score));
-                            }
-                        }
-                        Err(e) => {
-                            debug!("ML inference failed: {}", e);
+                Ok(mut model) => match self.infer(sentence, &mut model, tokenizer) {
+                    Ok(bert_score) => {
+                        max_score = max_score.max(bert_score);
+                        if bert_score >= 0.7 {
+                            reasons
+                                .push(format!("SecureBERT predictive analysis: {:.2}", bert_score));
                         }
                     }
-                }
+                    Err(e) => {
+                        debug!("ML inference failed: {}", e);
+                    }
+                },
                 Err(e) => {
                     warn!("Failed to lock behavioral model mutex: {}", e);
                 }
@@ -270,19 +298,25 @@ impl BehavioralClassifier {
                     }
                     Err(e) => {
                         debug!("SmolLM inference failed, trying OpenAI: {}", e);
-                        self.openai_fallback(sentence, &mut max_score, &mut reasons).await;
+                        self.openai_fallback(sentence, &mut max_score, &mut reasons)
+                            .await;
                     }
                 }
             } else {
                 // 5. OpenAI Final Fallback
-                self.openai_fallback(sentence, &mut max_score, &mut reasons).await;
+                self.openai_fallback(sentence, &mut max_score, &mut reasons)
+                    .await;
             }
         }
 
         let is_suspicious = max_score >= 0.7;
         if is_suspicious {
-            info!("Behavioral alert: {} (score={:.2}, reasons={:?})", 
-                sentence.chars().take(120).collect::<String>(), max_score, reasons);
+            info!(
+                "Behavioral alert: {} (score={:.2}, reasons={:?})",
+                sentence.chars().take(120).collect::<String>(),
+                max_score,
+                reasons
+            );
         }
 
         (
@@ -296,13 +330,23 @@ impl BehavioralClassifier {
         )
     }
 
-    fn infer(&self, sentence: &str, model: &mut Session, tokenizer: &Tokenizer) -> anyhow::Result<f32> {
-        let encoding = tokenizer.encode(sentence, true)
+    fn infer(
+        &self,
+        sentence: &str,
+        model: &mut Session,
+        tokenizer: &Tokenizer,
+    ) -> anyhow::Result<f32> {
+        let encoding = tokenizer
+            .encode(sentence, true)
             .map_err(|e| anyhow::anyhow!("Tokenization failed: {}", e))?;
-        
+
         let input_ids: Vec<i64> = encoding.get_ids().iter().map(|&id| id as i64).collect();
-        let attention_mask: Vec<i64> = encoding.get_attention_mask().iter().map(|&mask| mask as i64).collect();
-        
+        let attention_mask: Vec<i64> = encoding
+            .get_attention_mask()
+            .iter()
+            .map(|&mask| mask as i64)
+            .collect();
+
         // For ort 2.x, we can use the [shape] array and data vector for Tensor creation.
         let val_input_ids = Value::from_array(([1, input_ids.len()], input_ids))?;
         let val_attention_mask = Value::from_array(([1, attention_mask.len()], attention_mask))?;
@@ -313,17 +357,18 @@ impl BehavioralClassifier {
         ])?;
 
         // SmolLM/SecureBERT classification output is usually a logit.
-        let logits = outputs.get("logits")
+        let logits = outputs
+            .get("logits")
             .or_else(|| outputs.get("output_0"))
             .or_else(|| outputs.get("last_hidden_state")) // Fallback for some ONNX exports
             .ok_or_else(|| anyhow::anyhow!("Failed to find logits in model output"))?;
-        
+
         // Use Type-safe extraction
         let logits_extracted = logits.try_extract_tensor::<f32>()?;
         let (shape, logits_data) = (logits_extracted.0, logits_extracted.1);
-        
-        // Softmax or sigmoid for score. 
-        // 135M Instruct model might return full logits or hidden states. 
+
+        // Softmax or sigmoid for score.
+        // 135M Instruct model might return full logits or hidden states.
         // If it's a hidden state [1, seq, 768], we take the mean or first token.
         // If it's logits [1, seq, vocab], we might need more logic.
         // But for a simple classifier, we assume binary or single logit.
@@ -339,7 +384,12 @@ impl BehavioralClassifier {
         Ok(score)
     }
 
-    async fn openai_fallback(&self, sentence: &str, max_score: &mut f32, reasons: &mut Vec<String>) {
+    async fn openai_fallback(
+        &self,
+        sentence: &str,
+        max_score: &mut f32,
+        reasons: &mut Vec<String>,
+    ) {
         if !self.openai_key.is_empty() {
             match self.infer_openai(sentence).await {
                 Ok(openai_score) => {
@@ -383,12 +433,16 @@ impl BehavioralClassifier {
         }
 
         let body: serde_json::Value = res.json().await?;
-        let content = body["choices"][0]["message"]["content"].as_str().unwrap_or("{}");
-        
+        let content = body["choices"][0]["message"]["content"]
+            .as_str()
+            .unwrap_or("{}");
+
         #[derive(serde::Deserialize)]
-        struct ScoreRes { score: f32 }
+        struct ScoreRes {
+            score: f32,
+        }
         let parsed: ScoreRes = serde_json::from_str(content)?;
-        
+
         Ok(parsed.score)
     }
 }

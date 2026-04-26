@@ -3,13 +3,13 @@
 //! Includes Decentralized Identifiers (DID), Proof of Execution (PoE),
 //! and Mutual Attestation structures.
 
-use serde::{Deserialize, Serialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 
 /// A Decentralized Identifier (DID) representing an Odídẹrẹ́ node.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct NodeDID {
-    pub id: String, // e.g., "did:osoosi:12D3KooWN6LE..."
+    pub id: String,         // e.g., "did:osoosi:12D3KooWN6LE..."
     pub public_key: String, // Hex-encoded Ed25519 public key
 }
 

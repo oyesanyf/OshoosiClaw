@@ -9,7 +9,7 @@ pub async fn calculate_blake3_hash<P: AsRef<Path>>(path: P) -> anyhow::Result<St
     let mut file = File::open(path).await?;
     let mut hasher = blake3::Hasher::new();
     let mut buffer = [0u8; 65536]; // 64KB buffer
-    
+
     loop {
         let n = file.read(&mut buffer).await?;
         if n == 0 {
@@ -17,7 +17,7 @@ pub async fn calculate_blake3_hash<P: AsRef<Path>>(path: P) -> anyhow::Result<St
         }
         hasher.update(&buffer[..n]);
     }
-    
+
     Ok(hasher.finalize().to_hex().to_string())
 }
 

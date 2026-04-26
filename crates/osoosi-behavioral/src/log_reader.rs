@@ -41,14 +41,17 @@ impl BehavioralLogReader {
         {
             let channels = std::env::var("OSOOSI_BEHAVIORAL_CHANNELS")
                 .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
-                .unwrap_or_else(|_| vec![
-                    "System".to_string(),
-                    "Application".to_string(),
-                    "Security".to_string(),
-                    "Microsoft-Windows-Sysmon/Operational".to_string(),
-                    "Microsoft-Windows-PowerShell/Operational".to_string(),
-                    "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational".to_string(),
-                ]);
+                .unwrap_or_else(|_| {
+                    vec![
+                        "System".to_string(),
+                        "Application".to_string(),
+                        "Security".to_string(),
+                        "Microsoft-Windows-Sysmon/Operational".to_string(),
+                        "Microsoft-Windows-PowerShell/Operational".to_string(),
+                        "Microsoft-Windows-TerminalServices-LocalSessionManager/Operational"
+                            .to_string(),
+                    ]
+                });
             Self { channels }
         }
 
@@ -59,15 +62,20 @@ impl BehavioralLogReader {
                 .unwrap_or(true);
             let paths = std::env::var("OSOOSI_BEHAVIORAL_LOGS")
                 .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
-                .unwrap_or_else(|_| vec![
-                    "/var/log/syslog".to_string(),
-                    "/var/log/auth.log".to_string(),
-                    "/var/log/secure".to_string(),
-                    "/var/log/audit/audit.log".to_string(),
-                    "/var/log/nginx/access.log".to_string(),
-                    "/var/log/apache2/access.log".to_string(),
-                ]);
-            Self { paths, use_journald }
+                .unwrap_or_else(|_| {
+                    vec![
+                        "/var/log/syslog".to_string(),
+                        "/var/log/auth.log".to_string(),
+                        "/var/log/secure".to_string(),
+                        "/var/log/audit/audit.log".to_string(),
+                        "/var/log/nginx/access.log".to_string(),
+                        "/var/log/apache2/access.log".to_string(),
+                    ]
+                });
+            Self {
+                paths,
+                use_journald,
+            }
         }
 
         #[cfg(target_os = "macos")]
@@ -77,11 +85,13 @@ impl BehavioralLogReader {
                 .unwrap_or(true);
             let paths = std::env::var("OSOOSI_BEHAVIORAL_LOGS")
                 .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
-                .unwrap_or_else(|_| vec![
-                    "/var/log/system.log".to_string(),
-                    "/var/log/secure.log".to_string(),
-                    "/var/log/apache2/access_log".to_string(),
-                ]);
+                .unwrap_or_else(|_| {
+                    vec![
+                        "/var/log/system.log".to_string(),
+                        "/var/log/secure.log".to_string(),
+                        "/var/log/apache2/access_log".to_string(),
+                    ]
+                });
             Self { use_unified, paths }
         }
 
@@ -149,14 +159,7 @@ impl Default for BehavioralLogReader {
 impl BehavioralLogReader {
     fn query_windows_channel(channel: &str) -> Result<Vec<LogEvent>> {
         let output = std::process::Command::new("wevtutil")
-            .args([
-                "qe",
-                channel,
-                "/rd:true",
-                "/e:root",
-                "/c:500",
-                "/f:xml",
-            ])
+            .args(["qe", channel, "/rd:true", "/e:root", "/c:500", "/f:xml"])
             .output()?;
 
         if !output.status.success() {
@@ -201,7 +204,10 @@ fn parse_single_windows_event(xml: &str, channel: &str) -> Option<LogEvent> {
         .unwrap_or_else(|| "localhost".to_string());
 
     let mut data = HashMap::new();
-    data.insert("raw".to_string(), serde_json::json!(xml.chars().take(500).collect::<String>()));
+    data.insert(
+        "raw".to_string(),
+        serde_json::json!(xml.chars().take(500).collect::<String>()),
+    );
     if let Some(msg) = extract_xml_tag(xml, "Message") {
         data.insert("Message".to_string(), serde_json::json!(msg));
     }
@@ -243,7 +249,11 @@ fn extract_xml_attr(xml: &str, attr: &str) -> Option<String> {
 #[cfg(target_os = "windows")]
 fn extract_event_data(xml: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    if let Some(data) = xml.split("<EventData>").nth(1).and_then(|s| s.split("</EventData>").next()) {
+    if let Some(data) = xml
+        .split("<EventData>")
+        .nth(1)
+        .and_then(|s| s.split("</EventData>").next())
+    {
         for part in data.split("<Data Name=\"") {
             if part.contains("</Data>") {
                 if let Some(name_end) = part.find('"') {
@@ -305,7 +315,9 @@ impl BehavioralLogReader {
                     .get("__REALTIME_TIMESTAMP")
                     .and_then(|t| t.as_str())
                     .and_then(|s| s.parse::<i64>().ok())
-                    .and_then(|us| DateTime::from_timestamp(us / 1_000_000, ((us % 1_000_000) as u32) * 1000))
+                    .and_then(|us| {
+                        DateTime::from_timestamp(us / 1_000_000, ((us % 1_000_000) as u32) * 1000)
+                    })
                     .map(|dt| dt.with_timezone(&Utc))
                     .unwrap_or_else(Utc::now);
 
@@ -338,11 +350,15 @@ impl BehavioralLogReader {
         for line in content.lines().rev().take(50) {
             let mut data = HashMap::new();
             data.insert("raw".to_string(), serde_json::json!(line));
-            
+
             // Special handling for iboss:json web logs
             if path.contains("iboss") || line.trim().starts_with('{') {
                 if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                    if let Some(msg) = v.get("message").or_else(|| v.get("msg")).and_then(|m| m.as_str()) {
+                    if let Some(msg) = v
+                        .get("message")
+                        .or_else(|| v.get("msg"))
+                        .and_then(|m| m.as_str())
+                    {
                         data.insert("Message".to_string(), serde_json::json!(msg));
                     }
                     if let Some(url) = v.get("url").and_then(|u| u.as_str()) {
@@ -382,7 +398,15 @@ impl BehavioralLogReader {
 impl BehavioralLogReader {
     fn query_macos_unified() -> Result<Vec<LogEvent>> {
         let output = std::process::Command::new("log")
-            .args(["show", "--predicate", "eventMessage contains \"\"", "--last", "2m", "--style", "syslog"])
+            .args([
+                "show",
+                "--predicate",
+                "eventMessage contains \"\"",
+                "--last",
+                "2m",
+                "--style",
+                "syslog",
+            ])
             .output()?;
 
         if !output.status.success() {

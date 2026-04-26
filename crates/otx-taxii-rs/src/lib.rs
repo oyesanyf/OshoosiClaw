@@ -98,10 +98,7 @@ pub fn extract_indicators(xml: &str) -> Vec<Indicator> {
             "email",
             r"\b[A-Za-z0-9._%+-]+@[A-Za-z0-9.-]+\.[A-Za-z]{2,}\b",
         ),
-        (
-            "domain",
-            r"\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b",
-        ),
+        ("domain", r"\b(?:[a-zA-Z0-9-]+\.)+[a-zA-Z]{2,}\b"),
     ];
 
     for (indicator_type, pattern) in patterns {

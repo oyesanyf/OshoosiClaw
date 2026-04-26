@@ -1,10 +1,11 @@
-//! Cryptographic Audit Trail (Merkle Chain).
+//! Cryptographic Audit Trail (Merkle Tree).
 //!
-//! Provides a tamper-evident log of all system events and agent decisions.
+//! Provides a tamper-evident, verifiable log of all system events and agent decisions.
+//! This implementation uses a binary Merkle Tree for efficient inclusion proofs.
 
-use sha2::{Sha256, Digest};
-use serde::{Serialize, Deserialize};
 use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
+use sha2::{Digest, Sha256};
 use std::sync::Mutex;
 
 pub mod tpm;
@@ -14,114 +15,142 @@ pub struct AuditEntry {
     pub timestamp: DateTime<Utc>,
     pub event_type: String,
     pub data: serde_json::Value,
-    pub prev_hash: String,
 }
 
-pub struct AuditTrail {
+pub struct MerkleAuditTree {
     entries: Mutex<Vec<AuditEntry>>,
-    current_hash: Mutex<String>,
+    hashes: Mutex<Vec<String>>,
+    root: Mutex<String>,
 }
 
-impl Default for AuditTrail {
+impl Default for MerkleAuditTree {
     fn default() -> Self {
         Self::new()
     }
 }
 
-impl AuditTrail {
+impl MerkleAuditTree {
     pub fn new() -> Self {
         Self {
             entries: Mutex::new(Vec::new()),
-            current_hash: Mutex::new("0".repeat(64)), // Genesis hash
+            hashes: Mutex::new(Vec::new()),
+            root: Mutex::new("0".repeat(64)),
         }
     }
 
-    /// Append a new event to the Merkle Chain.
+    /// Append a new event and recalculate the Merkle Root.
     pub fn log(&self, event_type: &str, data: serde_json::Value) -> String {
         let mut entries = self.entries.lock().expect("audit entries mutex poisoned");
-        let mut current_hash = self.current_hash.lock().expect("audit current_hash mutex poisoned");
+        let mut hashes = self.hashes.lock().expect("audit hashes mutex poisoned");
+        let mut root = self.root.lock().expect("audit root mutex poisoned");
 
         let entry = AuditEntry {
             timestamp: Utc::now(),
             event_type: event_type.to_string(),
             data,
-            prev_hash: current_hash.clone(),
         };
 
-        // Calculate new hash: Hash(Data + PrevHash)
+        // 1. Calculate Leaf Hash: Hash(JSON(Entry))
         let mut hasher = Sha256::new();
-        hasher.update(serde_json::to_vec(&entry.data).unwrap_or_default());
-        hasher.update(entry.prev_hash.as_bytes());
-        let new_hash = hex::encode(hasher.finalize());
+        hasher.update(serde_json::to_vec(&entry).unwrap_or_default());
+        let leaf_hash = hex::encode(hasher.finalize());
 
-        *current_hash = new_hash.clone();
         entries.push(entry);
+        hashes.push(leaf_hash);
 
-        // Layer 3: Extend audit hash into TPM PCR (hardware attestation)
-        let _attestation = tpm::extend_audit_to_tpm(event_type, &new_hash);
+        // 2. Recompute Merkle Root (Binary Tree)
+        let new_root = self.compute_root(&hashes);
+        *root = new_root.clone();
 
-        new_hash
+        // 3. Extend to hardware TPM for root-of-trust
+        let _ = tpm::extend_audit_to_tpm(event_type, &new_root);
+
+        new_root
     }
 
-    /// Verify the integrity of the entire chain.
-    pub fn verify(&self) -> bool {
-        let entries = self.entries.lock().unwrap();
-        if entries.is_empty() {
-            return true;
+    fn compute_root(&self, leaf_hashes: &[String]) -> String {
+        if leaf_hashes.is_empty() {
+            return "0".repeat(64);
         }
+        let mut current_level = leaf_hashes.to_vec();
+        while current_level.len() > 1 {
+            let mut next_level = Vec::new();
+            for i in (0..current_level.len()).step_by(2) {
+                let left = &current_level[i];
+                let right = if i + 1 < current_level.len() {
+                    &current_level[i + 1]
+                } else {
+                    left // Balanced tree: duplicate last node if odd
+                };
 
-        let mut expected_prev_hash = "0".repeat(64);
-        for entry in entries.iter() {
-            if entry.prev_hash != expected_prev_hash {
-                return false;
+                let mut hasher = Sha256::new();
+                hasher.update(left.as_bytes());
+                hasher.update(right.as_bytes());
+                next_level.push(hex::encode(hasher.finalize()));
             }
-
-            let mut hasher = Sha256::new();
-            hasher.update(serde_json::to_vec(&entry.data).unwrap_or_default());
-            hasher.update(entry.prev_hash.as_bytes());
-            expected_prev_hash = hex::encode(hasher.finalize());
+            current_level = next_level;
         }
-
-        true
+        current_level[0].clone()
     }
 
-    /// Get the Merkle Root (current state hash).
-    pub fn root(&self) -> String {
-        self.current_hash.lock().expect("audit current_hash mutex poisoned").clone()
-    }
-
-    /// Get all entries for forensic analysis.
-    pub fn entries(&self) -> Vec<AuditEntry> {
-        self.entries.lock().expect("audit entries mutex poisoned").clone()
-    }
-
-    /// Get recent entries.
-    pub fn get_recent_entries(&self, count: usize) -> Vec<AuditEntry> {
-        let entries = self.entries.lock().expect("audit entries mutex poisoned");
-        entries.iter().rev().take(count).cloned().collect()
-    }
-
-    /// Generate a Merkle Proof for a specific entry index.
+    /// Generate a Merkle Inclusion Proof for a specific entry index.
     pub fn generate_proof(&self, index: usize) -> Option<osoosi_types::MerkleProof> {
-        let entries = self.entries.lock().expect("audit entries mutex poisoned");
+        let entries = self.entries.lock().unwrap();
+        let hashes = self.hashes.lock().unwrap();
+        
         if index >= entries.len() {
             return None;
         }
 
-        let entry = &entries[index];
-        let mut hasher = Sha256::new();
-        hasher.update(serde_json::to_vec(&entry.data).unwrap_or_default());
-        hasher.update(entry.prev_hash.as_bytes());
-        let leaf_hash = hex::encode(hasher.finalize());
+        let mut proof_hashes = Vec::new();
+        let mut current_index = index;
+        let mut current_level = hashes.clone();
 
-        // In a linear chain, the "siblings" are the preceding hashes.
-        // For a true Merkle Tree proof, we'd need a different structure.
-        // Here we provide a simplified proof for the chain.
+        while current_level.len() > 1 {
+            let sibling_index = if current_index % 2 == 0 {
+                current_index + 1
+            } else {
+                current_index - 1
+            };
+
+            if sibling_index < current_level.len() {
+                proof_hashes.push(current_level[sibling_index].clone());
+            } else {
+                proof_hashes.push(current_level[current_index].clone());
+            }
+
+            // Move up to the next level
+            let mut next_level = Vec::new();
+            for i in (0..current_level.len()).step_by(2) {
+                let left = &current_level[i];
+                let right = if i + 1 < current_level.len() {
+                    &current_level[i + 1]
+                } else {
+                    left
+                };
+                let mut hasher = Sha256::new();
+                hasher.update(left.as_bytes());
+                hasher.update(right.as_bytes());
+                next_level.push(hex::encode(hasher.finalize()));
+            }
+            current_level = next_level;
+            current_index /= 2;
+        }
+
         Some(osoosi_types::MerkleProof {
-            leaf_hash,
-            root_hash: self.root(),
-            siblings: entries.iter().take(index).map(|e| e.prev_hash.clone()).collect(),
+            leaf_hash: hashes[index].clone(),
+            root_hash: self.root.lock().unwrap().clone(),
+            siblings: proof_hashes,
             index,
         })
     }
+
+    pub fn root(&self) -> String {
+        self.root.lock().unwrap().clone()
+    }
+
+    pub fn entries(&self) -> Vec<AuditEntry> {
+        self.entries.lock().unwrap().clone()
+    }
 }
+

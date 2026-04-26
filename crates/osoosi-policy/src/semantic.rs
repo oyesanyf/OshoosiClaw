@@ -22,8 +22,10 @@ impl SemanticEngine {
         // Seed with common admin intents
         auth.insert("admin_service_check".to_string(), vec![0.1, 0.9, 0.05]);
         auth.insert("file_listing".to_string(), vec![0.8, 0.2, 0.1]);
-        
-        Self { authorized_intent: auth }
+
+        Self {
+            authorized_intent: auth,
+        }
     }
 
     /// Calculate "Semantic Distance" of a command.
@@ -31,9 +33,11 @@ impl SemanticEngine {
     /// Here we use a heuristic mapping as a placeholder for the algorithm.
     pub fn verify_intent(&self, command_line: &str) -> f32 {
         let cmd = command_line.to_lowercase();
-        
+
         // heuristic: base64 encoded chunks in powershell often imply malicious intent (obfuscation)
-        if (cmd.contains("powershell") || cmd.contains("pwsh")) && (cmd.contains("-enc") || cmd.contains("base64")) {
+        if (cmd.contains("powershell") || cmd.contains("pwsh"))
+            && (cmd.contains("-enc") || cmd.contains("base64"))
+        {
             return 0.95; // High anomaly / Semantic Drift
         }
 

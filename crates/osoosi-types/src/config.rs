@@ -26,9 +26,13 @@ pub struct TelemetryConfig {
 
 fn default_event_channel() -> String {
     #[cfg(target_os = "windows")]
-    { "Microsoft-Windows-Sysmon/Operational".to_string() }
+    {
+        "Microsoft-Windows-Sysmon/Operational".to_string()
+    }
     #[cfg(not(target_os = "windows"))]
-    { "default".to_string() }
+    {
+        "default".to_string()
+    }
 }
 
 fn default_poll_interval() -> u64 {
@@ -81,15 +85,25 @@ pub fn is_system_path(path: &str) -> bool {
     #[cfg(target_os = "windows")]
     {
         // Check for common Windows system paths
-        let system_root = std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string()).to_lowercase();
-        let program_files = std::env::var("ProgramFiles").unwrap_or_else(|_| "C:\\Program Files".to_string()).to_lowercase();
-        let program_files_x86 = std::env::var("ProgramFiles(x86)").unwrap_or_else(|_| "C:\\Program Files (x86)".to_string()).to_lowercase();
+        let system_root = std::env::var("SystemRoot")
+            .unwrap_or_else(|_| "C:\\Windows".to_string())
+            .to_lowercase();
+        let program_files = std::env::var("ProgramFiles")
+            .unwrap_or_else(|_| "C:\\Program Files".to_string())
+            .to_lowercase();
+        let program_files_x86 = std::env::var("ProgramFiles(x86)")
+            .unwrap_or_else(|_| "C:\\Program Files (x86)".to_string())
+            .to_lowercase();
 
-        if p.starts_with(&system_root) || p.starts_with(&program_files) || p.starts_with(&program_files_x86) {
+        if p.starts_with(&system_root)
+            || p.starts_with(&program_files)
+            || p.starts_with(&program_files_x86)
+        {
             return true;
         }
         // Direct checks for common roots if env vars missing
-        if p.starts_with("c:\\windows") || p.contains("\\system32\\") || p.contains("\\syswow64\\") {
+        if p.starts_with("c:\\windows") || p.contains("\\system32\\") || p.contains("\\syswow64\\")
+        {
             return true;
         }
     }
@@ -97,11 +111,21 @@ pub fn is_system_path(path: &str) -> bool {
     #[cfg(not(target_os = "windows"))]
     {
         // Re-normalize to forward slashes for Unix
-        let p = path; 
+        let p = path;
         let system_prefixes = [
-            "/bin/", "/sbin/", "/usr/bin/", "/usr/sbin/", "/etc/", 
-            "/lib/", "/lib64/", "/usr/lib/", "/usr/lib64/",
-            "/boot/", "/sys/", "/proc/", "/dev/"
+            "/bin/",
+            "/sbin/",
+            "/usr/bin/",
+            "/usr/sbin/",
+            "/etc/",
+            "/lib/",
+            "/lib64/",
+            "/usr/lib/",
+            "/usr/lib64/",
+            "/boot/",
+            "/sys/",
+            "/proc/",
+            "/dev/",
         ];
         if system_prefixes.iter().any(|prefix| p.starts_with(prefix)) {
             return true;
@@ -165,8 +189,7 @@ impl Default for BackupConfig {
 }
 
 /// Quarantine admin controls for releasing quarantined peers.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct QuarantineAdminConfig {
     /// Dedicated admin host IP allowlist (used for remote quarantine release).
     #[serde(default)]
@@ -175,7 +198,6 @@ pub struct QuarantineAdminConfig {
     #[serde(default)]
     pub key: String,
 }
-
 
 /// Autonomy config: auto-approve peers, auto-quarantine malware, sensible action thresholds.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -406,7 +428,7 @@ pub fn resolve_tools_dir() -> PathBuf {
     if let Ok(p) = std::env::var("OSOOSI_TOOLS_ROOT") {
         return PathBuf::from(p.trim());
     }
-    
+
     if let Some(root) = resolve_project_root() {
         // 1. Try 'tools' in project root (modern default)
         let t = root.join("tools");
@@ -421,9 +443,11 @@ pub fn resolve_tools_dir() -> PathBuf {
         // 3. Default to project_root/tools (will be created by provisioner)
         return t;
     }
-    
+
     // Fallback to current_dir/tools
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("tools")
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("tools")
 }
 
 /// Resolve the global cache directory for transient/downloaded data (feeds, models).
@@ -431,14 +455,14 @@ pub fn resolve_cache_dir() -> PathBuf {
     if let Ok(p) = std::env::var("OSOOSI_CACHE_DIR") {
         return PathBuf::from(p.trim());
     }
-    
+
     if let Some(root) = resolve_project_root() {
         let c = root.join("cache");
         if c.is_dir() {
             return c;
         }
     }
-    
+
     // Search upward for 'cache' directory
     let mut dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     loop {
@@ -452,9 +476,11 @@ pub fn resolve_cache_dir() -> PathBuf {
             break;
         }
     }
-    
+
     // Ultimate fallback: current_dir/cache
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("cache")
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("cache")
 }
 
 pub fn resolve_kev_cache_path() -> PathBuf {
@@ -476,9 +502,13 @@ pub fn resolve_capa_rules_dir() -> PathBuf {
 
 pub fn resolve_capa_path() -> PathBuf {
     #[cfg(target_os = "windows")]
-    { resolve_capa_dir().join("capa.exe") }
+    {
+        resolve_capa_dir().join("capa.exe")
+    }
     #[cfg(not(target_os = "windows"))]
-    { resolve_capa_dir().join("capa") }
+    {
+        resolve_capa_dir().join("capa")
+    }
 }
 
 pub fn resolve_capa_sigs_dir() -> PathBuf {
@@ -487,23 +517,39 @@ pub fn resolve_capa_sigs_dir() -> PathBuf {
 
 pub fn resolve_floss_path() -> PathBuf {
     #[cfg(target_os = "windows")]
-    { resolve_tools_dir().join("floss").join("floss.exe") }
+    {
+        resolve_tools_dir().join("floss").join("floss.exe")
+    }
     #[cfg(not(target_os = "windows"))]
-    { resolve_tools_dir().join("floss").join("floss") }
+    {
+        resolve_tools_dir().join("floss").join("floss")
+    }
 }
 
 pub fn resolve_hollows_hunter_path() -> PathBuf {
     #[cfg(target_os = "windows")]
-    { resolve_tools_dir().join("hollows_hunter").join("hollows_hunter.exe") }
+    {
+        resolve_tools_dir()
+            .join("hollows_hunter")
+            .join("hollows_hunter.exe")
+    }
     #[cfg(not(target_os = "windows"))]
-    { resolve_tools_dir().join("hollows_hunter").join("hollows_hunter") }
+    {
+        resolve_tools_dir()
+            .join("hollows_hunter")
+            .join("hollows_hunter")
+    }
 }
 
 pub fn resolve_ngrep_path() -> PathBuf {
     #[cfg(target_os = "windows")]
-    { resolve_tools_dir().join("ngrep").join("ngrep.exe") }
+    {
+        resolve_tools_dir().join("ngrep").join("ngrep.exe")
+    }
     #[cfg(not(target_os = "windows"))]
-    { resolve_tools_dir().join("ngrep").join("ngrep") }
+    {
+        resolve_tools_dir().join("ngrep").join("ngrep")
+    }
 }
 
 pub fn resolve_sysmon_path() -> PathBuf {
@@ -513,13 +559,19 @@ pub fn resolve_sysmon_path() -> PathBuf {
             .map(|a| a.eq_ignore_ascii_case("AMD64") || a.eq_ignore_ascii_case("ARM64"))
             .unwrap_or(cfg!(target_pointer_width = "64"));
         if is_64 {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("Sysmon64.exe")
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("Sysmon64.exe")
         } else {
-            std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("Sysmon.exe")
+            std::env::current_dir()
+                .unwrap_or_else(|_| PathBuf::from("."))
+                .join("Sysmon.exe")
         }
     }
     #[cfg(not(target_os = "windows"))]
-    { PathBuf::from("/usr/local/bin/sysmon") }
+    {
+        PathBuf::from("/usr/local/bin/sysmon")
+    }
 }
 
 pub fn resolve_clamscan_path() -> PathBuf {
@@ -527,12 +579,16 @@ pub fn resolve_clamscan_path() -> PathBuf {
     {
         if let Ok(pf) = std::env::var("ProgramFiles") {
             let p = PathBuf::from(pf).join("ClamAV").join("clamscan.exe");
-            if p.exists() { return p; }
+            if p.exists() {
+                return p;
+            }
         }
         PathBuf::from("clamscan.exe")
     }
     #[cfg(not(target_os = "windows"))]
-    { PathBuf::from("/usr/bin/clamscan") }
+    {
+        PathBuf::from("/usr/bin/clamscan")
+    }
 }
 
 /// Resolve the models directory for ML/LLM models (Malware, SmolLM, etc.).
@@ -542,14 +598,14 @@ pub fn resolve_models_dir() -> PathBuf {
     if let Ok(p) = std::env::var("OSOOSI_MODELS_DIR") {
         return PathBuf::from(p.trim());
     }
-    
+
     if let Some(root) = resolve_project_root() {
         let m = root.join("models");
         if m.is_dir() {
             return m;
         }
     }
-    
+
     // Fallback to searching upward for 'models' directory
     let mut dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     loop {
@@ -563,9 +619,11 @@ pub fn resolve_models_dir() -> PathBuf {
             break;
         }
     }
-    
+
     // Ultimate fallback: current_dir/models
-    std::env::current_dir().unwrap_or_else(|_| PathBuf::from(".")).join("models")
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("models")
 }
 
 pub fn resolve_smollm_dir() -> PathBuf {
@@ -578,16 +636,24 @@ pub fn resolve_smollm_onnx_path() -> PathBuf {
 
 pub fn resolve_openssl_path() -> PathBuf {
     #[cfg(target_os = "windows")]
-    { PathBuf::from("openssl.exe") } // Usually on PATH after install
+    {
+        PathBuf::from("openssl.exe")
+    } // Usually on PATH after install
     #[cfg(not(target_os = "windows"))]
-    { PathBuf::from("openssl") }
+    {
+        PathBuf::from("openssl")
+    }
 }
 
 pub fn resolve_xori_path() -> PathBuf {
     #[cfg(target_os = "windows")]
-    { resolve_tools_dir().join("xori").join("xori.exe") }
+    {
+        resolve_tools_dir().join("xori").join("xori.exe")
+    }
     #[cfg(not(target_os = "windows"))]
-    { resolve_tools_dir().join("xori").join("xori") }
+    {
+        resolve_tools_dir().join("xori").join("xori")
+    }
 }
 
 /// Walk up from current_dir to find project/workspace root (osoosi.toml or Cargo.toml with [workspace]).
@@ -621,7 +687,7 @@ pub fn resolve_config_path() -> Option<PathBuf> {
     if local.exists() {
         return Some(local);
     }
-    
+
     // Check parent directory (useful when running from target/release)
     if let Some(parent) = cwd.parent() {
         let parent_local = parent.join("osoosi.toml");
@@ -656,12 +722,17 @@ pub fn load_watch_paths_from_config() -> Option<Vec<String>> {
     let path = resolve_config_path()?;
     let content = std::fs::read_to_string(&path).ok()?;
     let cfg: FileConfig = toml::from_str(&content).ok()?;
-    let mut paths: Vec<String> = cfg.telemetry.watch_paths
+    let mut paths: Vec<String> = cfg
+        .telemetry
+        .watch_paths
         .into_iter()
         .map(|s| s.trim().to_string())
         .filter(|s| !s.is_empty())
         .collect();
-    if paths.iter().any(|s| s.eq_ignore_ascii_case("all") || s == "*") {
+    if paths
+        .iter()
+        .any(|s| s.eq_ignore_ascii_case("all") || s == "*")
+    {
         paths = all_physical_drive_paths();
     }
     if paths.is_empty() {
@@ -864,7 +935,11 @@ pub fn load_autonomy_config() -> AutonomyConfig {
         }
     }
     if let Ok(v) = std::env::var("OSOOSI_QUARANTINE_EXCLUDE_PATHS") {
-        let paths: Vec<String> = v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()).collect();
+        let paths: Vec<String> = v
+            .split(',')
+            .map(|s| s.trim().to_string())
+            .filter(|s| !s.is_empty())
+            .collect();
         if !paths.is_empty() {
             cfg.quarantine_exclude_paths = paths;
         }
@@ -940,7 +1015,7 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
                     } else if let Ok(socket_addr) = p.parse::<std::net::SocketAddr>() {
                         let ip = socket_addr.ip();
                         let port = socket_addr.port();
-                         if ip.is_ipv4() {
+                        if ip.is_ipv4() {
                             bootstrap_peers.push(format!("/ip4/{}/tcp/{}", ip, port));
                         } else {
                             bootstrap_peers.push(format!("/ip6/{}/tcp/{}", ip, port));
@@ -1094,8 +1169,7 @@ pub struct ExporterConfig {
 }
 
 /// Repair/patch configuration.
-#[derive(Debug, Clone, Serialize, Deserialize)]
-#[derive(Default)]
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct RepairConfig {
     /// User to temporarily add to admin group before patching, then remove after.
     /// Use "current" to grant the current user. Requires agent to run as Administrator/root.
@@ -1115,7 +1189,6 @@ pub struct RepairConfig {
     pub require_patch_hash_verification: bool,
 }
 
-
 /// Peer join rules: unpatched or out-of-support OS cannot join the mesh.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PeerRulesConfig {
@@ -1129,7 +1202,10 @@ pub struct PeerRulesConfig {
 
 impl Default for PeerRulesConfig {
     fn default() -> Self {
-        Self { require_patched: true, require_supported_os: true }
+        Self {
+            require_patched: true,
+            require_supported_os: true,
+        }
     }
 }
 
@@ -1243,16 +1319,14 @@ pub fn resolve_otx_api_key() -> Option<String> {
             return Some(t.to_string());
         }
     }
-    load_external_api_config()
-        .otx_api_key
-        .and_then(|s| {
-            let t = s.trim();
-            if t.is_empty() {
-                None
-            } else {
-                Some(t.to_string())
-            }
-        })
+    load_external_api_config().otx_api_key.and_then(|s| {
+        let t = s.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_string())
+        }
+    })
 }
 
 /// NVD API key: `NVD_API_KEY` overrides `[external_api].nvd_api_key` in `osoosi.toml`.
@@ -1263,16 +1337,14 @@ pub fn resolve_nvd_api_key() -> Option<String> {
             return Some(t.to_string());
         }
     }
-    load_external_api_config()
-        .nvd_api_key
-        .and_then(|s| {
-            let t = s.trim();
-            if t.is_empty() {
-                None
-            } else {
-                Some(t.to_string())
-            }
-        })
+    load_external_api_config().nvd_api_key.and_then(|s| {
+        let t = s.trim();
+        if t.is_empty() {
+            None
+        } else {
+            Some(t.to_string())
+        }
+    })
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

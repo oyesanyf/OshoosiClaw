@@ -1,9 +1,9 @@
+use async_trait::async_trait;
+use osoosi_types::SecuredExecutor;
 use std::path::{Path, PathBuf};
 use std::process::Output;
-use async_trait::async_trait;
-use tracing::info;
 use tokio::process::Command;
-use osoosi_types::SecuredExecutor;
+use tracing::info;
 
 /// Default implementation: executes directly on the host system.
 pub struct DirectExecutor {
@@ -30,11 +30,11 @@ impl SecuredExecutor for DirectExecutor {
     }
 
     async fn download(&self, url: &str, dest: &Path, resume: bool) -> anyhow::Result<()> {
-        use tokio::io::AsyncWriteExt;
         use futures::StreamExt;
+        use tokio::io::AsyncWriteExt;
 
         let mut request = self.client.get(url);
-        
+
         if resume && dest.exists() {
             let size = std::fs::metadata(dest)?.len();
             if size > 0 {
@@ -53,7 +53,7 @@ impl SecuredExecutor for DirectExecutor {
 
         let resp = request.send().await?;
         let status = resp.status();
-        
+
         if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
             return Ok(()); // Already finished
         }
@@ -66,7 +66,8 @@ impl SecuredExecutor for DirectExecutor {
             .create(true)
             .append(resume)
             .write(true)
-            .open(dest).await?;
+            .open(dest)
+            .await?;
 
         // If it's a 200 OK but we requested a resume, the server might not support it.
         // We should truncate if we have existing data.
@@ -96,7 +97,8 @@ pub struct OpenShellExecutor {
 impl OpenShellExecutor {
     pub fn new(sandbox_name: &str, policy_path: Option<&str>) -> Self {
         let cli_path = crate::tool_paths::resolve_openshell_cli_path();
-        let use_wsl = cfg!(windows) && !cli_path.exists() && Self::wsl_openshell_available_blocking();
+        let use_wsl =
+            cfg!(windows) && !cli_path.exists() && Self::wsl_openshell_available_blocking();
         Self {
             sandbox_name: sandbox_name.to_string(),
             policy_path: policy_path.map(|s| s.to_string()),
@@ -110,16 +112,12 @@ impl OpenShellExecutor {
     pub async fn is_available() -> bool {
         // Check for 'openshell' binary and 'docker' status
         let cli_path = crate::tool_paths::resolve_openshell_cli_path();
-        let openshell_check = Command::new(&cli_path)
-            .arg("--version")
-            .output().await;
-        
+        let openshell_check = Command::new(&cli_path).arg("--version").output().await;
+
         if let Ok(output) = openshell_check {
             if output.status.success() {
                 // Also check if docker is running
-                let docker_check = Command::new("docker")
-                    .arg("info")
-                    .output().await;
+                let docker_check = Command::new("docker").arg("info").output().await;
                 return docker_check.map(|o| o.status.success()).unwrap_or(false);
             }
         }
@@ -154,34 +152,42 @@ impl OpenShellExecutor {
     }
 
     async fn ensure_sandbox(&self) -> anyhow::Result<()> {
-        if self.sandbox_verified.load(std::sync::atomic::Ordering::SeqCst) {
+        if self
+            .sandbox_verified
+            .load(std::sync::atomic::Ordering::SeqCst)
+        {
             return Ok(());
         }
 
         // Check if sandbox exists
         let mut check_cmd = self.openshell_command();
         let check = check_cmd.args(["sandbox", "list"]).output().await?;
-        
+
         let stdout = String::from_utf8_lossy(&check.stdout);
         if stdout.contains(&self.sandbox_name) {
-            self.sandbox_verified.store(true, std::sync::atomic::Ordering::SeqCst);
+            self.sandbox_verified
+                .store(true, std::sync::atomic::Ordering::SeqCst);
             return Ok(());
         }
 
         info!("Creating OpenShell sandbox: {}...", self.sandbox_name);
         let mut create_cmd = self.openshell_command();
         create_cmd.args(["sandbox", "create", &self.sandbox_name]);
-        
+
         if let Some(ref policy) = self.policy_path {
             create_cmd.args(["--policy", policy]);
         }
 
         let status = create_cmd.status().await?;
         if !status.success() {
-            return Err(anyhow::anyhow!("Failed to create OpenShell sandbox: {}", self.sandbox_name));
+            return Err(anyhow::anyhow!(
+                "Failed to create OpenShell sandbox: {}",
+                self.sandbox_name
+            ));
         }
 
-        self.sandbox_verified.store(true, std::sync::atomic::Ordering::SeqCst);
+        self.sandbox_verified
+            .store(true, std::sync::atomic::Ordering::SeqCst);
         Ok(())
     }
 }
@@ -190,7 +196,7 @@ impl OpenShellExecutor {
 impl SecuredExecutor for OpenShellExecutor {
     async fn execute(&self, cmd: std::process::Command) -> anyhow::Result<Output> {
         self.ensure_sandbox().await?;
-        
+
         // Wrap command in 'openshell sandbox connect'
         let mut wrapped = self.openshell_command();
         wrapped.args(["sandbox", "connect", &self.sandbox_name, "--"]);
@@ -207,29 +213,36 @@ impl SecuredExecutor for OpenShellExecutor {
         self.ensure_sandbox().await?;
 
         info!("Sandboxed Download (OpenShell): {} -> {:?}", url, dest);
-        
+
         // Use curl inside the sandbox to perform the download, leveraging OpenShell's L7 policy engine
         let dest_str = dest.to_string_lossy();
         let mut wrapped = self.openshell_command();
         wrapped.args(["sandbox", "connect", &self.sandbox_name, "--", "curl", "-L"]);
-        
+
         if resume {
             wrapped.arg("-C").arg("-");
         }
-        
+
         if url.contains("huggingface.co") {
             if let Ok(token) = std::env::var("HF_TOKEN") {
-                wrapped.arg("-H").arg(format!("Authorization: Bearer {}", token));
+                wrapped
+                    .arg("-H")
+                    .arg(format!("Authorization: Bearer {}", token));
             } else if let Ok(token) = std::env::var("HUGGING_FACE_HUB_TOKEN") {
-                wrapped.arg("-H").arg(format!("Authorization: Bearer {}", token));
+                wrapped
+                    .arg("-H")
+                    .arg(format!("Authorization: Bearer {}", token));
             }
         }
-        
+
         wrapped.arg("-o").arg(dest_str.as_ref()).arg(url);
 
         let status = wrapped.status().await?;
         if !status.success() {
-            return Err(anyhow::anyhow!("Sandboxed download failed via OpenShell for: {}", url));
+            return Err(anyhow::anyhow!(
+                "Sandboxed download failed via OpenShell for: {}",
+                url
+            ));
         }
 
         Ok(())
@@ -243,7 +256,7 @@ pub async fn get_best_executor() -> std::sync::Arc<dyn SecuredExecutor> {
         std::sync::Arc::new(OpenShellExecutor::new("osoosi-runtime", None))
     } else {
         // Fallback to Native OS Sandbox (Landlock/JobObjects)
-        // For now, this returns DirectExecutor which will eventually 
+        // For now, this returns DirectExecutor which will eventually
         // trigger the Landlock/AppContainer logic.
         info!("NVIDIA OpenShell/Docker not available. Falling back to Native OS Sandboxing.");
         std::sync::Arc::new(DirectExecutor::new())

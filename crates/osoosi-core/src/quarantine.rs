@@ -20,7 +20,13 @@ pub fn quarantine_file(file_path: &str, quarantine_dir: &str) -> anyhow::Result<
         .file_name()
         .and_then(|n| n.to_str())
         .unwrap_or("unknown");
-    let hash_suffix = format!("{:x}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs());
+    let hash_suffix = format!(
+        "{:x}",
+        std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs()
+    );
     let safe_name = format!("{}_{}", hash_suffix, filename);
     let dest = Path::new(quarantine_dir).join(&safe_name);
 
@@ -50,12 +56,20 @@ mod tests {
         f.write_all(b"test content").unwrap();
         drop(f);
 
-        let result = quarantine_file(test_file.to_str().unwrap(), quarantine_dir.to_str().unwrap());
+        let result = quarantine_file(
+            test_file.to_str().unwrap(),
+            quarantine_dir.to_str().unwrap(),
+        );
         assert!(result.is_ok());
         let dest = result.unwrap();
         assert!(dest.exists());
         assert!(dest.starts_with(&quarantine_dir));
-        assert!(dest.file_name().unwrap().to_str().unwrap().starts_with(|c: char| c.is_ascii_hexdigit()));
+        assert!(dest
+            .file_name()
+            .unwrap()
+            .to_str()
+            .unwrap()
+            .starts_with(|c: char| c.is_ascii_hexdigit()));
 
         // Cleanup
         let _ = std::fs::remove_file(&dest);

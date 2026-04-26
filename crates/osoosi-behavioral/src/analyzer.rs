@@ -1,13 +1,13 @@
 //! AI Behavioral Analyzer (adapted from AIEventAnalyzer)
 //! Implements multi-platform AI-based log analysis using LLM meta-prompting.
 
-use serde::{Deserialize, Serialize};
-use anyhow::{Result, anyhow};
-use crate::log_reader::LogEvent;
 use crate::colog::CoLogFilter;
-use crate::reasoning::ReasoningEngine;
 use crate::llm_engine::SmolLMAnalyzer;
-use std::sync::{Mutex, Arc};
+use crate::log_reader::LogEvent;
+use crate::reasoning::ReasoningEngine;
+use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
+use std::sync::{Arc, Mutex};
 use tracing::info;
 
 #[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq)]
@@ -67,16 +67,20 @@ impl BehavioralAnalyzer {
         let api_key = std::env::var("OPENAI_API_KEY")
             .or_else(|_| std::env::var("OSOOSI_OPENAI_API_KEY"))
             .unwrap_or_default();
-        let api_base = std::env::var("OSOOSI_OPENAI_API_BASE").unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
+        let api_base = std::env::var("OSOOSI_OPENAI_API_BASE")
+            .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
         let model = std::env::var("OSOOSI_OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
-        
+
         let reasoning = ReasoningEngine::new();
         let smollm = Arc::new(tokio::sync::RwLock::new(None));
-        let embedder = Arc::new(Mutex::new(crate::process_tree::ProcessTreeEmbedder::new().expect("Failed to init ProcessTreeEmbedder")));
+        let embedder = Arc::new(Mutex::new(
+            crate::process_tree::ProcessTreeEmbedder::new()
+                .expect("Failed to init ProcessTreeEmbedder"),
+        ));
 
-        let analyzer = Self { 
-            api_key, 
-            api_base, 
+        let analyzer = Self {
+            api_key,
+            api_base,
             model,
             colog: Mutex::new(CoLogFilter::new(100)),
             reasoning,
@@ -84,7 +88,10 @@ impl BehavioralAnalyzer {
             embedder,
         };
 
-        if std::env::var("OSOOSI_ENABLE_SMOLLM").map(|v| v == "1").unwrap_or(false) {
+        if std::env::var("OSOOSI_ENABLE_SMOLLM")
+            .map(|v| v == "1")
+            .unwrap_or(false)
+        {
             analyzer.init_native_smollm();
         }
         analyzer
@@ -98,7 +105,8 @@ impl BehavioralAnalyzer {
     pub fn init_native_smollm(&self) {
         let smollm_lock = self.smollm.clone();
         tokio::task::spawn_blocking(move || {
-            let models_dir = std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
+            let models_dir =
+                std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
             let smollm_dir = std::path::Path::new(&models_dir).join("smollm");
             match SmolLMAnalyzer::new(&smollm_dir) {
                 Ok(s) => {
@@ -114,32 +122,41 @@ impl BehavioralAnalyzer {
     }
 
     /// Step 1: Generate investigative prompts based on mode and log data.
-    pub async fn generate_investigative_prompts(&self, mode: AnalysisMode, events: &[LogEvent]) -> Result<Vec<InvestigativePrompt>> {
+    pub async fn generate_investigative_prompts(
+        &self,
+        mode: AnalysisMode,
+        events: &[LogEvent],
+    ) -> Result<Vec<InvestigativePrompt>> {
         if !self.is_configured() {
             return Err(anyhow!("AI Analyzer not configured. Set OSOOSI_OPENAI_API_KEY or allow native SmolLM2 to initialize."));
         }
 
         let system_prompt = self.get_system_prompt_for_mode(mode);
         let log_context = self.format_events_for_llm(events);
-        
+
         // The power mode prompts explicitly request JSON response matching the power script's examples.
         let user_message = format!("{}\n\nLog Data:\n{}\n\nAnalyze data and return a JSON object with a 'prompts' field containing a list of investigative prompts.", system_prompt, log_context);
 
         let response = self.call_llm(&user_message, true).await?;
-        
+
         // Clean JSON from response
         let cleaned_json = self.extract_json(&response);
         let wrapper: serde_json::Value = serde_json::from_str(&cleaned_json)?;
-        let prompts_val = wrapper.get("prompts")
+        let prompts_val = wrapper
+            .get("prompts")
             .ok_or_else(|| anyhow!("Missing 'prompts' field in LLM response"))?;
-        
+
         let prompts: Vec<InvestigativePrompt> = serde_json::from_value(prompts_val.clone())?;
-        
+
         Ok(prompts)
     }
 
     /// Step 2: Perform deep analysis using a selected investigative prompt.
-    pub async fn perform_deep_analysis(&self, investigative_prompt: &str, events: &[LogEvent]) -> Result<String> {
+    pub async fn perform_deep_analysis(
+        &self,
+        investigative_prompt: &str,
+        events: &[LogEvent],
+    ) -> Result<String> {
         // If we have an expert reasoning engine (Foundation-Sec), use it!
         // This is the "Tier 2" specialist investigation.
         if let Ok(res) = self.reasoning.reason(events, investigative_prompt).await {
@@ -148,10 +165,15 @@ impl BehavioralAnalyzer {
                  **Verdict**: {}\n\
                  **Confidence**: {:.0}%\n\n\
                  ### Forensic Story\n{}\n\n",
-                res.verdict, res.confidence * 100.0, res.explanation
+                res.verdict,
+                res.confidence * 100.0,
+                res.explanation
             );
             if let Some(yara) = res.recommended_yara_l {
-                report.push_str(&format!("### Recommended YARA-L Rule\n```yara\n{}\n```\n", yara));
+                report.push_str(&format!(
+                    "### Recommended YARA-L Rule\n```yara\n{}\n```\n",
+                    yara
+                ));
             }
             return Ok(report);
         }
@@ -161,8 +183,9 @@ impl BehavioralAnalyzer {
         }
 
         let log_context = self.format_events_for_llm(events);
-        let enrichment = "Ensure that the response is comprehensive and detailed, providing in-depth insights.";
-        
+        let enrichment =
+            "Ensure that the response is comprehensive and detailed, providing in-depth insights.";
+
         let user_message = format!(
             "Task: {}\n\nEnrichment Instruction: {}\n\nSystem Log Context:\n{}\n\nProvide detailed security analysis and recommendations.",
             investigative_prompt, enrichment, log_context
@@ -181,10 +204,23 @@ impl BehavioralAnalyzer {
 
         // ML Layer: Process Tree Embedding (Candle)
         if event.source == "Microsoft-Windows-Sysmon" {
-            let event_id = event.data.get("EventId").and_then(|v| v.as_i64()).unwrap_or(0);
-            if event_id == 1 { // Process Creation
-                let parent = event.data.get("ParentImage").and_then(|v| v.as_str()).unwrap_or("unknown");
-                let child = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+            let event_id = event
+                .data
+                .get("EventId")
+                .and_then(|v| v.as_i64())
+                .unwrap_or(0);
+            if event_id == 1 {
+                // Process Creation
+                let parent = event
+                    .data
+                    .get("ParentImage")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let child = event
+                    .data
+                    .get("Image")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
                 let rel = crate::process_tree::ProcessRelationship {
                     parent_name: parent.to_string(),
                     child_name: child.to_string(),
@@ -192,7 +228,7 @@ impl BehavioralAnalyzer {
                     mitre_technique: None,
                     confidence: 1.0,
                 };
-                
+
                 if let Ok(embedder) = self.embedder.lock() {
                     if let Ok(emb) = embedder.embed(&rel) {
                         let ml_score = embedder.calculate_anomaly_score(&rel, &emb);
@@ -209,8 +245,15 @@ impl BehavioralAnalyzer {
     fn format_events_for_llm(&self, events: &[LogEvent]) -> String {
         let mut out = String::from("<security_event_data>\n");
         for ev in events.iter().take(100) {
-            let msg = ev.data.get("Message").and_then(|m| m.as_str()).unwrap_or("No message");
-            out.push_str(&format!("[{}] {} (Source: {}): {}\n", ev.timestamp, ev.computer, ev.source, msg));
+            let msg = ev
+                .data
+                .get("Message")
+                .and_then(|m| m.as_str())
+                .unwrap_or("No message");
+            out.push_str(&format!(
+                "[{}] {} (Source: {}): {}\n",
+                ev.timestamp, ev.computer, ev.source, msg
+            ));
         }
         out.push_str("</security_event_data>");
         out
@@ -229,7 +272,7 @@ impl BehavioralAnalyzer {
 
         // Only fall back to OpenAI/Remote if SmolLM is not loaded and a key is available
         if self.api_key.is_empty() {
-             return Err(anyhow!("No OpenAI API key and native SmolLM is not yet ready. Wait for initialization or set OSOOSI_OPENAI_API_KEY."));
+            return Err(anyhow!("No OpenAI API key and native SmolLM is not yet ready. Wait for initialization or set OSOOSI_OPENAI_API_KEY."));
         }
 
         let client = reqwest::Client::new();
@@ -249,15 +292,12 @@ impl BehavioralAnalyzer {
         }
 
         let mut req = client.post(&url);
-        
+
         if !self.api_key.is_empty() {
             req = req.header("Authorization", format!("Bearer {}", self.api_key));
         }
 
-        let res = req
-            .json(&body)
-            .send()
-            .await?;
+        let res = req.json(&body).send().await?;
 
         if !res.status().is_success() {
             let err_text = res.text().await?;

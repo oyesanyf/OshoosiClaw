@@ -42,11 +42,11 @@ impl DifferentialPrivacy {
         let mut rng = rand::thread_rng();
         let u: f32 = rng.gen_range(-0.5..0.5);
         let scale = self.config.sensitivity / self.config.epsilon;
-        
+
         // Laplacian noise = -scale * sign(u) * ln(1 - 2|u|)
         let sign = if u < 0.0 { -1.0 } else { 1.0 };
         let magnitude = (1.0 - 2.0 * u.abs()).ln();
-        
+
         -scale * sign * magnitude
     }
 

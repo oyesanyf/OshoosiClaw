@@ -3,19 +3,19 @@
 //! Reads security event logs from Windows Event Log, Linux auditd, and macOS audit.
 //! All events are normalized for the policy engine.
 
-use osoosi_types::{HostEventSource, HostSecurityEvent};
-#[cfg(target_os = "windows")]
-use tracing::{debug, warn};
 #[cfg(not(target_os = "windows"))]
 use chrono::Utc;
+use osoosi_types::{HostEventSource, HostSecurityEvent};
 #[cfg(not(target_os = "windows"))]
 use serde_json::json;
-#[cfg(not(target_os = "windows"))]
-use std::path::Path;
-#[cfg(target_os = "linux")]
-use std::io::{BufRead, BufReader};
 #[cfg(target_os = "linux")]
 use std::fs::File;
+#[cfg(target_os = "linux")]
+use std::io::{BufRead, BufReader};
+#[cfg(not(target_os = "windows"))]
+use std::path::Path;
+#[cfg(target_os = "windows")]
+use tracing::{debug, warn};
 
 /// Trait for platform-specific host event sources.
 pub trait HostEventReader: Send + Sync {
@@ -139,7 +139,7 @@ impl WindowsEventReader {
             cmd.args([
                 "qe",
                 &self.channel,
-                "/rd:true",   // newest-first so we get the most-recent 100
+                "/rd:true", // newest-first so we get the most-recent 100
                 "/c:100",
                 "/f:xml",
             ]);
@@ -148,7 +148,10 @@ impl WindowsEventReader {
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
             let stdout = String::from_utf8_lossy(&output.stdout);
-            let msg = if stderr.contains("Access is denied") || stderr.contains("access denied") || stdout.contains("Access is denied") {
+            let msg = if stderr.contains("Access is denied")
+                || stderr.contains("access denied")
+                || stdout.contains("Access is denied")
+            {
                 format!(
                     "wevtutil failed (access denied). OpenỌ̀ṣọ́ọ̀sì runs unprivileged—it does not request admin. \
                     Admin must grant read access: add the OpenỌ̀ṣọ́ọ̀sì service account to 'Event Log Readers' group, \
@@ -242,7 +245,7 @@ impl HostEventReader for WindowsEventReader {
         let xml_events = self.query_wevtutil()?;
         let mut out = Vec::new();
         let count = xml_events.len();
-        
+
         if count > 0 {
             tracing::info!(target: "telemetry", "[Sysmon] Read {} raw XML event(s) from '{}'", count, self.channel);
         }
@@ -418,7 +421,8 @@ impl LinuxAuditReader {
                 match k {
                     "type" => event_type = v,
                     "msg" => {
-                        if let Some(ts) = v.strip_prefix("audit(").and_then(|s| s.split(':').next()) {
+                        if let Some(ts) = v.strip_prefix("audit(").and_then(|s| s.split(':').next())
+                        {
                             msg_ts = ts.parse().unwrap_or(0.0);
                         }
                     }
@@ -462,7 +466,13 @@ impl LinuxAuditReader {
             data.insert("CommandLine".to_string(), json!(event_type));
         }
         if !data.contains_key("Image") {
-            data.insert("Image".to_string(), json!(data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("unknown")));
+            data.insert(
+                "Image".to_string(),
+                json!(data
+                    .get("CommandLine")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown")),
+            );
         }
 
         let timestamp = if msg_ts > 0.0 {
@@ -518,7 +528,8 @@ impl HostEventReader for LinuxAuditReader {
             }
         } else {
             for line in reader.lines().flatten().rev().take(50) {
-                if line.contains("Accepted") || line.contains("Failed") || line.contains("session") {
+                if line.contains("Accepted") || line.contains("Failed") || line.contains("session")
+                {
                     if let Some(ev) = self.parse_audit_line(&line) {
                         out.push(ev);
                     }
@@ -595,7 +606,10 @@ impl HostEventReader for MacAuditReader {
         if Path::new(&self.path).exists() {
             if let Ok(content) = std::fs::read_to_string(&self.path) {
                 for line in content.lines().rev().take(50) {
-                    if line.contains("Accepted") || line.contains("Failed") || line.contains("session") {
+                    if line.contains("Accepted")
+                        || line.contains("Failed")
+                        || line.contains("session")
+                    {
                         if let Some(ev) = self.parse_syslog_line(line) {
                             out.push(ev);
                         }

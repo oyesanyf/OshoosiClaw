@@ -10,7 +10,7 @@
 
 use rusqlite::{params, Connection};
 use std::path::Path;
-use tracing::{info, debug};
+use tracing::{debug, info};
 
 /// NSRL ingester and lookup engine.
 pub struct NsrlIngester {
@@ -29,7 +29,7 @@ impl NsrlIngester {
                 product_name TEXT,
                 os_name TEXT
             );
-            CREATE INDEX IF NOT EXISTS idx_nsrl_sha256 ON nsrl_whitelist(sha256);"
+            CREATE INDEX IF NOT EXISTS idx_nsrl_sha256 ON nsrl_whitelist(sha256);",
         )?;
 
         info!("NSRL whitelist database opened: {:?}", db_path);
@@ -47,7 +47,10 @@ impl NsrlIngester {
             anyhow::bail!("NSRL RDS file not found: {:?}", rds_path);
         }
 
-        info!("Ingesting NSRL RDS v3 from {:?} (this may take several minutes)...", rds_path);
+        info!(
+            "Ingesting NSRL RDS v3 from {:?} (this may take several minutes)...",
+            rds_path
+        );
 
         // Attach the NSRL database
         self.conn.execute(
@@ -64,7 +67,10 @@ impl NsrlIngester {
 
         self.conn.execute("DETACH DATABASE nist", [])?;
 
-        info!("NSRL ingestion complete: {} known-good hashes imported", count);
+        info!(
+            "NSRL ingestion complete: {} known-good hashes imported",
+            count
+        );
         Ok(count)
     }
 
@@ -133,7 +139,11 @@ impl NsrlIngester {
     /// Get the total count of known-good hashes in the whitelist.
     pub fn count(&self) -> usize {
         self.conn
-            .query_row("SELECT COUNT(*) FROM nsrl_whitelist", [], |row: &rusqlite::Row| row.get(0))
+            .query_row(
+                "SELECT COUNT(*) FROM nsrl_whitelist",
+                [],
+                |row: &rusqlite::Row| row.get(0),
+            )
             .unwrap_or(0)
     }
 
@@ -159,13 +169,18 @@ mod tests {
         let ingester = NsrlIngester::new(&tmp).expect("create nsrl db");
 
         // Insert a test hash
-        ingester.conn.execute(
-            "INSERT INTO nsrl_whitelist (sha256) VALUES (?1)",
-            params!["abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"],
-        ).unwrap();
+        ingester
+            .conn
+            .execute(
+                "INSERT INTO nsrl_whitelist (sha256) VALUES (?1)",
+                params!["abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"],
+            )
+            .unwrap();
 
-        assert!(ingester.is_known_good("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"));
-        assert!(!ingester.is_known_good("0000000000000000000000000000000000000000000000000000000000000000"));
+        assert!(ingester
+            .is_known_good("abcdef1234567890abcdef1234567890abcdef1234567890abcdef1234567890"));
+        assert!(!ingester
+            .is_known_good("0000000000000000000000000000000000000000000000000000000000000000"));
         assert_eq!(ingester.count(), 1);
 
         let _ = std::fs::remove_file(&tmp);

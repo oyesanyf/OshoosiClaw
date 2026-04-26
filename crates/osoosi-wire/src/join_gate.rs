@@ -1,10 +1,13 @@
 //! Join Gate: User approval for agents joining the mesh based on reputation scores.
 
 use super::MeshCommand;
+use chrono::Utc;
 use libp2p::PeerId;
 use osoosi_memory::MemoryStore;
-use osoosi_types::{PendingJoinRequest, QuarantinedPeer, ReputationScore, tainted_value_for_peer, TaintSink, PeerAnnounce, PeerRulesConfig};
-use chrono::Utc;
+use osoosi_types::{
+    tainted_value_for_peer, PeerAnnounce, PeerRulesConfig, PendingJoinRequest, QuarantinedPeer,
+    ReputationScore, TaintSink,
+};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -46,15 +49,22 @@ impl JoinGate {
     }
 
     /// Called when a PeerAnnounce is received. Upserts to memory; removes from pending if peer fails rules.
-    pub fn on_peer_announce_received(&self, announce: &PeerAnnounce, rules: &PeerRulesConfig) -> anyhow::Result<()> {
+    pub fn on_peer_announce_received(
+        &self,
+        announce: &PeerAnnounce,
+        rules: &PeerRulesConfig,
+    ) -> anyhow::Result<()> {
         self.memory.upsert_peer_status(announce)?;
 
         // Master Node Verification
         if let Some(ref master_pk_hex) = self.master_node_public_key {
             let verified = self.verify_membership_proof(master_pk_hex, announce);
-            
+
             if !verified {
-                warn!("Peer {} failed Master Node authorization check!", announce.source_node);
+                warn!(
+                    "Peer {} failed Master Node authorization check!",
+                    announce.source_node
+                );
                 self.memory.remove_pending_join(&announce.source_node).ok();
                 return Ok(());
             }
@@ -63,18 +73,34 @@ impl JoinGate {
         let fails = (rules.require_patched && !announce.is_patched)
             || (rules.require_supported_os && !announce.os_supported);
         if fails {
-            let reason = if !announce.is_patched { "unpatched" } else { "out-of-support OS" };
-            if self.memory.get_pending_joins()?.iter().any(|p| p.peer_id == announce.source_node) {
+            let reason = if !announce.is_patched {
+                "unpatched"
+            } else {
+                "out-of-support OS"
+            };
+            if self
+                .memory
+                .get_pending_joins()?
+                .iter()
+                .any(|p| p.peer_id == announce.source_node)
+            {
                 self.memory.remove_pending_join(&announce.source_node)?;
-                info!("Peer {} blocked from mesh: {}", announce.source_node, reason);
+                info!(
+                    "Peer {} blocked from mesh: {}",
+                    announce.source_node, reason
+                );
             }
         }
         Ok(())
     }
 
-    fn verify_membership_proof(&self, master_node_pk: &str, announce: &osoosi_types::PeerAnnounce) -> bool {
-        use ed25519_dalek::{VerifyingKey, Signature, Verifier};
-        
+    fn verify_membership_proof(
+        &self,
+        master_node_pk: &str,
+        announce: &osoosi_types::PeerAnnounce,
+    ) -> bool {
+        use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+
         let proof_hex = match &announce.membership_proof {
             Some(p) => p,
             None => return false,
@@ -101,12 +127,18 @@ impl JoinGate {
         };
 
         // Verification: Sign the PeerID
-        public_key.verify(announce.source_node.as_bytes(), &signature).is_ok()
+        public_key
+            .verify(announce.source_node.as_bytes(), &signature)
+            .is_ok()
     }
 
     /// Called when mDNS discovers a new peer. Auto-approves if reputation >= threshold; otherwise adds to pending.
     /// Blocks immediately if we have peer status and it fails require_patched / require_supported_os.
-    pub fn on_peer_discovered(&self, peer_id: PeerId, multiaddr: Option<String>) -> anyhow::Result<()> {
+    pub fn on_peer_discovered(
+        &self,
+        peer_id: PeerId,
+        multiaddr: Option<String>,
+    ) -> anyhow::Result<()> {
         let peer_id_str = peer_id.to_string();
 
         // Hardening: Discovery Rate-Limiting (Prevents flooding and UI saturation)
@@ -116,7 +148,8 @@ impl JoinGate {
                 return Ok(());
             }
         }
-        self.discovery_rate_limiter.insert(peer_id_str.clone(), Utc::now());
+        self.discovery_rate_limiter
+            .insert(peer_id_str.clone(), Utc::now());
         if self.is_quarantined(&peer_id_str)? {
             warn!("Ignoring discovered peer {} (quarantined)", peer_id_str);
             return Ok(());
@@ -125,7 +158,11 @@ impl JoinGate {
             let fails = (self.peer_rules.require_patched && !status.is_patched)
                 || (self.peer_rules.require_supported_os && !status.os_supported);
             if fails {
-                let reason = if !status.is_patched { "unpatched" } else { "out-of-support OS" };
+                let reason = if !status.is_patched {
+                    "unpatched"
+                } else {
+                    "out-of-support OS"
+                };
                 warn!("Peer {} blocked from mesh: {}", peer_id_str, reason);
                 return Ok(());
             }
@@ -147,23 +184,38 @@ impl JoinGate {
 
         // Autonomous: auto-approve when reputation meets threshold
         if score >= self.min_reputation_auto_approve && self.min_reputation_auto_approve < 1.0 {
-            let tainted = tainted_value_for_peer(&req.peer_id, req.reputation_score, req.multiaddr.as_deref());
+            let tainted = tainted_value_for_peer(
+                &req.peer_id,
+                req.reputation_score,
+                req.multiaddr.as_deref(),
+            );
             let sink = TaintSink::mesh_join();
             if tainted.check_sink(&sink).is_ok() {
                 if let Some(ref addr) = multiaddr {
-                    let _ = self.command_tx.try_send(MeshCommand::DialPeer(peer_id, addr.clone()));
+                    let _ = self
+                        .command_tx
+                        .try_send(MeshCommand::DialPeer(peer_id, addr.clone()));
                 }
-                if self.command_tx.try_send(MeshCommand::ApprovePeer(peer_id)).is_ok() {
-                    info!("Auto-approved peer {} (reputation: {:.2} >= {:.2})", peer_id_str, score, self.min_reputation_auto_approve);
+                if self
+                    .command_tx
+                    .try_send(MeshCommand::ApprovePeer(peer_id))
+                    .is_ok()
+                {
+                    info!(
+                        "Auto-approved peer {} (reputation: {:.2} >= {:.2})",
+                        peer_id_str, score, self.min_reputation_auto_approve
+                    );
                     return Ok(());
                 }
             }
         }
 
         if let Some(ref addr) = multiaddr {
-            let _ = self.command_tx.try_send(MeshCommand::DialPeer(peer_id, addr.clone()));
+            let _ = self
+                .command_tx
+                .try_send(MeshCommand::DialPeer(peer_id, addr.clone()));
         }
-        
+
         self.memory.add_pending_join(&req)?;
         info!(
             "Peer {} awaiting user approval (reputation: {:.2})",
@@ -175,7 +227,10 @@ impl JoinGate {
     /// User approved this peer. Taint check runs during grant access; if pass, adds to mesh and removes from pending.
     pub async fn allow(&self, peer_id: &str) -> anyhow::Result<()> {
         if self.is_quarantined(peer_id)? {
-            return Err(anyhow::anyhow!("Peer {} is quarantined and cannot be approved", peer_id));
+            return Err(anyhow::anyhow!(
+                "Peer {} is quarantined and cannot be approved",
+                peer_id
+            ));
         }
         if let Some(status) = self.memory.get_peer_status(peer_id)? {
             let fails = (self.peer_rules.require_patched && !status.is_patched)
@@ -188,7 +243,10 @@ impl JoinGate {
                 };
                 return Err(anyhow::anyhow!(
                     "Peer {} cannot join: {} (require_patched={}, require_supported_os={})",
-                    peer_id, reason, self.peer_rules.require_patched, self.peer_rules.require_supported_os
+                    peer_id,
+                    reason,
+                    self.peer_rules.require_patched,
+                    self.peer_rules.require_supported_os
                 ));
             }
         } else if self.peer_rules.require_patched || self.peer_rules.require_supported_os {
@@ -197,16 +255,16 @@ impl JoinGate {
                 peer_id
             ));
         }
-        let pending = self.memory.get_pending_joins()?
+        let pending = self
+            .memory
+            .get_pending_joins()?
             .into_iter()
             .find(|p| p.peer_id == peer_id);
-        let req = pending.ok_or_else(|| anyhow::anyhow!("Peer {} not in pending joins", peer_id))?;
+        let req =
+            pending.ok_or_else(|| anyhow::anyhow!("Peer {} not in pending joins", peer_id))?;
 
-        let tainted = tainted_value_for_peer(
-            &req.peer_id,
-            req.reputation_score,
-            req.multiaddr.as_deref(),
-        );
+        let tainted =
+            tainted_value_for_peer(&req.peer_id, req.reputation_score, req.multiaddr.as_deref());
         let sink = TaintSink::mesh_join();
         if let Err(violation) = tainted.check_sink(&sink) {
             return Err(anyhow::anyhow!(
@@ -215,12 +273,25 @@ impl JoinGate {
             ));
         }
 
-        let pid = peer_id.parse::<PeerId>().map_err(|e| anyhow::anyhow!("Invalid peer ID: {}", e))?;
+        let pid = peer_id
+            .parse::<PeerId>()
+            .map_err(|e| anyhow::anyhow!("Invalid peer ID: {}", e))?;
         self.memory.remove_pending_join(peer_id)?;
-        if self.command_tx.send(MeshCommand::ApprovePeer(pid)).await.is_err() {
-            warn!("Mesh may have shut down; approval for {} not delivered", peer_id);
+        if self
+            .command_tx
+            .send(MeshCommand::ApprovePeer(pid))
+            .await
+            .is_err()
+        {
+            warn!(
+                "Mesh may have shut down; approval for {} not delivered",
+                peer_id
+            );
         } else {
-            info!("User approved peer {} to join mesh (taint check passed)", peer_id);
+            info!(
+                "User approved peer {} to join mesh (taint check passed)",
+                peer_id
+            );
         }
         Ok(())
     }
@@ -322,11 +393,20 @@ impl JoinGate {
     pub fn auto_approve_backlog(&self) -> anyhow::Result<()> {
         let pending = self.memory.get_pending_joins()?;
         for req in pending {
-            if req.reputation_score >= self.min_reputation_auto_approve && self.min_reputation_auto_approve < 1.0 {
+            if req.reputation_score >= self.min_reputation_auto_approve
+                && self.min_reputation_auto_approve < 1.0
+            {
                 if let Ok(pid) = req.peer_id.parse::<PeerId>() {
-                    if self.command_tx.try_send(MeshCommand::ApprovePeer(pid)).is_ok() {
+                    if self
+                        .command_tx
+                        .try_send(MeshCommand::ApprovePeer(pid))
+                        .is_ok()
+                    {
                         self.memory.remove_pending_join(&req.peer_id)?;
-                        info!("Auto-approved backlog peer {} (reputation: {:.2} >= {:.2})", req.peer_id, req.reputation_score, self.min_reputation_auto_approve);
+                        info!(
+                            "Auto-approved backlog peer {} (reputation: {:.2} >= {:.2})",
+                            req.peer_id, req.reputation_score, self.min_reputation_auto_approve
+                        );
                     }
                 }
             }

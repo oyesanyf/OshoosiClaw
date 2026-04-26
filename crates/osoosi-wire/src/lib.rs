@@ -2,19 +2,19 @@
 //!
 //! Uses libp2p to disseminate threat intelligence across the mesh.
 
-pub mod join_gate;
-pub mod mesh;
-pub mod holograph;
-pub mod pqc;
-pub mod tarpit;
 pub mod confidential;
 pub mod ghost_node;
+pub mod holograph;
+pub mod join_gate;
+pub mod mesh;
+pub mod pqc;
+pub mod tarpit;
 
+pub use confidential::*;
+pub use ghost_node::*;
 pub use join_gate::JoinGate;
 pub use mesh::*;
 pub use tarpit::*;
-pub use confidential::*;
-pub use ghost_node::*;
 
 /// Gossipsub topic for mesh-wide tarpitting signals.
 pub const TARPIT_TOPIC: &str = "osoosi-tarpit-v1";

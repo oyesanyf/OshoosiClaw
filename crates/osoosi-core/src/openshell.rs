@@ -12,7 +12,7 @@ use std::env;
 use std::ffi::OsString;
 use std::path::{Path, PathBuf};
 use std::process::Command;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 /// `pip install git+https://...` (VCS) — needs `git` on PATH; same default as NVIDIA OpenShell docs.
 const OPENSHELL_PIP_GIT_URL: &str = "git+https://github.com/NVIDIA/OpenShell.git";
@@ -65,14 +65,24 @@ impl OpenShellManager {
         let cli_path = Self::find_openshell_cli();
         let policy_path = Self::find_policy_path();
         let use_wsl = cfg!(windows) && !cli_path.exists() && Self::check_wsl_openshell();
-        Self { cli_path, policy_path, use_wsl }
+        Self {
+            cli_path,
+            policy_path,
+            use_wsl,
+        }
     }
 
     /// Check if OpenShell CLI is available on this system.
     pub fn is_available(&self) -> bool {
-        if self.cli_path.exists() && self.cli_path.is_file() { return true; }
-        if Self::which_openshell().is_some() { return true; }
-        if cfg!(windows) && Self::check_wsl_openshell() { return true; }
+        if self.cli_path.exists() && self.cli_path.is_file() {
+            return true;
+        }
+        if Self::which_openshell().is_some() {
+            return true;
+        }
+        if cfg!(windows) && Self::check_wsl_openshell() {
+            return true;
+        }
         // Fallback: check if it's available as a python module
         Self::check_python_module()
     }
@@ -124,7 +134,11 @@ impl OpenShellManager {
     pub fn status(&self) -> OpenShellStatus {
         let installed = self.is_available();
         let version = if installed { self.get_version() } else { None };
-        let gateway_running = if installed { self.check_gateway() } else { false };
+        let gateway_running = if installed {
+            self.check_gateway()
+        } else {
+            false
+        };
         let sandboxes = if installed && gateway_running {
             self.list_sandboxes().unwrap_or_default()
         } else {
@@ -226,9 +240,16 @@ impl OpenShellManager {
     ///
     /// The sandbox name defaults to "osoosi" but can be customized.
     /// `osoosi_start_extra` is appended after `osoosi start` (e.g. `&["--no-dashboard"]`).
-    pub fn create_sandbox(&self, name: Option<&str>, osoosi_start_extra: &[&str]) -> OpenShellResult {
+    pub fn create_sandbox(
+        &self,
+        name: Option<&str>,
+        osoosi_start_extra: &[&str],
+    ) -> OpenShellResult {
         let sandbox_name = name.unwrap_or("osoosi");
-        info!("Creating OpenShell sandbox '{}' with policy: {:?}", sandbox_name, self.policy_path);
+        info!(
+            "Creating OpenShell sandbox '{}' with policy: {:?}",
+            sandbox_name, self.policy_path
+        );
 
         let mut cmd = self.openshell_command();
         cmd.args(["sandbox", "create"]);
@@ -237,7 +258,10 @@ impl OpenShellManager {
         if self.policy_path.exists() {
             cmd.args(["--policy", &self.policy_path.to_string_lossy()]);
         } else {
-            warn!("OpenShell policy not found at {:?}. Using default restrictive policy.", self.policy_path);
+            warn!(
+                "OpenShell policy not found at {:?}. Using default restrictive policy.",
+                self.policy_path
+            );
         }
 
         // Set the sandbox name
@@ -304,7 +328,11 @@ impl OpenShellManager {
     }
 
     /// Apply or update the security policy on a running sandbox.
-    pub fn apply_policy(&self, sandbox_name: Option<&str>, policy_path: Option<&Path>) -> OpenShellResult {
+    pub fn apply_policy(
+        &self,
+        sandbox_name: Option<&str>,
+        policy_path: Option<&Path>,
+    ) -> OpenShellResult {
         let name = sandbox_name.unwrap_or("osoosi");
         let policy = policy_path.unwrap_or(&self.policy_path);
 
@@ -316,11 +344,21 @@ impl OpenShellManager {
             };
         }
 
-        info!("Applying OpenShell policy to sandbox '{}': {:?}", name, policy);
+        info!(
+            "Applying OpenShell policy to sandbox '{}': {:?}",
+            name, policy
+        );
 
         let mut cmd = self.openshell_command();
         let output = cmd
-            .args(["policy", "set", name, "--policy", &policy.to_string_lossy(), "--wait"])
+            .args([
+                "policy",
+                "set",
+                name,
+                "--policy",
+                &policy.to_string_lossy(),
+                "--wait",
+            ])
             .output();
 
         match output {
@@ -329,7 +367,11 @@ impl OpenShellManager {
                 let stderr = String::from_utf8_lossy(&o.stderr);
                 OpenShellResult {
                     success: o.status.success(),
-                    message: if o.status.success() { stdout.to_string() } else { stderr.to_string() },
+                    message: if o.status.success() {
+                        stdout.to_string()
+                    } else {
+                        stderr.to_string()
+                    },
                     sandbox_name: Some(name.to_string()),
                 }
             }
@@ -355,7 +397,11 @@ impl OpenShellManager {
                 let stderr = String::from_utf8_lossy(&o.stderr);
                 OpenShellResult {
                     success: o.status.success(),
-                    message: if o.status.success() { stdout.to_string() } else { stderr.to_string() },
+                    message: if o.status.success() {
+                        stdout.to_string()
+                    } else {
+                        stderr.to_string()
+                    },
                     sandbox_name: Some(sandbox_name.to_string()),
                 }
             }
@@ -401,7 +447,11 @@ impl OpenShellManager {
             Ok(o) => {
                 let stdout = String::from_utf8_lossy(&o.stdout).to_string();
                 let stderr = String::from_utf8_lossy(&o.stderr).to_string();
-                let msg = if o.status.success() { stdout } else { format!("{}\n{}", stdout, stderr) };
+                let msg = if o.status.success() {
+                    stdout
+                } else {
+                    format!("{}\n{}", stdout, stderr)
+                };
                 OpenShellResult {
                     success: o.status.success(),
                     message: msg,
@@ -437,7 +487,11 @@ impl OpenShellManager {
                 } else {
                     String::from_utf8_lossy(&o.stderr).to_string()
                 };
-                OpenShellResult { success: o.status.success(), message: msg, sandbox_name: Some(name.to_string()) }
+                OpenShellResult {
+                    success: o.status.success(),
+                    message: msg,
+                    sandbox_name: Some(name.to_string()),
+                }
             }
             Err(e) => OpenShellResult {
                 success: false,
@@ -457,7 +511,8 @@ impl OpenShellManager {
         if !self.is_available() {
             return OpenShellResult {
                 success: false,
-                message: "OpenShell not available. Falling back to direct provisioning.".to_string(),
+                message: "OpenShell not available. Falling back to direct provisioning."
+                    .to_string(),
                 sandbox_name: None,
             };
         }
@@ -560,7 +615,11 @@ echo "DONE: YARA provisioning complete"
                     let stderr = String::from_utf8_lossy(&o.stderr);
                     OpenShellResult {
                         success: o.status.success(),
-                        message: if o.status.success() { stdout.to_string() } else { stderr.to_string() },
+                        message: if o.status.success() {
+                            stdout.to_string()
+                        } else {
+                            stderr.to_string()
+                        },
                         sandbox_name: None,
                     }
                 }
@@ -592,7 +651,10 @@ echo "DONE: YARA provisioning complete"
         }
 
         if let Some(ref g) = crate::tool_paths::resolve_git_executable() {
-            info!("Using Git at {} (set OSOOSI_GIT_PATH to override)", g.display());
+            info!(
+                "Using Git at {} (set OSOOSI_GIT_PATH to override)",
+                g.display()
+            );
         } else {
             warn!("Git not found (install Git for Windows or set OSOOSI_GIT_PATH); PyPI openshell may still work; VCS install will fail without git.");
         }
@@ -732,20 +794,26 @@ echo "DONE: YARA provisioning complete"
         // 1. Environment variable
         if let Ok(p) = std::env::var("OPENSHELL_SANDBOX_POLICY") {
             let path = PathBuf::from(p);
-            if path.exists() { return path; }
+            if path.exists() {
+                return path;
+            }
         }
 
         // 2. Next to executable
         if let Ok(exe) = std::env::current_exe() {
             if let Some(parent) = exe.parent() {
                 let policy = parent.join(DEFAULT_POLICY_PATH);
-                if policy.exists() { return policy; }
+                if policy.exists() {
+                    return policy;
+                }
             }
         }
 
         // 3. Current directory
         let cwd_policy = PathBuf::from(DEFAULT_POLICY_PATH);
-        if cwd_policy.exists() { return cwd_policy; }
+        if cwd_policy.exists() {
+            return cwd_policy;
+        }
 
         // Fallback
         PathBuf::from(DEFAULT_POLICY_PATH)

@@ -16,7 +16,7 @@
 
 use std::path::PathBuf;
 #[allow(unused_imports)]
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 /// Landlock sandbox configuration.
 #[derive(Debug, Clone)]
@@ -92,7 +92,10 @@ pub fn apply_landlock_sandbox(config: &LandlockConfig) -> anyhow::Result<()> {
         if config.strict_mode {
             anyhow::bail!("Failed to create Landlock ruleset: {}", err);
         }
-        warn!("Failed to create Landlock ruleset: {}. Continuing without sandbox.", err);
+        warn!(
+            "Failed to create Landlock ruleset: {}. Continuing without sandbox.",
+            err
+        );
         return Ok(());
     }
 
@@ -123,23 +126,29 @@ pub fn apply_landlock_sandbox(config: &LandlockConfig) -> anyhow::Result<()> {
         warn!("PR_SET_NO_NEW_PRIVS failed: {}", err);
     }
 
-    let ret = unsafe {
-        libc::syscall(libc::SYS_landlock_restrict_self, ruleset_fd, 0u32)
-    };
+    let ret = unsafe { libc::syscall(libc::SYS_landlock_restrict_self, ruleset_fd, 0u32) };
 
-    unsafe { libc::close(ruleset_fd); }
+    unsafe {
+        libc::close(ruleset_fd);
+    }
 
     if ret < 0 {
         let err = std::io::Error::last_os_error();
         if config.strict_mode {
             anyhow::bail!("Failed to apply Landlock restriction: {}", err);
         }
-        warn!("Failed to apply Landlock restriction: {}. Continuing without sandbox.", err);
+        warn!(
+            "Failed to apply Landlock restriction: {}. Continuing without sandbox.",
+            err
+        );
         return Ok(());
     }
 
-    info!("Landlock filesystem sandbox ACTIVE. {} read-only, {} writable paths.",
-        config.read_only_paths.len(), config.writable_paths.len());
+    info!(
+        "Landlock filesystem sandbox ACTIVE. {} read-only, {} writable paths.",
+        config.read_only_paths.len(),
+        config.writable_paths.len()
+    );
     Ok(())
 }
 
@@ -162,8 +171,7 @@ struct LandlockRulesetAttr {
 #[cfg(target_os = "linux")]
 fn landlock_ruleset_attr(abi: u32) -> LandlockRulesetAttr {
     // ABI v1 access flags
-    let mut flags: u64 = 
-        (1 << 0)  | // EXECUTE
+    let mut flags: u64 = (1 << 0)  | // EXECUTE
         (1 << 1)  | // WRITE_FILE
         (1 << 2)  | // READ_FILE
         (1 << 3)  | // READ_DIR
@@ -175,7 +183,7 @@ fn landlock_ruleset_attr(abi: u32) -> LandlockRulesetAttr {
         (1 << 9)  | // MAKE_SOCK
         (1 << 10) | // MAKE_FIFO
         (1 << 11) | // MAKE_BLOCK
-        (1 << 12);  // MAKE_SYM
+        (1 << 12); // MAKE_SYM
 
     if abi >= 2 {
         flags |= (1 << 13); // REFER (move/rename across dirs)
@@ -215,7 +223,11 @@ struct LandlockPathBeneathAttr {
 }
 
 #[cfg(target_os = "linux")]
-fn add_landlock_path_rule(ruleset_fd: i32, path: &std::path::Path, writable: bool) -> anyhow::Result<()> {
+fn add_landlock_path_rule(
+    ruleset_fd: i32,
+    path: &std::path::Path,
+    writable: bool,
+) -> anyhow::Result<()> {
     use std::os::unix::io::AsRawFd;
 
     let fd = std::fs::File::open(path)?;
@@ -246,7 +258,10 @@ fn add_landlock_path_rule(ruleset_fd: i32, path: &std::path::Path, writable: boo
     };
 
     if ret < 0 {
-        Err(anyhow::anyhow!("landlock_add_rule failed: {}", std::io::Error::last_os_error()))
+        Err(anyhow::anyhow!(
+            "landlock_add_rule failed: {}",
+            std::io::Error::last_os_error()
+        ))
     } else {
         Ok(())
     }

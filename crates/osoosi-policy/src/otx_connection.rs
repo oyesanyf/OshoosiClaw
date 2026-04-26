@@ -105,7 +105,9 @@ pub fn otx_match_sysmon_event(
         } else {
             for domain in &guard.domains {
                 if query_name.ends_with(domain) {
-                    hit = Some(format!("Domain {query_name} matched OTX suffix IoC {domain}"));
+                    hit = Some(format!(
+                        "Domain {query_name} matched OTX suffix IoC {domain}"
+                    ));
                     break;
                 }
             }

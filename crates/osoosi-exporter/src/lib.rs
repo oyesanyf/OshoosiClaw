@@ -19,9 +19,8 @@ use opentelemetry_sdk::trace::SdkTracerProvider;
 
 /// Initialize OpenTelemetry tracing and return a layer to add to the tracing subscriber.
 /// Set OSOOSI_OTEL_ENABLED=1 to enable.
-pub fn init_opentelemetry_layer<S>() -> Option<
-    tracing_opentelemetry::OpenTelemetryLayer<S, opentelemetry_sdk::trace::Tracer>,
->
+pub fn init_opentelemetry_layer<S>(
+) -> Option<tracing_opentelemetry::OpenTelemetryLayer<S, opentelemetry_sdk::trace::Tracer>>
 where
     S: tracing::Subscriber + for<'span> tracing_subscriber::registry::LookupSpan<'span>,
 {
@@ -48,15 +47,23 @@ pub struct SiemExporter {
 }
 
 impl SiemExporter {
-    pub fn new(endpoint: String, token: String, dp_config: Option<osoosi_dp::PrivacyConfig>) -> Self {
-        Self { 
-            endpoint, 
-            token, 
-            dp: dp_config.map(osoosi_dp::DifferentialPrivacy::new)
+    pub fn new(
+        endpoint: String,
+        token: String,
+        dp_config: Option<osoosi_dp::PrivacyConfig>,
+    ) -> Self {
+        Self {
+            endpoint,
+            token,
+            dp: dp_config.map(osoosi_dp::DifferentialPrivacy::new),
         }
     }
 
-    pub async fn export_event(&self, event_type: &str, data: serde_json::Value) -> anyhow::Result<()> {
+    pub async fn export_event(
+        &self,
+        event_type: &str,
+        data: serde_json::Value,
+    ) -> anyhow::Result<()> {
         let mut data = data;
         // Apply noise to top-level numeric fields if DP is enabled
         if let Some(ref dp) = self.dp {

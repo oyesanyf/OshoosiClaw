@@ -25,7 +25,11 @@ pub fn generate_yara_from_threat(sig: &ThreatSignature) -> Option<String> {
     }
     let rule_name = format!(
         "OsoosiGen_{}",
-        sig.id.replace('-', "_").chars().take(20).collect::<String>()
+        sig.id
+            .replace('-', "_")
+            .chars()
+            .take(20)
+            .collect::<String>()
     );
     let mut has_strings = false;
     let mut strings_section = String::new();
@@ -44,7 +48,11 @@ pub fn generate_yara_from_threat(sig: &ThreatSignature) -> Option<String> {
                 .step_by(2)
                 .filter_map(|i| u8::from_str_radix(hex.get(i..i + 2)?, 16).ok())
                 .collect();
-            let spaced: String = bytes.iter().map(|b| format!("{:02X}", b)).collect::<Vec<_>>().join(" ");
+            let spaced: String = bytes
+                .iter()
+                .map(|b| format!("{:02X}", b))
+                .collect::<Vec<_>>()
+                .join(" ");
             strings_section.push_str(&format!("        $h = {{ {} }}\n", spaced));
             cond_parts.push("$h".to_string());
             has_strings = true;

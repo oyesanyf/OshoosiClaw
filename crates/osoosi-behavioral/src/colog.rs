@@ -1,6 +1,6 @@
-use std::collections::VecDeque;
 use crate::LogEvent;
 use serde::{Deserialize, Serialize};
+use std::collections::VecDeque;
 
 /// CoLog-style log template.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq, Hash)]
@@ -31,7 +31,7 @@ impl CoLogFilter {
     /// Process a new event and return an anomaly score (0.0 to 1.0).
     pub fn process(&mut self, event: &LogEvent) -> f32 {
         let template = self.extract_template(event);
-        
+
         let score = if self.history.len() < 5 {
             // Not enough history for sequence analysis
             0.0
@@ -49,7 +49,9 @@ impl CoLogFilter {
 
     fn extract_template(&self, event: &LogEvent) -> LogTemplate {
         // Normalize the message/data into a template (ignoring PII like DIPs, Usernames)
-        let pattern = event.data.get("Message")
+        let pattern = event
+            .data
+            .get("Message")
             .and_then(|v| v.as_str())
             .map(|s| self.mask_pii(s))
             .unwrap_or_else(|| "empty_event".to_string());
@@ -75,7 +77,10 @@ impl CoLogFilter {
         // anomaly_threshold (default 0.8) defines the score above which we flag as anomalous.
 
         let last_n = self.history.iter().rev().take(5).collect::<Vec<_>>();
-        let source_count = last_n.iter().filter(|t| t.source == new_template.source).count();
+        let source_count = last_n
+            .iter()
+            .filter(|t| t.source == new_template.source)
+            .count();
 
         if source_count > 4 {
             // Rapid repeat from same source - often suspicious (scanning/brute)

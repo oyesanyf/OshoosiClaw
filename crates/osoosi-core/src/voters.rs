@@ -1,6 +1,6 @@
+use osoosi_model::{MalwareScanResult, MalwareScanner};
 use osoosi_policy::engine::{ThreatVoter, VoteResult};
 use osoosi_types::SysmonEvent;
-use osoosi_model::{MalwareScanResult, MalwareScanner};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -92,7 +92,7 @@ fn scanner_skip_path(path: &str) -> bool {
 }
 
 /// ClamAV Consensus Voter
-/// 
+///
 /// Provides a "clean" vote if ClamAV confirms the file is not infected.
 /// This acts as positive reinforcement for legitimate files that might
 /// otherwise look suspicious to ML models or behavioral heuristics.
@@ -164,6 +164,9 @@ impl ThreatVoter for MalConvVoter {
         {
             return None;
         }
+        if !self.scanner.has_ml_model() {
+            return None;
+        }
 
         const MAX_BYTES: u64 = 48 * 1024 * 1024;
         let mut best: Option<MalwareScanResult> = None;
@@ -199,9 +202,8 @@ impl ThreatVoter for MalConvVoter {
 
         let res = best?;
         let path_note = best_path.as_deref().unwrap_or("?");
-        let weak_signature_only = res.ml_score <= 0.0
-            && res.signature_score >= 1.0
-            && res.clam_detected != Some(true);
+        let weak_signature_only =
+            res.ml_score <= 0.0 && res.signature_score >= 1.0 && res.clam_detected != Some(true);
         if trusted_identity_signal(event, path_note) && weak_signature_only {
             return None;
         }

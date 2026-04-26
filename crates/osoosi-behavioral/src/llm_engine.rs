@@ -1,15 +1,17 @@
 use anyhow::Result;
 use candle_core::{Device, Tensor};
-use candle_transformers::models::llama::{Config as LlamaConfig, Llama as Model, Cache, LlamaEosToks};
 use candle_transformers::generation::LogitsProcessor;
-use tokenizers::Tokenizer;
-use std::sync::Mutex;
-use std::path::Path;
-use tracing::{info, warn};
-use serde::Deserialize;
-use ort::session::Session;
-use ort::session::builder::GraphOptimizationLevel;
+use candle_transformers::models::llama::{
+    Cache, Config as LlamaConfig, Llama as Model, LlamaEosToks,
+};
 use ndarray;
+use ort::session::builder::GraphOptimizationLevel;
+use ort::session::Session;
+use serde::Deserialize;
+use std::path::Path;
+use std::sync::Mutex;
+use tokenizers::Tokenizer;
+use tracing::{info, warn};
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
@@ -58,7 +60,10 @@ pub struct SmolLMAnalyzer {
 
 impl SmolLMAnalyzer {
     pub fn new(model_dir: &Path) -> Result<Self> {
-        info!("Initializing native SmolLM2-135M-Instruct analyzer from local files in {:?}...", model_dir);
+        info!(
+            "Initializing native SmolLM2-135M-Instruct analyzer from local files in {:?}...",
+            model_dir
+        );
         let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
 
         let tokenizer_filename = model_dir.join("tokenizer.json");
@@ -74,8 +79,12 @@ impl SmolLMAnalyzer {
         let config_raw: Config = serde_json::from_reader(std::fs::File::open(&config_filename)?)?;
         let config: LlamaConfig = config_raw.into();
 
-        let vb = unsafe { 
-            candle_nn::VarBuilder::from_mmaped_safetensors(&[&weights_filename], candle_core::DType::F32, &device)? 
+        let vb = unsafe {
+            candle_nn::VarBuilder::from_mmaped_safetensors(
+                &[&weights_filename],
+                candle_core::DType::F32,
+                &device,
+            )?
         };
         let model = Model::load(vb, &config)?;
         let cache = Cache::new(true, candle_core::DType::F32, &config, &device)?;
@@ -92,63 +101,91 @@ impl SmolLMAnalyzer {
 
     pub fn analyze_log(&self, sentence: &str) -> Result<f32> {
         let model = self.model.lock().unwrap();
-        
+
         let prompt = format!(
             "<|user|>\nYou are a security expert. Analyze the log and return a JSON score 0.0-1.0. Log: {} <|end|>\n<|assistant|>\n{{ \"score\": ", 
             sentence
         );
 
-        let tokens = self.tokenizer.encode(prompt, true).map_err(anyhow::Error::msg)?;
+        let tokens = self
+            .tokenizer
+            .encode(prompt, true)
+            .map_err(anyhow::Error::msg)?;
         let mut tokens_vec = tokens.get_ids().to_vec();
-        
+
         let mut logits_processor = LogitsProcessor::new(1337, Some(0.0), None);
         let mut result_text = String::new();
 
         for i in 0..10 {
             let input = Tensor::new(&tokens_vec[..], &self.device)?.unsqueeze(0)?;
             let mut cache = self.cache.lock().unwrap();
-            let logits = model.forward(&input, tokens_vec.len() - if i == 0 { 0 } else { 1 }, &mut cache)?;
+            let logits = model.forward(
+                &input,
+                tokens_vec.len() - if i == 0 { 0 } else { 1 },
+                &mut cache,
+            )?;
             let logits = logits.squeeze(0)?.get(logits.dims()[0] - 1)?;
-            
+
             let next_token = logits_processor.sample(&logits)?;
             tokens_vec.push(next_token);
-            
-            let decoded = self.tokenizer.decode(&[next_token], true).map_err(anyhow::Error::msg)?;
+
+            let decoded = self
+                .tokenizer
+                .decode(&[next_token], true)
+                .map_err(anyhow::Error::msg)?;
             if decoded.contains('}') || decoded.contains('\n') {
                 break;
             }
             result_text.push_str(&decoded);
-            if next_token == 0 { break; }
+            if next_token == 0 {
+                break;
+            }
         }
 
-        let score_str = result_text.trim().trim_matches(|c: char| !c.is_digit(10) && c != '.');
+        let score_str = result_text
+            .trim()
+            .trim_matches(|c: char| !c.is_digit(10) && c != '.');
         let score: f32 = score_str.parse().unwrap_or(0.0);
-        
+
         Ok(score)
     }
 
     pub fn generate_text(&self, prompt: &str, max_tokens: usize) -> Result<String> {
         let model = self.model.lock().unwrap();
-        
-        let tokens = self.tokenizer.encode(prompt, true).map_err(anyhow::Error::msg)?;
+
+        let tokens = self
+            .tokenizer
+            .encode(prompt, true)
+            .map_err(anyhow::Error::msg)?;
         let mut tokens_vec = tokens.get_ids().to_vec();
-        
+
         let mut logits_processor = LogitsProcessor::new(1337, Some(0.7), None);
         let mut result_text = String::new();
 
         for i in 0..max_tokens {
             let input = Tensor::new(&tokens_vec[..], &self.device)?.unsqueeze(0)?;
             let mut cache = self.cache.lock().unwrap();
-            let logits = model.forward(&input, tokens_vec.len() - if i == 0 { 0 } else { 1 }, &mut cache)?;
+            let logits = model.forward(
+                &input,
+                tokens_vec.len() - if i == 0 { 0 } else { 1 },
+                &mut cache,
+            )?;
             let logits = logits.squeeze(0)?.get(logits.dims()[0] - 1)?;
-            
+
             let next_token = logits_processor.sample(&logits)?;
             tokens_vec.push(next_token);
-            
-            let decoded = self.tokenizer.decode(&[next_token], true).map_err(anyhow::Error::msg)?;
-            if decoded.is_empty() { break; }
+
+            let decoded = self
+                .tokenizer
+                .decode(&[next_token], true)
+                .map_err(anyhow::Error::msg)?;
+            if decoded.is_empty() {
+                break;
+            }
             result_text.push_str(&decoded);
-            if next_token == 0 { break; }
+            if next_token == 0 {
+                break;
+            }
         }
         Ok(result_text)
     }
@@ -162,7 +199,10 @@ pub struct Gemma4Analyzer {
 
 impl Gemma4Analyzer {
     pub fn new(model_dir: &Path) -> Result<Self> {
-        info!("Initializing Gemma 4 E2B ONNX Cortex from {:?}...", model_dir);
+        info!(
+            "Initializing Gemma 4 E2B ONNX Cortex from {:?}...",
+            model_dir
+        );
 
         let model_path = model_dir.join("model.onnx");
         let tokenizer_filename = model_dir.join("tokenizer.json");
@@ -178,7 +218,10 @@ impl Gemma4Analyzer {
             .with_intra_threads(4)?
             .commit_from_file(&model_path)?;
 
-        Ok(Self { session: std::sync::Mutex::new(session), tokenizer })
+        Ok(Self {
+            session: std::sync::Mutex::new(session),
+            tokenizer,
+        })
     }
 
     pub fn reason_about_attack(&self, graph_summary: &str) -> Result<String> {
@@ -190,7 +233,10 @@ impl Gemma4Analyzer {
     }
 
     pub fn generate_text(&self, prompt: &str, max_tokens: usize) -> Result<String> {
-        let tokens = self.tokenizer.encode(prompt, true).map_err(anyhow::Error::msg)?;
+        let tokens = self
+            .tokenizer
+            .encode(prompt, true)
+            .map_err(anyhow::Error::msg)?;
         let mut tokens_vec = tokens.get_ids().to_vec();
         let mut result_text = String::new();
 
@@ -199,17 +245,20 @@ impl Gemma4Analyzer {
                 (1, tokens_vec.len()),
                 tokens_vec.iter().map(|&x| x as i64).collect(),
             )?;
-            
-            let mut session = self.session.lock().map_err(|_| anyhow::anyhow!("Session lock poisoned"))?;
-            let outputs = session.run(ort::inputs![
-                ort::value::TensorRef::from_array_view(&input_tensor)?
-            ])?;
+
+            let mut session = self
+                .session
+                .lock()
+                .map_err(|_| anyhow::anyhow!("Session lock poisoned"))?;
+            let outputs = session.run(ort::inputs![ort::value::TensorRef::from_array_view(
+                &input_tensor
+            )?])?;
             let (shape, data) = outputs[0].try_extract_tensor::<f32>()?;
-            
+
             let shape_vec = shape.clone();
             let vocab_size = *shape_vec.last().unwrap() as usize;
             let last_token_logits = &data[data.len() - vocab_size..];
-            
+
             let next_token = last_token_logits
                 .iter()
                 .enumerate()
@@ -217,13 +266,18 @@ impl Gemma4Analyzer {
                 .map(|(index, _)| index)
                 .unwrap_or(0) as u32;
 
-            if next_token == 0 || next_token == 1 { 
+            if next_token == 0 || next_token == 1 {
                 break;
             }
 
             tokens_vec.push(next_token);
-            let decoded = self.tokenizer.decode(&[next_token], true).map_err(anyhow::Error::msg)?;
-            if decoded.is_empty() { break; }
+            let decoded = self
+                .tokenizer
+                .decode(&[next_token], true)
+                .map_err(anyhow::Error::msg)?;
+            if decoded.is_empty() {
+                break;
+            }
             result_text.push_str(&decoded);
         }
 

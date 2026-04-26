@@ -2,8 +2,8 @@ use chrono::{Duration, Utc};
 use clap::{Parser, Subcommand};
 use otx_taxii::*;
 use reqwest::blocking::Client;
-use std::env::{self, VarError};
 use rusqlite::{params, Connection};
+use std::env::{self, VarError};
 
 #[derive(Parser)]
 #[command(name = "otx-taxii-rs")]
@@ -57,8 +57,9 @@ fn describe_env_var(name: &str) -> String {
             normalize_key_value(&s).len()
         ),
         Err(VarError::NotPresent) => "not visible to this process".to_string(),
-        Err(VarError::NotUnicode(_)) => "present but not valid UTF-8 (re-paste the key as plain text)"
-            .to_string(),
+        Err(VarError::NotUnicode(_)) => {
+            "present but not valid UTF-8 (re-paste the key as plain text)".to_string()
+        }
     }
 }
 
@@ -79,7 +80,10 @@ fn maybe_print_env_debug() {
         if p.is_empty() {
             eprintln!("  {OTX_KEY_ENV_POINTER}: set but empty (ignored, using default name list)");
         } else {
-            eprintln!("  {OTX_KEY_ENV_POINTER} points to {p:?} -> {}", describe_env_var(p));
+            eprintln!(
+                "  {OTX_KEY_ENV_POINTER} points to {p:?} -> {}",
+                describe_env_var(p)
+            );
         }
     } else {
         eprintln!("  {OTX_KEY_ENV_POINTER}: not set");
@@ -154,9 +158,18 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
         }
         Err(e) => {
             eprintln!("error: {e}");
-            eprintln!("Expected one of: {} (or set {} to the *name* of the variable that holds the key).", OTX_KEY_ENV_NAMES.join(", "), OTX_KEY_ENV_POINTER);
-            eprintln!("Re-run with {}=1 to see what this process can see (lengths only).", OTX_TAXII_DEBUG_ENV);
-            eprintln!(r#"  PowerShell: $env:OTX_API_KEY = "your-key"; $env:OTX_TAXII_DEBUG_ENV = "1"; .\otx-taxii-rs discovery"#);
+            eprintln!(
+                "Expected one of: {} (or set {} to the *name* of the variable that holds the key).",
+                OTX_KEY_ENV_NAMES.join(", "),
+                OTX_KEY_ENV_POINTER
+            );
+            eprintln!(
+                "Re-run with {}=1 to see what this process can see (lengths only).",
+                OTX_TAXII_DEBUG_ENV
+            );
+            eprintln!(
+                r#"  PowerShell: $env:OTX_API_KEY = "your-key"; $env:OTX_TAXII_DEBUG_ENV = "1"; .\otx-taxii-rs discovery"#
+            );
             eprintln!("Get a key: https://otx.alienvault.com/ → Account settings → API Key.");
             std::process::exit(1);
         }
@@ -184,9 +197,9 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
             let body = poll_request(&collection, begin);
             let response = post_taxii(&client, OTX_POLL_URL, &api_key, &body)?;
             let indicators = extract_indicators(&response);
-            
+
             save_sqlite(&db, &indicators)?;
-            
+
             println!(
                 "Saved {} indicators to SQLite database: {}",
                 indicators.len(),
@@ -200,7 +213,7 @@ fn main() -> Result<(), Box<dyn std::error::Error>> {
 
 fn save_sqlite(path: &str, indicators: &[Indicator]) -> Result<(), Box<dyn std::error::Error>> {
     let conn = Connection::open(path)?;
-    
+
     conn.execute(
         "CREATE TABLE IF NOT EXISTS indicators (
             id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -225,13 +238,7 @@ fn save_sqlite(path: &str, indicators: &[Indicator]) -> Result<(), Box<dyn std::
             "INSERT INTO indicators (indicator_type, value, source, first_seen, last_seen)
              VALUES (?1, ?2, ?3, ?4, ?5)
              ON CONFLICT(indicator_type, value, source) DO UPDATE SET last_seen = ?5",
-            params![
-                ind.indicator_type,
-                ind.value,
-                ind.source,
-                now,
-                now,
-            ],
+            params![ind.indicator_type, ind.value, ind.source, now, now,],
         )?;
     }
 

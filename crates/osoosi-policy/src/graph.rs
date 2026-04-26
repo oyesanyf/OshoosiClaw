@@ -2,8 +2,8 @@
 //!
 //! Tracks relationships between processes, files, and network activity over time.
 
-use dashmap::DashMap;
 use chrono::{DateTime, Utc};
+use dashmap::DashMap;
 
 #[derive(Debug, Clone)]
 pub struct Relationship {
@@ -36,8 +36,9 @@ impl GraphCorrelationEngine {
     /// Record an interaction (e.g., Process -> File).
     pub fn track(&self, source: &str, target: &str, itype: &str) {
         let key = format!("{}:{}:{}", source, itype, target);
-        
-        self.edges.entry(key.clone())
+
+        self.edges
+            .entry(key.clone())
             .and_modify(|r| {
                 r.last_seen = Utc::now();
                 r.frequency += 1;
@@ -60,7 +61,7 @@ impl GraphCorrelationEngine {
     /// Identify anomalies in topological shifts (e.g. trusted process accessing sensitive file for the first time).
     pub fn score_anomaly(&self, source: &str, target: &str, itype: &str) -> f32 {
         let key = format!("{}:{}:{}", source, itype, target);
-        
+
         if let Some(rel) = self.edges.get(&key) {
             // High frequency indicates established "normal" behavior
             if rel.frequency > 100 {
@@ -70,7 +71,9 @@ impl GraphCorrelationEngine {
         } else {
             // First time seeing this interaction (Topological Shift)
             // If it's a sensitive target, score higher
-            if target.to_lowercase().contains("lsass") || target.to_lowercase().contains("etc/shadow") {
+            if target.to_lowercase().contains("lsass")
+                || target.to_lowercase().contains("etc/shadow")
+            {
                 return 0.85;
             }
             0.3

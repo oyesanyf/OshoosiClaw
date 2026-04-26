@@ -32,8 +32,8 @@ impl HostSecurityEvent {
     /// Convert to SysmonEvent for policy engine (preserves Image, CommandLine, etc.).
     pub fn to_sysmon_event(&self) -> crate::SysmonEvent {
         use crate::SysmonEventId;
-        let event_id = SysmonEventId::try_from(self.event_id as u16)
-            .unwrap_or(SysmonEventId::Generic);
+        let event_id =
+            SysmonEventId::try_from(self.event_id as u16).unwrap_or(SysmonEventId::Generic);
         crate::SysmonEvent {
             event_id,
             timestamp: self.timestamp,

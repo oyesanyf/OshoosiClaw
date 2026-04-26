@@ -1,13 +1,13 @@
 //! MalConv (Malware Convolutional Neural Network) Implementation.
 //!
-//! Processes raw binary bytes directly for end-to-end classification 
+//! Processes raw binary bytes directly for end-to-end classification
 //! without manual feature engineering.
 
-use candle_core::{Tensor, DType, Device, Result};
-use candle_nn::{Embedding, Conv1d, Conv1dConfig, Linear, VarBuilder, Module, ops};
 use anyhow::{Context, Result as AnyhowResult};
+use candle_core::{DType, Device, Result, Tensor};
+use candle_nn::{ops, Conv1d, Conv1dConfig, Embedding, Linear, Module, VarBuilder};
 use std::fs::File;
-use std::io::{Read};
+use std::io::Read;
 use std::path::Path;
 
 pub struct MalConv {
@@ -33,7 +33,7 @@ impl MalConv {
 
         let conv_feat = candle_nn::conv1d(8, 128, 512, cfg, vb.pp("conv_feat"))?;
         let conv_gate = candle_nn::conv1d(8, 128, 512, cfg, vb.pp("conv_gate"))?;
-        
+
         let fc = candle_nn::linear(128, 2, vb.pp("fc"))?;
 
         Ok(Self {
@@ -55,7 +55,7 @@ impl Module for MalConv {
     fn forward(&self, xs: &Tensor) -> Result<Tensor> {
         // 1. Embedding: [batch, seq_len] -> [batch, seq_len, 8]
         let x = self.embedding.forward(xs)?;
-        
+
         // Transpose for Conv1d: [batch, 8, seq_len]
         let x = x.transpose(1, 2)?;
 
@@ -66,7 +66,7 @@ impl Module for MalConv {
 
         // 3. Global Max Pooling: [batch, 128, 1]
         let (_, _, _) = gated.dims3()?;
-        let pooled = gated.max(2)?; 
+        let pooled = gated.max(2)?;
 
         // 4. Final Classification
         self.fc.forward(&pooled)
@@ -74,7 +74,7 @@ impl Module for MalConv {
 }
 
 /// Binary Preprocessing Implementation
-/// Reads a file, truncates or pads it to a fixed length (e.g., 2MB), 
+/// Reads a file, truncates or pads it to a fixed length (e.g., 2MB),
 /// and converts the bytes into a Tensor of integer indices.
 pub fn preprocess_binary<P: AsRef<Path>>(
     path: P,
@@ -83,10 +83,10 @@ pub fn preprocess_binary<P: AsRef<Path>>(
 ) -> AnyhowResult<Tensor> {
     let mut file = File::open(&path)
         .with_context(|| format!("Failed to open binary for MalConv: {:?}", path.as_ref()))?;
-    
+
     let mut buffer = vec![0u8; max_len];
     let bytes_read = file.read(&mut buffer)?;
-    
+
     // Use index 256 as a padding/EOS token
     let mut input_data = vec![256u32; max_len];
     for i in 0..bytes_read {
@@ -94,16 +94,12 @@ pub fn preprocess_binary<P: AsRef<Path>>(
     }
 
     let tensor = Tensor::from_vec(input_data, (1, max_len), device)?;
-    
+
     Ok(tensor)
 }
 
 /// Helper to convert raw bytes to tensor if the file is already read.
-pub fn preprocess_bytes(
-    bytes: &[u8],
-    max_len: usize,
-    device: &Device,
-) -> AnyhowResult<Tensor> {
+pub fn preprocess_bytes(bytes: &[u8], max_len: usize, device: &Device) -> AnyhowResult<Tensor> {
     let mut input_data = vec![256u32; max_len];
     let len = bytes.len().min(max_len);
     for i in 0..len {

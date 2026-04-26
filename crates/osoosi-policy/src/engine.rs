@@ -2,12 +2,12 @@
 //!
 //! Correlates telemetry events with threat signatures.
 
+use crate::feed::OtxIndicators;
+use crate::graph::{GraphCorrelationEngine, Relationship};
+use crate::semantic::SemanticEngine;
 use dashmap::DashMap;
 use osoosi_memory::MemoryStore;
 use osoosi_types::{SysmonEvent, ThreatSignature};
-use crate::semantic::SemanticEngine;
-use crate::graph::{GraphCorrelationEngine, Relationship};
-use crate::feed::OtxIndicators;
 use std::sync::Arc;
 use std::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -135,11 +135,18 @@ fn is_trusted_operational_tool(event: &SysmonEvent) -> bool {
     TRUSTED_STEMS.contains(&stem.as_str())
 }
 
-fn classify_vote(voter: &str, result: &VoteResult, event: &SysmonEvent) -> (EvidenceClass, f32, bool) {
+fn classify_vote(
+    voter: &str,
+    result: &VoteResult,
+    event: &SysmonEvent,
+) -> (EvidenceClass, f32, bool) {
     let reason_lc = result.reason.to_ascii_lowercase();
     match voter {
         "OTX-C2" => {
-            let live = matches!(event.event_id, osoosi_types::SysmonEventId::NetworkConnect | osoosi_types::SysmonEventId::DnsQuery);
+            let live = matches!(
+                event.event_id,
+                osoosi_types::SysmonEventId::NetworkConnect | osoosi_types::SysmonEventId::DnsQuery
+            );
             if live {
                 (EvidenceClass::LiveNetwork, 1.0, true)
             } else {
@@ -152,7 +159,8 @@ fn classify_vote(voter: &str, result: &VoteResult, event: &SysmonEvent) -> (Evid
         "YaraX-Memory" => (EvidenceClass::Memory, 1.0, true),
         name if name.contains("ClamAV") => (EvidenceClass::StaticArtifact, 0.9, true),
         name if name.contains("MalConv") || name.contains("ML") => {
-            let weak_pe_signature = reason_lc.contains("ml=0.000") && reason_lc.contains("sig=1.000");
+            let weak_pe_signature =
+                reason_lc.contains("ml=0.000") && reason_lc.contains("sig=1.000");
             if weak_pe_signature {
                 (EvidenceClass::StaticArtifact, 0.42, false)
             } else {
@@ -175,9 +183,8 @@ fn orchestrate_evidence(votes: &[EvidenceVote], event: &SysmonEvent) -> Evidence
 
     for vote in votes {
         classes.insert(vote.class);
-        let weighted = vote.result.confidence.clamp(0.0, 1.0)
-            * vote.result.weight.max(0.0)
-            * vote.reliability;
+        let weighted =
+            vote.result.confidence.clamp(0.0, 1.0) * vote.result.weight.max(0.0) * vote.reliability;
         support += weighted;
         mass += vote.result.weight.max(0.0) * vote.reliability;
         max_single = max_single.max(weighted);
@@ -199,7 +206,10 @@ fn orchestrate_evidence(votes: &[EvidenceVote], event: &SysmonEvent) -> Evidence
     let has_behavior = classes.contains(&EvidenceClass::Behavior);
     let has_memory = classes.contains(&EvidenceClass::Memory);
     let has_static = classes.contains(&EvidenceClass::StaticArtifact);
-    let lifecycle_only = matches!(event.event_id, SysmonEventId::ProcessCreate | SysmonEventId::ProcessTerminate);
+    let lifecycle_only = matches!(
+        event.event_id,
+        SysmonEventId::ProcessCreate | SysmonEventId::ProcessTerminate
+    );
     let trusted_operational_tool = is_trusted_operational_tool(event);
 
     if threat_intel_only {
@@ -342,8 +352,12 @@ impl PolicyEngine {
 
     /// Register a temporary learned defense (Zero-Day defense from mesh gossip).
     pub fn register_temporary_rule(&self, cve_id: &str, rule: &str, _severity: f32) {
-        info!("PolicyEngine: Learning new defense for {} from mesh gossip.", cve_id);
-        self.global_intel_rules.insert(cve_id.to_string(), rule.to_string());
+        info!(
+            "PolicyEngine: Learning new defense for {} from mesh gossip.",
+            cve_id
+        );
+        self.global_intel_rules
+            .insert(cve_id.to_string(), rule.to_string());
     }
 
     /// Process a Sysmon event and check for threats.
@@ -503,7 +517,9 @@ impl PolicyEngine {
                 signature.confidence = 1.0;
                 signature.add_reason("Reinforced: matches confirmed federated threat pattern");
                 // Ensure action is at least GhostTarpit
-                if signature.recommended_action == ResponseAction::Alert || signature.recommended_action == ResponseAction::Tarpit {
+                if signature.recommended_action == ResponseAction::Alert
+                    || signature.recommended_action == ResponseAction::Tarpit
+                {
                     signature.recommended_action = ResponseAction::GhostTarpit;
                 }
             }
@@ -534,21 +550,20 @@ impl PolicyEngine {
             action = ?signature.recommended_action,
             "[CONSENSUS] round COMPLETE — threat signature emitted"
         );
-        
+
         Some(signature)
     }
-
 }
 
 #[cfg(test)]
 mod tests {
     use super::*;
-    use osoosi_types::{SysmonEvent, SysmonEventId};
-    use chrono::Utc;
-    use std::sync::Arc;
-    use crate::voters::{OtxVoter, SemanticVoter};
     use crate::feed::OtxIndicators;
+    use crate::voters::{OtxVoter, SemanticVoter};
+    use chrono::Utc;
+    use osoosi_types::{SysmonEvent, SysmonEventId};
     use serde_json::json;
+    use std::sync::Arc;
 
     fn make_event(image: &str, cmd_line: &str) -> osoosi_types::SysmonEvent {
         osoosi_types::SysmonEvent {
@@ -568,7 +583,7 @@ mod tests {
     fn test_scan_event_discovery_ttp() {
         let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
         let mut engine = PolicyEngine::new(memory);
-        
+
         // Add a basic semantic voter for testing
         engine.add_voter(Box::new(SemanticVoter {
             engine: crate::semantic::SemanticEngine::new(),
@@ -576,7 +591,7 @@ mod tests {
 
         let event = make_event("C:\\Windows\\System32\\whoami.exe", "whoami");
         let sig = engine.scan_event(&event);
-        // Note: semantic drift might not hit on 'whoami' without training, 
+        // Note: semantic drift might not hit on 'whoami' without training,
         // but this confirms the loop runs.
         let _ = sig;
     }
@@ -612,7 +627,9 @@ mod tests {
             product_version: None,
         };
 
-        let sig = engine.scan_event(&event).expect("OTX should vote via safety-net");
+        let sig = engine
+            .scan_event(&event)
+            .expect("OTX should vote via safety-net");
         let reason = sig.reason.as_deref().unwrap();
         assert!(reason.contains("OTX-C2"), "reason was: {}", reason);
         assert_eq!(sig.detector_count, 1);
@@ -672,7 +689,8 @@ mod tests {
             EvidenceVote {
                 result: VoteResult {
                     confidence: 1.0,
-                    reason: "MalwareScanner: combined=1.000 ml=0.000 sig=1.000 magika=pebin".to_string(),
+                    reason: "MalwareScanner: combined=1.000 ml=0.000 sig=1.000 magika=pebin"
+                        .to_string(),
                     weight: 0.88,
                 },
                 class: EvidenceClass::StaticArtifact,

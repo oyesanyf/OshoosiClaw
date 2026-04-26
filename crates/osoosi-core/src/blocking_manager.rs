@@ -1,7 +1,7 @@
+use osoosi_telemetry::AgentProvisioner;
+use osoosi_types::BlockingRule;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use osoosi_types::BlockingRule;
-use osoosi_telemetry::AgentProvisioner;
 use tracing::info;
 
 pub struct BlockingManager {
@@ -20,7 +20,10 @@ impl BlockingManager {
     pub async fn add_rule(&self, rule: BlockingRule) -> anyhow::Result<()> {
         info!("BlockingManager: Adding rule for path: {}", rule.path);
         let mut rules = self.rules.write().await;
-        if !rules.iter().any(|r| r.path == rule.path && r.kind == rule.kind) {
+        if !rules
+            .iter()
+            .any(|r| r.path == rule.path && r.kind == rule.kind)
+        {
             rules.push(rule);
             #[cfg(target_os = "windows")]
             self.provisioner.apply_blocking_rules(&rules).await?;

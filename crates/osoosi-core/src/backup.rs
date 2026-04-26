@@ -6,7 +6,7 @@
 use osoosi_types::BackupConfig;
 use std::process::Command;
 use std::sync::Arc;
-use tracing::{info, warn, error};
+use tracing::{error, info, warn};
 
 /// Run backup based on config. Called at agent start.
 /// If memory is provided, stores status for dashboard.
@@ -18,7 +18,7 @@ pub fn run_backup_on_start(config: &BackupConfig, memory: Option<Arc<osoosi_memo
         }
         return;
     }
-    if config.target.trim().is_empty() {
+    if config.backup_type != "restore_point" && config.target.trim().is_empty() {
         warn!("Backup enabled but target is empty. Skipping.");
         if let Some(ref m) = memory {
             let _ = m.set_backup_status("status", "no_target");
@@ -41,8 +41,40 @@ pub fn run_backup_on_start(config: &BackupConfig, memory: Option<Arc<osoosi_memo
         }
     }
 
+    if config.backup_type == "restore_point" {
+        if let Some(ref m) = memory {
+            let _ = m.set_backup_status("enabled", "true");
+            let _ = m.set_backup_status("backup_type", &config.backup_type);
+            let _ = m.set_backup_status("status", "pending");
+            let _ = m.set_backup_status("message", "Restore point creation queued in background");
+        }
+        let cfg = config.clone();
+        let mem = memory.clone();
+        std::thread::spawn(move || {
+            let result = run_restore_point(&cfg);
+            if let Some(ref m) = mem {
+                match &result {
+                    Ok(msg) => {
+                        let _ = m.set_backup_status("status", "ok");
+                        let _ = m.set_backup_status("message", msg);
+                        let _ = m.set_backup_status("last_at", &chrono::Utc::now().to_rfc3339());
+                    }
+                    Err(e) => {
+                        let _ = m.set_backup_status("status", "failed");
+                        let _ = m.set_backup_status("message", &e.to_string());
+                    }
+                }
+            }
+            match result {
+                Ok(msg) => info!("Background restore point: {}", msg),
+                Err(e) => warn!("Background restore point failed: {}", e),
+            }
+        });
+        info!("Restore point queued in background; agent startup is not blocked.");
+        return;
+    }
+
     let result = match config.backup_type.as_str() {
-        "restore_point" => run_restore_point(config),
         "full_image" => run_full_image(config),
         "file_sync" => run_file_sync(config),
         _ => run_file_sync(config),
@@ -74,21 +106,46 @@ pub fn run_backup_on_start(config: &BackupConfig, memory: Option<Arc<osoosi_memo
 #[cfg(target_os = "windows")]
 fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
     use std::process::Stdio;
+    use std::time::{Duration, Instant};
     let desc = format!("Osoosi pre-start {}", {
         let now = std::time::SystemTime::now();
-        let secs = now.duration_since(std::time::UNIX_EPOCH).unwrap_or_default().as_secs();
+        let secs = now
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
         format!("{}", secs)
     });
-    let status = Command::new("powershell")
+    let timeout_secs = std::env::var("OSOOSI_RESTORE_POINT_TIMEOUT_SECS")
+        .ok()
+        .and_then(|s| s.parse().ok())
+        .unwrap_or(20_u64);
+    let mut child = Command::new("powershell")
         .args([
             "-NoProfile",
             "-NonInteractive",
             "-Command",
-            &format!("Checkpoint-Computer -Description '{}' -RestorePointType MODIFY_SETTINGS", desc),
+            &format!(
+                "Checkpoint-Computer -Description '{}' -RestorePointType MODIFY_SETTINGS",
+                desc
+            ),
         ])
         .stdout(Stdio::null())
         .stderr(Stdio::piped())
-        .status()?;
+        .spawn()?;
+    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
+    let status = loop {
+        if let Some(status) = child.try_wait()? {
+            break status;
+        }
+        if Instant::now() >= deadline {
+            let _ = child.kill();
+            return Err(anyhow::anyhow!(
+                "Checkpoint-Computer timed out after {}s; continuing without blocking the agent",
+                timeout_secs
+            ));
+        }
+        std::thread::sleep(Duration::from_millis(250));
+    };
     if status.success() {
         Ok("System restore point created".to_string())
     } else {
@@ -100,9 +157,74 @@ fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
     }
 }
 
-#[cfg(not(target_os = "windows"))]
+#[cfg(target_os = "macos")]
 fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
-    Err(anyhow::anyhow!("restore_point is Windows-only; use file_sync on this OS"))
+    let label = format!(
+        "com.oshoosi.snapshot.{}",
+        chrono::Utc::now().timestamp().max(0)
+    );
+    let status = Command::new("tmutil").args(["localsnapshot"]).status()?;
+    if status.success() {
+        Ok(format!("APFS local snapshot requested ({})", label))
+    } else {
+        Err(anyhow::anyhow!("tmutil localsnapshot failed"))
+    }
+}
+
+#[cfg(target_os = "linux")]
+fn run_restore_point(config: &BackupConfig) -> anyhow::Result<String> {
+    let target = if config.target.trim().is_empty() {
+        "/".to_string()
+    } else {
+        config.target.clone()
+    };
+    if Command::new("sh")
+        .args(["-c", "command -v btrfs >/dev/null 2>&1"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        let snap_dir = std::path::Path::new("/.snapshots");
+        let _ = std::fs::create_dir_all(snap_dir);
+        let snap = snap_dir.join(format!("osoosi-{}", chrono::Utc::now().timestamp().max(0)));
+        let status = Command::new("sudo")
+            .args([
+                "btrfs",
+                "subvolume",
+                "snapshot",
+                "-r",
+                &target,
+                &snap.to_string_lossy(),
+            ])
+            .status()?;
+        if status.success() {
+            return Ok(format!(
+                "Btrfs read-only snapshot created at {}",
+                snap.display()
+            ));
+        }
+    }
+    if Command::new("sh")
+        .args(["-c", "command -v lvcreate >/dev/null 2>&1"])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false)
+    {
+        return Ok(
+            "LVM snapshot support detected; configure OSOOSI_LVM_VOLUME for exact LV snapshots"
+                .to_string(),
+        );
+    }
+    Ok("No native Linux snapshot provider detected; VM/provider snapshot recommended".to_string())
+}
+
+#[cfg(all(
+    not(target_os = "windows"),
+    not(target_os = "macos"),
+    not(target_os = "linux")
+))]
+fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
+    Ok("No native snapshot provider for this OS; VM/provider snapshot recommended".to_string())
 }
 
 #[cfg(target_os = "windows")]
@@ -111,7 +233,8 @@ fn run_full_image(config: &BackupConfig) -> anyhow::Result<String> {
     let target = config.target.trim().trim_end_matches('\\');
     let status = Command::new("wbadmin")
         .args([
-            "start", "backup",
+            "start",
+            "backup",
             &format!("-backupTarget:{}", target),
             "-include:C:",
             "-allCritical",
@@ -131,13 +254,16 @@ fn run_full_image(config: &BackupConfig) -> anyhow::Result<String> {
 
 #[cfg(not(target_os = "windows"))]
 fn run_full_image(_config: &BackupConfig) -> anyhow::Result<String> {
-    Err(anyhow::anyhow!("full_image is Windows-only; use file_sync on this OS"))
+    Err(anyhow::anyhow!(
+        "full_image is Windows-only; use file_sync on this OS"
+    ))
 }
 
 fn default_include_paths() -> Vec<String> {
     #[cfg(target_os = "windows")]
     {
-        let user = std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\Users\\Default".to_string());
+        let user =
+            std::env::var("USERPROFILE").unwrap_or_else(|_| "C:\\Users\\Default".to_string());
         vec![
             format!("{}\\Documents", user),
             format!("{}\\Desktop", user),
@@ -183,9 +309,27 @@ fn run_file_sync(config: &BackupConfig) -> anyhow::Result<String> {
         if !std::path::Path::new(src).exists() {
             continue;
         }
-        let dest = format!("{}\\OsoosiBackup\\{}", target, std::path::Path::new(src).file_name().and_then(|s| s.to_str()).unwrap_or("data"));
+        let dest = format!(
+            "{}\\OsoosiBackup\\{}",
+            target,
+            std::path::Path::new(src)
+                .file_name()
+                .and_then(|s| s.to_str())
+                .unwrap_or("data")
+        );
         let status = Command::new("robocopy")
-            .args([src.as_str(), &dest, "/MIR", "/MT:8", "/R:1", "/W:1", "/NFL", "/NDL", "/NJH", "/NJS"])
+            .args([
+                src.as_str(),
+                &dest,
+                "/MIR",
+                "/MT:8",
+                "/R:1",
+                "/W:1",
+                "/NFL",
+                "/NDL",
+                "/NJH",
+                "/NJS",
+            ])
             .stdout(Stdio::null())
             .stderr(Stdio::null())
             .status()?;
@@ -214,7 +358,10 @@ fn run_file_sync(config: &BackupConfig) -> anyhow::Result<String> {
         if !std::path::Path::new(&src).exists() {
             continue;
         }
-        let name = std::path::Path::new(&src).file_name().and_then(|s| s.to_str()).unwrap_or("data");
+        let name = std::path::Path::new(&src)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("data");
         let dest = format!("{}/{}", backup_root, name);
         let status = Command::new("rsync")
             .args(["-a", "--delete", &src, &format!("{}/", dest)])
@@ -246,7 +393,10 @@ fn run_file_sync(config: &BackupConfig) -> anyhow::Result<String> {
         if !std::path::Path::new(&src).exists() {
             continue;
         }
-        let name = std::path::Path::new(&src).file_name().and_then(|s| s.to_str()).unwrap_or("data");
+        let name = std::path::Path::new(&src)
+            .file_name()
+            .and_then(|s| s.to_str())
+            .unwrap_or("data");
         let dest = format!("{}/{}", backup_root, name);
         let status = Command::new("rsync")
             .args(["-a", "--delete", &src, &format!("{}/", dest)])

@@ -64,7 +64,11 @@ impl ThreatModel {
         if path.exists() {
             let data = std::fs::read_to_string(&path)?;
             let w: ModelWeights = serde_json::from_str(&data)?;
-            info!("Loaded threat model from {} ({} features)", path.display(), w.features.len());
+            info!(
+                "Loaded threat model from {} ({} features)",
+                path.display(),
+                w.features.len()
+            );
             Ok(w)
         } else {
             Err(anyhow::anyhow!("Model file not found"))
@@ -134,14 +138,21 @@ impl ThreatModel {
         if let Some(ref dp_conf) = self.config.dp_config {
             let dp = osoosi_dp::DifferentialPrivacy::new(dp_conf.clone());
             dp.privatize_weights(&mut feature_counts);
-            info!("Applied Differential Privacy (epsilon={}) to model weights", dp_conf.epsilon);
+            info!(
+                "Applied Differential Privacy (epsilon={}) to model weights",
+                dp_conf.epsilon
+            );
         }
 
         self.weights.features = feature_counts;
         self.weights.sample_count = samples.len();
         self.weights.trained_at = Some(chrono::Utc::now().to_rfc3339());
         self.save()?;
-        info!("Trained model on {} samples, {} features", samples.len(), self.weights.features.len());
+        info!(
+            "Trained model on {} samples, {} features",
+            samples.len(),
+            self.weights.features.len()
+        );
         Ok(())
     }
 
@@ -172,14 +183,18 @@ impl ThreatModel {
 
     /// Federated Learning: Merge a delta from a peer node.
     pub fn merge_delta(&mut self, delta: &osoosi_types::FederatedModelDelta) {
-        info!("Merging federated model delta from Node {} ({} features)", delta.source_node, delta.features.len());
-        
+        info!(
+            "Merging federated model delta from Node {} ({} features)",
+            delta.source_node,
+            delta.features.len()
+        );
+
         for (feat, weight) in &delta.features {
             let entry = self.weights.features.entry(feat.clone()).or_insert(0.0);
             // Average the weights (simplistic Federated Averaging)
             *entry = (*entry + *weight) / 2.0;
         }
-        
+
         self.weights.sample_count += 1;
         let _ = self.save();
     }

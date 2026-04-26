@@ -1,15 +1,18 @@
 //! Local SQLite persistence for threat intelligence and file integrity.
 
-use rusqlite::{params, Connection};
-use osoosi_types::{Kev, ThreatSignature, ReputationScore, PendingJoinRequest, QuarantinedPeer, ResponseAction, ActionState, PeerAnnounce, PeerStatus, MalwareSample};
 use chrono::{DateTime, Utc};
-use tracing::debug;
+use osoosi_types::{
+    ActionState, Kev, MalwareSample, PeerAnnounce, PeerStatus, PendingJoinRequest, QuarantinedPeer,
+    ReputationScore, ResponseAction, ThreatSignature,
+};
+use rusqlite::{params, Connection};
 use std::path::Path;
 use std::sync::Mutex;
+use tracing::debug;
 
 pub mod encryption;
-pub mod scanner;
 pub mod memory_scanner;
+pub mod scanner;
 
 pub use memory_scanner::*;
 
@@ -19,7 +22,10 @@ pub struct MemoryStore {
 }
 
 fn normalize_asset_path(path: &str) -> String {
-    let mut normalized = path.replace('/', "\\").trim_end_matches('\\').to_ascii_lowercase();
+    let mut normalized = path
+        .replace('/', "\\")
+        .trim_end_matches('\\')
+        .to_ascii_lowercase();
     if let Some(stripped) = normalized.strip_prefix("\\\\?\\") {
         normalized = stripped.to_string();
     }
@@ -39,11 +45,11 @@ impl MemoryStore {
         }
 
         let lock = Mutex::new(conn);
-        
+
         // Initialize Bloom filter: 1,000,000 items with 0.01% false positive rate
         let bloom = bloomfilter::Bloom::new_for_fp_rate(1_000_000, 0.0001);
-        
-        let s = Self { 
+
+        let s = Self {
             conn: lock,
             bloom_filter: Mutex::new(bloom),
         };
@@ -55,7 +61,7 @@ impl MemoryStore {
     fn init_db(&self) -> anyhow::Result<()> {
         debug!("Initializing memory store tables...");
         let conn = self.conn.lock().unwrap();
-        
+
         // KEV table
         conn.execute(
             "CREATE TABLE IF NOT EXISTS kev (
@@ -299,10 +305,7 @@ impl MemoryStore {
             [],
         )?;
 
-        conn.execute(
-            "CREATE INDEX IF NOT EXISTS idx_nsrl_sha1 ON nsrl(sha1)",
-            [],
-        )?;
+        conn.execute("CREATE INDEX IF NOT EXISTS idx_nsrl_sha1 ON nsrl(sha1)", [])?;
 
         conn.execute(
             "CREATE INDEX IF NOT EXISTS idx_otx_lookup ON otx_indicators(indicator_type, value)",
@@ -335,9 +338,11 @@ impl MemoryStore {
         let before: u64 = conn.query_row("SELECT COUNT(*) FROM nsrl", [], |r| r.get(0))?;
 
         // Tuned for one-shot bulk copy (reduces disk sync overhead; still crash-safe on WAL).
-        let _ = conn.query_row("PRAGMA journal_mode", [], |r: &rusqlite::Row| -> rusqlite::Result<String> {
-            r.get(0)
-        });
+        let _ = conn.query_row(
+            "PRAGMA journal_mode",
+            [],
+            |r: &rusqlite::Row| -> rusqlite::Result<String> { r.get(0) },
+        );
         let _ = conn.execute("PRAGMA synchronous = NORMAL", []);
         let _ = conn.execute("PRAGMA temp_store = MEMORY", []);
         // ~200MB page cache: speeds reading the attached NIST file (env overridable for fast SSDs)
@@ -369,7 +374,10 @@ impl MemoryStore {
         if file_tbl == 0 {
             let _ = tx.execute("DETACH DATABASE nist", []);
             tx.commit()?;
-            anyhow::bail!("NSRL file has no FILE table (expected NIST modern RDS): {:?}", nist_rds_path);
+            anyhow::bail!(
+                "NSRL file has no FILE table (expected NIST modern RDS): {:?}",
+                nist_rds_path
+            );
         }
 
         // Map NIST `FILE` columns → our schema; hashes in RDS are typically hex strings.
@@ -426,17 +434,16 @@ impl MemoryStore {
     /// Count NSRL records in the database.
     pub fn nsrl_record_count(&self) -> anyhow::Result<u64> {
         let conn = self.conn.lock().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM nsrl",
-            [],
-            |r| r.get(0),
-        )?;
+        let count: i64 = conn.query_row("SELECT COUNT(*) FROM nsrl", [], |r| r.get(0))?;
         Ok(count.max(0) as u64)
     }
 
     /// Retrieve the cached integrity status for a file path.
     /// Returns (hash_blake3, is_nsrl_validated, product_version).
-    pub fn get_file_integrity(&self, path: &str) -> anyhow::Result<Option<(String, bool, Option<String>)>> {
+    pub fn get_file_integrity(
+        &self,
+        path: &str,
+    ) -> anyhow::Result<Option<(String, bool, Option<String>)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare_cached("SELECT hash_blake3, is_nsrl_validated, product_version FROM file_integrity WHERE path = ?")?;
         let mut rows = stmt.query([path])?;
@@ -448,7 +455,13 @@ impl MemoryStore {
     }
 
     /// Record a file's integrity status.
-    pub fn upsert_file_integrity(&self, path: &str, hash: &str, is_nsrl: bool, version: Option<&str>) -> anyhow::Result<()> {
+    pub fn upsert_file_integrity(
+        &self,
+        path: &str,
+        hash: &str,
+        is_nsrl: bool,
+        version: Option<&str>,
+    ) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR REPLACE INTO file_integrity (path, hash_blake3, is_nsrl_validated, product_version, last_seen) VALUES (?, ?, ?, ?, ?)",
@@ -502,14 +515,15 @@ impl MemoryStore {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT * FROM kev WHERE cve_id = ?1")?;
         let mut rows = stmt.query(params![cve_id])?;
-        
+
         if let Some(row) = rows.next()? {
             Ok(Some(Kev {
                 cve_id: row.get(0)?,
                 vendor_project: row.get(1)?,
                 product: row.get(2)?,
                 vulnerability_name: row.get(3)?,
-                date_added: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)?.with_timezone(&Utc),
+                date_added: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)?
+                    .with_timezone(&Utc),
                 required_action: row.get(5)?,
                 due_date: Utc::now(), // Placeholder as it's not in schema currently
                 known_exploited: row.get::<_, i32>(6)? == 1,
@@ -639,7 +653,8 @@ impl MemoryStore {
                 score: row.get(1)?,
                 alerts_verified: row.get(2)?,
                 false_positives: row.get(3)?,
-                last_updated: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)?.with_timezone(&Utc),
+                last_updated: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)?
+                    .with_timezone(&Utc),
             }))
         } else {
             Ok(None)
@@ -705,7 +720,10 @@ impl MemoryStore {
 
     pub fn remove_pending_join(&self, peer_id: &str) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
-        conn.execute("DELETE FROM pending_joins WHERE peer_id = ?1", params![peer_id])?;
+        conn.execute(
+            "DELETE FROM pending_joins WHERE peer_id = ?1",
+            params![peer_id],
+        )?;
         Ok(())
     }
 
@@ -747,7 +765,12 @@ impl MemoryStore {
         Ok(None)
     }
 
-    pub fn quarantine_peer(&self, peer_id: &str, reason: &str, reputation_score: f32) -> anyhow::Result<()> {
+    pub fn quarantine_peer(
+        &self,
+        peer_id: &str,
+        reason: &str,
+        reputation_score: f32,
+    ) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
             "INSERT OR REPLACE INTO quarantined_peers (peer_id, reason, reputation_score, quarantined_at, released_at, active)
@@ -768,7 +791,8 @@ impl MemoryStore {
 
     pub fn is_peer_quarantined(&self, peer_id: &str) -> anyhow::Result<bool> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT 1 FROM quarantined_peers WHERE peer_id = ?1 AND active = 1")?;
+        let mut stmt =
+            conn.prepare("SELECT 1 FROM quarantined_peers WHERE peer_id = ?1 AND active = 1")?;
         let exists = stmt.exists(params![peer_id])?;
         Ok(exists)
     }
@@ -779,7 +803,7 @@ impl MemoryStore {
             "SELECT peer_id, reason, reputation_score, quarantined_at, released_at, active
              FROM quarantined_peers
              WHERE active = 1
-             ORDER BY quarantined_at DESC"
+             ORDER BY quarantined_at DESC",
         )?;
         let rows = stmt.query_map([], |row| {
             let released_at: Option<String> = row.get(4)?;
@@ -821,6 +845,9 @@ impl MemoryStore {
                 sig.reason
             ],
         )?;
+        if let Some(ref hash) = sig.hash_blake3 {
+            self.mark_hash_known_malicious(hash);
+        }
         Ok(())
     }
 
@@ -846,11 +873,8 @@ impl MemoryStore {
     /// Count mesh samples for training.
     pub fn malware_sample_count(&self) -> anyhow::Result<u64> {
         let conn = self.conn.lock().unwrap();
-        let count: i64 = conn.query_row(
-            "SELECT COUNT(*) FROM malware_samples",
-            [],
-            |r| r.get(0),
-        )?;
+        let count: i64 =
+            conn.query_row("SELECT COUNT(*) FROM malware_samples", [], |r| r.get(0))?;
         Ok(count.max(0) as u64)
     }
 
@@ -888,7 +912,7 @@ impl MemoryStore {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
             "SELECT id, cve_id, hash_blake3, process_name, confidence, detected_at, source_node 
-             FROM threats ORDER BY detected_at DESC LIMIT ?1"
+             FROM threats ORDER BY detected_at DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit as i64], |row| {
             Ok(ThreatSignature {
@@ -958,11 +982,14 @@ impl MemoryStore {
     /// Mark a threat as false positive (federated learning: pattern shared).
     /// Mark a threat as a false positive and return the (process_name, hash_blake3) for
     /// the orchestrator to whitelist in the NSRL session cache and suppress future alerts.
-    pub fn mark_threat_false_positive(&self, threat_id: &str, source_node: &str) -> anyhow::Result<Option<(Option<String>, Option<String>, Option<String>)>> {
+    pub fn mark_threat_false_positive(
+        &self,
+        threat_id: &str,
+        source_node: &str,
+    ) -> anyhow::Result<Option<(Option<String>, Option<String>, Option<String>)>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT process_name, hash_blake3, file_path FROM threats WHERE id = ?1"
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT process_name, hash_blake3, file_path FROM threats WHERE id = ?1")?;
         let mut rows = stmt.query(params![threat_id])?;
         let Some(row) = rows.next()? else {
             return Ok(None);
@@ -978,13 +1005,7 @@ impl MemoryStore {
             params![proc, hash, source_node, Utc::now().to_rfc3339()],
         )?;
         if !hash.is_empty() {
-            self.record_ai_override_locked(
-                &conn,
-                hash,
-                0,
-                "analyst false positive",
-                source_node,
-            )?;
+            self.record_ai_override_locked(&conn, hash, 0, "analyst false positive", source_node)?;
         }
         Ok(Some((process_name, hash_blake3, file_path)))
     }
@@ -1013,11 +1034,14 @@ impl MemoryStore {
 
     /// Mark a threat as a confirmed true positive.
     /// Returns (process_name, hash_blake3) so the orchestrator can engage tarpits.
-    pub fn mark_threat_true_positive(&self, threat_id: &str, source_node: &str) -> anyhow::Result<Option<(Option<String>, Option<String>, Option<String>)>> {
+    pub fn mark_threat_true_positive(
+        &self,
+        threat_id: &str,
+        source_node: &str,
+    ) -> anyhow::Result<Option<(Option<String>, Option<String>, Option<String>)>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare(
-            "SELECT process_name, hash_blake3, file_path FROM threats WHERE id = ?1"
-        )?;
+        let mut stmt =
+            conn.prepare("SELECT process_name, hash_blake3, file_path FROM threats WHERE id = ?1")?;
         let mut rows = stmt.query(params![threat_id])?;
         let Some(row) = rows.next()? else {
             return Ok(None);
@@ -1027,20 +1051,14 @@ impl MemoryStore {
         let file_path: Option<String> = row.get(2)?;
         let proc = process_name.as_deref().unwrap_or("");
         let hash = hash_blake3.as_deref().unwrap_or("");
-        
+
         conn.execute(
             "INSERT OR REPLACE INTO verified_threat_patterns (process_name, hash_blake3, source_node, marked_at)
              VALUES (?1, ?2, ?3, ?4)",
             params![proc, hash, source_node, Utc::now().to_rfc3339()],
         )?;
         if !hash.is_empty() {
-            self.record_ai_override_locked(
-                &conn,
-                hash,
-                1,
-                "analyst true positive",
-                source_node,
-            )?;
+            self.record_ai_override_locked(&conn, hash, 1, "analyst true positive", source_node)?;
         }
         Ok(Some((process_name, hash_blake3, file_path)))
     }
@@ -1063,13 +1081,21 @@ impl MemoryStore {
 
     pub fn get_ai_override(&self, file_hash: &str) -> anyhow::Result<Option<bool>> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare_cached("SELECT verdict FROM ai_overrides WHERE file_hash = ?1")?;
+        let mut stmt =
+            conn.prepare_cached("SELECT verdict FROM ai_overrides WHERE file_hash = ?1")?;
         let mut rows = stmt.query(params![file_hash])?;
-        Ok(rows.next()?.map(|row| row.get::<_, i64>(0).map(|v| v != 0)).transpose()?)
+        Ok(rows
+            .next()?
+            .map(|row| row.get::<_, i64>(0).map(|v| v != 0))
+            .transpose()?)
     }
 
     /// Check if process/hash matches a known false positive pattern.
-    pub fn is_false_positive_pattern(&self, process_name: Option<&str>, hash_blake3: Option<&str>) -> anyhow::Result<bool> {
+    pub fn is_false_positive_pattern(
+        &self,
+        process_name: Option<&str>,
+        hash_blake3: Option<&str>,
+    ) -> anyhow::Result<bool> {
         let conn = self.conn.lock().unwrap();
         let proc = process_name.unwrap_or("");
         let hash = hash_blake3.unwrap_or("");
@@ -1081,7 +1107,11 @@ impl MemoryStore {
     }
 
     /// Check if process/hash matches a confirmed true positive pattern.
-    pub fn is_true_positive_pattern(&self, process_name: Option<&str>, hash_blake3: Option<&str>) -> anyhow::Result<bool> {
+    pub fn is_true_positive_pattern(
+        &self,
+        process_name: Option<&str>,
+        hash_blake3: Option<&str>,
+    ) -> anyhow::Result<bool> {
         let conn = self.conn.lock().unwrap();
         let proc = process_name.unwrap_or("");
         let hash = hash_blake3.unwrap_or("");
@@ -1093,7 +1123,11 @@ impl MemoryStore {
     }
 
     /// Generic JSON query for the WASM brain.
-    pub fn query_json(&self, query: &str, parameters: &[String]) -> anyhow::Result<Vec<serde_json::Value>> {
+    pub fn query_json(
+        &self,
+        query: &str,
+        parameters: &[String],
+    ) -> anyhow::Result<Vec<serde_json::Value>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(query)?;
         let column_count = stmt.column_count();
@@ -1109,7 +1143,10 @@ impl MemoryStore {
                 let json_value = match value {
                     rusqlite::types::Value::Null => serde_json::Value::Null,
                     rusqlite::types::Value::Integer(i) => serde_json::Value::Number(i.into()),
-                    rusqlite::types::Value::Real(f) => serde_json::Value::Number(serde_json::Number::from_f64(f).unwrap_or_else(|| serde_json::Number::from(0))),
+                    rusqlite::types::Value::Real(f) => serde_json::Value::Number(
+                        serde_json::Number::from_f64(f)
+                            .unwrap_or_else(|| serde_json::Number::from(0)),
+                    ),
                     rusqlite::types::Value::Text(s) => serde_json::Value::String(s),
                     rusqlite::types::Value::Blob(b) => serde_json::Value::String(hex::encode(b)),
                 };
@@ -1122,9 +1159,10 @@ impl MemoryStore {
 
     pub fn repopulate_bloom_filter(&self) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare("SELECT hash_blake3 FROM threats WHERE hash_blake3 IS NOT NULL")?;
+        let mut stmt =
+            conn.prepare("SELECT hash_blake3 FROM threats WHERE hash_blake3 IS NOT NULL")?;
         let hashes = stmt.query_map([], |row| row.get::<_, String>(0))?;
-        
+
         let mut bloom = self.bloom_filter.lock().unwrap();
         for hash in hashes {
             if let Ok(h) = hash {
@@ -1200,30 +1238,33 @@ impl MemoryStore {
              ON CONFLICT(node_id) DO UPDATE SET 
              score = MAX(0.0, MIN(1.0, score + ?)),
              last_updated = ?",
-            params![node_id, 0.5 + delta, Utc::now().to_rfc3339(), delta, Utc::now().to_rfc3339()],
+            params![
+                node_id,
+                0.5 + delta,
+                Utc::now().to_rfc3339(),
+                delta,
+                Utc::now().to_rfc3339()
+            ],
         )?;
         Ok(())
     }
 
     /// Upsert OTX indicators in batch.
-    pub fn upsert_otx_indicators(&self, indicators: &[osoosi_types::OtxIndicator]) -> anyhow::Result<()> {
+    pub fn upsert_otx_indicators(
+        &self,
+        indicators: &[osoosi_types::OtxIndicator],
+    ) -> anyhow::Result<()> {
         let mut conn = self.conn.lock().unwrap();
         let tx = conn.transaction()?;
         {
             let mut stmt = tx.prepare_cached(
                 "INSERT INTO otx_indicators (indicator_type, value, source, first_seen, last_seen)
                  VALUES (?, ?, ?, ?, ?)
-                 ON CONFLICT(indicator_type, value, source) DO UPDATE SET last_seen = ?5"
+                 ON CONFLICT(indicator_type, value, source) DO UPDATE SET last_seen = ?5",
             )?;
             let now = Utc::now().to_rfc3339();
             for ind in indicators {
-                stmt.execute(params![
-                    ind.indicator_type,
-                    ind.value,
-                    ind.source,
-                    now,
-                    now,
-                ])?;
+                stmt.execute(params![ind.indicator_type, ind.value, ind.source, now, now,])?;
             }
         }
         tx.commit()?;
@@ -1233,7 +1274,9 @@ impl MemoryStore {
     /// Check if a value (IP, Domain, Hash, etc.) exists in the OTX indicator database.
     pub fn is_indicator_malicious(&self, kind: &str, value: &str) -> anyhow::Result<bool> {
         let conn = self.conn.lock().unwrap();
-        let mut stmt = conn.prepare_cached("SELECT 1 FROM otx_indicators WHERE indicator_type = ? AND value = ? LIMIT 1")?;
+        let mut stmt = conn.prepare_cached(
+            "SELECT 1 FROM otx_indicators WHERE indicator_type = ? AND value = ? LIMIT 1",
+        )?;
         let exists = stmt.exists(params![kind, value])?;
         Ok(exists)
     }

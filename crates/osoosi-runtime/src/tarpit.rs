@@ -21,10 +21,13 @@ impl TarpitManager {
 
     /// Enter a "Tarpit" state for a specific process ID.
     pub async fn apply_tarpit(&self, pid: u32, duration_secs: u64) {
-        use sysinfo::{System, Pid};
-        
-        warn!("Applying Resource Tarpit to PID {}: Throttling to IDLE priority...", pid);
-        
+        use sysinfo::{Pid, System};
+
+        warn!(
+            "Applying Resource Tarpit to PID {}: Throttling to IDLE priority...",
+            pid
+        );
+
         let s = System::new_all();
         if let Some(process) = s.process(Pid::from(pid as usize)) {
             // Note: sysinfo 0.30+ uses set_priority or similar if supported.

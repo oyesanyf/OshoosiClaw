@@ -8,11 +8,11 @@
 //! harden against "telemetry poisoning" attacks that attempt to blend malicious
 //! process chains into the normal baseline.
 
-use candle_core::{Device, Tensor, DType};
+use candle_core::{DType, Device, Tensor};
 use candle_nn::{Linear, Module};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::{warn, debug};
+use tracing::{debug, warn};
 
 /// Represents a process relationship in the execution chain.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -29,29 +29,29 @@ pub struct ProcessRelationship {
 /// Updated from MITRE ATT&CK v15 Windows sub-techniques.
 const SUSPICIOUS_PAIRS: &[(&str, &str, &str)] = &[
     // T1059 - Command and Scripting Interpreter
-    ("winword.exe", "cmd.exe",        "T1059.003"),
+    ("winword.exe", "cmd.exe", "T1059.003"),
     ("winword.exe", "powershell.exe", "T1059.001"),
-    ("excel.exe",   "cmd.exe",        "T1059.003"),
-    ("excel.exe",   "powershell.exe", "T1059.001"),
-    ("outlook.exe", "cmd.exe",        "T1059.003"),
+    ("excel.exe", "cmd.exe", "T1059.003"),
+    ("excel.exe", "powershell.exe", "T1059.001"),
+    ("outlook.exe", "cmd.exe", "T1059.003"),
     ("outlook.exe", "powershell.exe", "T1059.001"),
     // T1055 - Process Injection
     ("explorer.exe", "powershell.exe", "T1055"),
-    ("svchost.exe",  "cmd.exe",        "T1055"),
+    ("svchost.exe", "cmd.exe", "T1055"),
     // T1547 - Boot or Logon Autostart
-    ("lsass.exe",   "cmd.exe",    "T1547"),
-    ("lsass.exe",   "cscript.exe","T1547"),
+    ("lsass.exe", "cmd.exe", "T1547"),
+    ("lsass.exe", "cscript.exe", "T1547"),
     // T1218 - System Binary Proxy Execution
-    ("mshta.exe",   "powershell.exe", "T1218.005"),
-    ("regsvr32.exe","cmd.exe",        "T1218.010"),
-    ("wscript.exe", "cmd.exe",        "T1218.005"),
+    ("mshta.exe", "powershell.exe", "T1218.005"),
+    ("regsvr32.exe", "cmd.exe", "T1218.010"),
+    ("wscript.exe", "cmd.exe", "T1218.005"),
     // T1003 - OS Credential Dumping
-    ("lsass.exe",   "procdump.exe",  "T1003.001"),
-    ("lsass.exe",   "mimikatz.exe",  "T1003.001"),
+    ("lsass.exe", "procdump.exe", "T1003.001"),
+    ("lsass.exe", "mimikatz.exe", "T1003.001"),
     // T1036 - Masquerading
-    ("explorer.exe", "svchost.exe",  "T1036.005"),
+    ("explorer.exe", "svchost.exe", "T1036.005"),
     // T1569 - System Services
-    ("services.exe", "cmd.exe",      "T1569.002"),
+    ("services.exe", "cmd.exe", "T1569.002"),
 ];
 
 pub struct ProcessTreeEmbedder {
@@ -121,12 +121,46 @@ impl ProcessTreeEmbedder {
         let parent_lc = rel.parent_name.to_lowercase();
 
         // Behavioral flags
-        features[48] = if matches!(child_lc.as_str(), "cmd.exe" | "powershell.exe" | "bash" | "sh" | "zsh") { 1.0 } else { 0.0 };
-        features[49] = if matches!(child_lc.as_str(), "wscript.exe" | "cscript.exe" | "mshta.exe") { 1.0 } else { 0.0 };
-        features[50] = if parent_lc.contains("word") || parent_lc.contains("excel") || parent_lc.contains("outlook") || parent_lc.contains("powerpoint") { 1.0 } else { 0.0 };
-        features[51] = if matches!(child_lc.as_str(),
-            "regsvr32.exe" | "rundll32.exe" | "certutil.exe" | "bitsadmin.exe" |
-            "msiexec.exe" | "installutil.exe" | "odbcconf.exe" | "regasm.exe") { 1.0 } else { 0.0 };
+        features[48] = if matches!(
+            child_lc.as_str(),
+            "cmd.exe" | "powershell.exe" | "bash" | "sh" | "zsh"
+        ) {
+            1.0
+        } else {
+            0.0
+        };
+        features[49] = if matches!(
+            child_lc.as_str(),
+            "wscript.exe" | "cscript.exe" | "mshta.exe"
+        ) {
+            1.0
+        } else {
+            0.0
+        };
+        features[50] = if parent_lc.contains("word")
+            || parent_lc.contains("excel")
+            || parent_lc.contains("outlook")
+            || parent_lc.contains("powerpoint")
+        {
+            1.0
+        } else {
+            0.0
+        };
+        features[51] = if matches!(
+            child_lc.as_str(),
+            "regsvr32.exe"
+                | "rundll32.exe"
+                | "certutil.exe"
+                | "bitsadmin.exe"
+                | "msiexec.exe"
+                | "installutil.exe"
+                | "odbcconf.exe"
+                | "regasm.exe"
+        ) {
+            1.0
+        } else {
+            0.0
+        };
 
         features
     }
@@ -189,13 +223,24 @@ impl ProcessTreeEmbedder {
         }
 
         // Soft rule: distance from baseline embedding
-        let key = format!("{}→{}", rel.parent_name.to_lowercase(), rel.child_name.to_lowercase());
+        let key = format!(
+            "{}→{}",
+            rel.parent_name.to_lowercase(),
+            rel.child_name.to_lowercase()
+        );
         if let Some(baseline_emb) = self.baseline.get(&key) {
             let similarity = self.cosine_similarity(embedding, baseline_emb);
             let distance_score = (1.0 - similarity).max(0.0);
-            debug!("Process pair '{}' cosine distance: {:.3}", key, distance_score);
+            debug!(
+                "Process pair '{}' cosine distance: {:.3}",
+                key, distance_score
+            );
             // Threshold: pairs with >0.35 distance from baseline are suspicious
-            if distance_score > 0.35 { distance_score } else { 0.0 }
+            if distance_score > 0.35 {
+                distance_score
+            } else {
+                0.0
+            }
         } else {
             // Unknown baseline — moderate suspicion
             debug!("No baseline for '{}', defaulting to 0.3 suspicion.", key);
@@ -225,7 +270,10 @@ impl ProcessTreeEmbedder {
                     }
                 }
                 Err(e) => {
-                    warn!("Failed to embed process relationship {}→{}: {}", rel.parent_name, rel.child_name, e);
+                    warn!(
+                        "Failed to embed process relationship {}→{}: {}",
+                        rel.parent_name, rel.child_name, e
+                    );
                 }
             }
         }
@@ -249,7 +297,9 @@ impl ProcessTreeEmbedder {
         let dot: f32 = a.iter().zip(b.iter()).map(|(x, y)| x * y).sum();
         let norm_a: f32 = a.iter().map(|x| x * x).sum::<f32>().sqrt();
         let norm_b: f32 = b.iter().map(|x| x * x).sum::<f32>().sqrt();
-        if norm_a == 0.0 || norm_b == 0.0 { return 0.0; }
+        if norm_a == 0.0 || norm_b == 0.0 {
+            return 0.0;
+        }
         dot / (norm_a * norm_b)
     }
 }

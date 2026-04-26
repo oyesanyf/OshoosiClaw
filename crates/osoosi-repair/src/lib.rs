@@ -1,22 +1,24 @@
 //! with atomic rollbacks, health verification, and mesh-based learning.
 
 pub mod discovery;
-pub mod remediator;
-pub mod registry;
-pub mod patch_hash_store;
 pub mod jit;
+pub mod patch_hash_store;
+pub mod registry;
+pub mod remediator;
 
 use discovery::PatchDiscoverer;
 use remediator::StandaloneRemediator;
-use sha2::{Sha256, Digest};
+use sha2::{Digest, Sha256};
 
-use osoosi_types::{PatchMetadata, PatchTransaction, PatchState, SystemHealth, HealthMetric, RepairConfig};
-use osoosi_audit::AuditTrail;
-use anyhow::{Result, anyhow};
+use anyhow::{anyhow, Result};
 use chrono::Utc;
-use std::sync::Arc;
+use osoosi_audit::AuditTrail;
+use osoosi_types::{
+    HealthMetric, PatchMetadata, PatchState, PatchTransaction, RepairConfig, SystemHealth,
+};
 use std::process::Command;
-use tracing::{info, warn, error};
+use std::sync::Arc;
+use tracing::{error, info, warn};
 use uuid::Uuid;
 
 /// Current username for temporary admin grant. Windows: USERNAME (or DOMAIN\USER); Linux/macOS: USER or SUDO_USER.
@@ -67,7 +69,10 @@ impl Drop for TemporaryAdminGuard {
                 if s.success() {
                     info!("Revoked temporary admin for user {}", self.user);
                 } else {
-                    warn!("Failed to revoke temporary admin for user {} (may need manual removal)", self.user);
+                    warn!(
+                        "Failed to revoke temporary admin for user {} (may need manual removal)",
+                        self.user
+                    );
                 }
             }
         }
@@ -79,7 +84,10 @@ impl Drop for TemporaryAdminGuard {
                     .status();
                 if let Ok(s) = status {
                     if s.success() {
-                        info!("Revoked temporary admin for user {} (removed from group {})", self.user, group);
+                        info!(
+                            "Revoked temporary admin for user {} (removed from group {})",
+                            self.user, group
+                        );
                     } else {
                         warn!("Failed to revoke temporary admin for user {} from group {} (may need manual removal)", self.user, group);
                     }
@@ -95,7 +103,10 @@ impl Drop for TemporaryAdminGuard {
                 if s.success() {
                     info!("Revoked temporary admin for user {}", self.user);
                 } else {
-                    warn!("Failed to revoke temporary admin for user {} (may need manual removal)", self.user);
+                    warn!(
+                        "Failed to revoke temporary admin for user {} (may need manual removal)",
+                        self.user
+                    );
                 }
             }
         }
@@ -113,7 +124,7 @@ pub struct PatchEngine {
 
 impl PatchEngine {
     pub fn new(audit: Arc<AuditTrail>, repair_config: RepairConfig) -> Self {
-        Self { 
+        Self {
             audit,
             discoverer: PatchDiscoverer::new(),
             remediator: StandaloneRemediator::new(),
@@ -123,8 +134,14 @@ impl PatchEngine {
     }
 
     /// Replace a file with a clean version from the given URL. Used for malware remediation.
-    pub async fn remediate_file(&self, target_path: &str, download_url: &str) -> Result<std::path::PathBuf> {
-        self.remediator.remediate_file(target_path, download_url).await
+    pub async fn remediate_file(
+        &self,
+        target_path: &str,
+        download_url: &str,
+    ) -> Result<std::path::PathBuf> {
+        self.remediator
+            .remediate_file(target_path, download_url)
+            .await
     }
 
     /// Rollback a previously applied patch. Requires Administrator/root.
@@ -154,9 +171,9 @@ impl PatchEngine {
             expected_sha256: None,
         };
 
-        let snap_id = snapshot_id.map(|s| s.to_string()).or_else(|| {
-            Self::infer_snapshot_id(comp, patch_id)
-        });
+        let snap_id = snapshot_id
+            .map(|s| s.to_string())
+            .or_else(|| Self::infer_snapshot_id(comp, patch_id));
         let tx = PatchTransaction {
             transaction_id: Uuid::new_v4().to_string(),
             patch: metadata,
@@ -174,24 +191,43 @@ impl PatchEngine {
     fn infer_snapshot_id(component: &str, _patch_id: &str) -> Option<String> {
         #[cfg(target_os = "linux")]
         {
-            if Command::new("which").arg("dpkg-query").status().map(|s| s.success()).unwrap_or(false) {
+            if Command::new("which")
+                .arg("dpkg-query")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
                 let q = Command::new("dpkg-query")
                     .args(["-W", "-f=${Version}", component])
-                    .output().ok()?;
+                    .output()
+                    .ok()?;
                 let ver = String::from_utf8_lossy(&q.stdout).trim().to_string();
                 if !ver.is_empty() {
                     return Some(format!("apt:{}={}", component, ver));
                 }
             }
-            if Command::new("which").arg("rpm").status().map(|s| s.success()).unwrap_or(false) {
+            if Command::new("which")
+                .arg("rpm")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
                 let q = Command::new("rpm").args(["-q", component]).output().ok()?;
                 let ver = String::from_utf8_lossy(&q.stdout).trim().to_string();
                 if !ver.is_empty() {
                     return Some(format!("rpm:{}={}", component, ver));
                 }
             }
-            if Command::new("which").arg("pacman").status().map(|s| s.success()).unwrap_or(false) {
-                let q = Command::new("pacman").args(["-Q", component]).output().ok()?;
+            if Command::new("which")
+                .arg("pacman")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                let q = Command::new("pacman")
+                    .args(["-Q", component])
+                    .output()
+                    .ok()?;
                 let line = String::from_utf8_lossy(&q.stdout);
                 let ver = line.split_whitespace().nth(1)?.to_string();
                 if !ver.is_empty() {
@@ -206,18 +242,25 @@ impl PatchEngine {
     pub async fn run_discovery(&self) -> Result<Vec<PatchMetadata>> {
         info!("Repair Engine: Initiating patch discovery phase...");
         let patches = self.discoverer.discover_missing_patches().await?;
-        
+
         // Calculate hash of the patch list for Merkle logging
         let mut hasher = Sha256::new();
         hasher.update(format!("{:?}", patches).as_bytes());
         let hash = hex::encode(hasher.finalize());
 
-        info!("Discovery complete. Found {} patches (Hash: {}). Logging to Merkle Trail.", patches.len(), hash);
-        self.audit.log("repair", serde_json::json!({
-            "event": "Patch Discovery",
-            "count": patches.len(),
-            "hash": hash
-        }));
+        info!(
+            "Discovery complete. Found {} patches (Hash: {}). Logging to Merkle Trail.",
+            patches.len(),
+            hash
+        );
+        self.audit.log(
+            "repair",
+            serde_json::json!({
+                "event": "Patch Discovery",
+                "count": patches.len(),
+                "hash": hash
+            }),
+        );
 
         Ok(patches)
     }
@@ -242,7 +285,10 @@ impl PatchEngine {
             snapshot_id: None,
         };
 
-        info!("Starting patch transaction {} for {}", tx.transaction_id, tx.patch.cve_id);
+        info!(
+            "Starting patch transaction {} for {}",
+            tx.transaction_id, tx.patch.cve_id
+        );
 
         // 1. Snapshotting
         tx.snapshot_id = Some(self.create_snapshot(&metadata).await?);
@@ -259,14 +305,20 @@ impl PatchEngine {
                 // 3. Health-Check Verification (Smoke Tests)
                 let health = self.run_smoke_tests(&metadata).await?;
                 if health.overall_score < 0.95 {
-                    warn!("Health check failed (Score: {}). Initiating rollback...", health.overall_score);
+                    warn!(
+                        "Health check failed (Score: {}). Initiating rollback...",
+                        health.overall_score
+                    );
                     tx.state = PatchState::RollingBack;
                     self.log_state(&tx)?;
                     self.perform_rollback(&tx).await?;
                     tx.state = PatchState::Quarantined;
                     tx.completed_at = Some(Utc::now());
                 } else {
-                    info!("Health check passed (Score: {}). Committing patch.", health.overall_score);
+                    info!(
+                        "Health check passed (Score: {}). Committing patch.",
+                        health.overall_score
+                    );
                     tx.state = PatchState::Committed;
                     tx.completed_at = Some(Utc::now());
                 }
@@ -286,13 +338,16 @@ impl PatchEngine {
     }
 
     async fn create_snapshot(&self, _patch: &PatchMetadata) -> Result<String> {
-        // Optimization: Throttle snapshot creation. 
+        // Optimization: Throttle snapshot creation.
         // If a snapshot was created in the last 10 minutes, reuse it for this transaction.
         {
             let mut last_at = self.last_snapshot_at.lock().await;
             if let Some(instant) = *last_at {
                 if instant.elapsed() < std::time::Duration::from_secs(600) {
-                    info!("Snapshot throttle: Reusing recent system snapshot (created {:?} ago).", instant.elapsed());
+                    info!(
+                        "Snapshot throttle: Reusing recent system snapshot (created {:?} ago).",
+                        instant.elapsed()
+                    );
                     return Ok("recent-cached-snapshot".to_string());
                 }
             }
@@ -306,9 +361,10 @@ impl PatchEngine {
         {
             info!("Creating Windows restore point before patch...");
             let desc = format!("Osoosi-{}", &snap_id);
-            
+
             // 10/10 Logic: Bypass the 24-hour restore point frequency limit by temporarily setting registry key
-            let script = format!(r#"
+            let script = format!(
+                r#"
 $regPath = "HKLM:\Software\Microsoft\Windows NT\CurrentVersion\SystemRestore"
 if (-not (Test-Path $regPath)) {{ New-Item -Path $regPath -Force | Out-Null }}
 $oldVal = Get-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -ErrorAction SilentlyContinue
@@ -323,24 +379,68 @@ try {{
   if ($oldVal) {{ Set-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -Value $oldVal.SystemRestorePointCreationFrequency -Force }}
   else {{ Remove-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -Force -ErrorAction SilentlyContinue }}
 }}
-"#, desc.replace('"', "`\""));
+"#,
+                desc.replace('"', "`\"")
+            );
 
-            let status = Command::new("powershell")
-                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &script])
-                .status()?;
-            
-            if !status.success() {
-                warn!(
-                    "Failed to create Windows restore point (exit {:?}). Ensure admin rights and System Restore enabled; wusa/DISM rollback may still apply.",
-                    status.code()
-                );
-            }
+            tokio::spawn(async move {
+                let timeout_secs = std::env::var("OSOOSI_REPAIR_RESTORE_TIMEOUT_SECS")
+                    .ok()
+                    .and_then(|s| s.parse().ok())
+                    .unwrap_or(30_u64);
+                let mut child = match tokio::process::Command::new("powershell")
+                    .args([
+                        "-NoProfile",
+                        "-ExecutionPolicy",
+                        "Bypass",
+                        "-Command",
+                        &script,
+                    ])
+                    .spawn()
+                {
+                    Ok(child) => child,
+                    Err(e) => {
+                        warn!("Failed to start background Windows restore point: {}", e);
+                        return;
+                    }
+                };
+                match tokio::time::timeout(
+                    std::time::Duration::from_secs(timeout_secs),
+                    child.wait(),
+                )
+                .await
+                {
+                    Ok(Ok(status)) if status.success() => {
+                        info!("Background Windows restore point created for patch transaction.");
+                    }
+                    Ok(Ok(status)) => {
+                        warn!(
+                            "Background Windows restore point failed (exit {:?}). Patch engine continues.",
+                            status.code()
+                        );
+                    }
+                    Ok(Err(e)) => warn!("Background Windows restore point wait failed: {}", e),
+                    Err(_) => {
+                        let _ = child.kill().await;
+                        warn!(
+                            "Background Windows restore point timed out after {}s. Patch engine continues.",
+                            timeout_secs
+                        );
+                    }
+                }
+            });
+            info!("Windows restore point queued in background; patch orchestration will not block on VSS.");
         }
         #[cfg(target_os = "linux")]
         {
             // Capture pre-patch package version as rollback marker.
             info!("Capturing Linux package snapshot marker...");
-            let marker = if Command::new("which").arg("dpkg-query").status().map(|s| s.success()).unwrap_or(false) {
+            let marker = if Command::new("which")
+                .arg("dpkg-query")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
                 let q = Command::new("dpkg-query")
                     .args(["-W", "-f=${Version}", &_patch.component])
                     .output()?;
@@ -350,34 +450,68 @@ try {{
                 } else {
                     format!("apt:{}={}", _patch.component, ver)
                 }
-            } else if Command::new("which").arg("rpm").status().map(|s| s.success()).unwrap_or(false) {
-                let q = Command::new("rpm").args(["-q", &_patch.component]).output()?;
+            } else if Command::new("which")
+                .arg("rpm")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                let q = Command::new("rpm")
+                    .args(["-q", &_patch.component])
+                    .output()?;
                 let ver = String::from_utf8_lossy(&q.stdout).trim().to_string();
                 if ver.is_empty() {
                     format!("rpm:{}=<unknown>", _patch.component)
                 } else {
                     format!("rpm:{}={}", _patch.component, ver)
                 }
-            } else if Command::new("which").arg("pacman").status().map(|s| s.success()).unwrap_or(false) {
-                let q = Command::new("pacman").args(["-Q", &_patch.component]).output()?;
+            } else if Command::new("which")
+                .arg("pacman")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                let q = Command::new("pacman")
+                    .args(["-Q", &_patch.component])
+                    .output()?;
                 let line = String::from_utf8_lossy(&q.stdout).trim().to_string();
-                let ver = line.split_whitespace().nth(1).unwrap_or("<unknown>").to_string();
+                let ver = line
+                    .split_whitespace()
+                    .nth(1)
+                    .unwrap_or("<unknown>")
+                    .to_string();
                 if ver.is_empty() || ver == "<unknown>" {
                     format!("pacman:{}=<unknown>", _patch.component)
                 } else {
                     format!("pacman:{}={}", _patch.component, ver)
                 }
-            } else if Command::new("which").arg("zypper").status().map(|s| s.success()).unwrap_or(false) {
-                let q = Command::new("zypper").args(["se", "-s", &_patch.component]).output()?;
-                let ver = String::from_utf8_lossy(&q.stdout).lines()
+            } else if Command::new("which")
+                .arg("zypper")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                let q = Command::new("zypper")
+                    .args(["se", "-s", &_patch.component])
+                    .output()?;
+                let ver = String::from_utf8_lossy(&q.stdout)
+                    .lines()
                     .find(|l| l.contains(&_patch.component))
                     .and_then(|l| l.split_whitespace().nth(2))
                     .unwrap_or("<unknown>")
                     .to_string();
                 format!("zypper:{}={}", _patch.component, ver)
-            } else if Command::new("which").arg("apk").status().map(|s| s.success()).unwrap_or(false) {
-                let q = Command::new("apk").args(["info", &_patch.component]).output()?;
-                let ver = String::from_utf8_lossy(&q.stdout).lines()
+            } else if Command::new("which")
+                .arg("apk")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
+                let q = Command::new("apk")
+                    .args(["info", &_patch.component])
+                    .output()?;
+                let ver = String::from_utf8_lossy(&q.stdout)
+                    .lines()
                     .next()
                     .and_then(|l| l.split('-').last())
                     .unwrap_or("<unknown>")
@@ -402,10 +536,13 @@ try {{
 
     async fn execute_patch_apply(&self, patch: &PatchMetadata) -> Result<()> {
         if let Some(ref url) = patch.download_url {
-            info!("Patch has download URL. Using Standalone Remediator for: {}", patch.component);
+            info!(
+                "Patch has download URL. Using Standalone Remediator for: {}",
+                patch.component
+            );
             // On Windows, if component is an absolute path, we remediate it directly.
             // If it's just a name, we might need more logic, but for now we assume component is the path or identifier.
-            let target_path = &patch.component; 
+            let target_path = &patch.component;
             self.remediator.remediate_file(target_path, url).await?;
             return Ok(());
         }
@@ -416,7 +553,8 @@ try {{
         {
             let kb = patch.version.trim().to_uppercase();
             // COM-based installer for pending Windows updates (no external module dependency).
-            let ps = format!(r#"
+            let ps = format!(
+                r#"
 $kb = "{kb}"
 $session = New-Object -ComObject Microsoft.Update.Session
 $searcher = $session.CreateUpdateSearcher()
@@ -442,7 +580,10 @@ if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
 }} elseif ($res.ResultCode -notin 2,3) {{
   throw "Install failed. ResultCode=$($res.ResultCode) (2=Success, 3=SuccessWithErrors, 4=Failed, 5=Aborted)"
 }}
-"#, kb = kb, title = patch.component.replace('"', ""));
+"#,
+                kb = kb,
+                title = patch.component.replace('"', "")
+            );
             let status = Command::new("powershell")
                 .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps])
                 .status()?;
@@ -452,42 +593,81 @@ if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
         }
         #[cfg(target_os = "linux")]
         {
-            if Command::new("which").arg("apt-get").status().map(|s| s.success()).unwrap_or(false) {
+            if Command::new("which")
+                .arg("apt-get")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
                 let status = Command::new("apt-get")
                     .args(["install", "-y", "--only-upgrade", &patch.component])
                     .status()?;
                 if !status.success() {
-                    return Err(anyhow!("apt-get patch install failed for {}", patch.component));
+                    return Err(anyhow!(
+                        "apt-get patch install failed for {}",
+                        patch.component
+                    ));
                 }
-            } else if Command::new("which").arg("dnf").status().map(|s| s.success()).unwrap_or(false) {
+            } else if Command::new("which")
+                .arg("dnf")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
                 let status = Command::new("dnf")
                     .args(["upgrade", "-y", &patch.component])
                     .status()?;
                 if !status.success() {
                     return Err(anyhow!("dnf patch install failed for {}", patch.component));
                 }
-            } else if Command::new("which").arg("yum").status().map(|s| s.success()).unwrap_or(false) {
+            } else if Command::new("which")
+                .arg("yum")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
                 let status = Command::new("yum")
                     .args(["update", "-y", &patch.component])
                     .status()?;
                 if !status.success() {
                     return Err(anyhow!("yum patch install failed for {}", patch.component));
                 }
-            } else if Command::new("which").arg("pacman").status().map(|s| s.success()).unwrap_or(false) {
+            } else if Command::new("which")
+                .arg("pacman")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
                 let status = Command::new("pacman")
                     .args(["-S", "--noconfirm", "--needed", &patch.component])
                     .status()?;
                 if !status.success() {
-                    return Err(anyhow!("pacman patch install failed for {}", patch.component));
+                    return Err(anyhow!(
+                        "pacman patch install failed for {}",
+                        patch.component
+                    ));
                 }
-            } else if Command::new("which").arg("zypper").status().map(|s| s.success()).unwrap_or(false) {
+            } else if Command::new("which")
+                .arg("zypper")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
                 let status = Command::new("zypper")
                     .args(["install", "-y", &patch.component])
                     .status()?;
                 if !status.success() {
-                    return Err(anyhow!("zypper patch install failed for {}", patch.component));
+                    return Err(anyhow!(
+                        "zypper patch install failed for {}",
+                        patch.component
+                    ));
                 }
-            } else if Command::new("which").arg("apk").status().map(|s| s.success()).unwrap_or(false) {
+            } else if Command::new("which")
+                .arg("apk")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
                 let status = Command::new("apk")
                     .args(["add", "--no-cache", "--upgrade", &patch.component])
                     .status()?;
@@ -495,7 +675,9 @@ if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
                     return Err(anyhow!("apk patch install failed for {}", patch.component));
                 }
             } else {
-                return Err(anyhow!("No supported package manager found for patch apply"));
+                return Err(anyhow!(
+                    "No supported package manager found for patch apply"
+                ));
             }
         }
         #[cfg(target_os = "macos")]
@@ -519,9 +701,9 @@ if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
 
         // 1. Check if Sentry Engine is still talking
         metrics.push(HealthMetric {
-            component: "Sentry Engine".to_string(), 
-            score: 1.0, 
-            details: "Host communication verified".to_string() 
+            component: "Sentry Engine".to_string(),
+            score: 1.0,
+            details: "Host communication verified".to_string(),
         });
         score_sum += 1.0;
         score_count += 1.0;
@@ -532,15 +714,23 @@ if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
         #[cfg(not(target_os = "windows"))]
         let check_cmd = "ss -tulpn";
 
-        let net_ok = Command::new(if cfg!(target_os = "windows") { "cmd" } else { "sh" })
-            .args(if cfg!(target_os = "windows") { vec!["/C", check_cmd] } else { vec!["-c", check_cmd] })
-            .status()
-            .map(|s| s.success())
-            .unwrap_or(false);
-        metrics.push(HealthMetric { 
-            component: "Network Stack".to_string(), 
-            score: if net_ok { 0.99 } else { 0.3 }, 
-            details: format!("Checked via {}", check_cmd)
+        let net_ok = Command::new(if cfg!(target_os = "windows") {
+            "cmd"
+        } else {
+            "sh"
+        })
+        .args(if cfg!(target_os = "windows") {
+            vec!["/C", check_cmd]
+        } else {
+            vec!["-c", check_cmd]
+        })
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+        metrics.push(HealthMetric {
+            component: "Network Stack".to_string(),
+            score: if net_ok { 0.99 } else { 0.3 },
+            details: format!("Checked via {}", check_cmd),
         });
         score_sum += if net_ok { 0.99 } else { 0.3 };
         score_count += 1.0;
@@ -559,7 +749,11 @@ if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
         score_sum += if patch_verified { 1.0 } else { 0.0 };
         score_count += 1.0;
 
-        let score = if score_count > 0.0 { score_sum / score_count } else { 0.0 };
+        let score = if score_count > 0.0 {
+            score_sum / score_count
+        } else {
+            0.0
+        };
         Ok(SystemHealth {
             overall_score: score,
             metrics,
@@ -593,35 +787,63 @@ if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
         }
         #[cfg(target_os = "linux")]
         {
-            if Command::new("which").arg("dpkg-query").status().map(|s| s.success()).unwrap_or(false) {
+            if Command::new("which")
+                .arg("dpkg-query")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
                 return Command::new("dpkg-query")
                     .args(["-W", &patch.component])
                     .status()
                     .map(|s| s.success())
                     .unwrap_or(false);
             }
-            if Command::new("which").arg("rpm").status().map(|s| s.success()).unwrap_or(false) {
+            if Command::new("which")
+                .arg("rpm")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
                 return Command::new("rpm")
                     .args(["-q", &patch.component])
                     .status()
                     .map(|s| s.success())
                     .unwrap_or(false);
             }
-            if Command::new("which").arg("pacman").status().map(|s| s.success()).unwrap_or(false) {
+            if Command::new("which")
+                .arg("pacman")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
                 return Command::new("pacman")
                     .args(["-Q", &patch.component])
                     .status()
                     .map(|s| s.success())
                     .unwrap_or(false);
             }
-            if Command::new("which").arg("zypper").status().map(|s| s.success()).unwrap_or(false) {
+            if Command::new("which")
+                .arg("zypper")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
                 return Command::new("zypper")
                     .args(["se", "-i", &patch.component])
                     .output()
-                    .map(|o| o.status.success() && !String::from_utf8_lossy(&o.stdout).contains("No packages found"))
+                    .map(|o| {
+                        o.status.success()
+                            && !String::from_utf8_lossy(&o.stdout).contains("No packages found")
+                    })
                     .unwrap_or(false);
             }
-            if Command::new("which").arg("apk").status().map(|s| s.success()).unwrap_or(false) {
+            if Command::new("which")
+                .arg("apk")
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+            {
                 return Command::new("apk")
                     .args(["info", "-e", &patch.component])
                     .status()
@@ -635,14 +857,21 @@ if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
             Command::new("softwareupdate")
                 .args(["--history"])
                 .output()
-                .map(|o| String::from_utf8_lossy(&o.stdout).to_ascii_lowercase().contains(&patch.component.to_ascii_lowercase()))
+                .map(|o| {
+                    String::from_utf8_lossy(&o.stdout)
+                        .to_ascii_lowercase()
+                        .contains(&patch.component.to_ascii_lowercase())
+                })
                 .unwrap_or(false)
         }
     }
 
     async fn perform_rollback(&self, tx: &PatchTransaction) -> Result<()> {
         if let Some(ref snap_id) = tx.snapshot_id {
-            warn!("Repair Engine: REVERTING system state to snapshot: {}", snap_id);
+            warn!(
+                "Repair Engine: REVERTING system state to snapshot: {}",
+                snap_id
+            );
 
             #[cfg(target_os = "windows")]
             {
@@ -652,14 +881,21 @@ if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
                     let kb_num = kb.trim_start_matches("KB");
                     info!("Attempting wusa rollback for {}...", kb);
                     let status = Command::new("wusa.exe")
-                        .args(["/uninstall", &format!("/kb:{}", kb_num), "/quiet", "/norestart"])
+                        .args([
+                            "/uninstall",
+                            &format!("/kb:{}", kb_num),
+                            "/quiet",
+                            "/norestart",
+                        ])
                         .status()?;
-                    
+
                     if !status.success() {
                         let code = status.code().unwrap_or(-1);
-                        if code == 87 || code == -2147024809 { // Invalid parameter
+                        if code == 87 || code == -2147024809 {
+                            // Invalid parameter
                             warn!("wusa.exe rollback failed with code 87. Attempting DISM fallback for {}...", kb);
-                            let dism_ps = format!(r#"
+                            let dism_ps = format!(
+                                r#"
 $kb = "{}"
 $pkg = Get-WindowsPackage -Online | Where-Object {{ $_.PackageName -like "*$kb*" }}
 if ($pkg) {{
@@ -672,28 +908,47 @@ if ($pkg) {{
 }} else {{
   Write-Warning "Package for $kb not found via DISM. It may already be removed or is a non-standard update (e.g. Defender)."
 }}
-"#, kb_num);
+"#,
+                                kb_num
+                            );
                             let dism_status = Command::new("powershell")
-                                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &dism_ps])
+                                .args([
+                                    "-NoProfile",
+                                    "-ExecutionPolicy",
+                                    "Bypass",
+                                    "-Command",
+                                    &dism_ps,
+                                ])
                                 .status()?;
                             if !dism_status.success() {
-                                return Err(anyhow!("Windows rollback failed for {} (both wusa and DISM failed)", kb));
+                                return Err(anyhow!(
+                                    "Windows rollback failed for {} (both wusa and DISM failed)",
+                                    kb
+                                ));
                             }
                         } else if kb == "KB2267602" {
                             warn!("Rollback (uninstall) of Defender definitions ({}) is not supported by wusa.exe. Marking as soft failure.", kb);
                         } else {
-                            return Err(anyhow!("Windows rollback failed for {} (wusa exit code: {})", kb, code));
+                            return Err(anyhow!(
+                                "Windows rollback failed for {} (wusa exit code: {})",
+                                kb,
+                                code
+                            ));
                         }
                     }
                 } else {
-                    return Err(anyhow!("Windows rollback unavailable: patch is not a KB identifier"));
+                    return Err(anyhow!(
+                        "Windows rollback unavailable: patch is not a KB identifier"
+                    ));
                 }
             }
             #[cfg(target_os = "linux")]
             {
                 if snap_id.starts_with("apt:") {
                     let data = snap_id.trim_start_matches("apt:");
-                    let (pkg, ver) = data.split_once('=').unwrap_or((tx.patch.component.as_str(), "<unknown>"));
+                    let (pkg, ver) = data
+                        .split_once('=')
+                        .unwrap_or((tx.patch.component.as_str(), "<unknown>"));
                     if ver != "<unknown>" {
                         let status = Command::new("apt-get")
                             .args(["install", "-y", &format!("{}={}", pkg, ver)])
@@ -707,7 +962,9 @@ if ($pkg) {{
                     }
                 } else if snap_id.starts_with("rpm:") {
                     let data = snap_id.trim_start_matches("rpm:");
-                    let (pkg, _ver) = data.split_once('=').unwrap_or((tx.patch.component.as_str(), ""));
+                    let (pkg, _ver) = data
+                        .split_once('=')
+                        .unwrap_or((tx.patch.component.as_str(), ""));
                     let status = Command::new("dnf")
                         .args(["downgrade", "-y", pkg])
                         .status()
@@ -717,21 +974,35 @@ if ($pkg) {{
                     }
                 } else if snap_id.starts_with("pacman:") {
                     let data = snap_id.trim_start_matches("pacman:");
-                    let (pkg, ver) = data.split_once('=').unwrap_or((tx.patch.component.as_str(), "<unknown>"));
+                    let (pkg, ver) = data
+                        .split_once('=')
+                        .unwrap_or((tx.patch.component.as_str(), "<unknown>"));
                     if ver != "<unknown>" {
                         let status = Command::new("pacman")
-                            .args(["-U", "--noconfirm", &format!("/var/cache/pacman/pkg/{}-{}.pkg.tar.zst", pkg, ver)])
+                            .args([
+                                "-U",
+                                "--noconfirm",
+                                &format!("/var/cache/pacman/pkg/{}-{}.pkg.tar.zst", pkg, ver),
+                            ])
                             .status();
                         if status.as_ref().map(|s| !s.success()).unwrap_or(true) {
                             warn!("Pacman rollback: cached pkg may be missing. Manual downgrade: pacman -U /var/cache/pacman/pkg/<pkg>-<ver>.pkg.tar.zst");
-                            return Err(anyhow!("Pacman rollback failed for {} (cached pkg may have been removed)", pkg));
+                            return Err(anyhow!(
+                                "Pacman rollback failed for {} (cached pkg may have been removed)",
+                                pkg
+                            ));
                         }
                     } else {
-                        return Err(anyhow!("Pacman rollback version unknown for {}", tx.patch.component));
+                        return Err(anyhow!(
+                            "Pacman rollback version unknown for {}",
+                            tx.patch.component
+                        ));
                     }
                 } else if snap_id.starts_with("zypper:") {
                     let data = snap_id.trim_start_matches("zypper:");
-                    let (pkg, ver) = data.split_once('=').unwrap_or((tx.patch.component.as_str(), "<unknown>"));
+                    let (pkg, ver) = data
+                        .split_once('=')
+                        .unwrap_or((tx.patch.component.as_str(), "<unknown>"));
                     if ver != "<unknown>" {
                         let status = Command::new("zypper")
                             .args(["install", "-y", "--oldpackage", &format!("{}={}", pkg, ver)])
@@ -740,11 +1011,16 @@ if ($pkg) {{
                             return Err(anyhow!("Zypper rollback failed for {}", pkg));
                         }
                     } else {
-                        return Err(anyhow!("Zypper rollback version unknown for {}", tx.patch.component));
+                        return Err(anyhow!(
+                            "Zypper rollback version unknown for {}",
+                            tx.patch.component
+                        ));
                     }
                 } else if snap_id.starts_with("apk:") {
                     let data = snap_id.trim_start_matches("apk:");
-                    let (pkg, ver) = data.split_once('=').unwrap_or((tx.patch.component.as_str(), "<unknown>"));
+                    let (pkg, ver) = data
+                        .split_once('=')
+                        .unwrap_or((tx.patch.component.as_str(), "<unknown>"));
                     if ver != "<unknown>" {
                         let status = Command::new("apk")
                             .args(["add", "--no-cache", &format!("{}={}", pkg, ver)])
@@ -753,7 +1029,10 @@ if ($pkg) {{
                             return Err(anyhow!("Apk rollback failed for {}", pkg));
                         }
                     } else {
-                        return Err(anyhow!("Apk rollback version unknown for {}", tx.patch.component));
+                        return Err(anyhow!(
+                            "Apk rollback version unknown for {}",
+                            tx.patch.component
+                        ));
                     }
                 } else {
                     return Err(anyhow!("Linux rollback unavailable: no snapshot marker"));
@@ -761,7 +1040,9 @@ if ($pkg) {{
             }
             #[cfg(target_os = "macos")]
             {
-                return Err(anyhow!("macOS rollback requires manual recovery snapshot restore"));
+                return Err(anyhow!(
+                    "macOS rollback requires manual recovery snapshot restore"
+                ));
             }
 
             Ok(())
@@ -778,7 +1059,8 @@ if ($pkg) {{
                 .args(["session"])
                 .output()
                 .map(|o| o.status.success())
-                .unwrap_or(false) {
+                .unwrap_or(false)
+            {
                 return true;
             }
             // Fallback: 'fltmc filters' (requires elevation, but doesn't depend on Server service)
@@ -786,7 +1068,8 @@ if ($pkg) {{
                 .args(["filters"])
                 .output()
                 .map(|o| o.status.success())
-                .unwrap_or(false) {
+                .unwrap_or(false)
+            {
                 return true;
             }
             return false;
@@ -824,16 +1107,25 @@ if ($pkg) {{
                 .args(["localgroup", "administrators", &user, "/add"])
                 .status()?;
             if status.success() {
-                info!("Granted temporary admin for user {} (will revoke after patch)", user);
+                info!(
+                    "Granted temporary admin for user {} (will revoke after patch)",
+                    user
+                );
                 Ok(Some(TemporaryAdminGuard { user, group: None }))
             } else {
-                warn!("Failed to grant temporary admin for user {} (continuing without)", user);
+                warn!(
+                    "Failed to grant temporary admin for user {} (continuing without)",
+                    user
+                );
                 Ok(None)
             }
         }
         #[cfg(target_os = "linux")]
         {
-            let group = self.repair_config.patch_temporary_admin_group.as_deref()
+            let group = self
+                .repair_config
+                .patch_temporary_admin_group
+                .as_deref()
                 .map(|g| g.trim().to_string())
                 .filter(|g| !g.is_empty())
                 .or_else(|| {
@@ -856,9 +1148,15 @@ if ($pkg) {{
                 .status()?;
             if status.success() {
                 info!("Granted temporary admin for user {} (added to group {}, will revoke after patch)", user, group);
-                Ok(Some(TemporaryAdminGuard { user, group: Some(group) }))
+                Ok(Some(TemporaryAdminGuard {
+                    user,
+                    group: Some(group),
+                }))
             } else {
-                warn!("Failed to grant temporary admin for user {} (continuing without)", user);
+                warn!(
+                    "Failed to grant temporary admin for user {} (continuing without)",
+                    user
+                );
                 Ok(None)
             }
         }
@@ -868,10 +1166,16 @@ if ($pkg) {{
                 .args(["-o", "edit", "-a", &user, "-t", "user", "admin"])
                 .status()?;
             if status.success() {
-                info!("Granted temporary admin for user {} (will revoke after patch)", user);
+                info!(
+                    "Granted temporary admin for user {} (will revoke after patch)",
+                    user
+                );
                 Ok(Some(TemporaryAdminGuard { user, group: None }))
             } else {
-                warn!("Failed to grant temporary admin for user {} (continuing without)", user);
+                warn!(
+                    "Failed to grant temporary admin for user {} (continuing without)",
+                    user
+                );
                 Ok(None)
             }
         }
@@ -884,12 +1188,18 @@ if ($pkg) {{
 
     fn log_state(&self, tx: &PatchTransaction) -> Result<()> {
         // Record the transaction state change into the tamper-evident Merkle Logchain
-        let msg = format!("Repair Engine: Patch {} state changed to {:?}", tx.transaction_id, tx.state);
-        self.audit.log("repair", serde_json::json!({
-            "transaction_id": tx.transaction_id,
-            "state": format!("{:?}", tx.state),
-            "message": msg
-        }));
+        let msg = format!(
+            "Repair Engine: Patch {} state changed to {:?}",
+            tx.transaction_id, tx.state
+        );
+        self.audit.log(
+            "repair",
+            serde_json::json!({
+                "transaction_id": tx.transaction_id,
+                "state": format!("{:?}", tx.state),
+                "message": msg
+            }),
+        );
         Ok(())
     }
 }

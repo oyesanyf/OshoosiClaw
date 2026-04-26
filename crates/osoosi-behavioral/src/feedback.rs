@@ -1,8 +1,8 @@
 use rusqlite::{params, Connection, Result};
+use serde::{Deserialize, Serialize};
 use std::path::Path;
 use std::sync::Mutex;
 use tracing::info;
-use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LabeledSample {
@@ -28,12 +28,17 @@ impl FeedbackStore {
             )",
             [],
         )?;
-        Ok(Self { conn: Mutex::new(conn) })
+        Ok(Self {
+            conn: Mutex::new(conn),
+        })
     }
 
     pub fn add_feedback(&self, sentence: &str, label: bool) -> Result<()> {
         let conn = self.conn.lock().unwrap();
-        info!("Adding feedback: label={} for sentence \"{}\"", label, sentence);
+        info!(
+            "Adding feedback: label={} for sentence \"{}\"",
+            label, sentence
+        );
         conn.execute(
             "INSERT INTO feedback (sentence, label, confidence)
              VALUES (?1, ?2, ?3)
@@ -58,13 +63,16 @@ impl FeedbackStore {
     pub fn list_feedback(&self) -> Result<Vec<LabeledSample>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare("SELECT sentence, label, confidence FROM feedback")?;
-        let samples = stmt.query_map([], |row| {
-            Ok(LabeledSample {
-                sentence: row.get(0)?,
-                label: row.get::<_, i32>(1)? != 0,
-                confidence: row.get(2)?,
-            })
-        })?.filter_map(|s| s.ok()).collect();
+        let samples = stmt
+            .query_map([], |row| {
+                Ok(LabeledSample {
+                    sentence: row.get(0)?,
+                    label: row.get::<_, i32>(1)? != 0,
+                    confidence: row.get(2)?,
+                })
+            })?
+            .filter_map(|s| s.ok())
+            .collect();
         Ok(samples)
     }
 }

@@ -44,9 +44,8 @@ fn save_cache_inner(c: &ToolPathsCache) -> std::io::Result<()> {
     if let Some(parent) = p.parent() {
         fs::create_dir_all(parent)?;
     }
-    let data = serde_json::to_string_pretty(c).map_err(|e| {
-        std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string())
-    })?;
+    let data = serde_json::to_string_pretty(c)
+        .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
     fs::write(&p, data)
 }
 
@@ -72,7 +71,11 @@ pub fn discover_and_persist() {
 
     if next != prev {
         if let Err(e) = save_cache_inner(&next) {
-            tracing::warn!("Could not save tool_paths cache at {:?}: {}", cache_path(), e);
+            tracing::warn!(
+                "Could not save tool_paths cache at {:?}: {}",
+                cache_path(),
+                e
+            );
         }
     }
 }
@@ -212,7 +215,10 @@ fn local_tools_openshell() -> Option<PathBuf> {
     let candidates = if cfg!(windows) {
         vec![
             tools_dir.join("openshell").join("openshell.exe"),
-            tools_dir.join("openshell").join("bin").join("openshell.exe"),
+            tools_dir
+                .join("openshell")
+                .join("bin")
+                .join("openshell.exe"),
             tools_dir.join("openshell.exe"),
         ]
     } else {
@@ -278,7 +284,11 @@ fn find_in_path_directories(stem: &str) -> Option<PathBuf> {
     for dir in env::split_paths(&path_var) {
         #[cfg(windows)]
         {
-            for name in [format!("{stem}.exe"), format!("{stem}.EXE"), stem.to_string()] {
+            for name in [
+                format!("{stem}.exe"),
+                format!("{stem}.EXE"),
+                stem.to_string(),
+            ] {
                 let p = dir.join(&name);
                 if p.is_file() {
                     return Some(p);

@@ -1,14 +1,15 @@
 //! Threat Intelligence Feeds (CISA KEV, OTX).
 
+use chrono::{DateTime, Utc};
 use osoosi_types::{Kev, NsrlRecord};
 use serde_json::Value;
-use chrono::{DateTime, Utc};
 use std::collections::HashSet;
 use std::io::Write;
-use tracing::{info, warn, error, debug};
 use sysinfo::Disks;
+use tracing::{debug, error, info, warn};
 
-pub const CISA_KEV_FEED_URL: &str = "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
+pub const CISA_KEV_FEED_URL: &str =
+    "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
 /// Subscribed-pulses feed; often **504s or times out** on AlienVault’s side (see OTX community reports).
 pub const OTX_PULSES_SUBSCRIBED_URL: &str = "https://otx.alienvault.com/api/v1/pulses/subscribed/";
 /// Activity feed; same JSON shape as `results` pulses, but typically **reliable** when `/subscribed` fails.
@@ -126,12 +127,16 @@ impl ThreatFeedFetcher {
     /// Import NSRL records from a NIST .sqlite file (Modern RDA format).
     /// This loads **all** rows into memory — for large RDS files prefer
     /// `MemoryStore::import_nsrl_from_nist_rds_sqlite` (ATTACH + `INSERT..SELECT`, fast / low RAM).
-    pub async fn import_nsrl_from_sqlite(&self, path: &std::path::Path) -> anyhow::Result<Vec<NsrlRecord>> {
+    pub async fn import_nsrl_from_sqlite(
+        &self,
+        path: &std::path::Path,
+    ) -> anyhow::Result<Vec<NsrlRecord>> {
         use rusqlite::Connection;
-        
+
         let conn = Connection::open(path)?;
-        let mut stmt = conn.prepare("SELECT sha1, md5, sha256, name, size, product, os FROM FILE")?;
-        
+        let mut stmt =
+            conn.prepare("SELECT sha1, md5, sha256, name, size, product, os FROM FILE")?;
+
         let records_iter = stmt.query_map([], |row| {
             Ok(NsrlRecord {
                 sha1: row.get::<_, String>(0)?,
@@ -151,7 +156,7 @@ impl ThreatFeedFetcher {
         for record in records_iter {
             out.push(record?);
         }
-        
+
         Ok(out)
     }
 
@@ -167,8 +172,12 @@ impl ThreatFeedFetcher {
             if let Ok(metadata) = std::fs::metadata(&cache_path) {
                 if let Ok(modified) = metadata.modified() {
                     if let Ok(elapsed) = modified.elapsed() {
-                        if elapsed.as_secs() < 14400 { // 4 hours
-                            debug!("[KEV] Cache is fresh ({}s old), skipping fetch.", elapsed.as_secs());
+                        if elapsed.as_secs() < 14400 {
+                            // 4 hours
+                            debug!(
+                                "[KEV] Cache is fresh ({}s old), skipping fetch.",
+                                elapsed.as_secs()
+                            );
                             return self.load_kev_from_cache().await;
                         }
                     }
@@ -190,7 +199,10 @@ impl ThreatFeedFetcher {
         };
 
         if !response.status().is_success() {
-            warn!("[KEV] Server returned HTTP {}. Falling back to cache.", response.status());
+            warn!(
+                "[KEV] Server returned HTTP {}. Falling back to cache.",
+                response.status()
+            );
             return self.load_kev_from_cache().await;
         }
 
@@ -198,7 +210,10 @@ impl ThreatFeedFetcher {
         let bytes = match response.bytes().await {
             Ok(b) => b,
             Err(e) => {
-                warn!("[KEV] Failed to read response body: {}. Falling back to cache.", e);
+                warn!(
+                    "[KEV] Failed to read response body: {}. Falling back to cache.",
+                    e
+                );
                 return self.load_kev_from_cache().await;
             }
         };
@@ -226,16 +241,23 @@ impl ThreatFeedFetcher {
                     cve_id: v["cveID"].as_str().unwrap_or_default().to_string(),
                     vendor_project: v["vendorProject"].as_str().unwrap_or_default().to_string(),
                     product: v["product"].as_str().unwrap_or_default().to_string(),
-                    vulnerability_name: v["vulnerabilityName"].as_str().unwrap_or_default().to_string(),
+                    vulnerability_name: v["vulnerabilityName"]
+                        .as_str()
+                        .unwrap_or_default()
+                        .to_string(),
                     date_added: v["dateAdded"]
                         .as_str()
-                        .and_then(|d| DateTime::parse_from_rfc3339(&format!("{}T00:00:00Z", d)).ok())
+                        .and_then(|d| {
+                            DateTime::parse_from_rfc3339(&format!("{}T00:00:00Z", d)).ok()
+                        })
                         .map(|dt: DateTime<chrono::FixedOffset>| dt.with_timezone(&Utc))
                         .unwrap_or(Utc::now()),
                     required_action: v["requiredAction"].as_str().unwrap_or_default().to_string(),
                     due_date: v["dueDate"]
                         .as_str()
-                        .and_then(|d| DateTime::parse_from_rfc3339(&format!("{}T00:00:00Z", d)).ok())
+                        .and_then(|d| {
+                            DateTime::parse_from_rfc3339(&format!("{}T00:00:00Z", d)).ok()
+                        })
                         .map(|dt: DateTime<chrono::FixedOffset>| dt.with_timezone(&Utc))
                         .unwrap_or(Utc::now()),
                     known_exploited: true,
@@ -283,7 +305,8 @@ impl ThreatFeedFetcher {
             .map(|v| v != "0" && !v.eq_ignore_ascii_case("false") && v != "off")
             .unwrap_or(true);
         if use_taxii {
-            let collection = std::env::var("OTX_TAXII_COLLECTION").unwrap_or_else(|_| "user_LevelBlue".to_string());
+            let collection = std::env::var("OTX_TAXII_COLLECTION")
+                .unwrap_or_else(|_| "user_LevelBlue".to_string());
             return self.fetch_otx_taxii_indicators(api_key, &collection).await;
         }
 
@@ -311,7 +334,10 @@ impl ThreatFeedFetcher {
             .to_string();
 
         if use_subscribed {
-            info!("[OTX] REST: using /pulses/subscribed (modified_since={}) …", since);
+            info!(
+                "[OTX] REST: using /pulses/subscribed (modified_since={}) …",
+                since
+            );
         } else {
             info!("[OTX] REST: using /pulses/activity?limit=100 (set OTX_REST_PULSE_SOURCE=subscribed for legacy) …");
         }
@@ -352,11 +378,19 @@ impl ThreatFeedFetcher {
                             status
                         );
                     } else {
-                        warn!("[OTX] Attempt {} failed with status {}. Retrying...", attempts + 1, status);
+                        warn!(
+                            "[OTX] Attempt {} failed with status {}. Retrying...",
+                            attempts + 1,
+                            status
+                        );
                     }
                 }
                 Err(e) => {
-                    warn!("[OTX] Attempt {} network error: {}. Retrying...", attempts + 1, e);
+                    warn!(
+                        "[OTX] Attempt {} network error: {}. Retrying...",
+                        attempts + 1,
+                        e
+                    );
                 }
             }
             attempts += 1;
@@ -399,16 +433,16 @@ impl ThreatFeedFetcher {
 
         if let Some(results) = json_val.get("results").and_then(|v| v.as_array()) {
             for pulse in results {
-                let adversary = pulse.get("adversary")
+                let adversary = pulse
+                    .get("adversary")
                     .and_then(|v| v.as_str())
                     .unwrap_or_default();
-                let tags: Vec<&str> = pulse.get("tags")
+                let tags: Vec<&str> = pulse
+                    .get("tags")
                     .and_then(|v| v.as_array())
                     .map(|arr| arr.iter().filter_map(|t| t.as_str()).collect())
                     .unwrap_or_default();
-                let tlp = pulse.get("tlp")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("white");
+                let tlp = pulse.get("tlp").and_then(|v| v.as_str()).unwrap_or("white");
                 let has_indicators = pulse
                     .get("indicators")
                     .and_then(|v| v.as_array())
@@ -419,12 +453,16 @@ impl ThreatFeedFetcher {
                 let is_critical = !adversary.is_empty()
                     || tags.iter().any(|t| {
                         let lower = t.to_lowercase();
-                        lower.contains("apt") || lower.contains("ransomware")
-                            || lower.contains("critical") || lower.contains("0day")
-                            || lower.contains("zero-day") || lower.contains("targeted")
+                        lower.contains("apt")
+                            || lower.contains("ransomware")
+                            || lower.contains("critical")
+                            || lower.contains("0day")
+                            || lower.contains("zero-day")
+                            || lower.contains("targeted")
                             || lower.contains("nation-state")
                     })
-                    || tlp == "red" || tlp == "amber";
+                    || tlp == "red"
+                    || tlp == "amber";
 
                 if !is_critical {
                     if use_subscribed {
@@ -457,7 +495,10 @@ impl ThreatFeedFetcher {
                             out.ips.insert(raw);
                         } else if kind.contains("domain") || kind.contains("hostname") {
                             out.domains.insert(raw);
-                        } else if kind.contains("url") || raw.starts_with("http://") || raw.starts_with("https://") {
+                        } else if kind.contains("url")
+                            || raw.starts_with("http://")
+                            || raw.starts_with("https://")
+                        {
                             out.urls.insert(raw);
                         } else if kind.contains("filehash")
                             || kind.contains("sha256")
@@ -472,8 +513,14 @@ impl ThreatFeedFetcher {
             }
         }
 
-        info!("[OTX] Loaded {} critical indicators (IPs: {}, Domains: {}, URLs: {}, Hashes: {})",
-            out.total_count(), out.ips.len(), out.domains.len(), out.urls.len(), out.hashes.len());
+        info!(
+            "[OTX] Loaded {} critical indicators (IPs: {}, Domains: {}, URLs: {}, Hashes: {})",
+            out.total_count(),
+            out.ips.len(),
+            out.domains.len(),
+            out.urls.len(),
+            out.hashes.len()
+        );
 
         Ok(out)
     }
@@ -482,7 +529,10 @@ impl ThreatFeedFetcher {
     ///
     /// NVD API 2.0 recommends an API key for higher rate limits.
     /// Returns a list of CVE results (structured like KEV for now).
-    pub async fn fetch_nvd_cves(&self, api_key: Option<&str>) -> anyhow::Result<Vec<osoosi_types::Kev>> {
+    pub async fn fetch_nvd_cves(
+        &self,
+        api_key: Option<&str>,
+    ) -> anyhow::Result<Vec<osoosi_types::Kev>> {
         if offline_mode() {
             return Err(anyhow::anyhow!("Offline mode: skipping NVD fetch"));
         }
@@ -497,12 +547,11 @@ impl ThreatFeedFetcher {
         let mut attempts = 0;
         let mut response = None;
         while attempts < 3 {
-            let mut req = self.client.get(NVD_CVE_API_URL)
-                .query(&[
-                    ("resultsPerPage", "50"),
-                    ("lastModStartDate", &since),
-                    ("lastModEndDate", &now),
-                ]);
+            let mut req = self.client.get(NVD_CVE_API_URL).query(&[
+                ("resultsPerPage", "50"),
+                ("lastModStartDate", &since),
+                ("lastModEndDate", &now),
+            ]);
 
             if let Some(key) = api_key {
                 req = req.header("apiKey", key);
@@ -515,10 +564,18 @@ impl ThreatFeedFetcher {
                 }
                 Ok(r) => {
                     let status = r.status();
-                    warn!("[NVD] Attempt {} failed with status {}. Retrying...", attempts + 1, status);
+                    warn!(
+                        "[NVD] Attempt {} failed with status {}. Retrying...",
+                        attempts + 1,
+                        status
+                    );
                 }
                 Err(e) => {
-                    warn!("[NVD] Attempt {} network error: {}. Retrying...", attempts + 1, e);
+                    warn!(
+                        "[NVD] Attempt {} network error: {}. Retrying...",
+                        attempts + 1,
+                        e
+                    );
                 }
             }
             attempts += 1;
@@ -530,7 +587,10 @@ impl ThreatFeedFetcher {
         let response = match response {
             Some(r) => r,
             None => {
-                info!("[NVD] Failed to reach NVD API after {} attempts. Will retry next cycle.", attempts);
+                info!(
+                    "[NVD] Failed to reach NVD API after {} attempts. Will retry next cycle.",
+                    attempts
+                );
                 return Ok(Vec::new());
             }
         };
@@ -547,7 +607,11 @@ impl ThreatFeedFetcher {
         if let Some(vulnerabilities) = json_val.get("vulnerabilities").and_then(|v| v.as_array()) {
             for v in vulnerabilities {
                 if let Some(cve) = v.get("cve") {
-                    let id = cve.get("id").and_then(|v| v.as_str()).unwrap_or_default().to_string();
+                    let id = cve
+                        .get("id")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or_default()
+                        .to_string();
                     let kev = osoosi_types::Kev {
                         cve_id: id,
                         vendor_project: "NVD-Sync".to_string(),
@@ -567,13 +631,15 @@ impl ThreatFeedFetcher {
         Ok(out)
     }
 
-
     /// Validate that there is enough disk space for a download.
     fn check_disk_space(&self, dest_dir: &std::path::Path, required_gb: u64) -> anyhow::Result<()> {
         let disks = Disks::new_with_refreshed_list();
-        let target = dest_dir.canonicalize().unwrap_or_else(|_| dest_dir.to_path_buf());
-        
-        let disk = disks.iter()
+        let target = dest_dir
+            .canonicalize()
+            .unwrap_or_else(|_| dest_dir.to_path_buf());
+
+        let disk = disks
+            .iter()
             .filter(|d| target.starts_with(d.mount_point()))
             .max_by_key(|d| d.mount_point().as_os_str().len());
 
@@ -591,7 +657,10 @@ impl ThreatFeedFetcher {
 
     /// Download the latest NIST NSRL Minimal RDS (SQLite) and extract it.
     /// Returns the path to the extracted .db file.
-    pub async fn download_and_extract_nsrl(&self, dest_dir: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
+    pub async fn download_and_extract_nsrl(
+        &self,
+        dest_dir: &std::path::Path,
+    ) -> anyhow::Result<std::path::PathBuf> {
         // URLs to try in order — primary and fallback
         let urls = [
             "https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/rds_2026.03.1/RDS_2026.03.1_modern.zip",
@@ -627,11 +696,16 @@ impl ThreatFeedFetcher {
             let status = response.status();
             if !status.is_success() {
                 let body_preview = response.text().await.unwrap_or_default();
-                let preview = if body_preview.len() > 200 { &body_preview[..200] } else { &body_preview };
+                let preview = if body_preview.len() > 200 {
+                    &body_preview[..200]
+                } else {
+                    &body_preview
+                };
                 info!("NSRL download returned HTTP {}: {}", status, preview);
                 last_error = Some(anyhow::anyhow!(
                     "NSRL download returned HTTP {} for {}",
-                    status, url
+                    status,
+                    url
                 ));
                 continue;
             }
@@ -640,11 +714,18 @@ impl ThreatFeedFetcher {
             if let Some(ct) = response.headers().get(reqwest::header::CONTENT_TYPE) {
                 if let Ok(ct_str) = ct.to_str() {
                     let ct_lower = ct_str.to_lowercase();
-                    if ct_lower.contains("text/html") || ct_lower.contains("text/xml") || ct_lower.contains("application/xml") {
-                        info!("NSRL download returned unexpected content-type '{}' for {}", ct_str, url);
+                    if ct_lower.contains("text/html")
+                        || ct_lower.contains("text/xml")
+                        || ct_lower.contains("application/xml")
+                    {
+                        info!(
+                            "NSRL download returned unexpected content-type '{}' for {}",
+                            ct_str, url
+                        );
                         last_error = Some(anyhow::anyhow!(
                             "NSRL download returned non-ZIP content-type '{}' for {}",
-                            ct_str, url
+                            ct_str,
+                            url
                         ));
                         continue;
                     }
@@ -663,10 +744,14 @@ impl ThreatFeedFetcher {
             // Sanity check: ZIP files start with PK magic bytes (0x50 0x4B)
             if bytes.len() < 4 || bytes[0] != 0x50 || bytes[1] != 0x4B {
                 let preview: String = bytes.iter().take(100).map(|b| *b as char).collect();
-                info!("Downloaded file is not a valid ZIP (bad magic bytes). Preview: {}", preview);
+                info!(
+                    "Downloaded file is not a valid ZIP (bad magic bytes). Preview: {}",
+                    preview
+                );
                 last_error = Some(anyhow::anyhow!(
                     "Downloaded file from {} is not a valid ZIP archive ({} bytes, bad magic)",
-                    url, bytes.len()
+                    url,
+                    bytes.len()
                 ));
                 continue;
             }
@@ -691,7 +776,9 @@ impl ThreatFeedFetcher {
                     std::fs::create_dir_all(&outpath)?;
                 } else {
                     if let Some(p) = outpath.parent() {
-                        if !p.exists() { std::fs::create_dir_all(p)?; }
+                        if !p.exists() {
+                            std::fs::create_dir_all(p)?;
+                        }
                     }
                     let mut outfile = std::fs::File::create(&outpath)?;
                     std::io::copy(&mut file, &mut outfile)?;
@@ -715,7 +802,10 @@ impl ThreatFeedFetcher {
     /// Resumable, state-persistent streaming download for the NSRL RDS archive.
     ///
     /// Survives process restarts via a `.state.json` checkpoint file.
-    pub async fn download_nsrl_streaming(&self, dest_dir: &std::path::Path) -> anyhow::Result<std::path::PathBuf> {
+    pub async fn download_nsrl_streaming(
+        &self,
+        dest_dir: &std::path::Path,
+    ) -> anyhow::Result<std::path::PathBuf> {
         use futures::StreamExt;
         use tokio::io::AsyncWriteExt;
 
@@ -733,7 +823,7 @@ impl ThreatFeedFetcher {
             return Err(e);
         }
 
-        let zip_path   = dest_dir.join("nsrl_modern_stream.zip");
+        let zip_path = dest_dir.join("nsrl_modern_stream.zip");
         let state_path = dest_dir.join("nsrl_modern_stream.state.json");
 
         let download_client = reqwest::Client::builder()
@@ -754,7 +844,10 @@ impl ThreatFeedFetcher {
             while !download_finished && retry_count < 5 {
                 if retry_count > 0 {
                     let backoff = (15 * retry_count as u64).min(300);
-                    info!("[NSRL Background] Retrying download in {}s (Attempt {})...", backoff, retry_count);
+                    info!(
+                        "[NSRL Background] Retrying download in {}s (Attempt {})...",
+                        backoff, retry_count
+                    );
                     tokio::time::sleep(std::time::Duration::from_secs(backoff)).await;
                 }
 
@@ -776,7 +869,9 @@ impl ThreatFeedFetcher {
                             retry_count += 1;
                             continue;
                         }
-                        if current_size == remote_len && nsrl_local_zip_matches_complete(&zip_path, remote_len) {
+                        if current_size == remote_len
+                            && nsrl_local_zip_matches_complete(&zip_path, remote_len)
+                        {
                             info!(
                                 "[NSRL Background] Local ZIP already matches remote ({} B). Resuming to extract.",
                                 remote_len
@@ -793,7 +888,10 @@ impl ThreatFeedFetcher {
                     info!("[NSRL Background] RESUMING: Found existing file ({:.2} GB). Requesting remaining bytes from offset {}...", 
                         current_size as f64 / 1_073_741_824.0, current_size);
                 } else {
-                    info!("[NSRL Background] Starting fresh streaming download from {}...", url);
+                    info!(
+                        "[NSRL Background] Starting fresh streaming download from {}...",
+                        url
+                    );
                 }
 
                 let response = match request.send().await {
@@ -808,9 +906,14 @@ impl ThreatFeedFetcher {
 
                 let status = response.status();
                 if !status.is_success() {
-                    if status == reqwest::StatusCode::FORBIDDEN || status == reqwest::StatusCode::NOT_FOUND {
-                        warn!("[NSRL Background] URL returned {}. Skipping to next URL.", status);
-                        break; 
+                    if status == reqwest::StatusCode::FORBIDDEN
+                        || status == reqwest::StatusCode::NOT_FOUND
+                    {
+                        warn!(
+                            "[NSRL Background] URL returned {}. Skipping to next URL.",
+                            status
+                        );
+                        break;
                     }
                     // Range past EOF: treat as "already have full file" or delete stale partial and retry.
                     if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
@@ -819,14 +922,20 @@ impl ThreatFeedFetcher {
                             url
                         );
                         let local_len = std::fs::metadata(&zip_path).map(|m| m.len()).unwrap_or(0);
-                        if let Some(remote_len) = nsrl_s3_content_length(&download_client, url).await {
-                            if local_len == remote_len && nsrl_local_zip_matches_complete(&zip_path, remote_len) {
+                        if let Some(remote_len) =
+                            nsrl_s3_content_length(&download_client, url).await
+                        {
+                            if local_len == remote_len
+                                && nsrl_local_zip_matches_complete(&zip_path, remote_len)
+                            {
                                 info!("[NSRL Background] Local file is complete; continuing to extract.");
                                 download_finished = true;
                                 break;
                             }
                         } else if local_len > 0 && nsrl_local_zip_valid(&zip_path) {
-                            info!("[NSRL Background] ZIP validates after 416; continuing to extract.");
+                            info!(
+                                "[NSRL Background] ZIP validates after 416; continuing to extract."
+                            );
                             download_finished = true;
                             break;
                         }
@@ -844,7 +953,11 @@ impl ThreatFeedFetcher {
 
                 let is_partial = status == reqwest::StatusCode::PARTIAL_CONTENT;
                 let content_len = response.content_length().unwrap_or(0);
-                let total_size = if is_partial { content_len + current_size } else { content_len };
+                let total_size = if is_partial {
+                    content_len + current_size
+                } else {
+                    content_len
+                };
 
                 let mut stream = response.bytes_stream();
                 let mut first_chunk = None;
@@ -855,7 +968,7 @@ impl ThreatFeedFetcher {
                         if !chunk.starts_with(b"PK\x03\x04") {
                             error!("[NSRL Background] Download is NOT a valid ZIP (Magic mismatch). Likely an S3 error page.");
                             last_error = Some(anyhow::anyhow!("Invalid ZIP magic"));
-                            break; 
+                            break;
                         }
                         first_chunk = Some(chunk);
                     }
@@ -865,11 +978,15 @@ impl ThreatFeedFetcher {
                     .create(true)
                     .write(true)
                     .append(true)
-                    .open(&zip_path).await {
+                    .open(&zip_path)
+                    .await
+                {
                     Ok(f) => {
-                        if !is_partial && current_size > 0 { let _ = f.set_len(0).await; }
+                        if !is_partial && current_size > 0 {
+                            let _ = f.set_len(0).await;
+                        }
                         f
-                    },
+                    }
                     Err(e) => {
                         error!("[NSRL Background] File error: {}", e);
                         last_error = Some(e.into());
@@ -884,7 +1001,11 @@ impl ThreatFeedFetcher {
                     }
                 }
 
-                let mut downloaded = if is_partial { current_size } else { first_chunk.as_ref().map(|c| c.len() as u64).unwrap_or(0) };
+                let mut downloaded = if is_partial {
+                    current_size
+                } else {
+                    first_chunk.as_ref().map(|c| c.len() as u64).unwrap_or(0)
+                };
                 let mut last_log_pct = 0;
                 let mut stream_error = false;
 
@@ -906,14 +1027,22 @@ impl ThreatFeedFetcher {
 
                     downloaded += chunk.len() as u64;
                     if downloaded % (512 * 1024 * 1024) < (chunk.len() as u64) {
-                        let _ = std::fs::write(&state_path, serde_json::json!({"bytes_written": downloaded}).to_string());
+                        let _ = std::fs::write(
+                            &state_path,
+                            serde_json::json!({"bytes_written": downloaded}).to_string(),
+                        );
                     }
 
                     if total_size > 0 {
                         let pct = (downloaded * 100) / total_size;
                         if pct >= last_log_pct + 10 {
                             last_log_pct = pct;
-                            info!("[NSRL Background] Progress: {}% ({:.1} GB / {:.1} GB)", pct, downloaded as f64 / 1e9, total_size as f64 / 1e9);
+                            info!(
+                                "[NSRL Background] Progress: {}% ({:.1} GB / {:.1} GB)",
+                                pct,
+                                downloaded as f64 / 1e9,
+                                total_size as f64 / 1e9
+                            );
                         }
                     }
                 }
@@ -925,9 +1054,15 @@ impl ThreatFeedFetcher {
                     last_error = None;
                 } else {
                     retry_count += 1;
-                    if downloaded <= last_processed_size { stalled_count += 1; }
-                    else { stalled_count = 0; last_processed_size = downloaded; }
-                    if stalled_count > 3 { break; }
+                    if downloaded <= last_processed_size {
+                        stalled_count += 1;
+                    } else {
+                        stalled_count = 0;
+                        last_processed_size = downloaded;
+                    }
+                    if stalled_count > 3 {
+                        break;
+                    }
                 }
             }
 
@@ -935,7 +1070,7 @@ impl ThreatFeedFetcher {
                 info!("[NSRL Background] Download complete. Extracting...");
                 let dest_clone = dest_dir.to_path_buf();
                 let zip_clone = zip_path.clone();
-                
+
                 let res = tokio::task::spawn_blocking(move || {
                     let f = std::fs::File::open(&zip_clone)?;
                     let mut zip = zip::ZipArchive::new(f)?;
@@ -943,17 +1078,25 @@ impl ThreatFeedFetcher {
                     for i in 0..zip.len() {
                         let mut entry = zip.by_index(i)?;
                         let out = dest_clone.join(entry.name());
-                        if entry.name().ends_with('/') { std::fs::create_dir_all(&out)?; }
-                        else {
-                            if let Some(p) = out.parent() { if !p.exists() { std::fs::create_dir_all(p)?; } }
+                        if entry.name().ends_with('/') {
+                            std::fs::create_dir_all(&out)?;
+                        } else {
+                            if let Some(p) = out.parent() {
+                                if !p.exists() {
+                                    std::fs::create_dir_all(p)?;
+                                }
+                            }
                             let mut outfile = std::fs::File::create(&out)?;
                             std::io::copy(&mut entry, &mut outfile)?;
-                            if out.extension().and_then(|s| s.to_str()) == Some("db") { db = Some(out); }
+                            if out.extension().and_then(|s| s.to_str()) == Some("db") {
+                                db = Some(out);
+                            }
                         }
                     }
                     let _ = std::fs::remove_file(&zip_clone);
                     db.ok_or_else(|| anyhow::anyhow!("No DB found"))
-                }).await?;
+                })
+                .await?;
 
                 return res;
             }
@@ -965,7 +1108,10 @@ impl ThreatFeedFetcher {
     /// Check NIST S3 bucket for newer NSRL RDS versions and deltas.
     /// Returns a list of (version, url, is_delta) tuples found that are newer
     /// than `current_version` (e.g. "2025.03.1").
-    pub async fn check_nsrl_updates(&self, current_version: &str) -> anyhow::Result<Vec<(String, String, bool)>> {
+    pub async fn check_nsrl_updates(
+        &self,
+        current_version: &str,
+    ) -> anyhow::Result<Vec<(String, String, bool)>> {
         let bucket_url = "https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/";
 
         let download_client = reqwest::Client::builder()
@@ -973,11 +1119,17 @@ impl ThreatFeedFetcher {
             .build()
             .unwrap_or_else(|_| reqwest::Client::new());
 
-        info!("[NSRL Update Check] Checking for updates newer than {}...", current_version);
+        info!(
+            "[NSRL Update Check] Checking for updates newer than {}...",
+            current_version
+        );
 
         let response = download_client.get(bucket_url).send().await?;
         if !response.status().is_success() {
-            return Err(anyhow::anyhow!("Failed to list NSRL bucket: HTTP {}", response.status()));
+            return Err(anyhow::anyhow!(
+                "Failed to list NSRL bucket: HTTP {}",
+                response.status()
+            ));
         }
 
         let body = response.text().await?;
@@ -1008,7 +1160,10 @@ impl ThreatFeedFetcher {
                 );
 
                 // HEAD request to check if delta exists
-                let delta_exists = download_client.head(&delta_url).send().await
+                let delta_exists = download_client
+                    .head(&delta_url)
+                    .send()
+                    .await
                     .map(|r| r.status().is_success())
                     .unwrap_or(false);
 
@@ -1023,9 +1178,16 @@ impl ThreatFeedFetcher {
         }
 
         if updates.is_empty() {
-            info!("[NSRL Update Check] No updates found. Current version {} is up to date.", current_version);
+            info!(
+                "[NSRL Update Check] No updates found. Current version {} is up to date.",
+                current_version
+            );
         } else {
-            info!("[NSRL Update Check] Found {} update(s) newer than v{}", updates.len(), current_version);
+            info!(
+                "[NSRL Update Check] Found {} update(s) newer than v{}",
+                updates.len(),
+                current_version
+            );
         }
 
         Ok(updates)
@@ -1046,8 +1208,15 @@ impl ThreatFeedFetcher {
 
     /// Fetch OTX indicators via TAXII 1.1 (uses `otx_taxii` — same as `otx-taxii-rs.exe`: correct
     /// `Accept` + `X-TAXII-*` headers and HTTPS protocol URN for AlienVault OTX).
-    pub async fn fetch_otx_taxii_indicators(&self, api_key: &str, collection: &str) -> anyhow::Result<OtxIndicators> {
-        info!("[OTX TAXII] Polling collection '{}' (shared otx_taxii client)...", collection);
+    pub async fn fetch_otx_taxii_indicators(
+        &self,
+        api_key: &str,
+        collection: &str,
+    ) -> anyhow::Result<OtxIndicators> {
+        info!(
+            "[OTX TAXII] Polling collection '{}' (shared otx_taxii client)...",
+            collection
+        );
 
         if offline_mode() {
             return Err(anyhow::anyhow!("Offline mode: skipping OTX TAXII fetch"));
@@ -1094,7 +1263,10 @@ impl ThreatFeedFetcher {
             }
         }
 
-        info!("[OTX TAXII] Loaded {} indicators from TAXII feed.", out.total_count());
+        info!(
+            "[OTX TAXII] Loaded {} indicators from TAXII feed.",
+            out.total_count()
+        );
         Ok(out)
     }
 }

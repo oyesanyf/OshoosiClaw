@@ -17,9 +17,9 @@
 //! - **ML-DSA-65** (Dilithium): Digital signatures for attestation
 //! - **X25519**: Classical ECDH (combined with ML-KEM for hybrid)
 
-use sha2::{Sha256, Digest};
 use rand::RngCore;
-use tracing::{info, debug};
+use sha2::{Digest, Sha256};
+use tracing::{debug, info};
 
 /// PQC key pair for hybrid key exchange.
 #[derive(Clone)]
@@ -129,14 +129,14 @@ pub fn hybrid_sign(message: &[u8], private_key: &[u8; 32]) -> Vec<u8> {
     let classical_sig = classical_hasher.finalize();
 
     // 2. Post-Quantum signature (Falcon-512)
-    // Note: Falcon-512 keys are much larger than 32 bytes, 
+    // Note: Falcon-512 keys are much larger than 32 bytes,
     // but we derive them deterministically from the mesh secret for consistency.
-    
+
     // let mut seed = [0u8; 48]; // Falcon-512 needs 48 bytes of entropy
     // ... derive seed from private_key ...
     // let falcon_sk = falcon_rs::falcon512::SecretKey::from_seed(&seed);
     // let falcon_sig = falcon_sk.sign(message);
-    
+
     let mut pqc_hasher = Sha256::new();
     pqc_hasher.update(private_key);
     pqc_hasher.update(message);
@@ -153,15 +153,17 @@ pub fn hybrid_sign(message: &[u8], private_key: &[u8; 32]) -> Vec<u8> {
 
 /// Verify a hybrid signature.
 pub fn hybrid_verify(message: &[u8], signature: &[u8], public_key: &[u8; 32]) -> bool {
-    if signature.is_empty() { return false; }
+    if signature.is_empty() {
+        return false;
+    }
     let version = signature[signature.len() - 1];
-    
+
     if version == 0x02 {
         // Verify Falcon-512 + Ed25519
         let expected = hybrid_sign(message, public_key);
         return subtle::ConstantTimeEq::ct_eq(signature, expected.as_slice()).into();
     }
-    
+
     false
 }
 

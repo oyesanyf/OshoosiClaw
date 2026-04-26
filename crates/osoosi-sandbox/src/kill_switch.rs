@@ -3,10 +3,10 @@
 //! Like Linux's process scheduler, this allows administrators to instantly
 //! terminate a misbehaving WASM agent, reclaiming all resources.
 
+use chrono::{DateTime, Utc};
+use serde::{Deserialize, Serialize};
 use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
-use chrono::{DateTime, Utc};
-use serde::{Serialize, Deserialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum AgentStatus {
@@ -49,7 +49,11 @@ impl AgentProcess {
 
     /// Kill the agent immediately by incrementing the Wasmtime epoch.
     pub fn kill(&mut self) {
-        tracing::warn!("KILL SWITCH: Terminating agent '{}' (id={})", self.name, self.id);
+        tracing::warn!(
+            "KILL SWITCH: Terminating agent '{}' (id={})",
+            self.name,
+            self.id
+        );
         self.kill_flag.store(true, Ordering::SeqCst);
         self.engine.increment_epoch();
         self.status = AgentStatus::Killed;

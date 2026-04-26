@@ -156,6 +156,9 @@ pub struct FileCreateData {
 
 impl SysmonEvent {
     pub fn process_id(&self) -> Option<u32> {
-        self.data.get("ProcessId").and_then(|v| v.as_u64()).map(|v| v as u32)
+        self.data
+            .get("ProcessId")
+            .and_then(|v| v.as_u64())
+            .map(|v| v as u32)
     }
 }
