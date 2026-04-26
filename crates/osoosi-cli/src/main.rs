@@ -81,6 +81,9 @@ enum Commands {
         /// Run `openshell gateway deploy` before creating the sandbox
         #[arg(long, default_value_t = false)]
         sandbox_deploy_gateway: bool,
+        /// Windows helper: run the Linux Oshoosi build inside WSL2 and enable OpenShell sandboxing there.
+        #[arg(long, alias = "wdlflag", default_value_t = false)]
+        wsl: bool,
     },
     /// View the local threat intelligence status
     Status,
@@ -252,7 +255,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     if is_granting {
         handle_grant_access().await?;
         let _ = osoosi_core::firewall::open_mesh_ports();
-    } else if is_starting || is_bootstrapping {
+    } else if is_bootstrapping {
         // Ensure essentials on startup
         let executor = Arc::new(DirectExecutor::new());
         let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
@@ -260,6 +263,17 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             warn!("Automated provisioning encountered issues: {}. Continuing startup...", e);
         }
         let _ = ensure_ai_models().await;
+        let _ = osoosi_core::firewall::open_mesh_ports();
+    } else if is_starting {
+        let executor = Arc::new(DirectExecutor::new());
+        let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
+        tokio::spawn(async move {
+            info!("Startup provisioning is running in the background so Sysmon ingestion can begin immediately.");
+            if let Err(e) = provisioner.provision_telemetry().await {
+                warn!("Background provisioning encountered issues: {}. Agent monitoring continues.", e);
+            }
+            let _ = ensure_ai_models().await;
+        });
         let _ = osoosi_core::firewall::open_mesh_ports();
     }
     
@@ -278,17 +292,22 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             sandbox: start_in_sandbox,
             sandbox_name,
             sandbox_deploy_gateway,
+            wsl,
         }) => {
             osoosi_core::tool_paths::discover_and_persist();
             run_yara_sanitizer();
             let with_dashboard = dashboard && !no_dashboard;
+
+            if wsl {
+                return start_inside_wsl(with_dashboard, start_in_sandbox, &sandbox_name, sandbox_deploy_gateway);
+            }
 
             if start_in_sandbox {
                 use osoosi_core::openshell::OpenShellManager;
                 let manager = OpenShellManager::new();
                 if !manager.is_available() {
                     warn!(
-                        "--sandbox: OpenShell CLI not found on this machine (not a code bug). Install NVIDIA OpenShell and ensure `openshell` is on PATH, or set OPENSHELL_CLI_PATH to the executable. See project README (Sandboxing). Starting agent on the host instead."
+                        "--sandbox: OpenShell CLI not found. Oshoosi checks tools/openshell/openshell(.exe), OPENSHELL_CLI_PATH, and PATH. NVIDIA OpenShell v0.0.36 does not publish a native Windows .exe asset; use WSL/Linux OpenShell or place a compatible openshell.exe in tools/openshell. Starting agent on the host instead."
                     );
                 } else {
                     if sandbox_deploy_gateway {
@@ -602,6 +621,94 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
     }
     Ok(())
+}
+
+#[cfg(windows)]
+fn start_inside_wsl(
+    with_dashboard: bool,
+    sandbox: bool,
+    sandbox_name: &str,
+    deploy_gateway: bool,
+) -> anyhow::Result<()> {
+    let cwd = std::env::current_dir()?;
+    let wsl_cwd = windows_path_to_wsl(&cwd)?;
+    let mut args = vec!["start".to_string()];
+    if sandbox {
+        args.push("--sandbox".to_string());
+        args.push("--sandbox-name".to_string());
+        args.push(sandbox_name.to_string());
+        if deploy_gateway {
+            args.push("--sandbox-deploy-gateway".to_string());
+        }
+    }
+    if !with_dashboard {
+        args.push("--no-dashboard".to_string());
+    }
+
+    let cmdline = args
+        .iter()
+        .map(|a| sh_quote(a))
+        .collect::<Vec<_>>()
+        .join(" ");
+    let script = format!(
+        "set -e; cd {}; \
+         if ! command -v openshell >/dev/null 2>&1; then \
+           echo 'OpenShell is not installed in WSL. Run scripts/install-openshell-wsl.ps1 from Windows or install it inside WSL.' >&2; exit 127; \
+         fi; \
+         if ! docker info >/dev/null 2>&1; then \
+           echo 'Docker is not reachable from WSL. Enable Docker Desktop WSL integration for this distro.' >&2; exit 126; \
+         fi; \
+         if [ ! -x ./target/release/osoosi ]; then \
+           echo '[Oshoosi] Linux binary missing; building inside WSL...'; cargo build --release; \
+         fi; \
+         export OSOOSI_SECURE_RUNTIME=openshell; \
+         exec ./target/release/osoosi {}",
+        sh_quote(&wsl_cwd),
+        cmdline
+    );
+
+    info!("Starting Oshoosi inside WSL2 at {}", wsl_cwd);
+    let status = std::process::Command::new("wsl.exe")
+        .args(["sh", "-lc", &script])
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("WSL Oshoosi start failed with status {}", status))
+    }
+}
+
+#[cfg(not(windows))]
+fn start_inside_wsl(
+    _with_dashboard: bool,
+    _sandbox: bool,
+    _sandbox_name: &str,
+    _deploy_gateway: bool,
+) -> anyhow::Result<()> {
+    Err(anyhow::anyhow!("--wsl is only supported when launching from Windows"))
+}
+
+#[cfg(windows)]
+fn windows_path_to_wsl(path: &Path) -> anyhow::Result<String> {
+    let s = path
+        .canonicalize()
+        .unwrap_or_else(|_| path.to_path_buf())
+        .to_string_lossy()
+        .replace('\\', "/");
+    let bytes = s.as_bytes();
+    if bytes.len() >= 3 && bytes[1] == b':' && bytes[2] == b'/' {
+        let drive = (bytes[0] as char).to_ascii_lowercase();
+        let rest = &s[3..];
+        return Ok(format!("/mnt/{}/{}", drive, rest));
+    }
+    Err(anyhow::anyhow!(
+        "Cannot convert Windows path '{}' to a WSL /mnt/<drive>/ path",
+        s
+    ))
+}
+
+fn sh_quote(s: &str) -> String {
+    format!("'{}'", s.replace('\'', "'\"'\"'"))
 }
 
 async fn handle_grant_access() -> anyhow::Result<()> {

@@ -172,6 +172,9 @@ pub fn resolve_openshell_cli_path() -> PathBuf {
 }
 
 fn discover_openshell_unconstrained() -> Option<PathBuf> {
+    if let Some(p) = local_tools_openshell() {
+        return Some(p);
+    }
     if let Some(p) = resolve_executable("openshell") {
         return Some(p);
     }
@@ -202,6 +205,24 @@ fn discover_openshell_unconstrained() -> Option<PathBuf> {
         }
     }
     None
+}
+
+fn local_tools_openshell() -> Option<PathBuf> {
+    let tools_dir = osoosi_types::resolve_tools_dir();
+    let candidates = if cfg!(windows) {
+        vec![
+            tools_dir.join("openshell").join("openshell.exe"),
+            tools_dir.join("openshell").join("bin").join("openshell.exe"),
+            tools_dir.join("openshell.exe"),
+        ]
+    } else {
+        vec![
+            tools_dir.join("openshell").join("openshell"),
+            tools_dir.join("openshell").join("bin").join("openshell"),
+            tools_dir.join("openshell"),
+        ]
+    };
+    candidates.into_iter().find(|p| p.is_file())
 }
 
 /// `%LOCALAPPDATA%\\Python\\*\\Scripts\\openshell.exe`

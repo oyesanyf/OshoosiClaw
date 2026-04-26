@@ -1126,6 +1126,13 @@ impl EdrOrchestrator {
                     loop {
                         match reader.poll_events() {
                             Ok(events) => {
+                                if !events.is_empty() {
+                                    info!(
+                                        "Host event loop ingesting {} event(s) from {}",
+                                        events.len(),
+                                        resolved_source
+                                    );
+                                }
                                 for ev in events {
                                     let sysmon = ev.to_sysmon_event();
                                     if let Err(e) = orchestrator.process_telemetry(sysmon).await {
@@ -2443,50 +2450,149 @@ impl EdrOrchestrator {
         }
     }
 
-    /// Mark a threat as false positive and revert any active response.
+    fn feedback_file_path(process_name: Option<&str>, file_path: Option<&str>) -> Option<String> {
+        [file_path, process_name]
+            .into_iter()
+            .flatten()
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .find(|s| {
+                let p = std::path::Path::new(s);
+                p.is_absolute() && p.exists() && p.is_file()
+            })
+            .map(ToOwned::to_owned)
+    }
+
+    fn blake3_file_hex(path: &str) -> anyhow::Result<String> {
+        use std::io::Read;
+
+        let mut file = std::fs::File::open(path)?;
+        let mut hasher = blake3::Hasher::new();
+        let mut buf = [0u8; 64 * 1024];
+        loop {
+            let n = file.read(&mut buf)?;
+            if n == 0 {
+                break;
+            }
+            hasher.update(&buf[..n]);
+        }
+        Ok(hasher.finalize().to_hex().to_string())
+    }
+
+    /// Mark a threat as false positive: whitelist the hash, clear traps, suppress future alerts.
     pub async fn handle_false_positive(&self, threat_id: &str) -> anyhow::Result<()> {
         let source = self.trust.did().to_string();
-        if self.memory.mark_threat_false_positive(threat_id, &source)? {
-            info!("Threat {} marked as false positive. Reverting active response...", threat_id);
-            
-            // 1. Revert Deception (Ghost Files)
-            let traps_dir = self.runtime_config.traps_path.as_str();
-            let _ = self.response.clear_ghost_files(traps_dir).await;
+        match self.memory.mark_threat_false_positive(threat_id, &source)? {
+            Some((process_name, mut hash_blake3, file_path)) => {
+                info!("Threat {} marked as false positive. Whitelisting and reverting active response...", threat_id);
 
-            // 2. Clear Tarpits (Socket-level)
-            // Note: In a full impl, we'd track IPs per threat. For now, we clear global state or use a placeholder.
-            
-            self.audit.log("FALSE_POSITIVE_REMEDIATION", serde_json::json!({
-                "threat_id": threat_id,
-                "action": "remediation_triggered",
-            }));
-            
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("Threat not found"))
+                if hash_blake3.as_deref().unwrap_or("").is_empty() {
+                    if let Some(path) = Self::feedback_file_path(process_name.as_deref(), file_path.as_deref()) {
+                        match Self::blake3_file_hex(&path) {
+                            Ok(hash) => {
+                                info!("[FP] Resolved missing hash for '{}' as {}.", path, hash);
+                                hash_blake3 = Some(hash);
+                                let _ = self.memory.record_false_positive_pattern(
+                                    process_name.as_deref().or(Some(path.as_str())),
+                                    hash_blake3.as_deref(),
+                                    &source,
+                                );
+                            }
+                            Err(e) => warn!("[FP] Could not hash '{}' for false-positive allowlist: {}", path, e),
+                        }
+                    }
+                }
+
+                // 1. Whitelist the hash in the in-memory NSRL bypass cache so future scans skip it instantly
+                if let Some(ref hash) = hash_blake3 {
+                    if !hash.is_empty() {
+                        self.nsrl_cache.insert(hash.clone(), true);
+                        info!("[FP] Hash {} added to session NSRL bypass cache — will not re-alert.", hash);
+                    }
+                }
+
+                // 2. Whitelist the process name in the NSRL bypass cache as well
+                if let Some(ref proc) = process_name {
+                    if !proc.is_empty() {
+                        self.nsrl_cache.insert(proc.clone(), true);
+                        info!("[FP] Process '{}' added to session NSRL bypass cache.", proc);
+                    }
+                }
+
+                // 3. Revert Deception (Ghost Files / Traps)
+                let traps_dir = self.runtime_config.traps_path.as_str();
+                let _ = self.response.clear_ghost_files(traps_dir).await;
+                info!("[FP] Ghost files cleared from '{}'.", traps_dir);
+
+                self.audit.log("FALSE_POSITIVE_REMEDIATION", serde_json::json!({
+                    "threat_id": threat_id,
+                    "process_name": process_name,
+                    "hash_blake3": hash_blake3,
+                    "file_path": file_path,
+                    "action": "whitelisted_and_remediated",
+                }));
+
+                Ok(())
+            }
+            None => Err(anyhow::anyhow!("Threat '{}' not found in database", threat_id)),
         }
     }
 
-    /// Mark a threat as true positive (verified by analyst).
+    /// Mark a threat as true positive: reinforce mesh intelligence and begin serious tarpit.
     pub async fn handle_true_positive(&self, threat_id: &str) -> anyhow::Result<()> {
         let source = self.trust.did().to_string();
-        if self.memory.mark_threat_true_positive(threat_id, &source)? {
-            info!("Threat {} confirmed as TRUE positive. Broadcasting to mesh...", threat_id);
-            
-            self.audit.log("TRUE_POSITIVE_CONFIRMED", serde_json::json!({
-                "threat_id": threat_id,
-                "action": "intelligence_reinforced",
-            }));
+        match self.memory.mark_threat_true_positive(threat_id, &source)? {
+            Some((process_name, hash_blake3, file_path)) => {
+                info!("Threat {} confirmed as TRUE positive. Engaging tarpit and broadcasting...", threat_id);
 
-            // Share the confirmed threat as intelligence across the mesh
-            let summary = format!("Verified Threat Pattern (Confirmed by {}): {}", source, threat_id);
-            let _ = self.broadcast_intelligence(summary).await;
-            
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!("Threat not found"))
+                // 1. Engage the serious network tarpit using the existing QoS helper.
+                let tarpit_target = Self::feedback_file_path(process_name.as_deref(), file_path.as_deref())
+                    .or_else(|| process_name.clone());
+                if let Some(ref target) = tarpit_target {
+                    match crate::firewall::tarpit_process_network(None, Some(target)) {
+                        Ok(msg) => {
+                            warn!("[TP] Serious tarpit engaged: {}", msg);
+                            self.audit.log("RESPONSE_ACTION", serde_json::json!({
+                                "type": "ConfirmedTruePositiveTarpit",
+                                "threat_id": threat_id,
+                                "image": target,
+                                "message": msg
+                            }));
+                        }
+                        Err(e) => warn!("[TP] Serious tarpit could not be applied for '{}': {}", target, e),
+                    }
+                }
+
+                // 2. Add the hash to the known-malicious bloom filter so future mesh encounters are instantly flagged
+                if let Some(ref hash) = hash_blake3 {
+                    if !hash.is_empty() {
+                        self.memory.mark_hash_known_malicious(hash);
+                        info!("[TP] Hash {} added to known-malicious bloom filter.", hash);
+                    }
+                }
+
+                // 3. Broadcast confirmed threat intelligence to the mesh
+                self.audit.log("TRUE_POSITIVE_CONFIRMED", serde_json::json!({
+                    "threat_id": threat_id,
+                    "process_name": process_name,
+                    "hash_blake3": hash_blake3,
+                    "file_path": file_path,
+                    "tarpit_target": tarpit_target,
+                    "action": "tarpit_engaged_and_intel_broadcast",
+                }));
+
+                let summary = format!(
+                    "CONFIRMED THREAT — Analyst Verified (node: {}): id={} proc={:?} hash={:?}. Tarpit engaged.",
+                    source, threat_id, process_name, hash_blake3
+                );
+                let _ = self.broadcast_intelligence(summary).await;
+
+                Ok(())
+            }
+            None => Err(anyhow::anyhow!("Threat '{}' not found in database", threat_id)),
         }
     }
+
 
     pub async fn start_mesh_with_join_gate(&self) -> anyhow::Result<Arc<JoinGate>> {
         let autonomy = osoosi_types::load_autonomy_config();

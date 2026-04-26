@@ -1,4 +1,4 @@
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Output;
 use async_trait::async_trait;
 use tracing::info;
@@ -89,21 +89,28 @@ pub struct OpenShellExecutor {
     sandbox_name: String,
     policy_path: Option<String>,
     sandbox_verified: std::sync::atomic::AtomicBool,
+    cli_path: PathBuf,
+    use_wsl: bool,
 }
 
 impl OpenShellExecutor {
     pub fn new(sandbox_name: &str, policy_path: Option<&str>) -> Self {
+        let cli_path = crate::tool_paths::resolve_openshell_cli_path();
+        let use_wsl = cfg!(windows) && !cli_path.exists() && Self::wsl_openshell_available_blocking();
         Self {
             sandbox_name: sandbox_name.to_string(),
             policy_path: policy_path.map(|s| s.to_string()),
             sandbox_verified: std::sync::atomic::AtomicBool::new(false),
+            cli_path,
+            use_wsl,
         }
     }
 
     /// [NEW] Detect if NVIDIA OpenShell is available on this system.
     pub async fn is_available() -> bool {
         // Check for 'openshell' binary and 'docker' status
-        let openshell_check = Command::new("openshell")
+        let cli_path = crate::tool_paths::resolve_openshell_cli_path();
+        let openshell_check = Command::new(&cli_path)
             .arg("--version")
             .output().await;
         
@@ -116,7 +123,34 @@ impl OpenShellExecutor {
                 return docker_check.map(|o| o.status.success()).unwrap_or(false);
             }
         }
+        if cfg!(windows) {
+            let wsl_check = Command::new("wsl.exe")
+                .args(["openshell", "--version"])
+                .output()
+                .await;
+            if wsl_check.map(|o| o.status.success()).unwrap_or(false) {
+                return true;
+            }
+        }
         false
+    }
+
+    fn wsl_openshell_available_blocking() -> bool {
+        std::process::Command::new("wsl.exe")
+            .args(["openshell", "--version"])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false)
+    }
+
+    fn openshell_command(&self) -> Command {
+        if self.use_wsl {
+            let mut cmd = Command::new("wsl.exe");
+            cmd.arg("openshell");
+            cmd
+        } else {
+            Command::new(&self.cli_path)
+        }
     }
 
     async fn ensure_sandbox(&self) -> anyhow::Result<()> {
@@ -125,9 +159,8 @@ impl OpenShellExecutor {
         }
 
         // Check if sandbox exists
-        let check = Command::new("openshell")
-            .args(["sandbox", "list"])
-            .output().await?;
+        let mut check_cmd = self.openshell_command();
+        let check = check_cmd.args(["sandbox", "list"]).output().await?;
         
         let stdout = String::from_utf8_lossy(&check.stdout);
         if stdout.contains(&self.sandbox_name) {
@@ -136,7 +169,7 @@ impl OpenShellExecutor {
         }
 
         info!("Creating OpenShell sandbox: {}...", self.sandbox_name);
-        let mut create_cmd = Command::new("openshell");
+        let mut create_cmd = self.openshell_command();
         create_cmd.args(["sandbox", "create", &self.sandbox_name]);
         
         if let Some(ref policy) = self.policy_path {
@@ -159,7 +192,7 @@ impl SecuredExecutor for OpenShellExecutor {
         self.ensure_sandbox().await?;
         
         // Wrap command in 'openshell sandbox connect'
-        let mut wrapped = Command::new("openshell");
+        let mut wrapped = self.openshell_command();
         wrapped.args(["sandbox", "connect", &self.sandbox_name, "--"]);
         wrapped.arg(cmd.get_program());
         for arg in cmd.get_args() {
@@ -177,7 +210,7 @@ impl SecuredExecutor for OpenShellExecutor {
         
         // Use curl inside the sandbox to perform the download, leveraging OpenShell's L7 policy engine
         let dest_str = dest.to_string_lossy();
-        let mut wrapped = Command::new("openshell");
+        let mut wrapped = self.openshell_command();
         wrapped.args(["sandbox", "connect", &self.sandbox_name, "--", "curl", "-L"]);
         
         if resume {

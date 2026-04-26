@@ -193,6 +193,18 @@ impl MemoryStore {
             [],
         )?;
 
+        // Federated: analyst-confirmed malicious patterns shared across mesh.
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS verified_threat_patterns (
+                process_name TEXT,
+                hash_blake3 TEXT,
+                source_node TEXT,
+                marked_at TEXT,
+                PRIMARY KEY (process_name, hash_blake3)
+            )",
+            [],
+        )?;
+
         // Peer status from PeerAnnounce (for join rules: require_patched, require_supported_os)
         conn.execute(
             "CREATE TABLE IF NOT EXISTS peer_status (
@@ -885,17 +897,20 @@ impl MemoryStore {
     }
 
     /// Mark a threat as false positive (federated learning: pattern shared).
-    pub fn mark_threat_false_positive(&self, threat_id: &str, source_node: &str) -> anyhow::Result<bool> {
+    /// Mark a threat as a false positive and return the (process_name, hash_blake3) for
+    /// the orchestrator to whitelist in the NSRL session cache and suppress future alerts.
+    pub fn mark_threat_false_positive(&self, threat_id: &str, source_node: &str) -> anyhow::Result<Option<(Option<String>, Option<String>, Option<String>)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT process_name, hash_blake3 FROM threats WHERE id = ?1"
+            "SELECT process_name, hash_blake3, file_path FROM threats WHERE id = ?1"
         )?;
         let mut rows = stmt.query(params![threat_id])?;
         let Some(row) = rows.next()? else {
-            return Ok(false);
+            return Ok(None);
         };
         let process_name: Option<String> = row.get(0)?;
         let hash_blake3: Option<String> = row.get(1)?;
+        let file_path: Option<String> = row.get(2)?;
         let proc = process_name.as_deref().unwrap_or("");
         let hash = hash_blake3.as_deref().unwrap_or("");
         conn.execute(
@@ -903,21 +918,45 @@ impl MemoryStore {
              VALUES (?1, ?2, ?3, ?4)",
             params![proc, hash, source_node, Utc::now().to_rfc3339()],
         )?;
-        Ok(true)
+        Ok(Some((process_name, hash_blake3, file_path)))
     }
 
-    /// Mark a threat as a confirmed true positive (reinforcement).
-    pub fn mark_threat_true_positive(&self, threat_id: &str, source_node: &str) -> anyhow::Result<bool> {
+    /// Add or update a false-positive pattern directly. Used when the analyst
+    /// marks a threat whose stored row did not already include the resolved hash.
+    pub fn record_false_positive_pattern(
+        &self,
+        process_name: Option<&str>,
+        hash_blake3: Option<&str>,
+        source_node: &str,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT OR REPLACE INTO false_positive_patterns (process_name, hash_blake3, source_node, marked_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![
+                process_name.unwrap_or(""),
+                hash_blake3.unwrap_or(""),
+                source_node,
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Mark a threat as a confirmed true positive.
+    /// Returns (process_name, hash_blake3) so the orchestrator can engage tarpits.
+    pub fn mark_threat_true_positive(&self, threat_id: &str, source_node: &str) -> anyhow::Result<Option<(Option<String>, Option<String>, Option<String>)>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT process_name, hash_blake3 FROM threats WHERE id = ?1"
+            "SELECT process_name, hash_blake3, file_path FROM threats WHERE id = ?1"
         )?;
         let mut rows = stmt.query(params![threat_id])?;
         let Some(row) = rows.next()? else {
-            return Ok(false);
+            return Ok(None);
         };
         let process_name: Option<String> = row.get(0)?;
         let hash_blake3: Option<String> = row.get(1)?;
+        let file_path: Option<String> = row.get(2)?;
         let proc = process_name.as_deref().unwrap_or("");
         let hash = hash_blake3.as_deref().unwrap_or("");
         
@@ -926,7 +965,7 @@ impl MemoryStore {
              VALUES (?1, ?2, ?3, ?4)",
             params![proc, hash, source_node, Utc::now().to_rfc3339()],
         )?;
-        Ok(true)
+        Ok(Some((process_name, hash_blake3, file_path)))
     }
 
     /// Check if process/hash matches a known false positive pattern.
@@ -999,6 +1038,12 @@ impl MemoryStore {
     pub fn is_hash_known_malicious_fast(&self, hash: &str) -> bool {
         let bloom = self.bloom_filter.lock().unwrap();
         bloom.check(&hash.to_string())
+    }
+
+    /// Add a confirmed malicious hash to the bloom filter for fast future matching.
+    pub fn mark_hash_known_malicious(&self, hash: &str) {
+        let mut bloom = self.bloom_filter.lock().unwrap();
+        bloom.set(&hash.to_string());
     }
 
     pub fn get_reputation_value(&self, node_id: &str) -> anyhow::Result<f32> {

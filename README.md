@@ -410,6 +410,42 @@ Starts all detection engines, file watchers, mesh networking, behavioral analysi
 | `--sandbox` | Hand off to **NVIDIA OpenShell**: runs `openshell sandbox create … -- osoosi start …` and **exits the host process** on success. If `openshell` is missing, logs a warning and continues with a normal host agent. |
 | `--sandbox-name <name>` | Sandbox name for `--sandbox` (default: `osoosi`). |
 | `--sandbox-deploy-gateway` | Run `openshell gateway deploy` before create (if your setup uses a gateway). |
+| `--wsl` / `--wdlflag` | Windows helper: launch the Linux Oshoosi build inside WSL2, verify `openshell` + Docker there, and run with OpenShell sandboxing. |
+
+### Windows + WSL2 OpenShell
+
+NVIDIA OpenShell v0.0.36 does **not** publish a native Windows package. On Windows, use WSL2 for OpenShell-backed analysis:
+
+```powershell
+# Windows PowerShell
+wsl --install -d Ubuntu
+wsl --set-default-version 2
+```
+
+Install Docker Desktop with WSL2 backend, then enable integration for Ubuntu.
+
+Inside WSL2:
+
+```bash
+curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
+openshell --version
+docker info
+cd /mnt/d/harfile/OshoosiClaw
+cargo build --release
+```
+
+Then from Windows:
+
+```powershell
+.\target\release\osoosi.exe start --wsl --sandbox --sandbox-name my-agent-sandbox
+```
+
+`--wsl` automatically runs:
+
+```bash
+cd /mnt/d/harfile/OshoosiClaw
+OSOOSI_SECURE_RUNTIME=openshell ./target/release/osoosi start --sandbox --sandbox-name my-agent-sandbox
+```
 
 ### `grant-access` — One-Time System Setup
 

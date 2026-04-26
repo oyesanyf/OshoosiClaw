@@ -15,6 +15,7 @@ use tracing::{debug, info, warn};
 /// `tracing` target for grep-friendly consensus / voting lines (`RUST_LOG=consensus=debug`).
 pub const CONSENSUS_LOG_TARGET: &str = "consensus";
 
+#[derive(Debug, Clone)]
 pub struct VoteResult {
     pub confidence: f32,
     pub reason: String,
@@ -24,6 +25,168 @@ pub struct VoteResult {
 pub trait ThreatVoter: Send + Sync {
     fn name(&self) -> String;
     fn vote(&self, event: &SysmonEvent) -> Option<VoteResult>;
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
+enum EvidenceClass {
+    LiveNetwork,
+    Behavior,
+    Memory,
+    StaticArtifact,
+    ThreatIntel,
+    Reputation,
+}
+
+#[derive(Debug, Clone)]
+struct EvidenceVote {
+    voter: String,
+    result: VoteResult,
+    class: EvidenceClass,
+    reliability: f32,
+    strong_action: bool,
+}
+
+#[derive(Debug)]
+struct EvidenceDecision {
+    confidence: f32,
+    action: osoosi_types::ResponseAction,
+    require_approval: bool,
+    summary: String,
+}
+
+fn process_name_from_event(event: &SysmonEvent) -> Option<String> {
+    event
+        .data
+        .get("Image")
+        .and_then(|v| v.as_str())
+        .and_then(|p| std::path::Path::new(p).file_name())
+        .and_then(|n| n.to_str())
+        .map(ToOwned::to_owned)
+}
+
+fn preferred_hash_from_event(event: &SysmonEvent) -> Option<String> {
+    let hashes = event.data.get("Hashes")?.as_str()?;
+    for prefix in ["SHA256=", "SHA256:", "SHA1=", "SHA1:", "MD5=", "MD5:"] {
+        if let Some(value) = hashes
+            .split(',')
+            .map(str::trim)
+            .find_map(|part| part.strip_prefix(prefix))
+        {
+            let value = value.trim();
+            if !value.is_empty() {
+                return Some(value.to_ascii_lowercase());
+            }
+        }
+    }
+    None
+}
+
+fn classify_vote(voter: &str, result: &VoteResult, event: &SysmonEvent) -> (EvidenceClass, f32, bool) {
+    let reason_lc = result.reason.to_ascii_lowercase();
+    match voter {
+        "OTX-C2" => {
+            let live = matches!(event.event_id, osoosi_types::SysmonEventId::NetworkConnect | osoosi_types::SysmonEventId::DnsQuery);
+            if live {
+                (EvidenceClass::LiveNetwork, 1.0, true)
+            } else {
+                (EvidenceClass::ThreatIntel, 0.72, false)
+            }
+        }
+        "CISA-KEV" => (EvidenceClass::ThreatIntel, 0.58, false),
+        "Sigma" => (EvidenceClass::Behavior, 0.86, true),
+        "SemanticIntent" | "Gemma4-LLM" => (EvidenceClass::Behavior, 0.78, true),
+        "YaraX-Memory" => (EvidenceClass::Memory, 1.0, true),
+        name if name.contains("ClamAV") => (EvidenceClass::StaticArtifact, 0.9, true),
+        name if name.contains("MalConv") || name.contains("ML") => {
+            let weak_pe_signature = reason_lc.contains("ml=0.000") && reason_lc.contains("sig=1.000");
+            if weak_pe_signature {
+                (EvidenceClass::StaticArtifact, 0.42, false)
+            } else {
+                (EvidenceClass::StaticArtifact, 0.78, true)
+            }
+        }
+        _ => (EvidenceClass::Reputation, 0.65, false),
+    }
+}
+
+fn orchestrate_evidence(votes: &[EvidenceVote], event: &SysmonEvent) -> EvidenceDecision {
+    use osoosi_types::{ResponseAction, SysmonEventId};
+
+    let mut classes = std::collections::HashSet::new();
+    let mut support = 0.0f32;
+    let mut mass = 0.0f32;
+    let mut max_single = 0.0f32;
+    let mut strong_action = false;
+    let mut threat_intel_only = true;
+
+    for vote in votes {
+        classes.insert(vote.class);
+        let weighted = vote.result.confidence.clamp(0.0, 1.0)
+            * vote.result.weight.max(0.0)
+            * vote.reliability;
+        support += weighted;
+        mass += vote.result.weight.max(0.0) * vote.reliability;
+        max_single = max_single.max(weighted);
+        strong_action |= vote.strong_action;
+        threat_intel_only &= vote.class == EvidenceClass::ThreatIntel;
+    }
+
+    let independent = classes.len();
+    let base = if mass > 0.0 { support / mass } else { 0.0 };
+    let corroboration = match independent {
+        0 => 0.0,
+        1 => 0.52,
+        2 => 0.82,
+        _ => 1.0,
+    };
+    let mut confidence = (base * corroboration + max_single.min(1.0) * 0.12).min(1.0);
+
+    let has_live_network = classes.contains(&EvidenceClass::LiveNetwork);
+    let has_behavior = classes.contains(&EvidenceClass::Behavior);
+    let has_memory = classes.contains(&EvidenceClass::Memory);
+    let has_static = classes.contains(&EvidenceClass::StaticArtifact);
+    let lifecycle_only = matches!(event.event_id, SysmonEventId::ProcessCreate | SysmonEventId::ProcessTerminate);
+
+    if threat_intel_only {
+        confidence = confidence.min(0.49);
+    }
+    if lifecycle_only && !has_behavior && !has_memory && !has_live_network {
+        confidence = confidence.min(0.62);
+    }
+    if has_static && !has_behavior && !has_memory && !has_live_network && independent < 3 {
+        confidence = confidence.min(0.68);
+    }
+
+    let require_approval = confidence >= 0.70 && independent < 2;
+    let action = if confidence >= 0.94 && independent >= 3 && strong_action {
+        ResponseAction::Isolate
+    } else if confidence >= 0.82 && has_live_network && (has_behavior || has_static || has_memory) {
+        ResponseAction::GhostTarpit
+    } else if confidence >= 0.74 && has_live_network {
+        ResponseAction::Tarpit
+    } else if confidence >= 0.72 && strong_action && independent >= 2 {
+        ResponseAction::Deception
+    } else {
+        ResponseAction::Alert
+    };
+
+    EvidenceDecision {
+        confidence,
+        action,
+        require_approval,
+        summary: format!(
+            "EvidenceOrchestrator: classes={} independent={} strong_action={} base={:.2} confidence={:.2}",
+            classes
+                .iter()
+                .map(|c| format!("{:?}", c))
+                .collect::<Vec<_>>()
+                .join("+"),
+            independent,
+            strong_action,
+            base,
+            confidence
+        ),
+    }
 }
 
 pub struct PolicyEngine {
@@ -146,6 +309,7 @@ impl PolicyEngine {
         let mut is_threat = false;
         let mut vetoed = false;
         let mut otx_voted = false;
+        let mut evidence_votes: Vec<EvidenceVote> = Vec::new();
         const OTX_VOTER: &str = "OTX-C2";
 
         if let Ok(voters_guard) = self.voters.read() {
@@ -181,6 +345,14 @@ impl PolicyEngine {
                     if vname == OTX_VOTER {
                         otx_voted = true;
                     }
+                    let (class, reliability, strong_action) = classify_vote(&vname, &res, event);
+                    evidence_votes.push(EvidenceVote {
+                        voter: vname,
+                        result: res,
+                        class,
+                        reliability,
+                        strong_action,
+                    });
                 } else {
                     debug!(
                         target: CONSENSUS_LOG_TARGET,
@@ -215,6 +387,19 @@ impl PolicyEngine {
                 vote_count += 1;
                 signature.add_reason(format!("[{}]: {}", OTX_VOTER, otx_reason));
                 is_threat = true;
+                let res = VoteResult {
+                    confidence: c,
+                    reason: otx_reason,
+                    weight: w,
+                };
+                let (class, reliability, strong_action) = classify_vote(OTX_VOTER, &res, event);
+                evidence_votes.push(EvidenceVote {
+                    voter: OTX_VOTER.to_string(),
+                    result: res,
+                    class,
+                    reliability,
+                    strong_action,
+                });
             }
         }
 
@@ -228,25 +413,21 @@ impl PolicyEngine {
         }
 
         signature.detector_count = vote_count;
-        signature.confidence = (total_score / (vote_count as f32).max(1.0)).min(1.0);
+        signature.process_name = process_name_from_event(event);
+        signature.hash_blake3 = preferred_hash_from_event(event);
 
-        // Escalation Logic
-        if vote_count >= 2 && signature.confidence > 0.90 {
-            signature.recommended_action = ResponseAction::Isolate;
-        } else if signature.confidence > 0.98 {
-            signature.recommended_action = ResponseAction::Isolate; // Absolute certainty
-        } else if signature.confidence > 0.70 {
-            signature.recommended_action = ResponseAction::GhostTarpit;
-        } else if signature.confidence > 0.50 {
-            signature.recommended_action = ResponseAction::Tarpit;
-        } else {
-            signature.recommended_action = ResponseAction::Alert;
-        }
+        let decision = orchestrate_evidence(&evidence_votes, event);
+        signature.confidence = decision.confidence;
+        signature.recommended_action = decision.action;
+        signature.require_approval = decision.require_approval;
+        signature.add_reason(decision.summary);
 
         // Federated learning: adjust confidence based on known true/false positive patterns
         if is_threat {
-            let proc = signature.process_name.as_deref();
-            let hash = signature.hash_blake3.as_deref();
+            let proc_owned = signature.process_name.clone();
+            let hash_owned = signature.hash_blake3.clone();
+            let proc = proc_owned.as_deref();
+            let hash = hash_owned.as_deref();
 
             // 1. If it's a confirmed TRUE positive, boost to 1.0
             if let Ok(true) = self.memory.is_true_positive_pattern(proc, hash) {
@@ -261,9 +442,16 @@ impl PolicyEngine {
             else if let Ok(true) = self.memory.is_false_positive_pattern(proc, hash) {
                 signature.confidence = (signature.confidence * 0.05).max(0.0);
                 signature.add_reason("Suppressed: matches federated false positive pattern");
-                // If confidence is now very low, don't take action
+                // If confidence is now very low, drop the finding completely.
                 if signature.confidence < 0.2 {
-                    signature.recommended_action = ResponseAction::Alert;
+                    info!(
+                        target: CONSENSUS_LOG_TARGET,
+                        event_id = ?event.event_id,
+                        process = ?proc,
+                        hash = ?hash,
+                        "[CONSENSUS] suppressed false-positive pattern"
+                    );
+                    return None;
                 }
             }
         }
@@ -396,5 +584,81 @@ mod tests {
             reason
         );
         assert_eq!(sig.detector_count, 1);
+    }
+
+    #[test]
+    fn evidence_orchestrator_caps_kev_plus_weak_static_noise() {
+        let event = make_event("C:\\tools\\git\\cmd\\git.exe", "git status");
+        let votes = vec![
+            EvidenceVote {
+                voter: "CISA-KEV".to_string(),
+                result: VoteResult {
+                    confidence: 0.85,
+                    reason: "CISA KEV: git.exe matches product Git".to_string(),
+                    weight: 1.0,
+                },
+                class: EvidenceClass::ThreatIntel,
+                reliability: 0.58,
+                strong_action: false,
+            },
+            EvidenceVote {
+                voter: "MalConv-ML".to_string(),
+                result: VoteResult {
+                    confidence: 1.0,
+                    reason: "MalwareScanner: combined=1.000 ml=0.000 sig=1.000 magika=pebin".to_string(),
+                    weight: 0.88,
+                },
+                class: EvidenceClass::StaticArtifact,
+                reliability: 0.42,
+                strong_action: false,
+            },
+        ];
+
+        let decision = orchestrate_evidence(&votes, &event);
+        assert!(decision.confidence <= 0.68, "decision={decision:?}");
+        assert_eq!(decision.action, osoosi_types::ResponseAction::Alert);
+    }
+
+    #[test]
+    fn evidence_orchestrator_tarpits_correlated_live_network_findings() {
+        let mut event = make_event("C:\\Temp\\payload.exe", "payload.exe");
+        event.event_id = SysmonEventId::NetworkConnect;
+        event.data = json!({
+            "Image": "C:\\Temp\\payload.exe",
+            "CommandLine": "payload.exe",
+            "DestinationIp": "203.0.113.50",
+            "ProcessId": 4321
+        });
+        let votes = vec![
+            EvidenceVote {
+                voter: "OTX-C2".to_string(),
+                result: VoteResult {
+                    confidence: 0.93,
+                    reason: "OTX: destination IP matched pulse".to_string(),
+                    weight: 1.0,
+                },
+                class: EvidenceClass::LiveNetwork,
+                reliability: 1.0,
+                strong_action: true,
+            },
+            EvidenceVote {
+                voter: "Sigma".to_string(),
+                result: VoteResult {
+                    confidence: 0.86,
+                    reason: "Sigma: suspicious outbound connection".to_string(),
+                    weight: 0.8,
+                },
+                class: EvidenceClass::Behavior,
+                reliability: 0.86,
+                strong_action: true,
+            },
+        ];
+
+        let decision = orchestrate_evidence(&votes, &event);
+        assert!(decision.confidence >= 0.74, "decision={decision:?}");
+        assert!(matches!(
+            decision.action,
+            osoosi_types::ResponseAction::Tarpit | osoosi_types::ResponseAction::GhostTarpit
+        ));
     }
 }

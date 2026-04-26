@@ -50,6 +50,8 @@ pub struct OpenShellManager {
     cli_path: PathBuf,
     /// Path to the osoosi sandbox policy YAML.
     policy_path: PathBuf,
+    /// Use `wsl.exe openshell ...` on Windows when no native OpenShell exists.
+    use_wsl: bool,
 }
 
 impl OpenShellManager {
@@ -62,15 +64,36 @@ impl OpenShellManager {
     pub fn new() -> Self {
         let cli_path = Self::find_openshell_cli();
         let policy_path = Self::find_policy_path();
-        Self { cli_path, policy_path }
+        let use_wsl = cfg!(windows) && !cli_path.exists() && Self::check_wsl_openshell();
+        Self { cli_path, policy_path, use_wsl }
     }
 
     /// Check if OpenShell CLI is available on this system.
     pub fn is_available(&self) -> bool {
         if self.cli_path.exists() && self.cli_path.is_file() { return true; }
         if Self::which_openshell().is_some() { return true; }
+        if cfg!(windows) && Self::check_wsl_openshell() { return true; }
         // Fallback: check if it's available as a python module
         Self::check_python_module()
+    }
+
+    fn openshell_command(&self) -> Command {
+        if self.use_wsl {
+            let mut cmd = Command::new("wsl.exe");
+            cmd.arg("openshell");
+            cmd
+        } else {
+            Command::new(&self.cli_path)
+        }
+    }
+
+    fn check_wsl_openshell() -> bool {
+        cfg!(windows)
+            && Command::new("wsl.exe")
+                .args(["openshell", "--version"])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false)
     }
 
     /// Check if OpenShell is available via `python -m openshell` / `py -m openshell` (Windows).
@@ -118,10 +141,8 @@ impl OpenShellManager {
 
     /// Get the OpenShell CLI version.
     fn get_version(&self) -> Option<String> {
-        let output = Command::new(&self.cli_path)
-            .arg("--version")
-            .output()
-            .ok()?;
+        let mut cmd = self.openshell_command();
+        let output = cmd.arg("--version").output().ok()?;
         if output.status.success() {
             let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
             Some(version)
@@ -132,9 +153,8 @@ impl OpenShellManager {
 
     /// Check if the OpenShell gateway is running.
     fn check_gateway(&self) -> bool {
-        let output = Command::new(&self.cli_path)
-            .args(["gateway", "status"])
-            .output();
+        let mut cmd = self.openshell_command();
+        let output = cmd.args(["gateway", "status"]).output();
         match output {
             Ok(o) => o.status.success(),
             Err(_) => false,
@@ -143,9 +163,8 @@ impl OpenShellManager {
 
     /// List all active sandboxes.
     fn list_sandboxes(&self) -> anyhow::Result<Vec<SandboxInfo>> {
-        let output = Command::new(&self.cli_path)
-            .args(["sandbox", "list"])
-            .output()?;
+        let mut cmd = self.openshell_command();
+        let output = cmd.args(["sandbox", "list"]).output()?;
 
         if !output.status.success() {
             return Ok(vec![]);
@@ -172,9 +191,8 @@ impl OpenShellManager {
     pub fn deploy_gateway(&self) -> OpenShellResult {
         info!("Deploying OpenShell gateway...");
 
-        let output = Command::new(&self.cli_path)
-            .args(["gateway", "deploy"])
-            .output();
+        let mut cmd = self.openshell_command();
+        let output = cmd.args(["gateway", "deploy"]).output();
 
         match output {
             Ok(o) => {
@@ -212,7 +230,7 @@ impl OpenShellManager {
         let sandbox_name = name.unwrap_or("osoosi");
         info!("Creating OpenShell sandbox '{}' with policy: {:?}", sandbox_name, self.policy_path);
 
-        let mut cmd = Command::new(&self.cli_path);
+        let mut cmd = self.openshell_command();
         cmd.args(["sandbox", "create"]);
 
         // Apply the sandbox policy if available
@@ -264,9 +282,8 @@ impl OpenShellManager {
         let sandbox_name = name.unwrap_or("osoosi");
         info!("Connecting to OpenShell sandbox '{}'...", sandbox_name);
 
-        let status = Command::new(&self.cli_path)
-            .args(["sandbox", "connect", sandbox_name])
-            .status();
+        let mut cmd = self.openshell_command();
+        let status = cmd.args(["sandbox", "connect", sandbox_name]).status();
 
         match status {
             Ok(s) => OpenShellResult {
@@ -301,7 +318,8 @@ impl OpenShellManager {
 
         info!("Applying OpenShell policy to sandbox '{}': {:?}", name, policy);
 
-        let output = Command::new(&self.cli_path)
+        let mut cmd = self.openshell_command();
+        let output = cmd
             .args(["policy", "set", name, "--policy", &policy.to_string_lossy(), "--wait"])
             .output();
 
@@ -328,9 +346,8 @@ impl OpenShellManager {
         let sandbox_name = name.unwrap_or("osoosi");
         info!("Destroying OpenShell sandbox '{}'...", sandbox_name);
 
-        let output = Command::new(&self.cli_path)
-            .args(["sandbox", "destroy", sandbox_name])
-            .output();
+        let mut cmd = self.openshell_command();
+        let output = cmd.args(["sandbox", "destroy", sandbox_name]).output();
 
         match output {
             Ok(o) => {
@@ -373,7 +390,7 @@ impl OpenShellManager {
 
         info!("OpenShell: exec in '{}': {}", name, command.join(" "));
 
-        let mut cmd = Command::new(&self.cli_path);
+        let mut cmd = self.openshell_command();
         cmd.args(["sandbox", "exec", name, "--"]);
         cmd.args(command);
 
@@ -407,7 +424,7 @@ impl OpenShellManager {
 
     /// Create a sandbox without running the osoosi agent inside it (raw creation).
     fn create_sandbox_raw(&self, name: &str) -> OpenShellResult {
-        let mut cmd = Command::new(&self.cli_path);
+        let mut cmd = self.openshell_command();
         cmd.args(["sandbox", "create", "--name", name]);
         if self.policy_path.exists() {
             cmd.args(["--policy", &self.policy_path.to_string_lossy()]);
@@ -510,9 +527,8 @@ echo "DONE: YARA provisioning complete"
     pub fn stream_logs(&self, name: Option<&str>) -> OpenShellResult {
         let sandbox_name = name.unwrap_or("osoosi");
 
-        let status = Command::new(&self.cli_path)
-            .args(["logs", sandbox_name, "--tail"])
-            .status();
+        let mut cmd = self.openshell_command();
+        let status = cmd.args(["logs", sandbox_name, "--tail"]).status();
 
         match status {
             Ok(s) => OpenShellResult {
@@ -567,6 +583,14 @@ echo "DONE: YARA provisioning complete"
     /// so `pip install git+https://...` can run `git clone` (same as a manual `setx PATH ...; pip install git+...`).
     #[cfg(windows)]
     fn install_openshell_windows() -> OpenShellResult {
+        if Self::check_wsl_openshell() {
+            return OpenShellResult {
+                success: true,
+                message: "OpenShell is already available through WSL (`wsl.exe openshell --version`). Oshoosi will use WSL-backed OpenShell on this Windows host.".to_string(),
+                sandbox_name: None,
+            };
+        }
+
         if let Some(ref g) = crate::tool_paths::resolve_git_executable() {
             info!("Using Git at {} (set OSOOSI_GIT_PATH to override)", g.display());
         } else {
@@ -643,9 +667,10 @@ echo "DONE: YARA provisioning complete"
             }
         }
 
-        // 4) uv (often manages its own toolchain)
+        // 4) uv (native Windows package is not available for OpenShell v0.0.36,
+        // but keep this for future releases and clear diagnostics).
         let mut uv = Command::new("uv");
-        uv.args(["tool", "install", "-U", "openshell"]);
+        uv.args(["tool", "install", "-U", "openshell", "--prerelease=allow"]);
         if let Some(ref p) = path_for_pip {
             uv.env("PATH", p);
         }
@@ -658,7 +683,7 @@ echo "DONE: YARA provisioning complete"
             Ok(uv_out) => OpenShellResult {
                 success: false,
                 message: format!(
-                    "All install methods failed. Last uv stderr: {}",
+                    "All native Windows install methods failed. NVIDIA OpenShell v0.0.36 publishes Linux/macOS wheels only. Install it in WSL with: curl -LsSf https://astral.sh/uv/install.sh | sh && source $HOME/.cargo/env && uv tool install --prerelease=allow openshell. Last uv stderr: {}",
                     String::from_utf8_lossy(&uv_out.stderr)
                 ),
                 sandbox_name: None,

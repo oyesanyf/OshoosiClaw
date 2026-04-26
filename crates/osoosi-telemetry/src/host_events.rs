@@ -128,18 +128,19 @@ impl WindowsEventReader {
                 &self.channel,
                 &format!("/q:{}", query),
                 "/rd:false",
-                "/e:root",
                 &format!("/c:{n}"),
                 "/f:xml",
             ]);
         } else {
-            // First run: recent events to establish baseline (same cap as steady-state default).
+            // First run: load the last 100 events immediately so the dashboard
+            // is populated and the console shows activity right away.
+            // The cursor is then set to the newest record so subsequent polls
+            // only return truly NEW events.
             cmd.args([
                 "qe",
                 &self.channel,
-                "/rd:true",
-                "/e:root",
-                &format!("/c:{}", n.min(500)),
+                "/rd:true",   // newest-first so we get the most-recent 100
+                "/c:100",
                 "/f:xml",
             ]);
         }
@@ -167,33 +168,60 @@ impl WindowsEventReader {
             return Err(anyhow::anyhow!("{}", msg));
         }
         let xml = String::from_utf8_lossy(&output.stdout);
-        let events: Vec<String> = xml
-            .split("<Event")
-            .filter(|s| s.contains("</Event>"))
-            .map(|s| {
-                let end_pos = s.find("</Event>").unwrap_or(s.len());
-                format!("<Event{}", &s[..end_pos + "</Event>".len()])
-            })
-            .collect();
-        
+
+        // Split on "<Event" — handles both bare <Event> and namespaced <Event xmlns='...'>
+        // No /e:root wrapper used so output is raw concatenated XML events.
+        let events = Self::split_event_xml(&xml);
+
         let mut new_events = Vec::new();
         let mut max_id = self.last_record_id;
+        let is_first_run = self.last_record_id == 0;
 
-        // Note: if we used /rd:false above, the events come in chronological order.
-        // For /rd:true (first run), they come newest first.
         for ev in events {
             let record_id = self.extract_record_id(&ev);
-            if record_id <= self.last_record_id && self.last_record_id != 0 {
-                continue; // Skip already processed events just in case
-            }
             if record_id > max_id {
                 max_id = record_id;
+            }
+            // Skip duplicates on steady-state polls (guard against overlap)
+            if !is_first_run && record_id <= self.last_record_id {
+                continue;
             }
             new_events.push(ev);
         }
 
+        if is_first_run {
+            tracing::info!(
+                target: "telemetry",
+                "[Sysmon] Startup: loaded {} recent events from '{}' (cursor → RecordID {}). Live polling active.",
+                new_events.len(), self.channel, max_id
+            );
+        } else if !new_events.is_empty() {
+            tracing::info!(
+                target: "telemetry",
+                "[Sysmon] Polled {} new event(s) from '{}' (RecordID {} → {}).",
+                new_events.len(), self.channel, self.last_record_id, max_id
+            );
+        }
+
         self.last_record_id = max_id;
         Ok(new_events)
+    }
+
+    fn split_event_xml(xml: &str) -> Vec<String> {
+        let mut events = Vec::new();
+        let mut rest = xml;
+
+        while let Some(start) = rest.find("<Event") {
+            rest = &rest[start..];
+            let Some(end) = rest.find("</Event>") else {
+                break;
+            };
+            let event_end = end + "</Event>".len();
+            events.push(rest[..event_end].to_string());
+            rest = &rest[event_end..];
+        }
+
+        events
     }
 
     fn extract_record_id(&self, xml: &str) -> u64 {
@@ -216,7 +244,7 @@ impl HostEventReader for WindowsEventReader {
         let count = xml_events.len();
         
         if count > 0 {
-            tracing::info!(target: "telemetry", "Polled {} new events from channel '{}'", count, self.channel);
+            tracing::info!(target: "telemetry", "[Sysmon] Read {} raw XML event(s) from '{}'", count, self.channel);
         }
 
         for xml in xml_events {
@@ -236,11 +264,82 @@ impl HostEventReader for WindowsEventReader {
                 }
             }
         }
+        if count > 0 {
+            tracing::info!(
+                target: "telemetry",
+                "[Sysmon] Parsed {}/{} event(s) from '{}'",
+                out.len(),
+                count,
+                self.channel
+            );
+            if out.is_empty() {
+                warn!(
+                    "[Sysmon] Read {} raw event(s) from '{}' but parsed 0. Check XML parser compatibility.",
+                    count, self.channel
+                );
+            }
+        }
         Ok(out)
     }
 
     fn source_name(&self) -> String {
         format!("windows-eventlog:{}", self.channel)
+    }
+}
+
+#[cfg(all(test, target_os = "windows"))]
+mod windows_tests {
+    use super::*;
+
+    fn sample_sysmon_xml(record_id: u64, image: &str) -> String {
+        format!(
+            r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Microsoft-Windows-Sysmon"/>
+    <EventID>1</EventID>
+    <Computer>test-host</Computer>
+    <EventRecordID>{record_id}</EventRecordID>
+  </System>
+  <EventData>
+    <Data Name="Image">{image}</Data>
+    <Data Name="ProcessId">4242</Data>
+  </EventData>
+</Event>"#
+        )
+    }
+
+    #[test]
+    fn splits_namespaced_concatenated_wevtutil_xml() {
+        let blob = format!(
+            "{}{}",
+            sample_sysmon_xml(10, r"C:\Windows\System32\cmd.exe"),
+            sample_sysmon_xml(11, r"C:\Windows\System32\notepad.exe")
+        );
+
+        let events = WindowsEventReader::split_event_xml(&blob);
+        assert_eq!(events.len(), 2);
+        assert!(events[0].starts_with("<Event"));
+        assert!(events[0].contains("<EventRecordID>10</EventRecordID>"));
+        assert!(events[1].contains("<EventRecordID>11</EventRecordID>"));
+    }
+
+    #[test]
+    fn parses_namespaced_sysmon_xml() {
+        let parser = super::super::SysmonParser::new();
+        let event = parser
+            .parse_xml(&sample_sysmon_xml(12, r"C:\Windows\System32\cmd.exe"))
+            .expect("namespaced Sysmon XML should parse");
+
+        assert_eq!(event.event_id as u32, 1);
+        assert_eq!(event.computer, "test-host");
+        assert_eq!(
+            event.data.get("Image").and_then(|v| v.as_str()),
+            Some(r"C:\Windows\System32\cmd.exe")
+        );
+        assert_eq!(
+            event.data.get("EventRecordID").and_then(|v| v.as_str()),
+            Some("12")
+        );
     }
 }
 
