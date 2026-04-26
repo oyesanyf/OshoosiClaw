@@ -871,10 +871,15 @@ impl MemoryStore {
     pub fn get_recent_threats(&self, limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
         let conn = self.conn.lock().unwrap();
         let mut stmt = conn.prepare(
-            "SELECT id, cve_id, process_name, confidence, MAX(detected_at), source_node, file_path, reason 
-             FROM threats 
+            "SELECT id, cve_id, process_name, hash_blake3, confidence, MAX(detected_at), source_node, file_path, reason 
+             FROM threats t
+             WHERE NOT EXISTS (
+                SELECT 1 FROM false_positive_patterns fp
+                WHERE (fp.process_name != '' AND fp.process_name = COALESCE(t.process_name, ''))
+                   OR (fp.hash_blake3 != '' AND fp.hash_blake3 = COALESCE(t.hash_blake3, ''))
+             )
              GROUP BY COALESCE(NULLIF(cve_id, ''), NULLIF(process_name, ''), file_path), source_node
-             ORDER BY detected_at DESC 
+             ORDER BY detected_at DESC
              LIMIT ?1"
         )?;
         let rows = stmt.query_map(params![limit as i64], |row| {
@@ -882,11 +887,12 @@ impl MemoryStore {
                 "id": row.get::<_, String>(0)?,
                 "cve_id": row.get::<_, Option<String>>(1)?,
                 "process_name": row.get::<_, Option<String>>(2)?,
-                "confidence": row.get::<_, f64>(3)?,
-                "timestamp": row.get::<_, String>(4)?,
-                "source_node": row.get::<_, String>(5)?,
-                "file_path": row.get::<_, Option<String>>(6)?,
-                "reason": row.get::<_, Option<String>>(7)?,
+                "hash_blake3": row.get::<_, Option<String>>(3)?,
+                "confidence": row.get::<_, f64>(4)?,
+                "timestamp": row.get::<_, String>(5)?,
+                "source_node": row.get::<_, String>(6)?,
+                "file_path": row.get::<_, Option<String>>(7)?,
+                "reason": row.get::<_, Option<String>>(8)?,
             }))
         })?;
         let mut out = Vec::new();

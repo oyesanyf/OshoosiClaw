@@ -216,6 +216,8 @@ fn kev_quiet_benign_process_lifecycle(path: &str, stem: &str) -> bool {
     let trusted = p.contains("program files")
         || p.contains("programdata\\chocolatey")
         || p.contains("programdata\\scoop")
+        || p.contains("\\oshoosiclaw\\tools\\")
+        || p.contains("\\oshoosiclaw\\target\\")
         || p.contains("\\windows\\system32")
         || p.contains("\\windows\\syswow64")
         // Git for Windows (standard + portable, e.g. C:\tools\git\mingw64\bin\git.exe)
@@ -239,6 +241,23 @@ fn kev_quiet_benign_process_lifecycle(path: &str, stem: &str) -> bool {
         "wslhost",
         "wslservice",
         "node",
+        "net",
+        "smartscreen",
+        "sysmon",
+        "sysmon64",
+        "osoosi",
+        "capa",
+        "hayabusa",
+        "chainsaw",
+        "hollows_hunter",
+        "xori",
+        "rustc",
+        "cargo",
+        "python",
+        "cursor",
+        "antigravity",
+        "language_server_windows_x64",
+        "filecoauth",
     ];
     NOISY.contains(&stem)
 }

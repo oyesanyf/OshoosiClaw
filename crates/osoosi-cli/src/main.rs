@@ -710,17 +710,15 @@ fn ensure_wsl_ready() -> anyhow::Result<()> {
         Ok(output) => {
             let combined = decode_command_output(&output.stdout, &output.stderr);
             let normalized = combined.replace('\0', "").to_ascii_lowercase();
-            if normalized.contains("wsl_e_wsl_optional_component_required")
-                || normalized.contains("optional component")
-                || normalized.contains("requires the windows subsystem for linux")
-                || normalized.contains("wsl --install --no-distribution")
-            {
-                provision_wsl_optional_component()?;
-                return Err(anyhow::anyhow!(
-                    "Oshoosi launched WSL optional-component provisioning. Reboot Windows, then run the same `osoosi start --wsl --sandbox ...` command again."
-                ));
-            }
-            Err(anyhow::anyhow!("WSL status check failed: {}", combined.trim()))
+            warn!(
+                "WSL status is not usable yet (exit: {:?}). Provisioning WSL optional component. Details: {}",
+                output.status.code(),
+                normalized.trim()
+            );
+            provision_wsl_optional_component()?;
+            Err(anyhow::anyhow!(
+                "Oshoosi launched WSL optional-component provisioning. Approve the Windows UAC prompt if shown. Reboot Windows if requested, then run the same `osoosi start --wsl --sandbox ...` command again."
+            ))
         }
         Err(e) => Err(anyhow::anyhow!("Could not run wsl.exe: {}", e)),
     }

@@ -6,6 +6,7 @@ const state = {
     node_id: '',
     peer_count: 0,
     threats: [],
+    suppressedThreatKeys: new Set(),
     activity: [],
     chain_verified: false,
     current_view: 'dashboard',
@@ -134,9 +135,10 @@ async function updateDashboard() {
         }
 
         if (threats) {
-            state.threats = threats;
-            updateStats('threat-count', threats.length);
-            renderThreats(threats);
+            const visibleThreats = threats.filter(t => !state.suppressedThreatKeys.has(threatKey(t)));
+            state.threats = visibleThreats;
+            updateStats('threat-count', visibleThreats.length);
+            renderThreats(visibleThreats);
         }
 
         if (mesh) {
@@ -157,7 +159,7 @@ async function updateDashboard() {
 
         // Render views
         if (state.current_view === 'threats' && threats) {
-            renderThreatsView(threats);
+            renderThreatsView(state.threats);
         }
         if (state.current_view === 'mesh') {
             renderMeshView(mesh);
@@ -190,6 +192,41 @@ async function updateDashboard() {
         console.error("Failed to update dashboard:", error);
         document.getElementById('agent-status-text').innerText = "Agent Offline";
         document.querySelector('.status-dot').className = "status-dot";
+    }
+}
+
+function threatKey(t) {
+    return [
+        t?.id || '',
+        (t?.type || t?.process_name || '').toLowerCase(),
+        (t?.source_node || '').toLowerCase(),
+        (t?.file_path || '').toLowerCase(),
+        (t?.hash_blake3 || '').toLowerCase()
+    ].join('|');
+}
+
+function suppressThreatLocally(threatId) {
+    const selected = state.threats.find(t => t.id === threatId);
+    if (!selected) return;
+    const selectedType = (selected.type || selected.process_name || '').toLowerCase();
+    const selectedSource = (selected.source_node || '').toLowerCase();
+    const selectedPath = (selected.file_path || '').toLowerCase();
+    const selectedHash = (selected.hash_blake3 || '').toLowerCase();
+    const sameFinding = (t) =>
+        t.id === threatId ||
+        ((t.type || t.process_name || '').toLowerCase() === selectedType &&
+            (t.source_node || '').toLowerCase() === selectedSource) ||
+        (!!selectedPath && (t.file_path || '').toLowerCase() === selectedPath) ||
+        (!!selectedHash && (t.hash_blake3 || '').toLowerCase() === selectedHash);
+
+    state.threats
+        .filter(sameFinding)
+        .forEach(t => state.suppressedThreatKeys.add(threatKey(t)));
+    state.threats = state.threats.filter(t => !sameFinding(t));
+    updateStats('threat-count', state.threats.length);
+    renderThreats(state.threats);
+    if (state.current_view === 'threats') {
+        renderThreatsView(state.threats);
     }
 }
 
@@ -765,8 +802,8 @@ window.markFalsePositive = async function(threatId) {
         });
         const data = await res.json();
         if (data.ok) {
-            alert("Threat marked as false positive. Remediation initiated.");
-            updateDashboard();
+            suppressThreatLocally(threatId);
+            setTimeout(updateDashboard, 250);
         } else {
             alert("Error: " + data.error);
         }

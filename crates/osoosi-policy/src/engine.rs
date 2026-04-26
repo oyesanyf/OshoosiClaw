@@ -81,6 +81,61 @@ fn preferred_hash_from_event(event: &SysmonEvent) -> Option<String> {
     None
 }
 
+fn event_image_path(event: &SysmonEvent) -> Option<&str> {
+    event.data.get("Image").and_then(|v| v.as_str())
+}
+
+fn event_stem(event: &SysmonEvent) -> String {
+    event_image_path(event)
+        .and_then(|p| std::path::Path::new(p).file_stem())
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase()
+}
+
+fn is_trusted_operational_tool(event: &SysmonEvent) -> bool {
+    let path = event_image_path(event).unwrap_or("").to_ascii_lowercase();
+    let stem = event_stem(event);
+    let trusted_path = path.contains("\\windows\\system32\\")
+        || path.contains("\\windows\\syswow64\\")
+        || path.contains("\\program files\\")
+        || path.contains("\\program files (x86)\\")
+        || path.contains("\\programdata\\chocolatey\\")
+        || path.contains("\\programdata\\scoop\\")
+        || path.contains("\\tools\\git\\")
+        || path.contains("\\oshoosiclaw\\tools\\")
+        || path.contains("\\oshoosiclaw\\target\\")
+        || path.contains("/oshoosiclaw/tools/")
+        || path.contains("/oshoosiclaw/target/");
+    if !trusted_path {
+        return false;
+    }
+    const TRUSTED_STEMS: &[&str] = &[
+        "osoosi",
+        "sysmon",
+        "sysmon64",
+        "smartscreen",
+        "net",
+        "git",
+        "git-remote-https",
+        "capa",
+        "hayabusa",
+        "chainsaw",
+        "hollows_hunter",
+        "xori",
+        "rustc",
+        "cargo",
+        "python",
+        "node",
+        "code",
+        "cursor",
+        "antigravity",
+        "language_server_windows_x64",
+        "filecoauth",
+    ];
+    TRUSTED_STEMS.contains(&stem.as_str())
+}
+
 fn classify_vote(voter: &str, result: &VoteResult, event: &SysmonEvent) -> (EvidenceClass, f32, bool) {
     let reason_lc = result.reason.to_ascii_lowercase();
     match voter {
@@ -146,6 +201,7 @@ fn orchestrate_evidence(votes: &[EvidenceVote], event: &SysmonEvent) -> Evidence
     let has_memory = classes.contains(&EvidenceClass::Memory);
     let has_static = classes.contains(&EvidenceClass::StaticArtifact);
     let lifecycle_only = matches!(event.event_id, SysmonEventId::ProcessCreate | SysmonEventId::ProcessTerminate);
+    let trusted_operational_tool = is_trusted_operational_tool(event);
 
     if threat_intel_only {
         confidence = confidence.min(0.49);
@@ -155,6 +211,11 @@ fn orchestrate_evidence(votes: &[EvidenceVote], event: &SysmonEvent) -> Evidence
     }
     if has_static && !has_behavior && !has_memory && !has_live_network && independent < 3 {
         confidence = confidence.min(0.68);
+    }
+    if trusted_operational_tool && !has_live_network && !has_behavior && !has_memory {
+        confidence = confidence.min(0.18);
+    } else if trusted_operational_tool && !strong_action {
+        confidence = confidence.min(0.45);
     }
 
     let require_approval = confidence >= 0.70 && independent < 2;
@@ -421,6 +482,17 @@ impl PolicyEngine {
         signature.recommended_action = decision.action;
         signature.require_approval = decision.require_approval;
         signature.add_reason(decision.summary);
+
+        if signature.confidence < 0.20 && is_trusted_operational_tool(event) {
+            info!(
+                target: CONSENSUS_LOG_TARGET,
+                event_id = ?event.event_id,
+                process = ?signature.process_name,
+                confidence = signature.confidence,
+                "[CONSENSUS] trusted operational tool observed; no threat emitted without independent malicious behavior"
+            );
+            return None;
+        }
 
         // Federated learning: adjust confidence based on known true/false positive patterns
         if is_threat {

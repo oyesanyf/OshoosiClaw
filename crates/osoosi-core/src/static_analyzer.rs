@@ -48,6 +48,14 @@ impl StaticAnalyzer {
             return Ok(None);
         }
 
+        if Self::is_oshoosi_managed_tool(file_path) {
+            debug!(
+                "Static Analyzer: skipping threat emission for Oshoosi-managed tool {:?}",
+                file_path
+            );
+            return Ok(None);
+        }
+
         // Calculate hash first for caching
         let hash = self.calculate_sha256(file_path).unwrap_or_else(|_| "unknown".to_string());
         if hash != "unknown" {
@@ -180,6 +188,32 @@ impl StaticAnalyzer {
         }
 
         Ok(None)
+    }
+
+    fn is_oshoosi_managed_tool(file_path: &Path) -> bool {
+        if std::env::var("OSOOSI_ANALYZE_OWN_TOOLS")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("on"))
+            .unwrap_or(false)
+        {
+            return false;
+        }
+
+        let Ok(path) = file_path.canonicalize() else {
+            return false;
+        };
+        let tools_dir = osoosi_types::resolve_tools_dir()
+            .canonicalize()
+            .unwrap_or_else(|_| osoosi_types::resolve_tools_dir());
+        let project_target = osoosi_types::resolve_tools_dir()
+            .parent()
+            .map(|p| p.join("target"))
+            .and_then(|p| p.canonicalize().ok());
+
+        path.starts_with(&tools_dir)
+            || project_target
+                .as_ref()
+                .map(|target| path.starts_with(target))
+                .unwrap_or(false)
     }
 
     async fn run_capa(&self, file_path: &Path) -> anyhow::Result<Option<ThreatSignature>> {

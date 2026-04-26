@@ -441,16 +441,34 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                         let cve_id = d.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
                         let process_name = d.get("process_name").and_then(|v| v.as_str()).unwrap_or("");
                         let source_node = d.get("source_node").and_then(|v| v.as_str()).unwrap_or("");
-                        
+                        let image_path = d.get("image_path").or(d.get("file_path")).and_then(|v| v.as_str()).unwrap_or("");
+                        let hash_blake3 = d.get("hash_blake3").and_then(|v| v.as_str()).unwrap_or("");
+                        let process_for_feedback = if !process_name.is_empty() {
+                            process_name.to_string()
+                        } else if !image_path.is_empty() {
+                            image_path.rsplit(['\\', '/']).next().unwrap_or(image_path).to_string()
+                        } else {
+                            String::new()
+                        };
+                        if orch
+                            .memory()
+                            .is_false_positive_pattern(
+                                if process_for_feedback.is_empty() { None } else { Some(process_for_feedback.as_str()) },
+                                if hash_blake3.is_empty() { None } else { Some(hash_blake3) },
+                            )
+                            .unwrap_or(false)
+                        {
+                            return None;
+                        }
+
                         // Deduplicate by CVE or Process Name per node
-                        let key = format!("{}-{}-{}", cve_id.trim(), process_name.trim(), source_node.trim());
+                        let key = format!("{}-{}-{}", cve_id.trim(), process_for_feedback.trim(), source_node.trim());
                         if seen.contains(&key) {
                             return None;
                         }
                         seen.insert(key);
 
                         let id = d.get("id")?.as_str().unwrap_or("").to_string();
-                        let image_path = d.get("image_path").or(d.get("file_path")).and_then(|v| v.as_str()).unwrap_or("");
                         let type_str = if !process_name.is_empty() {
                             process_name.to_string()
                         } else if !image_path.is_empty() {
@@ -472,6 +490,7 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                             "details": format!("Source: {}", source_node),
                             "source_node": source_node,
                             "file_path": file_path,
+                            "hash_blake3": if hash_blake3.is_empty() { Value::Null } else { json!(hash_blake3) },
                             "reason": if reason.is_empty() { Value::Null } else { json!(reason) },
                             "entropy": d.get("entropy").cloned().unwrap_or(Value::Null),
                             "predicted_next": if predicted_next.is_empty() { Value::Null } else { json!(predicted_next) }
@@ -506,6 +525,7 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                             "timestamp": obj.get("timestamp"),
                             "details": format!("{} from {}", process_name, obj.get("source_node").and_then(|v| v.as_str()).unwrap_or("?")),
                             "source_node": obj.get("source_node"),
+                            "hash_blake3": obj.get("hash_blake3"),
                             "reason": reason,
                             "entropy": obj.get("entropy"),
                             "predicted_next": predicted_next
