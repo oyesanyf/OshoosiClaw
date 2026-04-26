@@ -460,9 +460,7 @@ impl MeshNode {
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Upnp(upnp::Event::GatewayNotFound)) => {
                         debug!("Oshoosi Mesh: UPnP gateway not found (manual port forwarding might be needed).");
                     }
-                    SwarmEvent::Behaviour(OsoosiBehaviorEvent::Upnp(upnp::Event::NonFatalError(e))) => {
-                        debug!("Oshoosi Mesh: UPnP non-fatal error: {}", e);
-                    }
+                    _ => {}
                     _ => {}
                 }
             }
