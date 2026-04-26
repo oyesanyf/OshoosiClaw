@@ -84,8 +84,9 @@ impl BehavioralAnalyzer {
             embedder,
         };
 
-        // Initialize SmolLM in the background to avoid stalling the app
-        analyzer.init_native_smollm();
+        if std::env::var("OSOOSI_ENABLE_SMOLLM").map(|v| v == "1").unwrap_or(false) {
+            analyzer.init_native_smollm();
+        }
         analyzer
     }
 

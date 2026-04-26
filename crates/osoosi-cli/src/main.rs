@@ -240,7 +240,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         std::env::set_var("OSOOSI_NO_ORT", "1");
         info!("AI features explicitly disabled.");
     }
-    
+
     let ai_cfg = osoosi_types::load_ai_config();
     if !ai_cfg.enabled {
         std::env::set_var("OSOOSI_NO_ORT", "1");
@@ -1004,9 +1004,10 @@ async fn handle_grant_access() -> anyhow::Result<()> {
 async fn setup_firewall() -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     {
-        let ps_cmd = "New-NetFirewallRule -DisplayName 'OpenOshoosi-Allow' -Direction Inbound -LocalPort 9000,8080 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue";
+        let ps_cmd = "New-NetFirewallRule -DisplayName 'OpenOshoosi-Allow' -Direction Inbound -LocalPort 9000,9876,3030,8080 -Protocol TCP -Action Allow -ErrorAction SilentlyContinue";
         let _ = std::process::Command::new("powershell").args(&["-Command", ps_cmd]).output()?;
     }
+    osoosi_core::firewall::open_mesh_ports()?;
     Ok(())
 }
 
@@ -1271,11 +1272,13 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
     }
 
     info!("Verifying AI models in {}...", osoosi_types::resolve_models_dir().display());
+    ensure_ollama_model().await;
+
     let models_dir = osoosi_types::resolve_models_dir();
-    let smollm_dir = models_dir.join("smollm");
+    let gemma_dir = models_dir.join("gemma4-e4b");
     let malware_dir = models_dir.join("malware");
 
-    let _ = fs::create_dir_all(&smollm_dir);
+    let _ = fs::create_dir_all(&gemma_dir);
     let _ = fs::create_dir_all(&malware_dir);
 
     // Use tokio-enabled API builder with optional HF_TOKEN
@@ -1296,6 +1299,63 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
         }
     };
 
+    // 1. Gemma 4 E4B ONNX (primary local reasoning model). Ollama is preferred
+    // when installed; these files support pure ONNX Runtime deployments.
+    let gemma_repo_name = std::env::var("OSOOSI_GEMMA_ONNX_REPO")
+        .unwrap_or_else(|_| "onnx-community/gemma-4-E4B-it-ONNX".to_string());
+    let gemma_repo = api.model(gemma_repo_name.clone());
+    let gemma_model_dest = gemma_dir.join("model.onnx");
+    let gemma_tokenizer_dest = gemma_dir.join("tokenizer.json");
+
+    if !gemma_tokenizer_dest.exists() {
+        for filename in ["tokenizer.json", "onnx/tokenizer.json"] {
+            match gemma_repo.get(filename).await {
+                Ok(downloaded) => {
+                    if fs::copy(downloaded, &gemma_tokenizer_dest).is_ok() {
+                        info!("Gemma 4 tokenizer saved from {}.", gemma_repo_name);
+                        break;
+                    }
+                }
+                Err(e) => tracing::debug!("Gemma tokenizer candidate {} failed: {}", filename, e),
+            }
+        }
+    }
+
+    if !gemma_model_dest.exists() {
+        for filename in [
+            "model.onnx",
+            "onnx/model.onnx",
+            "decoder_model_merged.onnx",
+            "onnx/decoder_model_merged.onnx",
+            "decoder_model.onnx",
+            "onnx/decoder_model.onnx",
+            "model_text_decoder.onnx",
+            "onnx/model_text_decoder.onnx",
+        ] {
+            match gemma_repo.get(filename).await {
+                Ok(downloaded) => {
+                    if fs::copy(downloaded, &gemma_model_dest).is_ok() {
+                        info!("Gemma 4 ONNX decoder saved from {} ({}) as model.onnx.", gemma_repo_name, filename);
+                        break;
+                    }
+                }
+                Err(e) => tracing::debug!("Gemma ONNX candidate {} failed: {}", filename, e),
+            }
+        }
+    }
+
+    if !gemma_model_dest.exists() || !gemma_tokenizer_dest.exists() {
+        warn!(
+            "Gemma 4 E4B ONNX files are incomplete in {:?}. Ollama Gemma is preferred when available; ONNX Gemma voter stays silent until model.onnx + tokenizer.json exist.",
+            gemma_dir
+        );
+    }
+
+    if std::env::var("OSOOSI_ENABLE_SMOLLM").map(|v| v == "1").unwrap_or(false) {
+    let smollm_dir = models_dir.join("smollm");
+    let _ = fs::create_dir_all(&smollm_dir);
+
+    // Optional legacy SmolLM bootstrap. Disabled by default; Gemma 4 is primary.
     // 1. SmolLM2-135M-Instruct (Native)
     let smollm_repo = api.model("HuggingFaceTB/SmolLM2-135M-Instruct".to_string());
     let smollm_files = ["model.safetensors", "tokenizer.json", "config.json"];
@@ -1332,6 +1392,8 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
     }
 
     // 3. MalConv — Candle-compatible `.safetensors` only. cycloevan/malconv on HF is Keras/TF (see model card), not an inference endpoint.
+    }
+
     let ai_cfg = osoosi_types::load_ai_config();
     let malconv_dest = malware_dir.join("malconv.safetensors");
     if !malconv_dest.exists() {
@@ -1378,4 +1440,71 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
 
     info!("AI models verified.");
     Ok(())
+}
+
+async fn ensure_ollama_model() {
+    let model = std::env::var("OSOOSI_OLLAMA_MODEL")
+        .or_else(|_| std::env::var("OSOOSI_REASONING_MODEL"))
+        .unwrap_or_else(|_| "gemma4:e4b".to_string());
+
+    let version = tokio::process::Command::new("ollama")
+        .arg("--version")
+        .output()
+        .await;
+    let Ok(version) = version else {
+        warn!(
+            "Ollama not found on PATH. Local Gemma reasoning will use ONNX/SmolLM files if present; otherwise AI reasoning voters stay silent."
+        );
+        return;
+    };
+
+    if !version.status.success() {
+        warn!("Ollama command exists but did not run successfully; skipping Ollama model provisioning.");
+        return;
+    }
+
+    info!("Ollama detected. Ensuring local reasoning model '{}' is available...", model);
+    let list = tokio::process::Command::new("ollama").arg("list").output().await;
+    let already_present = list
+        .ok()
+        .map(|out| String::from_utf8_lossy(&out.stdout).contains(&model))
+        .unwrap_or(false);
+
+    if !already_present {
+        match tokio::process::Command::new("ollama")
+            .args(["pull", &model])
+            .status()
+            .await
+        {
+            Ok(status) if status.success() => info!("Ollama model '{}' provisioned.", model),
+            Ok(status) => {
+                warn!("ollama pull {} exited with status {}. ONNX/SmolLM fallback remains available.", model, status);
+                return;
+            }
+            Err(e) => {
+                warn!("Failed to run ollama pull {}: {}. ONNX/SmolLM fallback remains available.", model, e);
+                return;
+            }
+        }
+    }
+
+    if std::env::var("OSOOSI_REASONING_BACKEND").is_err() {
+        std::env::set_var("OSOOSI_REASONING_BACKEND", "api");
+    }
+    if std::env::var("OSOOSI_REASONING_URL").is_err() {
+        std::env::set_var("OSOOSI_REASONING_URL", "http://127.0.0.1:11434/v1/chat/completions");
+    }
+    if std::env::var("OSOOSI_REASONING_KEY").is_err() {
+        std::env::set_var("OSOOSI_REASONING_KEY", "ollama");
+    }
+    std::env::set_var("OSOOSI_REASONING_MODEL", &model);
+    if std::env::var("OSOOSI_OPENAI_API_BASE").is_err() {
+        std::env::set_var("OSOOSI_OPENAI_API_BASE", "http://127.0.0.1:11434/v1");
+    }
+    if std::env::var("OSOOSI_OPENAI_API_KEY").is_err() {
+        std::env::set_var("OSOOSI_OPENAI_API_KEY", "ollama");
+    }
+    if std::env::var("OSOOSI_OPENAI_MODEL").is_err() {
+        std::env::set_var("OSOOSI_OPENAI_MODEL", &model);
+    }
 }

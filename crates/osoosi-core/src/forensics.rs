@@ -15,6 +15,9 @@ impl Default for ForensicStoryteller {
 
 impl ForensicStoryteller {
     pub fn new() -> Self {
+        if !std::env::var("OSOOSI_ENABLE_SMOLLM").map(|v| v == "1").unwrap_or(false) {
+            return Self { analyzer: None };
+        }
         let models_dir = std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
         let model_dir = Path::new(&models_dir).join("smollm");
 

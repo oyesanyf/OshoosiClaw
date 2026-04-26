@@ -94,7 +94,7 @@ impl BehavioralClassifier {
                 }
             }
         } else {
-            info!("Behavioral classifier: ONNX engine disabled (missing smollm2-135m-it.onnx or tokenizer.json). Falling back to native SmolLM LLM.");
+            info!("Behavioral classifier: local ONNX text model disabled; Gemma 4 reasoning is handled by the reasoning backend when configured.");
             (None, None)
         };
 
@@ -107,7 +107,10 @@ impl BehavioralClassifier {
             .build()
             .unwrap_or_default();
 
-        let smollm = if !no_ai && model.is_none() {
+        let smollm = if !no_ai
+            && model.is_none()
+            && std::env::var("OSOOSI_ENABLE_SMOLLM").map(|v| v == "1").unwrap_or(false)
+        {
             // Attempt to load native SmolLM2 if available (fallback)
             let smollm_dir = Path::new(&models_dir).join("smollm");
             match SmolLMAnalyzer::new(&smollm_dir) {

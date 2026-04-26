@@ -33,7 +33,7 @@ pub struct ReasoningEngine {
 impl ReasoningEngine {
     pub fn new() -> Self {
         let smollm = Arc::new(tokio::sync::RwLock::new(None));
-        let backend_type = std::env::var("OSOOSI_REASONING_BACKEND").unwrap_or_else(|_| "smollm".to_string());
+        let backend_type = std::env::var("OSOOSI_REASONING_BACKEND").unwrap_or_else(|_| "api".to_string());
         let backend = if backend_type == "python" {
             ReasoningBackend::PythonBridge { 
                 script_path: std::env::var("OSOOSI_REASONING_SCRIPT").unwrap_or_else(|_| "scripts/reason.py".to_string())
@@ -56,8 +56,10 @@ impl ReasoningEngine {
                 .unwrap_or_default(),
         };
 
-        // Initialize SmolLM in the background if selected
-        if matches!(engine.backend, ReasoningBackend::SmolLM) {
+        // Initialize legacy SmolLM only when explicitly requested.
+        if matches!(engine.backend, ReasoningBackend::SmolLM)
+            && std::env::var("OSOOSI_ENABLE_SMOLLM").map(|v| v == "1").unwrap_or(false)
+        {
             engine.init_native_smollm();
         }
         engine

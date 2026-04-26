@@ -18,6 +18,14 @@ pub struct MemoryStore {
     bloom_filter: Mutex<bloomfilter::Bloom<String>>,
 }
 
+fn normalize_asset_path(path: &str) -> String {
+    let mut normalized = path.replace('/', "\\").trim_end_matches('\\').to_ascii_lowercase();
+    if let Some(stripped) = normalized.strip_prefix("\\\\?\\") {
+        normalized = stripped.to_string();
+    }
+    normalized
+}
+
 impl MemoryStore {
     pub fn new(path: &str) -> anyhow::Result<Self> {
         let conn = Connection::open(path)?;
@@ -189,6 +197,51 @@ impl MemoryStore {
                 source_node TEXT,
                 marked_at TEXT,
                 PRIMARY KEY (process_name, hash_blake3)
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS internal_assets (
+                path TEXT PRIMARY KEY,
+                kind TEXT,
+                hash_blake3 TEXT,
+                added_at TEXT,
+                last_seen TEXT
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS ai_overrides (
+                file_hash TEXT PRIMARY KEY,
+                verdict INTEGER NOT NULL,
+                reason TEXT,
+                source_node TEXT,
+                timestamp TEXT NOT NULL
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS cve_exemptions (
+                cve_id TEXT NOT NULL,
+                binary_path TEXT NOT NULL,
+                expiry_date TEXT,
+                reason TEXT,
+                PRIMARY KEY (cve_id, binary_path)
+            )",
+            [],
+        )?;
+
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS training_samples (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                model_type TEXT NOT NULL,
+                features BLOB NOT NULL,
+                label INTEGER NOT NULL,
+                is_processed INTEGER DEFAULT 0,
+                created_at TEXT NOT NULL
             )",
             [],
         )?;
@@ -924,6 +977,15 @@ impl MemoryStore {
              VALUES (?1, ?2, ?3, ?4)",
             params![proc, hash, source_node, Utc::now().to_rfc3339()],
         )?;
+        if !hash.is_empty() {
+            self.record_ai_override_locked(
+                &conn,
+                hash,
+                0,
+                "analyst false positive",
+                source_node,
+            )?;
+        }
         Ok(Some((process_name, hash_blake3, file_path)))
     }
 
@@ -971,7 +1033,39 @@ impl MemoryStore {
              VALUES (?1, ?2, ?3, ?4)",
             params![proc, hash, source_node, Utc::now().to_rfc3339()],
         )?;
+        if !hash.is_empty() {
+            self.record_ai_override_locked(
+                &conn,
+                hash,
+                1,
+                "analyst true positive",
+                source_node,
+            )?;
+        }
         Ok(Some((process_name, hash_blake3, file_path)))
+    }
+
+    fn record_ai_override_locked(
+        &self,
+        conn: &Connection,
+        file_hash: &str,
+        verdict: i64,
+        reason: &str,
+        source_node: &str,
+    ) -> anyhow::Result<()> {
+        conn.execute(
+            "INSERT OR REPLACE INTO ai_overrides (file_hash, verdict, reason, source_node, timestamp)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![file_hash, verdict, reason, source_node, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
+    }
+
+    pub fn get_ai_override(&self, file_hash: &str) -> anyhow::Result<Option<bool>> {
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare_cached("SELECT verdict FROM ai_overrides WHERE file_hash = ?1")?;
+        let mut rows = stmt.query(params![file_hash])?;
+        Ok(rows.next()?.map(|row| row.get::<_, i64>(0).map(|v| v != 0)).transpose()?)
     }
 
     /// Check if process/hash matches a known false positive pattern.
@@ -1044,6 +1138,41 @@ impl MemoryStore {
     pub fn is_hash_known_malicious_fast(&self, hash: &str) -> bool {
         let bloom = self.bloom_filter.lock().unwrap();
         bloom.check(&hash.to_string())
+    }
+
+    pub fn upsert_internal_asset(
+        &self,
+        path: &str,
+        kind: &str,
+        hash_blake3: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let normalized = normalize_asset_path(path);
+        let now = Utc::now().to_rfc3339();
+        let conn = self.conn.lock().unwrap();
+        conn.execute(
+            "INSERT INTO internal_assets (path, kind, hash_blake3, added_at, last_seen)
+             VALUES (?1, ?2, ?3, ?4, ?4)
+             ON CONFLICT(path) DO UPDATE SET
+                kind=excluded.kind,
+                hash_blake3=COALESCE(excluded.hash_blake3, internal_assets.hash_blake3),
+                last_seen=excluded.last_seen",
+            params![normalized, kind, hash_blake3, now],
+        )?;
+        Ok(())
+    }
+
+    pub fn is_internal_asset_path(&self, path: &str) -> anyhow::Result<bool> {
+        let candidate = normalize_asset_path(path);
+        let conn = self.conn.lock().unwrap();
+        let mut stmt = conn.prepare_cached("SELECT path FROM internal_assets")?;
+        let assets = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        for asset in assets {
+            let asset = asset?;
+            if candidate == asset || candidate.starts_with(&format!("{}\\", asset)) {
+                return Ok(true);
+            }
+        }
+        Ok(false)
     }
 
     /// Add a confirmed malicious hash to the bloom filter for fast future matching.

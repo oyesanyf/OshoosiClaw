@@ -68,59 +68,36 @@ pub async fn start_dashboard_with_join_gate(
     start_dashboard_with_backend(port, join_gate, None).await
 }
 
-/// Resolve `dashboard/dist` (or `OSOOSI_DASHBOARD_DIR`) for static assets.
+/// Resolve dashboard assets. Prefer `dashboard/src` during repo runs so the
+/// live UI cannot lag behind stale copied `dashboard/dist` files.
 pub fn resolve_dashboard_asset_dir() -> PathBuf {
-    let mut asset_path = PathBuf::from("dashboard/dist");
-
     if let Ok(custom) = std::env::var("OSOOSI_DASHBOARD_DIR") {
         let p = PathBuf::from(&custom);
         if p.exists() {
-            asset_path = p;
+            return p;
         }
     }
 
-    if !asset_path.exists() {
-        if let Ok(exe) = std::env::current_exe() {
-            let mut dir = exe.parent().map(|p| p.to_path_buf());
-            for _ in 0..10 {
-                if let Some(ref d) = dir {
-                    let candidate = d.join("dashboard").join("dist");
-                    if candidate.exists() {
-                        asset_path = candidate;
-                        break;
-                    }
-                    dir = d.parent().map(|p| p.to_path_buf());
-                } else {
-                    break;
-                }
+    for start in [std::env::current_dir().ok(), std::env::current_exe().ok().and_then(|p| p.parent().map(|d| d.to_path_buf()))]
+        .into_iter()
+        .flatten()
+    {
+        let mut dir = Some(start);
+        for _ in 0..10 {
+            let Some(d) = dir else { break };
+            let candidate_src = d.join("dashboard").join("src");
+            if candidate_src.join("app.js").is_file() {
+                return candidate_src;
             }
-        }
-    }
-
-    if !asset_path.exists() {
-        if let Ok(cwd) = std::env::current_dir() {
-            let mut dir = Some(cwd);
-            for _ in 0..8 {
-                if let Some(ref d) = dir {
-                    let candidate_dist = d.join("dashboard").join("dist");
-                    if candidate_dist.exists() {
-                        asset_path = candidate_dist;
-                        break;
-                    }
-                    let candidate_src = d.join("dashboard").join("src");
-                    if candidate_src.exists() {
-                        asset_path = candidate_src;
-                        break;
-                    }
-                    dir = d.parent().map(|p| p.to_path_buf());
-                } else {
-                    break;
-                }
+            let candidate_dist = d.join("dashboard").join("dist");
+            if candidate_dist.join("app.js").is_file() {
+                return candidate_dist;
             }
+            dir = d.parent().map(|p| p.to_path_buf());
         }
     }
 
-    asset_path
+    PathBuf::from("dashboard/src")
 }
 
 async fn dashboard_health() -> Json<Value> {

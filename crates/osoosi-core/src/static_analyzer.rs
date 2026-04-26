@@ -23,21 +23,18 @@ pub struct StaticAnalyzer {
     signatures_path: PathBuf,
     /// Executor for running tools (Direct or OpenShell)
     executor: Arc<dyn osoosi_types::SecuredExecutor>,
-    /// Memory: For caching analysis results
-    memory: Arc<osoosi_memory::MemoryStore>,
     /// In-memory session cache for static analysis results (SHA256 -> ThreatSignature)
     analysis_cache: dashmap::DashMap<String, Option<ThreatSignature>>,
 }
 
 impl StaticAnalyzer {
-    pub fn new(memory: Arc<osoosi_memory::MemoryStore>, executor: Arc<dyn osoosi_types::SecuredExecutor>) -> Self {
+    pub fn new(_memory: Arc<osoosi_memory::MemoryStore>, executor: Arc<dyn osoosi_types::SecuredExecutor>) -> Self {
         Self {
             capa_path: osoosi_types::resolve_capa_path(),
             rules_path: osoosi_types::resolve_capa_rules_dir(),
             floss_path: osoosi_types::resolve_floss_path(),
             signatures_path: osoosi_types::resolve_capa_sigs_dir(),
             executor,
-            memory: memory,
             analysis_cache: dashmap::DashMap::new(),
         }
     }

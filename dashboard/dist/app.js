@@ -6,6 +6,7 @@ const state = {
     node_id: '',
     peer_count: 0,
     threats: [],
+    suppressedThreatKeys: new Set(),
     activity: [],
     chain_verified: false,
     current_view: 'dashboard',
@@ -67,6 +68,18 @@ function setupNav() {
                 document.getElementById('otel-map-view').classList.add('active');
                 viewTitle.innerText = "Global Telemetry Mesh Map";
                 renderOtelMapView();
+            } else if (view === 'zone') {
+                document.getElementById('zone-view').classList.add('active');
+                viewTitle.innerText = "Zone Security Gateway";
+                renderZoneView();
+            } else if (view === 'approvals') {
+                document.getElementById('approvals-view').classList.add('active');
+                viewTitle.innerText = "Response Approval Queue";
+                renderApprovalsView();
+            } else if (view === 'story') {
+                document.getElementById('story-view').classList.add('active');
+                viewTitle.innerText = "Forensic Storyboard";
+                renderStoryView();
             } else {
                 document.getElementById('other-view').classList.add('active');
                 viewTitle.innerText = item.querySelector('span').innerText;
@@ -122,9 +135,10 @@ async function updateDashboard() {
         }
 
         if (threats) {
-            state.threats = threats;
-            updateStats('threat-count', threats.length);
-            renderThreats(threats);
+            const visibleThreats = threats.filter(t => !state.suppressedThreatKeys.has(threatKey(t)));
+            state.threats = visibleThreats;
+            updateStats('threat-count', visibleThreats.length);
+            renderThreats(visibleThreats);
         }
 
         if (mesh) {
@@ -145,7 +159,7 @@ async function updateDashboard() {
 
         // Render views
         if (state.current_view === 'threats' && threats) {
-            renderThreatsView(threats);
+            renderThreatsView(state.threats);
         }
         if (state.current_view === 'mesh') {
             renderMeshView(mesh);
@@ -159,9 +173,11 @@ async function updateDashboard() {
         if (state.current_view === 'process-map') {
             // Optional: Auto-refresh graph every few polls if needed
         }
-
-        if (timeseries) {
-            updateTelemetryChart(timeseries);
+        if (state.current_view === 'zone') {
+            renderZoneView();
+        }
+        if (state.current_view === 'approvals') {
+            renderApprovalsView();
         }
 
         // Update global indicator
@@ -172,6 +188,41 @@ async function updateDashboard() {
         console.error("Failed to update dashboard:", error);
         document.getElementById('agent-status-text').innerText = "Agent Offline";
         document.querySelector('.status-dot').className = "status-dot";
+    }
+}
+
+function threatKey(t) {
+    return [
+        t?.id || '',
+        (t?.type || t?.process_name || '').toLowerCase(),
+        (t?.source_node || '').toLowerCase(),
+        (t?.file_path || '').toLowerCase(),
+        (t?.hash_blake3 || '').toLowerCase()
+    ].join('|');
+}
+
+function suppressThreatLocally(threatId) {
+    const selected = state.threats.find(t => t.id === threatId);
+    if (!selected) return;
+    const selectedType = (selected.type || selected.process_name || '').toLowerCase();
+    const selectedSource = (selected.source_node || '').toLowerCase();
+    const selectedPath = (selected.file_path || '').toLowerCase();
+    const selectedHash = (selected.hash_blake3 || '').toLowerCase();
+    const sameFinding = (t) =>
+        t.id === threatId ||
+        ((t.type || t.process_name || '').toLowerCase() === selectedType &&
+            (t.source_node || '').toLowerCase() === selectedSource) ||
+        (!!selectedPath && (t.file_path || '').toLowerCase() === selectedPath) ||
+        (!!selectedHash && (t.hash_blake3 || '').toLowerCase() === selectedHash);
+
+    state.threats
+        .filter(sameFinding)
+        .forEach(t => state.suppressedThreatKeys.add(threatKey(t)));
+    state.threats = state.threats.filter(t => !sameFinding(t));
+    updateStats('threat-count', state.threats.length);
+    renderThreats(state.threats);
+    if (state.current_view === 'threats') {
+        renderThreatsView(state.threats);
     }
 }
 
@@ -223,25 +274,43 @@ function renderThreats(threats) {
         return;
     }
 
-    list.innerHTML = filtered.map(threat => `
+    const groups = {};
+    filtered.forEach(t => {
+        // Variation is defined by Type + Source only; reasons are listed inside
+        const key = `${t.type}-${t.source_node || 'Unknown'}`;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(t);
+    });
+
+    list.innerHTML = Object.entries(groups).map(([key, groupThreats]) => {
+        const t = groupThreats[0];
+        const maxConfidence = Math.max(...groupThreats.map(gt => gt.confidence || 0));
+        const severity = maxConfidence > 0.8 ? 'CRITICAL' : (maxConfidence > 0.6 ? 'HIGH' : 'MEDIUM');
+        const severityColor = maxConfidence > 0.8 ? 'var(--accent-red)' : (maxConfidence > 0.6 ? '#ff9900' : '#ffcc00');
+        
+        return `
         <div class="timeline-item">
             <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
                 <i data-lucide="shield-alert"></i>
             </div>
             <div class="item-info">
-                <div class="item-title">${threat.type} Detected</div>
+                <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
+                    <span>${t.type} ${groupThreats.length > 1 ? `<span style="font-size:10px; color:var(--text-muted); margin-left:4px;">(${groupThreats.length} events)</span>` : ''}</span>
+                    <span style="font-size:9px; padding:1px 5px; border-radius:4px; background:${severityColor}; color:white; vertical-align:middle;">${severity}</span>
+                </div>
                 <div class="item-meta">
-                    <span><i data-lucide="crosshair" style="width:12px"></i> Confidence: ${(threat.confidence * 100).toFixed(0)}%</span>
-                    <span><i data-lucide="clock" style="width:12px"></i> ${formatTimestamp(threat.timestamp)}</span>
+                    <span><i data-lucide="crosshair" style="width:12px"></i> ${(maxConfidence * 100).toFixed(0)}% Confidence</span>
+                    <span><i data-lucide="clock" style="width:12px"></i> ${formatTimestamp(t.timestamp)}</span>
+                    ${t.entropy ? `<span><i data-lucide="zap" style="width:12px"></i> Entropy: ${t.entropy.toFixed(2)}</span>` : ''}
                 </div>
                 <div class="item-details" style="font-size: 11px; margin-top: 4px; color: var(--text-muted);">
-                    ${threat.reason ? `<div style="color:var(--accent-red); margin-bottom:2px;">${threat.reason}</div>` : ''}
-                    ${threat.file_path ? `<div style="margin-bottom:2px;">File: ${threat.file_path}</div>` : ''}
-                    ID: ${threat.id} | Source: ${threat.source_node}
+                    ${Array.from(new Set(groupThreats.map(gt => gt.reason || 'Anomalous behavior'))).join('; ')}
+                    <br/>
+                    <span style="font-size: 10px; opacity: 0.8;">Source: ${t.source_node}</span>
                 </div>
             </div>
         </div>
-    `).join('');
+    `}).join('');
     
     lucide.createIcons();
 }
@@ -275,48 +344,71 @@ function renderActivity(activity) {
  * Render detailed threats view
  */
 function renderThreatsView(threats) {
-    const list = document.getElementById('threats-data-list');
+    const list = document.getElementById('threat-view-list') || document.getElementById('threats-data-list');
     if (!list) return;
-    
-    if (!threats || threats.length === 0) {
-        list.innerHTML = '<p class="placeholder-text">No active threats detected in the network.</p>';
-        return;
-    }
 
-    const filtered = threats.filter(t => {
-        if (!state.searchQuery) return true;
-        const q = state.searchQuery;
-        return (t.type && t.type.toLowerCase().includes(q)) || 
-               (t.id && t.id.toLowerCase().includes(q)) ||
-               (t.file_path && t.file_path.toLowerCase().includes(q)) ||
-               (t.reason && t.reason.toLowerCase().includes(q));
+    const groups = {};
+    threats.forEach(t => {
+        const key = `${t.type}-${t.source_node || 'Unknown'}`;
+        if (!groups[key]) groups[key] = [];
+        groups[key].push(t);
     });
 
-    if (filtered.length === 0) {
-        list.innerHTML = '<p class="placeholder-text">No matches found for "' + state.searchQuery + '".</p>';
-        return;
-    }
+    list.innerHTML = Object.entries(groups).map(([key, groupThreats]) => {
+        const t = groupThreats[0];
+        const maxConfidence = Math.max(...groupThreats.map(gt => gt.confidence || 0));
+        const severity = maxConfidence > 0.8 ? 'CRITICAL SEVERITY' : (maxConfidence > 0.6 ? 'HIGH SEVERITY' : 'MEDIUM SEVERITY');
+        const severityColor = maxConfidence > 0.8 ? 'var(--accent-red)' : (maxConfidence > 0.6 ? '#ff9900' : '#ffcc00');
 
-    list.innerHTML = filtered.map(threat => `
-        <div class="timeline-item">
+        return `
+        <div class="timeline-item group-item" style="margin-bottom: 20px; border-bottom: 1px solid var(--glass-border); padding-bottom: 16px;">
             <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
                 <i data-lucide="shield-alert"></i>
             </div>
-            <div class="item-info">
-                <div class="item-title">${threat.type} <span style="font-size:10px; padding:2px 6px; border-radius:8px; background:var(--accent-red); color:white; margin-left:8px;">HIGH SEVERITY</span></div>
-                <div class="item-meta">
-                    <span><i data-lucide="crosshair" style="width:12px"></i> Confidence: ${(threat.confidence * 100).toFixed(0)}%</span>
-                    <span><i data-lucide="clock" style="width:12px"></i> ${formatTimestamp(threat.timestamp)}</span>
-                    <span><i data-lucide="target" style="width:12px"></i> Source: ${threat.source_node || 'Unknown'}</span>
+            <div class="item-info" style="cursor: pointer;" onclick="const d = document.getElementById('panel-long-${t.id}'); d.style.display = d.style.display === 'none' ? 'flex' : 'none';">
+                <div class="item-title" style="font-size: 16px; font-weight: 600;">
+                    ${t.type} 
+                    <span style="font-size:10px; padding:2px 8px; border-radius:12px; background:${severityColor}; color:white; margin-left:12px; vertical-align: middle;">${severity}</span>
                 </div>
-                ${threat.reason ? `<div class="item-reason" style="font-size:12px; color:var(--accent-red); margin-top:6px; background:rgba(255,77,77,0.05); padding:8px; border-radius:4px; border-left:3px solid var(--accent-red);">Reason: ${threat.reason}</div>` : ''}
-                ${threat.file_path ? `<div style="font-size:11px; color:var(--text-muted); margin-top:4px;">Path: ${threat.file_path}</div>` : ''}
+                <div class="item-meta" style="margin: 8px 0;">
+                    <span><i data-lucide="crosshair" style="width:12px"></i> Max Confidence: ${(maxConfidence * 100).toFixed(0)}%</span>
+                    <span><i data-lucide="clock" style="width:12px"></i> Latest: ${formatTimestamp(t.timestamp)}</span>
+                    <span><i data-lucide="target" style="width:12px"></i> Source: ${t.source_node || 'Unknown'}</span>
+                </div>
+                <div style="font-size: 11px; color: var(--accent-blue); margin-top: 4px;">Click to expand details</div>
+                <div id="panel-long-${t.id}" class="group-reasons" style="display: none; flex-direction: column; gap: 8px; margin-top: 12px;">
+                    ${t.entropy ? `
+                        <div class="entropy-gauge" style="margin-bottom: 10px; background: rgba(255,255,255,0.05); padding: 10px; border-radius: 6px;">
+                            <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); margin-bottom:4px;">
+                                <span>Shannon Entropy</span>
+                                <span>${t.entropy.toFixed(2)} bits</span>
+                            </div>
+                            <div style="height:4px; width:100%; background:rgba(255,255,255,0.1); border-radius:2px; overflow:hidden;">
+                                <div style="height:100%; width:${(t.entropy / 8 * 100).toFixed(0)}%; background:${t.entropy > 7.2 ? 'var(--accent-red)' : 'var(--accent-blue)'};"></div>
+                            </div>
+                            <div style="font-size:9px; color:var(--text-muted); margin-top:4px;">
+                                ${t.entropy > 7.2 ? 'High entropy indicates potential encryption or packing.' : 'Low/Medium entropy suggests standard binary code.'}
+                            </div>
+                        </div>
+                    ` : ''}
+                    ${groupThreats.map(gt => `
+                        <div class="reason-entry" style="font-size:12px; color:var(--text-header); background:rgba(255,255,255,0.03); padding:10px; border-radius:6px; border-left:3px solid ${severityColor};">
+                            <div style="font-weight: 600; margin-bottom: 2px;">Detection Signal:</div>
+                            ${gt.reason || 'Anomalous behavior detected'}
+                            <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">Confidence: ${(gt.confidence * 100).toFixed(0)}% | ${formatTimestamp(gt.timestamp)}</div>
+                        </div>
+                    `).join('')}
+                    ${t.file_path ? `<div style="font-size:11px; color:var(--text-muted); margin-top:10px; opacity: 0.8;">Primary Path: ${t.file_path}</div>` : ''}
+                </div>
             </div>
-            <div class="item-actions" style="display:flex; align-items:center;">
-                <button class="btn-text" style="color:var(--text-muted); border:1px solid var(--glass-border); padding:6px 12px; border-radius:6px;">Mark False Positive</button>
+            <div class="item-actions" style="display:flex; flex-direction: column; gap: 8px; justify-content: center; min-width: 150px;">
+                <button class="btn-text" onclick="markTruePositive('${t.id}')" style="color:var(--accent-green); border:1px solid var(--accent-green); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(0, 255, 150, 0.05); transition: all 0.2s;">Mark Positive</button>
+                <button class="btn-text" onclick="markFalsePositive('${t.id}')" style="color:var(--text-muted); border:1px solid var(--glass-border); padding:8px 16px; border-radius:6px; width: 100%; transition: all 0.2s;">Mark as False Positive</button>
+                <button class="btn-text" onclick="confirmThreat('${t.id}')" style="color:var(--accent-red); border:1px solid var(--accent-red); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(255, 77, 77, 0.05); transition: all 0.2s;">Confirm & Isolate</button>
+                <button class="btn-text" onclick="document.querySelector('[data-view=\'story\']').click()" style="color:var(--text-header); border:1px solid var(--glass-border); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(255, 255, 255, 0.05);">Forensic Story</button>
             </div>
         </div>
-    `).join('');
+    `}).join('');
     lucide.createIcons();
 }
 
@@ -366,6 +458,7 @@ function renderMalwareView(detections) {
                 <div class="item-meta">
                     <span><i data-lucide="file" style="width:12px"></i> File: ${det.file_path || 'Unknown'}</span>
                     <span><i data-lucide="activity" style="width:12px"></i> Score: ${det.score || 'N/A'}</span>
+                    ${det.entropy ? `<span><i data-lucide="zap" style="width:12px"></i> Entropy: ${det.entropy.toFixed(2)}</span>` : ''}
                 </div>
             </div>
         </div>
@@ -605,3 +698,194 @@ function updateTelemetryChart(data) {
 
 // Start the app
 document.addEventListener('DOMContentLoaded', init);
+
+/**
+ * Render Zone Overview
+ */
+async function renderZoneView() {
+    const summary = await fetchAPI('/zone-summary');
+    if (!summary) return;
+
+    const container = document.getElementById('zone-summary-container');
+    if (container) {
+        container.innerHTML = `
+            <div class="stat-card glass">
+                <div class="stat-label">Security Score</div>
+                <div class="stat-value" style="color: ${summary.security_score > 80 ? 'var(--accent-green)' : 'var(--accent-red)'}">${summary.security_score}%</div>
+            </div>
+            <div class="stat-card glass">
+                <div class="stat-label">Zone Node Count</div>
+                <div class="stat-value">${summary.peer_count + 1}</div>
+            </div>
+            <div class="stat-card glass">
+                <div class="stat-label">Zone ID</div>
+                <div class="stat-value" style="font-size: 14px;">${summary.zone}</div>
+            </div>
+        `;
+    }
+
+    const recs = document.getElementById('zone-recommendations');
+    if (recs) {
+        if (summary.recommendations && summary.recommendations.length > 0) {
+            recs.innerHTML = summary.recommendations.map(r => `
+                <div class="feed-item">
+                    <div class="item-title" style="color: var(--accent-blue);">Recommendation</div>
+                    <div class="item-meta">${r}</div>
+                </div>
+            `).join('');
+        } else {
+            recs.innerHTML = '<p class="placeholder-text">Security posture is optimal.</p>';
+        }
+    }
+}
+
+/**
+ * Render Approval Queue
+ */
+async function renderApprovalsView() {
+    const approvals = await fetchAPI('/pending-actions');
+    const list = document.getElementById('approval-list');
+    if (!list) return;
+
+    if (!approvals || approvals.length === 0) {
+        list.innerHTML = '<p class="placeholder-text">No pending actions requiring approval.</p>';
+        return;
+    }
+
+    list.innerHTML = approvals.map(app => `
+        <div class="timeline-item">
+            <div class="item-icon" style="background-color: rgba(255, 165, 0, 0.1); color: orange;">
+                <i data-lucide="help-circle"></i>
+            </div>
+            <div class="item-info">
+                <div class="item-title">Pending Action: ${app.action}</div>
+                <div class="item-meta">${app.description}</div>
+                <div class="item-actions mt-2">
+                    <button class="btn-small btn-approve" onclick="approveAction('${app.id}')">Approve</button>
+                    <button class="btn-small btn-reject" onclick="rejectAction('${app.id}')">Reject</button>
+                </div>
+            </div>
+        </div>
+    `).join('');
+    lucide.createIcons();
+}
+
+window.approveAction = async function(id) {
+    const res = await fetch(`${API_BASE}/approve-action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threat_id: id })
+    });
+    if (res.ok) renderApprovalsView();
+};
+
+window.rejectAction = async function(id) {
+    const res = await fetch(`${API_BASE}/reject-action`, {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json' },
+        body: JSON.stringify({ threat_id: id })
+    });
+    if (res.ok) renderApprovalsView();
+};
+
+window.markFalsePositive = async function(threatId) {
+    if (window.event) window.event.stopPropagation();
+    if (!confirm("Are you sure this is a False Positive? This will stop active responses and un-ghost files.")) return;
+    
+    try {
+        const res = await fetch(`${API_BASE}/threats/${threatId}/false-positive`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (data.ok) {
+            suppressThreatLocally(threatId);
+            setTimeout(updateDashboard, 250);
+        } else {
+            alert("Error: " + data.error);
+        }
+    } catch (err) {
+        console.error("Failed to mark false positive:", err);
+    }
+};
+
+window.markTruePositive = async function(threatId) {
+    if (window.event) window.event.stopPropagation();
+    if (!confirm("Confirm this as a True Positive? This will boost detection confidence across the mesh.")) return;
+    
+    try {
+        const res = await fetch(`${API_BASE}/threats/${threatId}/true-positive`, {
+            method: 'POST'
+        });
+        const data = await res.json();
+        if (data.ok) {
+            alert("Threat confirmed. Intelligence reinforced across mesh.");
+            updateDashboard();
+        } else {
+            alert("Error: " + data.error);
+        }
+    } catch (err) {
+        console.error("Failed to mark true positive:", err);
+    }
+};
+
+window.confirmThreat = async function(threatId) {
+    if (window.event) window.event.stopPropagation();
+    try {
+        const res = await fetch(`${API_BASE}/triage/decide`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ threat_id: threatId, action: 'Isolate' })
+        });
+        const data = await res.json();
+        if (data.ok) {
+            alert("Threat confirmed. Isolation initiated.");
+            updateDashboard();
+        }
+    } catch (err) {
+        console.error("Failed to confirm threat:", err);
+    }
+};
+
+window.investigateNode = function(nodeId) {
+    if (event) event.stopPropagation();
+    // Switch to mesh view and highlight node (placeholder logic)
+    document.querySelector('[data-view="mesh"]').click();
+};
+
+/**
+ * Render Forensic Story view
+ */
+async function renderStoryView() {
+    const container = document.getElementById('story-container');
+    if (!container) return;
+
+    // Add listener to refresh button
+    const refreshBtn = document.getElementById('refresh-story');
+    if (refreshBtn) {
+        refreshBtn.onclick = async () => {
+            container.innerHTML = '<div class="loading-spinner" style="margin: 20px auto;"></div><p class="placeholder-text">Synthesizing forensic story from OpenTelemetry spans...</p>';
+            const story = await fetchAPI('/story');
+            if (story && story.story) {
+                // Convert markdown-ish text to basic HTML (simple bold/newlines)
+                const formatted = story.story
+                    .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                    .replace(/\n/g, '<br/>');
+                container.innerHTML = `<div class="story-content" style="padding: 10px;">${formatted}</div>`;
+            } else {
+                container.innerHTML = '<p class="placeholder-text">Failed to generate story. Ensure agent is capturing OTel spans.</p>';
+            }
+        };
+    }
+
+    // Initial load if empty
+    if (container.querySelector('.placeholder-text')) {
+        const story = await fetchAPI('/story');
+        if (story && story.story) {
+            const formatted = story.story
+                .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
+                .replace(/\n/g, '<br/>');
+            container.innerHTML = `<div class="story-content" style="padding: 10px;">${formatted}</div>`;
+        }
+    }
+}
+

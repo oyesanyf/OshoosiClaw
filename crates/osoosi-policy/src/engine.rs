@@ -39,7 +39,6 @@ enum EvidenceClass {
 
 #[derive(Debug, Clone)]
 struct EvidenceVote {
-    voter: String,
     result: VoteResult,
     class: EvidenceClass,
     reliability: f32,
@@ -408,7 +407,6 @@ impl PolicyEngine {
                     }
                     let (class, reliability, strong_action) = classify_vote(&vname, &res, event);
                     evidence_votes.push(EvidenceVote {
-                        voter: vname,
                         result: res,
                         class,
                         reliability,
@@ -455,7 +453,6 @@ impl PolicyEngine {
                 };
                 let (class, reliability, strong_action) = classify_vote(OTX_VOTER, &res, event);
                 evidence_votes.push(EvidenceVote {
-                    voter: OTX_VOTER.to_string(),
                     result: res,
                     class,
                     reliability,
@@ -663,7 +660,6 @@ mod tests {
         let event = make_event("C:\\tools\\git\\cmd\\git.exe", "git status");
         let votes = vec![
             EvidenceVote {
-                voter: "CISA-KEV".to_string(),
                 result: VoteResult {
                     confidence: 0.85,
                     reason: "CISA KEV: git.exe matches product Git".to_string(),
@@ -674,7 +670,6 @@ mod tests {
                 strong_action: false,
             },
             EvidenceVote {
-                voter: "MalConv-ML".to_string(),
                 result: VoteResult {
                     confidence: 1.0,
                     reason: "MalwareScanner: combined=1.000 ml=0.000 sig=1.000 magika=pebin".to_string(),
@@ -703,7 +698,6 @@ mod tests {
         });
         let votes = vec![
             EvidenceVote {
-                voter: "OTX-C2".to_string(),
                 result: VoteResult {
                     confidence: 0.93,
                     reason: "OTX: destination IP matched pulse".to_string(),
@@ -714,7 +708,6 @@ mod tests {
                 strong_action: true,
             },
             EvidenceVote {
-                voter: "Sigma".to_string(),
                 result: VoteResult {
                     confidence: 0.86,
                     reason: "Sigma: suspicious outbound connection".to_string(),

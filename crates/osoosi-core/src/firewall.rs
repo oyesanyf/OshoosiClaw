@@ -232,11 +232,11 @@ pub fn clear_firewall_persistence() -> Result<()> {
     Ok(())
 }
 
-/// Open ports required for Mesh (4001) and Dashboard (3030).
+/// Open ports required for Oshoosi mesh/control traffic and dashboard access.
 pub fn open_mesh_ports() -> Result<()> {
+    let ports = [("Osoosi-Mesh", 9000_u16), ("Osoosi-Mesh-Alt", 9876_u16), ("Osoosi-Dashboard", 3030_u16)];
     #[cfg(target_os = "windows")]
     {
-        let ports = [("Osoosi-Mesh", 9000), ("Osoosi-Dashboard", 3000)];
         for (name, port) in ports {
             let _ = Command::new("netsh")
                 .args([
@@ -251,12 +251,22 @@ pub fn open_mesh_ports() -> Result<()> {
     }
     #[cfg(target_os = "linux")]
     {
-        // Try ufw first
-        let _ = Command::new("sudo").args(["ufw", "allow", "9000/tcp"]).status();
-        let _ = Command::new("sudo").args(["ufw", "allow", "3000/tcp"]).status();
-        // Fallback to iptables
-        let _ = Command::new("sudo").args(["iptables", "-I", "INPUT", "-p", "tcp", "--dport", "9000", "-j", "ACCEPT"]).status();
-        let _ = Command::new("sudo").args(["iptables", "-I", "INPUT", "-p", "tcp", "--dport", "3000", "-j", "ACCEPT"]).status();
+        for (_, port) in ports {
+            let port_spec = format!("{}/tcp", port);
+            let port_str = port.to_string();
+            let _ = Command::new("sudo").args(["ufw", "allow", &port_spec]).status();
+            let _ = Command::new("sudo")
+                .args(["iptables", "-I", "INPUT", "-p", "tcp", "--dport", &port_str, "-j", "ACCEPT"])
+                .status();
+        }
+    }
+    #[cfg(target_os = "macos")]
+    {
+        // macOS' Application Firewall is app-signing oriented. We still make the
+        // provisioning intent visible and leave packet-filter policy to managed deployments.
+        for (name, port) in ports {
+            tracing::info!("Firewall provisioning note: allow TCP {} for {} on macOS via pf/Application Firewall policy.", port, name);
+        }
     }
     Ok(())
 }

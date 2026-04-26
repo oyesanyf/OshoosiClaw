@@ -4,6 +4,93 @@ use osoosi_model::{MalwareScanResult, MalwareScanner};
 use std::path::Path;
 use std::sync::Arc;
 
+fn trusted_operational_path(path: &str) -> bool {
+    let p = path.replace('/', "\\").to_ascii_lowercase();
+    p.contains("\\windows\\system32\\")
+        || p.contains("\\windows\\syswow64\\")
+        || p.contains("\\program files\\")
+        || p.contains("\\program files (x86)\\")
+        || p.contains("\\programdata\\chocolatey\\")
+        || p.contains("\\programdata\\scoop\\")
+        || p.contains("\\tools\\git\\")
+        || p.contains("\\oshoosiclaw\\tools\\")
+        || p.contains("\\oshoosiclaw\\target\\")
+}
+
+fn event_text_field<'a>(event: &'a SysmonEvent, key: &str) -> Option<&'a str> {
+    event
+        .data
+        .get(key)
+        .and_then(|v| v.as_str())
+        .map(str::trim)
+        .filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("unknown"))
+}
+
+fn trusted_identity_signal(event: &SysmonEvent, path: &str) -> bool {
+    if !trusted_operational_path(path) {
+        return false;
+    }
+
+    let valid_signature = event_text_field(event, "SignatureStatus")
+        .or_else(|| event_text_field(event, "Signature Status"))
+        .is_some_and(|status| {
+            let status = status.to_ascii_lowercase();
+            status == "valid" || status.contains("trusted")
+        });
+    let publisher = event_text_field(event, "Signature")
+        .or_else(|| event_text_field(event, "Company"))
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let trusted_publisher = [
+        "microsoft",
+        "git",
+        "python",
+        "node.js",
+        "llvm",
+        "rust",
+        "openai",
+        "cursor",
+        "anysphere",
+        "patientpoint",
+    ]
+    .iter()
+    .any(|needle| publisher.contains(needle));
+
+    if valid_signature && trusted_publisher {
+        return true;
+    }
+
+    event
+        .product_version
+        .as_deref()
+        .map(str::trim)
+        .is_some_and(|v| !v.is_empty() && !v.eq_ignore_ascii_case("unknown"))
+}
+
+fn scanner_skip_path(path: &str) -> bool {
+    let p = path.replace('/', "\\").to_ascii_lowercase();
+    p.contains("\\.codex\\")
+        || p.contains("\\.gemini\\")
+        || p.contains("\\antigravity\\brain\\")
+        || p.contains("\\.system_generated\\logs\\")
+        || p.contains("\\oshoosiclaw\\tools\\hayabusa\\rules\\")
+        || p.contains("\\oshoosiclaw\\dashboard\\")
+        || p.contains("\\oshoosiclaw\\target\\")
+        || p.contains("\\oshoosiclaw\\cache\\")
+        || p.contains("\\oshoosiclaw\\models\\")
+        || p.contains("\\oshoosiclaw\\logs\\")
+        || p.contains("\\oshoosiclaw\\traps\\")
+        || p.ends_with(".yml")
+        || p.ends_with(".yaml")
+        || p.ends_with(".json")
+        || p.ends_with(".jsonl")
+        || p.ends_with(".toml")
+        || p.ends_with(".txt")
+        || p.ends_with(".log")
+        || p.ends_with(".sqlite")
+        || p.ends_with(".db")
+}
+
 /// ClamAV Consensus Voter
 /// 
 /// Provides a "clean" vote if ClamAV confirms the file is not infected.
@@ -20,6 +107,9 @@ impl ThreatVoter for ClamVoter {
 
     fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
+            if scanner_skip_path(image_path) || trusted_identity_signal(event, image_path) {
+                return None;
+            }
             let path = Path::new(image_path);
             if !path.exists() {
                 return None;
@@ -83,6 +173,9 @@ impl ThreatVoter for MalConvVoter {
             let Some(p) = event.data.get(key).and_then(|v| v.as_str()) else {
                 continue;
             };
+            if scanner_skip_path(p) {
+                continue;
+            }
             let path = Path::new(p);
             if !path.is_file() {
                 continue;
@@ -105,13 +198,19 @@ impl ThreatVoter for MalConvVoter {
         }
 
         let res = best?;
+        let path_note = best_path.as_deref().unwrap_or("?");
+        let weak_signature_only = res.ml_score <= 0.0
+            && res.signature_score >= 1.0
+            && res.clam_detected != Some(true);
+        if trusted_identity_signal(event, path_note) && weak_signature_only {
+            return None;
+        }
         let min_c = malconv_vote_min_combined();
         if !res.is_malware && res.combined_score < min_c {
             return None;
         }
 
         let conf = (res.combined_score.min(1.0)) as f32;
-        let path_note = best_path.as_deref().unwrap_or("?");
         Some(VoteResult {
             confidence: conf,
             reason: format!(

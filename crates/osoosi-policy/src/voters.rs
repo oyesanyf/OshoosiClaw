@@ -198,6 +198,21 @@ fn kev_product_matches_stem(stem: &str, product: &str) -> bool {
     false
 }
 
+fn kev_requires_exact_version(event: &SysmonEvent, full_path: &str) -> bool {
+    let lifecycle = matches!(
+        event.event_id,
+        SysmonEventId::ProcessCreate | SysmonEventId::ProcessTerminate | SysmonEventId::ImageLoad
+    );
+    if !lifecycle {
+        return false;
+    }
+    let p = full_path.to_ascii_lowercase();
+    p.contains("\\windows\\")
+        || p.contains("\\program files")
+        || p.contains("\\tools\\git\\")
+        || p.contains("\\oshoosiclaw\\")
+}
+
 /// Suppress CISA-KEV on **ProcessCreate** and **ProcessTerminate** for ubiquitous tools in typical install
 /// locations (huge FP rate — e.g. `git.exe` + KEV "Git" on portable/custom paths, terminate events).
 /// Set `OSOOSI_KEV_QUIET_SYSTEM_TOOLS=0` to restore KEV on those events. **NetworkConnect / DNS / Image** still evaluated.
@@ -305,8 +320,18 @@ impl ThreatVoter for KevVoter {
                 // VERSION-AWARE LOGIC: If we have a resolved product version, and it looks like a modern/patched version,
                 // we down-rank the confidence significantly.
                 let mut confidence = if is_known_good { 0.45 } else { 0.85 };
+                let exact_version = event
+                    .product_version
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|version| {
+                        !version.is_empty() && !version.eq_ignore_ascii_case("unknown")
+                    });
+                if kev_requires_exact_version(event, full_path) && exact_version.is_none() {
+                    return None;
+                }
 
-                if let Some(ref version) = event.product_version {
+                if let Some(version) = exact_version {
                     if version.starts_with("2.5")
                         || version.starts_with("3.")
                         || version.starts_with("v2.5")

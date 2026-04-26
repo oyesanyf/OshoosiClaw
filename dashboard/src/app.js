@@ -180,10 +180,6 @@ async function updateDashboard() {
             renderApprovalsView();
         }
 
-        if (timeseries) {
-            updateTelemetryChart(timeseries);
-        }
-
         // Update global indicator
         document.getElementById('agent-status-text').innerText = "Agent Online";
         document.querySelector('.status-dot').className = "status-dot online";
@@ -348,7 +344,7 @@ function renderActivity(activity) {
  * Render detailed threats view
  */
 function renderThreatsView(threats) {
-    const list = document.getElementById('threat-view-list');
+    const list = document.getElementById('threat-view-list') || document.getElementById('threats-data-list');
     if (!list) return;
 
     const groups = {};
@@ -406,7 +402,7 @@ function renderThreatsView(threats) {
                 </div>
             </div>
             <div class="item-actions" style="display:flex; flex-direction: column; gap: 8px; justify-content: center; min-width: 150px;">
-                <button class="btn-text" onclick="markTruePositive('${t.id}')" style="color:var(--accent-green); border:1px solid var(--accent-green); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(0, 255, 150, 0.05); transition: all 0.2s;">Mark as True Positive</button>
+                <button class="btn-text" onclick="markTruePositive('${t.id}')" style="color:var(--accent-green); border:1px solid var(--accent-green); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(0, 255, 150, 0.05); transition: all 0.2s;">Mark Positive</button>
                 <button class="btn-text" onclick="markFalsePositive('${t.id}')" style="color:var(--text-muted); border:1px solid var(--glass-border); padding:8px 16px; border-radius:6px; width: 100%; transition: all 0.2s;">Mark as False Positive</button>
                 <button class="btn-text" onclick="confirmThreat('${t.id}')" style="color:var(--accent-red); border:1px solid var(--accent-red); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(255, 77, 77, 0.05); transition: all 0.2s;">Confirm & Isolate</button>
                 <button class="btn-text" onclick="document.querySelector('[data-view=\'story\']').click()" style="color:var(--text-header); border:1px solid var(--glass-border); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(255, 255, 255, 0.05);">Forensic Story</button>

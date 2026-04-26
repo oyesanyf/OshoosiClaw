@@ -69,6 +69,119 @@ use tracing::{debug, info, warn, error};
 /// Repair status tuple: (last_cve, last_state, last_sig, last_at, pending_count, last_error).
 pub type RepairStatus = (Option<String>, Option<String>, Option<String>, Option<String>, u32, Option<String>);
 
+fn is_trusted_operational_image(image_path: &str) -> bool {
+    let path = image_path.to_ascii_lowercase();
+    let stem = std::path::Path::new(image_path)
+        .file_stem()
+        .and_then(|s| s.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    let trusted_path = path.contains("\\windows\\system32\\")
+        || path.contains("\\windows\\syswow64\\")
+        || path.contains("\\program files\\")
+        || path.contains("\\program files (x86)\\")
+        || path.contains("\\programdata\\chocolatey\\")
+        || path.contains("\\programdata\\scoop\\")
+        || path.contains("\\tools\\git\\")
+        || path.contains("\\oshoosiclaw\\tools\\")
+        || path.contains("\\oshoosiclaw\\target\\")
+        || path.contains("/oshoosiclaw/tools/")
+        || path.contains("/oshoosiclaw/target/");
+    if !trusted_path {
+        return false;
+    }
+
+    const TRUSTED_STEMS: &[&str] = &[
+        "osoosi",
+        "sysmon",
+        "sysmon64",
+        "smartscreen",
+        "net",
+        "git",
+        "git-remote-https",
+        "capa",
+        "hayabusa",
+        "chainsaw",
+        "hollows_hunter",
+        "xori",
+        "rustc",
+        "cargo",
+        "python",
+        "python3",
+        "node",
+        "code",
+        "cursor",
+        "antigravity",
+        "language_server_windows_x64",
+        "filecoauth",
+    ];
+    TRUSTED_STEMS.contains(&stem.as_str())
+}
+
+fn should_skip_file_malware_scan(path: &std::path::Path) -> bool {
+    let path_lc = path.to_string_lossy().replace('/', "\\").to_ascii_lowercase();
+    if path_lc.contains("\\.codex\\")
+        || path_lc.contains("\\.gemini\\")
+        || path_lc.contains("\\antigravity\\brain\\")
+        || path_lc.contains("\\.system_generated\\logs\\")
+        || path_lc.contains("\\oshoosiclaw\\tools\\hayabusa\\rules\\")
+        || path_lc.contains("\\oshoosiclaw\\dashboard\\")
+        || path_lc.contains("\\oshoosiclaw\\target\\")
+        || path_lc.contains("\\oshoosiclaw\\.git\\")
+        || path_lc.contains("\\oshoosiclaw\\cache\\")
+        || path_lc.contains("\\oshoosiclaw\\models\\")
+        || path_lc.contains("\\oshoosiclaw\\logs\\")
+        || path_lc.contains("\\oshoosiclaw\\traps\\")
+    {
+        return true;
+    }
+
+    let ext = path
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "yml" | "yaml" | "json" | "jsonl" | "toml" | "md" | "txt" | "log" | "sqlite" | "db"
+    )
+}
+
+fn register_internal_assets(memory: &MemoryStore) {
+    let mut assets: Vec<(std::path::PathBuf, &'static str)> = Vec::new();
+
+    let tools_dir = osoosi_types::resolve_tools_dir();
+    assets.push((tools_dir.clone(), "tools"));
+    if let Some(root) = tools_dir.parent() {
+        for (name, kind) in [
+            ("dashboard", "dashboard"),
+            ("target", "build-output"),
+            ("cache", "cache"),
+            ("models", "models"),
+            ("logs", "logs"),
+            ("traps", "deception"),
+            (".git", "repo-metadata"),
+        ] {
+            assets.push((root.join(name), kind));
+        }
+        assets.push((root.join("osoosi.toml"), "config"));
+    }
+
+    if let Ok(user_profile) = std::env::var("USERPROFILE") {
+        let user = std::path::PathBuf::from(user_profile);
+        assets.push((user.join(".codex"), "assistant-state"));
+        assets.push((user.join(".gemini"), "assistant-state"));
+    }
+
+    for (path, kind) in assets {
+        if let Some(path) = path.to_str() {
+            if let Err(err) = memory.upsert_internal_asset(path, kind, None) {
+                debug!("Failed to register internal asset {}: {}", path, err);
+            }
+        }
+    }
+}
+
 /// Best-effort YARA-X C2 rules: compilation must not take down the agent (yara-x can panic internally on some versions).
 fn try_build_c2_yara_voter() -> Option<osoosi_policy::voters::YaraXMemoryVoter> {
     use osoosi_policy::voters::YaraXMemoryVoter;
@@ -427,6 +540,7 @@ impl EdrOrchestrator {
         };
 
         let memory = Arc::new(MemoryStore::new(&runtime_config.db_path)?);
+        register_internal_assets(&memory);
         let telemetry = Arc::new(SysmonParser::new());
         let policy = Arc::new(PolicyEngine::new(memory.clone()));
         let sigma_dir = std::env::var("OSOOSI_SIGMA_DIR").unwrap_or_else(|_| "sigma".to_string());
@@ -495,7 +609,8 @@ impl EdrOrchestrator {
         
         let models_dir = std::path::PathBuf::from(std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string()));
         let smollm_dir = models_dir.join("smollm");
-        let behavioral_engine = match osoosi_behavioral::SmolLMAnalyzer::new(&smollm_dir) {
+        let behavioral_engine = if std::env::var("OSOOSI_ENABLE_SMOLLM").map(|v| v == "1").unwrap_or(false) {
+            match osoosi_behavioral::SmolLMAnalyzer::new(&smollm_dir) {
             Ok(a) => {
                 info!("Native SmolLM analyzer loaded from {:?}.", smollm_dir);
                 Some(Arc::new(a))
@@ -507,8 +622,13 @@ impl EdrOrchestrator {
                 );
                 None
             }
+            }
+        } else {
+            None
         };
-        let gemma_dir = models_dir.join("gemma4-e2b");
+        let gemma_dir = std::env::var("OSOOSI_GEMMA_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| models_dir.join("gemma4-e4b"));
         let gemma_cortex = if gemma_dir.exists() {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 osoosi_behavioral::Gemma4Analyzer::new(&gemma_dir)
@@ -823,6 +943,19 @@ impl EdrOrchestrator {
                         
                         // Analyze the image path immediately using the CEREBUS-enhanced MalwareScanner
                         if let Some(path) = exe_path {
+                            let path_str = path.to_string_lossy();
+                            if should_skip_file_malware_scan(path)
+                                || orchestrator
+                                    .memory
+                                    .is_internal_asset_path(&path_str)
+                                    .unwrap_or(false)
+                            {
+                                debug!(
+                                    "CyberShield: skipping trusted/internal image {}",
+                                    path.display()
+                                );
+                                continue;
+                            }
                             if let Some(result) = orchestrator.malware_scanner.scan_file(path) {
                                 if result.clam_detected == Some(false) {
                                     orchestrator.audit.log("CLAMAV_CLEAN", serde_json::json!({
@@ -963,9 +1096,26 @@ impl EdrOrchestrator {
                     if let Ok(event) = res {
                     info!("File change detected: {} (Hash: {})", event.path, event.hash);
                     let _ = orchestrator.memory.update_file_hash(&event.path, &event.hash);
+                    if let Ok(Some(verdict)) = orchestrator.memory.get_ai_override(&event.hash) {
+                        if verdict {
+                            warn!("File Monitor: local ledger marks {} as malicious; escalating without model scan.", event.path);
+                        } else {
+                            info!("File Monitor: local ledger allows {}; skipping AI scan.", event.path);
+                            continue;
+                        }
+                    }
 
                     // Magika pre-filter: only executable/scannable files go to the full scanner
                     let path = std::path::Path::new(&event.path);
+                    if should_skip_file_malware_scan(path)
+                        || orchestrator
+                            .memory
+                            .is_internal_asset_path(&event.path)
+                            .unwrap_or(false)
+                    {
+                        debug!("File Monitor: skipping non-malware asset {}", event.path);
+                        continue;
+                    }
                     if let Some(result) = orchestrator.malware_scanner.scan_file(path) {
                         // 1. ClamAV says clean → let it go (trust ClamAV over ML/signatures)
                         if result.clam_detected == Some(false) {
@@ -1438,6 +1588,9 @@ impl EdrOrchestrator {
                 .collect();
 
             entries.into_par_iter().for_each(|entry| {
+                if should_skip_file_malware_scan(entry.path()) {
+                    return;
+                }
                 if let Some(scan) = malware_scanner.scan_file(entry.path()) {
                     if scan.is_malware {
                         warn!("MALWARE GENERATED IN SANDBOX: {} (type={})", entry.path().display(), scan.malware_type);
@@ -1718,7 +1871,8 @@ impl EdrOrchestrator {
         }
 
         if signature.is_none() {
-            let proc = event.data.get("Image").and_then(|i| i.as_str())
+            let image_path = event.data.get("Image").and_then(|i| i.as_str());
+            let proc = image_path
                 .and_then(|p| std::path::Path::new(p).file_name())
                 .and_then(|n| n.to_str())
                 .map(String::from);
@@ -1727,7 +1881,20 @@ impl EdrOrchestrator {
             let score = model.infer(proc.as_deref(), cve.as_deref());
             if score >= 0.5 {
                 let is_fp = self.memory.is_false_positive_pattern(proc.as_deref(), None).unwrap_or(false);
-                if !is_fp {
+                let trusted_operational = image_path.map(is_trusted_operational_image).unwrap_or(false);
+                let version_known = event.product_version.as_deref().is_some_and(|v| {
+                    let v = v.trim();
+                    !v.is_empty() && !v.eq_ignore_ascii_case("unknown")
+                });
+                if is_fp {
+                    tracing::info!("ML threat model suppressed false positive pattern for process {:?}", proc);
+                } else if trusted_operational && version_known && cve.is_none() && score < 0.90 {
+                    tracing::info!(
+                        "ML threat model downgraded version-known trusted binary {:?} score {:.2}; no threat emitted",
+                        image_path,
+                        score
+                    );
+                } else {
                     let mut sig = osoosi_types::ThreatSignature::new(event.computer.clone());
                     sig.confidence = score;
                     sig.process_name = proc.clone();
@@ -1739,8 +1906,6 @@ impl EdrOrchestrator {
                         }
                     }
                     signature = Some(sig);
-                } else {
-                    tracing::info!("ML threat model suppressed false positive pattern for process {:?}", proc);
                 }
             }
         }
