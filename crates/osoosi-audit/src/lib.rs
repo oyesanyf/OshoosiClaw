@@ -152,6 +152,19 @@ impl MerkleAuditTree {
     pub fn entries(&self) -> Vec<AuditEntry> {
         self.entries.lock().unwrap().clone()
     }
+
+    pub fn get_recent_entries(&self, limit: usize) -> Vec<AuditEntry> {
+        let entries = self.entries.lock().unwrap();
+        let start = entries.len().saturating_sub(limit);
+        entries[start..].to_vec()
+    }
+
+    pub fn verify(&self) -> bool {
+        let hashes = self.hashes.lock().unwrap();
+        let root = self.root.lock().unwrap();
+        let computed = self.compute_root(&hashes);
+        computed == *root
+    }
 }
 
 /// Backward compatibility alias for the Merkle Audit Tree.
