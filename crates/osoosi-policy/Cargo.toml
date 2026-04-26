@@ -12,6 +12,7 @@ osoosi-telemetry = { path = "../osoosi-telemetry" }
 osoosi-memory = { path = "../osoosi-memory" }
 osoosi-behavioral = { path = "../osoosi-behavioral" }
 osoosi-audit = { path = "../osoosi-audit" }
+osoosi-dp = { path = "../osoosi-dp" }
 uuid = { workspace = true, features = ["v4"] }
 chrono = { workspace = true }
 serde = { workspace = true }

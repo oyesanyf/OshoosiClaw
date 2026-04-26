@@ -757,6 +757,13 @@ impl EdrOrchestrator {
         policy.add_voter(Box::new(crate::voters::MalConvVoter {
             scanner: malware_scanner.clone(),
         }));
+        
+        // Privacy-Enforced Voter: DP + Merkle Audit
+        let privacy_config = osoosi_dp::PrivacyConfig::default();
+        policy.add_voter(Box::new(osoosi_policy::voters::PrivacyVoter::new(
+            privacy_config,
+            audit.clone(),
+        )));
 
         Ok(Self {
             memory,

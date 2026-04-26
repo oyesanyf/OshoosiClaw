@@ -15,7 +15,6 @@ mod log_reader;
 mod process_tree;
 mod reasoning;
 mod sentence;
-pub mod privacy_voter;
 pub mod yara_analyzer;
 
 
@@ -28,6 +27,5 @@ pub use llm_engine::{Gemma4Analyzer, SmolLMAnalyzer};
 pub use log_reader::{BehavioralLogReader, LogEvent};
 pub use process_tree::{ProcessRelationship, ProcessTreeEmbedder};
 pub use sentence::event_to_behavioral_sentence;
-pub use privacy_voter::PrivacyVoter;
 pub use yara_analyzer::YaraAnalyzer;
 

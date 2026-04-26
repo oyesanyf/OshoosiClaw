@@ -154,3 +154,7 @@ impl MerkleAuditTree {
     }
 }
 
+/// Backward compatibility alias for the Merkle Audit Tree.
+pub type AuditTrail = MerkleAuditTree;
+
+
