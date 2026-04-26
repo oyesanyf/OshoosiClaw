@@ -261,6 +261,8 @@ impl ThreatFeedFetcher {
                         .map(|dt: DateTime<chrono::FixedOffset>| dt.with_timezone(&Utc))
                         .unwrap_or(Utc::now()),
                     known_exploited: true,
+                    version_start_including: None,
+                    version_end_excluding: None,
                 };
                 kevs.push(kev);
             }
@@ -612,15 +614,70 @@ impl ThreatFeedFetcher {
                         .and_then(|v| v.as_str())
                         .unwrap_or_default()
                         .to_string();
+
+                    // Extract product and versions from configurations (CPE)
+                    let mut product = "NVD".to_string();
+                    let mut version_start = None;
+                    let mut version_end = None;
+
+                    if let Some(configs) = cve.get("configurations").and_then(|c| c.as_array()) {
+                        for config in configs {
+                            if let Some(nodes) = config.get("nodes").and_then(|n| n.as_array()) {
+                                for node in nodes {
+                                    if let Some(matches) =
+                                        node.get("cpeMatch").and_then(|m| m.as_array())
+                                    {
+                                        for m in matches {
+                                            if m.get("vulnerable").and_then(|v| v.as_bool())
+                                                == Some(true)
+                                            {
+                                                if let Some(criteria) =
+                                                    m.get("criteria").and_then(|v| v.as_str())
+                                                {
+                                                    // cpe:2.3:a:vendor:product:version:...
+                                                    let parts: Vec<&str> =
+                                                        criteria.split(':').collect();
+                                                    if parts.len() >= 5 {
+                                                        product = parts[4].to_string();
+                                                    }
+                                                }
+                                                version_start = m
+                                                    .get("versionStartIncluding")
+                                                    .and_then(|v| v.as_str())
+                                                    .map(|s| s.to_string());
+                                                version_end = m
+                                                    .get("versionEndExcluding")
+                                                    .and_then(|v| v.as_str())
+                                                    .map(|s| s.to_string());
+
+                                                if product != "NVD" {
+                                                    break;
+                                                }
+                                            }
+                                        }
+                                    }
+                                    if product != "NVD" {
+                                        break;
+                                    }
+                                }
+                            }
+                            if product != "NVD" {
+                                        break;
+                            }
+                        }
+                    }
+
                     let kev = osoosi_types::Kev {
                         cve_id: id,
                         vendor_project: "NVD-Sync".to_string(),
-                        product: "NVD".to_string(),
+                        product,
                         vulnerability_name: "Imported from NVD".to_string(),
                         date_added: Utc::now(),
                         required_action: "None (Intelligence only)".to_string(),
                         due_date: Utc::now(),
                         known_exploited: false,
+                        version_start_including: version_start,
+                        version_end_excluding: version_end,
                     };
                     out.push(kev);
                 }

@@ -31,3 +31,4 @@ pe-sign = "0.1"
 rusqlite = { workspace = true }
 git2 = { workspace = true }
 reqwest = { workspace = true, features = ["json"] }
+dashmap = { workspace = true }

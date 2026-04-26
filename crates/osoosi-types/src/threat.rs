@@ -71,6 +71,11 @@ pub struct Kev {
     pub required_action: String,
     pub due_date: DateTime<Utc>,
     pub known_exploited: bool,
+    /// Version ranges for NVD-sourced vulnerabilities
+    #[serde(default)]
+    pub version_start_including: Option<String>,
+    #[serde(default)]
+    pub version_end_excluding: Option<String>,
 }
 
 /// NIST NSRL (National Software Reference Library) record.

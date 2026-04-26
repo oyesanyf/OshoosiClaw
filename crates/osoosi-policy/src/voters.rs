@@ -240,7 +240,7 @@ fn kev_requires_exact_version(event: &SysmonEvent, full_path: &str) -> bool {
 /// Suppress CISA-KEV on **ProcessCreate** and **ProcessTerminate** for ubiquitous tools in typical install
 /// locations (huge FP rate — e.g. `git.exe` + KEV "Git" on portable/custom paths, terminate events).
 /// Set `OSOOSI_KEV_QUIET_SYSTEM_TOOLS=0` to restore KEV on those events. **NetworkConnect / DNS / Image** still evaluated.
-fn kev_quiet_benign_process_lifecycle(path: &str, stem: &str) -> bool {
+fn kev_quiet_benign_process_lifecycle(path: &str, stem: &str, config: &osoosi_types::PolicyConfig) -> bool {
     if std::env::var("OSOOSI_KEV_QUIET_SYSTEM_TOOLS")
         .map(|v| v == "0" || v.eq_ignore_ascii_case("false") || v.eq_ignore_ascii_case("off"))
         .unwrap_or(false)
@@ -248,6 +248,15 @@ fn kev_quiet_benign_process_lifecycle(path: &str, stem: &str) -> bool {
         return false;
     }
     let p = path.to_lowercase();
+
+    // Configuration-driven suppression
+    if config.consensus_trusted_paths.iter().any(|t| p.contains(&t.to_lowercase())) {
+        return true;
+    }
+    if config.consensus_noisy_stems.iter().any(|s| stem.eq_ignore_ascii_case(s)) {
+        return true;
+    }
+
     let trusted = p.contains("program files")
         || p.contains("programdata\\chocolatey")
         || p.contains("programdata\\scoop")
@@ -255,6 +264,8 @@ fn kev_quiet_benign_process_lifecycle(path: &str, stem: &str) -> bool {
         || p.contains("\\oshoosiclaw\\target\\")
         || p.contains("\\windows\\system32")
         || p.contains("\\windows\\syswow64")
+        || p.contains("\\tools\\git\\")
+        || p.contains("git\\cmd")
         // Git for Windows (standard + portable, e.g. C:\tools\git\mingw64\bin\git.exe)
         || p.contains("\\mingw64\\")
         || p.contains("\\mingw32\\")
@@ -300,6 +311,7 @@ fn kev_quiet_benign_process_lifecycle(path: &str, stem: &str) -> bool {
 /// CISA KEV (Known Exploited Vulnerabilities) Voter
 pub struct KevVoter {
     pub memory: std::sync::Arc<osoosi_memory::MemoryStore>,
+    pub config: osoosi_types::PolicyConfig,
 }
 
 impl ThreatVoter for KevVoter {
@@ -322,7 +334,7 @@ impl ThreatVoter for KevVoter {
         if matches!(
             event.event_id,
             SysmonEventId::ProcessCreate | SysmonEventId::ProcessTerminate
-        ) && kev_quiet_benign_process_lifecycle(full_path, &stem)
+        ) && kev_quiet_benign_process_lifecycle(full_path, &stem, &self.config)
         {
             return None;
         }
@@ -342,31 +354,54 @@ impl ThreatVoter for KevVoter {
                 // VERSION-AWARE LOGIC: If we have a resolved product version, and it looks like a modern/patched version,
                 // we down-rank the confidence significantly.
                 let mut confidence = if is_known_good { 0.45 } else { 0.85 };
-                let exact_version =
-                    event
-                        .product_version
-                        .as_deref()
-                        .map(str::trim)
-                        .filter(|version| {
-                            !version.is_empty() && !version.eq_ignore_ascii_case("unknown")
-                        });
+                let mut exact_version = event
+                    .product_version
+                    .as_deref()
+                    .map(str::trim)
+                    .filter(|version| {
+                        !version.is_empty() && !version.eq_ignore_ascii_case("unknown")
+                    })
+                    .map(|s| s.to_string());
+
+                // Fallback: If version is missing from event, try to read it from the file (Windows only)
+                #[cfg(target_os = "windows")]
+                {
+                    if exact_version.is_none() {
+                        if let Ok(info) = win32_version_info::VersionInfo::from_file(full_path) {
+                            if !info.file_version.is_empty() {
+                                exact_version = Some(info.file_version);
+                            }
+                        }
+                    }
+                }
                 if kev_requires_exact_version(event, full_path) && exact_version.is_none() {
                     return None;
                 }
 
-                if let Some(version) = exact_version {
-                    if version.starts_with("2.5")
-                        || version.starts_with("3.")
-                        || version.starts_with("v2.5")
-                    {
-                        confidence *= 0.5; // Downgrade to Alert-only range
+                if let Some(version) = exact_version.as_deref() {
+                    use version_compare::{compare, Cmp};
+                    let mut in_vulnerable_range = true;
+
+                    if let Some(start) = &kev.version_start_including {
+                        if let Ok(Cmp::Lt) = compare(version, start) {
+                            in_vulnerable_range = false;
+                        }
+                    }
+                    if let Some(end) = &kev.version_end_excluding {
+                        if let Ok(Cmp::Eq) | Ok(Cmp::Gt) = compare(version, end) {
+                            in_vulnerable_range = false;
+                        }
+                    }
+
+                    if !in_vulnerable_range {
+                        confidence *= 0.1; // Downgrade to Alert-only range
                         return Some(VoteResult {
                             confidence,
                             reason: format!(
-                                "CISA KEV [POSSIBLE FP]: {} matches product {} ({}), but running version {} appears to be patched.",
+                                "CISA KEV/NVD [PATCHED]: {} matches product {} ({}), but running version {} is outside the vulnerable range.",
                                 file_name, kev.product, kev.cve_id, version
                             ),
-                            weight: 0.6,
+                            weight: 0.2,
                         });
                     }
                 }

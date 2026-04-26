@@ -8,6 +8,11 @@ use std::fs;
 use std::path::{Path, PathBuf};
 use tracing::{error, info, warn};
 
+#[cfg(target_os = "windows")]
+use std::os::windows::ffi::OsStrExt;
+#[cfg(target_os = "windows")]
+use winapi::um::winbase::{MoveFileExW, MOVEFILE_DELAY_UNTIL_REBOOT, MOVEFILE_REPLACE_EXISTING};
+
 pub struct StandaloneRemediator {
     client: reqwest::Client,
 }
@@ -67,6 +72,21 @@ impl StandaloneRemediator {
         fs::write(&temp_file, &data)?;
 
         if let Err(e) = fs::rename(&temp_file, target) {
+            #[cfg(target_os = "windows")]
+            {
+                // Error 5 = Access Denied (often file in use)
+                if e.raw_os_error() == Some(5) {
+                    warn!(
+                        "File {} is in use. Scheduling replacement on next reboot...",
+                        target_path
+                    );
+                    if let Ok(_) = self.schedule_reboot_move(&temp_file, target) {
+                        info!("Reboot-time replacement scheduled for {}. Patch will complete after restart.", target_path);
+                        return Ok(backup_path);
+                    }
+                }
+            }
+
             error!(
                 "Failed to swap remediated file: {}. Attempting rollback from backup.",
                 e
@@ -78,6 +98,33 @@ impl StandaloneRemediator {
 
         info!("Remediation complete for {}", target_path);
         Ok(backup_path)
+    }
+
+    #[cfg(target_os = "windows")]
+    fn schedule_reboot_move(&self, from: &Path, to: &Path) -> Result<()> {
+        fn to_wide(path: &Path) -> Vec<u16> {
+            path.as_os_str()
+                .encode_wide()
+                .chain(std::iter::once(0))
+                .collect()
+        }
+
+        let from_w = to_wide(from);
+        let to_w = to_wide(to);
+
+        unsafe {
+            if MoveFileExW(
+                from_w.as_ptr(),
+                to_w.as_ptr(),
+                MOVEFILE_DELAY_UNTIL_REBOOT | MOVEFILE_REPLACE_EXISTING,
+            ) == 0
+            {
+                let err = std::io::Error::last_os_error();
+                error!("MoveFileExW failed: {}", err);
+                return Err(anyhow!("Failed to schedule reboot move: {}", err));
+            }
+        }
+        Ok(())
     }
 
     fn create_backup(&self, path: &Path) -> Result<PathBuf> {

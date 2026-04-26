@@ -34,3 +34,7 @@ yara-x = { workspace = true }
 process-memory = { workspace = true }
 rand.workspace = true
 base64 = "0.22"
+version-compare = "0.2"
+
+[target.'cfg(target_os = "windows")'.dependencies]
+win32-version-info = "0.3"

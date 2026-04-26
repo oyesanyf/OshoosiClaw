@@ -71,7 +71,9 @@ impl MemoryStore {
                 vulnerability_name TEXT,
                 date_added TEXT,
                 required_action TEXT,
-                known_exploited INTEGER
+                known_exploited INTEGER,
+                version_start_including TEXT,
+                version_end_excluding TEXT
             )",
             [],
         )?;
@@ -473,8 +475,8 @@ impl MemoryStore {
     pub fn insert_kev(&self, kev: &Kev) -> anyhow::Result<()> {
         let conn = self.conn.lock().unwrap();
         conn.execute(
-            "INSERT OR REPLACE INTO kev (cve_id, vendor_project, product, vulnerability_name, date_added, required_action, known_exploited)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+            "INSERT OR REPLACE INTO kev (cve_id, vendor_project, product, vulnerability_name, date_added, required_action, known_exploited, version_start_including, version_end_excluding)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
             params![
                 kev.cve_id,
                 kev.vendor_project,
@@ -482,7 +484,9 @@ impl MemoryStore {
                 kev.vulnerability_name,
                 kev.date_added.to_rfc3339(),
                 kev.required_action,
-                if kev.known_exploited { 1 } else { 0 }
+                if kev.known_exploited { 1 } else { 0 },
+                kev.version_start_including,
+                kev.version_end_excluding,
             ],
         )?;
         Ok(())
@@ -494,8 +498,8 @@ impl MemoryStore {
         let tx = conn.transaction()?;
         for kev in kevs {
             tx.execute(
-                "INSERT OR REPLACE INTO kev (cve_id, vendor_project, product, vulnerability_name, date_added, required_action, known_exploited)
-                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7)",
+                "INSERT OR REPLACE INTO kev (cve_id, vendor_project, product, vulnerability_name, date_added, required_action, known_exploited, version_start_including, version_end_excluding)
+                 VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
                 params![
                     kev.cve_id,
                     kev.vendor_project,
@@ -503,7 +507,9 @@ impl MemoryStore {
                     kev.vulnerability_name,
                     kev.date_added.to_rfc3339(),
                     kev.required_action,
-                    if kev.known_exploited { 1 } else { 0 }
+                    if kev.known_exploited { 1 } else { 0 },
+                    kev.version_start_including,
+                    kev.version_end_excluding,
                 ],
             )?;
         }
@@ -525,8 +531,10 @@ impl MemoryStore {
                 date_added: DateTime::parse_from_rfc3339(&row.get::<_, String>(4)?)?
                     .with_timezone(&Utc),
                 required_action: row.get(5)?,
-                due_date: Utc::now(), // Placeholder as it's not in schema currently
+                due_date: Utc::now(),
                 known_exploited: row.get::<_, i32>(6)? == 1,
+                version_start_including: row.get(7)?,
+                version_end_excluding: row.get(8)?,
             }))
         } else {
             Ok(None)
@@ -548,6 +556,8 @@ impl MemoryStore {
                 required_action: row.get(5)?,
                 due_date: Utc::now(),
                 known_exploited: row.get::<_, i32>(6)? == 1,
+                version_start_including: row.get(7)?,
+                version_end_excluding: row.get(8)?,
             })
         })?;
 

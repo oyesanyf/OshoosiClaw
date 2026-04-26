@@ -111,6 +111,8 @@ pub struct FileChangeEvent {
     pub kind: EventKind,
 }
 
+const MAX_CONCURRENT_HASHING: usize = 4;
+
 impl FileWatcher {
     /// Create a new file watcher. Pass `Some(memory)` to persist unhashable paths to a skip list.
     pub fn new(
@@ -123,6 +125,7 @@ impl FileWatcher {
         let excludes = exclude_paths.clone();
         let trap_paths = Arc::new(dashmap::DashSet::new());
         let traps = trap_paths.clone();
+        let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_HASHING));
 
         // Notify watcher callback
         let watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
@@ -154,7 +157,10 @@ impl FileWatcher {
                             let path_for_hash = path.clone();
                             let memory_for_error = memory.clone();
 
+                            let sem = semaphore.clone();
+
                             rt.spawn(async move {
+                                let _permit = sem.acquire().await;
                                 match calculate_blake3_hash(&path_for_hash).await {
                                     Ok(hash) => {
                                         let _ = tx
@@ -320,13 +326,22 @@ pub async fn build_os_file_hash_baseline(
             continue;
         }
 
-        join_set.spawn(async move {
-            // Use spawn_blocking for the actual hashing to avoid tokio fs overhead and allow BLAKE3 to run at full speed
-            let res = tokio::task::spawn_blocking(move || {
-                let data = std::fs::read(&path)?;
-                Ok::<String, anyhow::Error>(blake3::hash(&data).to_hex().to_string())
-            })
-            .await;
+            join_set.spawn(async move {
+                // Buffered hashing to avoid reading entire file into memory
+                let res = tokio::task::spawn_blocking(move || {
+                    let file = std::fs::File::open(&path)?;
+                    let mut reader = std::io::BufReader::new(file);
+                    let mut hasher = blake3::Hasher::new();
+                    let mut buffer = [0u8; 65536];
+                    use std::io::Read;
+                    loop {
+                        let n = reader.read(&mut buffer)?;
+                        if n == 0 { break; }
+                        hasher.update(&buffer[..n]);
+                    }
+                    Ok::<String, anyhow::Error>(hasher.finalize().to_hex().to_string())
+                })
+                .await;
 
             match res {
                 Ok(Ok(hash)) => {

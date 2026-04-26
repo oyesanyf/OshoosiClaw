@@ -208,9 +208,8 @@ impl JoinGate {
                     return Ok(());
                 }
             }
-        }
-
-        if let Some(ref addr) = multiaddr {
+        } else if let Some(ref addr) = multiaddr {
+            // Only dial manually if not auto-approved (as auto-approval already dialed or it failed)
             let _ = self
                 .command_tx
                 .try_send(MeshCommand::DialPeer(peer_id, addr.clone()));

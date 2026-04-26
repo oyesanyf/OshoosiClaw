@@ -17,7 +17,7 @@ use std::sync::atomic::{AtomicU32, Ordering};
 use std::sync::Arc;
 use std::time::Duration;
 use tokio::sync::mpsc;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 // Helper functions removed as they are now in osoosi_types::config
 
@@ -163,19 +163,43 @@ impl MeshNode {
 
         for addr in mesh_config.listen_addrs {
             if let Ok(maddr) = addr.parse::<Multiaddr>() {
-                if let Err(e) = swarm.listen_on(maddr.clone()) {
-                    let es = e.to_string();
-                    if es.contains("10048")
-                        || es.to_lowercase().contains("address already in use")
-                        || es.to_lowercase().contains("address in use")
-                    {
-                        warn!(
-                            "Failed to listen on {}: {} — port may be in use (stop duplicate agent or set OSOOSI_MESH_LISTEN_ADDRS to a free port).",
-                            maddr, e
-                        );
-                    } else {
-                        warn!("Failed to listen on {}: {}", maddr, e);
+                let mut current_addr = maddr.clone();
+                let mut success = false;
+                
+                // Try up to 5 ports starting from the configured one
+                for i in 0..5 {
+                    if i > 0 {
+                        let mut new_addr = Multiaddr::empty();
+                        for proto in current_addr.iter() {
+                            match proto {
+                                libp2p::multiaddr::Protocol::Tcp(p) => {
+                                    new_addr.push(libp2p::multiaddr::Protocol::Tcp(p + 1));
+                                }
+                                other => new_addr.push(other),
+                            }
+                        }
+                        current_addr = new_addr;
                     }
+
+                    match swarm.listen_on(current_addr.clone()) {
+                        Ok(_) => {
+                            info!("Oshoosi Mesh: Listening on {}", current_addr);
+                            success = true;
+                            break;
+                        }
+                        Err(e) => {
+                            let es = e.to_string();
+                            if es.contains("10048") || es.contains("WSAEADDRINUSE") || es.contains("already in use") {
+                                warn!("Oshoosi Mesh: Port {} in use, trying next...", current_addr);
+                            } else {
+                                warn!("Oshoosi Mesh: Failed to listen on {}: {}", current_addr, e);
+                                break;
+                            }
+                        }
+                    }
+                }
+                if !success {
+                    error!("Oshoosi Mesh: Could not bind to any port for {}", maddr);
                 }
             }
         }
@@ -433,7 +457,18 @@ impl MeshNode {
                         info!("Local node is listening on {}", address);
                     }
                     SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
-                        warn!("Outgoing connection error to {:?}: {}", peer_id, error);
+                        let es = error.to_string();
+                        if es.contains("10048") || es.contains("WSAEADDRINUSE") {
+                            warn!("Socket exhaustion detected (WSAEADDRINUSE). Reducing mesh dial frequency.");
+                        } else {
+                            warn!("Outgoing connection error to {:?}: {}", peer_id, error);
+                        }
+                        
+                        // Autonomous Repair: Remove dead/unreachable peers from DHT to stop retry loops
+                        if let Some(pid) = peer_id {
+                            let _ = self.swarm.behaviour_mut().kademlia.remove_peer(&pid);
+                            debug!("Removed unreachable peer {} from Kademlia routing table.", pid);
+                        }
                     }
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Kademlia(kad::Event::OutboundQueryProgressed { result, .. })) => {
                         if let kad::QueryResult::GetClosestPeers(Ok(kad::GetClosestPeersOk { peers, .. })) = result {
@@ -460,7 +495,6 @@ impl MeshNode {
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Upnp(upnp::Event::GatewayNotFound)) => {
                         debug!("Oshoosi Mesh: UPnP gateway not found (manual port forwarding might be needed).");
                     }
-                    _ => {}
                     _ => {}
                 }
             }

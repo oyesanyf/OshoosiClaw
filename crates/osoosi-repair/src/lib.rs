@@ -133,6 +133,24 @@ impl PatchEngine {
         }
     }
 
+    pub fn is_admin(&self) -> bool {
+        #[cfg(target_os = "windows")]
+        {
+            // 'net session' is a reliable check for admin elevation on Windows
+            std::process::Command::new("net")
+                .arg("session")
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null())
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false)
+        }
+        #[cfg(not(target_os = "windows"))]
+        {
+            unsafe { libc::getuid() == 0 }
+        }
+    }
+
     /// Replace a file with a clean version from the given URL. Used for malware remediation.
     pub async fn remediate_file(
         &self,
@@ -387,7 +405,7 @@ try {{
                 let timeout_secs = std::env::var("OSOOSI_REPAIR_RESTORE_TIMEOUT_SECS")
                     .ok()
                     .and_then(|s| s.parse().ok())
-                    .unwrap_or(30_u64);
+                    .unwrap_or(120_u64);
                 let mut child = match tokio::process::Command::new("powershell")
                     .args([
                         "-NoProfile",
@@ -551,6 +569,11 @@ try {{
 
         #[cfg(target_os = "windows")]
         {
+            if !self.is_admin() {
+                warn!("Patch application requires Administrator privileges. Skipping Windows Update install for {}.", patch.component);
+                return Err(anyhow!("Administrator privileges required for Windows Update installation"));
+            }
+
             let kb = patch.version.trim().to_uppercase();
             // COM-based installer for pending Windows updates (no external module dependency).
             let ps = format!(
@@ -575,8 +598,9 @@ if ($collection.Count -eq 0) {{ throw "No matching Windows update found for {kb}
 $installer = $session.CreateUpdateInstaller()
 $installer.Updates = $collection
 $res = $installer.Install()
+if ($res.RebootRequired) {{ Write-Output "REBOOT_REQUIRED" }}
 if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
-  Write-Output "Update ($kb) failed via COM (likely already updating, restricted, or partition space issue). Continuing as it is non-critical for agent function."
+  Write-Output "NON_CRITICAL_FAILURE"
 }} elseif ($res.ResultCode -notin 2,3) {{
   throw "Install failed. ResultCode=$($res.ResultCode) (2=Success, 3=SuccessWithErrors, 4=Failed, 5=Aborted)"
 }}
@@ -584,11 +608,18 @@ if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
                 kb = kb,
                 title = patch.component.replace('"', "")
             );
-            let status = Command::new("powershell")
+            let output = Command::new("powershell")
                 .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps])
-                .status()?;
-            if !status.success() {
-                return Err(anyhow!("Windows patch install command failed"));
+                .output()?;
+            
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if !output.status.success() {
+                error!("Windows patch install command failed: {}", stdout);
+                return Err(anyhow!("Windows patch install command failed: {}", stdout));
+            }
+
+            if stdout.contains("REBOOT_REQUIRED") {
+                info!("Windows update installed successfully but requires a system REBOOT to complete.");
             }
         }
         #[cfg(target_os = "linux")]
@@ -765,9 +796,9 @@ if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
         #[cfg(target_os = "windows")]
         {
             let kb = patch.version.trim().to_uppercase();
-            if kb == "KB2267602" {
-                // Defender definition updates are non-critical and often volatile in Get-HotFix results.
-                // We acknowledge them as successful to avoid rolling back the system state.
+            if kb == "KB2267602" || kb == "KB5042320" {
+                // Defender definition updates and Servicing Stack Updates (SSU) are non-critical or volatile in Get-HotFix results.
+                // We acknowledge them as successful to avoid rolling back the system state prematurely.
                 return true;
             }
             if kb.starts_with("KB") {

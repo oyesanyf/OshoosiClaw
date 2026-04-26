@@ -574,7 +574,8 @@ impl EdrOrchestrator {
         let memory = Arc::new(MemoryStore::new(&runtime_config.db_path)?);
         register_internal_assets(&memory);
         let telemetry = Arc::new(SysmonParser::new());
-        let policy = Arc::new(PolicyEngine::new(memory.clone()));
+        let policy_config = osoosi_types::load_policy_config();
+        let policy = Arc::new(PolicyEngine::new(memory.clone(), policy_config));
         let sigma_dir = std::env::var("OSOOSI_SIGMA_DIR").unwrap_or_else(|_| "sigma".to_string());
         let policy_init = policy.clone();
         tokio::task::spawn_blocking(move || {
@@ -741,6 +742,7 @@ impl EdrOrchestrator {
 
         policy.add_voter(Box::new(osoosi_policy::voters::KevVoter {
             memory: memory.clone(),
+            config: policy.config.clone(),
         }));
 
         // Yara-X Memory Voter: wrap build in catch_unwind — yara-x can panic on some toolchains/rule edge cases.

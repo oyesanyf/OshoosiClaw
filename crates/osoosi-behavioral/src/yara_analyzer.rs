@@ -1,10 +1,10 @@
 use osoosi_types::ThreatSignature;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
-use yara_x::{Compiler, Scanner};
+use yara_x::{Compiler, Rules, Scanner};
 
 pub struct YaraAnalyzer {
-    rules_dir: PathBuf,
+    rules: Option<Rules>,
 }
 
 impl YaraAnalyzer {
@@ -12,21 +12,13 @@ impl YaraAnalyzer {
         let rules_dir = std::env::var("OSOOSI_YARA_DIR")
             .map(PathBuf::from)
             .unwrap_or_else(|_| PathBuf::from("yara"));
-        Self { rules_dir }
-    }
-
-    /// Scan a file with all loaded YARA rules.
-    pub fn scan_file(&self, path: &Path) -> anyhow::Result<Vec<String>> {
-        if !path.exists() {
-            return Ok(Vec::new());
-        }
-
+        
         let mut compiler = Compiler::new();
         let mut loaded = 0;
 
         // Load all .yar files in the yara directory
-        if self.rules_dir.exists() {
-            for entry in walkdir::WalkDir::new(&self.rules_dir)
+        if rules_dir.exists() {
+            for entry in walkdir::WalkDir::new(&rules_dir)
                 .into_iter()
                 .filter_map(|e| e.ok())
                 .filter(|e| {
@@ -45,13 +37,28 @@ impl YaraAnalyzer {
             }
         }
 
-        if loaded == 0 {
+        let rules = if loaded > 0 {
+            Some(compiler.build())
+        } else {
             debug!("YARA: No rules loaded.");
+            None
+        };
+
+        Self { rules }
+    }
+
+    /// Scan a file with all loaded YARA rules.
+    pub fn scan_file(&self, path: &Path) -> anyhow::Result<Vec<String>> {
+        if !path.exists() {
             return Ok(Vec::new());
         }
 
-        let rules = compiler.build();
-        let mut scanner = Scanner::new(&rules);
+        let rules = match &self.rules {
+            Some(r) => r,
+            None => return Ok(Vec::new()),
+        };
+
+        let mut scanner = Scanner::new(rules);
 
         let file_data = std::fs::read(path)?;
         let scan_results = scanner.scan(&file_data)?;

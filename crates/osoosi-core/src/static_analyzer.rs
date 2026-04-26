@@ -48,6 +48,14 @@ impl StaticAnalyzer {
             return Ok(None);
         }
 
+        // Limit to 64MB to avoid memory/CPU exhaustion on huge binaries
+        if let Ok(meta) = file_path.metadata() {
+            if meta.len() > 64 * 1024 * 1024 {
+                debug!("Static Analyzer: skipping huge file {:?}", file_path);
+                return Ok(None);
+            }
+        }
+
         if Self::is_oshoosi_managed_tool(file_path) {
             debug!(
                 "Static Analyzer: skipping threat emission for Oshoosi-managed tool {:?}",
@@ -79,7 +87,10 @@ impl StaticAnalyzer {
         );
 
         // 1-5. Parallel Analysis Layer (CAPA, FLOSS, Falcon, Xori, DiE)
-        // Spawning these in parallel reduces sequential 'openshell sandbox connect' latency.
+        // We use a semaphore to limit concurrent heavy tool executions globally
+        static TOOL_SEMAPHORE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
+        let _permit = TOOL_SEMAPHORE.acquire().await.unwrap();
+
         let (capa_res, floss_res, falcon_res, xori_res, die_res) = tokio::join!(
             self.run_capa(file_path),
             self.run_floss(file_path),
@@ -176,7 +187,7 @@ impl StaticAnalyzer {
         use sha2::{Digest, Sha256};
         let mut file = File::open(path)?;
         let mut hasher = Sha256::new();
-        let mut buffer = [0u8; 8192];
+        let mut buffer = [0u8; 65536]; // 64KB buffer
         loop {
             let n = file.read(&mut buffer)?;
             if n == 0 {

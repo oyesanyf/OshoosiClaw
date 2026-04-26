@@ -303,6 +303,9 @@ struct FileConfig {
     hex_patch: HexPatchConfig,
     #[serde(default)]
     pub ai: AiConfig,
+    /// Policy engine settings: rules paths, global exclusions, and noise suppression.
+    #[serde(default)]
+    pub policy: PolicyConfig,
     /// AlienVault OTX / NVD keys — see `load_external_api_config` and `resolve_*_api_key`.
     #[serde(default)]
     external_api: ExternalApiConfig,
@@ -1080,10 +1083,34 @@ fn parse_csv_env_internal(var_name: &str) -> Vec<String> {
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct PolicyConfig {
+    #[serde(default)]
     pub sigma_rules_paths: Vec<PathBuf>,
+    #[serde(default)]
     pub yara_rules_paths: Vec<PathBuf>,
     #[serde(default)]
     pub default_action: PolicyAction,
+    /// Paths to exclude from consensus scanning (suppresses ALL voters for matching paths).
+    #[serde(default)]
+    pub consensus_exclude_paths: Vec<String>,
+    /// Path substrings that should be considered 'trusted' by voters (quiets noisy voters like KEV).
+    #[serde(default)]
+    pub consensus_trusted_paths: Vec<String>,
+    /// Executable stems (e.g. "git", "chrome") that are known to be noisy and should be suppressed by KEV/Intel voters.
+    #[serde(default)]
+    pub consensus_noisy_stems: Vec<String>,
+}
+
+impl Default for PolicyConfig {
+    fn default() -> Self {
+        Self {
+            sigma_rules_paths: Vec::new(),
+            yara_rules_paths: Vec::new(),
+            default_action: PolicyAction::Alert,
+            consensus_exclude_paths: Vec::new(),
+            consensus_trusted_paths: Vec::new(),
+            consensus_noisy_stems: Vec::new(),
+        }
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize, Default)]
@@ -1345,6 +1372,33 @@ pub fn resolve_nvd_api_key() -> Option<String> {
             Some(t.to_string())
         }
     })
+}
+
+/// Load policy config from config file. Env overrides: OSOOSI_POLICY_EXCLUDE_PATHS, OSOOSI_POLICY_TRUSTED_PATHS, OSOOSI_POLICY_NOISY_STEMS.
+pub fn load_policy_config() -> PolicyConfig {
+    let mut cfg = if let Some(path) = resolve_config_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(fc) = toml::from_str::<FileConfig>(&content) {
+                fc.policy
+            } else {
+                PolicyConfig::default()
+            }
+        } else {
+            PolicyConfig::default()
+        }
+    } else {
+        PolicyConfig::default()
+    };
+    if let Ok(v) = std::env::var("OSOOSI_POLICY_EXCLUDE_PATHS") {
+        cfg.consensus_exclude_paths.extend(v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
+    }
+    if let Ok(v) = std::env::var("OSOOSI_POLICY_TRUSTED_PATHS") {
+        cfg.consensus_trusted_paths.extend(v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
+    }
+    if let Ok(v) = std::env::var("OSOOSI_POLICY_NOISY_STEMS") {
+        cfg.consensus_noisy_stems.extend(v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
+    }
+    cfg
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

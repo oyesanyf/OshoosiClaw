@@ -275,14 +275,16 @@ pub struct PolicyEngine {
     sigma: Arc<RwLock<crate::sigma::SigmaEngine>>,
     /// Learned Zero-Day defenses from the mesh (CVE -> Learned Rule)
     global_intel_rules: Arc<DashMap<String, String>>,
-    /// Alert cache to prevent duplicate notifications (Key: ProcessName + CVE -> LastAlertedTime)
-    _alert_cache: Arc<DashMap<String, std::time::Instant>>,
+    /// Consensus cache to prevent duplicate notifications (Key: EventID+Path+Hash -> (Signature, Time))
+    consensus_cache: Arc<DashMap<String, (ThreatSignature, std::time::Instant)>>,
     /// Multi-tool consensus voters
     voters: RwLock<Vec<Box<dyn ThreatVoter>>>,
+    /// Global policy config (noise suppression, trusted paths)
+    pub config: osoosi_types::PolicyConfig,
 }
 
 impl PolicyEngine {
-    pub fn new(memory: Arc<MemoryStore>) -> Self {
+    pub fn new(memory: Arc<MemoryStore>, config: osoosi_types::PolicyConfig) -> Self {
         Self {
             memory,
             _semantic: SemanticEngine::new(),
@@ -291,8 +293,9 @@ impl PolicyEngine {
             otx_indicators: Arc::new(RwLock::new(OtxIndicators::default())),
             sigma: Arc::new(RwLock::new(crate::sigma::SigmaEngine::new())),
             global_intel_rules: Arc::new(DashMap::new()),
-            _alert_cache: Arc::new(DashMap::new()),
+            consensus_cache: Arc::new(DashMap::new()),
             voters: RwLock::new(Vec::new()),
+            config,
         }
     }
 
@@ -369,11 +372,36 @@ impl PolicyEngine {
     pub fn scan_event(&self, event: &SysmonEvent) -> Option<ThreatSignature> {
         use osoosi_types::ResponseAction;
 
+        let image_path = event_image_path(event).unwrap_or("unknown");
+        let hash = preferred_hash_from_event(event).unwrap_or_else(|| "no-hash".to_string());
+
+        // 0. Global Exclusions: Skip all voting if path is in consensus_exclude_paths
+        let path_lc = image_path.to_lowercase();
+        if self.config.consensus_exclude_paths.iter().any(|ex| path_lc.contains(&ex.to_lowercase())) {
+            debug!(
+                target: CONSENSUS_LOG_TARGET,
+                path = %image_path,
+                "[CONSENSUS] round skipped (path in consensus_exclude_paths)"
+            );
+            return None;
+        }
+
+        let cache_key = format!("{:?}:{:?}:{}", event.event_id, image_path, hash);
+
+        // Deduplication: Avoid re-running consensus for the same event in a short window (30s)
+        if let Some(cached) = self.consensus_cache.get(&cache_key) {
+            let (sig, timestamp) = cached.value();
+            if timestamp.elapsed() < std::time::Duration::from_secs(30) {
+                return Some(sig.clone());
+            }
+        }
+
         let voters_len = self.voters.read().map(|v| v.len()).unwrap_or(0);
         debug!(
             target: CONSENSUS_LOG_TARGET,
             event_id = ?event.event_id,
             registered_voters = voters_len,
+            path = %image_path,
             "[CONSENSUS] round start"
         );
 
@@ -551,6 +579,7 @@ impl PolicyEngine {
             "[CONSENSUS] round COMPLETE — threat signature emitted"
         );
 
+        self.consensus_cache.insert(cache_key, (signature.clone(), std::time::Instant::now()));
         Some(signature)
     }
 }
