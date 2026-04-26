@@ -708,14 +708,12 @@ fn ensure_wsl_ready() -> anyhow::Result<()> {
             ))
         }
         Ok(output) => {
-            let combined = format!(
-                "{}\n{}",
-                String::from_utf8_lossy(&output.stdout),
-                String::from_utf8_lossy(&output.stderr)
-            );
-            if combined.contains("WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED")
-                || combined.contains("Optional Component")
-                || combined.contains("requires the Windows Subsystem for Linux")
+            let combined = decode_command_output(&output.stdout, &output.stderr);
+            let normalized = combined.replace('\0', "").to_ascii_lowercase();
+            if normalized.contains("wsl_e_wsl_optional_component_required")
+                || normalized.contains("optional component")
+                || normalized.contains("requires the windows subsystem for linux")
+                || normalized.contains("wsl --install --no-distribution")
             {
                 provision_wsl_optional_component()?;
                 return Err(anyhow::anyhow!(
@@ -726,6 +724,25 @@ fn ensure_wsl_ready() -> anyhow::Result<()> {
         }
         Err(e) => Err(anyhow::anyhow!("Could not run wsl.exe: {}", e)),
     }
+}
+
+#[cfg(windows)]
+fn decode_command_output(stdout: &[u8], stderr: &[u8]) -> String {
+    fn decode_one(bytes: &[u8]) -> String {
+        if bytes.len() >= 2 && bytes.len() % 2 == 0 {
+            let nul_odd = bytes.iter().skip(1).step_by(2).filter(|&&b| b == 0).count();
+            if nul_odd > bytes.len() / 4 {
+                let words = bytes
+                    .chunks_exact(2)
+                    .map(|c| u16::from_le_bytes([c[0], c[1]]))
+                    .collect::<Vec<_>>();
+                return String::from_utf16_lossy(&words);
+            }
+        }
+        String::from_utf8_lossy(bytes).to_string()
+    }
+
+    format!("{}\n{}", decode_one(stdout), decode_one(stderr))
 }
 
 #[cfg(windows)]
