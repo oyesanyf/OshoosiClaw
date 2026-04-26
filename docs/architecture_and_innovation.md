@@ -102,14 +102,23 @@ graph TD
     OE --> ORCH["EdrOrchestrator - threat decision"]
 ```
 
-Setup:
+Setup is mostly automatic from Windows:
 
 ```powershell
-wsl --install -d Ubuntu
-wsl --set-default-version 2
+.\target\release\osoosi.exe start --wsl --sandbox --sandbox-name my-agent-sandbox
 ```
 
-Inside WSL2:
+The launcher:
+
+- Launches WSL optional-component provisioning if Windows has not enabled WSL yet.
+- Installs Ubuntu when WSL exists but no distro is present.
+- Installs Rust and NVIDIA OpenShell inside WSL if missing.
+- Builds the Linux Oshoosi binary in WSL if missing.
+- Starts the Linux agent with `OSOOSI_SECURE_RUNTIME=openshell`.
+
+Docker Desktop with WSL2 integration for Ubuntu is still required for OpenShell's Linux sandbox runtime. If Docker is unavailable inside WSL, Oshoosi stops with a Docker-specific remediation message.
+
+Manual equivalent inside WSL2:
 
 ```bash
 curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
@@ -119,7 +128,7 @@ cd /mnt/d/harfile/OshoosiClaw
 cargo build --release
 ```
 
-From Windows:
+From Windows after provisioning:
 
 ```powershell
 .\target\release\osoosi.exe start --wsl --sandbox --sandbox-name my-agent-sandbox

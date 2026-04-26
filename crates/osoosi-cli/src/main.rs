@@ -630,6 +630,8 @@ fn start_inside_wsl(
     sandbox_name: &str,
     deploy_gateway: bool,
 ) -> anyhow::Result<()> {
+    ensure_wsl_ready()?;
+
     let cwd = std::env::current_dir()?;
     let repo_root = find_repo_root_for_wsl(&cwd);
     let wsl_cwd = windows_path_to_wsl(&repo_root)?;
@@ -653,11 +655,21 @@ fn start_inside_wsl(
         .join(" ");
     let script = format!(
         "set -e; cd {}; \
+         if ! command -v curl >/dev/null 2>&1; then \
+           echo '[Oshoosi] Installing curl inside WSL...'; sudo apt-get update && sudo apt-get install -y curl ca-certificates; \
+         fi; \
+         if ! command -v cargo >/dev/null 2>&1; then \
+           echo '[Oshoosi] Installing Rust toolchain inside WSL...'; curl --proto '=https' --tlsv1.2 -sSf https://sh.rustup.rs | sh -s -- -y; \
+         fi; \
+         export PATH=\"$HOME/.cargo/bin:$PATH\"; \
          if ! command -v openshell >/dev/null 2>&1; then \
-           echo 'OpenShell is not installed in WSL. Run scripts/install-openshell-wsl.ps1 from Windows or install it inside WSL.' >&2; exit 127; \
+           echo '[Oshoosi] Installing NVIDIA OpenShell inside WSL...'; curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh; export PATH=\"$HOME/.local/bin:$HOME/.cargo/bin:$PATH\"; \
          fi; \
          if ! docker info >/dev/null 2>&1; then \
            echo 'Docker is not reachable from WSL. Enable Docker Desktop WSL integration for this distro.' >&2; exit 126; \
+         fi; \
+         if ! command -v openshell >/dev/null 2>&1; then \
+           echo 'OpenShell installation did not expose an openshell command in WSL PATH.' >&2; exit 127; \
          fi; \
          if [ ! -x ./target/release/osoosi ]; then \
            echo '[Oshoosi] Linux binary missing; building inside WSL...'; cargo build --release; \
@@ -676,6 +688,86 @@ fn start_inside_wsl(
         Ok(())
     } else {
         Err(anyhow::anyhow!("WSL Oshoosi start failed with status {}", status))
+    }
+}
+
+#[cfg(windows)]
+fn ensure_wsl_ready() -> anyhow::Result<()> {
+    let status = std::process::Command::new("wsl.exe")
+        .arg("--status")
+        .output();
+
+    match status {
+        Ok(output) if output.status.success() => {
+            if wsl_has_distro()? {
+                return Ok(());
+            }
+            provision_ubuntu_distro()?;
+            Err(anyhow::anyhow!(
+                "Oshoosi started Ubuntu provisioning for WSL. Run `osoosi start --wsl --sandbox ...` again after Ubuntu finishes first-run setup."
+            ))
+        }
+        Ok(output) => {
+            let combined = format!(
+                "{}\n{}",
+                String::from_utf8_lossy(&output.stdout),
+                String::from_utf8_lossy(&output.stderr)
+            );
+            if combined.contains("WSL_E_WSL_OPTIONAL_COMPONENT_REQUIRED")
+                || combined.contains("Optional Component")
+                || combined.contains("requires the Windows Subsystem for Linux")
+            {
+                provision_wsl_optional_component()?;
+                return Err(anyhow::anyhow!(
+                    "Oshoosi launched WSL optional-component provisioning. Reboot Windows, then run the same `osoosi start --wsl --sandbox ...` command again."
+                ));
+            }
+            Err(anyhow::anyhow!("WSL status check failed: {}", combined.trim()))
+        }
+        Err(e) => Err(anyhow::anyhow!("Could not run wsl.exe: {}", e)),
+    }
+}
+
+#[cfg(windows)]
+fn wsl_has_distro() -> anyhow::Result<bool> {
+    let output = std::process::Command::new("wsl.exe")
+        .args(["-l", "-q"])
+        .output()?;
+    if !output.status.success() {
+        return Ok(false);
+    }
+    let text = String::from_utf8_lossy(&output.stdout)
+        .replace('\0', "")
+        .trim()
+        .to_string();
+    Ok(!text.is_empty())
+}
+
+#[cfg(windows)]
+fn provision_wsl_optional_component() -> anyhow::Result<()> {
+    let script = "Start-Process -Verb RunAs -FilePath wsl.exe -ArgumentList '--install --no-distribution'";
+    let status = std::process::Command::new("powershell.exe")
+        .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", script])
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!(
+            "Failed to launch elevated WSL optional-component installer: {}",
+            status
+        ))
+    }
+}
+
+#[cfg(windows)]
+fn provision_ubuntu_distro() -> anyhow::Result<()> {
+    let status = std::process::Command::new("wsl.exe")
+        .args(["--install", "-d", "Ubuntu"])
+        .status()?;
+    if status.success() {
+        Ok(())
+    } else {
+        Err(anyhow::anyhow!("Ubuntu WSL provisioning failed: {}", status))
     }
 }
 

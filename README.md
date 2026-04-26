@@ -417,28 +417,19 @@ Starts all detection engines, file watchers, mesh networking, behavioral analysi
 NVIDIA OpenShell v0.0.36 does **not** publish a native Windows package. On Windows, use WSL2 for OpenShell-backed analysis:
 
 ```powershell
-# Windows PowerShell
-wsl --install -d Ubuntu
-wsl --set-default-version 2
-```
-
-Install Docker Desktop with WSL2 backend, then enable integration for Ubuntu.
-
-Inside WSL2:
-
-```bash
-curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
-openshell --version
-docker info
-cd /mnt/d/harfile/OshoosiClaw
-cargo build --release
-```
-
-Then from Windows:
-
-```powershell
 .\target\release\osoosi.exe start --wsl --sandbox --sandbox-name my-agent-sandbox
 ```
+
+The launcher provisions as much as Windows allows automatically:
+
+- If the WSL optional component is missing, it launches `wsl --install --no-distribution` elevated. Windows may require UAC approval and a reboot.
+- If WSL exists but no distro is installed, it launches Ubuntu provisioning.
+- Inside WSL, it installs Rust if missing, installs OpenShell if missing, builds the Linux Oshoosi binary if missing, and starts the agent with `OSOOSI_SECURE_RUNTIME=openshell`.
+
+Docker Desktop still needs its WSL2 backend enabled because OpenShell uses Docker/K3s-style Linux primitives:
+
+- Install Docker Desktop.
+- Enable Settings -> Resources -> WSL Integration -> Ubuntu.
 
 `--wsl` automatically runs:
 
