@@ -3249,6 +3249,46 @@ impl EdrOrchestrator {
             )),
         }
     }
+    
+    /// Record a manual false positive suppression for future detections.
+    pub async fn record_manual_false_positive(
+        &self,
+        process_name: Option<&str>,
+        hash_blake3: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let source = self.trust.did().to_string();
+        info!("[FP] Manual suppression recorded for Process: {:?}, Hash: {:?}", process_name, hash_blake3);
+
+        // 1. Persist in memory store
+        self.memory.record_false_positive_pattern(
+            process_name,
+            hash_blake3,
+            &source,
+        )?;
+
+        // 2. Add to session bypass cache for instant skipping
+        if let Some(hash) = hash_blake3 {
+            if !hash.is_empty() {
+                self.nsrl_cache.insert(hash.to_string(), true);
+            }
+        }
+        if let Some(proc) = process_name {
+            if !proc.is_empty() {
+                self.nsrl_cache.insert(proc.to_string(), true);
+            }
+        }
+
+        self.audit.log(
+            "MANUAL_FP_SUBMISSION",
+            serde_json::json!({
+                "process_name": process_name,
+                "hash_blake3": hash_blake3,
+                "action": "suppressed",
+            }),
+        );
+
+        Ok(())
+    }
 
     /// Mark a threat as true positive: reinforce mesh intelligence and begin serious tarpit.
     pub async fn handle_true_positive(&self, threat_id: &str) -> anyhow::Result<()> {

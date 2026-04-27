@@ -1164,8 +1164,10 @@ async fn post_threat_true_positive(
 
 #[derive(Debug, Deserialize)]
 struct BehavioralFeedbackRequest {
-    sentence: String,
+    sentence: Option<String>,
     is_suspicious: bool,
+    process_name: Option<String>,
+    file_hash: Option<String>,
 }
 
 /// Explicit behavioral feedback (Continuous Learning).
@@ -1175,8 +1177,21 @@ async fn post_behavioral_feedback(
 ) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
-            orch.learn_behavior(&req.sentence, req.is_suspicious);
-            Json(json!({"ok": true, "message": "Behavioral feedback recorded"}))
+            if let Some(ref sentence) = req.sentence {
+                orch.learn_behavior(sentence, req.is_suspicious);
+            }
+            if !req.is_suspicious && (req.process_name.is_some() || req.file_hash.is_some()) {
+                if let Err(e) = orch
+                    .record_manual_false_positive(
+                        req.process_name.as_deref(),
+                        req.file_hash.as_deref(),
+                    )
+                    .await
+                {
+                    return Json(json!({"ok": false, "error": e.to_string()}));
+                }
+            }
+            Json(json!({"ok": true, "message": "Feedback recorded"}))
         }
         None => Json(json!({"ok": false, "error": "Backend not running"})),
     }

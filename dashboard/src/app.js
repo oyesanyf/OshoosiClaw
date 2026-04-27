@@ -301,6 +301,8 @@ function renderThreats(threats) {
                 <div class="item-meta">
                     <span><i data-lucide="crosshair" style="width:12px"></i> ${(maxConfidence * 100).toFixed(0)}% Confidence</span>
                     <span><i data-lucide="clock" style="width:12px"></i> ${formatTimestamp(t.timestamp)}</span>
+                    <button class="btn-text" onclick="markFalsePositive('${t.id}')" style="margin-left: 8px; color: var(--text-muted); font-size: 10px;">Flag FP</button>
+                    <button class="btn-text" onclick="markTruePositive('${t.id}')" style="margin-left: 8px; color: var(--accent-green); font-size: 10px;">Confirm</button>
                     ${t.entropy ? `<span><i data-lucide="zap" style="width:12px"></i> Entropy: ${t.entropy.toFixed(2)}</span>` : ''}
                 </div>
                 <div class="item-details" style="font-size: 11px; margin-top: 4px; color: var(--text-muted);">
@@ -894,6 +896,38 @@ window.confirmThreat = async function(threatId) {
         }
     } catch (err) {
         console.error("Failed to confirm threat:", err);
+    }
+};
+
+window.submitManualFP = async function() {
+    const proc = document.getElementById('manual-fp-proc').value.trim();
+    const hash = document.getElementById('manual-fp-hash').value.trim();
+    if (!proc && !hash) {
+        alert("Please provide at least a process name or a hash.");
+        return;
+    }
+    
+    try {
+        const res = await fetch(`${API_BASE}/behavioral/feedback`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ 
+                process_name: proc || null,
+                file_hash: hash || null,
+                is_suspicious: false
+            })
+        });
+        const data = await res.json();
+        if (data.ok) {
+            alert("Manual suppression policy applied.");
+            document.getElementById('manual-fp-proc').value = '';
+            document.getElementById('manual-fp-hash').value = '';
+            updateDashboard();
+        } else {
+            alert("Error: " + data.error);
+        }
+    } catch (err) {
+        console.error("Failed to submit manual FP:", err);
     }
 };
 
