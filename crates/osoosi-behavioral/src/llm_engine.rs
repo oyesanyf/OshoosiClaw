@@ -1,6 +1,7 @@
 use anyhow::Result;
 use candle_core::{Device, Tensor};
 use candle_transformers::generation::LogitsProcessor;
+use candle_transformers::models::bert::{BertModel, Config as BertConfig};
 use candle_transformers::models::llama::{
     Cache, Config as LlamaConfig, Llama as Model, LlamaEosToks,
 };
@@ -9,9 +10,9 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use serde::Deserialize;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tokenizers::Tokenizer;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
@@ -276,6 +277,149 @@ impl Gemma4Analyzer {
                 .decode(&[next_token], true)
                 .map_err(anyhow::Error::msg)?;
             if decoded.is_empty() {
+                break;
+            }
+            result_text.push_str(&decoded);
+        }
+
+        Ok(result_text)
+    }
+}
+
+/// SecureBERT 2.0 Analyzer (Candle/Transformer fallback).
+/// Uses a Cross-Encoder architecture to calculate the relationship between
+/// a security Query (e.g. "potential ransomware") and Context (the log sentence).
+pub struct SecureBertAnalyzer {
+    model: BertModel,
+    tokenizer: Tokenizer,
+    device: Device,
+}
+
+impl SecureBertAnalyzer {
+    pub fn new(model_dir: &Path) -> Result<Self> {
+        info!("Initializing native SecureBERT Cross-Encoder from {:?}...", model_dir);
+        let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
+
+        let config_path = model_dir.join("config.json");
+        let tokenizer_path = model_dir.join("tokenizer.json");
+        let weights_path = model_dir.join("model.safetensors");
+
+        if !config_path.exists() || !tokenizer_path.exists() || !weights_path.exists() {
+            anyhow::bail!("SecureBERT files missing in {:?}", model_dir);
+        }
+
+        let config: BertConfig = serde_json::from_reader(std::fs::File::open(&config_path)?)?;
+        let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(anyhow::Error::msg)?;
+        
+        let vb = unsafe {
+            candle_nn::VarBuilder::from_mmaped_safetensors(
+                &[&weights_path],
+                candle_core::DType::F32,
+                &device,
+            )?
+        };
+        let model = BertModel::load(vb, &config)?;
+
+        Ok(Self {
+            model,
+            tokenizer,
+            device,
+        })
+    }
+
+    /// Score the relationship between a query and context using the Cross-Encoder.
+    /// Returns a similarity probability (0.0 to 1.0).
+    pub fn score_pair(&self, query: &str, context: &str) -> Result<f32> {
+        // Tokenize the Pair [Query] + [SEP] + [Context]
+        let encoding = self.tokenizer.encode(format!("{} [SEP] {}", query, context), true)
+            .map_err(anyhow::Error::msg)?;
+        
+        let input_ids = Tensor::new(encoding.get_ids(), &self.device)?.unsqueeze(0)?;
+        let token_type_ids = Tensor::new(encoding.get_type_ids(), &self.device)?.unsqueeze(0)?;
+
+        // Forward pass
+        let logits = self.model.forward(&input_ids, &token_type_ids, None)?;
+        
+        // SecureBERT Cross-Encoder usually outputs a single logit or a 2-class vector.
+        // We assume index 0 is the similarity score (or the 'benign' class depending on training).
+        // If it's 2 classes (Benign, Malicious), we'd take the softmax.
+        // The user example uses a single logit with sigmoid.
+        let score = logits.flatten_all()?.to_vec1::<f32>()?[0];
+        let probability = 1.0 / (1.0 + (-score).exp()); // Sigmoid
+
+        Ok(probability)
+    }
+}
+
+/// Gemma 4 E4B-it "Security Judge" (Candle/Transformer fallback).
+/// Handles high-fidelity reasoning for complex forensic triage.
+pub struct SecurityJudge {
+    model: Model,
+    tokenizer: Tokenizer,
+    device: Device,
+    cache: Mutex<Cache>,
+}
+
+impl SecurityJudge {
+    pub async fn new(model_dir: &Path) -> Result<Self> {
+        info!("Initializing native Gemma 4 Security Judge (Candle) from {:?}...", model_dir);
+        let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
+
+        let config_path = model_dir.join("config.json");
+        let tokenizer_path = model_dir.join("tokenizer.json");
+        let weights_path = model_dir.join("model.safetensors");
+
+        if !config_path.exists() || !tokenizer_path.exists() || !weights_path.exists() {
+            anyhow::bail!("Gemma 4 files missing in {:?}", model_dir);
+        }
+
+        let config_raw: Config = serde_json::from_reader(std::fs::File::open(&config_path)?)?;
+        let config: LlamaConfig = config_raw.into();
+        let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(anyhow::Error::msg)?;
+        
+        let vb = unsafe {
+            candle_nn::VarBuilder::from_mmaped_safetensors(
+                &[&weights_path],
+                candle_core::DType::F32,
+                &device,
+            )?
+        };
+        let model = Model::load(vb, &config)?;
+        let cache = Cache::new(true, candle_core::DType::F32, &config, &device)?;
+
+        Ok(Self {
+            model,
+            tokenizer,
+            device,
+            cache: Mutex::new(cache),
+        })
+    }
+
+    /// The Parameterized Inference Function
+    pub async fn judge_artifact(&self, query: &str) -> Result<String> {
+        let prompt = format!("<|user|>\nYou are a security expert. Analyze this artifact and return a verdict: {} <|end|>\n<|assistant|>\n", query);
+
+        let tokens = self.tokenizer.encode(prompt, true).map_err(anyhow::Error::msg)?;
+        let mut tokens_vec = tokens.get_ids().to_vec();
+
+        let mut logits_processor = candle_transformers::generation::LogitsProcessor::new(1337, Some(0.0), None);
+        let mut result_text = String::new();
+
+        for i in 0..256 {
+            let input = Tensor::new(&tokens_vec[..], &self.device)?.unsqueeze(0)?;
+            let mut cache = self.cache.lock().unwrap();
+            let logits = self.model.forward(
+                &input,
+                tokens_vec.len() - if i == 0 { 0 } else { 1 },
+                &mut cache,
+            )?;
+            let logits = logits.squeeze(0)?.get(logits.dims()[0] - 1)?;
+
+            let next_token = logits_processor.sample(&logits)?;
+            tokens_vec.push(next_token);
+
+            let decoded = self.tokenizer.decode(&[next_token], true).map_err(anyhow::Error::msg)?;
+            if decoded.is_empty() || next_token == 0 {
                 break;
             }
             result_text.push_str(&decoded);

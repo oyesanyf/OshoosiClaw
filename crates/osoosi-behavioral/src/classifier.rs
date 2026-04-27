@@ -3,7 +3,7 @@
 //! Uses suspicious patterns to flag events. When SecureBERT ONNX model is available,
 //! inference can be added. Supports continual training via labeled feedback.
 
-use crate::llm_engine::SmolLMAnalyzer;
+use crate::llm_engine::{Gemma4Analyzer, SecureBertAnalyzer, SecurityJudge, SmolLMAnalyzer};
 use crate::{event_to_behavioral_sentence, feedback::FeedbackStore, LogEvent};
 use ort::session::{builder::SessionBuilder, Session};
 use ort::value::Value;
@@ -34,6 +34,8 @@ pub struct BehavioralClassifier {
     tokenizer: Option<Tokenizer>,
     feedback: Option<FeedbackStore>,
     smollm: Option<Arc<SmolLMAnalyzer>>,
+    securebert: Option<Arc<SecureBertAnalyzer>>,
+    judge: Option<Arc<SecurityJudge>>,
     openai_key: String,
     client: reqwest::Client,
 }
@@ -127,8 +129,25 @@ impl BehavioralClassifier {
             .build()
             .unwrap_or_default();
 
+        let securebert = if !no_ai {
+            let securebert_dir = Path::new(&models_dir).join("behavioral");
+            match SecureBertAnalyzer::new(&securebert_dir) {
+                Ok(s) => {
+                    info!("Native SecureBert Cross-Encoder loaded successfully.");
+                    Some(Arc::new(s))
+                }
+                Err(e) => {
+                    debug!("SecureBert Cross-Encoder unavailable: {}. Using fallback methods.", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         let smollm = if !no_ai
             && model.is_none()
+            && securebert.is_none()
             && std::env::var("OSOOSI_ENABLE_SMOLLM")
                 .map(|v| v == "1")
                 .unwrap_or(false)
@@ -152,12 +171,30 @@ impl BehavioralClassifier {
             None
         };
 
+        let judge = if !no_ai {
+            let gemma_dir = Path::new(&models_dir).join("gemma4-e4b");
+            match SecurityJudge::new(&gemma_dir).await {
+                Ok(j) => {
+                    info!("Gemma 4 Security Judge initialized.");
+                    Some(Arc::new(j))
+                }
+                Err(e) => {
+                    debug!("Gemma 4 Judge unavailable: {}. Forensic reasoning will use fallbacks.", e);
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
         Self {
             suspicious_patterns,
             model,
             tokenizer,
             feedback,
             smollm,
+            securebert,
+            judge,
             openai_key,
             client,
         }
@@ -295,7 +332,25 @@ impl BehavioralClassifier {
                     warn!("Failed to lock behavioral model mutex: {}", e);
                 }
             }
-        } else {
+        }
+
+        // 3b. SecureBERT Cross-Encoder (Transformer-based fallback/secondary)
+        if let Some(ref sb) = self.securebert {
+            let query = "Is this log activity malicious or indicative of a cyber attack?";
+            match sb.score_pair(query, sentence) {
+                Ok(sb_score) => {
+                    max_score = max_score.max(sb_score);
+                    if sb_score >= 0.7 {
+                        reasons.push(format!("SecureBERT Cross-Encoder analysis: {:.2}", sb_score));
+                    }
+                }
+                Err(e) => {
+                    debug!("SecureBert score_pair failed: {}", e);
+                }
+            }
+        }
+
+        if self.model.is_none() && self.securebert.is_none() {
             // 4. SmolLM Fallback (Deep Security Reasoning)
             if let Some(ref smollm) = self.smollm {
                 match smollm.analyze_log(sentence) {
@@ -319,6 +374,27 @@ impl BehavioralClassifier {
         }
 
         let is_suspicious = max_score >= 0.7;
+
+        // 3c. Gemma 4 Multimodal Reasoning (High-fidelity final tier)
+        if is_suspicious {
+            if let Some(ref judge) = self.judge {
+                let suspect_query = format!("Analyze this forensic artifact: '{}'. Is it malicious or benign context?", sentence);
+                match judge.judge_artifact(&suspect_query).await {
+                    Ok(verdict) => {
+                        if verdict.to_lowercase().contains("benign") {
+                            // High-reasoning model thinks it's benign, downgrade it
+                            return (false, 0.4, format!("Gemma 4 Forensic Override (Benign): {}", verdict));
+                        } else {
+                            reasons.push(format!("Gemma 4 Forensic Confirmation: {}", verdict));
+                        }
+                    }
+                    Err(e) => {
+                        debug!("Gemma 4 judge_artifact failed: {}", e);
+                    }
+                }
+            }
+        }
+
         if is_suspicious {
             info!(
                 "Behavioral alert: {} (score={:.2}, reasons={:?})",

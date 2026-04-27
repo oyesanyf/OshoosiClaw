@@ -764,9 +764,6 @@ impl EdrOrchestrator {
         );
         let smollm_dir = models_dir.join("smollm");
 
-        let spider_eyes = Arc::new(osoosi_behavioral::SpiderEyes::new(
-            &smollm_dir.join("gemma-4-local.bin").to_string_lossy()
-        ));
         let behavioral_debouncer = Arc::new(dashmap::DashMap::new());
 
         let behavioral_engine = if std::env::var("OSOOSI_ENABLE_SMOLLM")
@@ -792,6 +789,10 @@ impl EdrOrchestrator {
         let gemma_dir = std::env::var("OSOOSI_GEMMA_DIR")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| models_dir.join("gemma4-e4b"));
+
+        let spider_eyes = Arc::new(osoosi_behavioral::SpiderEyes::new(
+            &gemma_dir.to_string_lossy()
+        ));
         let gemma_cortex = if gemma_dir.exists() {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 osoosi_behavioral::Gemma4Analyzer::new(&gemma_dir)
@@ -1211,56 +1212,64 @@ impl EdrOrchestrator {
                 interval.tick().await;
                 match reader.poll_events() {
                     Ok(events) => {
+                        let mut set = tokio::task::JoinSet::new();
                         for event in events {
-                            // Tier 1: CoLog Autonomous Sequence Check
-                            let colog_score = analyzer.autonomous_check(&event);
-                            if colog_score > 0.7 {
-                                warn!("COLOG ANOMALY: Sequence deviation detected (score={:.2}) for source {}", colog_score, event.source);
-                                orchestrator.audit.log(
-                                    "COLOG_ANOMALY",
-                                    serde_json::json!({
-                                        "source": event.source,
-                                        "score": colog_score,
-                                        "event_id": event.event_id,
-                                        "data": event.data.get("Message"),
-                                    }),
-                                );
-                            }
-
-                            // Layer 2: SecureBERT / Rule-based Classification
-                            let result = classifier.classify(&event).await;
-                            if result.is_suspicious {
-                                let should_log =
-                                    match orchestrator.behavioral_debouncer.get(&result.reason) {
-                                        Some(last) => last.elapsed() > Duration::from_secs(300),
-                                        None => true,
-                                    };
-
-                                if should_log {
-                                    warn!(
-                                        "BEHAVIORAL ALERT: {} (score={:.2}, reason={})",
-                                        result.sentence.chars().take(80).collect::<String>(),
-                                        result.score,
-                                        result.reason
+                            let classifier_clone = classifier.clone();
+                            let orchestrator_clone = orchestrator.clone();
+                            let analyzer_clone = analyzer.clone();
+                            
+                            set.spawn(async move {
+                                // Tier 1: CoLog Autonomous Sequence Check
+                                let colog_score = analyzer_clone.autonomous_check(&event);
+                                if colog_score > 0.7 {
+                                    warn!("COLOG ANOMALY: Sequence deviation detected (score={:.2}) for source {}", colog_score, event.source);
+                                    orchestrator_clone.audit.log(
+                                        "COLOG_ANOMALY",
+                                        serde_json::json!({
+                                            "source": event.source,
+                                            "score": colog_score,
+                                            "event_id": event.event_id,
+                                            "data": event.data.get("Message"),
+                                        }),
                                     );
-                                    orchestrator
-                                        .behavioral_debouncer
-                                        .insert(result.reason.clone(), Instant::now());
                                 }
 
-                                orchestrator.audit.log(
-                                    "BEHAVIORAL_ALERT",
-                                    serde_json::json!({
-                                        "sentence": result.sentence,
-                                        "score": result.score,
-                                        "reason": result.reason,
-                                        "event_id": result.event_id,
-                                        "source": result.source,
-                                        "timestamp": chrono::Utc::now(),
-                                    }),
-                                );
-                            }
+                                // Layer 2: SecureBERT / Rule-based Classification
+                                let result = classifier_clone.classify(&event).await;
+                                if result.is_suspicious {
+                                    let should_log =
+                                        match orchestrator_clone.behavioral_debouncer.get(&result.reason) {
+                                            Some(last) => last.elapsed() > std::time::Duration::from_secs(300),
+                                            None => true,
+                                        };
+
+                                    if should_log {
+                                        warn!(
+                                            "BEHAVIORAL ALERT: {} (score={:.2}, reason={})",
+                                            result.sentence.chars().take(80).collect::<String>(),
+                                            result.score,
+                                            result.reason
+                                        );
+                                        orchestrator_clone
+                                            .behavioral_debouncer
+                                            .insert(result.reason.clone(), std::time::Instant::now());
+                                    }
+
+                                    orchestrator_clone.audit.log(
+                                        "BEHAVIORAL_ALERT",
+                                        serde_json::json!({
+                                            "sentence": result.sentence,
+                                            "score": result.score,
+                                            "reason": result.reason,
+                                            "event_id": result.event_id,
+                                            "source": result.source,
+                                            "timestamp": chrono::Utc::now(),
+                                        }),
+                                    );
+                                }
+                            });
                         }
+                        while let Some(_) = set.join_next().await {}
                     }
                     Err(e) => {
                         tracing::debug!("Behavioral log poll failed: {}", e);

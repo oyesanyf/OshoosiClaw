@@ -8,7 +8,7 @@ use osoosi_types::{
 use rusqlite::{params, Connection};
 use std::path::Path;
 use std::sync::Mutex;
-use tracing::debug;
+use tracing::{debug, info};
 
 pub mod encryption;
 pub mod memory_scanner;
@@ -313,6 +313,21 @@ impl MemoryStore {
             "CREATE INDEX IF NOT EXISTS idx_otx_lookup ON otx_indicators(indicator_type, value)",
             [],
         )?;
+
+        // MIGRATION: Add version_start_including / version_end_excluding to kev if they are missing
+        let table_info: Vec<String> = conn
+            .prepare("PRAGMA table_info(kev)")?
+            .query_map([], |row| row.get(1))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+
+        if !table_info.contains(&"version_start_including".to_string()) {
+            info!("Migrating 'kev' table: adding 'version_start_including' column...");
+            let _ = conn.execute("ALTER TABLE kev ADD COLUMN version_start_including TEXT", []);
+        }
+        if !table_info.contains(&"version_end_excluding".to_string()) {
+            info!("Migrating 'kev' table: adding 'version_end_excluding' column...");
+            let _ = conn.execute("ALTER TABLE kev ADD COLUMN version_end_excluding TEXT", []);
+        }
 
         Ok(())
     }

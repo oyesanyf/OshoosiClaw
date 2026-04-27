@@ -15,10 +15,23 @@ pub struct GemmaSupervisor {
 
 impl GemmaSupervisor {
     pub fn new(model_path: &str) -> Self {
-        let path = Path::new(model_path);
-        let analyzer = Gemma4Analyzer::new(path).ok().map(Arc::new);
+        let input_path = Path::new(model_path);
+        let model_dir = if input_path
+            .extension()
+            .and_then(|ext| ext.to_str())
+            .map(|ext| ext.eq_ignore_ascii_case("onnx"))
+            .unwrap_or(false)
+        {
+            input_path.parent().unwrap_or(input_path)
+        } else {
+            input_path
+        };
+        let analyzer = Gemma4Analyzer::new(model_dir).ok().map(Arc::new);
         if analyzer.is_none() {
-            warn!("Gemma 4 ONNX analyzer could not be initialized at {:?}. Falling back to heuristic analysis.", path);
+            warn!(
+                "Gemma 4 ONNX analyzer could not be initialized from {:?} (resolved model dir: {:?}). Falling back to heuristic analysis.",
+                input_path, model_dir
+            );
         }
         Self { analyzer }
     }
