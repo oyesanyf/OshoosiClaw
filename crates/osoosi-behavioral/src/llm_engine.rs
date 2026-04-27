@@ -10,7 +10,7 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use serde::Deserialize;
 use std::path::Path;
-use std::sync::{Arc, Mutex};
+use std::sync::Mutex;
 use tokenizers::Tokenizer;
 use tracing::{info, warn};
 
@@ -235,7 +235,7 @@ impl Gemma4Analyzer {
 
         // Fallback to Candle/Transformer
         info!("Gemma 4: attempting native transformer fallback...");
-        let judge = tokio::runtime::Handle::current().block_on(SecurityJudge::new(model_dir))?;
+        let judge = SecurityJudge::new(model_dir)?;
         Ok(Self::Candle(judge))
     }
 
@@ -246,7 +246,7 @@ impl Gemma4Analyzer {
         );
         match self {
             Self::Onnx { .. } => self.generate_text(&prompt, 256),
-            Self::Candle(judge) => tokio::runtime::Handle::current().block_on(judge.judge_artifact(&prompt)),
+            Self::Candle(judge) => judge.judge_artifact(&prompt),
         }
     }
 
@@ -281,7 +281,7 @@ impl Gemma4Analyzer {
                 }
                 Ok(result_text)
             }
-            Self::Candle(judge) => tokio::runtime::Handle::current().block_on(judge.judge_artifact(prompt)),
+            Self::Candle(judge) => judge.judge_artifact(prompt),
         }
     }
 }
@@ -361,7 +361,7 @@ pub struct SecurityJudge {
 }
 
 impl SecurityJudge {
-    pub async fn new(model_dir: &Path) -> Result<Self> {
+    pub fn new(model_dir: &Path) -> Result<Self> {
         info!("Initializing native Gemma 4 Security Judge (Candle) from {:?}...", model_dir);
         let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
 
@@ -396,7 +396,7 @@ impl SecurityJudge {
     }
 
     /// The Parameterized Inference Function
-    pub async fn judge_artifact(&self, query: &str) -> Result<String> {
+    pub fn judge_artifact(&self, query: &str) -> Result<String> {
         let prompt = format!("<|user|>\nYou are a security expert. Analyze this artifact and return a verdict: {} <|end|>\n<|assistant|>\n", query);
 
         let tokens = self.tokenizer.encode(prompt, true).map_err(anyhow::Error::msg)?;
