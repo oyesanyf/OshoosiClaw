@@ -57,6 +57,7 @@ dirs = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]
 winreg = { workspace = true }
+win32-version-info = "0.3"
 
 [target.'cfg(unix)'.dependencies]
 libc = { workspace = true }

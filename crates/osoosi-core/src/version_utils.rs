@@ -4,8 +4,6 @@
 //! threat detection and reduce false positives.
 
 use std::path::Path;
-use std::process::Command;
-use tracing::debug;
 
 /// Resolve the product version of a file.
 ///
@@ -27,32 +25,19 @@ pub fn get_file_version_info(path: &Path) -> Option<String> {
 
 #[cfg(target_os = "windows")]
 fn get_windows_file_version(path: &Path) -> Option<String> {
-    let path_str = path.to_string_lossy();
-
-    // Use PowerShell to get the ProductVersion from FileVersionInfo.
-    // This is more reliable than netsh or other tools for broad version extraction.
-    let output = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-Command",
-            &format!(
-                "(Get-ItemProperty '{}').VersionInfo.ProductVersion",
-                path_str
-            ),
-        ])
-        .output();
-
-    match output {
-        Ok(out) if out.status.success() => {
-            let version = String::from_utf8_lossy(&out.stdout).trim().to_string();
-            if version.is_empty() {
-                None
+    match win32_version_info::VersionInfo::from_file(path) {
+        Ok(info) => {
+            if info.product_version.is_empty() {
+                if !info.file_version.is_empty() {
+                    Some(info.file_version)
+                } else {
+                    None
+                }
             } else {
-                debug!("Resolved Windows version for {}: {}", path_str, version);
-                Some(version)
+                Some(info.product_version)
             }
         }
-        _ => None,
+        Err(_) => None,
     }
 }
 

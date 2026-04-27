@@ -500,6 +500,14 @@ async function renderProcessMapView() {
     }
 
     if (loading) loading.style.display = 'none';
+    
+    if (graphData.nodes.length === 0) {
+        if (loading) {
+            loading.style.display = 'block';
+            loading.innerText = "No attack graph data available yet.";
+        }
+        return;
+    }
 
     if (!state.network) {
         initGraph(container, graphData);
@@ -564,6 +572,34 @@ function initGraph(container, data) {
 
     state.network = new vis.Network(container, visData, options);
     
+    // Auto-center and fit graph once stabilized
+    state.network.on("stabilizationFinished", function () {
+        state.network.fit();
+    });
+    
+    // Initial fit attempt
+    setTimeout(() => { if(state.network) state.network.fit(); }, 1000);
+    
+    // Add event listener for refreshing
+    const refreshBtn = document.getElementById('refresh-graph');
+    if (refreshBtn) {
+        refreshBtn.onclick = () => renderProcessMapView();
+    }
+}
+
+/**
+ * Render OpenTelemetry Mesh Map
+ */
+async function renderOtelMapView() {
+    const container = document.getElementById('otel-mesh-map');
+    const loading = document.getElementById('otel-map-loading');
+    if (!container) return;
+
+    if (loading) loading.style.display = 'block';
+
+    const topologyData = await fetchAPI('/mesh/topology');
+    setTimeout(() => { if(state.network) state.network.fit(); }, 1000);
+    
     // Add event listener for refreshing
     const refreshBtn = document.getElementById('refresh-graph');
     if (refreshBtn) {
@@ -589,6 +625,14 @@ async function renderOtelMapView() {
 
     if (loading) loading.style.display = 'none';
 
+    if (topologyData.nodes.length === 0) {
+        if (loading) {
+            loading.style.display = 'block';
+            loading.innerText = "Mesh topology is still converging...";
+        }
+        return;
+    }
+
     if (!state.otelNetwork) {
         initOtelMap(container, topologyData);
     } else {
@@ -596,6 +640,7 @@ async function renderOtelMapView() {
             nodes: new vis.DataSet(topologyData.nodes),
             edges: new vis.DataSet(topologyData.edges)
         });
+        state.otelNetwork.fit();
     }
 }
 
@@ -633,6 +678,12 @@ function initOtelMap(container, data) {
     };
 
     state.otelNetwork = new vis.Network(container, visData, options);
+    
+    state.otelNetwork.on("stabilizationFinished", function () {
+        state.otelNetwork.fit();
+    });
+    
+    setTimeout(() => { if(state.otelNetwork) state.otelNetwork.fit(); }, 1000);
 }
 
 /**
@@ -865,27 +916,29 @@ async function renderStoryView() {
         refreshBtn.onclick = async () => {
             container.innerHTML = '<div class="loading-spinner" style="margin: 20px auto;"></div><p class="placeholder-text">Synthesizing forensic story from OpenTelemetry spans...</p>';
             const story = await fetchAPI('/story');
-            if (story && story.story) {
+            if (story && story.story && story.story !== "Orchestrator not active.") {
                 // Convert markdown-ish text to basic HTML (simple bold/newlines)
                 const formatted = story.story
                     .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                     .replace(/\n/g, '<br/>');
-                container.innerHTML = `<div class="story-content" style="padding: 10px;">${formatted}</div>`;
+                container.innerHTML = `<div class="story-content" style="padding: 10px; animation: fadeIn 0.8s ease-out;">${formatted}</div>`;
             } else {
-                container.innerHTML = '<p class="placeholder-text">Failed to generate story. Ensure agent is capturing OTel spans.</p>';
+                container.innerHTML = '<p class="placeholder-text">No significant security events to report in this story yet.</p>';
             }
         };
     }
 
-    // Initial load if empty
-    if (container.querySelector('.placeholder-text')) {
+    // Initial load if empty or placeholder
+    if (container.querySelector('.placeholder-text') || container.innerHTML === '') {
+        container.innerHTML = '<div class="loading-spinner" style="margin: 20px auto;"></div><p class="placeholder-text">Synthesizing forensic story...</p>';
         const story = await fetchAPI('/story');
-        if (story && story.story) {
+        if (story && story.story && story.story !== "Orchestrator not active.") {
             const formatted = story.story
                 .replace(/\*\*(.*?)\*\*/g, '<strong>$1</strong>')
                 .replace(/\n/g, '<br/>');
-            container.innerHTML = `<div class="story-content" style="padding: 10px;">${formatted}</div>`;
+            container.innerHTML = `<div class="story-content" style="padding: 10px; animation: fadeIn 0.8s ease-out;">${formatted}</div>`;
+        } else {
+            container.innerHTML = '<p class="placeholder-text">No significant security events to report in this story yet.</p>';
         }
     }
 }
-

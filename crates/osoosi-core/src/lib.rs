@@ -2190,7 +2190,7 @@ impl EdrOrchestrator {
                 .map(String::from);
             let model = self.threat_model.read().await;
             let score = model.infer(proc.as_deref(), cve.as_deref());
-            if score >= 0.5 {
+            if score >= 0.75 {
                 let is_fp = self
                     .memory
                     .is_false_positive_pattern(proc.as_deref(), None)
@@ -2198,23 +2198,33 @@ impl EdrOrchestrator {
                 let trusted_operational = image_path
                     .map(is_trusted_operational_image)
                     .unwrap_or(false);
-                let version_known = event.product_version.as_deref().is_some_and(|v| {
-                    let v = v.trim();
-                    !v.is_empty() && !v.eq_ignore_ascii_case("unknown")
-                });
+
                 
                 if is_fp {
                     tracing::debug!(
                         "ML threat model suppressed false positive pattern for process {:?}",
                         proc
                     );
-                } else if trusted_operational && version_known && cve.is_none() {
-                    // Suppress ML hits for trusted binaries with known versions unless a CVE is matched
-                    tracing::debug!(
-                        "ML threat model suppressed hit for trusted binary {:?} (score: {:.2}); version known and no CVE hit",
-                        image_path,
-                        score
-                    );
+                } else if trusted_operational && cve.is_none() {
+                    // SUPPRESSION: If it's a trusted tool and has NO CVE hit, never emit a standalone ML alarm 
+                    // unless the score is exceptionally high (e.g. > 0.98), suggesting a serious hijack.
+                    if score < 0.98 {
+                        tracing::debug!(
+                            "ML threat model suppressed hit for trusted binary {:?} (score: {:.2})",
+                            image_path,
+                            score
+                        );
+                    } else {
+                        let mut sig = osoosi_types::ThreatSignature::new(event.computer.clone());
+                        sig.confidence = score;
+                        sig.process_name = proc.clone();
+                        sig.cve_id = cve.clone();
+                        sig.add_reason(format!(
+                            "ML threat model: HIGH-CONFIDENCE hit on trusted binary {:?} (score: {:.2})",
+                            proc, score
+                        ));
+                        signature = Some(sig);
+                    }
                 } else {
                     let mut sig = osoosi_types::ThreatSignature::new(event.computer.clone());
                     sig.confidence = score;
