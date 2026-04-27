@@ -156,6 +156,7 @@ fn classify_vote(
         "CISA-KEV" => (EvidenceClass::ThreatIntel, 0.58, false),
         "Sigma" => (EvidenceClass::Behavior, 0.86, true),
         "SemanticIntent" | "Gemma4-LLM" => (EvidenceClass::Behavior, 0.78, true),
+        "Decompile" => (EvidenceClass::Behavior, 0.96, true),
         "YaraX-Memory" => (EvidenceClass::Memory, 1.0, true),
         name if name.contains("ClamAV") => (EvidenceClass::StaticArtifact, 0.9, true),
         name if name.contains("MalConv") || name.contains("ML") => {

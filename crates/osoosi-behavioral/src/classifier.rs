@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokenizers::Tokenizer;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Result of behavioral classification.
 #[derive(Debug, Clone, Serialize, Deserialize)]

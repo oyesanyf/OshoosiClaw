@@ -1,0 +1,6 @@
+[submodule "vendor/hayabusa"]
+	path = vendor/hayabusa
+	url = https://github.com/Yamato-Security/hayabusa
+[submodule "tools/hayabusa/rules"]
+	path = tools/hayabusa/rules
+	url = https://github.com/Yamato-Security/hayabusa-rules.git

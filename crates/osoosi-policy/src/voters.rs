@@ -169,6 +169,50 @@ fn vote_result_nsrl_veto() -> VoteResult {
     }
 }
 
+/// Decompile Voter (Spider Eyes Mechanistic Analyst)
+/// Uses Gemma 4 + Capstone to analyze the intent of a running process on-demand.
+pub struct DecompileVoter {
+    pub spider: Arc<osoosi_behavioral::SpiderEyes>,
+}
+
+impl ThreatVoter for DecompileVoter {
+    fn name(&self) -> String {
+        "Decompile".to_string()
+    }
+    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        // We only decompile on ProcessCreate or ImageLoad to catch entry-point intent
+        if !matches!(event.event_id, SysmonEventId::ProcessCreate | SysmonEventId::ImageLoad) {
+            return None;
+        }
+
+        let pid = event.process_id()?;
+        
+        // Deep analysis: SpiderEyes watches the process, disassembles, and reasons with Gemma 4
+        match self.spider.watch_process(pid) {
+            Ok(report) => {
+                let r_lower = report.to_lowercase();
+                if r_lower.contains("malicious") || r_lower.contains("attack") || r_lower.contains("injection") || r_lower.contains("hollowing") {
+                    return Some(VoteResult {
+                        confidence: 0.98,
+                        reason: format!("Decompile/SpiderEyes High-Confidence Hit: {}", report),
+                        weight: 1.5, // Decompile hits are extremely high rank
+                    });
+                } else if r_lower.contains("suspicious") || r_lower.contains("obfuscated") {
+                    return Some(VoteResult {
+                        confidence: 0.85,
+                        reason: format!("Decompile/SpiderEyes Suspicious Finding: {}", report),
+                        weight: 1.1,
+                    });
+                }
+            }
+            Err(_) => {
+                // Silently abstain if decompile fails (e.g. process exited too fast)
+            }
+        }
+        None
+    }
+}
+
 /// Yara-X Memory Voter (C2 Beacon Scanning)
 pub struct YaraXMemoryVoter {
     pub rules: yara_x::Rules,

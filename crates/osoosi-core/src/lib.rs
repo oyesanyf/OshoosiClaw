@@ -850,6 +850,11 @@ impl EdrOrchestrator {
             config: policy.config.clone(),
         }));
 
+        // Decompile Voter: SpiderEyes binary analysis (Gemma 4 + Capstone)
+        policy.add_voter(Box::new(osoosi_policy::voters::DecompileVoter {
+            spider: spider_eyes.clone(),
+        }));
+
         // Yara-X Memory Voter: wrap build in catch_unwind — yara-x can panic on some toolchains/rule edge cases.
         if let Some(voter) = try_build_c2_yara_voter() {
             policy.add_voter(Box::new(voter));
