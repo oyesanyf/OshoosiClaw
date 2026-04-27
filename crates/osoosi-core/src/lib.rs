@@ -65,6 +65,7 @@ use osoosi_model::{MalwareScanner, ModelConfig, ThreatModel};
 use osoosi_repair::PatchEngine;
 use osoosi_trust::TrustManager;
 use tracing::{debug, error, info, warn};
+use uuid::Uuid;
 
 /// Repair status tuple: (last_cve, last_state, last_sig, last_at, pending_count, last_error).
 pub type RepairStatus = (
@@ -333,10 +334,100 @@ pub struct EdrOrchestrator {
     correlator: Arc<crate::correlator::EventCorrelator>,
     /// Static Analyzer: CAPA + FLOSS + LLM reasoning
     static_analyzer: Arc<crate::static_analyzer::StaticAnalyzer>,
+    /// Morphic Hyper-Web: Entanglement and Probabilistic Deception
+    deception_engine: Arc<tokio::sync::Mutex<osoosi_behavioral::deception::EntanglementEngine>>,
+    /// Spider Eyes: Binary Analyzer (Gemma-4 + Capstone)
+    spider_eyes: Arc<osoosi_behavioral::SpiderEyes>,
     /// Runtime config (db paths, sandboxes, etc.)
-    runtime_config: osoosi_types::RuntimeConfig,
 }
+
 impl EdrOrchestrator {
+    /// Morphic Hyper-Web: Entangle a suspicious process.
+    pub async fn entangle_process(&self, pid: u32, name: &str) {
+        let mut engine = self.deception_engine.lock().await;
+        engine.entangle(pid, name);
+        warn!("🕸️  Morphic Entanglement active for {} (PID {})", name, pid);
+    }
+
+    /// Report gaslighted telemetry for a process.
+    pub async fn report_gaslighted_cpu(&self, pid: u32, real_cpu: f64) -> f64 {
+        let engine = self.deception_engine.lock().await;
+        if let Some(spider) = engine.get_spider(pid) {
+            spider.report_telemetry(real_cpu)
+        } else {
+            real_cpu
+        }
+    }
+
+    /// Helper to find a PID by process name.
+    pub async fn find_pid_by_name(&self, name: &str) -> Option<u32> {
+        use sysinfo::{ProcessExt, System, SystemExt};
+        let mut sys = System::new_all();
+        sys.refresh_all();
+        
+        for (pid, process) in sys.processes() {
+            if process.name().to_lowercase() == name.to_lowercase() {
+                return Some(pid.as_u32());
+            }
+        }
+        None
+    }
+
+    /// Confirm a threat and fully entangle it in the Morphic Hyper-Web.
+    pub async fn handle_confirm_and_entangle(&self, threat_id: &str) -> anyhow::Result<()> {
+        let source = self.trust.did().to_string();
+        
+        // 1. Mark as True Positive in memory
+        if let Some((process_name, hash, file_path)) = self.memory.mark_threat_true_positive(threat_id, &source)? {
+            info!("🕸️  Confirming threat {} and initiating Morphic Entanglement...", threat_id);
+            
+            // 2. Try to find the live process to entangle
+            if let Some(pid) = self.find_pid_by_name(&process_name).await {
+                // Perform Binary Analysis (Spider Eyes)
+                if let Ok(analysis) = self.spider_eyes.watch_process(pid) {
+                    info!("🕸️  [SPIDER-EYES] Analysis for {}: \n{}", process_name, analysis);
+                    
+                    // BROADCAST to mesh: Share the disassembly and intent report
+                    if let Some(ref tx) = *self.mesh_command_tx.lock().await {
+                        let msg = osoosi_wire::MeshCommand::Broadcast {
+                            topic: "threat_intelligence".to_string(),
+                            data: serde_json::json!({
+                                "type": "BINARY_ANALYSIS",
+                                "process": process_name,
+                                "hash": hash,
+                                "analysis": analysis
+                            }).to_string().into_bytes(),
+                        };
+                        let _ = tx.send(msg).await;
+                        info!("🕸️  [MESH] Broadcasted binary analysis for {} to all spiders.", process_name);
+                    }
+                }
+
+                self.entangle_process(pid, &process_name).await;
+            } else {
+                warn!("🕸️  Could not find live process for {}; entanglement pending next spawn.", process_name);
+            }
+
+            // 3. Engage network tarpit (Tarpitting)
+            let tarpit_target = file_path.clone().or_else(|| Some(process_name.clone()));
+            if let Some(target) = tarpit_target {
+                let _ = crate::firewall::tarpit_process_network(None, Some(&target));
+            }
+
+            // 4. Record the action in the audit trail
+            self.audit.log("MORPHIC_ENTANGLEMENT", serde_json::json!({
+                "threat_id": threat_id,
+                "process": process_name,
+                "hash": hash,
+                "action": "entangled"
+            }));
+            
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!("Threat not found or already processed"))
+        }
+    }
+
     pub fn behavioral_classifier(&self) -> Arc<osoosi_behavioral::BehavioralClassifier> {
         self.behavioral_classifier.clone()
     }
@@ -655,15 +746,16 @@ impl EdrOrchestrator {
             audit.clone(),
             memory.clone(),
         ));
-        let ghost_nodes = Arc::new(osoosi_wire::GhostNodeManager::new(
-            node_id,
-            mesh_command_tx.clone(),
-        ));
-
         let models_dir = std::path::PathBuf::from(
             std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string()),
         );
         let smollm_dir = models_dir.join("smollm");
+
+        let spider_eyes = Arc::new(osoosi_behavioral::SpiderEyes::new(
+            &smollm_dir.join("gemma-4-local.bin").to_string_lossy()
+        ));
+        let behavioral_debouncer = Arc::new(dashmap::DashMap::new());
+
         let behavioral_engine = if std::env::var("OSOOSI_ENABLE_SMOLLM")
             .map(|v| v == "1")
             .unwrap_or(false)
@@ -767,6 +859,10 @@ impl EdrOrchestrator {
             audit.clone(),
         )));
 
+        let deception_engine = Arc::new(tokio::sync::Mutex::new(
+            osoosi_behavioral::deception::EntanglementEngine::new(),
+        ));
+
         Ok(Self {
             memory,
             mesh_peer_count,
@@ -796,6 +892,7 @@ impl EdrOrchestrator {
             pii_classifier,
             browser_guard,
             static_analyzer,
+            deception_engine,
             correlator,
             nsrl_cache,
             remediation,
@@ -810,9 +907,11 @@ impl EdrOrchestrator {
             runtime_config,
             host_executor,
             task_executor,
-            behavioral_debouncer: Arc::new(dashmap::DashMap::new()),
+            behavioral_debouncer,
+            spider_eyes,
         })
     }
+}
 
     /// Start the P2P Mesh event loop. Returns the JoinGate to be shared with the Dashboard.
     pub async fn start_p2p_loop(&self) -> anyhow::Result<Arc<osoosi_wire::JoinGate>> {
@@ -1867,6 +1966,27 @@ impl EdrOrchestrator {
         mut event: osoosi_types::SysmonEvent,
     ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
+
+        // --- MORPHIC ENTANGLEMENT INTERCEPTION ---
+        if let Some(pid) = event.process_id() {
+            let mut engine = self.entanglement_engine.lock().await;
+            if engine.get_spider(pid as u32).is_some() {
+                match event.event_id {
+                    osoosi_types::SysmonEventId::FileCreate | osoosi_types::SysmonEventId::FileDelete => {
+                        let path = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("");
+                        if let Some(res) = engine.handle_event(pid as u32, "io_access", path) {
+                            info!("🕸️ [ENTANGLED I/O] Intercepted access from PID {}: {}", pid, res);
+                        }
+                    },
+                    osoosi_types::SysmonEventId::NetworkConnect => {
+                        if let Some(_) = engine.handle_event(pid as u32, "exfil", "network") {
+                            info!("🕸️ [ENTANGLED EXFIL] Redirected network activity for PID {}", pid);
+                        }
+                    },
+                    _ => {}
+                }
+            }
+        }
 
         // --- GLOBAL VERSION AWARENESS ---
         // Resolve and cache product version for the event's image to prevent false positives.
@@ -3288,6 +3408,52 @@ impl EdrOrchestrator {
         );
 
         Ok(())
+    }
+
+    /// Manually report a true positive threat: creates a threat entry and triggers full entanglement.
+    pub async fn handle_manual_true_positive(
+        &self,
+        process_name: Option<&str>,
+        file_hash: Option<&str>,
+    ) -> anyhow::Result<()> {
+        let threat_id = format!("manual-{}", uuid::Uuid::new_v4());
+        let source = self.trust.did().to_string();
+        let name = process_name.unwrap_or("manual_threat");
+        
+        // 1. Log to audit trail so it appears in recent threats
+        self.audit.log("THREAT_DETECTED", serde_json::json!({
+            "id": threat_id,
+            "process_name": name,
+            "hash_blake3": file_hash,
+            "source_node": source,
+            "confidence": 1.0,
+            "reason": "Manual analyst report",
+            "timestamp": chrono::Utc::now().to_rfc3339()
+        }));
+
+        // 2. Insert into memory store so handle_confirm_and_entangle can find it
+        self.memory.log_threat(&osoosi_types::ThreatSignature {
+            id: threat_id.clone(),
+            cve_id: None,
+            hash_blake3: file_hash.map(|s| s.to_string()),
+            process_name: Some(name.to_string()),
+            confidence: 1.0,
+            detected_at: chrono::Utc::now(),
+            source_node: source.clone(),
+            signature: None,
+            public_key: None,
+            merkle_proof: None,
+            recommended_action: osoosi_types::ResponseAction::Isolate,
+            reason: Some("Manual analyst report".to_string()),
+            predicted_next: None,
+            epsilon: Some(0.05),
+            detector_count: 1,
+            require_approval: false,
+            action_state: osoosi_types::ActionState::Executed,
+        })?;
+
+        // 3. Call the confirm and entangle logic
+        self.handle_confirm_and_entangle(&threat_id).await
     }
 
     /// Mark a threat as true positive: reinforce mesh intelligence and begin serious tarpit.

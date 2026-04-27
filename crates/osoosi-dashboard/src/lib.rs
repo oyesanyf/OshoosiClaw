@@ -154,6 +154,10 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             "/api/threats/:threat_id/true-positive",
             post(post_threat_true_positive),
         )
+        .route(
+            "/api/threats/confirm/:threat_id",
+            post(post_threat_confirm),
+        )
         .route("/api/behavioral/feedback", post(post_behavioral_feedback))
         .route("/api/behavioral/analyze", get(get_behavioral_analyze))
         .route("/api/behavioral/deep-dive", post(post_behavioral_deep_dive))
@@ -1162,6 +1166,22 @@ async fn post_threat_true_positive(
     }
 }
 
+async fn post_threat_confirm(
+    State(state): State<DashboardState>,
+    Path(threat_id): Path<String>,
+) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => match orch.handle_confirm_and_entangle(&threat_id).await {
+            Ok(_) => {
+                Json(json!({"ok": true, "message": "Threat confirmed and entangled in Morphic Hyper-Web"}))
+            }
+            Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+        },
+        None => Json(json!({"ok": false, "error": "Backend not running"})),
+    }
+}
+
+
 #[derive(Debug, Deserialize)]
 struct BehavioralFeedbackRequest {
     sentence: Option<String>,
@@ -1180,7 +1200,17 @@ async fn post_behavioral_feedback(
             if let Some(ref sentence) = req.sentence {
                 orch.learn_behavior(sentence, req.is_suspicious);
             }
-            if !req.is_suspicious && (req.process_name.is_some() || req.file_hash.is_some()) {
+            if req.is_suspicious {
+                if let Err(e) = orch
+                    .handle_manual_true_positive(
+                        req.process_name.as_deref(),
+                        req.file_hash.as_deref(),
+                    )
+                    .await
+                {
+                    return Json(json!({"ok": false, "error": e.to_string()}));
+                }
+            } else if req.process_name.is_some() || req.file_hash.is_some() {
                 if let Err(e) = orch
                     .record_manual_false_positive(
                         req.process_name.as_deref(),
@@ -1191,7 +1221,7 @@ async fn post_behavioral_feedback(
                     return Json(json!({"ok": false, "error": e.to_string()}));
                 }
             }
-            Json(json!({"ok": true, "message": "Feedback recorded"}))
+            Json(json!({"ok": true, "message": if req.is_suspicious { "Threat reported and entanglement initiated" } else { "Feedback recorded" }}))
         }
         None => Json(json!({"ok": false, "error": "Backend not running"})),
     }

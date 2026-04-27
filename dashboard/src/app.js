@@ -275,6 +275,55 @@ function renderThreats(threats) {
     }
 
     const groups = {};
+/**
+ * Helper to fetch from API
+ */
+async function fetchAPI(endpoint) {
+    try {
+        const response = await fetch(`${API_BASE}${endpoint}`);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return await response.json();
+    } catch (err) {
+        console.warn(`Error fetching ${endpoint}:`, err);
+        return null;
+    }
+}
+
+/**
+ * Update a stat card value
+ */
+function updateStats(id, value) {
+    const elem = document.getElementById(`stat-${id}`);
+    if (elem) elem.innerText = value;
+}
+
+/**
+ * Render threat timeline items
+ */
+function renderThreats(threats) {
+    const list = document.getElementById('threat-list');
+    if (!list) return;
+    
+    if (threats.length === 0) {
+        list.innerHTML = '<p class="placeholder-text">No active threats detected.</p>';
+        return;
+    }
+
+    const filtered = threats.filter(t => {
+        if (!state.searchQuery) return true;
+        const q = state.searchQuery;
+        return (t.type && t.type.toLowerCase().includes(q)) || 
+               (t.id && t.id.toLowerCase().includes(q)) ||
+               (t.file_path && t.file_path.toLowerCase().includes(q)) ||
+               (t.reason && t.reason.toLowerCase().includes(q));
+    });
+
+    if (filtered.length === 0) {
+        list.innerHTML = '<p class="placeholder-text">No matches found for "' + state.searchQuery + '".</p>';
+        return;
+    }
+
+    const groups = {};
     filtered.forEach(t => {
         // Variation is defined by Type + Source only; reasons are listed inside
         const key = `${t.type}-${t.source_node || 'Unknown'}`;
@@ -286,29 +335,32 @@ function renderThreats(threats) {
         const t = groupThreats[0];
         const maxConfidence = Math.max(...groupThreats.map(gt => gt.confidence || 0));
         const severity = maxConfidence > 0.8 ? 'CRITICAL' : (maxConfidence > 0.6 ? 'HIGH' : 'MEDIUM');
-        const severityColor = maxConfidence > 0.8 ? 'var(--accent-red)' : (maxConfidence > 0.6 ? '#ff9900' : '#ffcc00');
+        const badgeClass = maxConfidence > 0.8 ? 'red' : (maxConfidence > 0.6 ? 'blue' : 'blue');
+        const borderClass = maxConfidence > 0.8 ? 'threat-high' : (maxConfidence > 0.6 ? 'threat-medium' : 'threat-low');
         
         return `
-        <div class="timeline-item">
+        <div class="timeline-item ${borderClass}">
             <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
                 <i data-lucide="shield-alert"></i>
             </div>
             <div class="item-info">
                 <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
                     <span>${t.type} ${groupThreats.length > 1 ? `<span style="font-size:10px; color:var(--text-muted); margin-left:4px;">(${groupThreats.length} events)</span>` : ''}</span>
-                    <span style="font-size:9px; padding:1px 5px; border-radius:4px; background:${severityColor}; color:white; vertical-align:middle;">${severity}</span>
+                    <span class="badge ${badgeClass}">${severity}</span>
                 </div>
                 <div class="item-meta">
-                    <span><i data-lucide="crosshair" style="width:12px"></i> ${(maxConfidence * 100).toFixed(0)}% Confidence</span>
-                    <span><i data-lucide="clock" style="width:12px"></i> ${formatTimestamp(t.timestamp)}</span>
-                    <button class="btn-text" onclick="markFalsePositive('${t.id}')" style="margin-left: 8px; color: var(--text-muted); font-size: 10px;">Flag FP</button>
-                    <button class="btn-text" onclick="markTruePositive('${t.id}')" style="margin-left: 8px; color: var(--accent-green); font-size: 10px;">Confirm</button>
-                    ${t.entropy ? `<span><i data-lucide="zap" style="width:12px"></i> Entropy: ${t.entropy.toFixed(2)}</span>` : ''}
+                    <span><i data-lucide="crosshair"></i> ${(maxConfidence * 100).toFixed(0)}% Confidence</span>
+                    <span><i data-lucide="clock"></i> ${formatTimestamp(t.timestamp)}</span>
+                    ${t.entropy ? `<span><i data-lucide="zap"></i> Entropy: ${t.entropy.toFixed(2)}</span>` : ''}
                 </div>
-                <div class="item-details" style="font-size: 11px; margin-top: 4px; color: var(--text-muted);">
+                <div class="item-actions">
+                    <button class="action-btn" onclick="markFalsePositive('${t.id}')">Flag FP</button>
+                    <button class="action-btn primary" onclick="markTruePositive('${t.id}')">Confirm</button>
+                    <button class="action-btn" onclick="toggleGroupDetails('${t.id}')" style="margin-left:auto;">Details</button>
+                </div>
+                <div id="group-details-${t.id}" style="display:none; margin-top:12px; padding:10px; background:rgba(0,0,0,0.2); border-radius:8px; font-size:11px; color:var(--text-muted);">
                     ${Array.from(new Set(groupThreats.map(gt => gt.reason || 'Anomalous behavior'))).join('; ')}
-                    <br/>
-                    <span style="font-size: 10px; opacity: 0.8;">Source: ${t.source_node}</span>
+                    <div style="margin-top:4px; opacity:0.7;">Source Node: ${t.source_node}</div>
                 </div>
             </div>
         </div>
@@ -359,55 +411,57 @@ function renderThreatsView(threats) {
     list.innerHTML = Object.entries(groups).map(([key, groupThreats]) => {
         const t = groupThreats[0];
         const maxConfidence = Math.max(...groupThreats.map(gt => gt.confidence || 0));
-        const severity = maxConfidence > 0.8 ? 'CRITICAL SEVERITY' : (maxConfidence > 0.6 ? 'HIGH SEVERITY' : 'MEDIUM SEVERITY');
-        const severityColor = maxConfidence > 0.8 ? 'var(--accent-red)' : (maxConfidence > 0.6 ? '#ff9900' : '#ffcc00');
+        const severity = maxConfidence > 0.8 ? 'CRITICAL' : (maxConfidence > 0.6 ? 'HIGH' : 'MEDIUM');
+        const badgeClass = maxConfidence > 0.8 ? 'red' : 'blue';
+        const borderClass = maxConfidence > 0.8 ? 'threat-high' : 'threat-medium';
 
         return `
-        <div class="timeline-item group-item" style="margin-bottom: 20px; border-bottom: 1px solid var(--glass-border); padding-bottom: 16px;">
-            <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
-                <i data-lucide="shield-alert"></i>
-            </div>
-            <div class="item-info" style="cursor: pointer;" onclick="const d = document.getElementById('panel-long-${t.id}'); d.style.display = d.style.display === 'none' ? 'flex' : 'none';">
-                <div class="item-title" style="font-size: 16px; font-weight: 600;">
-                    ${t.type} 
-                    <span style="font-size:10px; padding:2px 8px; border-radius:12px; background:${severityColor}; color:white; margin-left:12px; vertical-align: middle;">${severity}</span>
+        <div class="timeline-item ${borderClass}" style="flex-direction: column; gap: 12px;">
+            <div style="display: flex; gap: 16px;">
+                <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
+                    <i data-lucide="shield-alert"></i>
                 </div>
-                <div class="item-meta" style="margin: 8px 0;">
-                    <span><i data-lucide="crosshair" style="width:12px"></i> Max Confidence: ${(maxConfidence * 100).toFixed(0)}%</span>
-                    <span><i data-lucide="clock" style="width:12px"></i> Latest: ${formatTimestamp(t.timestamp)}</span>
-                    <span><i data-lucide="target" style="width:12px"></i> Source: ${t.source_node || 'Unknown'}</span>
-                </div>
-                <div style="font-size: 11px; color: var(--accent-blue); margin-top: 4px;">Click to expand details</div>
-                <div id="panel-long-${t.id}" class="group-reasons" style="display: none; flex-direction: column; gap: 8px; margin-top: 12px;">
-                    ${t.entropy ? `
-                        <div class="entropy-gauge" style="margin-bottom: 10px; background: rgba(255,255,255,0.05); padding: 10px; border-radius: 6px;">
-                            <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); margin-bottom:4px;">
-                                <span>Shannon Entropy</span>
-                                <span>${t.entropy.toFixed(2)} bits</span>
-                            </div>
-                            <div style="height:4px; width:100%; background:rgba(255,255,255,0.1); border-radius:2px; overflow:hidden;">
-                                <div style="height:100%; width:${(t.entropy / 8 * 100).toFixed(0)}%; background:${t.entropy > 7.2 ? 'var(--accent-red)' : 'var(--accent-blue)'};"></div>
-                            </div>
-                            <div style="font-size:9px; color:var(--text-muted); margin-top:4px;">
-                                ${t.entropy > 7.2 ? 'High entropy indicates potential encryption or packing.' : 'Low/Medium entropy suggests standard binary code.'}
-                            </div>
-                        </div>
-                    ` : ''}
-                    ${groupThreats.map(gt => `
-                        <div class="reason-entry" style="font-size:12px; color:var(--text-header); background:rgba(255,255,255,0.03); padding:10px; border-radius:6px; border-left:3px solid ${severityColor};">
-                            <div style="font-weight: 600; margin-bottom: 2px;">Detection Signal:</div>
-                            ${gt.reason || 'Anomalous behavior detected'}
-                            <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">Confidence: ${(gt.confidence * 100).toFixed(0)}% | ${formatTimestamp(gt.timestamp)}</div>
-                        </div>
-                    `).join('')}
-                    ${t.file_path ? `<div style="font-size:11px; color:var(--text-muted); margin-top:10px; opacity: 0.8;">Primary Path: ${t.file_path}</div>` : ''}
+                <div class="item-info">
+                    <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
+                        <span>${t.type} (${groupThreats.length} events)</span>
+                        <span class="badge ${badgeClass}">${severity}</span>
+                    </div>
+                    <div class="item-meta">
+                        <span><i data-lucide="crosshair"></i> ${(maxConfidence * 100).toFixed(0)}% Confidence</span>
+                        <span><i data-lucide="clock"></i> ${formatTimestamp(t.timestamp)}</span>
+                    </div>
+                    <div style="font-size: 11px; color: var(--accent-blue); margin-top: 4px; cursor:pointer;" onclick="toggleGroupDetails('full-${t.id}')">
+                        <i data-lucide="info" style="width:10px; height:10px; vertical-align:middle;"></i> Toggle Forensic Details
+                    </div>
                 </div>
             </div>
-            <div class="item-actions" style="display:flex; flex-direction: column; gap: 8px; justify-content: center; min-width: 150px;">
-                <button class="btn-text" onclick="markTruePositive('${t.id}')" style="color:var(--accent-green); border:1px solid var(--accent-green); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(0, 255, 150, 0.05); transition: all 0.2s;">Mark Positive</button>
-                <button class="btn-text" onclick="markFalsePositive('${t.id}')" style="color:var(--text-muted); border:1px solid var(--glass-border); padding:8px 16px; border-radius:6px; width: 100%; transition: all 0.2s;">Mark as False Positive</button>
-                <button class="btn-text" onclick="confirmThreat('${t.id}')" style="color:var(--accent-red); border:1px solid var(--accent-red); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(255, 77, 77, 0.05); transition: all 0.2s;">Confirm & Isolate</button>
-                <button class="btn-text" onclick="document.querySelector('[data-view=\'story\']').click()" style="color:var(--text-header); border:1px solid var(--glass-border); padding:8px 16px; border-radius:6px; width: 100%; background: rgba(255, 255, 255, 0.05);">Forensic Story</button>
+            
+            <div id="group-details-full-${t.id}" style="display: none; flex-direction: column; gap: 10px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 10px;">
+                ${t.entropy ? `
+                    <div class="entropy-gauge">
+                        <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); margin-bottom:4px;">
+                            <span>Shannon Entropy</span>
+                            <span>${t.entropy.toFixed(2)} bits</span>
+                        </div>
+                        <div style="height:4px; width:100%; background:rgba(255,255,255,0.1); border-radius:2px; overflow:hidden;">
+                            <div style="height:100%; width:${(t.entropy / 8 * 100).toFixed(0)}%; background:${t.entropy > 7.2 ? 'var(--accent-red)' : 'var(--accent-blue)'};"></div>
+                        </div>
+                    </div>
+                ` : ''}
+                ${groupThreats.map(gt => `
+                    <div class="reason-entry" style="font-size:12px; color:var(--text-primary); background:rgba(255,255,255,0.03); padding:10px; border-radius:8px; border-left:2px solid var(--accent-blue);">
+                        ${gt.reason || 'Anomalous behavior detected'}
+                        <div style="font-size: 10px; color: var(--text-muted); margin-top: 4px;">Confidence: ${(gt.confidence * 100).toFixed(0)}% | ${formatTimestamp(gt.timestamp)}</div>
+                    </div>
+                `).join('')}
+                ${t.file_path ? `<div style="font-size:11px; color:var(--text-muted); opacity: 0.8;">Path: ${t.file_path}</div>` : ''}
+            </div>
+
+            <div class="item-actions" style="grid-template-columns: 1fr 1fr 1fr; display: grid; gap: 8px;">
+                <button class="action-btn primary" onclick="markTruePositive('${t.id}')">Mark Positive</button>
+                <button class="action-btn" onclick="markFalsePositive('${t.id}')">Flag FP</button>
+                <button class="action-btn" onclick="confirmThreat('${t.id}')" style="color:var(--accent-red); border-color:rgba(255,77,77,0.3);">Isolate</button>
+                <button class="action-btn" onclick="document.querySelector('[data-view=\'story\']').click()" style="grid-column: span 3;">View Forensic Story</button>
             </div>
         </div>
     `}).join('');
@@ -580,26 +634,6 @@ function initGraph(container, data) {
     });
     
     // Initial fit attempt
-    setTimeout(() => { if(state.network) state.network.fit(); }, 1000);
-    
-    // Add event listener for refreshing
-    const refreshBtn = document.getElementById('refresh-graph');
-    if (refreshBtn) {
-        refreshBtn.onclick = () => renderProcessMapView();
-    }
-}
-
-/**
- * Render OpenTelemetry Mesh Map
- */
-async function renderOtelMapView() {
-    const container = document.getElementById('otel-mesh-map');
-    const loading = document.getElementById('otel-map-loading');
-    if (!container) return;
-
-    if (loading) loading.style.display = 'block';
-
-    const topologyData = await fetchAPI('/mesh/topology');
     setTimeout(() => { if(state.network) state.network.fit(); }, 1000);
     
     // Add event listener for refreshing
@@ -881,21 +915,64 @@ window.markTruePositive = async function(threatId) {
     }
 };
 
-window.confirmThreat = async function(threatId) {
-    if (window.event) window.event.stopPropagation();
+/**
+ * Global Interactivity Helpers
+ */
+window.toggleGroupDetails = function(id) {
+    const el = document.getElementById(`group-details-${id}`);
+    if (el) {
+        el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+        lucide.createIcons();
+    }
+};
+
+window.confirmThreat = async function(id) {
+    if (!confirm('Are you sure you want to isolate this node and terminate the offending process?')) return;
     try {
-        const res = await fetch(`${API_BASE}/triage/decide`, {
+        await fetch(`/api/threats/confirm/${id}`, { method: 'POST' });
+        showNotification('Response initiated: Node isolated.', 'info');
+        updateDashboard();
+    } catch (e) {
+        showNotification('Failed to confirm threat.', 'error');
+    }
+};
+
+function showNotification(msg, type = 'info') {
+    // Basic toast if needed, or just log for now
+    console.log(`[Dashboard] ${type.toUpperCase()}: ${msg}`);
+}
+
+window.submitManualTP = async function() {
+    const proc = document.getElementById('manual-tp-proc').value.trim();
+    const hash = document.getElementById('manual-tp-hash').value.trim();
+    if (!proc && !hash) {
+        alert("Please provide at least a process name or a hash.");
+        return;
+    }
+    
+    if (!confirm(`Are you sure you want to report ${proc || hash} as a threat? This will trigger autonomous Morphic Entanglement.`)) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/behavioral/feedback`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ threat_id: threatId, action: 'Isolate' })
+            body: JSON.stringify({ 
+                process_name: proc || null,
+                file_hash: hash || null,
+                is_suspicious: true
+            })
         });
         const data = await res.json();
         if (data.ok) {
-            alert("Threat confirmed. Isolation initiated.");
+            alert("Threat reported. Morphic Entanglement sequence initiated.");
+            document.getElementById('manual-tp-proc').value = '';
+            document.getElementById('manual-tp-hash').value = '';
             updateDashboard();
+        } else {
+            alert("Error: " + data.error);
         }
     } catch (err) {
-        console.error("Failed to confirm threat:", err);
+        console.error("Failed to submit manual TP:", err);
     }
 };
 

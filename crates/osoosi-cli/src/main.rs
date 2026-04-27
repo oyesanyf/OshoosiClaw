@@ -261,8 +261,13 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     if is_granting {
         handle_grant_access().await?;
         let _ = osoosi_core::firewall::open_mesh_ports();
-    } else if is_bootstrapping {
-        // Ensure essentials on startup
+        // Provision models during initial setup
+        info!("🕸️ [SETUP] Provisioning AI models for first-run access...");
+        let _ = ensure_ai_models().await;
+    } 
+    
+    if is_bootstrapping {
+        // Ensure essentials on bootstrap
         let executor = Arc::new(DirectExecutor::new());
         let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
         if let Err(e) = provisioner.provision_telemetry().await {

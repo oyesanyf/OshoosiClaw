@@ -49,14 +49,19 @@ impl ForensicStoryteller {
         let threats: Vec<&AuditEntry> = entries
             .iter()
             .filter(|e| {
-                e.event_type == "THREAT_DETECTED"
-                    || e.event_type == "MALWARE_DETECTED"
-                    || e.event_type == "BEHAVIORAL_ALERT"
+                let et = e.event_type.to_uppercase();
+                et.contains("THREAT")
+                    || et.contains("MALWARE")
+                    || et.contains("ALERT")
+                    || et.contains("SYSMON")
+                    || et.contains("YARA")
+                    || et.contains("BEHAVIORAL")
+                    || et.contains("ENTANGLE")
             })
             .collect();
 
         if threats.is_empty() {
-            return "Analysis completed: Normal administrative activity detected. Audit integrity verified.".to_string();
+            return "Analysis completed: Monitoring system baseline. Audit integrity verified. No immediate threats require narrative synthesis.".to_string();
         }
 
         let mut timeline_data = String::new();
@@ -108,7 +113,16 @@ impl ForensicStoryteller {
 
         let threats: Vec<&AuditEntry> = entries
             .iter()
-            .filter(|e| e.event_type == "THREAT_DETECTED" || e.event_type == "MALWARE_DETECTED")
+            .filter(|e| {
+                let et = e.event_type.to_uppercase();
+                et.contains("THREAT")
+                    || et.contains("MALWARE")
+                    || et.contains("ALERT")
+                    || et.contains("SYSMON")
+                    || et.contains("YARA")
+                    || et.contains("BEHAVIORAL")
+                    || et.contains("ENTANGLE")
+            })
             .collect();
 
         for t in threats {
