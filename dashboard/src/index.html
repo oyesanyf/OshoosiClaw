@@ -181,22 +181,44 @@
                         </div>
                     </div>
                 </div>
-                <div class="card glass shadow-glow mt-4">
-                    <div class="card-header">
-                        <h3>Proactive Policy Suppression</h3>
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
+                    <div class="card glass shadow-glow">
+                        <div class="card-header">
+                            <h3>Proactive Policy Suppression</h3>
+                        </div>
+                        <div class="card-body">
+                            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">Manually suppress future detections for a specific process or file hash (False Positive).</p>
+                            <div style="display: flex; flex-direction: column; gap: 12px;">
+                                <div>
+                                    <label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Process Name (e.g. git.exe)</label>
+                                    <input type="text" id="manual-fp-proc" placeholder="git.exe" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border); padding: 10px; border-radius: 8px; color: white;">
+                                </div>
+                                <div>
+                                    <label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">File Hash (Optional)</label>
+                                    <input type="text" id="manual-fp-hash" placeholder="blake3 hash..." style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border); padding: 10px; border-radius: 8px; color: white;">
+                                </div>
+                                <button class="btn-text" onclick="submitManualFP()" style="padding: 10px 24px; background: var(--accent-blue); color: var(--bg-dark); border-radius: 8px; height: 42px; width: 100%;">Suppress</button>
+                            </div>
+                        </div>
                     </div>
-                    <div class="card-body">
-                        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">Manually suppress future detections for a specific process or file hash.</p>
-                        <div style="display: flex; gap: 12px; align-items: flex-end; flex-wrap: wrap;">
-                            <div style="flex: 1; min-width: 200px;">
-                                <label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Process Name (e.g. git.exe)</label>
-                                <input type="text" id="manual-fp-proc" placeholder="git.exe" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border); padding: 10px; border-radius: 8px; color: white;">
+
+                    <div class="card glass shadow-glow">
+                        <div class="card-header">
+                            <h3>Manual Threat Reporting</h3>
+                        </div>
+                        <div class="card-body">
+                            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">Manually report a process as a confirmed threat to trigger Morphic Entanglement (True Positive).</p>
+                            <div style="display: flex; flex-direction: column; gap: 12px;">
+                                <div>
+                                    <label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">Process Name (e.g. bad_actor.exe)</label>
+                                    <input type="text" id="manual-tp-proc" placeholder="malware.exe" style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border); padding: 10px; border-radius: 8px; color: white;">
+                                </div>
+                                <div>
+                                    <label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">File Hash (Optional)</label>
+                                    <input type="text" id="manual-tp-hash" placeholder="blake3 hash..." style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border); padding: 10px; border-radius: 8px; color: white;">
+                                </div>
+                                <button class="btn-text" onclick="submitManualTP()" style="padding: 10px 24px; background: var(--accent-red); color: white; border-radius: 8px; height: 42px; width: 100%;">Report & Entangle</button>
                             </div>
-                            <div style="flex: 1; min-width: 200px;">
-                                <label style="display: block; font-size: 11px; color: var(--text-muted); margin-bottom: 4px;">File Hash (Optional)</label>
-                                <input type="text" id="manual-fp-hash" placeholder="blake3 hash..." style="width: 100%; background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border); padding: 10px; border-radius: 8px; color: white;">
-                            </div>
-                            <button class="btn-text" onclick="submitManualFP()" style="padding: 10px 24px; background: var(--accent-blue); color: var(--bg-dark); border-radius: 8px; height: 42px;">Suppress</button>
                         </div>
                     </div>
                 </div>

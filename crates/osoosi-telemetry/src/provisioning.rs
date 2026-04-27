@@ -2141,8 +2141,14 @@ impl AgentProvisioner {
         let weight_path = malconv_dir.join("malconv.safetensors");
 
         if weight_path.exists() {
-            info!("MalConv weights already available.");
-            return Ok(());
+            if let Ok(m) = std::fs::metadata(&weight_path) {
+                if m.len() > 1024 {
+                    info!("MalConv weights already available.");
+                    return Ok(());
+                } else {
+                    warn!("Existing MalConv weights file is too small ({} bytes). Re-downloading...", m.len());
+                }
+            }
         }
         if !use_bundled_hf_weights() {
             info!("MalConv weights not present; skipping Hugging Face download (set OSOOSI_USE_BUNDLED_HF_WEIGHTS=1 to try the Oshoosi bundle, or add malconv.safetensors under models/malware).");
@@ -2152,10 +2158,21 @@ impl AgentProvisioner {
         info!("MalConv weights missing. Downloading from Oshoosi Hugging Face bundle (OSOOSI_USE_BUNDLED_HF_WEIGHTS)...");
         let _ = std::fs::create_dir_all(&malconv_dir);
 
+        // Try to use HF_TOKEN if available, otherwise just use the public URL
         let url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/malconv.safetensors?download=true";
+        
+        // We use download_with_resume which uses the internal executor
         self.download_with_resume(url, &weight_path).await?;
 
-        info!("MalConv weights provisioned successfully.");
+        if let Ok(m) = std::fs::metadata(&weight_path) {
+            if m.len() < 1024 {
+                warn!("Downloaded MalConv weights are suspiciously small ({} bytes). Check HF_TOKEN or repository existence.", m.len());
+                let _ = std::fs::remove_file(&weight_path);
+            } else {
+                info!("MalConv weights provisioned successfully ({} bytes).", m.len());
+            }
+        }
+        
         Ok(())
     }
 

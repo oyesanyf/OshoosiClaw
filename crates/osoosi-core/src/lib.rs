@@ -65,7 +65,6 @@ use osoosi_model::{MalwareScanner, ModelConfig, ThreatModel};
 use osoosi_repair::PatchEngine;
 use osoosi_trust::TrustManager;
 use tracing::{debug, error, info, warn};
-use uuid::Uuid;
 
 /// Repair status tuple: (last_cve, last_state, last_sig, last_at, pending_count, last_error).
 pub type RepairStatus = (
@@ -339,6 +338,7 @@ pub struct EdrOrchestrator {
     /// Spider Eyes: Binary Analyzer (Gemma-4 + Capstone)
     spider_eyes: Arc<osoosi_behavioral::SpiderEyes>,
     /// Runtime config (db paths, sandboxes, etc.)
+    runtime_config: osoosi_types::config::RuntimeConfig,
 }
 
 impl EdrOrchestrator {
@@ -353,7 +353,7 @@ impl EdrOrchestrator {
     pub async fn report_gaslighted_cpu(&self, pid: u32, real_cpu: f64) -> f64 {
         let engine = self.deception_engine.lock().await;
         if let Some(spider) = engine.get_spider(pid) {
-            spider.report_telemetry(real_cpu)
+            spider.get_telemetry(real_cpu)
         } else {
             real_cpu
         }
@@ -361,7 +361,7 @@ impl EdrOrchestrator {
 
     /// Helper to find a PID by process name.
     pub async fn find_pid_by_name(&self, name: &str) -> Option<u32> {
-        use sysinfo::{ProcessExt, System, SystemExt};
+        use sysinfo::{System};
         let mut sys = System::new_all();
         sys.refresh_all();
         
@@ -378,28 +378,35 @@ impl EdrOrchestrator {
         let source = self.trust.did().to_string();
         
         // 1. Mark as True Positive in memory
-        if let Some((process_name, hash, file_path)) = self.memory.mark_threat_true_positive(threat_id, &source)? {
+        if let Some((process_name_opt, hash_opt, file_path_opt)) = self.memory.mark_threat_true_positive(threat_id, &source)? {
+            let process_name = process_name_opt.unwrap_or_else(|| "unknown".to_string());
+            let hash = hash_opt.unwrap_or_else(|| "unknown".to_string());
+            
             info!("🕸️  Confirming threat {} and initiating Morphic Entanglement...", threat_id);
             
             // 2. Try to find the live process to entangle
             if let Some(pid) = self.find_pid_by_name(&process_name).await {
                 // Perform Binary Analysis (Spider Eyes)
-                if let Ok(analysis) = self.spider_eyes.watch_process(pid) {
-                    info!("🕸️  [SPIDER-EYES] Analysis for {}: \n{}", process_name, analysis);
-                    
-                    // BROADCAST to mesh: Share the disassembly and intent report
-                    if let Some(ref tx) = *self.mesh_command_tx.lock().await {
-                        let msg = osoosi_wire::MeshCommand::Broadcast {
-                            topic: "threat_intelligence".to_string(),
-                            data: serde_json::json!({
-                                "type": "BINARY_ANALYSIS",
-                                "process": process_name,
-                                "hash": hash,
-                                "analysis": analysis
-                            }).to_string().into_bytes(),
-                        };
-                        let _ = tx.send(msg).await;
-                        info!("🕸️  [MESH] Broadcasted binary analysis for {} to all spiders.", process_name);
+                match self.spider_eyes.watch_process(pid) {
+                    Ok(analysis) => {
+                        info!("🕸️  [SPIDER-EYES] Analysis for {}: \n{}", process_name, analysis);
+                        
+                        // BROADCAST to mesh: Share the disassembly and intent report
+                        if let Some(ref tx) = *self.mesh_command_tx.lock().await {
+                            let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
+                            sig.id = format!("analysis-{}", uuid::Uuid::new_v4());
+                            sig.process_name = Some(process_name.clone());
+                            sig.hash_blake3 = Some(hash.clone());
+                            sig.confidence = 1.0;
+                            sig.add_reason(analysis);
+                            
+                            let msg = osoosi_wire::MeshCommand::Broadcast(sig);
+                            let _ = tx.send(msg).await;
+                            info!("🕸️  [MESH] Broadcasted binary analysis for {} to all spiders.", process_name);
+                        }
+                    }
+                    Err(e) => {
+                        warn!("🕸️  [SPIDER-EYES] Binary analysis failed for {}: {}", process_name, e);
                     }
                 }
 
@@ -409,10 +416,12 @@ impl EdrOrchestrator {
             }
 
             // 3. Engage network tarpit (Tarpitting)
-            let tarpit_target = file_path.clone().or_else(|| Some(process_name.clone()));
-            if let Some(target) = tarpit_target {
-                let _ = crate::firewall::tarpit_process_network(None, Some(&target));
-            }
+            let target = if let Some(path) = file_path_opt {
+                path
+            } else {
+                process_name.clone()
+            };
+            let _ = crate::firewall::tarpit_process_network(None, Some(&target));
 
             // 4. Record the action in the audit trail
             self.audit.log("MORPHIC_ENTANGLEMENT", serde_json::json!({
@@ -737,6 +746,10 @@ impl EdrOrchestrator {
             task_executor.clone(),
         ));
         let correlator = Arc::new(crate::correlator::EventCorrelator::new());
+        let ghost_nodes = Arc::new(osoosi_wire::GhostNodeManager::new(
+            node_id.clone(),
+            mesh_command_tx.clone(),
+        ));
         let nsrl_cache = Arc::new(dashmap::DashMap::new());
         let remediation = Arc::new(crate::remediation::RemediationController::new());
         let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
@@ -911,7 +924,6 @@ impl EdrOrchestrator {
             spider_eyes,
         })
     }
-}
 
     /// Start the P2P Mesh event loop. Returns the JoinGate to be shared with the Dashboard.
     pub async fn start_p2p_loop(&self) -> anyhow::Result<Arc<osoosi_wire::JoinGate>> {
@@ -1969,10 +1981,10 @@ impl EdrOrchestrator {
 
         // --- MORPHIC ENTANGLEMENT INTERCEPTION ---
         if let Some(pid) = event.process_id() {
-            let mut engine = self.entanglement_engine.lock().await;
+            let mut engine = self.deception_engine.lock().await;
             if engine.get_spider(pid as u32).is_some() {
                 match event.event_id {
-                    osoosi_types::SysmonEventId::FileCreate | osoosi_types::SysmonEventId::FileDelete => {
+                    osoosi_types::SysmonEventId::FileCreate | osoosi_types::SysmonEventId::FileDeleteArchived | osoosi_types::SysmonEventId::FileDeleteLogged => {
                         let path = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("");
                         if let Some(res) = engine.handle_event(pid as u32, "io_access", path) {
                             info!("🕸️ [ENTANGLED I/O] Intercepted access from PID {}: {}", pid, res);
@@ -3373,28 +3385,28 @@ impl EdrOrchestrator {
     /// Record a manual false positive suppression for future detections.
     pub async fn record_manual_false_positive(
         &self,
-        process_name: Option<&str>,
-        hash_blake3: Option<&str>,
+        process_name: Option<String>,
+        hash_blake3: Option<String>,
     ) -> anyhow::Result<()> {
         let source = self.trust.did().to_string();
         info!("[FP] Manual suppression recorded for Process: {:?}, Hash: {:?}", process_name, hash_blake3);
 
         // 1. Persist in memory store
         self.memory.record_false_positive_pattern(
-            process_name,
-            hash_blake3,
+            process_name.as_deref(),
+            hash_blake3.as_deref(),
             &source,
         )?;
 
         // 2. Add to session bypass cache for instant skipping
-        if let Some(hash) = hash_blake3 {
+        if let Some(ref hash) = hash_blake3 {
             if !hash.is_empty() {
-                self.nsrl_cache.insert(hash.to_string(), true);
+                self.nsrl_cache.insert(hash.clone(), true);
             }
         }
-        if let Some(proc) = process_name {
+        if let Some(ref proc) = process_name {
             if !proc.is_empty() {
-                self.nsrl_cache.insert(proc.to_string(), true);
+                self.nsrl_cache.insert(proc.clone(), true);
             }
         }
 
@@ -3413,12 +3425,12 @@ impl EdrOrchestrator {
     /// Manually report a true positive threat: creates a threat entry and triggers full entanglement.
     pub async fn handle_manual_true_positive(
         &self,
-        process_name: Option<&str>,
-        file_hash: Option<&str>,
+        process_name: Option<String>,
+        file_hash: Option<String>,
     ) -> anyhow::Result<()> {
         let threat_id = format!("manual-{}", uuid::Uuid::new_v4());
         let source = self.trust.did().to_string();
-        let name = process_name.unwrap_or("manual_threat");
+        let name = process_name.as_deref().unwrap_or("manual_threat");
         
         // 1. Log to audit trail so it appears in recent threats
         self.audit.log("THREAT_DETECTED", serde_json::json!({

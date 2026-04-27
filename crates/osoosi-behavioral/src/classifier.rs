@@ -60,9 +60,18 @@ impl BehavioralClassifier {
             }
         };
 
+        let behavioral_dir = Path::new(&models_dir).join("behavioral");
         let smollm_dir = Path::new(&models_dir).join("smollm");
-        let model_path = smollm_dir.join("smollm2-135m-it.onnx");
-        let tokenizer_path = smollm_dir.join("tokenizer.json");
+        
+        // 1. Try SecureBERT (Primary behavioral classifier)
+        let mut model_path = behavioral_dir.join("model.onnx");
+        let mut tokenizer_path = behavioral_dir.join("tokenizer.json");
+        
+        if !model_path.exists() {
+            // 2. Fallback to SmolLM2
+            model_path = smollm_dir.join("smollm2-135m-it.onnx");
+            tokenizer_path = smollm_dir.join("tokenizer.json");
+        }
 
         let no_ai = std::env::var("OSOOSI_NO_AI")
             .map(|v| v == "1")

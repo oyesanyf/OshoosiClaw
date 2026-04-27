@@ -1,8 +1,7 @@
-use sysinfo::{Pid, System, SystemExt, ProcessExt};
+use sysinfo::{Pid, System};
 use capstone::prelude::*;
+use capstone::arch;
 use proc_maps::get_process_maps;
-use std::fs::File;
-use std::io::{Read, Seek, SeekFrom};
 use std::path::Path;
 use tracing::{info, warn, error};
 
@@ -71,10 +70,15 @@ impl SpiderEyes {
         
         info!("🕸️  [OSHOOSI] Spider attached to: {}", process.name());
 
-        // 2. ASLR BYPASS: Find the executable memory segments
+        // 2. ASLR BYPASS: Find the primary executable memory segment
         let maps = get_process_maps(target_pid as proc_maps::Pid)?;
+        let process_name = process.name().to_lowercase();
+        
+        // Try to find the segment that matches the process name and is executable
         let exec_segment = maps.iter()
-            .find(|m| m.is_exec() && m.filename().is_some())
+            .find(|m| m.is_exec() && m.filename().map(|f| f.to_string_lossy().to_lowercase().contains(&process_name)).unwrap_or(false))
+            // Fallback to first executable segment with a filename if name-match fails
+            .or_else(|| maps.iter().find(|m| m.is_exec() && m.filename().is_some()))
             .ok_or_else(|| anyhow::anyhow!("No executable code segment found for PID {}", target_pid))?;
 
         info!("🕸️  [ASLR] Executable segment found at: 0x{:x}", exec_segment.start());
@@ -82,11 +86,13 @@ impl SpiderEyes {
         // 3. CAPTURE: Read from memory
         // On Linux, we use /proc/[pid]/mem. On Windows, we'd use ReadProcessMemory.
         #[cfg(target_os = "linux")]
-        let mut buffer = {
-            let mut mem_file = File::open(format!("/proc/{}/mem", target_pid))?;
+        let buffer = {
+            use std::io::{Read, Seek, SeekFrom};
+            let mut mem_file = std::fs::File::open(format!("/proc/{}/mem", target_pid))?;
             let mut buf = vec![0u8; 1024];
             mem_file.seek(SeekFrom::Start(exec_segment.start() as u64))?;
-            mem_file.read_exact(&mut buf)?;
+            let bytes_read = mem_file.read(&mut buf)?;
+            buf.truncate(bytes_read);
             buf
         };
 
@@ -95,8 +101,8 @@ impl SpiderEyes {
             // Windows-specific memory reading logic
             use winapi::um::processthreadsapi::OpenProcess;
             use winapi::um::memoryapi::ReadProcessMemory;
+            use winapi::um::handleapi::CloseHandle;
             use winapi::um::winnt::PROCESS_VM_READ;
-            use std::ptr;
 
             let handle = unsafe { OpenProcess(PROCESS_VM_READ, 0, target_pid) };
             if handle.is_null() {
@@ -115,16 +121,26 @@ impl SpiderEyes {
                 )
             };
             
+            unsafe { CloseHandle(handle); }
+            
             if success == 0 {
                 return Err(anyhow::anyhow!("ReadProcessMemory failed"));
             }
+            buf.truncate(bytes_read);
             buf
         };
 
         // 4. DISASSEMBLE: Translate bytes to assembly
+        // Determine mode based on pointer size (simplified heuristic)
+        let mode = if std::mem::size_of::<usize>() == 8 {
+            arch::x86::ArchMode::Mode64
+        } else {
+            arch::x86::ArchMode::Mode32
+        };
+
         let cs = Capstone::new()
             .x86()
-            .mode(arch::x86::ArchMode::Mode64)
+            .mode(mode)
             .build()
             .map_err(|e| anyhow::anyhow!("{}", e))?;
 

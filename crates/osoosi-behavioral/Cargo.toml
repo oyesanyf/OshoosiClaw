@@ -8,6 +8,7 @@ description = "Behavioral detection from system/application logs using SecureBER
 [dependencies]
 osoosi-types = { path = "../osoosi-types" }
 osoosi-telemetry = { path = "../osoosi-telemetry" }
+osoosi-dp = { path = "../osoosi-dp" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }
@@ -25,10 +26,15 @@ candle-core = { workspace = true }
 candle-nn = { workspace = true }
 candle-transformers = { workspace = true }
 rand = { workspace = true }
+rand_distr = { workspace = true }
 yara-x = { workspace = true }
 walkdir = { workspace = true }
 hayabusa = { workspace = true }
 chainsaw = { workspace = true }
+proc-maps = { workspace = true }
+capstone = { workspace = true }
+sysinfo = { workspace = true }
+winapi = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 redbpf = { workspace = true }

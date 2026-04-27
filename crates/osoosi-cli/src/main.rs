@@ -1581,6 +1581,7 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
         // Prefer repos that ship safetensors/ONNX; cycloevan/malconv is last (often TF-only / no hosted inference on HF).
         let malconv_repos = [
             "oyesanyf/OshoosiClaw-Weights",
+            "oyesanyf/OshoosiClaw",
             "Xenova/malconv",
             "onnx-community/malconv",
             "cycloevan/malconv",
@@ -1602,6 +1603,30 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
                     Err(e) => {
                         tracing::debug!("MalConv HF get {} {}: {}", repo_name, file, e);
                     }
+                }
+            }
+        }
+    }
+
+    // 4. SecureBERT (Behavioral Sentence Classification)
+    let behavioral_dir = models_dir.join("behavioral");
+    let _ = fs::create_dir_all(&behavioral_dir);
+    let sb_model_dest = behavioral_dir.join("model.onnx");
+    let sb_tokenizer_dest = behavioral_dir.join("tokenizer.json");
+
+    if !sb_model_dest.exists() || !sb_tokenizer_dest.exists() {
+        info!("📥 Provisioning SecureBERT for behavioral analysis...");
+        let sb_repo = api.model("MarsSecurity/securebert-onnx".to_string());
+        
+        if !sb_tokenizer_dest.exists() {
+            if let Ok(downloaded) = sb_repo.get("tokenizer.json").await {
+                let _ = fs::copy(downloaded, &sb_tokenizer_dest);
+            }
+        }
+        if !sb_model_dest.exists() {
+            if let Ok(downloaded) = sb_repo.get("model.onnx").await {
+                if fs::copy(downloaded, &sb_model_dest).is_ok() {
+                    info!("✅ SecureBERT model saved.");
                 }
             }
         }

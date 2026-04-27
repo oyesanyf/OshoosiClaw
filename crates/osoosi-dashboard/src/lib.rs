@@ -1203,8 +1203,8 @@ async fn post_behavioral_feedback(
             if req.is_suspicious {
                 if let Err(e) = orch
                     .handle_manual_true_positive(
-                        req.process_name.as_deref(),
-                        req.file_hash.as_deref(),
+                        req.process_name.clone(),
+                        req.file_hash.clone(),
                     )
                     .await
                 {
@@ -1213,8 +1213,8 @@ async fn post_behavioral_feedback(
             } else if req.process_name.is_some() || req.file_hash.is_some() {
                 if let Err(e) = orch
                     .record_manual_false_positive(
-                        req.process_name.as_deref(),
-                        req.file_hash.as_deref(),
+                        req.process_name.clone(),
+                        req.file_hash.clone(),
                     )
                     .await
                 {

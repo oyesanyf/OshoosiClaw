@@ -1,8 +1,8 @@
 use std::collections::HashMap;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::{Duration, Instant};
-use rand::{Rng, thread_rng};
-use rand_distr::{Distribution, Laplace};
+use rand;
+use osoosi_dp::{DifferentialPrivacy, PrivacyConfig};
 use tracing::{info, warn};
 
 // --- THE MATHEMATICAL FOUNDATION ---
@@ -14,21 +14,24 @@ pub trait DeceptionSilk: Send + Sync {
 }
 
 pub struct LatticeSilk {
-    pub epsilon: f64,
-    pub sensitivity: f64,
+    pub dp: DifferentialPrivacy,
+}
+
+impl LatticeSilk {
+    pub fn new(epsilon: f32, sensitivity: f32) -> Self {
+        Self {
+            dp: DifferentialPrivacy::new(PrivacyConfig {
+                epsilon,
+                sensitivity,
+                min_samples: 0,
+            }),
+        }
+    }
 }
 
 impl DeceptionSilk for LatticeSilk {
     fn inject_noise(&self, value: f64) -> f64 {
-        let mut rng = thread_rng();
-        // Differential Privacy: Laplace Mechanism
-        // Noise ~ Laplace(0, sensitivity/epsilon)
-        let scale = if self.epsilon > 0.0 { self.sensitivity / self.epsilon } else { 1.0 };
-        let laplace = match Laplace::new(0.0, scale) {
-            Ok(l) => l,
-            Err(_) => return value, // Fallback if parameters are invalid
-        };
-        value + laplace.sample(&mut rng)
+        self.dp.add_noise(value as f32) as f64
     }
 
     fn entangle_string(&self, input: &str) -> String {
@@ -67,7 +70,7 @@ impl BeaconGenerator {
     }
 
     pub fn generate_honey_doc(&self, path: &str) -> Vec<u8> {
-        let tracking_id = format!("OSHOOSI-{:x}", thread_rng().gen::<u32>());
+        let tracking_id = format!("OSHOOSI-{:x}", rand::random::<u32>());
         warn!("🕸️  [BEACON] Injecting tracking signature for file: {}", path);
         info!("🕸️  [BEACON] Metadata Beacon: {}/v1/trace/{}", self.collector_url, tracking_id);
         
@@ -106,7 +109,7 @@ impl MorphicSpider {
             pid,
             process_name: process_name.to_string(),
             start_time: Instant::now(),
-            silk: LatticeSilk { epsilon, sensitivity: 1.0 },
+            silk: LatticeSilk::new(epsilon as f32, 1.0),
             integrity_count: AtomicU64::new(0),
             integrity_threshold: threshold,
             exfiltrator: ShadowExfiltrator::new(),
