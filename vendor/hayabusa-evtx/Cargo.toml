@@ -8,7 +8,7 @@ readme = "README.md"
 
 version = "0.9.6"
 authors = ["Omer Ben-Amram <omerbenamram@gmail.com>, Yamato Security"]
-edition = "2024"
+edition = "2021"
 
 exclude = ["**/*.evtx", "**/*.dat"]
 
