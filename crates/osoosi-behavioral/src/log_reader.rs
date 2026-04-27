@@ -22,6 +22,8 @@ pub struct LogEvent {
 pub struct BehavioralLogReader {
     #[cfg(target_os = "windows")]
     channels: Vec<String>,
+    #[cfg(target_os = "windows")]
+    last_poll_time: std::sync::Arc<std::sync::Mutex<Option<chrono::DateTime<chrono::Utc>>>>,
     #[cfg(target_os = "linux")]
     paths: Vec<String>,
     #[cfg(target_os = "linux")]
@@ -52,7 +54,10 @@ impl BehavioralLogReader {
                             .to_string(),
                     ]
                 });
-            Self { channels }
+            Self { 
+                channels,
+                last_poll_time: std::sync::Arc::new(std::sync::Mutex::new(None)),
+            }
         }
 
         #[cfg(target_os = "linux")]
@@ -108,7 +113,7 @@ impl BehavioralLogReader {
         #[cfg(target_os = "windows")]
         {
             for channel in &self.channels {
-                if let Ok(events) = Self::query_windows_channel(channel) {
+                if let Ok(events) = self.query_windows_channel(channel) {
                     out.extend(events);
                 }
             }
@@ -157,19 +162,41 @@ impl Default for BehavioralLogReader {
 
 #[cfg(target_os = "windows")]
 impl BehavioralLogReader {
-    fn query_windows_channel(channel: &str) -> Result<Vec<LogEvent>> {
+    fn query_windows_channel(&self, channel: &str) -> Result<Vec<LogEvent>> {
+        let mut query = format!("*[System[TimeCreated[timediff(@SystemTime) <= 600000]]]"); // Default to last 10m if no state
+        
+        {
+            let last_time = self.last_poll_time.lock().unwrap();
+            if let Some(t) = *last_time {
+                // wevtutil uses ISO8601 strings for queries
+                let ts_str = t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+                query = format!("*[System[TimeCreated[@SystemTime > '{}']]]", ts_str);
+            }
+        }
+
         let output = std::process::Command::new("wevtutil")
-            .args(["qe", channel, "/rd:true", "/e:root", "/c:500", "/f:xml"])
+            .args(["qe", channel, "/rd:false", "/e:root", "/c:1000", "/f:xml", "/q", &query])
             .output()?;
 
         if !output.status.success() {
             let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!("wevtutil failed for {}: {}", channel, stderr);
+            // Don't warn on empty query results (which wevtutil sometimes treats as error)
+            if !stderr.contains("No events were found") {
+                warn!("wevtutil failed for {}: {}", channel, stderr);
+            }
             return Ok(Vec::new());
         }
 
         let xml = String::from_utf8_lossy(&output.stdout);
-        Self::parse_windows_xml(&xml, channel)
+        let events = Self::parse_windows_xml(&xml, channel)?;
+        
+        // Update watermark
+        if let Some(latest) = events.iter().map(|e| e.timestamp).max() {
+            let mut last_time = self.last_poll_time.lock().unwrap();
+            *last_time = Some(latest);
+        }
+
+        Ok(events)
     }
 
     fn parse_windows_xml(xml: &str, channel: &str) -> Result<Vec<LogEvent>> {

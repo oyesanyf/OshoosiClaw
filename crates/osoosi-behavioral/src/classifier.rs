@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokenizers::Tokenizer;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// Result of behavioral classification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -36,6 +36,7 @@ pub struct BehavioralClassifier {
     smollm: Option<Arc<SmolLMAnalyzer>>,
     securebert: Option<Arc<SecureBertAnalyzer>>,
     judge: Option<Arc<SecurityJudge>>,
+    memo: Arc<dashmap::DashMap<String, (bool, f32, String)>>,
     openai_key: String,
     client: reqwest::Client,
 }
@@ -45,7 +46,6 @@ impl BehavioralClassifier {
         let suspicious_patterns = Self::build_suspicious_patterns();
         let models_dir =
             std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
-        let _behavioral_dir = Path::new(&models_dir).join("behavioral");
 
         let feedback_path = std::env::var("OSOOSI_DATA_DIR").unwrap_or_else(|_| "data".to_string());
         let _ = std::fs::create_dir_all(&feedback_path);
@@ -137,7 +137,7 @@ impl BehavioralClassifier {
                     Some(Arc::new(s))
                 }
                 Err(e) => {
-                    debug!("SecureBert Cross-Encoder unavailable: {}. Using fallback methods.", e);
+                    info!("SecureBert Cross-Encoder unavailable: {}. Using fallback methods.", e);
                     None
                 }
             }
@@ -179,7 +179,7 @@ impl BehavioralClassifier {
                     Some(Arc::new(j))
                 }
                 Err(e) => {
-                    debug!("Gemma 4 Judge unavailable: {}. Forensic reasoning will use fallbacks.", e);
+                    info!("Gemma 4 Judge unavailable: {}. Forensic reasoning will use fallbacks.", e);
                     None
                 }
             }
@@ -195,6 +195,7 @@ impl BehavioralClassifier {
             smollm,
             securebert,
             judge,
+            memo: Arc::new(dashmap::DashMap::new()),
             openai_key,
             client,
         }
@@ -257,6 +258,20 @@ impl BehavioralClassifier {
     }
 
     async fn classify_sentence(&self, sentence: &str) -> (bool, f32, String) {
+        if let Some(cached) = self.memo.get(sentence) {
+            return cached.clone();
+        }
+
+        let result = self.classify_sentence_internal(sentence).await;
+        
+        if self.memo.len() > 10000 {
+            self.memo.clear();
+        }
+        self.memo.insert(sentence.to_string(), result.clone());
+        result
+    }
+
+    async fn classify_sentence_internal(&self, sentence: &str) -> (bool, f32, String) {
         // 1. Check feedback (continual learning)
         if let Some(ref fb) = self.feedback {
             if let Ok(Some(label)) = fb.get_feedback(sentence) {
@@ -272,16 +287,22 @@ impl BehavioralClassifier {
         let mut reasons = Vec::new();
 
         // 0. Benign Allowlist (High-confidence benign events)
-        let lower = sentence.to_lowercase();
-        if lower.contains("session established") && lower.contains("from local") {
-            return (false, 0.1, "Common benign local session".to_string());
+        fn is_trusted_process(path: &str) -> bool {
+            let stem = std::path::Path::new(path)
+                .file_stem()
+                .and_then(|s| s.to_str())
+                .map(|s| s.to_lowercase())
+                .unwrap_or_default();
+            let trusted_tools = [
+                "git", "cargo", "rustc", "ollama", "npm", "node", "python", "pip", "conda",
+                "conhost", "cmd", "powershell", "pwsh", "explorer", "taskmgr", "regedit",
+            ];
+            trusted_tools.contains(&stem.as_str())
         }
-        if lower.contains("process started")
-            && (lower.contains("git.exe")
-                || lower.contains("conhost.exe")
-                || lower.contains("cargo.exe"))
-        {
-            return (false, 0.05, "Trusted development process".to_string());
+
+        // Rule-based check against process list (if event implies process execution)
+        if is_trusted_process(sentence) {
+            return (false, 0.0, "Trusted process path".to_string());
         }
 
         // 2. Rule-based checks (IOAs)
@@ -325,7 +346,7 @@ impl BehavioralClassifier {
                         }
                     }
                     Err(e) => {
-                        debug!("ML inference failed: {}", e);
+                        info!("ML inference failed: {}", e);
                     }
                 },
                 Err(e) => {

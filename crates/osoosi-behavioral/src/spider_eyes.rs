@@ -26,13 +26,18 @@ impl GemmaSupervisor {
         } else {
             input_path
         };
-        let analyzer = Gemma4Analyzer::new(model_dir).ok().map(Arc::new);
-        if analyzer.is_none() {
-            warn!(
-                "Gemma 4 ONNX analyzer could not be initialized from {:?} (resolved model dir: {:?}). Falling back to heuristic analysis.",
-                input_path, model_dir
-            );
-        }
+        
+        let analyzer = match Gemma4Analyzer::new(model_dir) {
+            Ok(a) => Some(Arc::new(a)),
+            Err(e) => {
+                warn!(
+                    "Gemma 4 Autonomous Cortex failed to initialize from {:?}: {}. Falling back to heuristic analysis.",
+                    model_dir, e
+                );
+                None
+            }
+        };
+        
         Self { analyzer }
     }
 

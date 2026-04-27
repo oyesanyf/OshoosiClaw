@@ -12,7 +12,7 @@ use serde::Deserialize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokenizers::Tokenizer;
-use tracing::{error, info, warn};
+use tracing::{info, warn};
 
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
@@ -193,36 +193,50 @@ impl SmolLMAnalyzer {
 }
 
 /// Gemma 4 E2B Analyzer: The "Autonomous Cortex" of OshoosiClaw.
-pub struct Gemma4Analyzer {
-    session: std::sync::Mutex<Session>,
-    tokenizer: Tokenizer,
+/// Supports dual-engine: ONNX (Primary) and Candle/Transformer (Fallback).
+pub enum Gemma4Analyzer {
+    Onnx {
+        session: std::sync::Mutex<Session>,
+        tokenizer: Tokenizer,
+        device: Device,
+    },
+    Candle(SecurityJudge),
 }
 
 impl Gemma4Analyzer {
     pub fn new(model_dir: &Path) -> Result<Self> {
         info!(
-            "Initializing Gemma 4 E2B ONNX Cortex from {:?}...",
+            "Initializing Gemma 4 Autonomous Cortex from {:?}...",
             model_dir
         );
 
         let model_path = model_dir.join("model.onnx");
         let tokenizer_filename = model_dir.join("tokenizer.json");
 
-        if !model_path.exists() {
-            anyhow::bail!("Missing Gemma 4 ONNX model at {:?}", model_path);
+        // Try ONNX first
+        if model_path.exists() {
+            match (|| -> Result<Self> {
+                let tokenizer = Tokenizer::from_file(&tokenizer_filename).map_err(anyhow::Error::msg)?;
+                let session = Session::builder()?
+                    .with_optimization_level(GraphOptimizationLevel::Level3)?
+                    .with_intra_threads(4)?
+                    .commit_from_file(&model_path)?;
+                
+                Ok(Self::Onnx {
+                    session: std::sync::Mutex::new(session),
+                    tokenizer,
+                    device: Device::Cpu, // ONNX default
+                })
+            })() {
+                Ok(s) => return Ok(s),
+                Err(e) => warn!("Gemma 4 ONNX initialization failed: {}. Falling back to native transformer (Candle).", e),
+            }
         }
 
-        let tokenizer = Tokenizer::from_file(&tokenizer_filename).map_err(anyhow::Error::msg)?;
-
-        let session = Session::builder()?
-            .with_optimization_level(GraphOptimizationLevel::Level3)?
-            .with_intra_threads(4)?
-            .commit_from_file(&model_path)?;
-
-        Ok(Self {
-            session: std::sync::Mutex::new(session),
-            tokenizer,
-        })
+        // Fallback to Candle/Transformer
+        info!("Gemma 4: attempting native transformer fallback...");
+        let judge = tokio::runtime::Handle::current().block_on(SecurityJudge::new(model_dir))?;
+        Ok(Self::Candle(judge))
     }
 
     pub fn reason_about_attack(&self, graph_summary: &str) -> Result<String> {
@@ -230,59 +244,45 @@ impl Gemma4Analyzer {
             "<|im_start|>system\nYou are the OshoosiClaw Autonomous Cortex. Reason about this attack graph.<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
             graph_summary
         );
-        self.generate_text(&prompt, 256)
+        match self {
+            Self::Onnx { .. } => self.generate_text(&prompt, 256),
+            Self::Candle(judge) => tokio::runtime::Handle::current().block_on(judge.judge_artifact(&prompt)),
+        }
     }
 
     pub fn generate_text(&self, prompt: &str, max_tokens: usize) -> Result<String> {
-        let tokens = self
-            .tokenizer
-            .encode(prompt, true)
-            .map_err(anyhow::Error::msg)?;
-        let mut tokens_vec = tokens.get_ids().to_vec();
-        let mut result_text = String::new();
+        match self {
+            Self::Onnx { session, tokenizer, .. } => {
+                let mut tokens_vec = tokenizer.encode(prompt, true).map_err(anyhow::Error::msg)?.get_ids().to_vec();
+                let mut result_text = String::new();
 
-        for _ in 0..max_tokens {
-            let input_tensor = ndarray::Array2::from_shape_vec(
-                (1, tokens_vec.len()),
-                tokens_vec.iter().map(|&x| x as i64).collect(),
-            )?;
+                for _ in 0..max_tokens {
+                    let mut session_guard = session.lock().unwrap();
+                    let input_val = ort::value::Value::from_array(([1, tokens_vec.len()], tokens_vec.iter().map(|&x| x as i64).collect::<Vec<_>>()))?;
+                    let outputs = session_guard.run(ort::inputs![input_val])?;
+                    let (shape, data) = outputs[0].try_extract_tensor::<f32>()?;
+                    let dims: Vec<usize> = shape.iter().map(|&d| d as usize).collect();
+                    let view = ndarray::ArrayView::from_shape(dims, data)?;
+                    
+                    let last_token_logits = view.slice(ndarray::s![0, -1, ..]);
+                    let next_token = last_token_logits
+                        .iter()
+                        .enumerate()
+                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                        .map(|(i, _)| i as u32)
+                        .unwrap_or(0);
 
-            let mut session = self
-                .session
-                .lock()
-                .map_err(|_| anyhow::anyhow!("Session lock poisoned"))?;
-            let outputs = session.run(ort::inputs![ort::value::TensorRef::from_array_view(
-                &input_tensor
-            )?])?;
-            let (shape, data) = outputs[0].try_extract_tensor::<f32>()?;
-
-            let shape_vec = shape.clone();
-            let vocab_size = *shape_vec.last().unwrap() as usize;
-            let last_token_logits = &data[data.len() - vocab_size..];
-
-            let next_token = last_token_logits
-                .iter()
-                .enumerate()
-                .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
-                .map(|(index, _)| index)
-                .unwrap_or(0) as u32;
-
-            if next_token == 0 || next_token == 1 {
-                break;
+                    tokens_vec.push(next_token);
+                    let decoded = tokenizer.decode(&[next_token], true).map_err(anyhow::Error::msg)?;
+                    if decoded.is_empty() || next_token == 0 {
+                        break;
+                    }
+                    result_text.push_str(&decoded);
+                }
+                Ok(result_text)
             }
-
-            tokens_vec.push(next_token);
-            let decoded = self
-                .tokenizer
-                .decode(&[next_token], true)
-                .map_err(anyhow::Error::msg)?;
-            if decoded.is_empty() {
-                break;
-            }
-            result_text.push_str(&decoded);
+            Self::Candle(judge) => tokio::runtime::Handle::current().block_on(judge.judge_artifact(prompt)),
         }
-
-        Ok(result_text)
     }
 }
 

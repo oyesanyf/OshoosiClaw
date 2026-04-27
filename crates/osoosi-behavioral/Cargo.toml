@@ -15,6 +15,7 @@ tracing = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
+dashmap = "5.5"
 hostname = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 ort = { workspace = true }
