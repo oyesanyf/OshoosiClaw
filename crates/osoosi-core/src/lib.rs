@@ -2092,10 +2092,6 @@ impl EdrOrchestrator {
             }
         }
 
-        if signature.is_none() {
-            signature = self.policy.scan_event(&event);
-        }
-
         if temporal_score > 0.6 {
             warn!(
                 "Einstein Alert: Significant temporal dilation ({}) for event from {}.",
@@ -2114,9 +2110,10 @@ impl EdrOrchestrator {
                 signature = Some(sig);
             }
         }
+
         // Behavioral baselining: record and detect first-connection anomalies
         let baseline_anomaly = match event.event_id {
-            SysmonEventId::NetworkConnect => {
+            osoosi_types::SysmonEventId::NetworkConnect => {
                 let proc = event
                     .data
                     .get("Image")
@@ -2131,7 +2128,7 @@ impl EdrOrchestrator {
                     .unwrap_or("");
                 self.baseline.record_network(&event.computer, proc, dest)
             }
-            SysmonEventId::DnsQuery => {
+            osoosi_types::SysmonEventId::DnsQuery => {
                 let proc = event
                     .data
                     .get("Image")
@@ -2149,7 +2146,7 @@ impl EdrOrchestrator {
             _ => false,
         };
 
-        if matches!(event.event_id, SysmonEventId::DnsQuery) {
+        if matches!(event.event_id, osoosi_types::SysmonEventId::DnsQuery) {
             if let Some(dns_sig) = self.analyze_dns_query_risk(&event).await {
                 let take_dns_sig = signature
                     .as_ref()
@@ -2160,7 +2157,7 @@ impl EdrOrchestrator {
                 }
             }
         }
-        // Baseline anomaly: first outbound connection from process
+
         if baseline_anomaly {
             if let Some(ref mut sig) = signature {
                 sig.add_reason("Behavioral baseline: first outbound connection/query from this process on this host");
@@ -2205,14 +2202,16 @@ impl EdrOrchestrator {
                     let v = v.trim();
                     !v.is_empty() && !v.eq_ignore_ascii_case("unknown")
                 });
+                
                 if is_fp {
-                    tracing::info!(
+                    tracing::debug!(
                         "ML threat model suppressed false positive pattern for process {:?}",
                         proc
                     );
-                } else if trusted_operational && version_known && cve.is_none() && score < 0.90 {
-                    tracing::info!(
-                        "ML threat model downgraded version-known trusted binary {:?} score {:.2}; no threat emitted",
+                } else if trusted_operational && version_known && cve.is_none() {
+                    // Suppress ML hits for trusted binaries with known versions unless a CVE is matched
+                    tracing::debug!(
+                        "ML threat model suppressed hit for trusted binary {:?} (score: {:.2}); version known and no CVE hit",
                         image_path,
                         score
                     );
@@ -2225,15 +2224,6 @@ impl EdrOrchestrator {
                         "ML threat model: process {:?} / CVE {:?} scored {:.2}",
                         proc, cve, score
                     ));
-                    if let Some(ref p) = proc {
-                        if p.to_lowercase().contains("mimikatz")
-                            || p.to_lowercase().contains("lsass")
-                        {
-                            sig.set_predicted_next(
-                                "Credential dumping or LSASS access may lead to lateral movement",
-                            );
-                        }
-                    }
                     signature = Some(sig);
                 }
             }

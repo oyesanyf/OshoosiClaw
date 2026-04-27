@@ -100,6 +100,15 @@ impl ThreatModel {
 
     /// Add a threat signature to training data and optionally retrain.
     pub fn add_training_sample(&mut self, sig: &ThreatSignature) {
+        // Avoid model poisoning: don't learn from detections of trusted operational tools (git, node, etc.)
+        // as these are likely noise or previous false positives that entered the gossip mesh.
+        if let Some(ref p) = sig.process_name {
+            let p = p.to_lowercase();
+            if p == "git.exe" || p == "node.exe" || p == "python.exe" || p == "net.exe" || p == "osoosi.exe" {
+                return;
+            }
+        }
+
         let features = Self::features_from_signature(sig);
         for feat in &features {
             *self.weights.features.entry(feat.clone()).or_insert(0.0) += sig.confidence;
