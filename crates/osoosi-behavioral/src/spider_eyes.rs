@@ -7,6 +7,8 @@ use tracing::{info, warn, error};
 
 use crate::llm_engine::Gemma4Analyzer;
 use std::sync::Arc;
+use dashmap::DashMap;
+use blake3::Hasher;
 
 /// THE BRAIN: Local Gemma 4 Mechanistic Analyst
 pub struct GemmaSupervisor {
@@ -68,22 +70,25 @@ impl GemmaSupervisor {
 
 pub struct SpiderEyes {
     supervisor: GemmaSupervisor,
+    analysis_cache: DashMap<String, String>, // Hash -> Report
 }
 
 impl SpiderEyes {
     pub fn new(model_path: &str) -> Self {
         Self {
             supervisor: GemmaSupervisor::new(model_path),
+            analysis_cache: DashMap::new(),
         }
     }
 
     /// ASLR-aware binary analysis of a running process.
     pub fn watch_process(&self, target_pid: u32) -> anyhow::Result<String> {
         // 1. Locate the process
-        let mut s = System::new_all();
-        s.refresh_processes();
+        let mut s = System::new();
+        let pid = Pid::from(target_pid as usize);
+        s.refresh_process(pid);
         
-        let process = s.process(Pid::from(target_pid as usize))
+        let process = s.process(pid)
             .ok_or_else(|| anyhow::anyhow!("Process {} not found", target_pid))?;
         
         info!("🕸️  [OSHOOSI] Spider attached to: {}", process.name());
@@ -104,48 +109,63 @@ impl SpiderEyes {
         // 3. CAPTURE: Read from memory
         // On Linux, we use /proc/[pid]/mem. On Windows, we'd use ReadProcessMemory.
         #[cfg(target_os = "linux")]
-        let buffer = {
+        let (buffer, hash) = {
             use std::io::{Read, Seek, SeekFrom};
             let mut mem_file = std::fs::File::open(format!("/proc/{}/mem", target_pid))?;
             let mut buf = vec![0u8; 1024];
             mem_file.seek(SeekFrom::Start(exec_segment.start() as u64))?;
             let bytes_read = mem_file.read(&mut buf)?;
             buf.truncate(bytes_read);
-            buf
+            
+            let mut hasher = Hasher::new();
+            hasher.update(&buf);
+            let hash = hasher.finalize().to_string();
+            
+            if let Some(cached_report) = self.analysis_cache.get(&hash) {
+                info!("🕸️  [CACHE-HIT] Re-using analysis for binary hash {}", hash);
+                return Ok(cached_report.clone());
+            }
+            (buf, hash)
         };
 
         #[cfg(target_os = "windows")]
-        let buffer = {
-            // Windows-specific memory reading logic
-            use winapi::um::processthreadsapi::OpenProcess;
-            use winapi::um::memoryapi::ReadProcessMemory;
-            use winapi::um::handleapi::CloseHandle;
-            use winapi::um::winnt::PROCESS_VM_READ;
-
-            let handle = unsafe { OpenProcess(PROCESS_VM_READ, 0, target_pid) };
-            if handle.is_null() {
-                return Err(anyhow::anyhow!("Failed to open process for reading"));
-            }
-
-            let mut buf = vec![0u8; 1024];
-            let mut bytes_read = 0;
-            let success = unsafe {
-                ReadProcessMemory(
-                    handle,
+        let (buffer, hash) = {
+            // 3. READ: Extract bytes for disassembly
+            let mut buffer = vec![0u8; exec_segment.size()];
+            unsafe {
+                let proc_handle = winapi::um::processthreadsapi::OpenProcess(
+                    winapi::um::winnt::PROCESS_VM_READ | winapi::um::winnt::PROCESS_QUERY_INFORMATION,
+                    0,
+                    target_pid,
+                );
+                if proc_handle.is_null() {
+                    return Err(anyhow::anyhow!("Failed to open process {} for reading", target_pid));
+                }
+                let mut bytes_read = 0;
+                let ok = winapi::um::memoryapi::ReadProcessMemory(
+                    proc_handle,
                     exec_segment.start() as *const _,
-                    buf.as_mut_ptr() as *mut _,
-                    buf.len(),
-                    &mut bytes_read
-                )
-            };
-            
-            unsafe { CloseHandle(handle); }
-            
-            if success == 0 {
-                return Err(anyhow::anyhow!("ReadProcessMemory failed"));
+                    buffer.as_mut_ptr() as *mut _,
+                    buffer.len(),
+                    &mut bytes_read,
+                );
+                winapi::um::handleapi::CloseHandle(proc_handle);
+                if ok == 0 {
+                    return Err(anyhow::anyhow!("Failed to read memory from PID {}", target_pid));
+                }
+                buffer.truncate(bytes_read);
             }
-            buf.truncate(bytes_read);
-            buf
+
+            // 3b. CACHE CHECK: Hash the bytes to avoid redundant disassembly/inference
+            let mut hasher = Hasher::new();
+            hasher.update(&buffer);
+            let hash = hasher.finalize().to_string();
+
+            if let Some(cached_report) = self.analysis_cache.get(&hash) {
+                info!("🕸️  [CACHE-HIT] Re-using analysis for binary hash {}", hash);
+                return Ok(cached_report.clone());
+            }
+            (buffer, hash)
         };
 
         // 4. DISASSEMBLE: Translate bytes to assembly
@@ -174,7 +194,12 @@ impl SpiderEyes {
         info!("🕸️  [LOCAL-AI] Gemma 4 analyzing assembly intent for PID {}...", target_pid);
         let report = self.supervisor.analyze_intent(&asm_output);
         
-        Ok(format!("PID: {}\nNAME: {}\nSEGMENT: 0x{:x}\nDISASSEMBLY: {}\n\nREPORT:\n{}", 
-            target_pid, process.name(), exec_segment.start(), asm_output, report))
+        let final_report = format!("PID: {}\nNAME: {}\nSEGMENT: 0x{:x}\nDISASSEMBLY: {}\n\nREPORT:\n{}", 
+            target_pid, process.name(), exec_segment.start(), asm_output, report);
+        
+        // Save to cache
+        self.analysis_cache.insert(hash, final_report.clone());
+        
+        Ok(final_report)
     }
 }

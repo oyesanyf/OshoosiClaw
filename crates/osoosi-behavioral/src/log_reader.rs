@@ -175,7 +175,14 @@ impl BehavioralLogReader {
         }
 
         let output = std::process::Command::new("wevtutil")
-            .args(["qe", channel, "/rd:false", "/e:root", "/c:1000", "/f:xml", "/q", &query])
+            .args([
+                "qe",
+                channel,
+                "/e:root",
+                "/c:1000",
+                "/f:xml",
+                &format!("/q:\"{}\"", query),
+            ])
             .output()?;
 
         if !output.status.success() {

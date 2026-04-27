@@ -93,10 +93,8 @@ fn is_trusted_operational_image(image_path: &str) -> bool {
         || path.contains("\\oshoosiclaw\\tools\\")
         || path.contains("\\oshoosiclaw\\target\\")
         || path.contains("/oshoosiclaw/tools/")
-        || path.contains("/oshoosiclaw/target/");
-    if !trusted_path {
-        return false;
-    }
+        || path.contains("/oshoosiclaw/target/")
+        || path.contains("\\appdata\\local\\programs\\python\\");
 
     const TRUSTED_STEMS: &[&str] = &[
         "osoosi",
@@ -120,8 +118,15 @@ fn is_trusted_operational_image(image_path: &str) -> bool {
         "antigravity",
         "language_server_windows_x64",
         "filecoauth",
+        "python",
+        "python3",
+        "pip",
     ];
-    TRUSTED_STEMS.contains(&stem.as_str())
+    let is_trusted_stem = TRUSTED_STEMS.contains(&stem.as_str());
+    
+    let is_venv = path.contains("\\.venv\\") || path.contains("/.venv/") || path.contains("\\site-packages\\") || path.contains("/site-packages/");
+    
+    is_trusted_stem && (trusted_path || is_venv)
 }
 
 fn should_skip_file_malware_scan(path: &std::path::Path) -> bool {
@@ -2352,8 +2357,9 @@ impl EdrOrchestrator {
                     );
                 } else if trusted_operational && cve.is_none() {
                     // SUPPRESSION: If it's a trusted tool and has NO CVE hit, never emit a standalone ML alarm 
-                    // unless the score is exceptionally high (e.g. > 0.98), suggesting a serious hijack.
-                    if score < 0.98 {
+                    // unless the score is exceptionally high (e.g. > 1.1), suggesting a serious hijack.
+                    // Note: We use 1.1 because some features can cap at 1.0.
+                    if score < 1.1 {
                         tracing::debug!(
                             "ML threat model suppressed hit for trusted binary {:?} (score: {:.2})",
                             image_path,
