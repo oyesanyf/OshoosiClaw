@@ -140,7 +140,7 @@ From Windows after provisioning:
 
 ```mermaid
 graph TD
-    SYS["Sysmon / FileWatcher"] -->|Telemetry| ORCH["EdrOrchestrator (osoosi-core)"]
+    SYS["Native EvtQuery API / FileWatcher"] -->|Telemetry| ORCH["EdrOrchestrator (osoosi-core)"]
     ORCH -->|Scan Events| POL["Policy Engine (osoosi-policy)"]
     POL -->|Voter Consensus| DEC{"Decision"}
     DEC -->|True Positive| TP["Tarpit + Firewall Block + Mesh Broadcast"]
@@ -156,14 +156,14 @@ graph TD
 | Crate | Role |
 |---|---|
 | `osoosi-core` | Main orchestrator: telemetry ingestion, consensus, response |
-| `osoosi-behavioral` | AI engine: DeepSeek R1 (GGUF), SecureBERT (ONNX), SmolLM (Candle) |
+| `osoosi-behavioral` | AI engine: DeepSeek R1 (GGUF/Ollama), SecureBERT (ONNX), SmolLM (Candle) |
 | `osoosi-wire` | P2P mesh networking via `libp2p` + GossipSub |
-| `osoosi-policy` | Sigma rules, CISA KEV, OTX TAXII, NVD threat feeds |
+| `osoosi-policy` | Sigma rules, CISA KEV, OTX TAXII, NVD threat feeds + rate-limited LLM voter |
 | `osoosi-runtime` | Active response: Tarpits, Ghost Files, Process Kill |
 | `osoosi-sandbox` | NVIDIA OpenShell isolation for high-risk tasks |
 | `osoosi-memory` | SQLite persistence, bloom filter, NSRL bypass cache |
 | `osoosi-repair` | Autonomous CVE discovery and patch application |
-| `osoosi-telemetry` | Sysmon/auditd/FileWatcher event ingestion |
+| `osoosi-telemetry` | Native Win32 EvtQuery API / auditd / FileWatcher event ingestion |
 
 ---
 
@@ -182,26 +182,54 @@ graph LR
     CON --> DEC{"Threat Decision"}
 ```
 
+### Smart Engine Selection
+
+The AI engine auto-selects the optimal backend based on hardware:
+
+| Condition | Engine Selected | Why |
+|---|---|---|
+| CUDA GPU + CUDA Toolkit | **Native GGUF (Candle on GPU)** | In-process, fastest, no external deps |
+| GPU + Ollama installed | **Ollama HTTP API** | llama.cpp backend, GPU-accelerated |
+| CPU-only + Ollama | **Ollama HTTP API** | llama.cpp is 10x faster than Candle on CPU |
+| CPU-only, no Ollama | **Native GGUF (Candle on CPU)** | Slow but functional, last resort |
+
 ### Model Loading Priority
 
 | Model | Purpose | Loading Order |
 |---|---|---|
-| **DeepSeek R1:1.5b** | LLM reasoning & attack graph analysis | 1. ONNX → 2. **Native GGUF (Candle)** → 3. Ollama subprocess |
+| **DeepSeek R1:1.5b** | LLM reasoning & attack graph analysis | 1. ONNX → 2. GGUF on GPU → 3. **Ollama HTTP API** → 4. GGUF on CPU |
 | **SecureBERT** | Log classification & behavioral scoring | 1. **ONNX (model.onnx)** → 2. Candle safetensors |
 | **MalConv** | Static binary malware detection | Candle safetensors |
 
-### Native GGUF Loading (NEW)
+### DeepSeek R1 Think-Trace Parser
 
-DeepSeek R1:1.5b can now run **natively inside osoosi.exe** via Candle's `quantized_qwen2` loader, using the same GGUF file Ollama downloaded:
+DeepSeek R1 generates internal reasoning traces before its final answer. The `strip_deepseek_thinking()` function handles both formats:
 
-- **No Ollama subprocess** — eliminates 21GB RAM spikes
-- **In-process inference** — ~1.1GB memory, no IPC overhead
-- **30s timeout** — configurable via `osoosi.toml`
-- Auto-downloads tokenizer from HuggingFace on first use
+- **XML tags**: `<think>...reasoning...</think>final answer`
+- **Ollama plaintext**: `Thinking...\n...reasoning...\n...done thinking.\nfinal answer`
 
-### SecureBERT ONNX (NEW)
+Only the final answer reaches the consensus voter — thinking traces are stripped at the engine level.
 
-SecureBERT now loads via ONNX Runtime (architecture-agnostic), using the existing 569MB `model.onnx`:
+### LLM Voter Rate Limiting
+
+The LLM-Reasoning voter is rate-limited to prevent CPU/GPU saturation:
+
+- **30-second cooldown** between LLM inference calls
+- **Safe-process filter**: 30+ known Windows system processes (svchost, explorer, etc.) are skipped entirely
+- **Minimum response check**: Responses < 10 chars are discarded (prevents phantom votes from timeouts)
+- **Max 48 tokens**: Short classification output only — no essays
+
+### Native Event Log Reading (Win32 EvtQuery API)
+
+Windows telemetry uses the **native EvtQuery API** instead of spawning `wevtutil.exe` subprocesses:
+
+- **Tamper-proof**: Attackers cannot bypass by renaming/blocking `wevtutil.exe`
+- **Performance**: Direct API call vs subprocess spawn per poll cycle
+- **Raw XML**: Events rendered directly in-process memory
+
+### SecureBERT ONNX
+
+SecureBERT loads via ONNX Runtime (architecture-agnostic), using the existing 569MB `model.onnx`:
 
 - Classifies Windows Event Logs as malicious/benign
 - Returns a 0.0–1.0 confidence score via sigmoid activation
@@ -240,8 +268,8 @@ All hardcoded values are now centralized. Environment variables override any val
 ```toml
 [ai]
 reasoning_model  = "deepseek-r1:1.5b"    # Ollama/GGUF model name
-llm_timeout_secs = 30                     # Kill inference after N seconds
-reasoning_url    = "http://127.0.0.1:11434/v1/chat/completions"
+llm_timeout_secs = 90                     # Kill inference after N seconds
+reasoning_url    = "http://127.0.0.1:11434/v1/chat/completions"  # Ollama HTTP API
 fallback_models  = ["gemma3:1b", "gemma3:4b", "qwen2.5:1.5b", "phi3:mini"]
 colog_threshold  = 0.85                   # Anomaly detection threshold
 
@@ -262,7 +290,7 @@ backup_type = "file_sync"
 | Env Variable | Overrides | Default |
 |---|---|---|
 | `OSOOSI_REASONING_MODEL` | `ai.reasoning_model` | `deepseek-r1:1.5b` |
-| `OSOOSI_LLM_TIMEOUT_SECS` | `ai.llm_timeout_secs` | `30` |
+| `OSOOSI_LLM_TIMEOUT_SECS` | `ai.llm_timeout_secs` | `90` |
 | `OSOOSI_REASONING_URL` | `ai.reasoning_url` | `http://127.0.0.1:11434/...` |
 | `OSOOSI_NO_AI` | `ai.enabled` | `true` |
 | `OSOOSI_DASHBOARD_PORT` | Dashboard port | `3030` |
