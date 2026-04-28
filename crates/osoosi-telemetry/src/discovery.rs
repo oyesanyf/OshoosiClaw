@@ -12,6 +12,10 @@ use std::process::Command;
 use std::time::Duration;
 use sysinfo::Networks;
 use tracing::{debug, info};
+#[cfg(target_os = "windows")]
+use windows::Win32::System::EventLog::*;
+#[cfg(target_os = "windows")]
+use windows::core::PCWSTR;
 
 /// A host discovered through any discovery method.
 #[derive(Debug, Clone)]
@@ -288,50 +292,53 @@ impl RouteScraper {
     #[cfg(target_os = "windows")]
     pub fn scrape_sysmon_connections(&self) -> Vec<DiscoveredHost> {
         let mut hosts = HashMap::new();
+        let parser = crate::sysmon::SysmonParser::new();
 
-        // Query Sysmon Event ID 3 (NetworkConnect) from last 24h
-        let ps_cmd = r#"
-            $since = (Get-Date).AddHours(-24)
-            Get-WinEvent -FilterHashtable @{
-                LogName = 'Microsoft-Windows-Sysmon/Operational'
-                Id = 3
-                StartTime = $since
-            } -ErrorAction SilentlyContinue |
-            ForEach-Object {
-                $xml = [xml]$_.ToXml()
-                $data = $xml.Event.EventData.Data
-                $dst = ($data | Where-Object { $_.Name -eq 'DestinationIp' }).'#text'
-                if ($dst) { Write-Output $dst }
-            } | Sort-Object -Unique
-        "#;
-
-        if let Ok(output) = Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", ps_cmd])
-            .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            for line in stdout.lines() {
-                let ip = line.trim();
-                if ip.is_empty() || ip == "127.0.0.1" || ip == "::1" {
-                    continue;
+        unsafe {
+            let channel = windows::core::w!("Microsoft-Windows-Sysmon/Operational");
+            let query = windows::core::w!("*[System[(EventID=3)]]");
+            
+            let handle = EvtQuery(None, channel, query, EvtQueryChannelPath.0 as u32);
+            if let Ok(h) = handle {
+                let mut events = vec![0isize; 64]; // EvtNext expects &mut [isize]
+                let mut returned = 0u32;
+                
+                // windows-rs EvtNext: (session, events_slice, timeout_ms, flags, returned)
+                if EvtNext(h, &mut events, 0, 0, &mut returned).is_ok() && returned > 0 {
+                    for i in 0..returned as usize {
+                        let event = EVT_HANDLE(events[i]);
+                        let mut buffer_used = 0u32;
+                        let mut property_count = 0u32;
+                        
+                        // Get XML length first
+                        let _ = EvtRender(None, event, EvtRenderEventXml.0 as u32, 0, None, &mut buffer_used, &mut property_count);
+                        
+                        if buffer_used > 0 {
+                            let mut buffer = vec![0u16; (buffer_used / 2 + 1) as usize];
+                            if EvtRender(None, event, EvtRenderEventXml.0 as u32, buffer_used, Some(buffer.as_mut_ptr() as *mut _), &mut buffer_used, &mut property_count).is_ok() {
+                                let xml = String::from_utf16_lossy(&buffer);
+                                if let Ok(parsed) = parser.parse_xml(&xml) {
+                                    if let Some(dst_ip) = parsed.data.get("DestinationIp").and_then(|v| v.as_str()) {
+                                        if dst_ip != "127.0.0.1" && dst_ip != "::1" {
+                                            hosts.entry(dst_ip.to_string()).or_insert_with(|| DiscoveredHost {
+                                                ip: dst_ip.to_string(),
+                                                mac: None,
+                                                interface: "sysmon-native".to_string(),
+                                                is_osoosi_peer: false,
+                                            });
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        let _ = EvtClose(event);
+                    }
                 }
-                hosts
-                    .entry(ip.to_string())
-                    .or_insert_with(|| DiscoveredHost {
-                        ip: ip.to_string(),
-                        mac: None,
-                        interface: "sysmon-event3".to_string(),
-                        is_osoosi_peer: false,
-                    });
+                let _ = EvtClose(h);
             }
         }
 
-        let result: Vec<DiscoveredHost> = hosts.into_values().collect();
-        info!(
-            "Sysmon Event ID 3 passive discovery: {} unique remote IPs",
-            result.len()
-        );
-        result
+        hosts.into_values().collect()
     }
 
     #[cfg(not(target_os = "windows"))]

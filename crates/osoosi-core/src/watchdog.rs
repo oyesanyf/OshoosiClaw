@@ -256,17 +256,29 @@ fn trigger_kill(state: &WatchdogState, reason: &str) {
     // Log to Windows Event Log or syslog before dying
     #[cfg(target_os = "windows")]
     {
-        // Try to create the source if it doesn't exist (requires admin, might fail)
-        let _ = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", "if (![System.Diagnostics.EventLog]::SourceExists('OsoosiWatchdog')) { New-EventLog -LogName Application -Source 'OsoosiWatchdog' }"])
-            .status();
+        use windows::Win32::System::EventLog::*;
+        use windows::core::PCWSTR;
 
-        let _ = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", &format!(
-                "Write-EventLog -LogName Application -Source 'OsoosiWatchdog' -EventId 9999 -EntryType Error -Message 'Watchdog kill-switch triggered: {}'",
-                reason
-            )])
-            .status();
+        unsafe {
+            let handle = RegisterEventSourceW(None, PCWSTR::from_raw(windows::core::w!("OsoosiWatchdog").as_ptr()));
+            if let Ok(h) = handle {
+                let msg = format!("Watchdog kill-switch triggered: {}", reason);
+                let mut w_msg: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
+                let strings = [PCWSTR::from_raw(w_msg.as_ptr())];
+                
+                let _ = ReportEventW(
+                    h,
+                    EVENTLOG_ERROR_TYPE,
+                    0u16,
+                    9999u32,
+                    None,
+                    0u32,
+                    Some(&strings),
+                    None,
+                );
+                let _ = DeregisterEventSource(h);
+            }
+        }
     }
 
     #[cfg(target_os = "linux")]
@@ -405,18 +417,9 @@ type SerialHandle = std::fs::File;
 
 #[cfg(target_os = "windows")]
 fn open_serial_port(port: &str, baud_rate: u32) -> anyhow::Result<SerialHandle> {
-    // Configure via mode command first
-    let _ = std::process::Command::new("mode")
-        .args([
-            port,
-            &format!("baud={}", baud_rate),
-            "parity=n",
-            "data=8",
-            "stop=1",
-        ])
-        .output();
+    use std::os::windows::io::AsRawHandle;
+    use windows::Win32::Devices::Communication::*;
 
-    // Open as a file (Windows COM ports are file-like)
     let path = if port.starts_with("\\\\") {
         port.to_string()
     } else {
@@ -426,20 +429,75 @@ fn open_serial_port(port: &str, baud_rate: u32) -> anyhow::Result<SerialHandle> 
         .read(true)
         .write(true)
         .open(&path)?;
+
+    let handle = windows::Win32::Foundation::HANDLE(file.as_raw_handle());
+    
+    unsafe {
+        let mut dcb = DCB::default();
+        dcb.DCBlength = std::mem::size_of::<DCB>() as u32;
+        if GetCommState(handle, &mut dcb).is_ok() {
+            dcb.BaudRate = baud_rate;
+            dcb.ByteSize = 8;
+            // Clear fParity bit (bit 1) in the DCB bitfield
+            dcb._bitfield &= !(1u32 << 1);
+            dcb.StopBits = ONESTOPBIT;
+            let _ = SetCommState(handle, &dcb);
+        }
+
+        let mut timeouts = COMMTIMEOUTS::default();
+        timeouts.ReadIntervalTimeout = u32::MAX;
+        timeouts.ReadTotalTimeoutConstant = 0;
+        timeouts.ReadTotalTimeoutMultiplier = 0;
+        timeouts.WriteTotalTimeoutConstant = 0;
+        timeouts.WriteTotalTimeoutMultiplier = 0;
+        let _ = SetCommTimeouts(handle, &timeouts);
+    }
+
     Ok(file)
 }
 
 #[cfg(target_os = "linux")]
 fn open_serial_port(port: &str, baud_rate: u32) -> anyhow::Result<SerialHandle> {
-    // Configure via stty
-    let _ = std::process::Command::new("stty")
-        .args(["-F", port, &baud_rate.to_string(), "raw", "-echo"])
-        .output();
+    use std::os::unix::io::AsRawFd;
 
     let file = std::fs::OpenOptions::new()
         .read(true)
         .write(true)
         .open(port)?;
+
+    let fd = file.as_raw_fd();
+    unsafe {
+        let mut termios: libc::termios = std::mem::zeroed();
+        if libc::tcgetattr(fd, &mut termios) == 0 {
+            let speed = match baud_rate {
+                9600 => libc::B9600,
+                19200 => libc::B19200,
+                38400 => libc::B38400,
+                57600 => libc::B57600,
+                115200 => libc::B115200,
+                _ => libc::B9600,
+            };
+            libc::cfsetispeed(&mut termios, speed);
+            libc::cfsetospeed(&mut termios, speed);
+            
+            termios.c_cflag |= libc::CLOCAL | libc::CREAD;
+            termios.c_cflag &= !libc::CSIZE;
+            termios.c_cflag |= libc::CS8;
+            termios.c_cflag &= !libc::PARENB;
+            termios.c_cflag &= !libc::CSTOPB;
+            termios.c_cflag &= !libc::CRTSCTS;
+            
+            termios.c_iflag &= !(libc::IGNBRK | libc::BRKINT | libc::PARMRK | libc::ISTRIP | libc::INLCR | libc::IGNCR | libc::ICRNL | libc::IXON);
+            termios.c_lflag &= !(libc::ECHO | libc::ECHONL | libc::ICANON | libc::ISIG | libc::IEXTEN);
+            termios.c_oflag &= !libc::OPOST;
+            
+            termios.c_cc[libc::VMIN] = 0;
+            termios.c_cc[libc::VTIME] = 10; // 1s timeout
+
+            libc::tcsetattr(fd, libc::TCSANOW, &termios);
+        }
+    }
+
     Ok(file)
 }
 

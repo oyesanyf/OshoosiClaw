@@ -63,17 +63,28 @@ impl Drop for TemporaryAdminGuard {
     fn drop(&mut self) {
         #[cfg(target_os = "windows")]
         {
-            let status = Command::new("net")
-                .args(["localgroup", "administrators", &self.user, "/delete"])
-                .status();
-            if let Ok(s) = status {
-                if s.success() {
-                    info!("Revoked temporary admin for user {}", self.user);
+            use windows::Win32::NetworkManagement::NetManagement::*;
+            use windows::core::PCWSTR;
+
+            let mut user_w: Vec<u16> = self.user.encode_utf16().chain(std::iter::once(0)).collect();
+            let group_w: Vec<u16> = "Administrators".encode_utf16().chain(std::iter::once(0)).collect();
+
+            let member = LOCALGROUP_MEMBERS_INFO_3 {
+                lgrmi3_domainandname: windows::core::PWSTR(user_w.as_mut_ptr()),
+            };
+
+            unsafe {
+                let result = NetLocalGroupDelMembers(
+                    None,
+                    PCWSTR::from_raw(group_w.as_ptr()),
+                    3,
+                    &member as *const _ as *const _,
+                    1,
+                );
+                if result == 0 {
+                    info!("Revoked temporary admin for user {} via native API.", self.user);
                 } else {
-                    warn!(
-                        "Failed to revoke temporary admin for user {} (may need manual removal)",
-                        self.user
-                    );
+                    warn!("Failed to revoke temporary admin for user {} (error {})", self.user, result);
                 }
             }
         }
@@ -135,21 +146,7 @@ impl PatchEngine {
     }
 
     pub fn is_admin(&self) -> bool {
-        #[cfg(target_os = "windows")]
-        {
-            // 'net session' is a reliable check for admin elevation on Windows
-            std::process::Command::new("net")
-                .arg("session")
-                .stdout(std::process::Stdio::null())
-                .stderr(std::process::Stdio::null())
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            unsafe { libc::getuid() == 0 }
-        }
+        osoosi_types::is_elevated()
     }
 
     /// Replace a file with a clean version from the given URL. Used for malware remediation.
@@ -563,51 +560,85 @@ impl PatchEngine {
             }
 
             let kb = patch.version.trim().to_uppercase();
-            // COM-based installer for pending Windows updates (no external module dependency).
-            let ps = format!(
-                r#"
-$kb = "{kb}"
-$session = New-Object -ComObject Microsoft.Update.Session
-$searcher = $session.CreateUpdateSearcher()
-$result = $searcher.Search("IsInstalled=0 and IsHidden=0")
-$collection = New-Object -ComObject Microsoft.Update.UpdateColl
-for ($i=0; $i -lt $result.Updates.Count; $i++) {{
-  $u = $result.Updates.Item($i)
-  $match = $false
-  if ($kb -like "KB*") {{
-    for ($j=0; $j -lt $u.KBArticleIDs.Count; $j++) {{
-      if (("KB" + $u.KBArticleIDs.Item($j)) -eq $kb) {{ $match = $true; break }}
-    }}
-  }}
-  if (-not $match -and $u.Title -like "*{title}*") {{ $match = $true }}
-  if ($match) {{ [void]$collection.Add($u) }}
-}}
-if ($collection.Count -eq 0) {{ throw "No matching Windows update found for {kb}/{title}" }}
-$installer = $session.CreateUpdateInstaller()
-$installer.Updates = $collection
-$res = $installer.Install()
-if ($res.RebootRequired) {{ Write-Output "REBOOT_REQUIRED" }}
-if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
-  Write-Output "NON_CRITICAL_FAILURE"
-}} elseif ($res.ResultCode -notin 2,3) {{
-  throw "Install failed. ResultCode=$($res.ResultCode) (2=Success, 3=SuccessWithErrors, 4=Failed, 5=Aborted)"
-}}
-"#,
-                kb = kb,
-                title = patch.component.replace('"', "")
-            );
-            let output = Command::new("powershell")
-                .args(["-NoProfile", "-ExecutionPolicy", "Bypass", "-Command", &ps])
-                .output()?;
-            
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if !output.status.success() {
-                error!("Windows patch install command failed: {}", stdout);
-                return Err(anyhow!("Windows patch install command failed: {}", stdout));
-            }
+            let title_match = patch.component.replace('"', "").to_lowercase();
 
-            if stdout.contains("REBOOT_REQUIRED") {
-                info!("Windows update installed successfully but requires a system REBOOT to complete.");
+            use windows::Win32::System::Com::*;
+            use windows::Win32::System::UpdateAgent::*;
+
+            unsafe {
+                let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+                let session: IUpdateSession = match CoCreateInstance(&UpdateSession, None, CLSCTX_INPROC_SERVER) {
+                    Ok(s) => s,
+                    Err(e) => return Err(anyhow!("Failed to create UpdateSession: {}", e)),
+                };
+
+                let searcher = session.CreateUpdateSearcher()?;
+                let result = match searcher.Search(&windows::core::BSTR::from("IsInstalled=0 and IsHidden=0")) {
+                    Ok(r) => r,
+                    Err(e) => return Err(anyhow!("Windows Update search failed: {}", e)),
+                };
+                
+                let updates = result.Updates()?;
+                let count = updates.Count()?;
+                let collection: IUpdateCollection = CoCreateInstance(&UpdateCollection, None, CLSCTX_INPROC_SERVER)?;
+                
+                for i in 0..count {
+                    // IUpdateCollection::get_Item takes i32
+                    if let Ok(update) = updates.get_Item(i as i32) {
+                        let mut is_match = false;
+                        if kb.starts_with("KB") {
+                            if let Ok(kb_ids) = update.KBArticleIDs() {
+                                let kb_count = kb_ids.Count().unwrap_or(0);
+                                for j in 0..kb_count {
+                                    if let Ok(id) = kb_ids.get_Item(j as i32) {
+                                        if format!("KB{}", id) == kb {
+                                            is_match = true;
+                                            break;
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                        
+                        if !is_match {
+                            if let Ok(title) = update.Title() {
+                                if title.to_string().to_lowercase().contains(&title_match) {
+                                    is_match = true;
+                                }
+                            }
+                        }
+                        
+                        if is_match {
+                            let _ = collection.Add(&update);
+                        }
+                    }
+                }
+                
+                if collection.Count().unwrap_or(0) == 0 {
+                    return Err(anyhow!("No matching Windows update found for {}/{}", kb, title_match));
+                }
+                
+                let installer = session.CreateUpdateInstaller()?;
+                installer.SetUpdates(&collection)?;
+                
+                info!("Starting native Windows Update installation for {}...", kb);
+                let res = match installer.Install() {
+                    Ok(r) => r,
+                    Err(e) => return Err(anyhow!("Windows Update installation triggered error: {}", e)),
+                };
+                
+                let reboot_req = res.RebootRequired();
+                if reboot_req.unwrap_or(windows::Win32::Foundation::VARIANT_BOOL(0)).0 != 0 {
+                    info!("Windows update installed successfully but requires a system REBOOT to complete.");
+                }
+                
+                use windows::Win32::System::UpdateAgent::OperationResultCode;
+                let result_code = res.ResultCode().unwrap_or(OperationResultCode(4)); // 4 = orcFailed
+                if result_code.0 == 4 && (kb == "KB2267602" || kb == "KB5042320") {
+                    warn!("Non-critical failure for Defender/System update {}; continuing.", kb);
+                } else if result_code.0 != 2 && result_code.0 != 3 { // 2=Success, 3=SuccessWithErrors
+                    return Err(anyhow!("Windows Update install failed with ResultCode: {}", result_code.0));
+                }
             }
         }
         #[cfg(target_os = "linux")]
@@ -790,17 +821,20 @@ if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
                 return true;
             }
             if kb.starts_with("KB") {
-                return Command::new("powershell")
-                    .args([
-                        "-NoProfile",
-                        "-ExecutionPolicy",
-                        "Bypass",
-                        "-Command",
-                        &format!("if (Get-HotFix -Id {} -ErrorAction SilentlyContinue) {{ exit 0 }} else {{ exit 1 }}", kb),
-                    ])
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false);
+                // Rustify: Use WMI to verify hotfix instead of powershell.exe
+                use wmi::{COMLibrary, WMIConnection};
+                let com_lib = match COMLibrary::new() {
+                    Ok(lib) => lib,
+                    Err(_) => return false,
+                };
+                let wmi_con = match WMIConnection::new(com_lib) {
+                    Ok(con) => con,
+                    Err(_) => return false,
+                };
+                
+                let query = format!("SELECT HotFixID FROM Win32_QuickFixEngineering WHERE HotFixID = '{}'", kb);
+                let results: Vec<serde_json::Value> = wmi_con.raw_query(&query).unwrap_or_default();
+                return !results.is_empty();
             }
             false
         }
@@ -913,32 +947,16 @@ if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
                         if code == 87 || code == -2147024809 {
                             // Invalid parameter
                             warn!("wusa.exe rollback failed with code 87. Attempting DISM fallback for {}...", kb);
-                            let dism_ps = format!(
-                                r#"
-$kb = "{}"
-$pkg = Get-WindowsPackage -Online | Where-Object {{ $_.PackageName -like "*$kb*" }}
-if ($pkg) {{
-  Write-Output "Found package $($pkg.PackageName). Removing via DISM..."
-  try {{
-    Remove-WindowsPackage -Online -PackageName $pkg.PackageName -NoRestart -ErrorAction Stop
-  }} catch {{
-    Write-Warning "DISM removal failed for $($pkg.PackageName): $_. System may require manual cleanup."
-  }}
-}} else {{
-  Write-Warning "Package for $kb not found via DISM. It may already be removed or is a non-standard update (e.g. Defender)."
-}}
-"#,
-                                kb_num
-                            );
-                            let dism_status = Command::new("powershell")
-                                .args([
-                                    "-NoProfile",
-                                    "-ExecutionPolicy",
-                                    "Bypass",
-                                    "-Command",
-                                    &dism_ps,
-                                ])
+                            // Rustify: Use dism.exe directly instead of powershell.exe
+                            let dism_status = Command::new("dism.exe")
+                                .args(["/Online", "/Remove-Package", &format!("/PackageName:Package_for_RollupFix~31bf3856ad364e35~amd64~~{}.1.1.1", kb_num), "/NoRestart", "/Quiet"])
                                 .status()?;
+                            if !dism_status.success() {
+                                // Try generic package name if specific one fails
+                                let _ = Command::new("dism.exe")
+                                    .args(["/Online", "/Remove-Package", &format!("/PackageName:{}", kb), "/NoRestart", "/Quiet"])
+                                    .status();
+                            }
                             if !dism_status.success() {
                                 return Err(anyhow!(
                                     "Windows rollback failed for {} (both wusa and DISM failed)",
@@ -1071,34 +1089,7 @@ if ($pkg) {{
     }
 
     fn can_apply_patches() -> bool {
-        #[cfg(target_os = "windows")]
-        {
-            // Try 'net session' first (standard check)
-            if Command::new("net")
-                .args(["session"])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-            {
-                return true;
-            }
-            // Fallback: 'fltmc filters' (requires elevation, but doesn't depend on Server service)
-            if Command::new("fltmc")
-                .args(["filters"])
-                .output()
-                .map(|o| o.status.success())
-                .unwrap_or(false)
-            {
-                return true;
-            }
-            return false;
-        }
-        #[cfg(any(target_os = "linux", target_os = "macos"))]
-        {
-            return unsafe { libc::geteuid() == 0 };
-        }
-        #[allow(unreachable_code)]
-        false
+        osoosi_types::is_elevated()
     }
 
     /// If patch_temporary_admin_user is set and we have admin, add user to admin group. Returns guard that revokes on drop.
@@ -1122,21 +1113,34 @@ if ($pkg) {{
 
         #[cfg(target_os = "windows")]
         {
-            let status = Command::new("net")
-                .args(["localgroup", "administrators", &user, "/add"])
-                .status()?;
-            if status.success() {
-                info!(
-                    "Granted temporary admin for user {} (will revoke after patch)",
-                    user
+            use windows::Win32::NetworkManagement::NetManagement::*;
+            use windows::core::PCWSTR;
+
+            let mut user_w: Vec<u16> = user.encode_utf16().chain(std::iter::once(0)).collect();
+            let group_w: Vec<u16> = "Administrators".encode_utf16().chain(std::iter::once(0)).collect();
+
+            let member = LOCALGROUP_MEMBERS_INFO_3 {
+                lgrmi3_domainandname: windows::core::PWSTR(user_w.as_mut_ptr()),
+            };
+
+            unsafe {
+                let result = NetLocalGroupAddMembers(
+                    None,
+                    PCWSTR::from_raw(group_w.as_ptr()),
+                    3,
+                    &member as *const _ as *const _,
+                    1,
                 );
-                Ok(Some(TemporaryAdminGuard { user, group: None }))
-            } else {
-                warn!(
-                    "Failed to grant temporary admin for user {} (continuing without)",
-                    user
-                );
-                Ok(None)
+                if result == 0 {
+                    info!("Granted temporary admin for user {} via native API.", user);
+                    Ok(Some(TemporaryAdminGuard { user, group: None }))
+                } else if result == 1378 {
+                    // Already a member
+                    Ok(None)
+                } else {
+                    warn!("Failed to grant temporary admin for user {} (error {})", user, result);
+                    Ok(None)
+                }
             }
         }
         #[cfg(target_os = "linux")]

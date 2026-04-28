@@ -5,11 +5,13 @@
 //! Linux: Sysmon for Linux
 //! macOS: Endpoint Security Framework
 
-use osoosi_types::SecuredExecutor;
-use std::path::Path;
+use osoosi_types::{extract_zip, SecuredExecutor};
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use tracing::{info, warn};
+use std::fs::File;
+use std::io::{self, Read, Write};
 
 /// Opt-in: download MalConv / SmolLM2 from `oyesanyf/OshoosiClaw-Weights` during provisioning. Default **off** — that bundle often 404s unless you publish it.
 fn use_bundled_hf_weights() -> bool {
@@ -119,21 +121,25 @@ impl AgentProvisioner {
 
         #[cfg(target_os = "windows")]
         {
-            // Mesh Port: 9000 (libp2p), Dashboard Port: 3000
             let ports = [("OshoosiMesh", "9000"), ("OshoosiDashboard", "3000")];
             for (name, port) in ports {
-                let check_cmd = format!("netsh advfirewall firewall show rule name='{}'", name);
-                let mut check = Command::new("powershell");
-                check.args(["-NoProfile", "-Command", &check_cmd]);
+                let mut check = Command::new("netsh");
+                check.args(["advfirewall", "firewall", "show", "rule", &format!("name={}", name)]);
 
                 if !self.executor.execute(check).await?.status.success() {
                     info!("Adding firewall rule: {} (Port {})...", name, port);
-                    let add_cmd = format!(
-                        "netsh advfirewall firewall add rule name='{}' dir=in action=allow protocol=TCP localport={}",
-                        name, port
-                    );
-                    let mut add = Command::new("powershell");
-                    add.args(["-NoProfile", "-Command", &add_cmd]);
+                    let mut add = Command::new("netsh");
+                    add.args([
+                        "advfirewall",
+                        "firewall",
+                        "add",
+                        "rule",
+                        &format!("name={}", name),
+                        "dir=in",
+                        "action=allow",
+                        "protocol=TCP",
+                        &format!("localport={}", port),
+                    ]);
                     self.executor.execute(add).await?;
                 }
             }
@@ -705,18 +711,8 @@ impl AgentProvisioner {
         .await?;
 
         info!("Extracting Sysmon...");
-        let cmd_str = format!(
-            "Expand-Archive -Path '{}' -DestinationPath '.' -Force; Remove-Item '{}'",
-            zip_path.display(),
-            zip_path.display()
-        );
-        self.exec_with_retry(
-            "powershell",
-            &["-NoProfile", "-NonInteractive", "-Command", &cmd_str],
-            "Sysmon Extraction",
-            2,
-        )
-        .await?;
+        extract_zip(zip_path, Path::new("."))?;
+        let _ = std::fs::remove_file(zip_path);
         info!("Sysmon downloaded and extracted successfully.");
 
         if required_path.exists() {
@@ -1121,23 +1117,8 @@ impl AgentProvisioner {
             self.download_with_resume(&url, &zip_path).await?;
 
             info!("Extracting FLOSS...");
-            let ps_cmd = format!(
-                "New-Item -ItemType Directory -Force -Path '{}' | Out-Null; \
-                  Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
-                  Remove-Item '{}'",
-                target_dir_str,
-                zip_path.to_string_lossy(),
-                target_dir_str,
-                zip_path.to_string_lossy()
-            );
-
-            self.exec_with_retry(
-                "powershell",
-                &["-NoProfile", "-NonInteractive", "-Command", &ps_cmd],
-                "FLOSS Extraction",
-                2,
-            )
-            .await?;
+            extract_zip(&zip_path, &target_dir)?;
+            let _ = std::fs::remove_file(&zip_path);
             Ok(())
         }
 
@@ -1234,18 +1215,8 @@ impl AgentProvisioner {
             self.download_with_resume(&url, &zip_path).await?;
 
             info!("Extracting HollowsHunter...");
-            let cmd_str = format!(
-                "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-                zip_path.display(),
-                target_dir.display()
-            );
-            self.exec_with_retry(
-                "powershell",
-                &["-NoProfile", "-NonInteractive", "-Command", &cmd_str],
-                "HollowsHunter Extraction",
-                2,
-            )
-            .await?;
+            extract_zip(&zip_path, &target_dir)?;
+            let _ = std::fs::remove_file(&zip_path);
             Ok(())
         }
 
@@ -1303,18 +1274,8 @@ impl AgentProvisioner {
             self.download_with_resume(&url, &zip_path).await?;
 
             info!("Extracting ngrep...");
-            let cmd_str = format!(
-                "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-                zip_path.display(),
-                target_dir.display()
-            );
-            self.exec_with_retry(
-                "powershell",
-                &["-NoProfile", "-NonInteractive", "-Command", &cmd_str],
-                "ngrep Extraction",
-                2,
-            )
-            .await?;
+            extract_zip(&zip_path, &target_dir)?;
+            let _ = std::fs::remove_file(&zip_path);
             Ok(())
         }
         #[cfg(not(target_os = "windows"))]
@@ -1507,27 +1468,31 @@ impl AgentProvisioner {
 
             #[cfg(target_os = "windows")]
             {
-                let ps_cmd = format!(
-                    "$ProgressPreference='SilentlyContinue'; \
-                     if (Test-Path '{}') {{ Remove-Item -Recurse -Force '{}' -ErrorAction SilentlyContinue }} \
-                     Expand-Archive -Path '{}' -DestinationPath '{}' -Force; \
-                     $subdirs = Get-ChildItem -Path '{}' -Directory; \
-                     if ($subdirs.Count -eq 1) {{ \
-                        Copy-Item -Path \"$($subdirs[0].FullName)\\*\" -Destination '{}' -Recurse -Force; \
-                     }} else {{ \
-                        Copy-Item -Path \"{}/*\" -Destination '{}' -Recurse -Force; \
-                     }} \
-                     Remove-Item -Recurse -Force '{}'",
-                     tmp_extract.to_string_lossy(), tmp_extract.to_string_lossy(), zip_path.to_string_lossy(), tmp_extract.to_string_lossy(), tmp_extract.to_string_lossy(), target_sub_dir.to_string_lossy(), tmp_extract.to_string_lossy(), target_sub_dir.to_string_lossy(), tmp_extract.to_string_lossy()
-                );
-
-                self.exec_with_retry(
-                    "powershell",
-                    &["-NoProfile", "-NonInteractive", "-Command", &ps_cmd],
-                    &format!("Extract YARA {}", name),
-                    2,
-                )
-                .await?;
+                let _ = std::fs::remove_dir_all(&tmp_extract);
+                extract_zip(&zip_path, &tmp_extract)?;
+                
+                // RESILIENCE: If extracted into a single subfolder, move content up
+                if let Ok(entries) = std::fs::read_dir(&tmp_extract) {
+                    let subdirs: Vec<_> = entries.filter_map(|e| e.ok()).collect();
+                    if subdirs.len() == 1 && subdirs[0].path().is_dir() {
+                        let sub_path = subdirs[0].path();
+                        if let Ok(sub_entries) = std::fs::read_dir(&sub_path) {
+                            for entry in sub_entries.filter_map(|e| e.ok()) {
+                                let dest = target_sub_dir.join(entry.file_name());
+                                let _ = std::fs::rename(entry.path(), dest);
+                            }
+                        }
+                    } else {
+                        // Move everything from tmp_extract to target_sub_dir
+                        if let Ok(entries) = std::fs::read_dir(&tmp_extract) {
+                            for entry in entries.filter_map(|e| e.ok()) {
+                                let dest = target_sub_dir.join(entry.file_name());
+                                let _ = std::fs::rename(entry.path(), dest);
+                            }
+                        }
+                    }
+                }
+                let _ = std::fs::remove_dir_all(&tmp_extract);
             }
             #[cfg(not(target_os = "windows"))]
             {
@@ -1573,24 +1538,9 @@ impl AgentProvisioner {
             let path_str = full_path.to_string_lossy();
 
             info!("Adding Windows Defender exclusion for: {}...", path_str);
-            let ps_cmd = format!(
-                "Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue",
-                path_str
-            );
-
-            let mut cmd = Command::new("powershell");
-            cmd.args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd]);
-            let status = self.executor.execute(cmd).await?.status;
-
-            if status.success() {
-                info!("Windows Defender exclusion added successfully.");
-                Ok(())
-            } else {
-                warn!("Failed to add Defender exclusion. This typically requires Administrator privileges.");
-                Err(anyhow::anyhow!(
-                    "Defender exclusion failed (check privileges)."
-                ))
-            }
+            osoosi_types::add_defender_exclusion(path_str.as_ref())?;
+            info!("Windows Defender exclusion added successfully.");
+            Ok(())
         }
         #[cfg(not(target_os = "windows"))]
         {
@@ -1953,85 +1903,13 @@ impl AgentProvisioner {
             #[cfg(target_os = "windows")]
             {
                 let exclusion_path = capa_dir.to_string_lossy();
-                let ps_cmd = format!(
-                    "Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue",
-                    exclusion_path
-                );
-                let _ = self
-                    .exec_with_retry(
-                        "powershell",
-                        &["-NoProfile", "-Command", &ps_cmd],
-                        "AV Exclusion",
-                        1,
-                    )
-                    .await;
+                let _ = osoosi_types::add_defender_exclusion(&exclusion_path);
             }
 
             self.download_with_resume(&url, &zip_path).await?;
 
             info!("Extracting CAPA binary...");
-            #[cfg(target_os = "windows")]
-            {
-                let cmd_str = format!(
-                    "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-                    zip_path.display(),
-                    capa_dir.display()
-                );
-                self.exec_with_retry(
-                    "powershell",
-                    &["-NoProfile", "-NonInteractive", "-Command", &cmd_str],
-                    "CAPA Binary Extraction",
-                    2,
-                )
-                .await?;
-
-                // RESILIENCE: Check if extracted into a subfolder and move it out
-                let subfolder = capa_dir.join(format!("capa-v{}-windows", version));
-                if subfolder.exists() {
-                    let sub_bin = subfolder.join("capa.exe");
-                    if sub_bin.exists() {
-                        let _ = std::fs::rename(sub_bin, &capa_bin);
-                    }
-                    let _ = std::fs::remove_dir_all(subfolder);
-                }
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                let cmd_str = format!(
-                    "unzip -o '{}' -d '{}'",
-                    zip_path.display(),
-                    capa_dir.display()
-                );
-                let mut cmd = std::process::Command::new("sh");
-                cmd.args(["-c", &cmd_str]);
-                let _ = self.executor.execute(cmd).await;
-
-                // RESILIENCE: Handle subfolder extraction on Linux/Mac
-                let os_name = if cfg!(target_os = "macos") {
-                    "macos"
-                } else {
-                    "linux"
-                };
-                let arch_suffix = if std::env::consts::ARCH == "aarch64" {
-                    "-arm64"
-                } else {
-                    ""
-                };
-                let subfolder =
-                    capa_dir.join(format!("capa-v{}-{}{}", version, os_name, arch_suffix));
-
-                if subfolder.exists() {
-                    let sub_bin = subfolder.join("capa");
-                    if sub_bin.exists() {
-                        let _ = std::fs::rename(sub_bin, &capa_bin);
-                    }
-                    let _ = std::fs::remove_dir_all(subfolder);
-                }
-
-                let _ = std::process::Command::new("chmod")
-                    .args(["+x", &capa_bin.to_string_lossy()])
-                    .status();
-            }
+            extract_zip(&zip_path, &capa_dir)?;
             let _ = std::fs::remove_file(&zip_path);
         }
 
@@ -2047,35 +1925,8 @@ impl AgentProvisioner {
             self.download_with_resume(&rules_url, &rules_zip).await?;
 
             info!("Extracting CAPA rules...");
-            let temp_extract = capa_dir.join("temp_rules");
-            let _ = std::fs::create_dir_all(&temp_extract);
-
-            #[cfg(target_os = "windows")]
-            {
-                let cmd_str = format!(
-                    "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-                    rules_zip.display(),
-                    temp_extract.display()
-                );
-                self.exec_with_retry(
-                    "powershell",
-                    &["-NoProfile", "-NonInteractive", "-Command", &cmd_str],
-                    "CAPA Rules Extraction",
-                    2,
-                )
-                .await?;
-            }
-            #[cfg(not(target_os = "windows"))]
-            {
-                let cmd_str = format!(
-                    "unzip -o '{}' -d '{}'",
-                    rules_zip.display(),
-                    temp_extract.display()
-                );
-                let mut cmd = std::process::Command::new("sh");
-                cmd.args(["-c", &cmd_str]);
-                let _ = self.executor.execute(cmd).await;
-            }
+            let temp_extract = capa_dir.join("rules_tmp_extract");
+            extract_zip(&rules_zip, &temp_extract)?;
 
             let source = temp_extract.join(format!("capa-rules-{}", version));
             if source.exists() {
@@ -2094,34 +1945,7 @@ impl AgentProvisioner {
 
             if self.download_with_resume(sigs_url, &sigs_zip).await.is_ok() {
                 info!("Extracting CAPA signatures...");
-                let _ = std::fs::create_dir_all(&sigs_dir);
-
-                #[cfg(target_os = "windows")]
-                {
-                    let cmd_str = format!(
-                        "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-                        sigs_zip.display(),
-                        sigs_dir.display()
-                    );
-                    self.exec_with_retry(
-                        "powershell",
-                        &["-NoProfile", "-NonInteractive", "-Command", &cmd_str],
-                        "CAPA Signatures Extraction",
-                        2,
-                    )
-                    .await?;
-                }
-                #[cfg(not(target_os = "windows"))]
-                {
-                    let cmd_str = format!(
-                        "unzip -o '{}' -d '{}'",
-                        sigs_zip.display(),
-                        sigs_dir.display()
-                    );
-                    let mut cmd = std::process::Command::new("sh");
-                    cmd.args(["-c", &cmd_str]);
-                    let _ = self.executor.execute(cmd).await;
-                }
+                extract_zip(&sigs_zip, &sigs_dir)?;
 
                 let _ = std::fs::remove_file(&sigs_zip);
             }
@@ -2239,36 +2063,8 @@ impl AgentProvisioner {
         self.download_with_resume(&url, &zip_path).await?;
 
         // Extraction logic similar to CAPA
-        #[cfg(target_os = "windows")]
-        {
-            let cmd_str = format!(
-                "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-                zip_path.display(),
-                hayabusa_dir.display()
-            );
-            self.exec_with_retry(
-                "powershell",
-                &["-NoProfile", "-NonInteractive", "-Command", &cmd_str],
-                "Hayabusa Extraction",
-                2,
-            )
-            .await?;
-        }
-        #[cfg(not(target_os = "windows"))]
-        {
-            let _ = std::fs::create_dir_all(&hayabusa_dir);
-            let cmd_str = format!(
-                "unzip -o '{}' -d '{}'",
-                zip_path.display(),
-                hayabusa_dir.display()
-            );
-            let mut cmd = std::process::Command::new("sh");
-            cmd.args(["-c", &cmd_str]);
-            let _ = self.executor.execute(cmd).await;
-            let _ = std::process::Command::new("chmod")
-                .args(["+x", &hayabusa_bin.to_string_lossy()])
-                .status();
-        }
+        info!("Extracting Hayabusa...");
+        extract_zip(&zip_path, &hayabusa_dir)?;
         let _ = std::fs::remove_file(&zip_path);
 
         info!("Hayabusa provisioned successfully.");
@@ -2307,18 +2103,8 @@ impl AgentProvisioner {
 
         #[cfg(target_os = "windows")]
         {
-            let cmd_str = format!(
-                "Expand-Archive -Path '{}' -DestinationPath '{}' -Force",
-                pkg_path.display(),
-                chainsaw_dir.display()
-            );
-            self.exec_with_retry(
-                "powershell",
-                &["-NoProfile", "-NonInteractive", "-Command", &cmd_str],
-                "Chainsaw Extraction",
-                2,
-            )
-            .await?;
+            info!("Extracting Chainsaw...");
+            extract_zip(&pkg_path, &chainsaw_dir)?;
         }
         #[cfg(not(target_os = "windows"))]
         {

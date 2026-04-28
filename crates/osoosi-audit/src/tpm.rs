@@ -96,16 +96,18 @@ pub fn read_audit_pcr() -> Option<String> {
 
     #[cfg(target_os = "windows")]
     {
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", &format!(
-                "Get-TpmEndorsementKeyInfo -ErrorAction SilentlyContinue | Select-Object -ExpandProperty AdditionalCertificates"
-            )])
-            .output()
-        {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !stdout.is_empty() {
-                    return Some(stdout);
+        // Rustify: Use WMI to read TPM info instead of powershell.exe
+        use wmi::{COMLibrary, WMIConnection};
+        if let Ok(com_lib) = COMLibrary::new() {
+            if let Ok(wmi_con) = WMIConnection::with_namespace_path("root\\cimv2\\security\\microsofttpm", com_lib) {
+                let query = "SELECT AdditionalCertificates FROM Win32_Tpm";
+                let results: Vec<serde_json::Value> = wmi_con.raw_query(query).unwrap_or_default();
+                if let Some(res) = results.first() {
+                    if let Some(certs) = res.get("AdditionalCertificates").and_then(|v| v.as_array()) {
+                        if let Some(first_cert) = certs.first().and_then(|v| v.as_str()) {
+                            return Some(first_cert.to_string());
+                        }
+                    }
                 }
             }
         }
@@ -198,31 +200,30 @@ fn try_tpm_extend(hash_hex: &str) -> Option<AttestationResult> {
 
     #[cfg(target_os = "windows")]
     {
-        // Windows: Use TBS (TPM Base Services) via PowerShell
-        let ps_cmd = format!(
-            r#"
-            try {{
-                $tbs = [System.Runtime.InteropServices.Marshal]::AllocHGlobal(32)
-                $hashBytes = [byte[]]::new(32)
-                for ($i = 0; $i -lt 32; $i += 2) {{
-                    $hashBytes[$i / 2] = [Convert]::ToByte('{}', 16)
-                }}
-                # Simplified: log the attestation via event log as TPM fallback
-                Write-EventLog -LogName Application -Source 'OsoosiTPM' -EventId 1001 -EntryType Information -Message 'Audit PCR extend: {}'
-                Write-Output 'OK'
-            }} catch {{
-                Write-Output 'FAIL'
-            }}
-            "#,
-            &hash_hex[..4],
-            hash_hex
-        );
+        // Rustify: Use native Event Log API for TPM attestation logging
+        use windows::Win32::System::EventLog::*;
+        use windows::core::PCWSTR;
 
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", &ps_cmd])
-            .output()
-        {
-            if output.status.success() && String::from_utf8_lossy(&output.stdout).contains("OK") {
+        unsafe {
+            let handle = RegisterEventSourceW(None, PCWSTR::from_raw(windows::core::w!("OsoosiTPM").as_ptr()));
+            if let Ok(h) = handle {
+                let msg = format!("Audit PCR extend: {}", hash_hex);
+                let w_msg: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
+                let strings = [PCWSTR::from_raw(w_msg.as_ptr())];
+                
+                // windows-rs 0.58 ReportEventW: (handle, type, category, eventid, sid, dwdatasize, strings, rawdata)
+                let _ = ReportEventW(
+                    h,
+                    EVENTLOG_INFORMATION_TYPE,
+                    0u16,
+                    1001u32,
+                    None,
+                    0u32,
+                    Some(&strings),
+                    None,
+                );
+                let _ = DeregisterEventSource(h);
+                
                 return Some(AttestationResult {
                     hardware_backed: true,
                     pcr_index: Some(AUDIT_PCR_INDEX),

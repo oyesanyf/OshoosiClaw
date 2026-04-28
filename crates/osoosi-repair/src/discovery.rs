@@ -42,68 +42,62 @@ impl PatchDiscoverer {
 
     #[cfg(target_os = "windows")]
     fn discover_windows(&self) -> Result<Vec<PatchMetadata>> {
-        info!("Querying Windows Update Agent for missing patches (Resilient Mode)...");
+        info!("Querying Windows Update Agent for missing patches (Native COM)...");
 
-        // 10/10 Logic: Added explicit error handling and timeout-safe COM initialization
-        let ps_script = r#"
-$ErrorActionPreference = 'Stop'
-try {
-    $Session = New-Object -ComObject Microsoft.Update.Session
-    $Searcher = $Session.CreateUpdateSearcher()
-    # Search for uninstalled security updates only for speed/reliability
-    $Result = $Searcher.Search("IsInstalled=0 and IsHidden=0 and Type='Software'")
-    
-    if ($Result.Updates.Count -eq 0) {
-        Write-Output "[]"
-        exit
-    }
+        use windows::Win32::System::Com::*;
+        use windows::Win32::System::UpdateAgent::*;
 
-    $updates = $Result.Updates | ForEach-Object {
-        $kb = if ($_.KBArticleIDs.Count -gt 0) { "KB$($_.KBArticleIDs.Item(0))" } else { $null }
-        [PSCustomObject]@{
-            Title = $_.Title
-            Description = $_.Description
-            KB = $kb
+        unsafe {
+            let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
+            let session: IUpdateSession = match CoCreateInstance(&UpdateSession, None, CLSCTX_INPROC_SERVER) {
+                Ok(s) => s,
+                Err(e) => return Err(anyhow!("Failed to create UpdateSession: {}", e)),
+            };
+            
+            let searcher = session.CreateUpdateSearcher()?;
+            let result = match searcher.Search(&windows::core::BSTR::from("IsInstalled=0 and IsHidden=0 and Type='Software'")) {
+                Ok(r) => r,
+                Err(e) => {
+                    warn!("Windows Update search failed: {}. Falling back to empty.", e);
+                    return Ok(vec![]);
+                }
+            };
+            
+            let updates = result.Updates()?;
+            let count = updates.Count()?;
+            
+            let mut patches = Vec::new();
+            for i in 0..count {
+                // IUpdateCollection::get_Item takes i32
+                if let Ok(update) = updates.get_Item(i as i32) {
+                    let title = update.Title().map(|t| t.to_string()).unwrap_or_default();
+                    let desc = update.Description().map(|d| d.to_string()).unwrap_or_default();
+                    if let Ok(kb_ids) = update.KBArticleIDs() {
+                        let kb_count = kb_ids.Count().unwrap_or(0);
+                        let kb = if kb_count > 0 {
+                            kb_ids.get_Item(0).map(|id| format!("KB{}", id)).unwrap_or_default()
+                        } else {
+                            String::new()
+                        };
+                        
+                        if !kb.is_empty() {
+                            patches.push(PatchMetadata {
+                                cve_id: kb.clone(),
+                                description: if desc.is_empty() { title.clone() } else { desc },
+                                severity: PatchSeverity::High,
+                                component: title,
+                                version: kb,
+                                download_url: None,
+                                expected_sha256: None,
+                            });
+                        }
+                    }
+                }
+            }
+            
+            info!("Windows discovery: {} pending updates found.", patches.len());
+            Ok(patches)
         }
-    }
-    $updates | ConvertTo-Json -Compress
-} catch {
-    Write-Error $_.Exception.Message
-    exit 1
-}
-"#;
-
-        let output = Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                ps_script,
-            ])
-            .output()?;
-
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            warn!(
-                "Windows Update query failed: {}. Falling back to WMI baseline.",
-                stderr.trim()
-            );
-            // Return empty instead of crashing the whole engine, or implement WMI fallback here
-            return Ok(vec![]);
-        }
-
-        let json_str = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if json_str.is_empty() || json_str == "null" || json_str == "[]" {
-            return Ok(vec![]);
-        }
-
-        let patches = Self::parse_windows_updates_json(&json_str)?;
-        info!(
-            "Windows discovery: {} pending updates found.",
-            patches.len()
-        );
-        Ok(patches)
     }
 
     #[cfg(target_os = "windows")]

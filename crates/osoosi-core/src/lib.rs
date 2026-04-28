@@ -1243,14 +1243,25 @@ impl EdrOrchestrator {
 
                                     // Tarpit the suspicious process
                                     let pid_str = pid.to_string();
+                                    // Rustify: Use native NT API to suspend process instead of powershell.exe
                                     #[cfg(target_os = "windows")]
-                                    let _ = std::process::Command::new("powershell")
-                                        .args([
-                                            "-NoProfile",
-                                            "-Command",
-                                            &format!("Suspend-Process -Id {}", pid_str),
-                                        ])
-                                        .status();
+                                    unsafe {
+                                        use windows::Win32::System::Threading::{OpenProcess, PROCESS_SUSPEND_RESUME};
+                                        use windows::Win32::Foundation::CloseHandle;
+                                        
+                                        if let Ok(handle) = OpenProcess(PROCESS_SUSPEND_RESUME, false, pid.as_u32()) {
+                                            // NtSuspendProcess is the most reliable way to suspend a whole process
+                                            let ntdll = windows::Win32::System::LibraryLoader::GetModuleHandleW(windows::core::w!("ntdll.dll")).unwrap_or_default();
+                                            if !ntdll.is_invalid() {
+                                                if let Some(nt_suspend) = windows::Win32::System::LibraryLoader::GetProcAddress(ntdll, windows::core::s!("NtSuspendProcess")) {
+                                                    let nt_suspend: extern "system" fn(windows::Win32::Foundation::HANDLE) -> i32 = std::mem::transmute(nt_suspend);
+                                                    let _ = nt_suspend(handle);
+                                                    info!("CyberShield: Suspended malicious process {} (PID {}) via native NT API.", process_name, pid);
+                                                }
+                                            }
+                                            let _ = CloseHandle(handle);
+                                        }
+                                    }
                                 }
                             }
                         }

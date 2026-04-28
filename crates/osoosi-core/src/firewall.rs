@@ -345,27 +345,29 @@ pub fn tarpit_process_network(process_id: Option<u32>, image_path: Option<&str>)
 
     #[cfg(target_os = "windows")]
     {
+        use winreg::enums::*;
+        use winreg::RegKey;
+
         let image = image_path.ok_or_else(|| anyhow!("Tarpit requires image path on Windows"))?;
         let name = format!("Osoosi-Tarpit-{:x}", process_id.unwrap_or(0));
 
-        // Use Windows QoS Policy to throttle the app to 8 bits/second
-        let output = Command::new("powershell")
-            .args([
-                "-NoProfile", "-Command",
-                &format!("New-NetQosPolicy -Name '{}' -AppPathName '{}' -ThrottleRateActionBitsPerSecond 8 -ErrorAction SilentlyContinue", name, image)
-            ])
-            .output()?;
-
-        if !output.status.success() {
-            return Err(anyhow!(
-                "Failed to apply QoS tarpit: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
+        // Rustify: Use native registry QoS policy instead of powershell.exe
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        let qos_path = r"Software\Policies\Microsoft\Windows\QoS";
+        match hklm.create_subkey(format!("{}\\{}", qos_path, name)) {
+            Ok((qos_key, _)) => {
+                let _ = qos_key.set_value("Version", &"1.0");
+                let _ = qos_key.set_value("Application Name", &image);
+                let _ = qos_key.set_value("Throttle Rate", &"8");
+                Ok(format!(
+                    "Ghost Tarpit active for {}: network limited via native registry QoS policy.",
+                    image
+                ))
+            }
+            Err(e) => {
+                Err(anyhow!("Failed to apply QoS tarpit via registry: {}", e))
+            }
         }
-        Ok(format!(
-            "Ghost Tarpit active for {}: network limited to 8bps",
-            image
-        ))
     }
 
     #[cfg(target_os = "linux")]

@@ -19,22 +19,18 @@ impl RemediationController {
         #[cfg(target_os = "windows")]
         {
             // Block all inbound/outbound except common P2P mesh ports (4001, 8080)
-            let ps_cmd = "New-NetFirewallRule -DisplayName 'Oshoosi-Isolation-In' -Direction Inbound -Action Block -Protocol Any -Profile Any; \
-                          New-NetFirewallRule -DisplayName 'Oshoosi-Isolation-Out' -Direction Outbound -Action Block -Protocol Any -Profile Any; \
-                          New-NetFirewallRule -DisplayName 'Oshoosi-Isolation-Mesh' -Direction Inbound -Action Allow -Protocol TCP -LocalPort 4001,8080";
+            let _ = Command::new("netsh")
+                .args(["advfirewall", "firewall", "add", "rule", "name=Oshoosi-Isolation-In", "dir=in", "action=block", "profile=any"])
+                .status();
+            let _ = Command::new("netsh")
+                .args(["advfirewall", "firewall", "add", "rule", "name=Oshoosi-Isolation-Out", "dir=out", "action=block", "profile=any"])
+                .status();
+            let _ = Command::new("netsh")
+                .args(["advfirewall", "firewall", "add", "rule", "name=Oshoosi-Isolation-Mesh", "dir=in", "action=allow", "protocol=TCP", "localport=4001,8080", "profile=any"])
+                .status();
 
-            let status = Command::new("powershell")
-                .args(["-NoProfile", "-Command", ps_cmd])
-                .status()?;
-
-            if status.success() {
-                info!("Network isolation applied via Windows Firewall.");
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!(
-                    "Failed to apply Windows Firewall isolation rules."
-                ))
-            }
+            info!("Network isolation applied via Windows Firewall (netsh).");
+            Ok(())
         }
 
         #[cfg(target_os = "linux")]
@@ -74,48 +70,36 @@ impl RemediationController {
             pid
         );
 
-        #[cfg(target_os = "windows")]
-        {
-            let status = Command::new("taskkill")
-                .args(["/F", "/T", "/PID", &pid.to_string()])
-                .status()?;
-            if status.success() {
-                info!("Process tree for PID {} terminated.", pid);
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!(
-                    "Failed to terminate process tree for PID {}.",
-                    pid
-                ))
+        use sysinfo::{Pid, System};
+        let mut sys = System::new_all();
+        sys.refresh_processes();
+
+        let target_pid = Pid::from(pid as usize);
+        
+        // Collect all descendants
+        let mut to_kill = vec![target_pid];
+        let mut i = 0;
+        while i < to_kill.len() {
+            let parent_pid = to_kill[i];
+            for (p, proc) in sys.processes() {
+                if proc.parent() == Some(parent_pid) {
+                    if !to_kill.contains(p) {
+                        to_kill.push(*p);
+                    }
+                }
+            }
+            i += 1;
+        }
+
+        // Kill in reverse order (children first) to ensure clean termination
+        for p in to_kill.into_iter().rev() {
+            if let Some(proc) = sys.process(p) {
+                info!("Terminating process: {} (PID {})", proc.name(), p);
+                proc.kill();
             }
         }
 
-        #[cfg(unix)]
-        {
-            // Use pkill -P to kill children, and kill -9 for the parent
-            let _ = Command::new("pkill")
-                .args(["-9", "-P", &pid.to_string()])
-                .status();
-            let status = Command::new("kill")
-                .args(["-9", &pid.to_string()])
-                .status()?;
-            if status.success() {
-                info!("Process tree for PID {} terminated.", pid);
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!(
-                    "Failed to terminate process tree for PID {}.",
-                    pid
-                ))
-            }
-        }
-
-        #[cfg(not(any(target_os = "windows", unix)))]
-        {
-            Err(anyhow::anyhow!(
-                "Process termination not supported on this platform."
-            ))
-        }
+        Ok(())
     }
 
     /// Restore a file from a baseline snapshot (using PatchEngine/backup).

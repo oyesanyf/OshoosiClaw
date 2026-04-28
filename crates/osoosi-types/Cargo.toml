@@ -19,3 +19,9 @@ sha2 = { workspace = true }
 hex = { workspace = true }
 rand = { workspace = true }
 dirs = { workspace = true }
+zip = { workspace = true }
+windows = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+wmi = "0.13"
+winreg = "0.7"

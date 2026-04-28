@@ -15,6 +15,8 @@ pub mod taint;
 pub mod threat;
 pub mod trust;
 
+pub mod utils;
+
 pub use blocking::*;
 pub use config::*;
 pub use error::*;
@@ -26,3 +28,4 @@ pub use sysmon::*;
 pub use taint::*;
 pub use threat::*;
 pub use trust::*;
+pub use utils::*;

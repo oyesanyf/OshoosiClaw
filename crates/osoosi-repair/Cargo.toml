@@ -21,3 +21,5 @@ bytes = { workspace = true }
 libc.workspace = true
 winapi = { workspace = true }
 windows = { workspace = true }
+winreg = { workspace = true }
+wmi = "0.13"

@@ -1,4 +1,6 @@
 use anyhow::{anyhow, Result};
+use winreg::enums::*;
+use winreg::RegKey;
 use std::process::Command;
 use tracing::{info, warn};
 
@@ -67,69 +69,60 @@ impl RegistryRemediator {
     }
 
     #[cfg(target_os = "windows")]
-    fn find_and_delete_value(key: &str, image_path: &str) -> Result<Option<String>> {
-        // Use powershell for easier registry filtering
-        let script = format!(
-            "Get-ItemProperty -Path 'Registry::{}' | Get-Member -MemberType NoteProperty | Where-Object {{ (Get-ItemProperty -Path 'Registry::{}').$($_.Name) -like '*{}*' }} | Select-Object -ExpandProperty Name",
-            key, key, image_path.replace("'", "''")
-        );
+    fn find_and_delete_value(key_path: &str, image_path: &str) -> Result<Option<String>> {
+        let (root, path) = if key_path.starts_with("HKLM") {
+            (RegKey::predef(HKEY_LOCAL_MACHINE), &key_path[5..])
+        } else {
+            (RegKey::predef(HKEY_CURRENT_USER), &key_path[5..])
+        };
 
-        let output = Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .output()?;
+        let key = root.open_subkey_with_flags(path, KEY_READ | KEY_SET_VALUE)?;
+        let mut deleted = Vec::new();
 
-        if !output.status.success() {
-            return Ok(None);
+        for val in key.enum_values().filter_map(|x| x.ok()) {
+            let (name, value) = val;
+            let val_str = value.to_string().to_lowercase();
+            if val_str.contains(&image_path.to_lowercase()) {
+                if let Ok(_) = key.delete_value(&name) {
+                    deleted.push(name);
+                }
+            }
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if stdout.is_empty() {
-            return Ok(None);
+        if deleted.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(deleted.join(", ")))
         }
-
-        // Delete the identified values
-        for val_name in stdout.lines() {
-            let del_script = format!(
-                "Remove-ItemProperty -Path 'Registry::{}' -Name '{}' -Force",
-                key, val_name
-            );
-            let _ = Command::new("powershell")
-                .args(["-NoProfile", "-NonInteractive", "-Command", &del_script])
-                .status();
-        }
-
-        Ok(Some(stdout))
     }
 
     #[cfg(target_os = "windows")]
     fn find_and_disable_service(image_path: &str) -> Result<Option<String>> {
-        // Find services where ImagePath matches our target
-        let script = format!(
-            "Get-WmiObject win32_service | Where-Object {{ $_.PathName -like '*{}*' }} | Select-Object -ExpandProperty Name",
-            image_path.replace("'", "''")
-        );
+        // Enumerate services via registry instead of WMI/PowerShell for performance and reliability
+        let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+        let services_key = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Services")?;
+        
+        let mut disabled_services = Vec::new();
+        let target_lower = image_path.to_lowercase();
 
-        let output = Command::new("powershell")
-            .args(["-NoProfile", "-NonInteractive", "-Command", &script])
-            .output()?;
-
-        if !output.status.success() {
-            return Ok(None);
+        for name in services_key.enum_keys().filter_map(|x| x.ok()) {
+            if let Ok(svc_key) = services_key.open_subkey_with_flags(&name, KEY_READ | KEY_SET_VALUE) {
+                if let Ok(path) = svc_key.get_value::<String, _>("ImagePath") {
+                    if path.to_lowercase().contains(&target_lower) {
+                        // Disable service (Start = 4)
+                        let _ = svc_key.set_value("Start", &4u32);
+                        // Also try to stop it via sc.exe (standard command)
+                        let _ = Command::new("sc.exe").args(["stop", &name]).status();
+                        disabled_services.push(name);
+                    }
+                }
+            }
         }
 
-        let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-        if stdout.is_empty() {
-            return Ok(None);
+        if disabled_services.is_empty() {
+            Ok(None)
+        } else {
+            Ok(Some(disabled_services.join(", ")))
         }
-
-        // Disable and stop the identified services
-        for svc_name in stdout.lines() {
-            let _ = Command::new("sc.exe").args(["stop", svc_name]).status();
-            let _ = Command::new("sc.exe")
-                .args(["config", svc_name, "start=", "disabled"])
-                .status();
-        }
-
-        Ok(Some(stdout))
     }
 }

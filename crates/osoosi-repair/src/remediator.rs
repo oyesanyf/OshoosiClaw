@@ -10,8 +10,6 @@ use tracing::{error, info, warn};
 
 #[cfg(target_os = "windows")]
 use std::os::windows::ffi::OsStrExt;
-#[cfg(target_os = "windows")]
-use winapi::um::winbase::{MoveFileExW, MOVEFILE_DELAY_UNTIL_REBOOT, MOVEFILE_REPLACE_EXISTING};
 
 pub struct StandaloneRemediator {
     client: reqwest::Client,
@@ -102,6 +100,9 @@ impl StandaloneRemediator {
 
     #[cfg(target_os = "windows")]
     fn schedule_reboot_move(&self, from: &Path, to: &Path) -> Result<()> {
+        use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_DELAY_UNTIL_REBOOT, MOVEFILE_REPLACE_EXISTING};
+        use windows::core::PCWSTR;
+
         fn to_wide(path: &Path) -> Vec<u16> {
             path.as_os_str()
                 .encode_wide()
@@ -113,16 +114,14 @@ impl StandaloneRemediator {
         let to_w = to_wide(to);
 
         unsafe {
-            if MoveFileExW(
-                from_w.as_ptr(),
-                to_w.as_ptr(),
+            MoveFileExW(
+                PCWSTR::from_raw(from_w.as_ptr()),
+                PCWSTR::from_raw(to_w.as_ptr()),
                 MOVEFILE_DELAY_UNTIL_REBOOT | MOVEFILE_REPLACE_EXISTING,
-            ) == 0
-            {
-                let err = std::io::Error::last_os_error();
-                error!("MoveFileExW failed: {}", err);
-                return Err(anyhow!("Failed to schedule reboot move: {}", err));
-            }
+            ).map_err(|e| {
+                error!("MoveFileExW failed: {}", e);
+                anyhow!("Failed to schedule reboot move: {}", e)
+            })?;
         }
         Ok(())
     }

@@ -14,6 +14,8 @@
 use sha2::Sha256;
 use std::path::{Path, PathBuf};
 use tracing::{debug, info, warn};
+#[cfg(target_os = "windows")]
+use wmi::{COMLibrary, WMIConnection};
 
 // ============================================================================
 // 1. Confidential Computing (TEE) Detection & Memory Shield
@@ -97,17 +99,18 @@ fn detect_sgx() -> bool {
     #[cfg(target_os = "windows")]
     {
         // Check for SGX driver via registry or device
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args([
-                "-NoProfile",
-                "-Command",
-                "Get-WmiObject Win32_Processor | Select-Object -ExpandProperty Caption",
-            ])
-            .output()
-        {
-            let caption = String::from_utf8_lossy(&output.stdout).to_lowercase();
-            if caption.contains("sgx") {
-                return true;
+        // Rustify: Check for SGX via native WMI query
+        if let Ok(com_lib) = COMLibrary::new() {
+            if let Ok(wmi_con) = WMIConnection::new(com_lib) {
+                let query = "SELECT Caption FROM Win32_Processor";
+                let results: Vec<serde_json::Value> = wmi_con.raw_query(query).unwrap_or_default();
+                for res in results {
+                    if let Some(caption) = res.get("Caption").and_then(|v| v.as_str()) {
+                        if caption.to_lowercase().contains("sgx") {
+                            return true;
+                        }
+                    }
+                }
             }
         }
     }
@@ -191,16 +194,16 @@ pub fn detect_tpm() -> TpmStatus {
     #[cfg(target_os = "windows")]
     {
         // Windows: check via WMI
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Get-WmiObject -Namespace 'root\\cimv2\\security\\microsofttpm' -Class Win32_Tpm | Select-Object -ExpandProperty SpecVersion"])
-            .output()
-        {
-            if output.status.success() {
-                let version = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !version.is_empty() {
-                    status.available = true;
-                    status.version = Some(version);
+        // Windows: check via WMI (Native)
+        if let Ok(com_lib) = COMLibrary::new() {
+            if let Ok(wmi_con) = WMIConnection::with_namespace_path("root\\cimv2\\security\\microsofttpm", com_lib) {
+                let query = "SELECT SpecVersion FROM Win32_Tpm";
+                let results: Vec<serde_json::Value> = wmi_con.raw_query(query).unwrap_or_default();
+                if let Some(res) = results.first() {
+                    if let Some(version) = res.get("SpecVersion").and_then(|v| v.as_str()) {
+                        status.available = true;
+                        status.version = Some(version.to_string());
+                    }
                 }
             }
         }
@@ -285,22 +288,9 @@ pub fn tpm_attest_audit_entry(event_type: &str, data_hash: &str) -> Option<Strin
 
     #[cfg(target_os = "windows")]
     {
-        // Windows: use Tbsi (TPM Base Services) via PowerShell
-        let ps_script = format!(
-            r#"$tpm = Get-WmiObject -Namespace 'root\cimv2\security\microsofttpm' -Class Win32_Tpm; if ($tpm) {{ $tpm.Attest('{}') }}"#,
-            &data_hash[..32]
-        );
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command", &ps_script])
-            .output()
-        {
-            if output.status.success() {
-                let result = String::from_utf8_lossy(&output.stdout).trim().to_string();
-                if !result.is_empty() {
-                    return Some(result);
-                }
-            }
-        }
+        // Rustify: powershell.exe dependency removed. 
+        // Direct WMI method calls for TPM.Attest require advanced COM bindings.
+        // Falling back to software attestation for now to maintain agent integrity without shell spawns.
     }
 
     software_attest(event_type, data_hash)
@@ -488,18 +478,20 @@ pub fn detect_dpu() -> DpuStatus {
 
     #[cfg(target_os = "windows")]
     {
-        // Windows: check for Mellanox/NVIDIA NICs via Get-NetAdapter
-        if let Ok(output) = std::process::Command::new("powershell")
-            .args(["-NoProfile", "-Command",
-                "Get-NetAdapter | Where-Object { $_.InterfaceDescription -like '*Mellanox*' -or $_.InterfaceDescription -like '*BlueField*' } | Select-Object -ExpandProperty InterfaceDescription"])
-            .output()
-        {
-            let stdout = String::from_utf8_lossy(&output.stdout).trim().to_string();
-            if !stdout.is_empty() {
-                if stdout.to_lowercase().contains("bluefield") {
-                    status.bluefield_detected = true;
+        // Windows: check for Mellanox/BlueField NICs via WMI Native
+        if let Ok(com_lib) = COMLibrary::new() {
+            let query = "SELECT InterfaceDescription FROM MSFT_NetAdapter WHERE InterfaceDescription LIKE '%Mellanox%' OR InterfaceDescription LIKE '%BlueField%'";
+            // MSFT_NetAdapter is in Root/StandardCimv2
+            if let Ok(wmi_con) = WMIConnection::with_namespace_path("Root\\StandardCimv2", com_lib) {
+                let results: Vec<serde_json::Value> = wmi_con.raw_query(query).unwrap_or_default();
+                for res in results {
+                    if let Some(desc) = res.get("InterfaceDescription").and_then(|v| v.as_str()) {
+                        if desc.to_lowercase().contains("bluefield") {
+                            status.bluefield_detected = true;
+                        }
+                        status.smartnic_detected = true;
+                    }
                 }
-                status.smartnic_detected = true;
             }
         }
     }
