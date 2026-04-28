@@ -867,9 +867,9 @@ impl EdrOrchestrator {
         }));
 
         if let Some(ref gemma) = gemma_cortex {
-            policy.add_voter(Box::new(osoosi_policy::voters::GemmaVoter {
-                analyzer: gemma.clone(),
-            }));
+            policy.add_voter(Box::new(osoosi_policy::voters::GemmaVoter::new(
+                gemma.clone(),
+            )));
         }
 
         policy.add_voter(Box::new(osoosi_policy::voters::KevVoter {

@@ -303,37 +303,39 @@ impl Gemma4Analyzer {
                 std::fs::metadata(onnx_file).map(|m| m.len()).unwrap_or(0));
         }
 
-        // Prefer Ollama when available (GPU-accelerated, fast inference)
-        if std::process::Command::new("ollama").arg("--version").output().is_ok() {
-            info!("Ollama detected (GPU-accelerated). Using Ollama for AI reasoning.");
-            return Ok(Self::OllamaFallback);
-        }
-
-        // No Ollama: try loading GGUF natively via Candle (CPU-only, slower)
+        // Priority 1: Native GGUF via Candle (in-process, no external deps, GPU if available)
         let ai_cfg = osoosi_types::config::load_ai_config();
         if let Some(gguf_path) = resolve_gguf_path(&ai_cfg.reasoning_model) {
-            info!("No Ollama found. Loading GGUF natively via Candle (CPU)...");
+            info!("Loading GGUF model natively via Candle (in-process, no Ollama needed)...");
+            let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
+            info!("Candle device: {:?}", device);
             match load_native_gguf(&gguf_path) {
                 Ok((model, tokenizer)) => {
-                    info!("Native GGUF model loaded. Note: CPU inference is slow for 1.5B models.");
+                    info!("Native GGUF model loaded on {:?}. Ollama is NOT required.", device);
                     return Ok(Self::NativeGGUF {
                         model: Mutex::new(model),
                         tokenizer,
-                        device: Device::Cpu,
+                        device,
                     });
                 }
                 Err(e) => {
-                    warn!("Native GGUF loading failed: {}.", e);
+                    warn!("Native GGUF loading failed: {}. Trying Ollama fallback.", e);
                 }
             }
         }
 
-        // Final Fallback to Candle/Transformer
+        // Priority 2: Ollama HTTP API (optional, for machines with Ollama installed)
+        if std::process::Command::new("ollama").arg("--version").output().is_ok() {
+            info!("Ollama detected. Using Ollama HTTP API for AI reasoning (optional fallback).");
+            return Ok(Self::OllamaFallback);
+        }
+
+        // Priority 3: Candle/Transformer safetensors fallback
         info!("Attempting native transformer fallback (Candle)...");
         match SecurityJudge::new(model_dir) {
             Ok(judge) => Ok(Self::Candle(judge)),
             Err(e) => {
-                Err(anyhow::anyhow!("All local AI fallback engines (ONNX, Ollama, GGUF, Candle) failed: {}", e))
+                Err(anyhow::anyhow!("All AI engines (GGUF, Ollama, Candle) failed: {}", e))
             }
         }
     }

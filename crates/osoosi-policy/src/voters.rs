@@ -81,8 +81,35 @@ impl ThreatVoter for SigmaVoter {
 
 /// LLM Reasoning Voter (The "Autonomous Cortex")
 /// Uses the configured LLM (DeepSeek R1, etc.) to reason about security events.
+/// Rate-limited to prevent GPU/CPU saturation from high-volume Sysmon telemetry.
 pub struct GemmaVoter {
     pub analyzer: Arc<osoosi_behavioral::Gemma4Analyzer>,
+    last_call: std::sync::Mutex<std::time::Instant>,
+}
+
+impl GemmaVoter {
+    pub fn new(analyzer: Arc<osoosi_behavioral::Gemma4Analyzer>) -> Self {
+        Self {
+            analyzer,
+            last_call: std::sync::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(60)),
+        }
+    }
+
+    /// Pre-filter: skip known-safe system processes to avoid wasting LLM inference.
+    fn is_known_safe(image: &str) -> bool {
+        let name = image.rsplit('\\').next().unwrap_or(image).to_lowercase();
+        matches!(name.as_str(),
+            "explorer.exe" | "svchost.exe" | "csrss.exe" | "wininit.exe" |
+            "services.exe" | "lsass.exe" | "smss.exe" | "dwm.exe" |
+            "taskhostw.exe" | "runtimebroker.exe" | "searchhost.exe" |
+            "sihost.exe" | "fontdrvhost.exe" | "ctfmon.exe" |
+            "conhost.exe" | "dllhost.exe" | "spoolsv.exe" |
+            "searchindexer.exe" | "securityhealthservice.exe" |
+            "msedgewebview2.exe" | "systemsettings.exe" |
+            "textinputhost.exe" | "widgetservice.exe" |
+            "osoosi.exe" | "ollama.exe" | "cargo.exe" | "rustc.exe"
+        )
+    }
 }
 
 impl ThreatVoter for GemmaVoter {
@@ -90,14 +117,29 @@ impl ThreatVoter for GemmaVoter {
         "LLM-Reasoning".to_string()
     }
     fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
-        let cmd_line = event
-            .data
-            .get("CommandLine")
-            .and_then(|v| v.as_str())
-            .unwrap_or("unknown");
         let image = event
             .data
             .get("Image")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        // Skip known-safe system processes (no need for LLM reasoning)
+        if Self::is_known_safe(image) {
+            return None;
+        }
+
+        // Rate limit: at most 1 LLM call per 10 seconds to protect CPU/GPU
+        {
+            let mut last = self.last_call.lock().unwrap();
+            if last.elapsed() < std::time::Duration::from_secs(10) {
+                return None;
+            }
+            *last = std::time::Instant::now();
+        }
+
+        let cmd_line = event
+            .data
+            .get("CommandLine")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
         let version = event.product_version.as_deref().unwrap_or("unknown");
