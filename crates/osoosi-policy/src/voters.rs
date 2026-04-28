@@ -128,10 +128,10 @@ impl ThreatVoter for GemmaVoter {
             return None;
         }
 
-        // Rate limit: at most 1 LLM call per 10 seconds to protect CPU/GPU
+        // Rate limit: at most 1 LLM call per 30 seconds to protect CPU/GPU
         {
             let mut last = self.last_call.lock().unwrap();
-            if last.elapsed() < std::time::Duration::from_secs(10) {
+            if last.elapsed() < std::time::Duration::from_secs(30) {
                 return None;
             }
             *last = std::time::Instant::now();
@@ -154,14 +154,21 @@ impl ThreatVoter for GemmaVoter {
                 // Strip DeepSeek <think>...</think> reasoning trace
                 let reasoning = strip_think_tags(&raw_reasoning);
 
+                // Ignore empty/garbage responses (timeout, model confusion, etc.)
+                if reasoning.len() < 10 {
+                    return None;
+                }
+
                 let r_lower = reasoning.to_lowercase();
                 if r_lower.contains("malicious")
                     || r_lower.contains("attack")
                     || r_lower.contains("suspicious")
                 {
+                    // Truncate to 200 chars for clean log output
+                    let display: String = reasoning.chars().take(200).collect();
                     return Some(VoteResult {
                         confidence: 0.9,
-                        reason: format!("LLM Reasoning: {}", reasoning),
+                        reason: format!("LLM Reasoning: {}", display),
                         weight: 0.9, // LLM reasoning has high weight for complex TTPs
                     });
                 }

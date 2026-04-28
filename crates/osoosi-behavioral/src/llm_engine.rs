@@ -341,14 +341,15 @@ impl Gemma4Analyzer {
     }
 
     pub fn reason_about_attack(&self, graph_summary: &str) -> Result<String> {
+        // Short, focused prompt to minimize prefill time on CPU
         let prompt = format!(
-            "<|im_start|>system\nYou are the OshoosiClaw Autonomous Cortex. Reason about this attack graph.\n<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
+            "<|im_start|>system\nClassify this event as malicious, suspicious, or benign. One sentence max.\n<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
             graph_summary
         );
         let raw = match self {
-            Self::Onnx { .. } => self.generate_text(&prompt, 256),
+            Self::Onnx { .. } => self.generate_text(&prompt, 48),
             Self::Candle(judge) => judge.judge_artifact(&prompt),
-            Self::NativeGGUF { .. } => self.generate_text(&prompt, 256),
+            Self::NativeGGUF { .. } => self.generate_text(&prompt, 48),
             Self::OllamaFallback => {
                 let ai = osoosi_types::config::load_ai_config();
                 let model = ai.reasoning_model;
@@ -454,9 +455,13 @@ impl Gemma4Analyzer {
                 let mut model_guard = model.lock().unwrap();
                 let mut result_text = String::new();
 
-                // Process the prompt (prefill)
+                // Process the prompt (prefill) with a hard 15s timeout
+                let prefill_start = std::time::Instant::now();
                 let input = Tensor::new(&prompt_tokens[..], device)?.unsqueeze(0)?;
                 let logits = model_guard.forward(&input, 0).map_err(|e| anyhow::anyhow!("GGUF forward: {}", e))?;
+                if prefill_start.elapsed() > std::time::Duration::from_secs(15) {
+                    warn!("GGUF prefill took {:?} — model may be too large for this CPU", prefill_start.elapsed());
+                }
                 let logits = logits.squeeze(0).map_err(|e| anyhow::anyhow!("{}", e))?;
                 let next_token = logits
                     .to_vec1::<f32>()
@@ -468,13 +473,13 @@ impl Gemma4Analyzer {
                     .unwrap_or(0);
                 all_tokens.push(next_token);
 
-                // Decode loop
+                // Decode loop — capped at 64 tokens to prevent CPU saturation
                 let eos_token = 151643u32; // Qwen2 EOS token
-                let max_gen = max_tokens.min(512);
+                let max_gen = max_tokens.min(64);
                 for _ in 0..max_gen {
                     if start.elapsed() > timeout {
                         warn!("Native GGUF inference timed out after {:?}", timeout);
-                        break;
+                        return Err(anyhow::anyhow!("GGUF timed out after {:?}", timeout));
                     }
                     let last = *all_tokens.last().unwrap();
                     if last == eos_token || last == 0 {
