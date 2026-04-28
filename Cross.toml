@@ -1,0 +1,42 @@
+# OshoosiClaw — Cross.toml
+# Used by `cross` (https://github.com/cross-rs/cross) for Docker-based cross-compilation.
+# Install: cargo install cross --git https://github.com/cross-rs/cross
+# ─────────────────────────────────────────────────────────────────────────────
+
+# ── Linux x86_64 musl (static binary — recommended for EDR deployment) ────────
+[target.x86_64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-musl:main"
+
+# Pre-build: install Linux-side native deps needed by our crates
+pre-build = [
+    "apt-get update -qq",
+    "apt-get install -y --no-install-recommends libclang-dev llvm-dev pkg-config libssl-dev",
+]
+
+# ── Linux aarch64 musl (ARM64 static — Raspberry Pi, cloud ARM) ───────────────
+[target.aarch64-unknown-linux-musl]
+image = "ghcr.io/cross-rs/aarch64-unknown-linux-musl:main"
+pre-build = [
+    "apt-get update -qq",
+    "apt-get install -y --no-install-recommends libclang-dev llvm-dev pkg-config",
+]
+
+# ── Linux x86_64 glibc (dynamic — standard Kali/Debian target) ───────────────
+[target.x86_64-unknown-linux-gnu]
+image = "ghcr.io/cross-rs/x86_64-unknown-linux-gnu:main"
+pre-build = [
+    "apt-get update -qq",
+    "apt-get install -y --no-install-recommends libclang-dev llvm-dev pkg-config libssl-dev",
+]
+
+# ── Windows GNU (from Linux, via mingw-w64) ───────────────────────────────────
+[target.x86_64-pc-windows-gnu]
+image = "ghcr.io/cross-rs/x86_64-pc-windows-gnu:main"
+
+# ── Build environment ─────────────────────────────────────────────────────────
+[build.env]
+passthrough = [
+    "OSOOSI_USE_BUNDLED_HF_WEIGHTS",
+    "ORT_DYLIB_PATH",
+    "RUST_LOG",
+]
