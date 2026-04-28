@@ -1252,10 +1252,6 @@ fn ort_dynamic_library_path() -> PathBuf {
     PathBuf::from("onnxruntime.dll")
 }
 
-fn escape_ps_literal(path: &str) -> String {
-    path.replace('\'', "''")
-}
-
 async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
     if std::env::var("OSOOSI_NO_ORT")
         .map(|v| v == "1")

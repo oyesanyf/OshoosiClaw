@@ -4,7 +4,6 @@
 
 use anyhow::{anyhow, Result};
 use osoosi_types::{PatchMetadata, PatchSeverity};
-use std::process::Command;
 use tracing::{info, warn};
 
 pub struct PatchDiscoverer;
@@ -101,6 +100,7 @@ impl PatchDiscoverer {
     }
 
     #[cfg(target_os = "windows")]
+    #[allow(dead_code)]
     fn parse_windows_updates_json(json_str: &str) -> Result<Vec<PatchMetadata>> {
         let mut patches = Vec::new();
         let parsed: serde_json::Value = serde_json::from_str(json_str)

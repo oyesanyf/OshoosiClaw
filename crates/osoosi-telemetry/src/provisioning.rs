@@ -6,12 +6,10 @@
 //! macOS: Endpoint Security Framework
 
 use osoosi_types::{extract_zip, SecuredExecutor};
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
 use tracing::{info, warn};
-use std::fs::File;
-use std::io::{self, Read, Write};
 
 /// Opt-in: download MalConv / SmolLM2 from `oyesanyf/OshoosiClaw-Weights` during provisioning. Default **off** — that bundle often 404s unless you publish it.
 fn use_bundled_hf_weights() -> bool {
@@ -1108,7 +1106,7 @@ impl AgentProvisioner {
                 .parent()
                 .unwrap_or(&osoosi_types::resolve_tools_dir().join("floss"))
                 .to_path_buf();
-            let target_dir_str = target_dir.to_string_lossy();
+            let _target_dir_str = target_dir.to_string_lossy();
 
             info!("FLOSS not found. Downloading v{} for Windows...", version);
             let zip_path = target_dir.join("floss.zip");

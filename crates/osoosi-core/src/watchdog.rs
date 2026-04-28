@@ -263,7 +263,7 @@ fn trigger_kill(state: &WatchdogState, reason: &str) {
             let handle = RegisterEventSourceW(None, PCWSTR::from_raw(windows::core::w!("OsoosiWatchdog").as_ptr()));
             if let Ok(h) = handle {
                 let msg = format!("Watchdog kill-switch triggered: {}", reason);
-                let mut w_msg: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
+                let w_msg: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
                 let strings = [PCWSTR::from_raw(w_msg.as_ptr())];
                 
                 let _ = ReportEventW(

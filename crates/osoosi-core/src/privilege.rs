@@ -12,8 +12,6 @@ use std::process::Command;
 use tracing::info;
 #[cfg(target_os = "windows")]
 use wmi::{COMLibrary, WMIConnection};
-#[cfg(target_os = "windows")]
-use std::path::Path;
 
 #[derive(Debug, Clone, Serialize)]
 pub struct PrivilegeStatus {
@@ -362,7 +360,7 @@ fn add_to_group(status: &mut PrivilegeStatus, user: &str, group: &str) {
     use windows::core::PCWSTR;
 
     let mut user_w: Vec<u16> = user.encode_utf16().chain(std::iter::once(0)).collect();
-    let mut group_w: Vec<u16> = group.encode_utf16().chain(std::iter::once(0)).collect();
+    let group_w: Vec<u16> = group.encode_utf16().chain(std::iter::once(0)).collect();
 
     let member = LOCALGROUP_MEMBERS_INFO_3 {
         lgrmi3_domainandname: windows::core::PWSTR(user_w.as_mut_ptr()),

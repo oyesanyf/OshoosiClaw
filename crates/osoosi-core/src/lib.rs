@@ -1242,7 +1242,7 @@ impl EdrOrchestrator {
                                     let _ = orchestrator.activate_mesh_hologram("127.0.0.1").await;
 
                                     // Tarpit the suspicious process
-                                    let pid_str = pid.to_string();
+                                    let _pid_str = pid.to_string();
                                     // Rustify: Use native NT API to suspend process instead of powershell.exe
                                     #[cfg(target_os = "windows")]
                                     unsafe {

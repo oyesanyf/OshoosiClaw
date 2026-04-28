@@ -14,8 +14,6 @@ use sysinfo::Networks;
 use tracing::{debug, info};
 #[cfg(target_os = "windows")]
 use windows::Win32::System::EventLog::*;
-#[cfg(target_os = "windows")]
-use windows::core::PCWSTR;
 
 /// A host discovered through any discovery method.
 #[derive(Debug, Clone)]

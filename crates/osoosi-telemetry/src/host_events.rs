@@ -237,6 +237,7 @@ impl WindowsEventReader {
         Ok(new_events)
     }
 
+    #[allow(dead_code)] // used in unit tests (windows_tests::splits_namespaced_*)
     fn split_event_xml(xml: &str) -> Vec<String> {
         let mut events = Vec::new();
         let mut rest = xml;
