@@ -1,3 +1,4 @@
+
 //! with atomic rollbacks, health verification, and mesh-based learning.
 
 pub mod discovery;
@@ -389,6 +390,7 @@ $oldVal = Get-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequ
 Set-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -Value 0 -Type DWord -Force
 $desc = "{}"
 try {{
+  Enable-ComputerRestore -Drive "$env:SystemDrive\" -ErrorAction SilentlyContinue
   Checkpoint-Computer -Description $desc -RestorePointType "MODIFY_SETTINGS" -ErrorAction Stop
   Write-Output "Successfully created restore point: $desc"
 }} catch {{

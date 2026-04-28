@@ -111,7 +111,7 @@ impl BehavioralClassifier {
                     (None, None)
                 }
                 (_, Err(e)) => {
-                    warn!("Failed to load tokenizer: {}", e);
+                    info!("Behavioral ONNX tokenizer format not supported by current tokenizers crate ({}). Classifier proceeds without local ONNX; AI reasoning uses Ollama/Gemma4.", e);
                     (None, None)
                 }
             }
@@ -130,7 +130,18 @@ impl BehavioralClassifier {
             .unwrap_or_default();
 
         let securebert = if !no_ai {
-            let securebert_dir = Path::new(&models_dir).join("behavioral");
+            let securebert_dir = std::env::var("OSOOSI_SECUREBERT_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    let hf_dir = Path::new(&models_dir).join("models--MarsSecurity--securebert-onnx").join("snapshots");
+                    if let Ok(mut entries) = std::fs::read_dir(&hf_dir) {
+                        if let Some(Ok(entry)) = entries.next() {
+                            return entry.path();
+                        }
+                    }
+                    Path::new(&models_dir).join("behavioral")
+                });
+                
             match SecureBertAnalyzer::new(&securebert_dir) {
                 Ok(s) => {
                     info!("Native SecureBert Cross-Encoder loaded successfully.");
@@ -153,7 +164,18 @@ impl BehavioralClassifier {
                 .unwrap_or(false)
         {
             // Attempt to load native SmolLM2 if available (fallback)
-            let smollm_dir = Path::new(&models_dir).join("smollm");
+            let smollm_dir = std::env::var("OSOOSI_SMOLLM_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    let hf_dir = Path::new(&models_dir).join("models--HuggingFaceTB--SmolLM2-135M-Instruct").join("snapshots");
+                    if let Ok(mut entries) = std::fs::read_dir(&hf_dir) {
+                        if let Some(Ok(entry)) = entries.next() {
+                            return entry.path();
+                        }
+                    }
+                    Path::new(&models_dir).join("smollm")
+                });
+                
             match SmolLMAnalyzer::new(&smollm_dir) {
                 Ok(s) => {
                     info!("Native SmolLM2 fallback initialization successful.");
@@ -172,7 +194,18 @@ impl BehavioralClassifier {
         };
 
         let judge = if !no_ai {
-            let gemma_dir = Path::new(&models_dir).join("gemma4-e4b");
+            let gemma_dir = std::env::var("OSOOSI_GEMMA_DIR")
+                .map(std::path::PathBuf::from)
+                .unwrap_or_else(|_| {
+                    let hf_dir = Path::new(&models_dir).join("models--onnx-community--gemma-4-E4B-it-ONNX").join("snapshots");
+                    if let Ok(mut entries) = std::fs::read_dir(&hf_dir) {
+                        if let Some(Ok(entry)) = entries.next() {
+                            return entry.path().join("onnx");
+                        }
+                    }
+                    Path::new(&models_dir).join("gemma4-e4b")
+                });
+                
             match SecurityJudge::new(&gemma_dir) {
                 Ok(j) => {
                     info!("Gemma 4 Security Judge initialized.");

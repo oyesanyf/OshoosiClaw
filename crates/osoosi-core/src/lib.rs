@@ -126,7 +126,10 @@ fn is_trusted_operational_image(image_path: &str) -> bool {
     
     let is_venv = path.contains("\\.venv\\") || path.contains("/.venv/") || path.contains("\\site-packages\\") || path.contains("/site-packages/");
     
-    is_trusted_stem && (trusted_path || is_venv)
+    // Also skip if it's explicitly a tool directory regardless of stem
+    let is_tool_dir = path.contains("\\tools\\git\\") || path.contains("/tools/git/") || path.contains("\\oshoosiclaw\\");
+
+    (is_trusted_stem && (trusted_path || is_venv)) || is_tool_dir
 }
 
 fn should_skip_file_malware_scan(path: &std::path::Path) -> bool {
@@ -766,7 +769,17 @@ impl EdrOrchestrator {
         let models_dir = std::path::PathBuf::from(
             std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string()),
         );
-        let smollm_dir = models_dir.join("smollm");
+        let smollm_dir = std::env::var("OSOOSI_SMOLLM_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                let hf_dir = models_dir.join("models--HuggingFaceTB--SmolLM2-135M-Instruct").join("snapshots");
+                if let Ok(mut entries) = std::fs::read_dir(&hf_dir) {
+                    if let Some(Ok(entry)) = entries.next() {
+                        return entry.path();
+                    }
+                }
+                models_dir.join("smollm")
+            });
 
         let behavioral_debouncer = Arc::new(dashmap::DashMap::new());
 
@@ -790,9 +803,18 @@ impl EdrOrchestrator {
         } else {
             None
         };
+        
         let gemma_dir = std::env::var("OSOOSI_GEMMA_DIR")
             .map(std::path::PathBuf::from)
-            .unwrap_or_else(|_| models_dir.join("gemma4-e4b"));
+            .unwrap_or_else(|_| {
+                let hf_dir = models_dir.join("models--onnx-community--gemma-4-E4B-it-ONNX").join("snapshots");
+                if let Ok(mut entries) = std::fs::read_dir(&hf_dir) {
+                    if let Some(Ok(entry)) = entries.next() {
+                        return entry.path().join("onnx");
+                    }
+                }
+                models_dir.join("gemma4-e4b")
+            });
 
         let spider_eyes = Arc::new(osoosi_behavioral::SpiderEyes::new(
             &gemma_dir.to_string_lossy()

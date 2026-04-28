@@ -62,9 +62,6 @@ impl BehavioralLogReader {
 
         #[cfg(target_os = "linux")]
         {
-            let use_journald = std::env::var("OSOOSI_BEHAVIORAL_USE_JOURNALD")
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(true);
             let paths = std::env::var("OSOOSI_BEHAVIORAL_LOGS")
                 .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
                 .unwrap_or_else(|_| {
@@ -79,15 +76,11 @@ impl BehavioralLogReader {
                 });
             Self {
                 paths,
-                use_journald,
             }
         }
 
         #[cfg(target_os = "macos")]
         {
-            let use_unified = std::env::var("OSOOSI_BEHAVIORAL_USE_UNIFIED")
-                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-                .unwrap_or(true);
             let paths = std::env::var("OSOOSI_BEHAVIORAL_LOGS")
                 .map(|s| s.split(',').map(|x| x.trim().to_string()).collect())
                 .unwrap_or_else(|_| {
@@ -97,7 +90,7 @@ impl BehavioralLogReader {
                         "/var/log/apache2/access_log".to_string(),
                     ]
                 });
-            Self { use_unified, paths }
+            Self { paths }
         }
 
         #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
@@ -121,11 +114,6 @@ impl BehavioralLogReader {
 
         #[cfg(target_os = "linux")]
         {
-            if self.use_journald {
-                if let Ok(events) = Self::query_journald() {
-                    out.extend(events);
-                }
-            }
             for path in &self.paths {
                 if let Ok(events) = Self::read_linux_log_file(path) {
                     out.extend(events);
@@ -135,11 +123,6 @@ impl BehavioralLogReader {
 
         #[cfg(target_os = "macos")]
         {
-            if self.use_unified {
-                if let Ok(events) = Self::query_macos_unified() {
-                    out.extend(events);
-                }
-            }
             for path in &self.paths {
                 if let Ok(events) = Self::read_macos_log_file(path) {
                     out.extend(events);
@@ -163,47 +146,85 @@ impl Default for BehavioralLogReader {
 #[cfg(target_os = "windows")]
 impl BehavioralLogReader {
     fn query_windows_channel(&self, channel: &str) -> Result<Vec<LogEvent>> {
-        let mut query = format!("*[System[TimeCreated[timediff(@SystemTime) <= 600000]]]"); // Default to last 10m if no state
+        use windows::core::{HSTRING, w, PCWSTR};
+        use windows::Win32::System::EventLog::{
+            EvtQuery, EvtNext, EvtRender, EvtClose, EvtRenderEventXml,
+            EvtQueryChannelPath, EvtQueryForwardDirection, EVT_HANDLE
+        };
+        use windows::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, ERROR_NO_MORE_ITEMS, GetLastError};
+
+        let mut query = format!("*[System[TimeCreated[timediff(@SystemTime) <= 600000]]]");
         
         {
             let last_time = self.last_poll_time.lock().unwrap();
             if let Some(t) = *last_time {
-                // wevtutil uses ISO8601 strings for queries
                 let ts_str = t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
                 query = format!("*[System[TimeCreated[@SystemTime > '{}']]]", ts_str);
             }
         }
 
-        let output = std::process::Command::new("wevtutil")
-            .args([
-                "qe",
-                channel,
-                "/e:root",
-                "/c:1000",
-                "/f:xml",
-                &format!("/q:\"{}\"", query),
-            ])
-            .output()?;
+        let channel_h = HSTRING::from(channel);
+        let query_h = HSTRING::from(query);
 
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            // Don't warn on empty query results (which wevtutil sometimes treats as error)
-            if !stderr.contains("No events were found") {
-                warn!("wevtutil failed for {}: {}", channel, stderr);
+        let handle = unsafe {
+            match EvtQuery(
+                None,
+                &channel_h,
+                &query_h,
+                EvtQueryChannelPath.0 | EvtQueryForwardDirection.0,
+            ) {
+                Ok(h) => h,
+                Err(e) => {
+                    warn!("EvtQuery failed for {}: {}", channel, e);
+                    return Ok(Vec::new());
+                }
             }
-            return Ok(Vec::new());
+        };
+
+        let mut out = Vec::new();
+
+        unsafe {
+            let mut events = [0isize; 50];
+            let mut returned = 0;
+
+            while EvtNext(handle, &mut events, 0, 0, &mut returned).is_ok() && returned > 0 {
+                for i in 0..returned as usize {
+                    let evt = EVT_HANDLE(events[i]);
+                    let mut buffer_used = 0;
+                    let mut property_count = 0;
+
+                    let _ = EvtRender(None, evt, EvtRenderEventXml.0 as u32, 0, None, &mut buffer_used, &mut property_count);
+
+                    let mut buffer: Vec<u16> = vec![0; (buffer_used / 2) as usize];
+                    if EvtRender(
+                        None, 
+                        evt, 
+                        EvtRenderEventXml.0 as u32, 
+                        buffer.len() as u32 * 2, 
+                        Some(buffer.as_mut_ptr() as *mut std::ffi::c_void), 
+                        &mut buffer_used, 
+                        &mut property_count
+                    ).is_ok() {
+                        let xml = String::from_utf16_lossy(&buffer);
+                        let clean_xml = xml.trim_end_matches('\0');
+                        if let Some(parsed) = parse_single_windows_event(clean_xml, channel) {
+                            out.push(parsed);
+                        }
+                    }
+                    let _ = EvtClose(evt);
+                }
+            }
+
+            let _ = EvtClose(handle);
         }
 
-        let xml = String::from_utf8_lossy(&output.stdout);
-        let events = Self::parse_windows_xml(&xml, channel)?;
-        
         // Update watermark
-        if let Some(latest) = events.iter().map(|e| e.timestamp).max() {
+        if let Some(latest) = out.iter().map(|e| e.timestamp).max() {
             let mut last_time = self.last_poll_time.lock().unwrap();
             *last_time = Some(latest);
         }
 
-        Ok(events)
+        Ok(out)
     }
 
     fn parse_windows_xml(xml: &str, channel: &str) -> Result<Vec<LogEvent>> {
@@ -312,67 +333,6 @@ fn extract_event_data(xml: &str) -> Vec<(String, String)> {
 
 #[cfg(target_os = "linux")]
 impl BehavioralLogReader {
-    fn query_journald() -> Result<Vec<LogEvent>> {
-        let output = std::process::Command::new("journalctl")
-            .args(["-n", "100", "-o", "json", "--no-pager", "-t", "sysmon"])
-            .output()
-            .or_else(|_| {
-                // Fallback: search for any security-related items if no explicit sysmon tag
-                std::process::Command::new("journalctl")
-                    .args(["-n", "50", "-o", "json", "--no-pager"])
-                    .output()
-            })?;
-
-        if !output.status.success() {
-            return Ok(Vec::new());
-        }
-
-        let mut out = Vec::new();
-        for line in String::from_utf8_lossy(&output.stdout).lines() {
-            if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                let mut data = HashMap::new();
-                if let Some(msg) = v.get("MESSAGE").and_then(|m| m.as_str()) {
-                    data.insert("Message".to_string(), serde_json::json!(msg));
-                }
-                if let Some(pid) = v.get("_PID") {
-                    data.insert("ProcessId".to_string(), pid.clone());
-                }
-                if let Some(exe) = v.get("_EXE").and_then(|e| e.as_str()) {
-                    data.insert("Image".to_string(), serde_json::json!(exe));
-                }
-                if let Some(cmd) = v.get("_CMDLINE").and_then(|c| c.as_str()) {
-                    data.insert("CommandLine".to_string(), serde_json::json!(cmd));
-                }
-                data.insert("raw".to_string(), v.clone());
-
-                let timestamp = v
-                    .get("__REALTIME_TIMESTAMP")
-                    .and_then(|t| t.as_str())
-                    .and_then(|s| s.parse::<i64>().ok())
-                    .and_then(|us| {
-                        DateTime::from_timestamp(us / 1_000_000, ((us % 1_000_000) as u32) * 1000)
-                    })
-                    .map(|dt| dt.with_timezone(&Utc))
-                    .unwrap_or_else(Utc::now);
-
-                let hostname = v
-                    .get("_HOSTNAME")
-                    .and_then(|h| h.as_str())
-                    .unwrap_or("localhost")
-                    .to_string();
-
-                out.push(LogEvent {
-                    source: "linux:journald".to_string(),
-                    event_id: 0,
-                    timestamp,
-                    computer: hostname,
-                    data,
-                });
-            }
-        }
-        Ok(out)
-    }
-
     fn read_linux_log_file(&self, path: &str) -> Result<Vec<LogEvent>> {
         let path_obj = std::path::Path::new(path);
         if !path_obj.exists() {
@@ -430,46 +390,6 @@ impl BehavioralLogReader {
 
 #[cfg(target_os = "macos")]
 impl BehavioralLogReader {
-    fn query_macos_unified() -> Result<Vec<LogEvent>> {
-        let output = std::process::Command::new("log")
-            .args([
-                "show",
-                "--predicate",
-                "eventMessage contains \"\"",
-                "--last",
-                "2m",
-                "--style",
-                "syslog",
-            ])
-            .output()?;
-
-        if !output.status.success() {
-            return Ok(Vec::new());
-        }
-
-        let content = String::from_utf8_lossy(&output.stdout);
-        let mut out = Vec::new();
-        for line in content.lines().rev().take(50) {
-            let mut data = HashMap::new();
-            data.insert("raw".to_string(), serde_json::json!(line));
-            if let Some(msg) = line.splitn(5, ' ').nth(4) {
-                data.insert("Message".to_string(), serde_json::json!(msg));
-            }
-
-            out.push(LogEvent {
-                source: "macos:unified".to_string(),
-                event_id: 0,
-                timestamp: Utc::now(),
-                computer: hostname::get()
-                    .ok()
-                    .and_then(|h| h.into_string().ok())
-                    .unwrap_or_else(|| "localhost".to_string()),
-                data,
-            });
-        }
-        Ok(out)
-    }
-
     fn read_macos_log_file(path: &str) -> Result<Vec<LogEvent>> {
         let path = std::path::Path::new(path);
         if !path.exists() {

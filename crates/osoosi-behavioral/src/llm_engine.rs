@@ -201,6 +201,7 @@ pub enum Gemma4Analyzer {
         device: Device,
     },
     Candle(SecurityJudge),
+    OllamaFallback,
 }
 
 impl Gemma4Analyzer {
@@ -211,16 +212,27 @@ impl Gemma4Analyzer {
         );
 
         let model_path = model_dir.join("model.onnx");
+        let decoder_path = model_dir.join("decoder_model_merged.onnx");
         let tokenizer_filename = model_dir.join("tokenizer.json");
 
-        // Try ONNX first
-        if model_path.exists() {
+        // The ONNX model requires multi-GB data shards alongside the manifest.
+        // If the .onnx file is smaller than 10 MB it's just a manifest stub and
+        // ONNX Runtime will fail with "file_size: The system cannot find the file".
+        // Skip straight to Ollama/Candle in that case.
+        let onnx_file = if decoder_path.exists() { &decoder_path } else { &model_path };
+        let onnx_viable = onnx_file.exists() && {
+            let sz = std::fs::metadata(onnx_file).map(|m| m.len()).unwrap_or(0);
+            sz > 10_000_000 // > 10 MB means it's likely a real model, not a manifest
+        };
+
+        // Try ONNX only if the model file is large enough to be real
+        if onnx_viable {
             match (|| -> Result<Self> {
                 let tokenizer = Tokenizer::from_file(&tokenizer_filename).map_err(anyhow::Error::msg)?;
                 let session = Session::builder()?
                     .with_optimization_level(GraphOptimizationLevel::Level3)?
                     .with_intra_threads(4)?
-                    .commit_from_file(&model_path)?;
+                    .commit_from_file(onnx_file)?;
                 
                 Ok(Self::Onnx {
                     session: std::sync::Mutex::new(session),
@@ -229,14 +241,27 @@ impl Gemma4Analyzer {
                 })
             })() {
                 Ok(s) => return Ok(s),
-                Err(e) => warn!("Gemma 4 ONNX initialization failed: {}. Falling back to native transformer (Candle).", e),
+                Err(e) => warn!("Gemma 4 ONNX initialization failed: {}. Falling back.", e),
             }
+        } else if onnx_file.exists() {
+            info!("Gemma 4 ONNX manifest is a stub ({} bytes). Skipping ONNX, using Ollama/Candle fallback.",
+                std::fs::metadata(onnx_file).map(|m| m.len()).unwrap_or(0));
         }
 
-        // Fallback to Candle/Transformer
-        info!("Gemma 4: attempting native transformer fallback...");
-        let judge = SecurityJudge::new(model_dir)?;
-        Ok(Self::Candle(judge))
+        // Fallback to Ollama first if available (faster and better reasoning)
+        if std::process::Command::new("ollama").arg("--version").output().is_ok() {
+            info!("Ollama detected. Prioritizing Ollama for AI reasoning fallback.");
+            return Ok(Self::OllamaFallback);
+        }
+
+        // Final Fallback to Candle/Transformer
+        info!("Gemma 4: attempting native transformer fallback (Candle)...");
+        match SecurityJudge::new(model_dir) {
+            Ok(judge) => Ok(Self::Candle(judge)),
+            Err(e) => {
+                Err(anyhow::anyhow!("All local AI fallback engines (ONNX, Ollama, Candle) failed: {}", e))
+            }
+        }
     }
 
     pub fn reason_about_attack(&self, graph_summary: &str) -> Result<String> {
@@ -247,6 +272,17 @@ impl Gemma4Analyzer {
         match self {
             Self::Onnx { .. } => self.generate_text(&prompt, 256),
             Self::Candle(judge) => judge.judge_artifact(&prompt),
+            Self::OllamaFallback => {
+                let model = std::env::var("OSOOSI_OLLAMA_MODEL").unwrap_or_else(|_| "llama3.1".to_string());
+                let output = std::process::Command::new("ollama")
+                    .args(["run", &model, &prompt])
+                    .output()?;
+                if output.status.success() {
+                    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+                } else {
+                    Err(anyhow::anyhow!("Ollama execution failed: {}", String::from_utf8_lossy(&output.stderr)))
+                }
+            }
         }
     }
 
@@ -282,6 +318,19 @@ impl Gemma4Analyzer {
                 Ok(result_text)
             }
             Self::Candle(judge) => judge.judge_artifact(prompt),
+            Self::OllamaFallback => {
+                let model = std::env::var("OSOOSI_REASONING_MODEL")
+                    .or_else(|_| std::env::var("OSOOSI_OLLAMA_MODEL"))
+                    .unwrap_or_else(|_| "gemma4:e4b".to_string());
+                let output = std::process::Command::new("ollama")
+                    .args(["run", &model, prompt])
+                    .output()?;
+                if output.status.success() {
+                    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
+                } else {
+                    Err(anyhow::anyhow!("Ollama execution failed: {}", String::from_utf8_lossy(&output.stderr)))
+                }
+            }
         }
     }
 }

@@ -71,19 +71,17 @@ impl CoLogFilter {
     }
 
     fn calculate_sequence_anomaly(&self, new_template: &LogTemplate) -> f32 {
-        // Placeholder for sequence probability calculation.
-        // For now, we use a simple heuristic: if this template is rarely seen
-        // after the previous sequence, it's anomalous.
-        // anomaly_threshold (default 0.8) defines the score above which we flag as anomalous.
-
-        let last_n = self.history.iter().rev().take(5).collect::<Vec<_>>();
-        let source_count = last_n
+        // Track how many times this EXACT template has appeared recently.
+        // A single source (like windows:Security) will easily burst 50+ logs at once, which is normal.
+        let last_n = self.history.iter().rev().take(50).collect::<Vec<_>>();
+        let exact_match_count = last_n
             .iter()
-            .filter(|t| t.source == new_template.source)
+            .filter(|t| t.source == new_template.source && t.event_id == new_template.event_id)
             .count();
 
-        if source_count > 4 {
-            // Rapid repeat from same source - often suspicious (scanning/brute)
+        // Only trigger an anomaly if the exact same event repeats excessively
+        if exact_match_count > 20 {
+            // Rapid repeat of identical template - potentially suspicious but less noisy
             self.anomaly_threshold - 0.05 // 0.75 when threshold is 0.8
         } else {
             0.1

@@ -1,0 +1,9 @@
+[package]
+name = "evttest"
+version.workspace = true
+edition.workspace = true
+license.workspace = true
+rust-version.workspace = true
+
+[dependencies]
+windows = { version = "0.58.0", features = ["Win32_System_EventLog", "Win32_Foundation"] }

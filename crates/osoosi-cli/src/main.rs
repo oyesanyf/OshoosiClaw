@@ -364,10 +364,16 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             // 2. Bind dashboard as soon as the orchestrator exists so the UI can load while loops start.
             if with_dashboard {
                 info!("Auto-launching dashboard UI...");
+                // Kill any zombie process holding the dashboard port from a previous run
+                let dashboard_port = std::env::var("OSOOSI_DASHBOARD_PORT")
+                    .ok()
+                    .and_then(|s| s.parse::<u16>().ok())
+                    .unwrap_or(3030);
+                kill_port_holder(dashboard_port);
                 let dash_orch = Arc::new(orchestrator.clone());
                 let dash_gate = join_gate.clone();
                 tokio::spawn(async move {
-                    let mut current_port = 3030u16;
+                    let mut current_port = dashboard_port;
                     let mut opened_port: Option<u16> = None;
                     while current_port <= 3040 {
                         match osoosi_dashboard::spawn_dashboard_with_backend(
@@ -1123,6 +1129,95 @@ async fn handle_grant_access() -> anyhow::Result<()> {
     Ok(())
 }
 
+/// Kill any zombie/leftover process that is holding a specific TCP port.
+/// This prevents "Port 3030 in use" on restarts.
+fn kill_port_holder(port: u16) {
+    #[cfg(target_os = "windows")]
+    {
+        // Use netstat to find PIDs listening on this port
+        let output = std::process::Command::new("netstat")
+            .args(["-ano", "-p", "TCP"])
+            .output();
+        if let Ok(out) = output {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let port_str = format!(":{}", port);
+            let mut pids_to_kill = std::collections::HashSet::new();
+            for line in stdout.lines() {
+                if line.contains(&port_str) && (line.contains("LISTENING") || line.contains("ESTABLISHED")) {
+                    // The PID is the last whitespace-separated token
+                    if let Some(pid_str) = line.split_whitespace().last() {
+                        if let Ok(pid) = pid_str.parse::<u32>() {
+                            if pid > 0 {
+                                pids_to_kill.insert(pid);
+                            }
+                        }
+                    }
+                }
+            }
+            // Don't kill ourselves
+            let my_pid = std::process::id();
+            for pid in pids_to_kill {
+                if pid == my_pid {
+                    continue;
+                }
+                info!("Killing zombie process PID {} holding port {}...", pid, port);
+                let _ = std::process::Command::new("taskkill")
+                    .args(["/F", "/PID", &pid.to_string()])
+                    .output();
+            }
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        let output = std::process::Command::new("ss")
+            .args(["-tlnp"])
+            .output();
+        if let Ok(out) = output {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            let port_str = format!(":{}", port);
+            for line in stdout.lines() {
+                if line.contains(&port_str) {
+                    // Extract pid from "pid=NNNN,"
+                    if let Some(pid_start) = line.find("pid=") {
+                        let rest = &line[pid_start + 4..];
+                        if let Some(end) = rest.find(|c: char| !c.is_ascii_digit()) {
+                            if let Ok(pid) = rest[..end].parse::<u32>() {
+                                if pid > 0 && pid != std::process::id() {
+                                    info!("Killing zombie process PID {} holding port {}...", pid, port);
+                                    let _ = std::process::Command::new("kill")
+                                        .args(["-9", &pid.to_string()])
+                                        .output();
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    #[cfg(target_os = "macos")]
+    {
+        let output = std::process::Command::new("lsof")
+            .args(["-ti", &format!(":{}", port)])
+            .output();
+        if let Ok(out) = output {
+            let stdout = String::from_utf8_lossy(&out.stdout);
+            for pid_str in stdout.lines() {
+                if let Ok(pid) = pid_str.trim().parse::<u32>() {
+                    if pid > 0 && pid != std::process::id() {
+                        info!("Killing zombie process PID {} holding port {}...", pid, port);
+                        let _ = std::process::Command::new("kill")
+                            .args(["-9", &pid.to_string()])
+                            .output();
+                    }
+                }
+            }
+        }
+    }
+}
+
 async fn setup_firewall() -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     {
@@ -1464,100 +1559,54 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
     let gemma_repo_name = std::env::var("OSOOSI_GEMMA_ONNX_REPO")
         .unwrap_or_else(|_| "onnx-community/gemma-4-E4B-it-ONNX".to_string());
     let gemma_repo = api.model(gemma_repo_name.clone());
-    let gemma_model_dest = gemma_dir.join("model.onnx");
-    let gemma_tokenizer_dest = gemma_dir.join("tokenizer.json");
 
-    if !gemma_tokenizer_dest.exists() {
-        for filename in ["tokenizer.json", "onnx/tokenizer.json"] {
-            match gemma_repo.get(filename).await {
-                Ok(downloaded) => {
-                    if fs::copy(downloaded, &gemma_tokenizer_dest).is_ok() {
-                        info!("Gemma 4 tokenizer saved from {}.", gemma_repo_name);
-                        break;
-                    }
-                }
-                Err(e) => tracing::debug!("Gemma tokenizer candidate {} failed: {}", filename, e),
-            }
+    // Just pull the necessary files into the HuggingFace cache.
+    // The runtime logic in `osoosi-core` will dynamically locate the snapshot dir.
+    info!("Ensuring Gemma 4 ONNX shards are cached from {}...", gemma_repo_name);
+    for filename in [
+        "tokenizer.json",
+        "onnx/tokenizer.json",
+        "model.onnx",
+        "onnx/model.onnx",
+        "decoder_model_merged.onnx",
+        "onnx/decoder_model_merged.onnx",
+        "decoder_model_merged.onnx_data_1",
+        "onnx/decoder_model_merged.onnx_data_1",
+        "decoder_model_merged.onnx_data_2",
+        "onnx/decoder_model_merged.onnx_data_2",
+        "decoder_model_merged.onnx_data_3",
+        "onnx/decoder_model_merged.onnx_data_3",
+        "decoder_model_merged.onnx_data_4",
+        "onnx/decoder_model_merged.onnx_data_4",
+        "decoder_model_merged.onnx_data_5",
+        "onnx/decoder_model_merged.onnx_data_5",
+        "decoder_model_merged.onnx_data_6",
+        "onnx/decoder_model_merged.onnx_data_6",
+        "decoder_model_merged.onnx_data_7",
+        "onnx/decoder_model_merged.onnx_data_7",
+    ] {
+        if let Ok(_) = gemma_repo.get(filename).await {
+            tracing::debug!("Cached Gemma component: {}", filename);
         }
-    }
-
-    if !gemma_model_dest.exists() {
-        for filename in [
-            "model.onnx",
-            "onnx/model.onnx",
-            "decoder_model_merged.onnx",
-            "onnx/decoder_model_merged.onnx",
-            "decoder_model.onnx",
-            "onnx/decoder_model.onnx",
-            "model_text_decoder.onnx",
-            "onnx/model_text_decoder.onnx",
-        ] {
-            match gemma_repo.get(filename).await {
-                Ok(downloaded) => {
-                    if fs::copy(downloaded, &gemma_model_dest).is_ok() {
-                        info!(
-                            "Gemma 4 ONNX decoder saved from {} ({}) as model.onnx.",
-                            gemma_repo_name, filename
-                        );
-                        break;
-                    }
-                }
-                Err(e) => tracing::debug!("Gemma ONNX candidate {} failed: {}", filename, e),
-            }
-        }
-    }
-
-    if !gemma_model_dest.exists() || !gemma_tokenizer_dest.exists() {
-        warn!(
-            "Gemma 4 E4B ONNX files are incomplete in {:?}. Ollama Gemma is preferred when available; ONNX Gemma voter stays silent until model.onnx + tokenizer.json exist.",
-            gemma_dir
-        );
     }
 
     if std::env::var("OSOOSI_ENABLE_SMOLLM")
         .map(|v| v == "1")
         .unwrap_or(false)
     {
-        let smollm_dir = models_dir.join("smollm");
-        let _ = fs::create_dir_all(&smollm_dir);
-
         // Optional legacy SmolLM bootstrap. Disabled by default; Gemma 4 is primary.
         // 1. SmolLM2-135M-Instruct (Native)
         let smollm_repo = api.model("HuggingFaceTB/SmolLM2-135M-Instruct".to_string());
-        let smollm_files = ["model.safetensors", "tokenizer.json", "config.json"];
-        for file in smollm_files {
-            let dest = smollm_dir.join(file);
-            if !dest.exists() {
-                info!("📥 Downloading SmolLM component: {}...", file);
-                match smollm_repo.get(file).await {
-                    Ok(downloaded) => {
-                        let _ = fs::copy(downloaded, dest);
-                    }
-                    Err(e) => warn!("Failed to download {}: {}", file, e),
-                }
-            }
+        info!("Ensuring SmolLM components are cached...");
+        for file in ["model.safetensors", "tokenizer.json", "config.json"] {
+            let _ = smollm_repo.get(file).await;
         }
 
         // 2. SmolLM2-135M-Instruct (ONNX)
         let smollm_onnx_repo = api.model("onnx-community/SmolLM2-135M-Instruct".to_string());
-        let smollm_onnx_dest = smollm_dir.join("smollm2-135m-it.onnx");
-        if !smollm_onnx_dest.exists() {
-            info!("📥 Downloading SmolLM component: smollm2-135m-it.onnx...");
-            // Try various names
-            for filename in ["model.onnx", "smollm2-135m-it.onnx", "onnx/model.onnx"] {
-                match smollm_onnx_repo.get(filename).await {
-                    Ok(downloaded) => {
-                        if fs::copy(downloaded, &smollm_onnx_dest).is_ok() {
-                            info!("✅ SmolLM ONNX model saved.");
-                            break;
-                        }
-                    }
-                    Err(_) => continue,
-                }
-            }
+        for filename in ["model.onnx", "smollm2-135m-it.onnx", "onnx/model.onnx"] {
+            let _ = smollm_onnx_repo.get(filename).await;
         }
-
-        // 3. MalConv — Candle-compatible `.safetensors` only. cycloevan/malconv on HF is Keras/TF (see model card), not an inference endpoint.
     }
 
     let ai_cfg = osoosi_types::load_ai_config();
@@ -1571,6 +1620,7 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
             }
         }
     }
+    
     if !malconv_dest.exists() {
         let malconv_files = [
             "model.safetensors",
@@ -1578,7 +1628,6 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
             "pytorch_model.safetensors",
             "weights.safetensors",
         ];
-        // Prefer repos that ship safetensors/ONNX; cycloevan/malconv is last (often TF-only / no hosted inference on HF).
         let malconv_repos = [
             "oyesanyf/OshoosiClaw-Weights",
             "oyesanyf/OshoosiClaw",
@@ -1609,28 +1658,10 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
     }
 
     // 4. SecureBERT (Behavioral Sentence Classification)
-    let behavioral_dir = models_dir.join("behavioral");
-    let _ = fs::create_dir_all(&behavioral_dir);
-    let sb_model_dest = behavioral_dir.join("model.onnx");
-    let sb_tokenizer_dest = behavioral_dir.join("tokenizer.json");
-
-    if !sb_model_dest.exists() || !sb_tokenizer_dest.exists() {
-        info!("📥 Provisioning SecureBERT for behavioral analysis...");
-        let sb_repo = api.model("MarsSecurity/securebert-onnx".to_string());
-        
-        if !sb_tokenizer_dest.exists() {
-            if let Ok(downloaded) = sb_repo.get("tokenizer.json").await {
-                let _ = fs::copy(downloaded, &sb_tokenizer_dest);
-            }
-        }
-        if !sb_model_dest.exists() {
-            if let Ok(downloaded) = sb_repo.get("model.onnx").await {
-                if fs::copy(downloaded, &sb_model_dest).is_ok() {
-                    info!("✅ SecureBERT model saved.");
-                }
-            }
-        }
-    }
+    info!("Ensuring SecureBERT components are cached...");
+    let sb_repo = api.model("MarsSecurity/securebert-onnx".to_string());
+    let _ = sb_repo.get("tokenizer.json").await;
+    let _ = sb_repo.get("model.onnx").await;
 
     info!("AI models verified.");
     Ok(())

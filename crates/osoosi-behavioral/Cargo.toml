@@ -37,6 +37,7 @@ proc-maps = { workspace = true }
 capstone = { workspace = true }
 sysinfo = { workspace = true }
 winapi = { workspace = true }
+windows = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
 redbpf = { workspace = true }
