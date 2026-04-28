@@ -275,55 +275,6 @@ function renderThreats(threats) {
     }
 
     const groups = {};
-/**
- * Helper to fetch from API
- */
-async function fetchAPI(endpoint) {
-    try {
-        const response = await fetch(`${API_BASE}${endpoint}`);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return await response.json();
-    } catch (err) {
-        console.warn(`Error fetching ${endpoint}:`, err);
-        return null;
-    }
-}
-
-/**
- * Update a stat card value
- */
-function updateStats(id, value) {
-    const elem = document.getElementById(`stat-${id}`);
-    if (elem) elem.innerText = value;
-}
-
-/**
- * Render threat timeline items
- */
-function renderThreats(threats) {
-    const list = document.getElementById('threat-list');
-    if (!list) return;
-    
-    if (threats.length === 0) {
-        list.innerHTML = '<p class="placeholder-text">No active threats detected.</p>';
-        return;
-    }
-
-    const filtered = threats.filter(t => {
-        if (!state.searchQuery) return true;
-        const q = state.searchQuery;
-        return (t.type && t.type.toLowerCase().includes(q)) || 
-               (t.id && t.id.toLowerCase().includes(q)) ||
-               (t.file_path && t.file_path.toLowerCase().includes(q)) ||
-               (t.reason && t.reason.toLowerCase().includes(q));
-    });
-
-    if (filtered.length === 0) {
-        list.innerHTML = '<p class="placeholder-text">No matches found for "' + state.searchQuery + '".</p>';
-        return;
-    }
-
-    const groups = {};
     filtered.forEach(t => {
         // Variation is defined by Type + Source only; reasons are listed inside
         const key = `${t.type}-${t.source_node || 'Unknown'}`;

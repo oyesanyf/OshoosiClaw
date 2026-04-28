@@ -757,8 +757,8 @@ if ($res.ResultCode -eq 4 -and ($kb -eq "KB2267602" -or $kb -eq "KB5042320")) {{
         } else {
             vec!["-c", check_cmd]
         })
-        .status()
-        .map(|s| s.success())
+        .output()
+        .map(|o| o.status.success())
         .unwrap_or(false);
         metrics.push(HealthMetric {
             component: "Network Stack".to_string(),
