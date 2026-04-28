@@ -273,14 +273,36 @@ impl Gemma4Analyzer {
             Self::Onnx { .. } => self.generate_text(&prompt, 256),
             Self::Candle(judge) => judge.judge_artifact(&prompt),
             Self::OllamaFallback => {
-                let model = std::env::var("OSOOSI_OLLAMA_MODEL").unwrap_or_else(|_| "llama3.1".to_string());
-                let output = std::process::Command::new("ollama")
+                let ai = osoosi_types::config::load_ai_config();
+                let model = ai.reasoning_model;
+                let timeout_secs = ai.llm_timeout_secs;
+
+                let mut child = std::process::Command::new("ollama")
                     .args(["run", &model, &prompt])
-                    .output()?;
-                if output.status.success() {
-                    Ok(String::from_utf8_lossy(&output.stdout).trim().to_string())
-                } else {
-                    Err(anyhow::anyhow!("Ollama execution failed: {}", String::from_utf8_lossy(&output.stderr)))
+                    .stdout(std::process::Stdio::piped())
+                    .stderr(std::process::Stdio::piped())
+                    .spawn()?;
+
+                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
+                loop {
+                    match child.try_wait() {
+                        Ok(Some(status)) => {
+                            let out = child.wait_with_output()?;
+                            if status.success() {
+                                return Ok(String::from_utf8_lossy(&out.stdout).trim().to_string());
+                            } else {
+                                return Err(anyhow::anyhow!("Ollama failed: {}", String::from_utf8_lossy(&out.stderr)));
+                            }
+                        }
+                        Ok(None) => {
+                            if std::time::Instant::now() >= deadline {
+                                let _ = child.kill();
+                                return Err(anyhow::anyhow!("Ollama inference timed out after {}s", timeout_secs));
+                            }
+                            std::thread::sleep(std::time::Duration::from_millis(250));
+                        }
+                        Err(e) => return Err(e.into()),
+                    }
                 }
             }
         }
@@ -319,13 +341,9 @@ impl Gemma4Analyzer {
             }
             Self::Candle(judge) => judge.judge_artifact(prompt),
             Self::OllamaFallback => {
-                let model = std::env::var("OSOOSI_REASONING_MODEL")
-                    .or_else(|_| std::env::var("OSOOSI_OLLAMA_MODEL"))
-                    .unwrap_or_else(|_| "deepseek-r1:1.5b".to_string());
-                let timeout_secs: u64 = std::env::var("OSOOSI_LLM_TIMEOUT_SECS")
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(30);
+                let ai = osoosi_types::config::load_ai_config();
+                let model = ai.reasoning_model;
+                let timeout_secs = ai.llm_timeout_secs;
 
                 let mut child = std::process::Command::new("ollama")
                     .args(["run", &model, prompt])

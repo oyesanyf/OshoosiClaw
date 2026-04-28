@@ -1685,9 +1685,8 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
 }
 
 async fn ensure_ollama_model() {
-    let preferred = std::env::var("OSOOSI_OLLAMA_MODEL")
-        .or_else(|_| std::env::var("OSOOSI_REASONING_MODEL"))
-        .unwrap_or_else(|_| "deepseek-r1:1.5b".to_string());
+    let ai = osoosi_types::config::load_ai_config();
+    let preferred = ai.reasoning_model.clone();
 
     if !ollama_available().await {
         install_ollama_best_effort().await;
@@ -1711,9 +1710,9 @@ async fn ensure_ollama_model() {
         .unwrap_or_default();
 
     let mut candidates = vec![preferred.clone()];
-    for fallback in ["deepseek-r1:1.5b", "gemma3:1b", "gemma3:4b", "qwen2.5:1.5b"] {
+    for fallback in &ai.fallback_models {
         if !candidates.iter().any(|m| m == fallback) {
-            candidates.push(fallback.to_string());
+            candidates.push(fallback.clone());
         }
     }
 

@@ -116,7 +116,7 @@ impl ThreatVoter for GemmaVoter {
                 {
                     return Some(VoteResult {
                         confidence: 0.9,
-                        reason: format!("Gemma 4 Reasoning: {}", reasoning),
+                        reason: format!("LLM Reasoning: {}", reasoning),
                         weight: 0.9, // LLM reasoning has high weight for complex TTPs
                     });
                 }

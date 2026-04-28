@@ -1274,10 +1274,41 @@ pub struct AiConfig {
     /// it is not a Hugging Face Inference deployment and does not supply this format by default—use a converted weights URL or bundled repo below.
     #[serde(default)]
     pub malconv_weights_url: Option<String>,
+    /// Ollama model used for LLM reasoning (e.g. "deepseek-r1:1.5b").
+    #[serde(default = "default_reasoning_model")]
+    pub reasoning_model: String,
+    /// Maximum seconds an LLM inference call may run before being killed.
+    #[serde(default = "default_llm_timeout")]
+    pub llm_timeout_secs: u64,
+    /// Ollama API endpoint URL.
+    #[serde(default = "default_reasoning_url")]
+    pub reasoning_url: String,
+    /// Ordered fallback model list when the primary is not available.
+    #[serde(default = "default_fallback_models")]
+    pub fallback_models: Vec<String>,
+    /// COLOG anomaly threshold (0.0–1.0).  Events above trigger anomaly.
+    #[serde(default = "default_colog_threshold")]
+    pub colog_threshold: f64,
 }
 
 fn default_ai_enabled() -> bool {
     true
+}
+
+fn default_reasoning_model() -> String {
+    "deepseek-r1:1.5b".to_string()
+}
+fn default_llm_timeout() -> u64 {
+    30
+}
+fn default_reasoning_url() -> String {
+    "http://127.0.0.1:11434/v1/chat/completions".to_string()
+}
+fn default_fallback_models() -> Vec<String> {
+    vec!["gemma3:1b".into(), "gemma3:4b".into(), "qwen2.5:1.5b".into(), "phi3:mini".into()]
+}
+fn default_colog_threshold() -> f64 {
+    0.85
 }
 
 fn apply_ai_env_overrides(mut c: AiConfig) -> AiConfig {
@@ -1292,6 +1323,19 @@ fn apply_ai_env_overrides(mut c: AiConfig) -> AiConfig {
             c.malconv_weights_url = Some(t.to_string());
         }
     }
+    if let Ok(v) = std::env::var("OSOOSI_REASONING_MODEL") {
+        c.reasoning_model = v;
+    } else if let Ok(v) = std::env::var("OSOOSI_OLLAMA_MODEL") {
+        c.reasoning_model = v;
+    }
+    if let Ok(v) = std::env::var("OSOOSI_LLM_TIMEOUT_SECS") {
+        if let Ok(s) = v.parse() {
+            c.llm_timeout_secs = s;
+        }
+    }
+    if let Ok(v) = std::env::var("OSOOSI_REASONING_URL") {
+        c.reasoning_url = v;
+    }
     c
 }
 
@@ -1301,6 +1345,11 @@ impl Default for AiConfig {
             enabled: true,
             // Bundled weights mirror (Candle safetensors). cycloevan/malconv is TF `.h5` + training code, not HF inference.
             malconv_weights_url: Some("https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/malconv.safetensors?download=true".to_string()),
+            reasoning_model: default_reasoning_model(),
+            llm_timeout_secs: default_llm_timeout(),
+            reasoning_url: default_reasoning_url(),
+            fallback_models: default_fallback_models(),
+            colog_threshold: default_colog_threshold(),
         }
     }
 }
