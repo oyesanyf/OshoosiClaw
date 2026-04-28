@@ -15,6 +15,55 @@ use std::sync::Mutex;
 use tokenizers::Tokenizer;
 use tracing::{info, warn};
 
+/// Strip DeepSeek R1 thinking traces from LLM output.
+/// Handles both formats:
+///   1. XML tags: `<think>...reasoning...</think>final answer`
+///   2. Ollama plaintext: `Thinking...\n...reasoning...\n...done thinking.\nfinal answer`
+fn strip_deepseek_thinking(raw: &str) -> String {
+    let trimmed = raw.trim();
+
+    // Format 1: <think>...</think> XML tags
+    if let Some(end_idx) = trimmed.find("</think>") {
+        let after = trimmed[end_idx + "</think>".len()..].trim();
+        if !after.is_empty() {
+            return after.to_string();
+        }
+    }
+
+    // Format 2: Ollama "...done thinking." plaintext delimiter
+    if let Some(idx) = trimmed.find("...done thinking.") {
+        let after = trimmed[idx + "...done thinking.".len()..].trim();
+        if !after.is_empty() {
+            return after.to_string();
+        }
+    }
+
+    // Format 3: Starts with "Thinking..." — find first double newline after thinking
+    if trimmed.starts_with("Thinking...") || trimmed.starts_with("thinking...") {
+        // Look for the boundary between thinking and answer
+        // Usually after a blank line or "done thinking"
+        if let Some(idx) = trimmed.find("\n\n") {
+            // Check if the content after looks like an answer (not more thinking)
+            let after = trimmed[idx..].trim();
+            // Skip if it's still thinking content
+            let lower = after.to_lowercase();
+            if !lower.starts_with("okay") && !lower.starts_with("i need")
+                && !lower.starts_with("let me") && !lower.starts_with("so ")
+                && !lower.starts_with("first") && !lower.starts_with("the user")
+            {
+                return after.to_string();
+            }
+        }
+    }
+
+    // Format 4: Contains <think> but no closing tag (model timed out mid-thought)
+    if let Some(start_idx) = trimmed.find("<think>") {
+        return trimmed[..start_idx].trim().to_string();
+    }
+
+    trimmed.to_string()
+}
+
 #[derive(Deserialize, Debug, Clone)]
 pub struct Config {
     pub hidden_size: usize,
@@ -291,10 +340,10 @@ impl Gemma4Analyzer {
 
     pub fn reason_about_attack(&self, graph_summary: &str) -> Result<String> {
         let prompt = format!(
-            "<|im_start|>system\nYou are the OshoosiClaw Autonomous Cortex. Reason about this attack graph.<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
+            "<|im_start|>system\nYou are the OshoosiClaw Autonomous Cortex. Reason about this attack graph.\n<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
             graph_summary
         );
-        match self {
+        let raw = match self {
             Self::Onnx { .. } => self.generate_text(&prompt, 256),
             Self::Candle(judge) => judge.judge_artifact(&prompt),
             Self::NativeGGUF { .. } => self.generate_text(&prompt, 256),
@@ -303,35 +352,61 @@ impl Gemma4Analyzer {
                 let model = ai.reasoning_model;
                 let timeout_secs = ai.llm_timeout_secs;
 
-                let mut child = std::process::Command::new("ollama")
-                    .args(["run", &model, &prompt])
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped())
-                    .spawn()?;
+                // Use Ollama HTTP API via raw TCP (no extra deps, reuses loaded model)
+                let body = serde_json::json!({
+                    "model": model,
+                    "messages": [
+                        {"role": "system", "content": "You are the OshoosiClaw Autonomous Cortex. Analyze security events concisely. State if the process is malicious, suspicious, or benign. Be brief."},
+                        {"role": "user", "content": graph_summary}
+                    ],
+                    "stream": false
+                });
+                let body_str = serde_json::to_string(&body)?;
 
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
-                loop {
-                    match child.try_wait() {
-                        Ok(Some(status)) => {
-                            let out = child.wait_with_output()?;
-                            if status.success() {
-                                return Ok(String::from_utf8_lossy(&out.stdout).trim().to_string());
-                            } else {
-                                return Err(anyhow::anyhow!("Ollama failed: {}", String::from_utf8_lossy(&out.stderr)));
-                            }
-                        }
-                        Ok(None) => {
-                            if std::time::Instant::now() >= deadline {
-                                let _ = child.kill();
-                                return Err(anyhow::anyhow!("Ollama inference timed out after {}s", timeout_secs));
-                            }
-                            std::thread::sleep(std::time::Duration::from_millis(250));
-                        }
-                        Err(e) => return Err(e.into()),
-                    }
-                }
+                // Parse host:port from reasoning_url
+                let url = &ai.reasoning_url;
+                let host_port = url
+                    .strip_prefix("http://").unwrap_or(url)
+                    .split('/').next().unwrap_or("127.0.0.1:11434");
+                let path = url
+                    .strip_prefix("http://").unwrap_or(url)
+                    .find('/').map(|i| &url.strip_prefix("http://").unwrap_or(url)[i..])
+                    .unwrap_or("/v1/chat/completions");
+
+                let timeout = std::time::Duration::from_secs(timeout_secs);
+                let stream = std::net::TcpStream::connect_timeout(
+                    &host_port.parse().unwrap_or_else(|_| "127.0.0.1:11434".parse().unwrap()),
+                    std::time::Duration::from_secs(5),
+                ).map_err(|e| anyhow::anyhow!("Ollama not reachable at {}: {}", host_port, e))?;
+                stream.set_read_timeout(Some(timeout)).ok();
+                stream.set_write_timeout(Some(std::time::Duration::from_secs(5))).ok();
+
+                use std::io::{Write, Read};
+                let request = format!(
+                    "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                    path, host_port, body_str.len(), body_str
+                );
+                let mut stream = stream;
+                stream.write_all(request.as_bytes())?;
+
+                let mut response = String::new();
+                stream.read_to_string(&mut response).ok();
+
+                // Extract JSON body (after \r\n\r\n headers)
+                let json_body = response.split("\r\n\r\n").nth(1).unwrap_or(&response);
+                let json: serde_json::Value = serde_json::from_str(json_body)
+                    .map_err(|e| anyhow::anyhow!("Ollama JSON parse: {}", e))?;
+
+                let content = json["choices"][0]["message"]["content"]
+                    .as_str()
+                    .unwrap_or("No response");
+
+                Ok(strip_deepseek_thinking(content))
             }
-        }
+        }?;
+
+        // Strip thinking traces from all backends
+        Ok(strip_deepseek_thinking(&raw))
     }
 
     pub fn generate_text(&self, prompt: &str, max_tokens: usize) -> Result<String> {

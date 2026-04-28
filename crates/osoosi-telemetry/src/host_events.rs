@@ -101,12 +101,22 @@ impl WindowsEventReader {
     }
 
     fn channel_exists(channel: &str) -> bool {
-        use std::process::Command;
-        Command::new("wevtutil")
-            .args(["gl", channel])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        use windows::core::HSTRING;
+        use windows::Win32::System::EventLog::*;
+        unsafe {
+            match EvtQuery(
+                None,
+                &HSTRING::from(channel),
+                &HSTRING::from("*[System[(EventRecordID > 0)]]"),
+                EvtQueryChannelPath.0 | EvtQueryReverseDirection.0,
+            ) {
+                Ok(h) => {
+                    let _ = EvtClose(h);
+                    true
+                }
+                Err(_) => false,
+            }
+        }
     }
 
     fn wevt_batch_size() -> u32 {
@@ -117,91 +127,108 @@ impl WindowsEventReader {
             .unwrap_or(1_000)
     }
 
-    fn query_wevtutil(&mut self) -> anyhow::Result<Vec<String>> {
-        use std::process::Command;
-        let n = Self::wevt_batch_size();
-        let mut cmd = Command::new("wevtutil");
-        if self.last_record_id > 0 {
-            let query = format!("*[System[(EventRecordID > {})]]", self.last_record_id);
-            cmd.args([
-                "qe",
-                &self.channel,
-                &format!("/q:{}", query),
-                "/rd:false",
-                &format!("/c:{n}"),
-                "/f:xml",
-            ]);
-        } else {
-            // First run: load the last 100 events immediately so the dashboard
-            // is populated and the console shows activity right away.
-            // The cursor is then set to the newest record so subsequent polls
-            // only return truly NEW events.
-            cmd.args([
-                "qe",
-                &self.channel,
-                "/rd:true", // newest-first so we get the most-recent 100
-                "/c:100",
-                "/f:xml",
-            ]);
-        }
-        let output = cmd.output()?;
-        if !output.status.success() {
-            let stderr = String::from_utf8_lossy(&output.stderr);
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            let msg = if stderr.contains("Access is denied")
-                || stderr.contains("access denied")
-                || stdout.contains("Access is denied")
-            {
-                format!(
-                    "wevtutil failed (access denied). OpenỌ̀ṣọ́ọ̀sì runs unprivileged—it does not request admin. \
-                    Admin must grant read access: add the OpenỌ̀ṣọ́ọ̀sì service account to 'Event Log Readers' group, \
-                    or set channel ACL via: wevtutil gl \"{}\" then wevtutil sl \"{}\" /ca:<SDDL>",
-                    self.channel, self.channel
-                )
-            } else if stderr.contains("not found") || stdout.contains("not found") {
-                format!(
-                    "wevtutil failed: channel '{}' was not found. Install/configure Sysmon or set OSOOSI_EVENT_SOURCE to an existing channel. Details: {} {}",
-                    self.channel,
-                    stderr,
-                    stdout
-                )
-            } else {
-                format!("wevtutil failed: STDERR: {} | STDOUT: {}", stderr, stdout)
-            };
-            return Err(anyhow::anyhow!("{}", msg));
-        }
-        let xml = String::from_utf8_lossy(&output.stdout);
+    /// Native Windows Event Log query using EvtQuery API (no wevtutil subprocess).
+    fn query_native(&mut self) -> anyhow::Result<Vec<String>> {
+        use windows::core::HSTRING;
+        use windows::Win32::System::EventLog::*;
 
-        // Split on "<Event" — handles both bare <Event> and namespaced <Event xmlns='...'>
-        // No /e:root wrapper used so output is raw concatenated XML events.
-        let events = Self::split_event_xml(&xml);
+        let n = Self::wevt_batch_size() as usize;
+        let xpath = if self.last_record_id > 0 {
+            format!("*[System[(EventRecordID > {})]]", self.last_record_id)
+        } else {
+            "*".to_string()
+        };
+
+        let flags = if self.last_record_id > 0 {
+            EvtQueryChannelPath.0 // forward direction for incremental
+        } else {
+            EvtQueryChannelPath.0 | EvtQueryReverseDirection.0 // newest-first for initial load
+        };
+
+        let query_handle = unsafe {
+            EvtQuery(
+                None,
+                &HSTRING::from(self.channel.as_str()),
+                &HSTRING::from(xpath.as_str()),
+                flags,
+            )
+        }.map_err(|e| anyhow::anyhow!(
+            "EvtQuery failed on '{}': {}. Ensure Event Log Readers group membership or admin rights.",
+            self.channel, e
+        ))?;
+
+        let batch = if self.last_record_id > 0 { n.min(1000) } else { 100 };
+        let mut event_handles = vec![0isize; batch];
+        let mut returned = 0u32;
+
+        let got_events = unsafe {
+            EvtNext(query_handle, &mut event_handles, 1000, 0, &mut returned)
+        }.is_ok();
 
         let mut new_events = Vec::new();
         let mut max_id = self.last_record_id;
         let is_first_run = self.last_record_id == 0;
 
-        for ev in events {
-            let record_id = self.extract_record_id(&ev);
-            if record_id > max_id {
-                max_id = record_id;
+        if got_events && returned > 0 {
+            for i in 0..returned as usize {
+                let handle = EVT_HANDLE(event_handles[i]);
+
+                // Render event as XML
+                let mut buffer_used = 0u32;
+                let mut property_count = 0u32;
+
+                // First call to get required buffer size
+                unsafe {
+                    let _ = EvtRender(
+                        None, handle, EvtRenderEventXml.0,
+                        0, None, &mut buffer_used, &mut property_count,
+                    );
+                }
+
+                if buffer_used == 0 {
+                    unsafe { let _ = EvtClose(handle); }
+                    continue;
+                }
+
+                let mut buffer = vec![0u16; (buffer_used / 2) as usize + 1];
+                let render_ok = unsafe {
+                    EvtRender(
+                        None, handle, EvtRenderEventXml.0,
+                        buffer_used,
+                        Some(buffer.as_mut_ptr() as *mut _),
+                        &mut buffer_used, &mut property_count,
+                    )
+                };
+
+                if render_ok.is_ok() {
+                    let xml = String::from_utf16_lossy(&buffer);
+                    let record_id = self.extract_record_id(&xml);
+                    if record_id > max_id {
+                        max_id = record_id;
+                    }
+                    if !is_first_run && record_id <= self.last_record_id {
+                        unsafe { let _ = EvtClose(handle); }
+                        continue;
+                    }
+                    new_events.push(xml);
+                }
+
+                unsafe { let _ = EvtClose(handle); }
             }
-            // Skip duplicates on steady-state polls (guard against overlap)
-            if !is_first_run && record_id <= self.last_record_id {
-                continue;
-            }
-            new_events.push(ev);
         }
+
+        unsafe { let _ = EvtClose(query_handle); }
 
         if is_first_run {
             tracing::info!(
                 target: "telemetry",
-                "[Sysmon] Startup: loaded {} recent events from '{}' (cursor → RecordID {}). Live polling active.",
+                "[Sysmon] Startup: loaded {} recent events via native EvtQuery from '{}' (cursor → RecordID {}). Live polling active.",
                 new_events.len(), self.channel, max_id
             );
         } else if !new_events.is_empty() {
             tracing::info!(
                 target: "telemetry",
-                "[Sysmon] Polled {} new event(s) from '{}' (RecordID {} → {}).",
+                "[Sysmon] Polled {} new event(s) via native EvtQuery from '{}' (RecordID {} → {}).",
                 new_events.len(), self.channel, self.last_record_id, max_id
             );
         }
@@ -242,7 +269,7 @@ impl WindowsEventReader {
 #[cfg(target_os = "windows")]
 impl HostEventReader for WindowsEventReader {
     fn poll_events(&mut self) -> anyhow::Result<Vec<HostSecurityEvent>> {
-        let xml_events = self.query_wevtutil()?;
+        let xml_events = self.query_native()?;
         let mut out = Vec::new();
         let count = xml_events.len();
 
