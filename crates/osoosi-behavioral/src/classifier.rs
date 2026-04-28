@@ -111,12 +111,12 @@ impl BehavioralClassifier {
                     (None, None)
                 }
                 (_, Err(e)) => {
-                    info!("Behavioral ONNX tokenizer format not supported by current tokenizers crate ({}). Classifier proceeds without local ONNX; AI reasoning uses Ollama/Gemma4.", e);
+                    info!("Behavioral ONNX tokenizer format not supported by current tokenizers crate ({}). Classifier proceeds without local ONNX; AI reasoning uses Ollama/LLM Cortex.", e);
                     (None, None)
                 }
             }
         } else {
-            info!("Behavioral classifier: local ONNX text model disabled; Gemma 4 reasoning is handled by the reasoning backend when configured.");
+            info!("Behavioral classifier: local ONNX text model disabled; LLM reasoning is handled by the reasoning backend when configured.");
             (None, None)
         };
 
@@ -208,11 +208,11 @@ impl BehavioralClassifier {
                 
             match SecurityJudge::new(&gemma_dir) {
                 Ok(j) => {
-                    info!("Gemma 4 Security Judge initialized.");
+                    info!("LLM Security Judge initialized.");
                     Some(Arc::new(j))
                 }
                 Err(e) => {
-                    info!("Gemma 4 Judge unavailable: {}. Forensic reasoning will use fallbacks.", e);
+                    info!("LLM Security Judge unavailable: {}. Forensic reasoning will use fallbacks.", e);
                     None
                 }
             }
@@ -429,7 +429,7 @@ impl BehavioralClassifier {
 
         let is_suspicious = max_score >= 0.7;
 
-        // 3c. Gemma 4 Multimodal Reasoning (High-fidelity final tier)
+        // 3c. LLM Cortex Reasoning (High-fidelity final tier)
         if is_suspicious {
             if let Some(ref judge) = self.judge {
                 let suspect_query = format!("Analyze this forensic artifact: '{}'. Is it malicious or benign context?", sentence);
@@ -437,13 +437,13 @@ impl BehavioralClassifier {
                     Ok(verdict) => {
                         if verdict.to_lowercase().contains("benign") {
                             // High-reasoning model thinks it's benign, downgrade it
-                            return (false, 0.4, format!("Gemma 4 Forensic Override (Benign): {}", verdict));
+                            return (false, 0.4, format!("LLM Forensic Override (Benign): {}", verdict));
                         } else {
-                            reasons.push(format!("Gemma 4 Forensic Confirmation: {}", verdict));
+                            reasons.push(format!("LLM Forensic Confirmation: {}", verdict));
                         }
                     }
                     Err(e) => {
-                        debug!("Gemma 4 judge_artifact failed: {}", e);
+                        debug!("LLM judge_artifact failed: {}", e);
                     }
                 }
             }

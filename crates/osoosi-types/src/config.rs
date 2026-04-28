@@ -1299,7 +1299,7 @@ fn default_reasoning_model() -> String {
     "deepseek-r1:1.5b".to_string()
 }
 fn default_llm_timeout() -> u64 {
-    30
+    90
 }
 fn default_reasoning_url() -> String {
     "http://127.0.0.1:11434/v1/chat/completions".to_string()

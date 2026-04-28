@@ -342,7 +342,7 @@ pub struct EdrOrchestrator {
     static_analyzer: Arc<crate::static_analyzer::StaticAnalyzer>,
     /// Morphic Hyper-Web: Entanglement and Probabilistic Deception
     deception_engine: Arc<tokio::sync::Mutex<osoosi_behavioral::deception::EntanglementEngine>>,
-    /// Spider Eyes: Binary Analyzer (Gemma-4 + Capstone)
+    /// Spider Eyes: Binary Analyzer (LLM Cortex + Capstone)
     spider_eyes: Arc<osoosi_behavioral::SpiderEyes>,
     /// Runtime config (db paths, sandboxes, etc.)
     runtime_config: osoosi_types::config::RuntimeConfig,
@@ -826,14 +826,14 @@ impl EdrOrchestrator {
                 Ok(Ok(analyzer)) => Some(Arc::new(analyzer)),
                 Ok(Err(e)) => {
                     warn!(
-                        "Gemma 4 ONNX cortex failed to load: {}. Check model.onnx, tokenizer.json, and ONNX Runtime (ort.dll) version vs `ort` crate.",
+                        "LLM ONNX cortex failed to load: {}. Check model.onnx, tokenizer.json, and ONNX Runtime (ort.dll) version vs `ort` crate.",
                         e
                     );
                     None
                 }
                 Err(_) => {
                     warn!(
-                        "Gemma 4 ONNX init panicked (often ONNX Runtime native library mismatch). Install a matching ORT or remove {:?} to skip.",
+                        "LLM ONNX init panicked (often ONNX Runtime native library mismatch). Install a matching ORT or remove {:?} to skip.",
                         gemma_dir
                     );
                     None
@@ -877,7 +877,7 @@ impl EdrOrchestrator {
             config: policy.config.clone(),
         }));
 
-        // Decompile Voter: SpiderEyes binary analysis (Gemma 4 + Capstone)
+        // Decompile Voter: SpiderEyes binary analysis (LLM + Capstone)
         policy.add_voter(Box::new(osoosi_policy::voters::DecompileVoter {
             spider: spider_eyes.clone(),
         }));

@@ -193,7 +193,7 @@ impl SmolLMAnalyzer {
     }
 }
 
-/// Gemma 4 E2B Analyzer: The "Autonomous Cortex" of OshoosiClaw.
+/// LLM Cortex Analyzer: The "Autonomous Cortex" of OshoosiClaw.
 /// Supports dual-engine: ONNX (Primary) and Candle/Transformer (Fallback).
 pub enum Gemma4Analyzer {
     Onnx {
@@ -213,7 +213,7 @@ pub enum Gemma4Analyzer {
 impl Gemma4Analyzer {
     pub fn new(model_dir: &Path) -> Result<Self> {
         info!(
-            "Initializing Gemma 4 Autonomous Cortex from {:?}...",
+            "Initializing LLM Cortex from {:?}...",
             model_dir
         );
 
@@ -247,20 +247,26 @@ impl Gemma4Analyzer {
                 })
             })() {
                 Ok(s) => return Ok(s),
-                Err(e) => warn!("Gemma 4 ONNX initialization failed: {}. Falling back.", e),
+                Err(e) => warn!("LLM ONNX initialization failed: {}. Falling back.", e),
             }
         } else if onnx_file.exists() {
-            info!("Gemma 4 ONNX manifest is a stub ({} bytes). Skipping ONNX, using Ollama/Candle fallback.",
+            info!("LLM ONNX manifest is a stub ({} bytes). Skipping ONNX, using Ollama/Candle fallback.",
                 std::fs::metadata(onnx_file).map(|m| m.len()).unwrap_or(0));
         }
 
-        // Fallback: try loading GGUF natively via Candle (no Ollama needed)
+        // Prefer Ollama when available (GPU-accelerated, fast inference)
+        if std::process::Command::new("ollama").arg("--version").output().is_ok() {
+            info!("Ollama detected (GPU-accelerated). Using Ollama for AI reasoning.");
+            return Ok(Self::OllamaFallback);
+        }
+
+        // No Ollama: try loading GGUF natively via Candle (CPU-only, slower)
         let ai_cfg = osoosi_types::config::load_ai_config();
         if let Some(gguf_path) = resolve_gguf_path(&ai_cfg.reasoning_model) {
-            info!("Found GGUF model at {:?}. Loading natively via Candle...", gguf_path);
+            info!("No Ollama found. Loading GGUF natively via Candle (CPU)...");
             match load_native_gguf(&gguf_path) {
                 Ok((model, tokenizer)) => {
-                    info!("Native GGUF model loaded successfully! No Ollama process needed.");
+                    info!("Native GGUF model loaded. Note: CPU inference is slow for 1.5B models.");
                     return Ok(Self::NativeGGUF {
                         model: Mutex::new(model),
                         tokenizer,
@@ -268,15 +274,9 @@ impl Gemma4Analyzer {
                     });
                 }
                 Err(e) => {
-                    warn!("Native GGUF loading failed: {}. Falling back to Ollama.", e);
+                    warn!("Native GGUF loading failed: {}.", e);
                 }
             }
-        }
-
-        // Fallback to Ollama if available
-        if std::process::Command::new("ollama").arg("--version").output().is_ok() {
-            info!("Ollama detected. Using Ollama for AI reasoning fallback.");
-            return Ok(Self::OllamaFallback);
         }
 
         // Final Fallback to Candle/Transformer
@@ -284,7 +284,7 @@ impl Gemma4Analyzer {
         match SecurityJudge::new(model_dir) {
             Ok(judge) => Ok(Self::Candle(judge)),
             Err(e) => {
-                Err(anyhow::anyhow!("All local AI fallback engines (ONNX, GGUF, Ollama, Candle) failed: {}", e))
+                Err(anyhow::anyhow!("All local AI fallback engines (ONNX, Ollama, GGUF, Candle) failed: {}", e))
             }
         }
     }
@@ -643,7 +643,7 @@ impl SecureBertAnalyzer {
     }
 }
 
-/// Gemma 4 E4B-it "Security Judge" (Candle/Transformer fallback).
+/// Security Judge (Candle/Transformer fallback).
 /// Handles high-fidelity reasoning for complex forensic triage.
 pub struct SecurityJudge {
     model: Model,
@@ -654,7 +654,7 @@ pub struct SecurityJudge {
 
 impl SecurityJudge {
     pub fn new(model_dir: &Path) -> Result<Self> {
-        info!("Initializing native Gemma 4 Security Judge (Candle) from {:?}...", model_dir);
+        info!("Initializing Security Judge (Candle) from {:?}...", model_dir);
         let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
 
         let config_path = model_dir.join("config.json");
@@ -662,7 +662,7 @@ impl SecurityJudge {
         let weights_path = model_dir.join("model.safetensors");
 
         if !config_path.exists() || !tokenizer_path.exists() || !weights_path.exists() {
-            anyhow::bail!("Gemma 4 files missing in {:?}", model_dir);
+            anyhow::bail!("Security Judge model files missing in {:?}", model_dir);
         }
 
         let config_raw: Config = serde_json::from_reader(std::fs::File::open(&config_path)?)?;

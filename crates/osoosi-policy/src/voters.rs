@@ -79,7 +79,8 @@ impl ThreatVoter for SigmaVoter {
     }
 }
 
-/// Gemma 4 LLM Voter (The "Autonomous Cortex")
+/// LLM Reasoning Voter (The "Autonomous Cortex")
+/// Uses the configured LLM (DeepSeek R1, etc.) to reason about security events.
 pub struct GemmaVoter {
     pub analyzer: Arc<osoosi_behavioral::Gemma4Analyzer>,
 }
@@ -107,8 +108,10 @@ impl ThreatVoter for GemmaVoter {
         );
 
         match self.analyzer.reason_about_attack(&summary) {
-            Ok(reasoning) => {
-                // Heuristic: if reasoning contains "malicious", "attack", or "suspicious"
+            Ok(raw_reasoning) => {
+                // Strip DeepSeek <think>...</think> reasoning trace
+                let reasoning = strip_think_tags(&raw_reasoning);
+
                 let r_lower = reasoning.to_lowercase();
                 if r_lower.contains("malicious")
                     || r_lower.contains("attack")
@@ -124,6 +127,19 @@ impl ThreatVoter for GemmaVoter {
             Err(_) => {}
         }
         None
+    }
+}
+
+/// Strip DeepSeek R1 `<think>...</think>` reasoning traces from LLM output,
+/// returning only the final vote/answer content.
+fn strip_think_tags(raw: &str) -> String {
+    if let Some(end_idx) = raw.find("</think>") {
+        raw[end_idx + "</think>".len()..].trim().to_string()
+    } else if raw.contains("<think>") {
+        // Incomplete think block — model timed out mid-thought
+        raw.replace("<think>", "").trim().to_string()
+    } else {
+        raw.trim().to_string()
     }
 }
 

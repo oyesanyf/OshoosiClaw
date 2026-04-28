@@ -10,7 +10,7 @@ use std::sync::Arc;
 use dashmap::DashMap;
 use blake3::Hasher;
 
-/// THE BRAIN: Local Gemma 4 Mechanistic Analyst
+/// THE BRAIN: Local LLM Mechanistic Analyst
 pub struct GemmaSupervisor {
     pub analyzer: Option<Arc<Gemma4Analyzer>>,
 }
@@ -33,7 +33,7 @@ impl GemmaSupervisor {
             Ok(a) => Some(Arc::new(a)),
             Err(e) => {
                 warn!(
-                    "Gemma 4 Autonomous Cortex failed to initialize from {:?}: {}. Falling back to heuristic analysis.",
+                    "LLM Cortex failed to initialize from {:?}: {}. Falling back to heuristic analysis.",
                     model_dir, e
                 );
                 None
@@ -48,7 +48,7 @@ impl GemmaSupervisor {
             match analyzer.reason_about_attack(asm) {
                 Ok(report) => format!("AI ANALYSIS: {}", report),
                 Err(e) => {
-                    error!("Gemma 4 inference failed: {}. Using fallback heuristic.", e);
+                    error!("LLM inference failed: {}. Using fallback heuristic.", e);
                     self.analyze_heuristic(asm)
                 }
             }
@@ -190,8 +190,8 @@ impl SpiderEyes {
             asm_output.push_str(&format!("{} {}; ", i.mnemonic().unwrap_or(""), i.op_str().unwrap_or("")));
         }
 
-        // 5. LOCAL INFERENCE: Gemma 4 Mechanistic Interpretability
-        info!("🕸️  [LOCAL-AI] Gemma 4 analyzing assembly intent for PID {}...", target_pid);
+        // 5. LOCAL INFERENCE: LLM Mechanistic Interpretability
+        info!("🕸️  [LOCAL-AI] LLM Cortex analyzing assembly intent for PID {}...", target_pid);
         let report = self.supervisor.analyze_intent(&asm_output);
         
         let final_report = format!("PID: {}\nNAME: {}\nSEGMENT: 0x{:x}\nDISASSEMBLY: {}\n\nREPORT:\n{}", 

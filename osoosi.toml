@@ -13,7 +13,7 @@ enabled = true
 reasoning_model  = "deepseek-r1:1.5b"
 
 # Maximum seconds an LLM inference call may run before being killed.
-llm_timeout_secs = 30
+llm_timeout_secs = 90
 
 # Ollama API endpoint (used by the HTTP/chat-completions path).
 reasoning_url    = "http://127.0.0.1:11434/v1/chat/completions"

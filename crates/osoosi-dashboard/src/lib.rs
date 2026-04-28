@@ -1339,7 +1339,7 @@ async fn get_analyst_chat(State(state): State<DashboardState>) -> Json<Value> {
                 .filter(|e| e.event_type == "AI_REASONING" || e.event_type == "AUTONOMOUS_ACTION")
                 .map(|e| {
                     let author = if e.event_type == "AI_REASONING" {
-                        "Gemma 4 Cortex"
+                        "LLM Cortex"
                     } else {
                         "Immune System"
                     };
