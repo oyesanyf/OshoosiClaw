@@ -303,34 +303,57 @@ impl Gemma4Analyzer {
                 std::fs::metadata(onnx_file).map(|m| m.len()).unwrap_or(0));
         }
 
-        // Priority 1: Native GGUF via Candle (in-process, no external deps, GPU if available)
         let ai_cfg = osoosi_types::config::load_ai_config();
+        let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
+        let has_gpu = device.is_cuda();
+        info!("AI device detection: {:?} (GPU: {})", device, has_gpu);
+
+        // Priority 1: Native GGUF via Candle — ONLY if GPU available (CPU is too slow)
+        if has_gpu {
+            if let Some(gguf_path) = resolve_gguf_path(&ai_cfg.reasoning_model) {
+                info!("CUDA GPU detected! Loading GGUF model natively via Candle...");
+                match load_native_gguf(&gguf_path) {
+                    Ok((model, tokenizer)) => {
+                        info!("Native GGUF model loaded on GPU. Ollama is NOT required.");
+                        return Ok(Self::NativeGGUF {
+                            model: Mutex::new(model),
+                            tokenizer,
+                            device,
+                        });
+                    }
+                    Err(e) => {
+                        warn!("Native GGUF GPU loading failed: {}. Trying Ollama.", e);
+                    }
+                }
+            }
+        } else {
+            info!("No CUDA GPU detected. Skipping native GGUF (too slow on CPU). Checking Ollama...");
+        }
+
+        // Priority 2: Ollama HTTP API (llama.cpp backend — optimized for CPU inference)
+        if std::process::Command::new("ollama").arg("--version").output().is_ok() {
+            info!("Ollama detected. Using Ollama HTTP API for AI reasoning (llama.cpp backend, fast on CPU).");
+            return Ok(Self::OllamaFallback);
+        }
+
+        // Priority 3: Native GGUF on CPU (last resort, slow but functional)
         if let Some(gguf_path) = resolve_gguf_path(&ai_cfg.reasoning_model) {
-            info!("Loading GGUF model natively via Candle (in-process, no Ollama needed)...");
-            let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
-            info!("Candle device: {:?}", device);
+            warn!("No GPU, no Ollama. Loading GGUF natively on CPU (will be slow)...");
             match load_native_gguf(&gguf_path) {
                 Ok((model, tokenizer)) => {
-                    info!("Native GGUF model loaded on {:?}. Ollama is NOT required.", device);
                     return Ok(Self::NativeGGUF {
                         model: Mutex::new(model),
                         tokenizer,
-                        device,
+                        device: Device::Cpu,
                     });
                 }
                 Err(e) => {
-                    warn!("Native GGUF loading failed: {}. Trying Ollama fallback.", e);
+                    warn!("Native GGUF loading failed: {}.", e);
                 }
             }
         }
 
-        // Priority 2: Ollama HTTP API (optional, for machines with Ollama installed)
-        if std::process::Command::new("ollama").arg("--version").output().is_ok() {
-            info!("Ollama detected. Using Ollama HTTP API for AI reasoning (optional fallback).");
-            return Ok(Self::OllamaFallback);
-        }
-
-        // Priority 3: Candle/Transformer safetensors fallback
+        // Priority 4: Candle/Transformer safetensors fallback
         info!("Attempting native transformer fallback (Candle)...");
         match SecurityJudge::new(model_dir) {
             Ok(judge) => Ok(Self::Candle(judge)),
