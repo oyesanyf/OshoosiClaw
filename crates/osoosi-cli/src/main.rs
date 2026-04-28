@@ -1262,10 +1262,14 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
 
     let dll_path = ort_dynamic_library_path();
 
+    // ORT stable releases for Windows x64 — newest first so we always get the best version.
+    // ort crate 2.0.0-rc.10 is compatible with ONNX Runtime 1.19–1.25.
     let versions = [
-        ("1.22.2", "https://github.com/microsoft/onnxruntime/releases/download/v1.22.2/onnxruntime-win-x64-1.22.2.zip"),
-        ("1.22.1", "https://github.com/microsoft/onnxruntime/releases/download/v1.22.1/onnxruntime-win-x64-1.22.1.zip"),
+        ("1.25.1", "https://github.com/microsoft/onnxruntime/releases/download/v1.25.1/onnxruntime-win-x64-1.25.1.zip"),
         ("1.22.0", "https://github.com/microsoft/onnxruntime/releases/download/v1.22.0/onnxruntime-win-x64-1.22.0.zip"),
+        ("1.21.1", "https://github.com/microsoft/onnxruntime/releases/download/v1.21.1/onnxruntime-win-x64-1.21.1.zip"),
+        ("1.20.1", "https://github.com/microsoft/onnxruntime/releases/download/v1.20.1/onnxruntime-win-x64-1.20.1.zip"),
+        ("1.19.2", "https://github.com/microsoft/onnxruntime/releases/download/v1.19.2/onnxruntime-win-x64-1.19.2.zip"),
     ];
     let mut success = false;
 
@@ -1287,11 +1291,17 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
 
         if !dll_path.exists() {
             info!("📥 Downloading ONNX Runtime v{}...", version);
-            let zip_path = "ort_tmp.zip";
-            let tmp_dir = "ort_extract";
+
+            // Use a temp dir next to the exe so it works regardless of CWD
+            let base_dir = dll_path
+                .parent()
+                .map(|p| p.to_path_buf())
+                .unwrap_or_else(|| std::env::temp_dir());
+            let zip_path = base_dir.join("ort_tmp.zip");
+            let tmp_dir = base_dir.join("ort_extract");
 
             let executor = DirectExecutor::new();
-            if let Err(e) = executor.download(url, Path::new(zip_path), false).await {
+            if let Err(e) = executor.download(url, &zip_path, false).await {
                 warn!(
                     "Failed to download ORT v{}: {}. Trying next version...",
                     version, e
@@ -1299,15 +1309,15 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
                 continue;
             }
 
-            if let Err(e) = extract_zip(Path::new(zip_path), Path::new(tmp_dir)) {
+            if let Err(e) = extract_zip(&zip_path, &tmp_dir) {
                 warn!("Failed to extract ORT v{}: {}", version, e);
-                let _ = fs::remove_file(zip_path);
+                let _ = fs::remove_file(&zip_path);
                 continue;
             }
 
             // Find onnxruntime.dll in extracted files
             let mut found_dll = None;
-            for entry in walkdir::WalkDir::new(tmp_dir)
+            for entry in walkdir::WalkDir::new(&tmp_dir)
                 .into_iter()
                 .filter_map(|e| e.ok())
             {
@@ -1323,8 +1333,8 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
                 }
             }
 
-            let _ = fs::remove_file(zip_path);
-            let _ = fs::remove_dir_all(tmp_dir);
+            let _ = fs::remove_file(&zip_path);
+            let _ = fs::remove_dir_all(&tmp_dir);
         }
 
         if let Some(p) = dll_path.to_str() {

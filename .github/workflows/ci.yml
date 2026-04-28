@@ -1,0 +1,99 @@
+name: CI
+
+on:
+  push:
+    branches: [main]
+  pull_request:
+    branches: [main]
+
+env:
+  CARGO_TERM_COLOR: always
+  RUST_BACKTRACE: 1
+
+jobs:
+  # ── Clippy: zero warnings policy ─────────────────────────────────────────────
+  clippy:
+    name: Clippy (zero warnings)
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust stable + clippy
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: clippy
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: clippy-windows
+
+      - name: Run Clippy
+        run: cargo clippy --workspace --all-targets -- -D warnings
+
+  # ── cargo-audit: dependency vulnerability scan ────────────────────────────────
+  audit:
+    name: Dependency Audit (cargo-audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install cargo-audit
+        run: cargo install cargo-audit --locked
+
+      - name: Run audit
+        run: cargo audit
+
+  # ── Tests ────────────────────────────────────────────────────────────────────
+  test:
+    name: Tests
+    runs-on: windows-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          submodules: recursive
+
+      - name: Install Rust stable
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry
+        uses: Swatinem/rust-cache@v2
+        with:
+          key: test-windows
+
+      - name: Run tests
+        env:
+          OSOOSI_NO_ORT: "1"   # skip ORT download in CI
+          OSOOSI_NO_AI: "1"
+        run: cargo test --workspace
+
+  # ── Format check ─────────────────────────────────────────────────────────────
+  fmt:
+    name: Format Check (rustfmt)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust stable + rustfmt
+        uses: dtolnay/rust-toolchain@stable
+        with:
+          components: rustfmt
+
+      - name: Check formatting
+        run: cargo fmt --all -- --check
+
+  # ── Secret scan ───────────────────────────────────────────────────────────────
+  secrets:
+    name: Secret Scan (gitleaks)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          fetch-depth: 0   # full history for secret detection
+
+      - name: Run Gitleaks
+        uses: gitleaks/gitleaks-action@v2
+        env:
+          GITHUB_TOKEN: ${{ secrets.GITHUB_TOKEN }}

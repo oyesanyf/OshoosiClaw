@@ -1,0 +1,38 @@
+# CODEOWNERS
+# Each line is a file pattern followed by the required reviewers.
+# These owners are automatically requested for review when a PR
+# modifies the listed files. Their approval is MANDATORY for merge
+# even if other reviewers have already approved.
+#
+# Docs: https://docs.github.com/en/repositories/managing-your-repositorys-settings-and-features/customizing-your-repository/about-code-owners
+
+# ── Global fallback: all files require owner review ───────────────────────────
+*                                   @oyesanyf
+
+# ── Core EDR brain (consensus, orchestrator, blocking) ────────────────────────
+crates/osoosi-core/                 @oyesanyf
+
+# ── AI / ML models (ONNX, SecureBERT, MalConv) ───────────────────────────────
+crates/osoosi-model/                @oyesanyf
+
+# ── Policy engine (rules, consensus weights) ──────────────────────────────────
+crates/osoosi-policy/               @oyesanyf
+
+# ── Trust & identity (P2P mesh certificates) ─────────────────────────────────
+crates/osoosi-trust/                @oyesanyf
+
+# ── Cryptographic audit trail (Merkle logchain) ───────────────────────────────
+crates/osoosi-audit/                @oyesanyf
+
+# ── Sandbox executor (privilege boundary) ─────────────────────────────────────
+crates/osoosi-sandbox/              @oyesanyf
+
+# ── Workspace dependency manifest (prevents dep hijacking) ───────────────────
+Cargo.toml                          @oyesanyf
+Cargo.lock                          @oyesanyf
+
+# ── CI / CD pipelines ────────────────────────────────────────────────────────
+.github/                            @oyesanyf
+
+# ── Security policy ──────────────────────────────────────────────────────────
+SECURITY.md                         @oyesanyf

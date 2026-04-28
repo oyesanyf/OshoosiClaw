@@ -147,7 +147,20 @@ impl StaticAnalyzer {
                     "Low Entropy ({:.2}): Binary likely not obfuscated",
                     entropy
                 ));
-                signature.confidence *= 0.8; // Reward low entropy (suppress)
+                // Suppress packer/UPX findings when entropy is low — low entropy is
+                // strong counter-evidence against packing (packed files are high entropy)
+                let had_packer_reason = signature.reason.as_ref()
+                    .map(|r| r.to_lowercase().contains("packer") || r.to_lowercase().contains("upx"))
+                    .unwrap_or(false);
+                if had_packer_reason {
+                    // Halve confidence: low entropy + packer flag = likely false positive
+                    signature.confidence *= 0.5;
+                    signature.add_reason(
+                        "[Low entropy discounts packer flag — packed binaries have high entropy]".to_string()
+                    );
+                } else {
+                    signature.confidence *= 0.8; // General suppression for low-entropy binaries
+                }
             }
 
             // 7. ClamAV Analysis (Voting Integration)
@@ -328,6 +341,21 @@ impl StaticAnalyzer {
         let domain_regex =
             Regex::new(r"(?i)\b[a-z0-9\.-]+\.(com|org|net|xyz|ru|cn|top|icu)\b").unwrap();
 
+        // Known-good infrastructure domains: OCSP, CRL, CDNs used by Windows certificate validation.
+        // Seeing these does NOT indicate malice — it indicates normal TLS certificate checking.
+        let known_good_domains: &[&str] = &[
+            "ocsp.sectigo.com", "ocsp.comodoca.com", "ocsp.digicert.com",
+            "crl.sectigo.com", "crl.comodoca.com", "crl.microsoft.com",
+            "ocsp.usertrust.com", "crt.sectigo.com", "ocsp2.globalsign.com",
+            "ocsp.globalsign.com", "crl.globalsign.com",
+            // Windows Update / telemetry (not malicious)
+            "windowsupdate.microsoft.com", "update.microsoft.com",
+            "ctldl.windowsupdate.com", "www.microsoft.com",
+            // GitHub CDN (git.exe, dev tools)
+            "github.com", "objects.githubusercontent.com", "raw.githubusercontent.com",
+            "api.github.com",
+        ];
+
         if let Some(strings) = json.get("strings").and_then(|s| s.as_object()) {
             for value in strings.values() {
                 if let Some(arr) = value.as_array() {
@@ -336,7 +364,12 @@ impl StaticAnalyzer {
                             if ip_regex.is_match(s) {
                                 artifacts.push(format!("IP: {}", s));
                             } else if domain_regex.is_match(s) {
-                                artifacts.push(format!("Domain: {}", s));
+                                // Skip known-good domains — they reduce noise, not raise it
+                                let is_known_good = known_good_domains.iter()
+                                    .any(|&good| s.to_lowercase().contains(good));
+                                if !is_known_good {
+                                    artifacts.push(format!("Domain: {}", s));
+                                }
                             } else if s.contains("powershell") || s.contains("http") {
                                 artifacts.push(format!("String: {}", s));
                             }
@@ -374,11 +407,10 @@ impl StaticAnalyzer {
     }
 
     async fn run_falcon(&self, _file_path: &Path) -> anyhow::Result<Option<String>> {
-        // use falcon::loader::Elf; or Pe;
-        // In this implementation, we simulate the formal analysis.
-        Ok(Some(
-            "Detected potential obfuscated control flow in entry point.".to_string(),
-        ))
+        // TODO: Integrate falcon-rs library for formal binary analysis
+        // When implemented, this will perform IL lifting and data-flow analysis
+        // to detect obfuscated control flow, shellcode, and unpacking stubs.
+        Ok(None) // Return None until real integration is complete (prevents false positives)
     }
 
     async fn run_xori(&self, file_path: &Path) -> anyhow::Result<Option<String>> {
@@ -418,15 +450,13 @@ impl StaticAnalyzer {
     }
 
     async fn run_die_rust(&self, _file_path: &Path) -> anyhow::Result<Option<String>> {
-        // die-rust library integration
-        // let detections = die_rust::detect_file(file_path)?;
-        // if let Some(best) = detections.first() {
-        //     return Ok(Some(format!("DiE Signature: {} ({})", best.name, best.version)));
-        // }
-
-        Ok(Some(
-            "Detect It Easy: Identified potential packer (UPX 3.96)".to_string(),
-        ))
+        // TODO: Integrate die-rust library when stable API is available
+        // When implemented:
+        //   let detections = die_rust::detect_file(file_path)?;
+        //   if let Some(best) = detections.first() {
+        //       return Ok(Some(format!("DiE Signature: {} ({})", best.name, best.version)));
+        //   }
+        Ok(None) // Return None until real integration is complete (prevents false positives)
     }
 
     /// Calculate Shannon Entropy of a file to detect packing/encryption.

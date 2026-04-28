@@ -710,7 +710,7 @@ impl EdrOrchestrator {
         let min_train = std::env::var("OSOOSI_MODEL_MIN_SAMPLES")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(10);
+            .unwrap_or(3); // 3 samples = enough for initial baseline; override with OSOOSI_MODEL_MIN_SAMPLES=N
         let model_config = ModelConfig {
             models_dir: std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string()),
             min_samples: min_train,
