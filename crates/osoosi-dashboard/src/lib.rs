@@ -752,7 +752,7 @@ async fn post_reject_action(
 async fn get_consensus(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
-            let status = orch.policy_consensus_status().await;
+            let status = orch.policy_consensus_status();
             Json(serde_json::to_value(&status).unwrap_or(json!({})))
         }
         None => Json(json!({})),
@@ -1126,7 +1126,7 @@ async fn get_agent_context(State(state): State<DashboardState>) -> Json<Value> {
                     "combined_score": d.combined_score,
                 })).collect::<Vec<_>>(),
                 "malware_stats": { "scanned": mw_stats.total_scanned, "skipped": mw_stats.total_skipped, "malware_count": mw_stats.total_malware },
-                "consensus_summary": orch.policy_consensus_status().await.iter().map(|(id, msgs)| {
+                "consensus_summary": orch.policy_consensus_status().iter().map(|(id, msgs)| {
                     let votes = msgs.iter().filter(|m| matches!(m, osoosi_types::PolicyConsensusMessage::Vote(_))).count();
                     json!({ "policy_id": id, "mesh_votes": votes })
                 }).collect::<Vec<_>>(),

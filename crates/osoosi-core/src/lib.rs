@@ -280,9 +280,8 @@ pub struct EdrOrchestrator {
     triage_store: crate::triage::TriageStore,
     /// Behavioral baseline for anomaly detection
     baseline: Arc<crate::baseline::BehavioralBaseline>,
-    /// Policy Consensus tracking (Mesh-validated patches)
-    policy_consensus:
-        Arc<tokio::sync::Mutex<HashMap<String, Vec<osoosi_types::PolicyConsensusMessage>>>>,
+    /// Policy Consensus tracking (Mesh-validated patches) — DashMap: lock-free concurrent access
+    policy_consensus: Arc<dashmap::DashMap<String, Vec<osoosi_types::PolicyConsensusMessage>>>,
     /// Approval Queue for high-stakes autonomous actions
     approval_queue: Arc<tokio::sync::Mutex<Vec<osoosi_sandbox::ApprovalRequest>>>,
     /// Sandbox Executor for isolated tool execution
@@ -341,7 +340,7 @@ pub struct EdrOrchestrator {
     /// Static Analyzer: CAPA + FLOSS + LLM reasoning
     static_analyzer: Arc<crate::static_analyzer::StaticAnalyzer>,
     /// Morphic Hyper-Web: Entanglement and Probabilistic Deception
-    deception_engine: Arc<tokio::sync::Mutex<osoosi_behavioral::deception::EntanglementEngine>>,
+    deception_engine: Arc<tokio::sync::RwLock<osoosi_behavioral::deception::EntanglementEngine>>,
     /// Spider Eyes: Binary Analyzer (LLM Cortex + Capstone)
     spider_eyes: Arc<osoosi_behavioral::SpiderEyes>,
     /// Runtime config (db paths, sandboxes, etc.)
@@ -351,14 +350,14 @@ pub struct EdrOrchestrator {
 impl EdrOrchestrator {
     /// Morphic Hyper-Web: Entangle a suspicious process.
     pub async fn entangle_process(&self, pid: u32, name: &str) {
-        let mut engine = self.deception_engine.lock().await;
+        let mut engine = self.deception_engine.write().await;
         engine.entangle(pid, name);
         warn!("🕸️  Morphic Entanglement active for {} (PID {})", name, pid);
     }
 
     /// Report gaslighted telemetry for a process.
     pub async fn report_gaslighted_cpu(&self, pid: u32, real_cpu: f64) -> f64 {
-        let engine = self.deception_engine.lock().await;
+        let engine = self.deception_engine.read().await;
         if let Some(spider) = engine.get_spider(pid) {
             spider.get_telemetry(real_cpu)
         } else {
@@ -904,7 +903,7 @@ impl EdrOrchestrator {
             audit.clone(),
         )));
 
-        let deception_engine = Arc::new(tokio::sync::Mutex::new(
+        let deception_engine = Arc::new(tokio::sync::RwLock::new(
             osoosi_behavioral::deception::EntanglementEngine::new(),
         ));
 
@@ -926,7 +925,7 @@ impl EdrOrchestrator {
             malware_scanner,
             triage_store,
             baseline,
-            policy_consensus: Arc::new(tokio::sync::Mutex::new(HashMap::new())),
+            policy_consensus: Arc::new(dashmap::DashMap::new()),
             approval_queue,
             sandbox,
             shield,
@@ -1025,10 +1024,11 @@ impl EdrOrchestrator {
                                 let orch_clone = orch_msg.clone();
                                 let msg_clone = msg.clone();
                                 let voter_id = vote.voter_id.clone();
-                                tokio::spawn(async move {
-                                    let mut consensus = orch_clone.policy_consensus.lock().await;
-                                    consensus.entry(voter_id).or_default().push(msg_clone);
-                                });
+                                // DashMap: lock-free insert — no async lock needed
+                                orch_clone.policy_consensus
+                                    .entry(voter_id)
+                                    .or_default()
+                                    .push(msg_clone);
                             }
                         },
                         |_shard| {}, // Ghost shards - placeholder for future distributed storage
@@ -2084,7 +2084,7 @@ impl EdrOrchestrator {
 
         // --- MORPHIC ENTANGLEMENT INTERCEPTION ---
         if let Some(pid) = event.process_id() {
-            let mut engine = self.deception_engine.lock().await;
+            let mut engine = self.deception_engine.write().await;
             if engine.get_spider(pid as u32).is_some() {
                 match event.event_id {
                     osoosi_types::SysmonEventId::FileCreate | osoosi_types::SysmonEventId::FileDeleteArchived | osoosi_types::SysmonEventId::FileDeleteLogged => {
@@ -3803,8 +3803,8 @@ impl EdrOrchestrator {
                     osoosi_types::PolicyConsensusMessage::Vote(v) => v.policy_id.clone(),
                 };
                 let snapshot = {
-                    let mut guard = history.lock().await;
-                    let entry = guard.entry(policy_id.clone()).or_insert_with(Vec::new);
+                    // DashMap: lock-free entry mutation
+                    let mut entry = history.entry(policy_id.clone()).or_default();
                     entry.push(msg.clone());
                     entry.clone()
                 };
@@ -3956,10 +3956,14 @@ impl EdrOrchestrator {
     }
 
     /// Policy Consensus status for all policies tracked in the mesh.
-    pub async fn policy_consensus_status(
+    pub fn policy_consensus_status(
         &self,
     ) -> HashMap<String, Vec<osoosi_types::PolicyConsensusMessage>> {
-        self.policy_consensus.lock().await.clone()
+        // DashMap: collect into HashMap without holding any lock
+        self.policy_consensus
+            .iter()
+            .map(|entry| (entry.key().clone(), entry.value().clone()))
+            .collect()
     }
 
     /// Access the threat model for inference (used by policy engine).

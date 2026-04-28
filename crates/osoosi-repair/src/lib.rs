@@ -130,8 +130,8 @@ pub struct PatchEngine {
     discoverer: PatchDiscoverer,
     remediator: StandaloneRemediator,
     repair_config: RepairConfig,
-    /// Throttling: track the last time a snapshot was created to avoid redundant restore points.
-    last_snapshot_at: Arc<tokio::sync::Mutex<Option<std::time::Instant>>>,
+    /// Throttling: Unix epoch secs of last snapshot (0 = never). Atomic avoids async Mutex overhead.
+    last_snapshot_secs: Arc<std::sync::atomic::AtomicU64>,
 }
 
 impl PatchEngine {
@@ -141,7 +141,7 @@ impl PatchEngine {
             discoverer: PatchDiscoverer::new(),
             remediator: StandaloneRemediator::new(),
             repair_config,
-            last_snapshot_at: Arc::new(tokio::sync::Mutex::new(None)),
+            last_snapshot_secs: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         }
     }
 
@@ -354,21 +354,22 @@ impl PatchEngine {
     }
 
     async fn create_snapshot(&self, _patch: &PatchMetadata) -> Result<String> {
-        // Optimization: Throttle snapshot creation.
-        // If a snapshot was created in the last 10 minutes, reuse it for this transaction.
-        {
-            let mut last_at = self.last_snapshot_at.lock().await;
-            if let Some(instant) = *last_at {
-                if instant.elapsed() < std::time::Duration::from_secs(600) {
-                    info!(
-                        "Snapshot throttle: Reusing recent system snapshot (created {:?} ago).",
-                        instant.elapsed()
-                    );
-                    return Ok("recent-cached-snapshot".to_string());
-                }
-            }
-            *last_at = Some(std::time::Instant::now());
+        use std::sync::atomic::Ordering;
+        // Throttle: atomic load of last snapshot epoch, no async lock needed
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap_or_default()
+            .as_secs();
+        let last = self.last_snapshot_secs.load(Ordering::Acquire);
+        if last > 0 && now_secs.saturating_sub(last) < 600 {
+            info!(
+                "Snapshot throttle: Reusing recent system snapshot (created {}s ago).",
+                now_secs.saturating_sub(last)
+            );
+            return Ok("recent-cached-snapshot".to_string());
         }
+        // CAS: only one concurrent caller wins; others will get the cached result next round
+        self.last_snapshot_secs.store(now_secs, Ordering::Release);
 
         info!("Creating filesystem snapshot...");
         let snap_id = format!("snap-{}", Uuid::new_v4());

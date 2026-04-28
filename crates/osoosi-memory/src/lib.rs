@@ -7,7 +7,7 @@ use osoosi_types::{
 };
 use rusqlite::{params, Connection};
 use std::path::Path;
-use std::sync::Mutex;
+use parking_lot::Mutex;
 use tracing::{debug, info};
 
 pub mod encryption;
@@ -39,10 +39,18 @@ impl MemoryStore {
         // SQLCipher: Apply encryption if available and DB is not in-memory
         if path != ":memory:" {
             let key = encryption::get_db_encryption_key();
-            // Try to apply encryption — if rusqlite wasn't compiled with sqlcipher,
-            // the PRAGMA key will be silently ignored (no-op).
             let _ = encryption::apply_encryption(&conn, &key);
         }
+
+        // Enable WAL mode for concurrent readers + single writer (no blocking reads)
+        let _ = conn.execute_batch("
+            PRAGMA journal_mode = WAL;
+            PRAGMA synchronous = NORMAL;
+            PRAGMA temp_store = MEMORY;
+            PRAGMA mmap_size = 134217728;
+            PRAGMA cache_size = -8000;
+            PRAGMA busy_timeout = 5000;
+        ");
 
         let lock = Mutex::new(conn);
 
@@ -60,7 +68,7 @@ impl MemoryStore {
 
     fn init_db(&self) -> anyhow::Result<()> {
         debug!("Initializing memory store tables...");
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
 
         // KEV table
         conn.execute(
@@ -335,7 +343,7 @@ impl MemoryStore {
     /// Check if a SHA1 hash exists in the NSRL 'Known Good' list (compares lowercase hex).
     pub fn is_nsrl_known_good(&self, sha1: &str) -> anyhow::Result<bool> {
         let key = sha1.trim().to_ascii_lowercase();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare_cached("SELECT 1 FROM nsrl WHERE sha1 = ? LIMIT 1")?;
         let exists = stmt.exists([key])?;
         Ok(exists)
@@ -351,7 +359,7 @@ impl MemoryStore {
         if !nist_rds_path.exists() {
             anyhow::bail!("NSRL RDS file not found: {:?}", nist_rds_path);
         }
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let before: u64 = conn.query_row("SELECT COUNT(*) FROM nsrl", [], |r| r.get(0))?;
 
         // Tuned for one-shot bulk copy (reduces disk sync overhead; still crash-safe on WAL).
@@ -422,7 +430,7 @@ impl MemoryStore {
 
     /// Upsert a batch of NSRL records.
     pub fn upsert_nsrl_records(&self, records: &[osoosi_types::NsrlRecord]) -> anyhow::Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
         {
             let mut stmt = tx.prepare_cached(
@@ -450,7 +458,7 @@ impl MemoryStore {
 
     /// Count NSRL records in the database.
     pub fn nsrl_record_count(&self) -> anyhow::Result<u64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let count: i64 = conn.query_row("SELECT COUNT(*) FROM nsrl", [], |r| r.get(0))?;
         Ok(count.max(0) as u64)
     }
@@ -461,7 +469,7 @@ impl MemoryStore {
         &self,
         path: &str,
     ) -> anyhow::Result<Option<(String, bool, Option<String>)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare_cached("SELECT hash_blake3, is_nsrl_validated, product_version FROM file_integrity WHERE path = ?")?;
         let mut rows = stmt.query([path])?;
         if let Some(row) = rows.next()? {
@@ -479,7 +487,7 @@ impl MemoryStore {
         is_nsrl: bool,
         version: Option<&str>,
     ) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO file_integrity (path, hash_blake3, is_nsrl_validated, product_version, last_seen) VALUES (?, ?, ?, ?, ?)",
             params![path, hash, if is_nsrl { 1 } else { 0 }, version, Utc::now().to_rfc3339()],
@@ -488,7 +496,7 @@ impl MemoryStore {
     }
 
     pub fn insert_kev(&self, kev: &Kev) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO kev (cve_id, vendor_project, product, vulnerability_name, date_added, required_action, known_exploited, version_start_including, version_end_excluding)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -509,7 +517,7 @@ impl MemoryStore {
 
     /// Batch insert KEVs in a single transaction to avoid database lock contention.
     pub fn insert_kevs_batch(&self, kevs: &[Kev]) -> anyhow::Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
         for kev in kevs {
             tx.execute(
@@ -533,7 +541,7 @@ impl MemoryStore {
     }
 
     pub fn get_kev(&self, cve_id: &str) -> anyhow::Result<Option<Kev>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT * FROM kev WHERE cve_id = ?1")?;
         let mut rows = stmt.query(params![cve_id])?;
 
@@ -557,7 +565,7 @@ impl MemoryStore {
     }
 
     pub fn get_all_kevs(&self) -> anyhow::Result<Vec<Kev>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT * FROM kev")?;
         let rows = stmt.query_map([], |row| {
             Ok(Kev {
@@ -584,7 +592,7 @@ impl MemoryStore {
     }
 
     pub fn update_file_hash(&self, path: &str, hash: &str) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO file_integrity (path, hash_blake3, last_seen)
              VALUES (?1, ?2, ?3)",
@@ -594,7 +602,7 @@ impl MemoryStore {
     }
 
     pub fn set_repair_status(&self, key: &str, value: &str) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO repair_status (key, value, updated_at) VALUES (?1, ?2, ?3)",
             params![key, value, Utc::now().to_rfc3339()],
@@ -603,14 +611,14 @@ impl MemoryStore {
     }
 
     pub fn get_repair_status(&self, key: &str) -> anyhow::Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT value FROM repair_status WHERE key = ?1")?;
         let res = stmt.query_row(params![key], |row| row.get(0)).ok();
         Ok(res)
     }
 
     pub fn set_backup_status(&self, key: &str, value: &str) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO backup_status (key, value, updated_at) VALUES (?1, ?2, ?3)",
             params![key, value, Utc::now().to_rfc3339()],
@@ -619,14 +627,14 @@ impl MemoryStore {
     }
 
     pub fn get_backup_status(&self, key: &str) -> anyhow::Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT value FROM backup_status WHERE key = ?1")?;
         let res = stmt.query_row(params![key], |row| row.get(0)).ok();
         Ok(res)
     }
 
     pub fn set_model_training_status(&self, key: &str, value: &str) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO model_training_status (key, value, updated_at) VALUES (?1, ?2, ?3)",
             params![key, value, Utc::now().to_rfc3339()],
@@ -635,14 +643,14 @@ impl MemoryStore {
     }
 
     pub fn get_model_training_status(&self, key: &str) -> anyhow::Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT value FROM model_training_status WHERE key = ?1")?;
         let res = stmt.query_row(params![key], |row| row.get(0)).ok();
         Ok(res)
     }
 
     pub fn get_file_hash(&self, path: &str) -> anyhow::Result<Option<String>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT hash_blake3 FROM file_integrity WHERE path = ?1")?;
         let res = stmt.query_row(params![path], |row| row.get(0)).ok();
         Ok(res)
@@ -650,7 +658,7 @@ impl MemoryStore {
 
     /// Add a path to the skip list (e.g. locked files that cannot be hashed).
     pub fn add_file_to_skip_list(&self, path: &str, reason: &str) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO file_skip_list (path, reason, added_at) VALUES (?1, ?2, ?3)",
             params![path, reason, Utc::now().to_rfc3339()],
@@ -660,14 +668,14 @@ impl MemoryStore {
 
     /// Check if a path is in the skip list.
     pub fn is_file_in_skip_list(&self, path: &str) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT 1 FROM file_skip_list WHERE path = ?1")?;
         let res = stmt.exists(params![path])?;
         Ok(res)
     }
 
     pub fn get_reputation(&self, node_id: &str) -> anyhow::Result<Option<ReputationScore>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT node_id, score, alerts_verified, false_positives, last_updated FROM reputation WHERE node_id = ?1"
         )?;
@@ -687,7 +695,7 @@ impl MemoryStore {
     }
 
     pub fn upsert_reputation(&self, rep: &ReputationScore) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO reputation (node_id, score, alerts_verified, false_positives, last_updated)
              VALUES (?1, ?2, ?3, ?4, ?5)",
@@ -703,7 +711,7 @@ impl MemoryStore {
     }
 
     pub fn add_pending_join(&self, req: &PendingJoinRequest) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO pending_joins (peer_id, multiaddr, reputation_score, alerts_verified, false_positives, discovered_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -720,7 +728,7 @@ impl MemoryStore {
     }
 
     pub fn get_pending_joins(&self) -> anyhow::Result<Vec<PendingJoinRequest>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT peer_id, multiaddr, reputation_score, alerts_verified, false_positives, discovered_at FROM pending_joins"
         )?;
@@ -744,7 +752,7 @@ impl MemoryStore {
     }
 
     pub fn remove_pending_join(&self, peer_id: &str) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "DELETE FROM pending_joins WHERE peer_id = ?1",
             params![peer_id],
@@ -753,7 +761,7 @@ impl MemoryStore {
     }
 
     pub fn upsert_peer_status(&self, announce: &PeerAnnounce) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO peer_status (peer_id, is_patched, os_name, os_version, os_supported, received_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -770,7 +778,7 @@ impl MemoryStore {
     }
 
     pub fn get_peer_status(&self, peer_id: &str) -> anyhow::Result<Option<PeerStatus>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT peer_id, is_patched, os_name, os_version, os_supported, received_at FROM peer_status WHERE peer_id = ?1"
         )?;
@@ -796,7 +804,7 @@ impl MemoryStore {
         reason: &str,
         reputation_score: f32,
     ) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO quarantined_peers (peer_id, reason, reputation_score, quarantined_at, released_at, active)
              VALUES (?1, ?2, ?3, ?4, NULL, 1)",
@@ -806,7 +814,7 @@ impl MemoryStore {
     }
 
     pub fn release_quarantined_peer(&self, peer_id: &str) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "UPDATE quarantined_peers SET active = 0, released_at = ?2 WHERE peer_id = ?1",
             params![peer_id, Utc::now().to_rfc3339()],
@@ -815,7 +823,7 @@ impl MemoryStore {
     }
 
     pub fn is_peer_quarantined(&self, peer_id: &str) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt =
             conn.prepare("SELECT 1 FROM quarantined_peers WHERE peer_id = ?1 AND active = 1")?;
         let exists = stmt.exists(params![peer_id])?;
@@ -823,7 +831,7 @@ impl MemoryStore {
     }
 
     pub fn get_quarantined_peers(&self) -> anyhow::Result<Vec<QuarantinedPeer>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT peer_id, reason, reputation_score, quarantined_at, released_at, active
              FROM quarantined_peers
@@ -854,7 +862,7 @@ impl MemoryStore {
     }
 
     pub fn log_threat(&self, sig: &ThreatSignature) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO threats (id, cve_id, hash_blake3, process_name, confidence, detected_at, source_node, file_path, reason)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
@@ -879,7 +887,7 @@ impl MemoryStore {
     /// Store malware sample from mesh for distributed EMBER-style training.
     pub fn insert_malware_sample(&self, sample: &MalwareSample) -> anyhow::Result<()> {
         let features_json = serde_json::to_string(&sample.features).unwrap_or_default();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO malware_samples (file_hash, source_node, label, features_json, feature_version, received_at)
              VALUES (?1, ?2, ?3, ?4, ?5, ?6)",
@@ -897,7 +905,7 @@ impl MemoryStore {
 
     /// Count mesh samples for training.
     pub fn malware_sample_count(&self) -> anyhow::Result<u64> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let count: i64 =
             conn.query_row("SELECT COUNT(*) FROM malware_samples", [], |r| r.get(0))?;
         Ok(count.max(0) as u64)
@@ -905,7 +913,7 @@ impl MemoryStore {
 
     /// Get malware samples for training (export to JSON/CSV for EMBER script).
     pub fn get_malware_samples(&self, limit: usize) -> anyhow::Result<Vec<MalwareSample>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT file_hash, source_node, label, features_json, feature_version, received_at
              FROM malware_samples ORDER BY received_at DESC LIMIT ?1",
@@ -934,7 +942,7 @@ impl MemoryStore {
 
     /// Get threats as ThreatSignature for model training (self + peer data).
     pub fn get_threats_for_training(&self, limit: usize) -> anyhow::Result<Vec<ThreatSignature>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, cve_id, hash_blake3, process_name, confidence, detected_at, source_node 
              FROM threats ORDER BY detected_at DESC LIMIT ?1",
@@ -971,7 +979,7 @@ impl MemoryStore {
 
     /// Get recent threats for dashboard (from memory + audit THREAT_DETECTED events).
     pub fn get_recent_threats(&self, limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(
             "SELECT id, cve_id, process_name, hash_blake3, confidence, MAX(detected_at), source_node, file_path, reason 
              FROM threats t
@@ -1012,7 +1020,7 @@ impl MemoryStore {
         threat_id: &str,
         source_node: &str,
     ) -> anyhow::Result<Option<(Option<String>, Option<String>, Option<String>)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt =
             conn.prepare("SELECT process_name, hash_blake3, file_path FROM threats WHERE id = ?1")?;
         let mut rows = stmt.query(params![threat_id])?;
@@ -1043,7 +1051,7 @@ impl MemoryStore {
         hash_blake3: Option<&str>,
         source_node: &str,
     ) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO false_positive_patterns (process_name, hash_blake3, source_node, marked_at)
              VALUES (?1, ?2, ?3, ?4)",
@@ -1064,7 +1072,7 @@ impl MemoryStore {
         threat_id: &str,
         source_node: &str,
     ) -> anyhow::Result<Option<(Option<String>, Option<String>, Option<String>)>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt =
             conn.prepare("SELECT process_name, hash_blake3, file_path FROM threats WHERE id = ?1")?;
         let mut rows = stmt.query(params![threat_id])?;
@@ -1105,7 +1113,7 @@ impl MemoryStore {
     }
 
     pub fn get_ai_override(&self, file_hash: &str) -> anyhow::Result<Option<bool>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt =
             conn.prepare_cached("SELECT verdict FROM ai_overrides WHERE file_hash = ?1")?;
         let mut rows = stmt.query(params![file_hash])?;
@@ -1121,7 +1129,7 @@ impl MemoryStore {
         process_name: Option<&str>,
         hash_blake3: Option<&str>,
     ) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let proc = process_name.unwrap_or("");
         let hash = hash_blake3.unwrap_or("");
         let mut stmt = conn.prepare(
@@ -1137,7 +1145,7 @@ impl MemoryStore {
         process_name: Option<&str>,
         hash_blake3: Option<&str>,
     ) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let proc = process_name.unwrap_or("");
         let hash = hash_blake3.unwrap_or("");
         let mut stmt = conn.prepare(
@@ -1153,7 +1161,7 @@ impl MemoryStore {
         query: &str,
         parameters: &[String],
     ) -> anyhow::Result<Vec<serde_json::Value>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare(query)?;
         let column_count = stmt.column_count();
         let column_names: Vec<String> = stmt.column_names().iter().map(|s| s.to_string()).collect();
@@ -1183,12 +1191,12 @@ impl MemoryStore {
     }
 
     pub fn repopulate_bloom_filter(&self) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt =
             conn.prepare("SELECT hash_blake3 FROM threats WHERE hash_blake3 IS NOT NULL")?;
         let hashes = stmt.query_map([], |row| row.get::<_, String>(0))?;
 
-        let mut bloom = self.bloom_filter.lock().unwrap();
+        let mut bloom = self.bloom_filter.lock();
         for hash in hashes {
             if let Ok(h) = hash {
                 bloom.set(&h);
@@ -1199,7 +1207,7 @@ impl MemoryStore {
 
     /// Fast probabilistic check for malicious hash. Returns true if POSSIBLY malicious.
     pub fn is_hash_known_malicious_fast(&self, hash: &str) -> bool {
-        let bloom = self.bloom_filter.lock().unwrap();
+        let bloom = self.bloom_filter.lock();
         bloom.check(&hash.to_string())
     }
 
@@ -1211,7 +1219,7 @@ impl MemoryStore {
     ) -> anyhow::Result<()> {
         let normalized = normalize_asset_path(path);
         let now = Utc::now().to_rfc3339();
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO internal_assets (path, kind, hash_blake3, added_at, last_seen)
              VALUES (?1, ?2, ?3, ?4, ?4)
@@ -1226,7 +1234,7 @@ impl MemoryStore {
 
     pub fn is_internal_asset_path(&self, path: &str) -> anyhow::Result<bool> {
         let candidate = normalize_asset_path(path);
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare_cached("SELECT path FROM internal_assets")?;
         let assets = stmt.query_map([], |row| row.get::<_, String>(0))?;
         for asset in assets {
@@ -1240,12 +1248,12 @@ impl MemoryStore {
 
     /// Add a confirmed malicious hash to the bloom filter for fast future matching.
     pub fn mark_hash_known_malicious(&self, hash: &str) {
-        let mut bloom = self.bloom_filter.lock().unwrap();
+        let mut bloom = self.bloom_filter.lock();
         bloom.set(&hash.to_string());
     }
 
     pub fn get_reputation_value(&self, node_id: &str) -> anyhow::Result<f32> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT score FROM reputation WHERE node_id = ?")?;
         let mut rows = stmt.query([node_id])?;
         if let Some(row) = rows.next()? {
@@ -1256,7 +1264,7 @@ impl MemoryStore {
     }
 
     pub fn update_reputation(&self, node_id: &str, delta: f32) -> anyhow::Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO reputation (node_id, score, last_updated) 
              VALUES (?, ?, ?) 
@@ -1279,7 +1287,7 @@ impl MemoryStore {
         &self,
         indicators: &[osoosi_types::OtxIndicator],
     ) -> anyhow::Result<()> {
-        let mut conn = self.conn.lock().unwrap();
+        let mut conn = self.conn.lock();
         let tx = conn.transaction()?;
         {
             let mut stmt = tx.prepare_cached(
@@ -1298,7 +1306,7 @@ impl MemoryStore {
 
     /// Check if a value (IP, Domain, Hash, etc.) exists in the OTX indicator database.
     pub fn is_indicator_malicious(&self, kind: &str, value: &str) -> anyhow::Result<bool> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock();
         let mut stmt = conn.prepare_cached(
             "SELECT 1 FROM otx_indicators WHERE indicator_type = ? AND value = ? LIMIT 1",
         )?;
