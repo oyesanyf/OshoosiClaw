@@ -146,12 +146,12 @@ impl Default for BehavioralLogReader {
 #[cfg(target_os = "windows")]
 impl BehavioralLogReader {
     fn query_windows_channel(&self, channel: &str) -> Result<Vec<LogEvent>> {
-        use windows::core::{HSTRING, w, PCWSTR};
+        use windows::core::HSTRING;
         use windows::Win32::System::EventLog::{
             EvtQuery, EvtNext, EvtRender, EvtClose, EvtRenderEventXml,
             EvtQueryChannelPath, EvtQueryForwardDirection, EVT_HANDLE
         };
-        use windows::Win32::Foundation::{ERROR_INSUFFICIENT_BUFFER, ERROR_NO_MORE_ITEMS, GetLastError};
+
 
         let mut query = format!("*[System[TimeCreated[timediff(@SystemTime) <= 600000]]]");
         
@@ -227,7 +227,7 @@ impl BehavioralLogReader {
         Ok(out)
     }
 
-    fn parse_windows_xml(xml: &str, channel: &str) -> Result<Vec<LogEvent>> {
+    fn _parse_windows_xml(xml: &str, channel: &str) -> Result<Vec<LogEvent>> {
         let mut out = Vec::new();
         for block in xml.split("<Event>").filter(|s| s.contains("</Event>")) {
             let full = format!("<Event>{}", block);
