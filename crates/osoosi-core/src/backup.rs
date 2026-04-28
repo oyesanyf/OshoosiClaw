@@ -105,8 +105,9 @@ pub fn run_backup_on_start(config: &BackupConfig, memory: Option<Arc<osoosi_memo
 
 #[cfg(target_os = "windows")]
 fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
-    use std::process::Stdio;
-    use std::time::{Duration, Instant};
+    use windows::Win32::System::Restore::*;
+    use windows::Win32::Foundation::BOOL;
+
     let desc = format!("Osoosi pre-start {}", {
         let now = std::time::SystemTime::now();
         let secs = now
@@ -115,44 +116,49 @@ fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
             .as_secs();
         format!("{}", secs)
     });
-    let timeout_secs = std::env::var("OSOOSI_RESTORE_POINT_TIMEOUT_SECS")
-        .ok()
-        .and_then(|s| s.parse().ok())
-        .unwrap_or(20_u64);
-    let mut child = Command::new("powershell")
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-Command",
-            &format!(
-                "Checkpoint-Computer -Description '{}' -RestorePointType MODIFY_SETTINGS",
-                desc
-            ),
-        ])
-        .stdout(Stdio::null())
-        .stderr(Stdio::piped())
-        .spawn()?;
-    let deadline = Instant::now() + Duration::from_secs(timeout_secs);
-    let status = loop {
-        if let Some(status) = child.try_wait()? {
-            break status;
+
+    // Bypass 24-hour frequency limit via registry
+    let reg_path = "HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore";
+    let _ = Command::new("reg")
+        .args(["add", reg_path, "/v", "SystemRestorePointCreationFrequency", "/t", "REG_DWORD", "/d", "0", "/f"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    // Build RESTOREPOINTINFOW
+    let mut info: RESTOREPOINTINFOW = unsafe { std::mem::zeroed() };
+    info.dwEventType = BEGIN_SYSTEM_CHANGE;
+    info.dwRestorePtType = APPLICATION_INSTALL;
+    info.llSequenceNumber = 0;
+
+    let desc_wide: Vec<u16> = desc.encode_utf16().collect();
+    let desc_ptr = std::ptr::addr_of_mut!(info.szDescription) as *mut u16;
+    let max_len = 256 - 1;
+    let copy_len = desc_wide.len().min(max_len);
+    unsafe {
+        for (i, &ch) in desc_wide[..copy_len].iter().enumerate() {
+            desc_ptr.add(i).write_unaligned(ch);
         }
-        if Instant::now() >= deadline {
-            let _ = child.kill();
-            return Err(anyhow::anyhow!(
-                "Checkpoint-Computer timed out after {}s; continuing without blocking the agent",
-                timeout_secs
-            ));
-        }
-        std::thread::sleep(Duration::from_millis(250));
-    };
-    if status.success() {
-        Ok("System restore point created".to_string())
+    }
+
+    let mut status: STATEMGRSTATUS = unsafe { std::mem::zeroed() };
+    let result: BOOL = unsafe { SRSetRestorePointW(&info, &mut status) };
+
+    // Clean up registry key
+    let _ = Command::new("reg")
+        .args(["delete", reg_path, "/v", "SystemRestorePointCreationFrequency", "/f"])
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
+        .status();
+
+    if result.as_bool() {
+        let seq = status.llSequenceNumber;
+        Ok(format!("System restore point created (seq: {})", seq))
     } else {
-        let stderr = String::new(); // We'd need to capture it
+        let code = status.nStatus;
         Err(anyhow::anyhow!(
-            "Checkpoint-Computer failed (may need Admin). Run PowerShell as Administrator. {}",
-            stderr
+            "SRSetRestorePointW failed. Status code: {:?} (may need Admin or System Protection enabled)",
+            code
         ))
     }
 }

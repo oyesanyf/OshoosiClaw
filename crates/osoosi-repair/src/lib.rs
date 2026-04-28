@@ -378,78 +378,64 @@ impl PatchEngine {
 
         #[cfg(target_os = "windows")]
         {
-            info!("Creating Windows restore point before patch...");
-            let desc = format!("Osoosi-{}", &snap_id);
+            info!("Creating Windows restore point via native SRSetRestorePointW API...");
+            let desc_str = format!("Osoosi-{}", &snap_id);
 
-            // 10/10 Logic: Bypass the 24-hour restore point frequency limit by temporarily setting registry key
-            let script = format!(
-                r#"
-$regPath = "HKLM:\Software\Microsoft\Windows NT\CurrentVersion\SystemRestore"
-if (-not (Test-Path $regPath)) {{ New-Item -Path $regPath -Force | Out-Null }}
-$oldVal = Get-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -ErrorAction SilentlyContinue
-Set-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -Value 0 -Type DWord -Force
-$desc = "{}"
-try {{
-  Enable-ComputerRestore -Drive "$env:SystemDrive\" -ErrorAction SilentlyContinue
-  Checkpoint-Computer -Description $desc -RestorePointType "MODIFY_SETTINGS" -ErrorAction Stop
-  Write-Output "Successfully created restore point: $desc"
-}} catch {{
-  Write-Warning "Restore point failed: $_"
-}} finally {{
-  if ($oldVal) {{ Set-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -Value $oldVal.SystemRestorePointCreationFrequency -Force }}
-  else {{ Remove-ItemProperty -Path $regPath -Name "SystemRestorePointCreationFrequency" -Force -ErrorAction SilentlyContinue }}
-}}
-"#,
-                desc.replace('"', "`\"")
-            );
+            tokio::task::spawn_blocking(move || {
+                use windows::Win32::System::Restore::*;
+                use windows::Win32::Foundation::BOOL;
 
-            tokio::spawn(async move {
-                let timeout_secs = std::env::var("OSOOSI_REPAIR_RESTORE_TIMEOUT_SECS")
-                    .ok()
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(120_u64);
-                let mut child = match tokio::process::Command::new("powershell")
-                    .args([
-                        "-NoProfile",
-                        "-ExecutionPolicy",
-                        "Bypass",
-                        "-Command",
-                        &script,
-                    ])
-                    .spawn()
-                {
-                    Ok(child) => child,
-                    Err(e) => {
-                        warn!("Failed to start background Windows restore point: {}", e);
-                        return;
-                    }
-                };
-                match tokio::time::timeout(
-                    std::time::Duration::from_secs(timeout_secs),
-                    child.wait(),
-                )
-                .await
-                {
-                    Ok(Ok(status)) if status.success() => {
-                        info!("Background Windows restore point created for patch transaction.");
-                    }
-                    Ok(Ok(status)) => {
-                        warn!(
-                            "Background Windows restore point failed (exit {:?}). Patch engine continues.",
-                            status.code()
-                        );
-                    }
-                    Ok(Err(e)) => warn!("Background Windows restore point wait failed: {}", e),
-                    Err(_) => {
-                        let _ = child.kill().await;
-                        warn!(
-                            "Background Windows restore point timed out after {}s. Patch engine continues.",
-                            timeout_secs
-                        );
+                // Bypass 24-hour frequency limit via registry
+                let reg_path = "HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore";
+                let _ = std::process::Command::new("reg")
+                    .args(["add", reg_path, "/v", "SystemRestorePointCreationFrequency", "/t", "REG_DWORD", "/d", "0", "/f"])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+
+                // Build RESTOREPOINTINFOW with description
+                let mut info: RESTOREPOINTINFOW = unsafe { std::mem::zeroed() };
+                info.dwEventType = BEGIN_SYSTEM_CHANGE;
+                info.dwRestorePtType = APPLICATION_INSTALL;
+                info.llSequenceNumber = 0;
+
+                let desc_wide: Vec<u16> = desc_str.encode_utf16().collect();
+                // szDescription is in a packed struct, use raw pointer writes
+                let desc_ptr = std::ptr::addr_of_mut!(info.szDescription) as *mut u16;
+                let max_len = 256 - 1; // szDescription is [u16; 256]
+                let copy_len = desc_wide.len().min(max_len);
+                unsafe {
+                    for (i, &ch) in desc_wide[..copy_len].iter().enumerate() {
+                        desc_ptr.add(i).write_unaligned(ch);
                     }
                 }
+
+                let mut status: STATEMGRSTATUS = unsafe { std::mem::zeroed() };
+
+                let result: BOOL = unsafe { SRSetRestorePointW(&info, &mut status) };
+
+                // Clean up registry key
+                let _ = std::process::Command::new("reg")
+                    .args(["delete", reg_path, "/v", "SystemRestorePointCreationFrequency", "/f"])
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null())
+                    .status();
+
+                if result.as_bool() {
+                    let seq = status.llSequenceNumber;
+                    info!(
+                        "Native restore point created. Sequence: {}",
+                        seq
+                    );
+                } else {
+                    let code = status.nStatus;
+                    warn!(
+                        "Native restore point failed. Status code: {:?} (may need Admin or System Protection enabled)",
+                        code
+                    );
+                }
             });
-            info!("Windows restore point queued in background; patch orchestration will not block on VSS.");
+            info!("Native restore point queued in background thread; patch orchestration is not blocked.");
         }
         #[cfg(target_os = "linux")]
         {

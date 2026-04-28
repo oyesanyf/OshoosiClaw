@@ -20,3 +20,4 @@ reqwest = { workspace = true }
 bytes = { workspace = true }
 libc.workspace = true
 winapi = { workspace = true }
+windows = { workspace = true }

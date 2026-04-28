@@ -444,33 +444,126 @@ function renderMeshView(mesh) {
 }
 
 /**
- * Render malware scanner view
+ * Render malware scanner view with drill-down details
  */
 function renderMalwareView(detections) {
     const list = document.getElementById('malware-data-list');
     if (!list) return;
 
+    // Update stat counters from malware status API
+    fetchAPI('/malware-status').then(status => {
+        if (status) {
+            updateStats('scanned', status.total_scanned || 0);
+            updateStats('malware-found', status.total_malware || 0);
+            updateStats('clean-scans', status.clamav_clean_count || 0);
+            const mlEl = document.getElementById('stat-ml-status');
+            if (mlEl) mlEl.innerText = status.model_loaded ? 'Active ✅' : 'Inactive';
+        }
+    });
+
     if (!detections || detections.length === 0) {
-        list.innerHTML = '<p class="placeholder-text">No malware detected recently.</p>';
+        list.innerHTML = '<p class="placeholder-text">No malware detected recently. System is clean.</p>';
         return;
     }
 
-    list.innerHTML = detections.map(det => `
-        <div class="timeline-item">
-            <div class="item-icon" style="background-color: rgba(189, 147, 249, 0.1); color: var(--accent-purple);">
-                <i data-lucide="bug"></i>
-            </div>
-            <div class="item-info">
-                <div class="item-title">Malware Signature Match</div>
-                <div class="item-meta">
-                    <span><i data-lucide="file" style="width:12px"></i> File: ${det.file_path || 'Unknown'}</span>
-                    <span><i data-lucide="activity" style="width:12px"></i> Score: ${det.score || 'N/A'}</span>
-                    ${det.entropy ? `<span><i data-lucide="zap" style="width:12px"></i> Entropy: ${det.entropy.toFixed(2)}</span>` : ''}
+    list.innerHTML = detections.map((det, idx) => {
+        const score = det.combined_score || det.score || 0;
+        const severity = score > 0.8 ? 'CRITICAL' : (score > 0.5 ? 'HIGH' : 'MEDIUM');
+        const badgeClass = score > 0.8 ? 'red' : 'blue';
+        const borderClass = score > 0.8 ? 'threat-high' : (score > 0.5 ? 'threat-medium' : 'threat-low');
+        const fileName = det.file_path ? det.file_path.split('\\\\').pop().split('/').pop() : 'Unknown';
+        const detId = `mw-${idx}`;
+
+        return `
+        <div class="timeline-item ${borderClass}" style="flex-direction: column; gap: 12px;">
+            <div style="display: flex; gap: 16px;">
+                <div class="item-icon" style="background-color: rgba(189, 147, 249, 0.1); color: var(--accent-purple);">
+                    <i data-lucide="bug"></i>
+                </div>
+                <div class="item-info">
+                    <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
+                        <span>${det.malware_type || 'Malware Signature Match'}</span>
+                        <span class="badge ${badgeClass}">${severity}</span>
+                    </div>
+                    <div class="item-meta">
+                        <span><i data-lucide="file" style="width:12px"></i> ${fileName}</span>
+                        <span><i data-lucide="activity" style="width:12px"></i> Score: ${typeof score === 'number' ? score.toFixed(3) : 'N/A'}</span>
+                        ${det.entropy ? `<span><i data-lucide="zap" style="width:12px"></i> Entropy: ${det.entropy.toFixed(2)}</span>` : ''}
+                        ${det.magika_label ? `<span><i data-lucide="tag" style="width:12px"></i> ${det.magika_label}</span>` : ''}
+                    </div>
+                    <div style="font-size: 11px; color: var(--accent-blue); margin-top: 4px; cursor:pointer;" onclick="toggleMalwareDetails('${detId}')">
+                        <i data-lucide="info" style="width:10px; height:10px; vertical-align:middle;"></i> Toggle Forensic Details
+                    </div>
                 </div>
             </div>
+
+            <div id="malware-details-${detId}" style="display: none; flex-direction: column; gap: 10px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 10px;">
+                ${det.entropy ? `
+                    <div class="entropy-gauge">
+                        <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); margin-bottom:4px;">
+                            <span>Shannon Entropy</span>
+                            <span>${det.entropy.toFixed(2)} bits</span>
+                        </div>
+                        <div style="height:4px; width:100%; background:rgba(255,255,255,0.1); border-radius:2px; overflow:hidden;">
+                            <div style="height:100%; width:${(det.entropy / 8 * 100).toFixed(0)}%; background:${det.entropy > 7.2 ? 'var(--accent-red)' : 'var(--accent-blue)'};"></div>
+                        </div>
+                    </div>
+                ` : ''}
+                <div style="font-size:12px; color:var(--text-primary); background:rgba(255,255,255,0.03); padding:10px; border-radius:8px; border-left:2px solid var(--accent-purple);">
+                    <div><strong>Full Path:</strong> ${det.file_path || 'Unknown'}</div>
+                    ${det.file_hash ? `<div style="margin-top:4px;"><strong>Hash:</strong> <code style="font-size:10px; color:var(--accent-blue);">${det.file_hash}</code></div>` : ''}
+                    <div style="margin-top:4px;"><strong>ML Score:</strong> ${det.ml_score != null ? det.ml_score.toFixed(3) : 'N/A'} | <strong>Signature:</strong> ${det.signature_score != null ? det.signature_score.toFixed(3) : 'N/A'} | <strong>Combined:</strong> ${typeof score === 'number' ? score.toFixed(3) : 'N/A'}</div>
+                    ${det.yara_matches && det.yara_matches.length > 0 ? `<div style="margin-top:4px;"><strong>YARA Rules:</strong> ${det.yara_matches.join(', ')}</div>` : ''}
+                    ${det.evasion && det.evasion.length > 0 ? `<div style="margin-top:4px; color:var(--accent-red);"><strong>Evasion Indicators:</strong> ${det.evasion.join(', ')}</div>` : ''}
+                    ${det.timestamp ? `<div style="margin-top:4px; font-size:10px; color:var(--text-muted);">Detected: ${formatTimestamp(det.timestamp)}</div>` : ''}
+                </div>
+            </div>
+
+            <div class="item-actions" style="grid-template-columns: 1fr 1fr; display: grid; gap: 8px;">
+                <button class="action-btn" onclick="markMalwareFP('${det.file_hash || ''}', '${fileName}')">Flag False Positive</button>
+                <button class="action-btn" onclick="quarantineMalware('${det.file_path || ''}')" style="color:var(--accent-red); border-color:rgba(255,77,77,0.3);">Quarantine</button>
+            </div>
         </div>
-    `).join('');
+    `}).join('');
     lucide.createIcons();
+}
+
+function toggleMalwareDetails(id) {
+    const el = document.getElementById('malware-details-' + id);
+    if (el) el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+}
+
+async function triggerMalwareScan() {
+    try {
+        await fetch(`${API_BASE}/scan-trigger`, { method: 'POST' });
+    } catch(e) {
+        console.warn('Scan trigger failed:', e);
+    }
+}
+
+async function markMalwareFP(hash, name) {
+    try {
+        await fetch(`${API_BASE}/false-positive`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hash: hash, process_name: name })
+        });
+    } catch(e) {
+        console.warn('FP marking failed:', e);
+    }
+}
+
+async function quarantineMalware(filePath) {
+    if (!confirm('Quarantine this file? It will be moved to an isolated location.')) return;
+    try {
+        await fetch(`${API_BASE}/quarantine`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_path: filePath })
+        });
+    } catch(e) {
+        console.warn('Quarantine failed:', e);
+    }
 }
 
 /**

@@ -256,21 +256,48 @@
             <div id="malware-view" class="view-content">
                 <div class="stats-grid">
                     <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper purple">
+                            <i data-lucide="scan"></i>
+                        </div>
                         <div class="stat-info">
                             <span class="stat-label">Total Scanned</span>
                             <span class="stat-value" id="stat-scanned">0</span>
                         </div>
                     </div>
                     <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper red">
+                            <i data-lucide="bug"></i>
+                        </div>
                         <div class="stat-info">
                             <span class="stat-label">Malware Found</span>
                             <span class="stat-value red" id="stat-malware-found">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper green">
+                            <i data-lucide="shield-check"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Clean Scans</span>
+                            <span class="stat-value" id="stat-clean-scans">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper blue">
+                            <i data-lucide="cpu"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">ML Model</span>
+                            <span class="stat-value" id="stat-ml-status" style="font-size:14px;">—</span>
                         </div>
                     </div>
                 </div>
                 <div class="card glass shadow-glow mt-4">
                     <div class="card-header">
                         <h3>Recent Detections</h3>
+                        <div class="header-actions">
+                            <button class="btn-text" onclick="triggerMalwareScan()"><i data-lucide="play" style="width:14px; margin-right:4px;"></i> Trigger Scan</button>
+                        </div>
                     </div>
                     <div class="card-body">
                         <div id="malware-data-list" class="timeline-list">
