@@ -86,7 +86,7 @@ pub struct GemmaVoter {
 
 impl ThreatVoter for GemmaVoter {
     fn name(&self) -> String {
-        "Gemma4-LLM".to_string()
+        "LLM-Reasoning".to_string()
     }
     fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         let cmd_line = event

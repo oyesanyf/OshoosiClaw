@@ -20,7 +20,7 @@ blake3 = { workspace = true }
 hostname = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 ort = { workspace = true }
-tokenizers = "0.15"
+tokenizers = "0.19"
 rusqlite = { workspace = true }
 ndarray = "0.16"
 reqwest = { workspace = true, features = ["json"] }
