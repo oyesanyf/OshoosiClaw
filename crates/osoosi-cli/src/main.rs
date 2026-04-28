@@ -1129,41 +1129,53 @@ async fn handle_grant_access() -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Kill any zombie/leftover process that is holding a specific TCP port.
-/// This prevents "Port 3030 in use" on restarts.
+/// Kill any **osoosi.exe** zombie that is holding a specific TCP port.
+/// If a non-osoosi process holds the port, leave it alone (the caller will try the next port).
 fn kill_port_holder(port: u16) {
     #[cfg(target_os = "windows")]
     {
-        // Use netstat to find PIDs listening on this port
+        // Step 1: find PIDs listening on this port via netstat
         let output = std::process::Command::new("netstat")
             .args(["-ano", "-p", "TCP"])
             .output();
-        if let Ok(out) = output {
-            let stdout = String::from_utf8_lossy(&out.stdout);
-            let port_str = format!(":{}", port);
-            let mut pids_to_kill = std::collections::HashSet::new();
-            for line in stdout.lines() {
-                if line.contains(&port_str) && (line.contains("LISTENING") || line.contains("ESTABLISHED")) {
-                    // The PID is the last whitespace-separated token
-                    if let Some(pid_str) = line.split_whitespace().last() {
-                        if let Ok(pid) = pid_str.parse::<u32>() {
-                            if pid > 0 {
-                                pids_to_kill.insert(pid);
-                            }
-                        }
+        let Ok(out) = output else { return };
+        let stdout = String::from_utf8_lossy(&out.stdout);
+        let needle = format!(":{} ", port); // trailing space avoids matching :30300
+        let needle_v6 = format!(":{}\r", port);
+        let my_pid = std::process::id();
+        let mut pids: std::collections::HashSet<u32> = std::collections::HashSet::new();
+
+        for line in stdout.lines() {
+            let has_port = line.contains(&needle) || line.contains(&needle_v6)
+                || line.ends_with(&format!(":{}", port));
+            if !has_port { continue; }
+            if !(line.contains("LISTENING") || line.contains("ESTABLISHED") || line.contains("TIME_WAIT")) { continue; }
+            if let Some(pid_str) = line.split_whitespace().last() {
+                if let Ok(pid) = pid_str.parse::<u32>() {
+                    if pid > 0 && pid != my_pid {
+                        pids.insert(pid);
                     }
                 }
             }
-            // Don't kill ourselves
-            let my_pid = std::process::id();
-            for pid in pids_to_kill {
-                if pid == my_pid {
-                    continue;
+        }
+
+        // Step 2: for each PID, check if the image name is osoosi.exe
+        for pid in pids {
+            let wmic = std::process::Command::new("tasklist")
+                .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
+                .output();
+            if let Ok(wout) = wmic {
+                let line = String::from_utf8_lossy(&wout.stdout).to_ascii_lowercase();
+                if line.contains("osoosi") {
+                    info!("Killing stale osoosi.exe (PID {}) holding port {}...", pid, port);
+                    let _ = std::process::Command::new("taskkill")
+                        .args(["/F", "/PID", &pid.to_string()])
+                        .output();
+                    // Give the OS a moment to release the socket
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                } else {
+                    info!("Port {} held by non-osoosi process (PID {}), will try another port.", port, pid);
                 }
-                info!("Killing zombie process PID {} holding port {}...", pid, port);
-                let _ = std::process::Command::new("taskkill")
-                    .args(["/F", "/PID", &pid.to_string()])
-                    .output();
             }
         }
     }
@@ -1175,19 +1187,20 @@ fn kill_port_holder(port: u16) {
             .output();
         if let Ok(out) = output {
             let stdout = String::from_utf8_lossy(&out.stdout);
-            let port_str = format!(":{}", port);
+            let needle = format!(":{} ", port);
             for line in stdout.lines() {
-                if line.contains(&port_str) {
-                    // Extract pid from "pid=NNNN,"
-                    if let Some(pid_start) = line.find("pid=") {
-                        let rest = &line[pid_start + 4..];
-                        if let Some(end) = rest.find(|c: char| !c.is_ascii_digit()) {
-                            if let Ok(pid) = rest[..end].parse::<u32>() {
-                                if pid > 0 && pid != std::process::id() {
-                                    info!("Killing zombie process PID {} holding port {}...", pid, port);
-                                    let _ = std::process::Command::new("kill")
-                                        .args(["-9", &pid.to_string()])
-                                        .output();
+                if !line.contains(&needle) { continue; }
+                if let Some(pid_start) = line.find("pid=") {
+                    let rest = &line[pid_start + 4..];
+                    if let Some(end) = rest.find(|c: char| !c.is_ascii_digit()) {
+                        if let Ok(pid) = rest[..end].parse::<u32>() {
+                            if pid > 0 && pid != std::process::id() {
+                                // Check if it's osoosi
+                                let cmdline = std::fs::read_to_string(format!("/proc/{}/cmdline", pid)).unwrap_or_default();
+                                if cmdline.contains("osoosi") {
+                                    info!("Killing stale osoosi (PID {}) holding port {}...", pid, port);
+                                    let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).output();
+                                    std::thread::sleep(std::time::Duration::from_millis(500));
                                 }
                             }
                         }
@@ -1207,10 +1220,14 @@ fn kill_port_holder(port: u16) {
             for pid_str in stdout.lines() {
                 if let Ok(pid) = pid_str.trim().parse::<u32>() {
                     if pid > 0 && pid != std::process::id() {
-                        info!("Killing zombie process PID {} holding port {}...", pid, port);
-                        let _ = std::process::Command::new("kill")
-                            .args(["-9", &pid.to_string()])
-                            .output();
+                        // Check process name
+                        let ps = std::process::Command::new("ps").args(["-p", &pid.to_string(), "-o", "comm="]).output();
+                        let name = ps.map(|o| String::from_utf8_lossy(&o.stdout).to_string()).unwrap_or_default();
+                        if name.contains("osoosi") {
+                            info!("Killing stale osoosi (PID {}) holding port {}...", pid, port);
+                            let _ = std::process::Command::new("kill").args(["-9", &pid.to_string()]).output();
+                            std::thread::sleep(std::time::Duration::from_millis(500));
+                        }
                     }
                 }
             }
