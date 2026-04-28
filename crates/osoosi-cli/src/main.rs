@@ -448,25 +448,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
 
             // Start components
-            orchestrator.start_maintenance_loop();
-            orchestrator.start_cybershield_monitor();
-            orchestrator.start_behavioral_detector();
-            orchestrator.clone().adaptive().start_adaptive_loop(); // Active resource-aware scaling
-            orchestrator.start_repair_loop(3600, true).await;
-            orchestrator.start_fetcher_loop().await;
-            orchestrator.start_model_training_loop(60).await;
-
-            let watch_paths = osoosi_types::load_watch_paths_from_config()
-                .unwrap_or_else(osoosi_types::all_physical_drive_paths);
-            let paths_refs: Vec<&str> = watch_paths.iter().map(String::as_str).collect();
-            let _ = orchestrator.start_file_watcher_paths(&paths_refs).await;
-
-            let event_source = if cfg!(windows) {
-                "Microsoft-Windows-Sysmon/Operational".to_string()
-            } else {
-                "default".to_string()
-            };
-            orchestrator.start_host_event_loop(&event_source, 1).await;
+            if let Err(e) = orchestrator.boot().await {
+                error!("CRITICAL: Agent boot sequence failed: {}", e);
+            }
 
             info!(
                 "OpenỌ̀ṣọ́ọ̀sì Agent is live and monitoring (Total startup: {:?}).",

@@ -1076,7 +1076,45 @@ impl EdrOrchestrator {
         Ok(join_gate)
     }
 
-    /// Start background maintenance loop for rule updates and health checks.
+    pub async fn boot(&self) -> anyhow::Result<()> {
+        info!("OpenỌ̀ṣọ́ọ̀sì Agent Booting (Target: {})", std::env::consts::OS);
+        
+        // 1. Adaptive Runtime & Maintenance
+        self.start_maintenance_loop();
+        self.clone().adaptive().start_adaptive_loop();
+        
+        // 2. Behavioral & Resource Monitors
+        self.start_cybershield_monitor();
+        self.start_behavioral_detector();
+        
+        // 3. File Monitoring (Hooking the FileWatcher)
+        let watch_paths = osoosi_types::load_watch_paths_from_config()
+            .unwrap_or_else(osoosi_types::all_physical_drive_paths);
+        let paths_refs: Vec<&str> = watch_paths.iter().map(String::as_str).collect();
+        if let Err(e) = self.start_file_watcher_paths(&paths_refs).await {
+            warn!("FileWatcher failed to start: {}. Real-time file monitoring disabled.", e);
+        } else {
+            info!("FileWatcher activated for {} paths.", paths_refs.len());
+        }
+        
+        // 4. Host Security Events (Sysmon/Journald)
+        let event_source = if cfg!(windows) {
+            "Microsoft-Windows-Sysmon/Operational".to_string()
+        } else {
+            "default".to_string()
+        };
+        self.start_host_event_loop(&event_source, 1).await;
+        
+        // 5. Intelligent Sourcing & Self-Healing
+        self.start_repair_loop(3600, true).await;
+        self.start_fetcher_loop().await;
+        self.start_model_training_loop(60).await;
+        
+        info!("All security subsystems are ACTIVE.");
+        Ok(())
+    }
+
+    /// Background task for Rule Maintenance (YARA, Sigma, etc.)
     pub fn start_maintenance_loop(&self) {
         let orchestrator = self.clone();
         tokio::spawn(async move {
@@ -4326,5 +4364,33 @@ impl EdrOrchestrator {
         } else {
             anyhow::bail!("Pending action not found")
         }
+    }
+
+
+    /// Trigger an immediate filesystem baseline scan.
+    pub fn trigger_baseline(&self) {
+        let baseline_memory = self.memory.clone();
+        let watch_paths = osoosi_types::load_watch_paths_from_config()
+            .unwrap_or_else(osoosi_types::all_physical_drive_paths);
+        let baseline_paths: Vec<String> = watch_paths.iter().map(|s| s.to_string()).collect();
+        let baseline_excludes = osoosi_types::load_exclude_paths_from_config();
+        tokio::spawn(async move {
+            info!("Manual baseline triggered from dashboard/orchestrator.");
+            osoosi_telemetry::build_os_file_hash_baseline(
+                baseline_paths,
+                baseline_memory,
+                baseline_excludes,
+            )
+            .await;
+            info!("Manual baseline scan completed.");
+        });
+    }
+
+    /// Create a system restore point (Windows only).
+    pub fn trigger_restore_point(&self) {
+        let config = osoosi_types::load_backup_config();
+        let mem = Some(self.memory.clone());
+        info!("Manual restore point creation initiated.");
+        crate::backup::run_backup_on_start(&config, mem);
     }
 }

@@ -144,6 +144,11 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/attack-graph", get(get_attack_graph))
         .route("/api/agent/context", get(get_agent_context))
         .route("/api/agent/trigger-patch", post(post_agent_trigger_patch))
+        .route("/api/agent/trigger-baseline", post(post_agent_trigger_baseline))
+        .route(
+            "/api/agent/trigger-restore-point",
+            post(post_agent_trigger_restore_point),
+        )
         .route("/api/triage/decide", post(post_triage_decide))
         .route("/api/query", get(get_query))
         .route(
@@ -1303,6 +1308,26 @@ async fn post_agent_trigger_patch(State(state): State<DashboardState>) -> Json<V
         Some(orch) => {
             orch.trigger_patch_discovery();
             Json(json!({"ok": true, "message": "Patch discovery triggered"}))
+        }
+        None => Json(json!({"ok": false, "error": "Backend not running"})),
+    }
+}
+
+async fn post_agent_trigger_baseline(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            orch.trigger_baseline();
+            Json(json!({"ok": true, "message": "Baseline scan triggered"}))
+        }
+        None => Json(json!({"ok": false, "error": "Backend not running"})),
+    }
+}
+
+async fn post_agent_trigger_restore_point(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            orch.trigger_restore_point();
+            Json(json!({"ok": true, "message": "Restore point creation triggered"}))
         }
         None => Json(json!({"ok": false, "error": "Backend not running"})),
     }
