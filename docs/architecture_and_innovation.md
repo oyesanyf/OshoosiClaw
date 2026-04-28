@@ -156,6 +156,7 @@ graph TD
 | Crate | Role |
 |---|---|
 | `osoosi-core` | Main orchestrator: telemetry ingestion, consensus, response |
+| `osoosi-behavioral` | AI engine: DeepSeek R1 (GGUF), SecureBERT (ONNX), SmolLM (Candle) |
 | `osoosi-wire` | P2P mesh networking via `libp2p` + GossipSub |
 | `osoosi-policy` | Sigma rules, CISA KEV, OTX TAXII, NVD threat feeds |
 | `osoosi-runtime` | Active response: Tarpits, Ghost Files, Process Kill |
@@ -166,11 +167,54 @@ graph TD
 
 ---
 
+## 🧠 AI Engine Architecture
+
+OshoosiClaw uses a **multi-model consensus** architecture. Each model is a "voter" in the threat decision pipeline:
+
+```mermaid
+graph LR
+    EVT["Security Event"] --> V1["SecureBERT (ONNX)"]
+    EVT --> V2["DeepSeek R1 (Native GGUF)"]
+    EVT --> V3["MalConv (Candle)"]
+    EVT --> V4["YaraX Rules"]
+    EVT --> V5["Sigma Rules"]
+    V1 & V2 & V3 & V4 & V5 --> CON["Consensus Engine"]
+    CON --> DEC{"Threat Decision"}
+```
+
+### Model Loading Priority
+
+| Model | Purpose | Loading Order |
+|---|---|---|
+| **DeepSeek R1:1.5b** | LLM reasoning & attack graph analysis | 1. ONNX → 2. **Native GGUF (Candle)** → 3. Ollama subprocess |
+| **SecureBERT** | Log classification & behavioral scoring | 1. **ONNX (model.onnx)** → 2. Candle safetensors |
+| **MalConv** | Static binary malware detection | Candle safetensors |
+
+### Native GGUF Loading (NEW)
+
+DeepSeek R1:1.5b can now run **natively inside osoosi.exe** via Candle's `quantized_qwen2` loader, using the same GGUF file Ollama downloaded:
+
+- **No Ollama subprocess** — eliminates 21GB RAM spikes
+- **In-process inference** — ~1.1GB memory, no IPC overhead
+- **30s timeout** — configurable via `osoosi.toml`
+- Auto-downloads tokenizer from HuggingFace on first use
+
+### SecureBERT ONNX (NEW)
+
+SecureBERT now loads via ONNX Runtime (architecture-agnostic), using the existing 569MB `model.onnx`:
+
+- Classifies Windows Event Logs as malicious/benign
+- Returns a 0.0–1.0 confidence score via sigmoid activation
+- Falls back to Candle safetensors if ONNX fails
+
+---
+
 ## ⚙️ Setup and Configuration
 
 ### Prerequisites
 - **Rust**: Latest stable toolchain (`rustup update stable`)
 - **Sysmon**: Required on Windows — installed automatically by the agent on first run
+- **Ollama** *(optional)*: Only needed if native GGUF loading fails
 - **OpenShell CLI** *(optional)*: Required for sandboxed execution (`openshell` on PATH)
 
 ### Build
@@ -190,19 +234,38 @@ cargo build --release
 > **Note**: The agent now automatically finds `osoosi.toml` even when started from `target/release/`.
 
 ### Configuration (`osoosi.toml`)
+
+All hardcoded values are now centralized. Environment variables override any value:
+
 ```toml
+[ai]
+reasoning_model  = "deepseek-r1:1.5b"    # Ollama/GGUF model name
+llm_timeout_secs = 30                     # Kill inference after N seconds
+reasoning_url    = "http://127.0.0.1:11434/v1/chat/completions"
+fallback_models  = ["gemma3:1b", "gemma3:4b", "qwen2.5:1.5b", "phi3:mini"]
+colog_threshold  = 0.85                   # Anomaly detection threshold
+
 [external_api]
 otx_api_key = "your-alienvault-key"
-nvd_api_key  = "your-nvd-key"
+nvd_api_key = "your-nvd-key"
 
 [autonomy]
-auto_quarantine_malware          = true
-quarantine_confidence_threshold  = 0.95
+auto_quarantine_malware         = true
+quarantine_confidence_threshold = 0.95
+action_confidence_threshold     = 0.80
 
 [backup]
 enabled     = false
 backup_type = "file_sync"
 ```
+
+| Env Variable | Overrides | Default |
+|---|---|---|
+| `OSOOSI_REASONING_MODEL` | `ai.reasoning_model` | `deepseek-r1:1.5b` |
+| `OSOOSI_LLM_TIMEOUT_SECS` | `ai.llm_timeout_secs` | `30` |
+| `OSOOSI_REASONING_URL` | `ai.reasoning_url` | `http://127.0.0.1:11434/...` |
+| `OSOOSI_NO_AI` | `ai.enabled` | `true` |
+| `OSOOSI_DASHBOARD_PORT` | Dashboard port | `3030` |
 
 ---
 
@@ -210,3 +273,4 @@ backup_type = "file_sync"
 OpenỌ̀ṣọ́ọ̀sì operates on the principle of **Decentralized Sovereignty**.
 Threat intelligence is shared at mesh-speed across all peers, but every node remains its own Castle.
 There is no central server to hack, no single point of failure. **The mesh is the security.**
+

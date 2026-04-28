@@ -5,6 +5,7 @@ use candle_transformers::models::bert::{BertModel, Config as BertConfig};
 use candle_transformers::models::llama::{
     Cache, Config as LlamaConfig, Llama as Model, LlamaEosToks,
 };
+use candle_transformers::models::quantized_qwen2::ModelWeights as Qwen2Weights;
 use ndarray;
 use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
@@ -201,6 +202,11 @@ pub enum Gemma4Analyzer {
         device: Device,
     },
     Candle(SecurityJudge),
+    NativeGGUF {
+        model: Mutex<Qwen2Weights>,
+        tokenizer: Tokenizer,
+        device: Device,
+    },
     OllamaFallback,
 }
 
@@ -248,18 +254,37 @@ impl Gemma4Analyzer {
                 std::fs::metadata(onnx_file).map(|m| m.len()).unwrap_or(0));
         }
 
-        // Fallback to Ollama first if available (faster and better reasoning)
+        // Fallback: try loading GGUF natively via Candle (no Ollama needed)
+        let ai_cfg = osoosi_types::config::load_ai_config();
+        if let Some(gguf_path) = resolve_gguf_path(&ai_cfg.reasoning_model) {
+            info!("Found GGUF model at {:?}. Loading natively via Candle...", gguf_path);
+            match load_native_gguf(&gguf_path) {
+                Ok((model, tokenizer)) => {
+                    info!("Native GGUF model loaded successfully! No Ollama process needed.");
+                    return Ok(Self::NativeGGUF {
+                        model: Mutex::new(model),
+                        tokenizer,
+                        device: Device::Cpu,
+                    });
+                }
+                Err(e) => {
+                    warn!("Native GGUF loading failed: {}. Falling back to Ollama.", e);
+                }
+            }
+        }
+
+        // Fallback to Ollama if available
         if std::process::Command::new("ollama").arg("--version").output().is_ok() {
-            info!("Ollama detected. Prioritizing Ollama for AI reasoning fallback.");
+            info!("Ollama detected. Using Ollama for AI reasoning fallback.");
             return Ok(Self::OllamaFallback);
         }
 
         // Final Fallback to Candle/Transformer
-        info!("Gemma 4: attempting native transformer fallback (Candle)...");
+        info!("Attempting native transformer fallback (Candle)...");
         match SecurityJudge::new(model_dir) {
             Ok(judge) => Ok(Self::Candle(judge)),
             Err(e) => {
-                Err(anyhow::anyhow!("All local AI fallback engines (ONNX, Ollama, Candle) failed: {}", e))
+                Err(anyhow::anyhow!("All local AI fallback engines (ONNX, GGUF, Ollama, Candle) failed: {}", e))
             }
         }
     }
@@ -272,6 +297,7 @@ impl Gemma4Analyzer {
         match self {
             Self::Onnx { .. } => self.generate_text(&prompt, 256),
             Self::Candle(judge) => judge.judge_artifact(&prompt),
+            Self::NativeGGUF { .. } => self.generate_text(&prompt, 256),
             Self::OllamaFallback => {
                 let ai = osoosi_types::config::load_ai_config();
                 let model = ai.reasoning_model;
@@ -340,6 +366,65 @@ impl Gemma4Analyzer {
                 Ok(result_text)
             }
             Self::Candle(judge) => judge.judge_artifact(prompt),
+            Self::NativeGGUF { model, tokenizer, device } => {
+                let ai = osoosi_types::config::load_ai_config();
+                let timeout = std::time::Duration::from_secs(ai.llm_timeout_secs);
+                let start = std::time::Instant::now();
+
+                let encoding = tokenizer.encode(prompt, true).map_err(anyhow::Error::msg)?;
+                let prompt_tokens = encoding.get_ids().to_vec();
+                let mut all_tokens = prompt_tokens.clone();
+                let mut model_guard = model.lock().unwrap();
+                let mut result_text = String::new();
+
+                // Process the prompt (prefill)
+                let input = Tensor::new(&prompt_tokens[..], device)?.unsqueeze(0)?;
+                let logits = model_guard.forward(&input, 0).map_err(|e| anyhow::anyhow!("GGUF forward: {}", e))?;
+                let logits = logits.squeeze(0).map_err(|e| anyhow::anyhow!("{}", e))?;
+                let next_token = logits
+                    .to_vec1::<f32>()
+                    .map_err(|e| anyhow::anyhow!("{}", e))?
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                    .map(|(i, _)| i as u32)
+                    .unwrap_or(0);
+                all_tokens.push(next_token);
+
+                // Decode loop
+                let eos_token = 151643u32; // Qwen2 EOS token
+                let max_gen = max_tokens.min(512);
+                for _ in 0..max_gen {
+                    if start.elapsed() > timeout {
+                        warn!("Native GGUF inference timed out after {:?}", timeout);
+                        break;
+                    }
+                    let last = *all_tokens.last().unwrap();
+                    if last == eos_token || last == 0 {
+                        break;
+                    }
+                    let decoded = tokenizer.decode(&[last], true).map_err(anyhow::Error::msg)?;
+                    if decoded.is_empty() {
+                        break;
+                    }
+                    result_text.push_str(&decoded);
+
+                    let input = Tensor::new(&[last], device)?.unsqueeze(0)?;
+                    let logits = model_guard.forward(&input, all_tokens.len() - 1).map_err(|e| anyhow::anyhow!("{}", e))?;
+                    let logits = logits.squeeze(0).map_err(|e| anyhow::anyhow!("{}", e))?;
+                    let next = logits
+                        .to_vec1::<f32>()
+                        .map_err(|e| anyhow::anyhow!("{}", e))?
+                        .iter()
+                        .enumerate()
+                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                        .map(|(i, _)| i as u32)
+                        .unwrap_or(0);
+                    all_tokens.push(next);
+                }
+
+                Ok(result_text)
+            }
             Self::OllamaFallback => {
                 let ai = osoosi_types::config::load_ai_config();
                 let model = ai.reasoning_model;
@@ -377,68 +462,184 @@ impl Gemma4Analyzer {
     }
 }
 
-/// SecureBERT 2.0 Analyzer (Candle/Transformer fallback).
-/// Uses a Cross-Encoder architecture to calculate the relationship between
-/// a security Query (e.g. "potential ransomware") and Context (the log sentence).
-pub struct SecureBertAnalyzer {
-    model: BertModel,
-    tokenizer: Tokenizer,
-    device: Device,
+/// Resolve the GGUF blob path for an Ollama model (e.g. "deepseek-r1:1.5b").
+fn resolve_gguf_path(model_name: &str) -> Option<std::path::PathBuf> {
+    // Try `ollama show <model> --modelfile` to get the FROM path
+    let output = std::process::Command::new("ollama")
+        .args(["show", model_name, "--modelfile"])
+        .output()
+        .ok()?;
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let line = line.trim();
+        if line.starts_with("FROM ") {
+            let path_str = line.strip_prefix("FROM ")?.trim();
+            let path = std::path::PathBuf::from(path_str);
+            if path.exists() {
+                return Some(path);
+            }
+        }
+    }
+    None
+}
+
+/// Load a GGUF model natively via Candle's quantized Qwen2 loader.
+/// Returns the model weights and tokenizer.
+fn load_native_gguf(gguf_path: &std::path::Path) -> Result<(Qwen2Weights, Tokenizer)> {
+    use candle_core::quantized::gguf_file;
+
+    let mut file = std::fs::File::open(gguf_path)?;
+    let content = gguf_file::Content::read(&mut file)
+        .map_err(|e| anyhow::anyhow!("Failed to read GGUF: {}", e))?;
+
+    let device = Device::Cpu;
+    let model = Qwen2Weights::from_gguf(content, &mut file, &device)
+        .map_err(|e| anyhow::anyhow!("Failed to load Qwen2 from GGUF: {}", e))?;
+
+    // Load tokenizer from local file or download
+    let tokenizer = load_deepseek_tokenizer()?;
+
+    Ok((model, tokenizer))
+}
+
+/// Load the DeepSeek R1 tokenizer. Checks local cache first, then downloads.
+fn load_deepseek_tokenizer() -> Result<Tokenizer> {
+    let model_dir = osoosi_types::config::resolve_models_dir().join("deepseek-r1");
+    let tokenizer_path = model_dir.join("tokenizer.json");
+
+    if tokenizer_path.exists() {
+        info!("Loading DeepSeek tokenizer from {:?}", tokenizer_path);
+        return Tokenizer::from_file(&tokenizer_path).map_err(|e| anyhow::anyhow!("Tokenizer load: {}", e));
+    }
+
+    // Try to download via curl/Invoke-WebRequest (sync, no reqwest::blocking needed)
+    info!("Downloading DeepSeek-R1 tokenizer from HuggingFace...");
+    let _ = std::fs::create_dir_all(&model_dir);
+    let url = "https://huggingface.co/deepseek-ai/DeepSeek-R1-Distill-Qwen-1.5B/resolve/main/tokenizer.json";
+
+    let download_ok = std::process::Command::new("curl")
+        .args(["-sL", "-o", &tokenizer_path.to_string_lossy(), url])
+        .status()
+        .map(|s| s.success())
+        .unwrap_or(false);
+
+    if download_ok && tokenizer_path.exists() {
+        info!("DeepSeek tokenizer saved to {:?}", tokenizer_path);
+        return Tokenizer::from_file(&tokenizer_path).map_err(|e| anyhow::anyhow!("Tokenizer load: {}", e));
+    }
+
+    Err(anyhow::anyhow!(
+        "Could not load DeepSeek tokenizer. Download manually:\n  curl -sL -o {:?} {}",
+        tokenizer_path, url
+    ))
+}
+
+/// SecureBERT Analyzer — security-domain encoder for log classification.
+/// Primary: ONNX Runtime (model.onnx). Fallback: Candle safetensors.
+pub enum SecureBertAnalyzer {
+    Onnx {
+        session: Mutex<Session>,
+        tokenizer: Tokenizer,
+    },
+    Candle {
+        model: BertModel,
+        tokenizer: Tokenizer,
+        device: Device,
+    },
 }
 
 impl SecureBertAnalyzer {
     pub fn new(model_dir: &Path) -> Result<Self> {
-        info!("Initializing native SecureBERT Cross-Encoder from {:?}...", model_dir);
-        let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
+        info!("Initializing SecureBERT from {:?}...", model_dir);
 
-        let config_path = model_dir.join("config.json");
         let tokenizer_path = model_dir.join("tokenizer.json");
-        let weights_path = model_dir.join("model.safetensors");
+        if !tokenizer_path.exists() {
+            anyhow::bail!("SecureBERT tokenizer.json not found in {:?}", model_dir);
+        }
+        let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(anyhow::Error::msg)?;
 
-        if !config_path.exists() || !tokenizer_path.exists() || !weights_path.exists() {
-            anyhow::bail!("SecureBERT files missing in {:?}", model_dir);
+        // Try ONNX first (model.onnx — already downloaded, architecture-agnostic)
+        let onnx_path = model_dir.join("model.onnx");
+        if onnx_path.exists() {
+            let sz = std::fs::metadata(&onnx_path).map(|m| m.len()).unwrap_or(0);
+            if sz > 10_000_000 {
+                match Session::builder()
+                    .and_then(|b| b.with_optimization_level(GraphOptimizationLevel::Level3))
+                    .and_then(|b| b.with_intra_threads(4))
+                    .and_then(|b| b.commit_from_file(&onnx_path))
+                {
+                    Ok(session) => {
+                        info!("SecureBERT ONNX loaded successfully ({} MB)", sz / 1_000_000);
+                        return Ok(Self::Onnx {
+                            session: Mutex::new(session),
+                            tokenizer,
+                        });
+                    }
+                    Err(e) => warn!("SecureBERT ONNX init failed: {}. Trying Candle.", e),
+                }
+            }
         }
 
-        let config: BertConfig = serde_json::from_reader(std::fs::File::open(&config_path)?)?;
-        let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(anyhow::Error::msg)?;
-        
-        let vb = unsafe {
-            candle_nn::VarBuilder::from_mmaped_safetensors(
-                &[&weights_path],
-                candle_core::DType::F32,
-                &device,
-            )?
-        };
-        let model = BertModel::load(vb, &config)?;
+        // Fallback: Candle safetensors
+        let config_path = model_dir.join("config.json");
+        let weights_path = model_dir.join("model.safetensors");
+        if config_path.exists() && weights_path.exists() {
+            let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
+            let config: BertConfig = serde_json::from_reader(std::fs::File::open(&config_path)?)?;
+            let vb = unsafe {
+                candle_nn::VarBuilder::from_mmaped_safetensors(
+                    &[&weights_path],
+                    candle_core::DType::F32,
+                    &device,
+                )?
+            };
+            let model = BertModel::load(vb, &config)?;
+            info!("SecureBERT Candle loaded successfully.");
+            return Ok(Self::Candle { model, tokenizer, device });
+        }
 
-        Ok(Self {
-            model,
-            tokenizer,
-            device,
-        })
+        anyhow::bail!(
+            "SecureBERT not found. Need model.onnx or (model.safetensors + config.json) in {:?}",
+            model_dir
+        )
     }
 
-    /// Score the relationship between a query and context using the Cross-Encoder.
+    /// Score the relationship between a query and context.
     /// Returns a similarity probability (0.0 to 1.0).
     pub fn score_pair(&self, query: &str, context: &str) -> Result<f32> {
-        // Tokenize the Pair [Query] + [SEP] + [Context]
-        let encoding = self.tokenizer.encode(format!("{} [SEP] {}", query, context), true)
-            .map_err(anyhow::Error::msg)?;
-        
-        let input_ids = Tensor::new(encoding.get_ids(), &self.device)?.unsqueeze(0)?;
-        let token_type_ids = Tensor::new(encoding.get_type_ids(), &self.device)?.unsqueeze(0)?;
+        match self {
+            Self::Onnx { session, tokenizer } => {
+                let encoding = tokenizer
+                    .encode(format!("{} [SEP] {}", query, context), true)
+                    .map_err(anyhow::Error::msg)?;
+                let ids: Vec<i64> = encoding.get_ids().iter().map(|&x| x as i64).collect();
+                let attention: Vec<i64> = encoding.get_attention_mask().iter().map(|&x| x as i64).collect();
+                let type_ids: Vec<i64> = encoding.get_type_ids().iter().map(|&x| x as i64).collect();
+                let len = ids.len();
 
-        // Forward pass
-        let logits = self.model.forward(&input_ids, &token_type_ids, None)?;
-        
-        // SecureBERT Cross-Encoder usually outputs a single logit or a 2-class vector.
-        // We assume index 0 is the similarity score (or the 'benign' class depending on training).
-        // If it's 2 classes (Benign, Malicious), we'd take the softmax.
-        // The user example uses a single logit with sigmoid.
-        let score = logits.flatten_all()?.to_vec1::<f32>()?[0];
-        let probability = 1.0 / (1.0 + (-score).exp()); // Sigmoid
+                let input_ids = ort::value::Value::from_array(([1, len], ids))?;
+                let attention_mask = ort::value::Value::from_array(([1, len], attention))?;
+                let token_type_ids = ort::value::Value::from_array(([1, len], type_ids))?;
 
-        Ok(probability)
+                let mut session_guard = session.lock().unwrap();
+                let outputs = session_guard.run(ort::inputs![input_ids, attention_mask, token_type_ids])?;
+                let (_, data) = outputs[0].try_extract_tensor::<f32>()?;
+                let score = data[0];
+                let probability = 1.0 / (1.0 + (-score).exp());
+                Ok(probability)
+            }
+            Self::Candle { model, tokenizer, device } => {
+                let encoding = tokenizer
+                    .encode(format!("{} [SEP] {}", query, context), true)
+                    .map_err(anyhow::Error::msg)?;
+                let input_ids = Tensor::new(encoding.get_ids(), device)?.unsqueeze(0)?;
+                let token_type_ids = Tensor::new(encoding.get_type_ids(), device)?.unsqueeze(0)?;
+                let logits = model.forward(&input_ids, &token_type_ids, None)?;
+                let score = logits.flatten_all()?.to_vec1::<f32>()?[0];
+                let probability = 1.0 / (1.0 + (-score).exp());
+                Ok(probability)
+            }
+        }
     }
 }
 
