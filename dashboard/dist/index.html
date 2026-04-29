@@ -323,16 +323,34 @@
 
             <!-- Process Map View -->
             <div id="process-map-view" class="view-content">
-                <div class="card glass shadow-glow" style="height: calc(100vh - 200px);">
+                <div class="card glass shadow-glow graph-card" id="graph-card">
                     <div class="card-header">
                         <h3>Attack Graph & Process Map</h3>
-                        <div class="header-actions">
-                            <button class="btn-text" id="refresh-graph"><i data-lucide="refresh-cw" style="width:14px; margin-right:4px;"></i> Refresh Graph</button>
+                        <div class="header-actions" style="display:flex; gap:8px; align-items:center;">
+                            <button class="btn-text" id="refresh-graph"><i data-lucide="refresh-cw" style="width:14px; margin-right:4px;"></i> Refresh</button>
+                            <button class="btn-text" id="graph-expand-btn" title="Toggle Fullscreen"><i data-lucide="maximize-2" style="width:14px; margin-right:4px;"></i> Expand</button>
                         </div>
                     </div>
                     <div class="card-body" style="height: 100%; padding:0; position:relative;">
+                        <!-- Zoom controls -->
+                        <div id="graph-controls" class="graph-controls">
+                            <button onclick="graphZoomIn()" title="Zoom In"><i data-lucide="zoom-in" style="width:16px;height:16px;"></i></button>
+                            <button onclick="graphZoomOut()" title="Zoom Out"><i data-lucide="zoom-out" style="width:16px;height:16px;"></i></button>
+                            <button onclick="graphFit()" title="Fit All"><i data-lucide="scan" style="width:16px;height:16px;"></i></button>
+                        </div>
+                        <!-- Node detail tooltip -->
+                        <div id="graph-node-tooltip" class="graph-tooltip" style="display:none;"></div>
                         <div id="attack-graph" style="height: 100%; width: 100%;"></div>
                         <div id="graph-loading" class="placeholder-text" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%);">Loading graph data...</div>
+                        <!-- Legend -->
+                        <div class="graph-legend">
+                            <span><span class="legend-dot" style="background:#6366f1;"></span>Host</span>
+                            <span><span class="legend-dot" style="background:#8b5cf6;"></span>Process</span>
+                            <span><span class="legend-dot" style="background:#ef4444;"></span>Threat</span>
+                            <span><span class="legend-dot" style="background:#10b981;"></span>Response</span>
+                            <span><span class="legend-dot" style="background:#f59e0b;"></span>IP</span>
+                            <span><span class="legend-dot" style="background:#ec4899;"></span>Domain</span>
+                        </div>
                     </div>
                 </div>
             </div>

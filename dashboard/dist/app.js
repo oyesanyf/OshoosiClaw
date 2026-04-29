@@ -654,6 +654,14 @@ function initGraph(container, data) {
             },
             stabilization: { iterations: 100 }
         },
+        interaction: {
+            hover: true,
+            tooltipDelay: 200,
+            zoomView: true,
+            dragView: true,
+            navigationButtons: false,
+            keyboard: { enabled: true }
+        },
         groups: {
             host: { color: { background: '#6366f1', border: '#4338ca' } },
             process: { color: { background: '#8b5cf6', border: '#6d28d9' } },
@@ -674,18 +682,132 @@ function initGraph(container, data) {
     
     // Auto-center and fit graph once stabilized
     state.network.on("stabilizationFinished", function () {
-        state.network.fit();
+        state.network.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
     });
     
     // Initial fit attempt
     setTimeout(() => { if(state.network) state.network.fit(); }, 1000);
     
-    // Add event listener for refreshing
+    // --- Node click: show detail tooltip ---
+    state.network.on("click", function (params) {
+        const tooltip = document.getElementById('graph-node-tooltip');
+        if (!tooltip) return;
+
+        if (params.nodes.length > 0) {
+            const nodeId = params.nodes[0];
+            const nodeData = visData.nodes.get(nodeId);
+            if (!nodeData) { tooltip.style.display = 'none'; return; }
+
+            const groupColors = {
+                host: '#6366f1', process: '#8b5cf6', ip: '#f59e0b',
+                domain: '#ec4899', threat: '#ef4444', response: '#10b981',
+                predicted: '#f97316'
+            };
+            const dotColor = groupColors[nodeData.group] || '#888';
+
+            let rows = `<div class="tooltip-row"><span class="tooltip-key">Type</span><span class="tooltip-val">${nodeData.group || 'unknown'}</span></div>`;
+            if (nodeData.title) rows += `<div class="tooltip-row"><span class="tooltip-key">Detail</span><span class="tooltip-val">${nodeData.title}</span></div>`;
+            if (nodeData.id) rows += `<div class="tooltip-row"><span class="tooltip-key">ID</span><span class="tooltip-val">${nodeData.id}</span></div>`;
+
+            // Count connections
+            const connectedEdges = state.network.getConnectedEdges(nodeId);
+            const connectedNodes = state.network.getConnectedNodes(nodeId);
+            rows += `<div class="tooltip-row"><span class="tooltip-key">Connections</span><span class="tooltip-val">${connectedNodes.length} nodes, ${connectedEdges.length} edges</span></div>`;
+
+            tooltip.innerHTML = `
+                <div class="tooltip-title">
+                    <span class="dot" style="background:${dotColor};"></span>
+                    ${nodeData.label || nodeData.id}
+                </div>
+                ${rows}
+            `;
+            tooltip.style.display = 'block';
+
+            // Focus on the clicked node
+            state.network.focus(nodeId, {
+                scale: 1.5,
+                animation: { duration: 400, easingFunction: 'easeInOutQuad' }
+            });
+        } else {
+            tooltip.style.display = 'none';
+        }
+    });
+
+    // Hide tooltip on canvas click (empty area)
+    state.network.on("deselectNode", function() {
+        const tooltip = document.getElementById('graph-node-tooltip');
+        if (tooltip) tooltip.style.display = 'none';
+    });
+
+    // --- Expand / Fullscreen toggle ---
+    const expandBtn = document.getElementById('graph-expand-btn');
+    const graphCard = document.getElementById('graph-card');
+    if (expandBtn && graphCard) {
+        expandBtn.onclick = () => toggleGraphFullscreen();
+    }
+    
+    // --- Refresh button ---
     const refreshBtn = document.getElementById('refresh-graph');
     if (refreshBtn) {
         refreshBtn.onclick = () => renderProcessMapView();
     }
+
+    // Recreate Lucide icons for dynamically added buttons
+    lucide.createIcons();
 }
+
+/* ---- Graph interactive controls (global scope) ---- */
+
+window.graphZoomIn = function() {
+    if (!state.network) return;
+    const scale = state.network.getScale();
+    state.network.moveTo({ scale: scale * 1.4, animation: { duration: 300, easingFunction: 'easeInOutQuad' } });
+};
+
+window.graphZoomOut = function() {
+    if (!state.network) return;
+    const scale = state.network.getScale();
+    state.network.moveTo({ scale: scale / 1.4, animation: { duration: 300, easingFunction: 'easeInOutQuad' } });
+};
+
+window.graphFit = function() {
+    if (!state.network) return;
+    state.network.fit({ animation: { duration: 500, easingFunction: 'easeInOutQuad' } });
+};
+
+window.toggleGraphFullscreen = function() {
+    const card = document.getElementById('graph-card');
+    const btn = document.getElementById('graph-expand-btn');
+    if (!card) return;
+
+    const isFullscreen = card.classList.toggle('fullscreen');
+
+    // Update button icon/text
+    if (btn) {
+        btn.innerHTML = isFullscreen
+            ? '<i data-lucide="minimize-2" style="width:14px; margin-right:4px;"></i> Collapse'
+            : '<i data-lucide="maximize-2" style="width:14px; margin-right:4px;"></i> Expand';
+        lucide.createIcons();
+    }
+
+    // Resize the vis-network to fill the new container size
+    if (state.network) {
+        setTimeout(() => {
+            state.network.redraw();
+            state.network.fit({ animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
+        }, 100);
+    }
+};
+
+// ESC to exit fullscreen graph
+document.addEventListener('keydown', function(e) {
+    if (e.key === 'Escape') {
+        const card = document.getElementById('graph-card');
+        if (card && card.classList.contains('fullscreen')) {
+            toggleGraphFullscreen();
+        }
+    }
+});
 
 /**
  * Render OpenTelemetry Mesh Map
