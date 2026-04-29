@@ -1,0 +1,6 @@
+cd309b2b750b83b6d4699697071d647109a3212645d0c69de89164b650c6ec00  openshell-x86_64-unknown-linux-musl.tar.gz
+6fae1119b5cf4e718c96ee5874ada6ab5e35c016aba6e1e0adb5d93e6ab63bc0  openshell-aarch64-unknown-linux-musl.tar.gz
+4d18ab9b966fcd68cdfc08c1189856ff9fff3734222f35fed038ddca9cd291c3  openshell-aarch64-apple-darwin.tar.gz
+35d6fdda7875b46d6d678b001fdf66fe3392cb91aceec631fb030eed362a7eed  openshell-0.0.36-py3-none-macosx_13_0_arm64.whl
+e255aa58f3f1b4198674692f770e9f21203e53ae1852c06b372791f9b21e3b67  openshell-0.0.36-py3-none-manylinux_2_39_aarch64.whl
+2f79097e822ada56d123f71555c045dce721cc0991bc5d94c2625f3a759a9c82  openshell-0.0.36-py3-none-manylinux_2_39_x86_64.whl
