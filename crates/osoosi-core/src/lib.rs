@@ -914,6 +914,12 @@ impl EdrOrchestrator {
         // DNS Shield Voter: Evaluates DNS query telemetry (DGA, tunneling, blocklist, darknet)
         policy.add_voter(Box::new(osoosi_policy::voters::DnsShieldVoter));
 
+        // Sysmon DNS Voter (Event ID 22): Process-attributed DNS analysis with LLM context
+        let dns_blocklist = Arc::new(osoosi_dns::DnsBlocklist::new());
+        policy.add_voter(Box::new(osoosi_policy::voters::SysmonDnsVoter {
+            blocklist: dns_blocklist,
+        }));
+
         let deception_engine = Arc::new(tokio::sync::RwLock::new(
             osoosi_behavioral::deception::EntanglementEngine::new(),
         ));

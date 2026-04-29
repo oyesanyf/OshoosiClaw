@@ -19,6 +19,7 @@ osoosi-model = { path = "../osoosi-model" }
 osoosi-sandbox = { path = "../osoosi-sandbox" }
 osoosi-behavioral = { path = "../osoosi-behavioral" }
 osoosi-dp = { path = "../osoosi-dp" }
+osoosi-dns = { path = "../osoosi-dns" }
 ed25519-dalek = { workspace = true }
 sysinfo = { workspace = true }
 tfhe = { workspace = true }

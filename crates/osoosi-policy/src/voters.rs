@@ -888,3 +888,147 @@ impl ThreatVoter for DnsShieldVoter {
         }
     }
 }
+
+/// Sysmon DNS Query Voter (Event ID 22)
+///
+/// Processes native Sysmon DNS telemetry which tells us WHICH PROCESS made WHICH DNS query.
+/// This is more powerful than the DNS proxy because Sysmon provides process-level attribution
+/// (Image, PID, User) for every single DNS lookup on the host.
+///
+/// Pipeline:
+///   1. Extracts QueryName from Sysmon Event 22
+///   2. Runs DGA/entropy analysis via osoosi_dns::analysis
+///   3. Checks the domain against the DNS blocklist
+///   4. Correlates the originating process (Image) to determine if the lookup is anomalous
+///   5. For suspicious patterns, builds a context string that the LLM voter can reason about
+pub struct SysmonDnsVoter {
+    pub blocklist: std::sync::Arc<osoosi_dns::DnsBlocklist>,
+}
+
+impl ThreatVoter for SysmonDnsVoter {
+    fn name(&self) -> String {
+        "Sysmon-DNS".to_string()
+    }
+
+    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        // Only process Sysmon Event ID 22 (DnsQuery)
+        if event.event_id != SysmonEventId::DnsQuery {
+            return None;
+        }
+
+        let query_name = event.data.get("QueryName").and_then(|v| v.as_str())?;
+        let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let pid = event.process_id().unwrap_or(0);
+        let query_results = event.data.get("QueryResults").and_then(|v| v.as_str()).unwrap_or("");
+        let query_status = event.data.get("QueryStatus").and_then(|v| v.as_str()).unwrap_or("");
+
+        // Extract process name from full image path
+        let proc_name = image.rsplit(['\\', '/']).next().unwrap_or(image).to_lowercase();
+
+        // --- 1. Blocklist check ---
+        if let Some(block_reason) = self.blocklist.is_blocked(query_name) {
+            return Some(VoteResult {
+                confidence: 0.93,
+                reason: format!(
+                    "DNS BLOCKLIST HIT: Process '{}' (PID {}) queried '{}'. Reason: {}",
+                    proc_name, pid, query_name, block_reason
+                ),
+                weight: 0.9,
+            });
+        }
+
+        // --- 2. DGA/Entropy/Tunneling analysis ---
+        let analysis = osoosi_dns::analysis::analyze_domain(query_name);
+
+        match analysis.verdict {
+            osoosi_dns::DnsVerdict::Block => {
+                return Some(VoteResult {
+                    confidence: 0.92,
+                    reason: format!(
+                        "DNS THREAT (Process Attribution): '{}' (PID {}) resolved '{}'. {} [Entropy: {:.2}]",
+                        proc_name, pid, query_name, analysis.reason, analysis.entropy
+                    ),
+                    weight: 0.85,
+                });
+            }
+            osoosi_dns::DnsVerdict::Suspicious => {
+                // For suspicious domains, check if the process is unusual for making DNS queries
+                let is_unusual_resolver = !matches!(
+                    proc_name.as_str(),
+                    "chrome.exe" | "firefox.exe" | "msedge.exe" | "svchost.exe"
+                    | "dns.exe" | "dnscache" | "systemd-resolved" | "mDNSResponder"
+                    | "curl.exe" | "wget" | "powershell.exe" | "cmd.exe"
+                    | "explorer.exe" | "teams.exe" | "slack.exe" | "outlook.exe"
+                    | "code.exe" | "osoosi" | "osoosi.exe"
+                );
+
+                if is_unusual_resolver {
+                    return Some(VoteResult {
+                        confidence: 0.7,
+                        reason: format!(
+                            "SUSPICIOUS DNS: Unusual process '{}' (PID {}) querying '{}'. {}",
+                            proc_name, pid, query_name, analysis.reason
+                        ),
+                        weight: 0.6,
+                    });
+                }
+
+                // Known process but suspicious domain — lower weight
+                return Some(VoteResult {
+                    confidence: 0.5,
+                    reason: format!(
+                        "DNS Monitor: '{}' queried suspicious domain '{}'. Entropy: {:.2}",
+                        proc_name, query_name, analysis.entropy
+                    ),
+                    weight: 0.4,
+                });
+            }
+            osoosi_dns::DnsVerdict::Allow => {}
+        }
+
+        // --- 3. Process-based anomaly detection ---
+        // Even if the domain is clean, certain processes should NEVER make DNS queries
+        let never_resolves = matches!(
+            proc_name.as_str(),
+            "lsass.exe" | "csrss.exe" | "smss.exe" | "wininit.exe"
+            | "services.exe" | "winlogon.exe" | "dwm.exe"
+        );
+
+        if never_resolves {
+            return Some(VoteResult {
+                confidence: 0.88,
+                reason: format!(
+                    "ANOMALOUS DNS: System process '{}' (PID {}) made DNS query to '{}'. \
+                     This process should never make outbound DNS queries. \
+                     Possible code injection or process hollowing.",
+                    proc_name, pid, query_name
+                ),
+                weight: 0.85,
+            });
+        }
+
+        // --- 4. Rapid-fire DGA beaconing detection ---
+        // If the query resolved to NXDOMAIN (failure), it might be DGA probing
+        if query_status.contains("NXDOMAIN") || query_status == "5" || query_results.is_empty() {
+            // Failed DNS lookups from non-browser processes are suspicious
+            let is_browser = matches!(
+                proc_name.as_str(),
+                "chrome.exe" | "firefox.exe" | "msedge.exe" | "safari"
+            );
+            if !is_browser && analysis.entropy > 3.0 {
+                return Some(VoteResult {
+                    confidence: 0.75,
+                    reason: format!(
+                        "DGA PROBE: '{}' (PID {}) queried '{}' which resolved to NXDOMAIN. \
+                         Entropy {:.2} suggests algorithmically generated domain. \
+                         Possible C2 channel probing.",
+                        proc_name, pid, query_name, analysis.entropy
+                    ),
+                    weight: 0.7,
+                });
+            }
+        }
+
+        None
+    }
+}
