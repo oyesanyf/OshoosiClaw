@@ -96,20 +96,6 @@ impl GemmaVoter {
     }
 
     /// Pre-filter: skip known-safe system processes to avoid wasting LLM inference.
-    fn is_known_safe(image: &str) -> bool {
-        let name = image.rsplit('\\').next().unwrap_or(image).to_lowercase();
-        matches!(name.as_str(),
-            "explorer.exe" | "svchost.exe" | "csrss.exe" | "wininit.exe" |
-            "services.exe" | "lsass.exe" | "smss.exe" | "dwm.exe" |
-            "taskhostw.exe" | "runtimebroker.exe" | "searchhost.exe" |
-            "sihost.exe" | "fontdrvhost.exe" | "ctfmon.exe" |
-            "conhost.exe" | "dllhost.exe" | "spoolsv.exe" |
-            "searchindexer.exe" | "securityhealthservice.exe" |
-            "msedgewebview2.exe" | "systemsettings.exe" |
-            "textinputhost.exe" | "widgetservice.exe" |
-            "osoosi.exe" | "ollama.exe" | "cargo.exe" | "rustc.exe"
-        )
-    }
 }
 
 impl ThreatVoter for GemmaVoter {

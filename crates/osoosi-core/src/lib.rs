@@ -956,7 +956,6 @@ impl EdrOrchestrator {
         })
     }
 
-    /// Start the P2P Mesh event loop. Returns the JoinGate to be shared with the Dashboard.
     pub async fn start_p2p_loop(&self) -> anyhow::Result<Arc<osoosi_wire::JoinGate>> {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
 

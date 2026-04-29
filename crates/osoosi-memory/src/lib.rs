@@ -323,25 +323,6 @@ impl MemoryStore {
         )?;
 
         // MIGRATION: Add version_start_including / version_end_excluding to kev if they are missing
-        let table_info: Vec<String> = conn
-            .prepare("PRAGMA table_info(kev)")?
-            .query_map([], |row| row.get(1))?
-            .collect::<rusqlite::Result<Vec<String>>>()?;
-
-        if !table_info.contains(&"version_start_including".to_string()) {
-            info!("Migrating 'kev' table: adding 'version_start_including' column...");
-            let _ = conn.execute("ALTER TABLE kev ADD COLUMN version_start_including TEXT", []);
-        }
-        if !table_info.contains(&"version_end_excluding".to_string()) {
-            info!("Migrating 'kev' table: adding 'version_end_excluding' column...");
-            let _ = conn.execute("ALTER TABLE kev ADD COLUMN version_end_excluding TEXT", []);
-        }
-
-        Ok(())
-    }
-
-    /// Check if a SHA1 hash exists in the NSRL 'Known Good' list (compares lowercase hex).
-    pub fn is_nsrl_known_good(&self, sha1: &str) -> anyhow::Result<bool> {
         let key = sha1.trim().to_ascii_lowercase();
         let conn = self.conn.lock();
         let mut stmt = conn.prepare_cached("SELECT 1 FROM nsrl WHERE sha1 = ? LIMIT 1")?;

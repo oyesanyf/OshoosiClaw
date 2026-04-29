@@ -355,10 +355,6 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 }
             }
 
-            let start_instant = std::time::Instant::now();
-            let orchestrator = EdrOrchestrator::new().await?;
-
-            // 1. Start P2P Mesh Networking (Discovery, Consensus, and Peer Approval)
             let join_gate = orchestrator.start_p2p_loop().await.ok();
 
             // 2. Bind dashboard as soon as the orchestrator exists so the UI can load while loops start.
