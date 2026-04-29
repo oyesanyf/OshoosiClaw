@@ -28,5 +28,13 @@ bytes = { workspace = true }
 zip = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
-windows = { version = "0.58", features = ["Win32_System_EventLog", "Win32_System_Com"] }
+windows = { version = "0.58", features = [
+    "Win32_System_EventLog", 
+    "Win32_System_Com",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+    "Win32_System_LibraryLoader",
+    "Win32_Security"
+] }
 wmi = "0.13"

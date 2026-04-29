@@ -895,13 +895,21 @@ impl EdrOrchestrator {
         policy.add_voter(Box::new(crate::voters::MalConvVoter {
             scanner: malware_scanner.clone(),
         }));
-        
+
         // Privacy-Enforced Voter: DP + Merkle Audit
         let privacy_config = osoosi_dp::PrivacyConfig::default();
         policy.add_voter(Box::new(osoosi_policy::voters::PrivacyVoter::new(
             privacy_config,
             audit.clone(),
         )));
+
+        // Native Instrumentation Voter: Ported from OpenEDR
+        policy.add_voter(Box::new(osoosi_policy::voters::NativeVoter {
+            memory: memory.clone(),
+        }));
+
+        // Injection Telemetry Voter: Processes inner-process hook events (BitBlt, CreateProcessW, send, ptrace, etc.)
+        policy.add_voter(Box::new(osoosi_policy::voters::InjectionTelemetryVoter));
 
         let deception_engine = Arc::new(tokio::sync::RwLock::new(
             osoosi_behavioral::deception::EntanglementEngine::new(),
@@ -956,7 +964,17 @@ impl EdrOrchestrator {
         })
     }
 
-    /// Start the P2P Mesh event loop. Returns the JoinGate to be shared with the Dashboard.
+    pub async fn run_maintenance_loop(&self) {
+        info!("EDR Maintenance Loop started.");
+        let mut interval = tokio::time::interval(Duration::from_secs(3600 * 24)); // Once a day
+        loop {
+            interval.tick().await;
+            if let Err(e) = self.memory.vacuum_and_prune(30) {
+                error!("Maintenance loop failed: {}", e);
+            }
+        }
+    }
+
     pub async fn start_p2p_loop(&self) -> anyhow::Result<Arc<osoosi_wire::JoinGate>> {
         let (tx, rx) = tokio::sync::mpsc::channel(100);
 

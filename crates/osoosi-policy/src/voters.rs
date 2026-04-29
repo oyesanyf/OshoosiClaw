@@ -96,19 +96,34 @@ impl GemmaVoter {
     }
 
     /// Pre-filter: skip known-safe system processes to avoid wasting LLM inference.
-    fn is_known_safe(image: &str) -> bool {
-        let name = image.rsplit('\\').next().unwrap_or(image).to_lowercase();
-        matches!(name.as_str(),
-            "explorer.exe" | "svchost.exe" | "csrss.exe" | "wininit.exe" |
-            "services.exe" | "lsass.exe" | "smss.exe" | "dwm.exe" |
-            "taskhostw.exe" | "runtimebroker.exe" | "searchhost.exe" |
-            "sihost.exe" | "fontdrvhost.exe" | "ctfmon.exe" |
-            "conhost.exe" | "dllhost.exe" | "spoolsv.exe" |
-            "searchindexer.exe" | "securityhealthservice.exe" |
-            "msedgewebview2.exe" | "systemsettings.exe" |
-            "textinputhost.exe" | "widgetservice.exe" |
-            "osoosi.exe" | "ollama.exe" | "cargo.exe" | "rustc.exe"
-        )
+    pub fn is_known_safe(image_path: &str) -> bool {
+        let path = image_path.to_ascii_lowercase();
+        let stem = std::path::Path::new(image_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        
+        let trusted_path = path.contains("\\windows\\system32\\")
+            || path.contains("\\windows\\syswow64\\")
+            || path.contains("\\program files\\")
+            || path.contains("\\program files (x86)\\")
+            || path.contains("\\programdata\\chocolatey\\")
+            || path.contains("\\programdata\\scoop\\")
+            || path.contains("\\tools\\git\\")
+            || path.contains("\\oshoosiclaw\\tools\\")
+            || path.contains("\\oshoosiclaw\\target\\")
+            || path.contains("/oshoosiclaw/tools/")
+            || path.contains("/oshoosiclaw/target/")
+            || path.contains("\\appdata\\local\\programs\\python\\");
+
+        const TRUSTED_STEMS: &[&str] = &[
+            "osoosi", "sysmon", "sysmon64", "csrss", "lsass", "winlogon", "services", 
+            "svchost", "explorer", "taskmgr", "runtimebroker", "searchindexer", 
+            "rustc", "cargo", "python", "git", "cursor", "antigravity", "code", "node", "ollama", "npm", "powershell", "cmd"
+        ];
+
+        trusted_path || TRUSTED_STEMS.contains(&stem.as_str())
     }
 }
 
@@ -189,6 +204,80 @@ fn strip_think_tags(raw: &str) -> String {
         raw.replace("<think>", "").trim().to_string()
     } else {
         raw.trim().to_string()
+    }
+}
+
+/// Native Instrumentation Voter (Ported from OpenEDR architectural patterns)
+/// Votes on self-protection violations, USB exfiltration, and registry anomalies.
+pub struct NativeVoter {
+    pub memory: Arc<osoosi_memory::MemoryStore>,
+}
+
+impl ThreatVoter for NativeVoter {
+    fn name(&self) -> String {
+        "Native-Instrumentation".to_string()
+    }
+    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        // 1. Self-Protection: Check if unauthorized process is touching Oshoosi files/registry
+        if let Some(path) = event.data.get("TargetFilename").and_then(|v| v.as_str()) {
+            if osoosi_types::reg_utils::is_self_protection_file_path(path) {
+                // If it's not Oshoosi itself or a trusted system process
+                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+                if !image.to_lowercase().contains("osoosi") && !image.to_lowercase().contains("system32") {
+                    return Some(VoteResult {
+                        confidence: 0.95,
+                        reason: format!("Self-Protection Violation: process {} attempted to access EDR binary/data at {}", image, path),
+                        weight: 1.0, // Critical violation
+                    });
+                }
+            }
+        }
+
+        if let Some(key) = event.data.get("TargetObject").and_then(|v| v.as_str()) {
+            let normalized = osoosi_types::reg_utils::normalize_registry_path(key);
+            if osoosi_types::reg_utils::is_self_protection_reg_path(&normalized) {
+                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+                if !image.to_lowercase().contains("osoosi") {
+                    return Some(VoteResult {
+                        confidence: 0.95,
+                        reason: format!("Self-Protection Violation: process {} attempted to modify EDR registry key {}", image, key),
+                        weight: 1.0,
+                    });
+                }
+            }
+
+            // 2. Normalized Registry Persistence Check
+            if normalized.contains("software\\microsoft\\windows\\currentversion\\run") 
+               || normalized.contains("system\\currentcontrolset\\services") {
+                // Suspicious if not from a known installer
+                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+                if !image.to_lowercase().contains("msiexec") && !image.to_lowercase().contains("setup") {
+                    return Some(VoteResult {
+                        confidence: 0.75,
+                        reason: format!("Suspicious Persistence: process {} modifying boot/service key {}", image, normalized),
+                        weight: 0.6,
+                    });
+                }
+            }
+        }
+
+        // 3. USB Exfiltration Detection (using OpenEDR pattern)
+        if event.event_id == SysmonEventId::FileCreate {
+            if let Some(path) = event.data.get("TargetFilename").and_then(|v| v.as_str()) {
+                // If it's a drive usually associated with USB (D:, E:, etc. that isn't the system drive)
+                let p = path.to_lowercase();
+                if (p.starts_with("d:\\") || p.starts_with("e:\\") || p.starts_with("f:\\")) 
+                   && !p.contains("osoosi") {
+                    return Some(VoteResult {
+                        confidence: 0.6,
+                        reason: format!("Potential USB Exfiltration: file creation on removable media at {}", path),
+                        weight: 0.5,
+                    });
+                }
+            }
+        }
+
+        None
     }
 }
 
@@ -570,7 +659,6 @@ impl ThreatVoter for PrivacyVoter {
 
         if base_score > 0.0 {
             // 2. APPLY DIFFERENTIAL PRIVACY: Add Laplacian noise to the score
-            // This prevents an observer from knowing the exact local detection confidence.
             let noisy_score = (base_score + self.dp.laplace_noise()).clamp(0.0, 1.0);
 
             // 3. LOG TO MERKLE AUDIT TREE: Ensure the decision is tamper-proof
@@ -587,6 +675,154 @@ impl ThreatVoter for PrivacyVoter {
             })
         } else {
             None
+        }
+    }
+}
+
+/// Injection Telemetry Voter (Ported from OpenEDR hooking engine)
+///
+/// Evaluates telemetry events generated by the `osoosi-inject` in-process hooks.
+/// Detects:
+///   - Screen capture spyware (BitBlt hook telemetry)
+///   - Process hollowing / shellcode injection (NtAllocateVirtualMemory with RWX)
+///   - Credential dumping (ReadProcessMemory targeting lsass.exe)
+///   - Execution of suspicious commands (CreateProcessW / execve interceptions)
+///   - C2 beacon patterns in network send() payloads
+pub struct InjectionTelemetryVoter;
+
+impl ThreatVoter for InjectionTelemetryVoter {
+    fn name(&self) -> String {
+        "Injection-Telemetry".to_string()
+    }
+
+    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        // The hook payload tags events with a "HookSource" data field when it reports
+        // intercepted API calls back to the orchestrator via the telemetry channel.
+        let hook_source = event.data.get("HookSource").and_then(|v| v.as_str())?;
+
+        match hook_source {
+            // --- Screen Capture Spyware Detection (BitBlt hook) ---
+            "BitBlt" => {
+                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+                // Trusted screen-capture processes (RDP, screenshot tools) are excluded
+                let img_lower = image.to_lowercase();
+                if img_lower.contains("sniphost") || img_lower.contains("snippingtool")
+                    || img_lower.contains("mstsc") || img_lower.contains("teamviewer")
+                    || img_lower.contains("obs") || img_lower.contains("osoosi") {
+                    return None;
+                }
+                Some(VoteResult {
+                    confidence: 0.85,
+                    reason: format!("Screen Capture Detected: process {} called BitBlt (potential spyware/stalkerware)", image),
+                    weight: 0.7,
+                })
+            }
+
+            // --- Process Hollowing / Shellcode Injection Detection ---
+            "NtAllocateVirtualMemory" => {
+                let protect = event.data.get("Protection").and_then(|v| v.as_str()).unwrap_or("");
+                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+                // PAGE_EXECUTE_READWRITE (0x40) is almost always shellcode injection
+                if protect.contains("RWX") || protect.contains("0x40") {
+                    // Exclude known legitimate JIT engines
+                    let img_lower = image.to_lowercase();
+                    if img_lower.contains("java") || img_lower.contains("dotnet")
+                        || img_lower.contains("node") || img_lower.contains("chrome")
+                        || img_lower.contains("firefox") {
+                        return None;
+                    }
+                    return Some(VoteResult {
+                        confidence: 0.92,
+                        reason: format!("Process Injection Suspected: {} allocated RWX memory (shellcode/hollowing indicator)", image),
+                        weight: 0.85,
+                    });
+                }
+                None
+            }
+
+            // --- Credential Dumping Detection (ReadProcessMemory / ptrace) ---
+            "ReadProcessMemory" | "ptrace" => {
+                let target = event.data.get("TargetProcess").and_then(|v| v.as_str()).unwrap_or("");
+                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let target_lower = target.to_lowercase();
+                // lsass.exe is THE target for credential dumping (Mimikatz, etc.)
+                if target_lower.contains("lsass") {
+                    return Some(VoteResult {
+                        confidence: 0.98,
+                        reason: format!("CRITICAL: Credential Dumping Attempt! Process {} read memory of lsass.exe", image),
+                        weight: 1.0, // Maximum weight — this is an active attack
+                    });
+                }
+                // Reading EDR memory is also a self-protection violation
+                if target_lower.contains("osoosi") {
+                    return Some(VoteResult {
+                        confidence: 0.95,
+                        reason: format!("Self-Defense: Process {} attempted to read EDR process memory", image),
+                        weight: 1.0,
+                    });
+                }
+                None
+            }
+
+            // --- Execution Blocking (CreateProcessW / execve) ---
+            "CreateProcessW" | "execve" => {
+                let cmd_line = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("");
+                let cmd_lower = cmd_line.to_lowercase();
+
+                // Detect encoded PowerShell commands (common malware evasion)
+                if cmd_lower.contains("-encodedcommand") || cmd_lower.contains("-enc ") || cmd_lower.contains("-e ") {
+                    return Some(VoteResult {
+                        confidence: 0.88,
+                        reason: format!("Encoded Execution Detected: child process launched with obfuscated arguments: {}", 
+                            &cmd_line[..cmd_line.len().min(120)]),
+                        weight: 0.8,
+                    });
+                }
+
+                // Detect reverse shells
+                if (cmd_lower.contains("/dev/tcp") || cmd_lower.contains("bash -i"))
+                    || (cmd_lower.contains("nc ") && cmd_lower.contains(" -e "))
+                    || cmd_lower.contains("ncat") && cmd_lower.contains("--sh-exec") {
+                    return Some(VoteResult {
+                        confidence: 0.95,
+                        reason: format!("Reverse Shell Detected: {}", &cmd_line[..cmd_line.len().min(120)]),
+                        weight: 0.95,
+                    });
+                }
+
+                None
+            }
+
+            // --- C2 Beacon Detection (send / WSASend) ---
+            "send" | "WSASend" => {
+                let payload_hint = event.data.get("PayloadHint").and_then(|v| v.as_str()).unwrap_or("");
+                let hint_lower = payload_hint.to_lowercase();
+
+                // DNS tunneling patterns: unusually long subdomain labels
+                if hint_lower.contains(".onion") || hint_lower.contains(".i2p") {
+                    return Some(VoteResult {
+                        confidence: 0.9,
+                        reason: format!("Darknet Communication: outbound traffic to anonymization network detected"),
+                        weight: 0.85,
+                    });
+                }
+
+                // HTTP beaconing with suspicious User-Agents
+                if hint_lower.contains("user-agent:") {
+                    if hint_lower.contains("cobalt") || hint_lower.contains("meterpreter")
+                        || hint_lower.contains("empire") || hint_lower.contains("covenant") {
+                        return Some(VoteResult {
+                            confidence: 0.95,
+                            reason: format!("C2 Framework Beacon: known attack framework User-Agent detected in outbound HTTP"),
+                            weight: 0.9,
+                        });
+                    }
+                }
+
+                None
+            }
+
+            _ => None,
         }
     }
 }

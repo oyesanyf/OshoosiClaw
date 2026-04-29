@@ -1,0 +1,31 @@
+[package]
+name = "osoosi-inject"
+version = "0.1.0"
+edition = "2021"
+
+[lib]
+crate-type = ["cdylib", "rlib"]
+
+[dependencies]
+# We use 'retour' for Detours-style trampoline API hooking in Rust
+retour = "0.3.1"
+lazy_static = "1.4"
+tracing = "0.1"
+
+# Windows API definitions
+[dependencies.windows]
+version = "0.52"
+features = [
+    "Win32_Foundation",
+    "Win32_System_LibraryLoader",
+    "Win32_System_Memory",
+    "Win32_System_Threading",
+    "Win32_System_Diagnostics_Debug",
+    "Win32_System_SystemServices",
+    "Win32_Security",
+
+    "Win32_Graphics_Gdi", # For Screen capture hooking (BitBlt)
+]
+
+[target.'cfg(any(target_os = "linux", target_os = "macos"))'.dependencies]
+libc = "0.2"

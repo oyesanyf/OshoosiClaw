@@ -396,6 +396,18 @@ fn default_max_host_calls() -> usize {
     256
 }
 
+/// Resolve the base directory of the agent (where the EXE is located).
+/// This is used for all internal tool paths to prevent "os error 3" when
+/// starting the agent from a different CWD.
+pub fn resolve_base_dir() -> PathBuf {
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(parent) = exe.parent() {
+            return parent.to_path_buf();
+        }
+    }
+    std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."))
+}
+
 /// Resolve the bin directory for tools (ClamAV, etc.). Uses project root when found.
 /// Env overrides: OSOOSI_BIN or OSOOSI_SIGCHECK_INSTALL_DIR (legacy, same as OSOOSI_BIN).
 pub fn resolve_bin_dir() -> PathBuf {
@@ -561,14 +573,11 @@ pub fn resolve_sysmon_path() -> PathBuf {
         let is_64 = std::env::var("PROCESSOR_ARCHITECTURE")
             .map(|a| a.eq_ignore_ascii_case("AMD64") || a.eq_ignore_ascii_case("ARM64"))
             .unwrap_or(cfg!(target_pointer_width = "64"));
+        let base = resolve_base_dir();
         if is_64 {
-            std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join("Sysmon64.exe")
+            base.join("Sysmon64.exe")
         } else {
-            std::env::current_dir()
-                .unwrap_or_else(|_| PathBuf::from("."))
-                .join("Sysmon.exe")
+            base.join("Sysmon.exe")
         }
     }
     #[cfg(not(target_os = "windows"))]

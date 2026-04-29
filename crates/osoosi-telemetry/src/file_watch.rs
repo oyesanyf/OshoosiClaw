@@ -24,6 +24,11 @@ fn should_skip_path(path: &Path, osoosi_dir: &Path, exclude_paths: &[String]) ->
         || s_lower.ends_with(".db-wal")
         || s_lower.ends_with("-shm")
         || s_lower.ends_with(".db-shm")
+        // Transient download lock files (huggingface, cargo, etc) — always held by downloader
+        || s_lower.ends_with(".lock")
+        || s_lower.ends_with(".part")
+        || s_lower.ends_with(".incomplete")
+        || s_lower.ends_with(".tmp")
     {
         return true;
     }
@@ -183,7 +188,8 @@ impl FileWatcher {
                                             .contains("being used by another process")
                                             || err_str.contains("Permission denied")
                                             || err_str.contains("Access is denied")
-                                            || err_str.contains("os error 32");
+                                            || err_str.contains("os error 32")  // ERROR_SHARING_VIOLATION
+                                            || err_str.contains("os error 33"); // ERROR_LOCK_VIOLATION (partial lock)
                                         if is_not_found {
                                             debug!(
                                                 "Skipped hashing (file gone): {:?}",
@@ -358,7 +364,8 @@ pub async fn build_os_file_hash_baseline(
                     let is_locked = err_str.contains("being used by another process")
                         || err_str.contains("Permission denied")
                         || err_str.contains("Access is denied")
-                        || err_str.contains("os error 32");
+                        || err_str.contains("os error 32")  // ERROR_SHARING_VIOLATION
+                        || err_str.contains("os error 33"); // ERROR_LOCK_VIOLATION
 
                     if is_locked {
                         let _ = mem.add_file_to_skip_list(&path_str, &err_str);
