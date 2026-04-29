@@ -25,6 +25,10 @@ impl BehavioralBaseline {
         Self::default()
     }
 
+    /// Maximum unique destinations/queries tracked per process before we stop inserting.
+    /// Once a process has this many unique connections it's clearly established, not anomalous.
+    const MAX_ENTRIES_PER_PROCESS: usize = 1000;
+
     /// Record a network connection. Returns true if this is the first outbound from this process (anomaly).
     pub fn record_network(&self, host: &str, process: &str, dest_ip: &str) -> bool {
         if !baseline_enabled() || dest_ip.is_empty() {
@@ -35,7 +39,10 @@ impl BehavioralBaseline {
             .entry(process.to_string())
             .or_insert_with(|| (HashSet::new(), HashSet::new()));
         let is_first = !entry.0.contains(dest_ip);
-        entry.0.insert(dest_ip.to_string());
+        // Cap memory: stop inserting after MAX_ENTRIES_PER_PROCESS unique destinations
+        if entry.0.len() < Self::MAX_ENTRIES_PER_PROCESS {
+            entry.0.insert(dest_ip.to_string());
+        }
         is_first && entry.0.len() == 1
     }
 
@@ -53,7 +60,10 @@ impl BehavioralBaseline {
             .entry(process.to_string())
             .or_insert_with(|| (HashSet::new(), HashSet::new()));
         let is_first = !entry.1.contains(&domain);
-        entry.1.insert(domain);
+        // Cap memory: stop inserting after MAX_ENTRIES_PER_PROCESS unique queries
+        if entry.1.len() < Self::MAX_ENTRIES_PER_PROCESS {
+            entry.1.insert(domain);
+        }
         is_first && entry.1.len() == 1
     }
 

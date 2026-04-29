@@ -32,8 +32,10 @@ impl TarpitManager {
             pid
         );
 
-        let s = System::new_all();
-        if let Some(process) = s.process(Pid::from(pid as usize)) {
+        let mut s = System::new();
+        let target_pid = Pid::from(pid as usize);
+        s.refresh_process(target_pid);
+        if let Some(process) = s.process(target_pid) {
             let pname = process.name();
             info!("Throttling process: {} (PID {})", pname, pid);
         } else {

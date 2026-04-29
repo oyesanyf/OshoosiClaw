@@ -367,12 +367,13 @@ impl EdrOrchestrator {
 
     /// Helper to find a PID by process name.
     pub async fn find_pid_by_name(&self, name: &str) -> Option<u32> {
-        use sysinfo::{System};
-        let mut sys = System::new_all();
-        sys.refresh_all();
+        use sysinfo::System;
+        let mut sys = System::new();
+        sys.refresh_processes();
         
+        let name_lower = name.to_lowercase();
         for (pid, process) in sys.processes() {
-            if process.name().to_lowercase() == name.to_lowercase() {
+            if process.name().to_lowercase() == name_lower {
                 return Some(pid.as_u32());
             }
         }
@@ -2406,9 +2407,10 @@ impl EdrOrchestrator {
             }
         }
 
-        // Log telemetry entry to Merkle Audit Chain
-        self.audit
-            .log("TELEMETRY_INGESTED", serde_json::to_value(&event)?);
+        // Note: Threat events are already audited individually via THREAT_DETECTED above.
+        // We intentionally do NOT audit every clean telemetry event to the Merkle chain —
+        // doing so causes O(n) recomputation per event and double-serialization overhead.
+        // The Causal AI graph below captures the full event timeline for forensic replay.
 
         // Log to console and log file with full forensic detail
         let event_name = format!("{:?}", event.event_id);
