@@ -32,7 +32,7 @@ A temporal security engine that treats system events as a **Causal Manifold**.
 
 ---
 
-### 3. Federated Reinforcement Loop (NEW)
+### 3. Federated Reinforcement Loop
 The agent learns from analyst feedback and propagates intelligence across the mesh in real-time.
 
 | Action | Effect |
@@ -118,21 +118,78 @@ The launcher:
 
 Docker Desktop with WSL2 integration for Ubuntu is still required for OpenShell's Linux sandbox runtime. If Docker is unavailable inside WSL, Oshoosi stops with a Docker-specific remediation message.
 
-Manual equivalent inside WSL2:
+---
 
-```bash
-curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh
-openshell --version
-docker info
-cd /mnt/d/harfile/OshoosiClaw
-cargo build --release
+### 5. Native In-Process Hooking Engine (Ported from OpenEDR)
+
+OshoosiClaw includes a **cross-platform, in-process API hooking payload** (`osoosi-inject`) that gives the agent direct visibility into what every process on the system is doing at the API level.
+
+```mermaid
+graph LR
+    PROC["Target Process"] -->|"DLL/SO loaded"| HOOK["osoosi-inject Payload"]
+    HOOK --> H1["BitBlt Hook — Screen Capture Detection"]
+    HOOK --> H2["CreateProcessW/execve — Execution Blocking"]
+    HOOK --> H3["NtAllocateVirtualMemory — Shellcode Detection"]
+    HOOK --> H4["OpenProcess/ptrace — Anti-Credential Dump"]
+    HOOK --> H5["ReadProcessMemory — EDR Self-Defense"]
+    HOOK --> H6["send/WSASend — Deep Packet Inspection"]
+    H1 & H2 & H3 & H4 & H5 & H6 -->|Telemetry| VOTER["InjectionTelemetryVoter"]
+    VOTER --> CONSENSUS["Consensus Engine"]
 ```
 
-From Windows after provisioning:
+| Platform | Mechanism | Delivery |
+|---|---|---|
+| **Windows** | Detours (retour crate) — trampoline API hooking | VirtualAllocEx + CreateRemoteThread injection |
+| **Linux** | LD_PRELOAD — libc symbol interposition | `/etc/ld.so.preload` or ptrace |
+| **macOS** | DYLD_INSERT_LIBRARIES — dylib interposition | Environment variable on child processes |
 
-```powershell
-.\target\release\osoosi.exe start --wsl --sandbox --sandbox-name my-agent-sandbox
+#### Hooked APIs
+
+| Hook | Windows API | Unix Equivalent | Detects |
+|---|---|---|---|
+| Screen Capture | `BitBlt` (GDI32) | N/A (X11 screenshot intercepted via sandbox) | Spyware, stalkerware, banking trojans |
+| Execution | `CreateProcessW` | `execve` | Reverse shells, encoded PowerShell, cryptominers |
+| Memory Allocation | `NtAllocateVirtualMemory` | `mmap` (future) | Process hollowing, shellcode injection |
+| Process Handle | `OpenProcess` | `ptrace(PTRACE_ATTACH)` | Credential dumping (Mimikatz), EDR tampering |
+| Memory Read | `ReadProcessMemory` | `ptrace(PTRACE_PEEKDATA)` | LSASS memory scraping, agent memory inspection |
+| Network | `send` (ws2_32) | `send` (libc) | C2 beacons, DNS tunneling, darknet traffic |
+
+---
+
+### 6. Spider Eyes — Mechanistic Binary Analyst
+
+SpiderEyes is Oshoosi's **live disassembly and AI reasoning engine**. It attaches to a running process, reads its executable memory segments (bypassing ASLR), disassembles the machine code with Capstone, and then feeds the assembly into a local LLM (Gemma 4) for mechanistic interpretability.
+
+```mermaid
+graph TD
+    PID["Suspicious PID"] --> ATTACH["Spider attaches via proc_maps"]
+    ATTACH --> ASLR["ASLR Bypass: Locate .text segment"]
+    ASLR --> READ["Cross-platform Memory Read"]
+    READ --> HASH["BLAKE3 Hash — Cache Check"]
+    HASH -->|Cache Hit| CACHED["Return cached report"]
+    HASH -->|Cache Miss| DISASM["Capstone x86/x64 Disassembly"]
+    DISASM --> LLM{"Gemma 4 Available?"}
+    LLM -->|Yes| AI["AI Mechanistic Analysis"]
+    LLM -->|No| HEUR["Heuristic Pattern Matching"]
+    AI --> REPORT["Structured Threat Report"]
+    HEUR --> REPORT
+    REPORT --> VOTE["DecompileVoter casts vote in Consensus"]
 ```
+
+#### Heuristic Patterns (Fallback when LLM unavailable)
+
+| Pattern | What It Detects |
+|---|---|
+| `JMP ESP` / `CALL ESP` / `JMP RSP` | ROP exploit gadgets |
+| `AESENC` / `AESDEC` / `PXOR` | Ransomware encryption or encrypted C2 |
+| `INT 0x2D` / `RDTSC` timing | Anti-debugging evasion |
+| `CPUID` + comparison | VM/sandbox detection |
+| `MOV CR0` / `WRMSR` / `SIDT` | Kernel rootkit / privilege escalation |
+| `GetProcAddress` / `LoadLibrary` | Packed/obfuscated malware, shellcode loaders |
+| Large NOP sleds (>20) | Classic exploit padding |
+| `syscall` + ptrace patterns | Process injection / hollowing |
+| Socket + connect sequences | C2 network beaconing |
+| LSASS / SAM references | Credential harvesting |
 
 ---
 
@@ -141,12 +198,15 @@ From Windows after provisioning:
 ```mermaid
 graph TD
     SYS["Native EvtQuery API / FileWatcher"] -->|Telemetry| ORCH["EdrOrchestrator (osoosi-core)"]
+    INJ["osoosi-inject Hooks"] -->|Hook Telemetry| ORCH
     ORCH -->|Scan Events| POL["Policy Engine (osoosi-policy)"]
     POL -->|Voter Consensus| DEC{"Decision"}
     DEC -->|True Positive| TP["Tarpit + Firewall Block + Mesh Broadcast"]
     DEC -->|False Positive| FP["Whitelist Hash + Clear Traps"]
     DEC -->|Needs Deep Analysis| SBX["OpenShell Sandbox (osoosi-sandbox)"]
+    DEC -->|Deep Binary Analysis| SPIDER["SpiderEyes Disassembly + LLM"]
     SBX -->|Report| ORCH
+    SPIDER -->|Report| ORCH
     TP -->|GossipSub| PEERS["Remote Mesh Peers"]
     ORCH --> AUD["Audit Trail (Merkle Chain)"]
 ```
@@ -155,15 +215,19 @@ graph TD
 
 | Crate | Role |
 |---|---|
-| `osoosi-core` | Main orchestrator: telemetry ingestion, consensus, response |
-| `osoosi-behavioral` | AI engine: DeepSeek R1 (GGUF/Ollama), SecureBERT (ONNX), SmolLM (Candle) |
+| `osoosi-core` | Main orchestrator: telemetry ingestion, consensus, response, maintenance |
+| `osoosi-behavioral` | AI engine: Gemma 4 (ONNX), SecureBERT (ONNX), SmolLM (Candle), SpiderEyes |
 | `osoosi-wire` | P2P mesh networking via `libp2p` + GossipSub |
-| `osoosi-policy` | Sigma rules, CISA KEV, OTX TAXII, NVD threat feeds + rate-limited LLM voter |
+| `osoosi-policy` | Sigma, CISA KEV, OTX TAXII, NVD feeds + LLM voter + Injection Telemetry voter |
+| `osoosi-inject` | Cross-platform in-process API hooking payload (Windows DLL / Linux SO / macOS dylib) |
 | `osoosi-runtime` | Active response: Tarpits, Ghost Files, Process Kill |
 | `osoosi-sandbox` | NVIDIA OpenShell isolation for high-risk tasks |
-| `osoosi-memory` | SQLite persistence, bloom filter, NSRL bypass cache |
+| `osoosi-memory` | SQLite persistence, bloom filter, NSRL bypass cache, vacuum/prune maintenance |
 | `osoosi-repair` | Autonomous CVE discovery and patch application |
-| `osoosi-telemetry` | Native Win32 EvtQuery API / auditd / FileWatcher event ingestion |
+| `osoosi-telemetry` | Native Win32 EvtQuery API / auditd / FileWatcher + DLL Injector |
+| `osoosi-types` | Shared types, registry normalizer, self-protection path utilities |
+| `osoosi-dp` | Differential privacy (Laplacian noise) for privacy-preserving detection |
+| `osoosi-audit` | Merkle audit tree for tamper-proof decision logging |
 
 ---
 
@@ -174,13 +238,37 @@ OshoosiClaw uses a **multi-model consensus** architecture. Each model is a "vote
 ```mermaid
 graph LR
     EVT["Security Event"] --> V1["SecureBERT (ONNX)"]
-    EVT --> V2["DeepSeek R1 (Native GGUF)"]
+    EVT --> V2["Gemma (Ollama/GGUF)"]
     EVT --> V3["MalConv (Candle)"]
     EVT --> V4["YaraX Rules"]
     EVT --> V5["Sigma Rules"]
-    V1 & V2 & V3 & V4 & V5 --> CON["Consensus Engine"]
+    EVT --> V6["OTX C2 Intel"]
+    EVT --> V7["CISA KEV"]
+    EVT --> V8["NSRL Veto"]
+    EVT --> V9["Native Instrumentation"]
+    EVT --> V10["Injection Telemetry"]
+    EVT --> V11["Decompile (SpiderEyes)"]
+    EVT --> V12["Privacy (DP + Merkle)"]
+    V1 & V2 & V3 & V4 & V5 & V6 & V7 & V8 & V9 & V10 & V11 & V12 --> CON["Consensus Engine"]
     CON --> DEC{"Threat Decision"}
 ```
+
+### All Registered Voters
+
+| # | Voter | Source | Weight | Purpose |
+|---|---|---|---|---|
+| 1 | `SemanticVoter` | Semantic Engine | 0.7 | Detects command-line intent drift |
+| 2 | `OtxVoter` | AlienVault OTX | 0.6–0.9 | C2 IP/hash/domain matching |
+| 3 | `SigmaVoter` | Sigma Rules | 0.8 | Community detection rules |
+| 4 | `GemmaVoter` | Gemma LLM (Ollama) | 0.9 | Deep reasoning about TTPs |
+| 5 | `NativeVoter` | OpenEDR port | 0.5–1.0 | Self-protection, USB exfil, registry persistence |
+| 6 | `NsrlVoter` | NIST NSRL | **-2.0** | Veto: suppresses known-good binaries |
+| 7 | `DecompileVoter` | SpiderEyes | 0.98 | Live disassembly + AI mechanistic analysis |
+| 8 | `ClamVoter` | ClamAV/YARA | 0.85 | Signature-based malware detection |
+| 9 | `MalConvVoter` | MalConv ML | 0.6 | Neural network binary classification |
+| 10 | `KevVoter` | CISA KEV | 0.5–0.85 | Known exploited vulnerabilities |
+| 11 | `PrivacyVoter` | DP + Merkle | 0.8 | Privacy-preserving detection with audit trail |
+| 12 | `InjectionTelemetryVoter` | Hook Payload | 0.7–1.0 | Screen capture, shellcode, cred dump, C2, reverse shells |
 
 ### Smart Engine Selection
 
@@ -192,23 +280,6 @@ The AI engine auto-selects the optimal backend based on hardware:
 | GPU + Ollama installed | **Ollama HTTP API** | llama.cpp backend, GPU-accelerated |
 | CPU-only + Ollama | **Ollama HTTP API** | llama.cpp is 10x faster than Candle on CPU |
 | CPU-only, no Ollama | **Native GGUF (Candle on CPU)** | Slow but functional, last resort |
-
-### Model Loading Priority
-
-| Model | Purpose | Loading Order |
-|---|---|---|
-| **DeepSeek R1:1.5b** | LLM reasoning & attack graph analysis | 1. ONNX → 2. GGUF on GPU → 3. **Ollama HTTP API** → 4. GGUF on CPU |
-| **SecureBERT** | Log classification & behavioral scoring | 1. **ONNX (model.onnx)** → 2. Candle safetensors |
-| **MalConv** | Static binary malware detection | Candle safetensors |
-
-### DeepSeek R1 Think-Trace Parser
-
-DeepSeek R1 generates internal reasoning traces before its final answer. The `strip_deepseek_thinking()` function handles both formats:
-
-- **XML tags**: `<think>...reasoning...</think>final answer`
-- **Ollama plaintext**: `Thinking...\n...reasoning...\n...done thinking.\nfinal answer`
-
-Only the final answer reaches the consensus voter — thinking traces are stripped at the engine level.
 
 ### LLM Voter Rate Limiting
 
@@ -226,14 +297,6 @@ Windows telemetry uses the **native EvtQuery API** instead of spawning `wevtutil
 - **Tamper-proof**: Attackers cannot bypass by renaming/blocking `wevtutil.exe`
 - **Performance**: Direct API call vs subprocess spawn per poll cycle
 - **Raw XML**: Events rendered directly in-process memory
-
-### SecureBERT ONNX
-
-SecureBERT loads via ONNX Runtime (architecture-agnostic), using the existing 569MB `model.onnx`:
-
-- Classifies Windows Event Logs as malicious/benign
-- Returns a 0.0–1.0 confidence score via sigmoid activation
-- Falls back to Candle safetensors if ONNX fails
 
 ---
 
@@ -257,6 +320,9 @@ cargo build --release
 
 # With hardware sandboxing
 ./target/release/osoosi start --sandbox --sandbox-name my-agent
+
+# With dashboard UI
+./target/release/osoosi start --dashboard
 ```
 
 > **Note**: The agent now automatically finds `osoosi.toml` even when started from `target/release/`.
@@ -301,4 +367,3 @@ backup_type = "file_sync"
 OpenỌ̀ṣọ́ọ̀sì operates on the principle of **Decentralized Sovereignty**.
 Threat intelligence is shared at mesh-speed across all peers, but every node remains its own Castle.
 There is no central server to hack, no single point of failure. **The mesh is the security.**
-

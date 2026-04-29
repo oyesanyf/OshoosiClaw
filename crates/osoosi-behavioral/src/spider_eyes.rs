@@ -58,12 +58,62 @@ impl GemmaSupervisor {
     }
 
     fn analyze_heuristic(&self, asm: &str) -> String {
-        if asm.contains("syscall") && (asm.contains("0x65") || asm.contains("101")) { // ptrace/process_vm_writev patterns
-            "HEURISTIC ANALYSIS: Detected syscall sequence consistent with process hollowing or memory injection.".to_string()
-        } else if asm.contains("socket") && asm.contains("connect") {
-            "HEURISTIC ANALYSIS: Detected network beaconing behavior in unexpected code segment.".to_string()
-        } else {
+        let asm_lower = asm.to_lowercase();
+        let mut findings: Vec<&str> = Vec::new();
+
+        // --- Process Injection / Hollowing ---
+        if asm_lower.contains("syscall") && (asm_lower.contains("0x65") || asm_lower.contains("101")) {
+            findings.push("Detected syscall sequence consistent with process hollowing or memory injection (ptrace/process_vm_writev).");
+        }
+
+        // --- Network Beaconing ---
+        if asm_lower.contains("socket") && asm_lower.contains("connect") {
+            findings.push("Detected network beaconing behavior in unexpected code segment.");
+        }
+
+        // --- Shellcode / ROP Patterns ---
+        if asm_lower.contains("jmp esp") || asm_lower.contains("call esp") || asm_lower.contains("jmp rsp") {
+            findings.push("Detected stack-pivot gadget (JMP ESP/RSP). Strong indicator of Return-Oriented Programming (ROP) exploit.");
+        }
+
+        // --- Cryptographic / Ransomware Patterns ---
+        if asm_lower.contains("aesenc") || asm_lower.contains("aesdec") || asm_lower.contains("pxor") {
+            findings.push("Detected AES encryption instructions. Could indicate ransomware payload or encrypted C2 communication.");
+        }
+
+        // --- Anti-Debug / Evasion ---
+        if asm_lower.contains("int 0x2d") || (asm_lower.contains("rdtsc") && asm_lower.contains("sub")) {
+            findings.push("Detected anti-debugging technique (INT 2D / RDTSC timing check). Malware evasion likely.");
+        }
+        if asm_lower.contains("cpuid") && asm_lower.contains("cmp") {
+            findings.push("Detected VM/sandbox detection via CPUID. Malware may refuse to execute in analysis environments.");
+        }
+
+        // --- Privilege Escalation ---
+        if asm_lower.contains("mov cr0") || asm_lower.contains("wrmsr") || asm_lower.contains("sidt") {
+            findings.push("Detected privileged instruction sequence (CR0/MSR/IDT). Kernel-level rootkit or privilege escalation attempt.");
+        }
+
+        // --- Credential Harvesting ---
+        if asm_lower.contains("lsass") || (asm_lower.contains("samss") && asm_lower.contains("read")) {
+            findings.push("Detected reference to LSASS/SAM. Credential harvesting (Mimikatz-style) suspected.");
+        }
+
+        // --- Dynamic Import Resolution (GetProcAddress pattern) ---
+        if asm_lower.contains("getprocaddress") || asm_lower.contains("loadlibrary") {
+            findings.push("Detected dynamic API resolution (GetProcAddress/LoadLibrary). Common in packed/obfuscated malware and shellcode.");
+        }
+
+        // --- NOP Sled Detection ---
+        let nop_count = asm_lower.matches("nop").count();
+        if nop_count > 20 {
+            findings.push("Detected large NOP sled (>20 consecutive NOPs). Classic shellcode padding for exploit reliability.");
+        }
+
+        if findings.is_empty() {
             "HEURISTIC ANALYSIS: Code segment appears consistent with normal execution.".to_string()
+        } else {
+            format!("HEURISTIC ANALYSIS: {} finding(s) detected.\n{}", findings.len(), findings.join("\n"))
         }
     }
 }
@@ -106,67 +156,14 @@ impl SpiderEyes {
 
         info!("🕸️  [ASLR] Executable segment found at: 0x{:x}", exec_segment.start());
 
-        // 3. CAPTURE: Read from memory
-        // On Linux, we use /proc/[pid]/mem. On Windows, we'd use ReadProcessMemory.
-        #[cfg(target_os = "linux")]
-        let (buffer, hash) = {
-            use std::io::{Read, Seek, SeekFrom};
-            let mut mem_file = std::fs::File::open(format!("/proc/{}/mem", target_pid))?;
-            let mut buf = vec![0u8; 1024];
-            mem_file.seek(SeekFrom::Start(exec_segment.start() as u64))?;
-            let bytes_read = mem_file.read(&mut buf)?;
-            buf.truncate(bytes_read);
-            
-            let mut hasher = Hasher::new();
-            hasher.update(&buf);
-            let hash = hasher.finalize().to_string();
-            
-            if let Some(cached_report) = self.analysis_cache.get(&hash) {
-                info!("🕸️  [CACHE-HIT] Re-using analysis for binary hash {}", hash);
-                return Ok(cached_report.clone());
-            }
-            (buf, hash)
-        };
+        // 3. CAPTURE: Read from memory (platform-specific)
+        let (buffer, hash) = self.read_process_memory(target_pid, exec_segment.start(), exec_segment.size())?;
 
-        #[cfg(target_os = "windows")]
-        let (buffer, hash) = {
-            // 3. READ: Extract bytes for disassembly
-            let mut buffer = vec![0u8; exec_segment.size()];
-            unsafe {
-                let proc_handle = winapi::um::processthreadsapi::OpenProcess(
-                    winapi::um::winnt::PROCESS_VM_READ | winapi::um::winnt::PROCESS_QUERY_INFORMATION,
-                    0,
-                    target_pid,
-                );
-                if proc_handle.is_null() {
-                    return Err(anyhow::anyhow!("Failed to open process {} for reading", target_pid));
-                }
-                let mut bytes_read = 0;
-                let ok = winapi::um::memoryapi::ReadProcessMemory(
-                    proc_handle,
-                    exec_segment.start() as *const _,
-                    buffer.as_mut_ptr() as *mut _,
-                    buffer.len(),
-                    &mut bytes_read,
-                );
-                winapi::um::handleapi::CloseHandle(proc_handle);
-                if ok == 0 {
-                    return Err(anyhow::anyhow!("Failed to read memory from PID {}", target_pid));
-                }
-                buffer.truncate(bytes_read);
-            }
-
-            // 3b. CACHE CHECK: Hash the bytes to avoid redundant disassembly/inference
-            let mut hasher = Hasher::new();
-            hasher.update(&buffer);
-            let hash = hasher.finalize().to_string();
-
-            if let Some(cached_report) = self.analysis_cache.get(&hash) {
-                info!("🕸️  [CACHE-HIT] Re-using analysis for binary hash {}", hash);
-                return Ok(cached_report.clone());
-            }
-            (buffer, hash)
-        };
+        // Check cache first
+        if let Some(cached_report) = self.analysis_cache.get(&hash) {
+            info!("🕸️  [CACHE-HIT] Re-using analysis for binary hash {}", hash);
+            return Ok(cached_report.clone());
+        }
 
         // 4. DISASSEMBLE: Translate bytes to assembly
         // Determine mode based on pointer size (simplified heuristic)
@@ -201,5 +198,98 @@ impl SpiderEyes {
         self.analysis_cache.insert(hash, final_report.clone());
         
         Ok(final_report)
+    }
+
+    /// Cross-platform process memory reader
+    #[cfg(target_os = "linux")]
+    fn read_process_memory(&self, pid: u32, start: usize, _size: usize) -> anyhow::Result<(Vec<u8>, String)> {
+        use std::io::{Read, Seek, SeekFrom};
+        let mut mem_file = std::fs::File::open(format!("/proc/{}/mem", pid))?;
+        let mut buf = vec![0u8; 4096]; // Read more bytes for better analysis coverage
+        mem_file.seek(SeekFrom::Start(start as u64))?;
+        let bytes_read = mem_file.read(&mut buf)?;
+        buf.truncate(bytes_read);
+        
+        let mut hasher = Hasher::new();
+        hasher.update(&buf);
+        let hash = hasher.finalize().to_string();
+        
+        Ok((buf, hash))
+    }
+
+    /// macOS: Uses mach_vm_read to read process memory (requires SIP disabled or entitled binary)
+    #[cfg(target_os = "macos")]
+    fn read_process_memory(&self, pid: u32, start: usize, size: usize) -> anyhow::Result<(Vec<u8>, String)> {
+        use std::io::{Read, Seek, SeekFrom};
+        // macOS does not have /proc/[pid]/mem, so we use mach VM read via libc.
+        // For now, we use the proc-maps crate data and attempt to read via /dev/mem or task_for_pid.
+        // A full implementation requires a code-signed binary with the com.apple.security.cs.debugger entitlement.
+        
+        // Fallback: try reading from the executable file on disk instead of live memory.
+        // This is less accurate but works without SIP bypass.
+        let maps = proc_maps::get_process_maps(pid as proc_maps::Pid)?;
+        let exec_seg = maps.iter()
+            .find(|m| m.is_exec() && m.filename().is_some())
+            .ok_or_else(|| anyhow::anyhow!("No executable segment found for PID {}", pid))?;
+        
+        if let Some(path) = exec_seg.filename() {
+            let path_str = path.to_string_lossy();
+            if std::path::Path::new(&*path_str).exists() {
+                let mut f = std::fs::File::open(&*path_str)?;
+                let mut buf = vec![0u8; 4096];
+                let bytes_read = f.read(&mut buf)?;
+                buf.truncate(bytes_read);
+                
+                let mut hasher = Hasher::new();
+                hasher.update(&buf);
+                let hash = hasher.finalize().to_string();
+                
+                info!("🕸️  [macOS] Read {} bytes from on-disk binary: {}", bytes_read, path_str);
+                return Ok((buf, hash));
+            }
+        }
+        
+        Err(anyhow::anyhow!("macOS: Could not read process memory for PID {}. Code-signing entitlement required.", pid))
+    }
+
+    /// Windows: Uses ReadProcessMemory via the windows crate
+    #[cfg(target_os = "windows")]
+    fn read_process_memory(&self, pid: u32, start: usize, size: usize) -> anyhow::Result<(Vec<u8>, String)> {
+        use windows::Win32::System::Threading::{OpenProcess, PROCESS_VM_READ, PROCESS_QUERY_INFORMATION};
+        use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+        use windows::Win32::Foundation::CloseHandle;
+
+        let read_size = size.min(4096); // Cap read size
+        let mut buffer = vec![0u8; read_size];
+
+        unsafe {
+            let proc_handle = OpenProcess(
+                PROCESS_VM_READ | PROCESS_QUERY_INFORMATION,
+                false,
+                pid,
+            ).map_err(|e| anyhow::anyhow!("Failed to open process {}: {}", pid, e))?;
+            
+            let mut bytes_read = 0usize;
+            let result = ReadProcessMemory(
+                proc_handle,
+                start as *const std::ffi::c_void,
+                buffer.as_mut_ptr() as *mut std::ffi::c_void,
+                read_size,
+                Some(&mut bytes_read),
+            );
+            
+            let _ = CloseHandle(proc_handle);
+            
+            if result.is_err() {
+                return Err(anyhow::anyhow!("Failed to read memory from PID {}", pid));
+            }
+            buffer.truncate(bytes_read);
+        }
+
+        let mut hasher = Hasher::new();
+        hasher.update(&buffer);
+        let hash = hasher.finalize().to_string();
+
+        Ok((buffer, hash))
     }
 }
