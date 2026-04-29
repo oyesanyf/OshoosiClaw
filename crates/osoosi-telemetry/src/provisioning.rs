@@ -439,14 +439,14 @@ impl AgentProvisioner {
         full_fidelity_sysmon_xml(rules)
     }
 
-    /// Windows: Install Sysmon
     #[cfg(target_os = "windows")]
     async fn provision_windows(&self) -> anyhow::Result<()> {
         info!("Provisioning Windows telemetry (Sysmon)...");
 
-        let config_dir = Path::new("config");
+        let base_dir = osoosi_types::resolve_base_dir();
+        let config_dir = base_dir.join("config");
         if !config_dir.exists() {
-            let _ = std::fs::create_dir_all(config_dir);
+            let _ = std::fs::create_dir_all(&config_dir);
         }
 
         let full_fidelity_cfg = config_dir.join("sysmon-immune-system.xml");
@@ -471,7 +471,7 @@ impl AgentProvisioner {
         rules: &[osoosi_types::BlockingRule],
     ) -> anyhow::Result<()> {
         let xml = self.generate_sysmon_xml(rules);
-        let config_path = Path::new("config").join("sysmon-blocking.xml");
+        let config_path = osoosi_types::resolve_base_dir().join("config").join("sysmon-blocking.xml");
         std::fs::write(&config_path, xml)?;
 
         let binary = self.ensure_sysmon_binary().await?;
@@ -701,16 +701,17 @@ impl AgentProvisioner {
             required
         );
 
-        let zip_path = Path::new("Sysmon.zip");
+        let base_dir = osoosi_types::resolve_base_dir();
+        let zip_path = base_dir.join("Sysmon.zip");
         self.download_with_resume(
             "https://download.sysinternals.com/files/Sysmon.zip",
-            zip_path,
+            &zip_path,
         )
         .await?;
 
         info!("Extracting Sysmon...");
-        extract_zip(zip_path, Path::new("."))?;
-        let _ = std::fs::remove_file(zip_path);
+        extract_zip(&zip_path, &base_dir)?;
+        let _ = std::fs::remove_file(&zip_path);
         info!("Sysmon downloaded and extracted successfully.");
 
         if required_path.exists() {

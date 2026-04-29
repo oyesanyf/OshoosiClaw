@@ -182,7 +182,7 @@ impl MemoryStore {
             [],
         )?;
 
-        // File skip list: paths that failed to hash (locked, permission denied) — avoid retry spam
+        // File skip list: paths that failed to hash (locked, permission denied) \u2014 avoid retry spam
         conn.execute(
             "CREATE TABLE IF NOT EXISTS file_skip_list (
                 path TEXT PRIMARY KEY,
@@ -323,6 +323,38 @@ impl MemoryStore {
         )?;
 
         // MIGRATION: Add version_start_including / version_end_excluding to kev if they are missing
+        let table_info: Vec<String> = conn
+            .prepare("PRAGMA table_info(kev)")?
+            .query_map([], |row| row.get(1))?
+            .collect::<rusqlite::Result<Vec<String>>>()?;
+
+        if !table_info.contains(&"version_start_including".to_string()) {
+            info!("Migrating 'kev' table: adding 'version_start_including' column...");
+            let _ = conn.execute("ALTER TABLE kev ADD COLUMN version_start_including TEXT", []);
+        }
+        if !table_info.contains(&"version_end_excluding".to_string()) {
+            info!("Migrating 'kev' table: adding 'version_end_excluding' column...");
+            let _ = conn.execute("ALTER TABLE kev ADD COLUMN version_end_excluding TEXT", []);
+        }
+
+        Ok(())
+    }
+
+    /// Prune old data and vacuum the database to reclaim space.
+    pub fn vacuum_and_prune(&self, days_retention: u32) -> anyhow::Result<()> {
+        info!("Pruning database records older than {} days...", days_retention);
+        let conn = self.conn.lock();
+        let cutoff = (Utc::now() - chrono::Duration::days(days_retention as i64)).to_rfc3339();
+        let skip_cutoff = (Utc::now() - chrono::Duration::days(1)).to_rfc3339();
+        let deleted_threats = conn.execute("DELETE FROM threats WHERE detected_at < ?", [&cutoff])?;
+        let deleted_integrity = conn.execute("DELETE FROM file_integrity WHERE last_seen < ?", [&cutoff])?;
+        let deleted_skips = conn.execute("DELETE FROM file_skip_list WHERE added_at < ?", [&skip_cutoff])?;
+        info!("Pruned {} threats, {} integrity records, and {} skip-list entries.", deleted_threats, deleted_integrity, deleted_skips);
+        let _ = conn.execute_batch("VACUUM;");
+        Ok(())
+    }
+
+    pub fn is_nsrl_known_good(&self, sha1: &str) -> anyhow::Result<bool> {
         let key = sha1.trim().to_ascii_lowercase();
         let conn = self.conn.lock();
         let mut stmt = conn.prepare_cached("SELECT 1 FROM nsrl WHERE sha1 = ? LIMIT 1")?;
@@ -330,7 +362,7 @@ impl MemoryStore {
         Ok(exists)
     }
 
-    /// Bulk-import NSRL from an official NIST **RDS** SQLite (Modern `FILE` table) by `ATTACH` + `INSERT…SELECT`.
+    /// Bulk-import NSRL from an official NIST **RDS** SQLite (Modern `FILE` table) by `ATTACH` + `INSERT\u2026SELECT`.
     /// This avoids loading millions of rows into Rust and completes much faster with lower RAM use than
     /// `import_nsrl_from_sqlite` + `upsert_nsrl_records`. Safe to run while the agent is up (WAL + readers).
     pub fn import_nsrl_from_nist_rds_sqlite(&self, nist_rds_path: &Path) -> anyhow::Result<u64> {
@@ -386,7 +418,7 @@ impl MemoryStore {
             );
         }
 
-        // Map NIST `FILE` columns → our schema; hashes in RDS are typically hex strings.
+        // Map NIST `FILE` columns \u2192 our schema; hashes in RDS are typically hex strings.
         tx.execute(
             "INSERT OR REPLACE INTO main.nsrl (sha1, md5, sha256, file_name, file_size, product_code, os_code)
              SELECT lower(sha1), lower(md5), lower(sha256), name, size, product, os FROM nist.FILE",

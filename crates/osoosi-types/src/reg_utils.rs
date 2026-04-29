@@ -43,6 +43,18 @@ pub fn normalize_registry_path(path: &str) -> String {
     normalized
 }
 
+/// Check if a normalized registry path belongs to Oshoosi's own configuration.
+pub fn is_self_protection_reg_path(path: &str) -> bool {
+    let normalized = path.to_lowercase();
+    normalized.contains("software\\oshoosiclaw") || normalized.contains("software\\comodoedragent")
+}
+
+/// Check if a file path belongs to Oshoosi's own binaries or data.
+pub fn is_self_protection_file_path(path: &str) -> bool {
+    let normalized = path.to_lowercase();
+    normalized.contains("\\oshoosiclaw\\") || normalized.contains("\\comodoedragent\\")
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

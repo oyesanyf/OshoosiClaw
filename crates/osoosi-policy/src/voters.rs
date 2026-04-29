@@ -96,6 +96,35 @@ impl GemmaVoter {
     }
 
     /// Pre-filter: skip known-safe system processes to avoid wasting LLM inference.
+    pub fn is_known_safe(image_path: &str) -> bool {
+        let path = image_path.to_ascii_lowercase();
+        let stem = std::path::Path::new(image_path)
+            .file_stem()
+            .and_then(|s| s.to_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+        
+        let trusted_path = path.contains("\\windows\\system32\\")
+            || path.contains("\\windows\\syswow64\\")
+            || path.contains("\\program files\\")
+            || path.contains("\\program files (x86)\\")
+            || path.contains("\\programdata\\chocolatey\\")
+            || path.contains("\\programdata\\scoop\\")
+            || path.contains("\\tools\\git\\")
+            || path.contains("\\oshoosiclaw\\tools\\")
+            || path.contains("\\oshoosiclaw\\target\\")
+            || path.contains("/oshoosiclaw/tools/")
+            || path.contains("/oshoosiclaw/target/")
+            || path.contains("\\appdata\\local\\programs\\python\\");
+
+        const TRUSTED_STEMS: &[&str] = &[
+            "osoosi", "sysmon", "sysmon64", "csrss", "lsass", "winlogon", "services", 
+            "svchost", "explorer", "taskmgr", "runtimebroker", "searchindexer", 
+            "rustc", "cargo", "python", "git", "cursor", "antigravity", "code", "node", "ollama", "npm", "powershell", "cmd"
+        ];
+
+        trusted_path || TRUSTED_STEMS.contains(&stem.as_str())
+    }
 }
 
 impl ThreatVoter for GemmaVoter {
@@ -175,6 +204,80 @@ fn strip_think_tags(raw: &str) -> String {
         raw.replace("<think>", "").trim().to_string()
     } else {
         raw.trim().to_string()
+    }
+}
+
+/// Native Instrumentation Voter (Ported from OpenEDR architectural patterns)
+/// Votes on self-protection violations, USB exfiltration, and registry anomalies.
+pub struct NativeVoter {
+    pub memory: Arc<osoosi_memory::MemoryStore>,
+}
+
+impl ThreatVoter for NativeVoter {
+    fn name(&self) -> String {
+        "Native-Instrumentation".to_string()
+    }
+    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        // 1. Self-Protection: Check if unauthorized process is touching Oshoosi files/registry
+        if let Some(path) = event.data.get("TargetFilename").and_then(|v| v.as_str()) {
+            if osoosi_types::reg_utils::is_self_protection_file_path(path) {
+                // If it's not Oshoosi itself or a trusted system process
+                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+                if !image.to_lowercase().contains("osoosi") && !image.to_lowercase().contains("system32") {
+                    return Some(VoteResult {
+                        confidence: 0.95,
+                        reason: format!("Self-Protection Violation: process {} attempted to access EDR binary/data at {}", image, path),
+                        weight: 1.0, // Critical violation
+                    });
+                }
+            }
+        }
+
+        if let Some(key) = event.data.get("TargetObject").and_then(|v| v.as_str()) {
+            let normalized = osoosi_types::reg_utils::normalize_registry_path(key);
+            if osoosi_types::reg_utils::is_self_protection_reg_path(&normalized) {
+                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+                if !image.to_lowercase().contains("osoosi") {
+                    return Some(VoteResult {
+                        confidence: 0.95,
+                        reason: format!("Self-Protection Violation: process {} attempted to modify EDR registry key {}", image, key),
+                        weight: 1.0,
+                    });
+                }
+            }
+
+            // 2. Normalized Registry Persistence Check
+            if normalized.contains("software\\microsoft\\windows\\currentversion\\run") 
+               || normalized.contains("system\\currentcontrolset\\services") {
+                // Suspicious if not from a known installer
+                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+                if !image.to_lowercase().contains("msiexec") && !image.to_lowercase().contains("setup") {
+                    return Some(VoteResult {
+                        confidence: 0.75,
+                        reason: format!("Suspicious Persistence: process {} modifying boot/service key {}", image, normalized),
+                        weight: 0.6,
+                    });
+                }
+            }
+        }
+
+        // 3. USB Exfiltration Detection (using OpenEDR pattern)
+        if event.event_id == SysmonEventId::FileCreate {
+            if let Some(path) = event.data.get("TargetFilename").and_then(|v| v.as_str()) {
+                // If it's a drive usually associated with USB (D:, E:, etc. that isn't the system drive)
+                let p = path.to_lowercase();
+                if (p.starts_with("d:\\") || p.starts_with("e:\\") || p.starts_with("f:\\")) 
+                   && !p.contains("osoosi") {
+                    return Some(VoteResult {
+                        confidence: 0.6,
+                        reason: format!("Potential USB Exfiltration: file creation on removable media at {}", path),
+                        weight: 0.5,
+                    });
+                }
+            }
+        }
+
+        None
     }
 }
 
@@ -556,7 +659,6 @@ impl ThreatVoter for PrivacyVoter {
 
         if base_score > 0.0 {
             // 2. APPLY DIFFERENTIAL PRIVACY: Add Laplacian noise to the score
-            // This prevents an observer from knowing the exact local detection confidence.
             let noisy_score = (base_score + self.dp.laplace_noise()).clamp(0.0, 1.0);
 
             // 3. LOG TO MERKLE AUDIT TREE: Ensure the decision is tamper-proof

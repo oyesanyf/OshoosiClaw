@@ -355,8 +355,16 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 }
             }
 
-            let join_gate = orchestrator.start_p2p_loop().await.ok();
+            let start_instant = std::time::Instant::now();
+            let orchestrator = osoosi_core::EdrOrchestrator::new().await?;
 
+            // Start maintenance loop (DB pruning/vacuum)
+            let maint_orch = orchestrator.clone();
+            tokio::spawn(async move {
+                maint_orch.run_maintenance_loop().await;
+            });
+
+            let join_gate = orchestrator.start_p2p_loop().await.ok();
             // 2. Bind dashboard as soon as the orchestrator exists so the UI can load while loops start.
             if with_dashboard {
                 info!("Auto-launching dashboard UI...");

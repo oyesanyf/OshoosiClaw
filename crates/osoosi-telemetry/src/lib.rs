@@ -9,6 +9,7 @@ pub mod hash;
 pub mod host_events;
 pub mod provisioning;
 pub mod sysmon;
+pub mod injector;
 
 pub use discovery::*;
 pub use file_watch::*;
@@ -16,3 +17,4 @@ pub use hash::*;
 pub use host_events::*;
 pub use provisioning::*;
 pub use sysmon::*;
+pub use injector::*;
