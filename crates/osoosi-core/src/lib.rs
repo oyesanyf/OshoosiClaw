@@ -1018,6 +1018,9 @@ impl EdrOrchestrator {
 
             let orch_sig = orch.clone();
             let orch_msg = orch.clone();
+            let orch_intel = orch.clone();
+            let orch_sample = orch.clone();
+            let orch_tarpit = orch.clone();
             let orch_delta = orch.clone();
 
             tokio::spawn(async move {
@@ -1035,6 +1038,10 @@ impl EdrOrchestrator {
                             // Persist mesh threat so it shows in the dashboard
                             if let Err(e) = orch_sig.memory.log_threat(&sig) {
                                 error!("Failed to persist mesh threat: {}", e);
+                            }
+                            // Mark malicious hashes in Bloom filter for fast-path blocking
+                            if let Some(ref hash) = sig.hash_blake3 {
+                                orch_sig.memory.mark_hash_known_malicious(hash);
                             }
                             orch_sig.audit.log(
                                 "MESH_THREAT_RECEIVED",
@@ -1058,11 +1065,109 @@ impl EdrOrchestrator {
                                     .push(msg_clone);
                             }
                         },
-                        |_shard| {}, // Ghost shards - placeholder for future distributed storage
-                        |_intel| {}, // Global intel
-                        |_sample| {}, // Malware samples
-                        |_tarpit| {}, // Tarpit signals
-                        |_confidential| {}, // Confidential messages
+                        |_shard| {}, // Ghost shards — placeholder for future distributed deception storage
+                        move |intel| {
+                            // Global Intel: Persist peer threat intelligence and mark hashes
+                            info!(
+                                "Mesh Intel: Received global intelligence from {} — {}",
+                                intel.source_node, intel.summary
+                            );
+                            orch_intel.audit.log(
+                                "MESH_INTEL_RECEIVED",
+                                serde_json::json!({
+                                    "source_node": intel.source_node,
+                                    "source_url": intel.source_url,
+                                    "summary": intel.summary,
+                                }),
+                            );
+                            // If the intel carries a zero-day defense, log it for the repair engine
+                            if let Some(ref defense) = intel.defense {
+                                warn!(
+                                    "Mesh Intel: Zero-day defense received for {} (severity: {:.2})",
+                                    defense.cve_id, defense.severity
+                                );
+                            }
+                        },
+                        move |sample| {
+                            // Malware Sample: Feed into federated threat model for distributed learning
+                            info!(
+                                "Mesh Sample: Received malware sample from {} (hash: {}, label: {})",
+                                sample.source_node, sample.file_hash, sample.label
+                            );
+                            // Mark the hash as known-malicious in Bloom filter for fast-path detection
+                            if sample.label == 0 {
+                                orch_sample.memory.mark_hash_known_malicious(&sample.file_hash);
+                            }
+                            orch_sample.audit.log(
+                                "MESH_SAMPLE_RECEIVED",
+                                serde_json::json!({
+                                    "source_node": sample.source_node,
+                                    "file_hash": sample.file_hash,
+                                    "label": sample.label,
+                                    "feature_version": sample.feature_version,
+                                }),
+                            );
+                        },
+                        move |tarpit_signal| {
+                            // Tarpit Signal: Apply collaborative attacker IP block when peers warn
+                            if tarpit_signal.confidence >= 0.5 {
+                                warn!(
+                                    "Mesh Tarpit: Peer warns about attacker IP {} (confidence: {:.2}, type: {}). Applying local firewall block.",
+                                    tarpit_signal.target_ip, tarpit_signal.confidence, tarpit_signal.attack_type
+                                );
+
+                                // Block attacker IP at the firewall level (netsh on Windows, iptables on Linux)
+                                #[cfg(target_os = "windows")]
+                                {
+                                    let rule_name = format!("Osoosi-MeshTarpit-{}", tarpit_signal.target_ip.replace('.', "-").replace(':', "-"));
+                                    let _ = std::process::Command::new("netsh")
+                                        .args([
+                                            "advfirewall", "firewall", "add", "rule",
+                                            &format!("name={}", rule_name),
+                                            "dir=in", "action=block",
+                                            &format!("remoteip={}", tarpit_signal.target_ip),
+                                            "profile=any",
+                                        ])
+                                        .status();
+                                    let _ = std::process::Command::new("netsh")
+                                        .args([
+                                            "advfirewall", "firewall", "add", "rule",
+                                            &format!("name={}-out", rule_name),
+                                            "dir=out", "action=block",
+                                            &format!("remoteip={}", tarpit_signal.target_ip),
+                                            "profile=any",
+                                        ])
+                                        .status();
+                                    info!("Mesh Tarpit: Firewall rules applied for attacker IP {}", tarpit_signal.target_ip);
+                                }
+
+                                #[cfg(target_os = "linux")]
+                                {
+                                    let _ = std::process::Command::new("iptables")
+                                        .args(["-A", "INPUT", "-s", &tarpit_signal.target_ip, "-j", "DROP"])
+                                        .status();
+                                    let _ = std::process::Command::new("iptables")
+                                        .args(["-A", "OUTPUT", "-d", &tarpit_signal.target_ip, "-j", "DROP"])
+                                        .status();
+                                    info!("Mesh Tarpit: iptables rules applied for attacker IP {}", tarpit_signal.target_ip);
+                                }
+
+                                orch_tarpit.audit.log(
+                                    "MESH_TARPIT_APPLIED",
+                                    serde_json::json!({
+                                        "target_ip": tarpit_signal.target_ip,
+                                        "confidence": tarpit_signal.confidence,
+                                        "attack_type": tarpit_signal.attack_type,
+                                    }),
+                                );
+                            } else {
+                                info!(
+                                    "Mesh Tarpit: Low-confidence signal for {} ({:.2}) — logged but not applied.",
+                                    tarpit_signal.target_ip, tarpit_signal.confidence
+                                );
+                            }
+                        },
+                        |_confidential| {}, // Confidential messages — reserved for future FHE-encrypted comms
                         move |delta| {
                             let orch_clone = orch_delta.clone();
                             tokio::spawn(async move {
@@ -2267,10 +2372,23 @@ impl EdrOrchestrator {
                             }
                         });
 
-                        // Immediate termination
+                        // Immediate termination + self-healing rollback
                         if let Some(pid) = event.process_id() {
                             warn!("Terminating suspicious process PID: {}", pid);
                             let _ = self.remediation.kill_process_tree(pid as u32);
+
+                            // Self-Healing: Rollback any file changes made by the malicious process
+                            let self_healer = self.self_healing.clone();
+                            let heal_pid = pid as u32;
+                            tokio::spawn(async move {
+                                match self_healer.rollback_process_actions(heal_pid).await {
+                                    Ok(count) if count > 0 => {
+                                        warn!("Self-Healing: Rolled back {} file(s) for terminated PID {}.", count, heal_pid);
+                                    }
+                                    Ok(_) => info!("Self-Healing: No rollback targets found for PID {}.", heal_pid),
+                                    Err(e) => warn!("Self-Healing rollback failed for PID {}: {}", heal_pid, e),
+                                }
+                            });
                         }
                     }
                 }
