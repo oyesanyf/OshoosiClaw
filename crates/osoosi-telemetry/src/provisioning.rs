@@ -2161,7 +2161,7 @@ impl AgentProvisioner {
 /// Sysmon with partial profiles, or most event IDs stop flowing.
 pub fn full_fidelity_sysmon_xml(rules: &[osoosi_types::BlockingRule]) -> String {
     let mut xml = String::from(
-        r#"<Sysmon schemaversion="4.82">
+        r#"<Sysmon schemaversion="4.91">
   <HashAlgorithms>*</HashAlgorithms>
   <CheckRevocation/>
   <DnsLookup/>
