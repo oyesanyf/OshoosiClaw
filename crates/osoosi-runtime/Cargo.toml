@@ -20,3 +20,6 @@ rand = { workspace = true }
 sysinfo = { workspace = true }
 tfhe = { workspace = true }
 bincode = { workspace = true }
+
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }

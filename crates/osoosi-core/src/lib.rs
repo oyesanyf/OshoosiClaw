@@ -1137,6 +1137,32 @@ impl EdrOrchestrator {
         self.start_fetcher_loop().await;
         self.start_model_training_loop(60).await;
         
+        // 6. Ghost Node Deception Services + Canary Deployment
+        let ghost_enabled = std::env::var("OSOOSI_GHOST_ENABLED")
+            .map(|v| v != "0" && !v.eq_ignore_ascii_case("false"))
+            .unwrap_or(true);
+        if ghost_enabled {
+            info!("Starting Ghost Node deception services (honeypot listeners)...");
+            self.ghost_nodes.start_all_deceptions().await;
+
+            // Deploy Ghost Canary files on disk
+            let canary_system = crate::canary::CanaryManager::new();
+            let deployed = canary_system.deploy_canaries();
+            if !deployed.is_empty() {
+                info!("Deployed {} Ghost Canary traps across the filesystem.", deployed.len());
+            }
+
+            // Deploy ghost trap files (high-value bait)
+            let traps_path = &self.runtime_config.traps_path;
+            if let Err(e) = self.response.spawn_ghost_files(traps_path).await {
+                warn!("Ghost trap file deployment failed: {} (non-fatal)", e);
+            } else {
+                info!("Ghost trap files deployed to {:?}", traps_path);
+            }
+        } else {
+            info!("Ghost Node deception disabled via OSOOSI_GHOST_ENABLED=0.");
+        }
+
         info!("All security subsystems are ACTIVE.");
         Ok(())
     }
