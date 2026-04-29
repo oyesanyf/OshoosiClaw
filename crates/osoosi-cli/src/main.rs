@@ -415,6 +415,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
             // Background thread to download/populate NSRL if empty
             tokio::spawn(async move {
+                // Delay background NSRL tasks to allow provisioning and boot to finish
+                tokio::time::sleep(std::time::Duration::from_secs(15)).await;
+                
                 let nsrl_count = nsrl_orch.memory().nsrl_record_count().unwrap_or(0);
                 let fetcher = osoosi_policy::ThreatFeedFetcher::new();
                 let nsrl_dir = std::env::temp_dir().join("osoosi-nsrl-shared-cache");
@@ -1544,8 +1547,8 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
     let gemma_dir = models_dir.join("gemma4-e4b");
     let malware_dir = models_dir.join("malware");
 
-    let _ = fs::create_dir_all(&gemma_dir);
-    let _ = fs::create_dir_all(&malware_dir);
+    fs::create_dir_all(&gemma_dir)?;
+    fs::create_dir_all(&malware_dir)?;
 
     // Use tokio-enabled API builder with optional HF_TOKEN
     let api = {

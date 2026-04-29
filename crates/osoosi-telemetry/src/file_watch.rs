@@ -291,26 +291,29 @@ pub async fn build_os_file_hash_baseline(
     let mut current_concurrency = std::env::var("OSOOSI_BASELINE_CONCURRENCY")
         .ok()
         .and_then(|s| s.parse().ok())
-        .unwrap_or(20); // Lowered default
+        .unwrap_or(4); // Significantly lowered default to prevent freezes
     let min_concurrency = 1;
-    let _target_cpu_usage = 40.0; // Don't use more than 40% of a single core for hashing if global load is high
+    let _target_cpu_usage = 30.0; // Lower target
 
     while let Some(path) = rx.recv().await {
         // 1. Periodically check system load and adjust throttle
-        if last_report.elapsed().as_secs() >= 5 {
-            sys.refresh_all();
+        if last_report.elapsed().as_secs() >= 10 {
+            // Only refresh CPU and specific process info to avoid heavy new_all()
+            sys.refresh_cpu_usage();
+            sys.refresh_process(self_pid);
+            
             let total_cpu = sys.global_cpu_info().cpu_usage();
             let process_cpu = sys.process(self_pid).map(|p| p.cpu_usage()).unwrap_or(0.0);
 
             // If system is heavily loaded or we are exceeding our own "fair share"
-            if total_cpu > 70.0 || process_cpu > 50.0 {
+            if total_cpu > 60.0 || process_cpu > 40.0 {
                 current_concurrency = (current_concurrency / 2).max(min_concurrency);
-                debug!("Resource throttling active: CPU {:.1}% (Agent {:.1}%), reducing concurrency to {}", total_cpu, process_cpu, current_concurrency);
-                // Introduce a small pause to let the OS breathe
-                tokio::time::sleep(Duration::from_millis(100)).await;
-            } else if total_cpu < 30.0 && process_cpu < 20.0 {
+                info!("Resource throttling: System CPU {:.1}% (Agent {:.1}%), reducing concurrency to {}", total_cpu, process_cpu, current_concurrency);
+                // Pause to let the OS breathe
+                tokio::time::sleep(Duration::from_millis(500)).await;
+            } else if total_cpu < 25.0 && process_cpu < 15.0 {
                 // Calm system, can ramp up slightly
-                current_concurrency = (current_concurrency + 2).min(50);
+                current_concurrency = (current_concurrency + 1).min(12);
             }
 
             let current = hashed_count.load(std::sync::atomic::Ordering::Relaxed);

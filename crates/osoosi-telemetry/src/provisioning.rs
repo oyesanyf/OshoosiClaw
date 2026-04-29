@@ -446,7 +446,9 @@ impl AgentProvisioner {
         let base_dir = osoosi_types::resolve_base_dir();
         let config_dir = base_dir.join("config");
         if !config_dir.exists() {
-            let _ = std::fs::create_dir_all(&config_dir);
+            if let Err(e) = std::fs::create_dir_all(&config_dir) {
+                warn!("Failed to create config directory {:?}: {}. Provisioning might fail.", config_dir, e);
+            }
         }
 
         let full_fidelity_cfg = config_dir.join("sysmon-immune-system.xml");
@@ -471,7 +473,12 @@ impl AgentProvisioner {
         rules: &[osoosi_types::BlockingRule],
     ) -> anyhow::Result<()> {
         let xml = self.generate_sysmon_xml(rules);
-        let config_path = osoosi_types::resolve_base_dir().join("config").join("sysmon-blocking.xml");
+        let base_dir = osoosi_types::resolve_base_dir();
+        let config_dir = base_dir.join("config");
+        if !config_dir.exists() {
+            std::fs::create_dir_all(&config_dir)?;
+        }
+        let config_path = config_dir.join("sysmon-blocking.xml");
         std::fs::write(&config_path, xml)?;
 
         let binary = self.ensure_sysmon_binary().await?;
@@ -802,6 +809,9 @@ impl AgentProvisioner {
         );
 
         let base_dir = osoosi_types::resolve_base_dir();
+        if !base_dir.exists() {
+            std::fs::create_dir_all(&base_dir)?;
+        }
         let zip_path = base_dir.join("Sysmon.zip");
         self.download_with_resume(
             "https://download.sysinternals.com/files/Sysmon.zip",
@@ -1538,7 +1548,7 @@ impl AgentProvisioner {
         for (name, url) in sources {
             let target_sub_dir = yara_base_dir.join(name);
             if !target_sub_dir.exists() {
-                let _ = std::fs::create_dir_all(&target_sub_dir);
+                std::fs::create_dir_all(&target_sub_dir)?;
             }
 
             // Only download if the subfolder is empty
@@ -2079,7 +2089,7 @@ impl AgentProvisioner {
         }
 
         info!("MalConv weights missing. Downloading from Oshoosi Hugging Face bundle (OSOOSI_USE_BUNDLED_HF_WEIGHTS)...");
-        let _ = std::fs::create_dir_all(&malconv_dir);
+        std::fs::create_dir_all(&malconv_dir)?;
 
         // Try to use HF_TOKEN if available, otherwise just use the public URL
         let url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/malconv.safetensors?download=true";
@@ -2118,7 +2128,7 @@ impl AgentProvisioner {
         }
 
         info!("Behavioral model weights missing. Provisioning from Oshoosi Hugging Face bundle (OSOOSI_USE_BUNDLED_HF_WEIGHTS)...");
-        let _ = std::fs::create_dir_all(&smollm_dir);
+        std::fs::create_dir_all(&smollm_dir)?;
 
         let model_url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/smollm2-135m-it.onnx?download=true";
         let tokenizer_url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/tokenizer.json?download=true";
@@ -2159,6 +2169,7 @@ impl AgentProvisioner {
         let url = format!("https://github.com/Yamato-Security/hayabusa/releases/download/v{}/hayabusa-{}-mac-x64.zip", version, version);
 
         let zip_path = tools_dir.join("hayabusa.zip");
+        std::fs::create_dir_all(&tools_dir)?;
         self.download_with_resume(&url, &zip_path).await?;
 
         // Extraction logic similar to CAPA
@@ -2198,6 +2209,7 @@ impl AgentProvisioner {
         } else {
             "chainsaw.tar.gz"
         });
+        std::fs::create_dir_all(&tools_dir)?;
         self.download_with_resume(&url, &pkg_path).await?;
 
         #[cfg(target_os = "windows")]
@@ -2243,10 +2255,8 @@ impl AgentProvisioner {
         // Xori is often built from source or provided as a crate,
         // but for this agent we'll attempt to download a pre-built binary if available
         // or just log that it needs manual setup if not found.
-        info!("Provisioning Xori...");
-        // Placeholder for Xori binary download logic
-        // For now, we'll create the directory to signify intent.
-        let _ = std::fs::create_dir_all(&xori_dir);
+        info!("Xori not found. Provisioning Xori...");
+        std::fs::create_dir_all(&xori_dir)?;
 
         info!("Xori directory prepared. (Binary download pending official release availability).");
         Ok(())
