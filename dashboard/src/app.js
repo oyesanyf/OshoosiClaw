@@ -412,7 +412,7 @@ function renderThreatsView(threats) {
                 <button class="action-btn primary" onclick="markTruePositive('${t.id}')">Mark Positive</button>
                 <button class="action-btn" onclick="markFalsePositive('${t.id}')">Flag FP</button>
                 <button class="action-btn" onclick="confirmThreat('${t.id}')" style="color:var(--accent-red); border-color:rgba(255,77,77,0.3);">Isolate</button>
-                <button class="action-btn" onclick="document.querySelector('[data-view=\'story\']').click()" style="grid-column: span 3;">View Forensic Story</button>
+                <button class="action-btn" onclick="navigateToStory()" style="grid-column: span 3;">View Forensic Story</button>
             </div>
         </div>
     `}).join('');
@@ -1095,5 +1095,15 @@ async function renderStoryView() {
         } else {
             container.innerHTML = '<p class="placeholder-text">No significant security events to report in this story yet.</p>';
         }
+    }
+}
+
+/**
+ * Navigate to the Forensic Story view from any button
+ */
+function navigateToStory() {
+    const storyNav = document.querySelector('[data-view="story"]');
+    if (storyNav) {
+        storyNav.click();
     }
 }

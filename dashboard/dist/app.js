@@ -412,7 +412,7 @@ function renderThreatsView(threats) {
                 <button class="action-btn primary" onclick="markTruePositive('${t.id}')">Mark Positive</button>
                 <button class="action-btn" onclick="markFalsePositive('${t.id}')">Flag FP</button>
                 <button class="action-btn" onclick="confirmThreat('${t.id}')" style="color:var(--accent-red); border-color:rgba(255,77,77,0.3);">Isolate</button>
-                <button class="action-btn" onclick="document.querySelector('[data-view=\'story\']').click()" style="grid-column: span 3;">View Forensic Story</button>
+                <button class="action-btn" onclick="navigateToStory()" style="grid-column: span 3;">View Forensic Story</button>
             </div>
         </div>
     `}).join('');
@@ -446,56 +446,32 @@ function renderMeshView(mesh) {
 /**
  * Render malware scanner view with drill-down details
  */
-/**
- * Render malware scanner view with drill-down details and GPU status
- */
-async function renderMalwareView(detections) {
+function renderMalwareView(detections) {
     const list = document.getElementById('malware-data-list');
     if (!list) return;
 
-    // Fetch scanner stats for the header
-    const stats = await fetchAPI('/malware-status');
-    
-    let statsHtml = '';
-    if (stats) {
-        statsHtml = `
-        <div class="malware-stats-grid mb-4" style="display: grid; grid-template-columns: repeat(4, 1fr); gap: 10px;">
-            <div class="stat-card glass" style="padding:10px;">
-                <div class="stat-label" style="font-size: 9px; opacity: 0.6; text-transform: uppercase;">Scanned</div>
-                <div class="stat-value" style="font-size: 16px;">${stats.total_scanned}</div>
-            </div>
-            <div class="stat-card glass" style="padding:10px;">
-                <div class="stat-label" style="font-size: 9px; opacity: 0.6; text-transform: uppercase;">Detections</div>
-                <div class="stat-value ${stats.total_malware > 0 ? 'text-red' : ''}" style="font-size: 16px;">${stats.total_malware}</div>
-            </div>
-            <div class="stat-card glass" style="padding:10px;">
-                <div class="stat-label" style="font-size: 9px; opacity: 0.6; text-transform: uppercase;">ML Logic</div>
-                <div class="stat-value" style="font-size: 12px; color: ${stats.model_loaded ? 'var(--accent-green)' : 'var(--accent-red)'}">
-                    ${stats.model_loaded ? 'Active ✅' : 'Inactive'}
-                </div>
-            </div>
-            <div class="stat-card glass" style="padding:10px;">
-                <div class="stat-label" style="font-size: 9px; opacity: 0.6; text-transform: uppercase;">GPU Accel</div>
-                <div class="stat-value" style="font-size: 9px; color: ${stats.gpu_available ? 'var(--accent-blue)' : '#8b949e'}; white-space: nowrap; overflow: hidden; text-overflow: ellipsis;" title="${stats.device_name}">
-                    ${stats.gpu_available ? '<i data-lucide="zap" style="width:10px;height:10px;vertical-align:middle;"></i> ' + stats.device_name : 'CPU Only'}
-                </div>
-            </div>
-        </div>
-        `;
-    }
+    // Update stat counters from malware status API
+    fetchAPI('/malware-status').then(status => {
+        if (status) {
+            updateStats('scanned', status.total_scanned || 0);
+            updateStats('malware-found', status.total_malware || 0);
+            updateStats('clean-scans', status.clamav_clean_count || 0);
+            const mlEl = document.getElementById('stat-ml-status');
+            if (mlEl) mlEl.innerText = status.model_loaded ? 'Active ✅' : 'Inactive';
+        }
+    });
 
     if (!detections || detections.length === 0) {
-        list.innerHTML = statsHtml + '<p class="placeholder-text">No malware detected recently. System is clean.</p>';
-        lucide.createIcons();
+        list.innerHTML = '<p class="placeholder-text">No malware detected recently. System is clean.</p>';
         return;
     }
 
-    list.innerHTML = statsHtml + detections.map((det, idx) => {
+    list.innerHTML = detections.map((det, idx) => {
         const score = det.combined_score || det.score || 0;
         const severity = score > 0.8 ? 'CRITICAL' : (score > 0.5 ? 'HIGH' : 'MEDIUM');
         const badgeClass = score > 0.8 ? 'red' : 'blue';
         const borderClass = score > 0.8 ? 'threat-high' : (score > 0.5 ? 'threat-medium' : 'threat-low');
-        const fileName = det.file_path ? det.file_path.split('\\').pop().split('/').pop() : 'Unknown';
+        const fileName = det.file_path ? det.file_path.split('\\\\').pop().split('/').pop() : 'Unknown';
         const detId = `mw-${idx}`;
 
         return `
@@ -510,31 +486,42 @@ async function renderMalwareView(detections) {
                         <span class="badge ${badgeClass}">${severity}</span>
                     </div>
                     <div class="item-meta">
-                        <span title="${det.file_path}"><i data-lucide="file" style="width:12px"></i> ${fileName}</span>
-                        <span><i data-lucide="activity" style="width:12px"></i> Score: ${typeof score === 'number' ? (score * 100).toFixed(1) : 'N/A'}%</span>
+                        <span><i data-lucide="file" style="width:12px"></i> ${fileName}</span>
+                        <span><i data-lucide="activity" style="width:12px"></i> Score: ${typeof score === 'number' ? score.toFixed(3) : 'N/A'}</span>
+                        ${det.entropy ? `<span><i data-lucide="zap" style="width:12px"></i> Entropy: ${det.entropy.toFixed(2)}</span>` : ''}
+                        ${det.magika_label ? `<span><i data-lucide="tag" style="width:12px"></i> ${det.magika_label}</span>` : ''}
                     </div>
-                    <div style="font-size: 11px; color: var(--accent-blue); margin-top: 4px; cursor:pointer;" onclick="toggleGroupDetails('${detId}')">
+                    <div style="font-size: 11px; color: var(--accent-blue); margin-top: 4px; cursor:pointer;" onclick="toggleMalwareDetails('${detId}')">
                         <i data-lucide="info" style="width:10px; height:10px; vertical-align:middle;"></i> Toggle Forensic Details
                     </div>
                 </div>
             </div>
 
-            <div id="group-details-${detId}" style="display: none; flex-direction: column; gap: 10px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 10px; font-size: 11px;">
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 10px;">
-                    <div><strong>ML Score:</strong> ${(det.ml_score * 100).toFixed(1)}%</div>
-                    <div><strong>Sig Score:</strong> ${(det.signature_score * 100).toFixed(1)}%</div>
-                    <div><strong>Entropy:</strong> ${det.entropy ? det.entropy.toFixed(3) : 'N/A'}</div>
-                    <div><strong>Type:</strong> ${det.magika_label || 'Binary'}</div>
+            <div id="malware-details-${detId}" style="display: none; flex-direction: column; gap: 10px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 10px;">
+                ${det.entropy ? `
+                    <div class="entropy-gauge">
+                        <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); margin-bottom:4px;">
+                            <span>Shannon Entropy</span>
+                            <span>${det.entropy.toFixed(2)} bits</span>
+                        </div>
+                        <div style="height:4px; width:100%; background:rgba(255,255,255,0.1); border-radius:2px; overflow:hidden;">
+                            <div style="height:100%; width:${(det.entropy / 8 * 100).toFixed(0)}%; background:${det.entropy > 7.2 ? 'var(--accent-red)' : 'var(--accent-blue)'};"></div>
+                        </div>
+                    </div>
+                ` : ''}
+                <div style="font-size:12px; color:var(--text-primary); background:rgba(255,255,255,0.03); padding:10px; border-radius:8px; border-left:2px solid var(--accent-purple);">
+                    <div><strong>Full Path:</strong> ${det.file_path || 'Unknown'}</div>
+                    ${det.file_hash ? `<div style="margin-top:4px;"><strong>Hash:</strong> <code style="font-size:10px; color:var(--accent-blue);">${det.file_hash}</code></div>` : ''}
+                    <div style="margin-top:4px;"><strong>ML Score:</strong> ${det.ml_score != null ? det.ml_score.toFixed(3) : 'N/A'} | <strong>Signature:</strong> ${det.signature_score != null ? det.signature_score.toFixed(3) : 'N/A'} | <strong>Combined:</strong> ${typeof score === 'number' ? score.toFixed(3) : 'N/A'}</div>
+                    ${det.yara_matches && det.yara_matches.length > 0 ? `<div style="margin-top:4px;"><strong>YARA Rules:</strong> ${det.yara_matches.join(', ')}</div>` : ''}
+                    ${det.evasion && det.evasion.length > 0 ? `<div style="margin-top:4px; color:var(--accent-red);"><strong>Evasion Indicators:</strong> ${det.evasion.join(', ')}</div>` : ''}
+                    ${det.timestamp ? `<div style="margin-top:4px; font-size:10px; color:var(--text-muted);">Detected: ${formatTimestamp(det.timestamp)}</div>` : ''}
                 </div>
-                <div style="margin-top: 5px;"><strong>Path:</strong> <span style="word-break: break-all; opacity: 0.8;">${det.file_path}</span></div>
-                ${det.yara_matches && det.yara_matches.length > 0 ? `<div style="margin-top: 5px;"><strong>YARA Matches:</strong> <span style="color: var(--accent-purple);">${det.yara_matches.join(', ')}</span></div>` : ''}
-                <div style="margin-top: 5px; opacity: 0.6; font-style: italic;">Detected at: ${new Date(det.timestamp).toLocaleString()}</div>
-                
-                <div class="item-actions mt-3" style="display: flex; gap: 10px;">
-                    <button class="btn-small" onclick="quarantineMalware('${det.file_path.replace(/\\/g, '\\\\')}')">Quarantine</button>
-                    <button class="btn-small" onclick="markMalwareFP('${det.file_hash}', '${fileName}')">False Positive</button>
-                    <button class="btn-small" onclick="investigateNode('${det.file_hash}')">Trace Origin</button>
-                </div>
+            </div>
+
+            <div class="item-actions" style="grid-template-columns: 1fr 1fr; display: grid; gap: 8px;">
+                <button class="action-btn" onclick="markMalwareFP('${det.file_hash || ''}', '${fileName}')">Flag False Positive</button>
+                <button class="action-btn" onclick="quarantineMalware('${det.file_path || ''}')" style="color:var(--accent-red); border-color:rgba(255,77,77,0.3);">Quarantine</button>
             </div>
         </div>
     `}).join('');
@@ -582,72 +569,15 @@ async function quarantineMalware(filePath) {
 /**
  * Render repair engine view
  */
-/**
- * Render repair engine view with status details and actions
- */
-function renderRepairView(status) {
+function renderRepairView(repairStatus) {
     const container = document.getElementById('repair-data');
     if (!container) return;
 
-    if (!status) {
-        container.innerHTML = '<p class="placeholder-text">Repair Engine offline.</p>';
-        return;
-    }
-
-    const isPending = status.pending_count > 0;
-    const lastAt = status.last_at ? formatTimestamp(status.last_at) : 'Never';
-
     container.innerHTML = `
-        <div class="repair-status-card glass" style="padding: 20px; border-left: 4px solid ${isPending ? 'var(--accent-red)' : 'var(--accent-green)'};">
-            <div class="repair-status-header" style="display: flex; justify-content: space-between; align-items: flex-start;">
-                <div>
-                    <div class="status-title" style="font-size: 18px; font-weight: bold; color: ${isPending ? 'var(--accent-red)' : 'var(--accent-green)'}; display: flex; align-items: center; gap: 8px;">
-                        <i data-lucide="${isPending ? 'alert-circle' : 'shield-check'}"></i>
-                        ${isPending ? status.pending_count + ' Patches Pending' : 'System Integrity Verified'}
-                    </div>
-                    <div class="status-meta" style="font-size: 11px; opacity: 0.7; margin-top: 5px;">
-                        Last Scan: ${lastAt} | Node: ${state.node_id.substring(0,8)}
-                    </div>
-                </div>
-                <div class="repair-actions" style="display: flex; gap: 8px;">
-                    <button class="action-btn" onclick="triggerPatchDiscovery()" title="Scan for missing security patches">
-                        <i data-lucide="search" style="width:14px"></i>
-                    </button>
-                    <button class="action-btn" onclick="triggerBaseline()" title="Re-index filesystem baseline">
-                        <i data-lucide="database" style="width:14px"></i>
-                    </button>
-                    <button class="action-btn" onclick="triggerRestorePoint()" title="Create system restore point">
-                        <i data-lucide="save" style="width:14px"></i>
-                    </button>
-                </div>
-            </div>
-            
-            <div class="repair-details-grid mt-4" style="display: grid; grid-template-columns: 1fr 1fr; gap: 15px;">
-                <div class="detail-item">
-                    <div class="detail-label" style="font-size: 9px; text-transform: uppercase; opacity: 0.5;">Last CVE Patched</div>
-                    <div class="detail-value" style="font-family: monospace; font-size: 13px;">${status.last_cve || 'N/A'}</div>
-                </div>
-                <div class="detail-item">
-                    <div class="detail-label" style="font-size: 9px; text-transform: uppercase; opacity: 0.5;">Engine State</div>
-                    <div class="detail-value" style="font-size: 13px;">${status.last_state || 'Monitoring'}</div>
-                </div>
-            </div>
-
-            ${status.last_error ? `
-            <div class="repair-error glass mt-3" style="padding: 10px; border-color: rgba(255,0,0,0.2); color: #ff8080; font-size: 11px;">
-                <strong>Last Error:</strong> ${status.last_error}
-            </div>` : ''}
-
-            <div class="forensic-toggle mt-3" style="font-size: 11px; color: var(--accent-blue); cursor: pointer; display: flex; align-items: center; gap: 4px;" onclick="toggleGroupDetails('repair-forensics')">
-                <i data-lucide="chevron-down" style="width:14px; height:14px;"></i>
-                Advanced Repair Metrics
-            </div>
-            <div id="group-details-repair-forensics" class="forensic-details glass mt-2" style="display: none; padding: 12px; font-size: 11px; flex-direction: column; gap: 6px;">
-                <div><strong>Patch Signature:</strong> <span style="font-family:monospace; opacity:0.8;">${status.last_sig || 'Unsigned'}</span></div>
-                <div><strong>System Protection:</strong> Enabled ✅</div>
-                <div><strong>Integrity Check:</strong> Passed ✅</div>
-                <div class="mt-2" style="opacity: 0.5; font-style: italic;">Automatic remediation is ${isPending ? 'holding for approval' : 'active'}.</div>
-            </div>
+        <div style="padding: 24px; text-align: center;">
+            <i data-lucide="wrench" style="width:48px; height:48px; color:var(--accent-green); margin-bottom:16px;"></i>
+            <h4 style="color:var(--text-header); font-size:18px; margin-bottom:8px;">System Integrity Verified</h4>
+            <p style="color:var(--text-muted); font-size:14px;">All critical services and policies are currently healthy. No active repairs are needed.</p>
         </div>
     `;
     lucide.createIcons();
@@ -896,42 +826,6 @@ function updateTelemetryChart(data) {
         state.telemetryChart.update('none');
     }
 }
-
-window.triggerPatchDiscovery = async function() {
-    try {
-        const res = await fetch(`${API_BASE}/agent/trigger-patch`, { method: 'POST' });
-        if (res.ok) {
-            alert("Patch discovery initiated. Intelligence gathering in progress...");
-            updateDashboard();
-        }
-    } catch (err) {
-        console.error("Failed to trigger patch discovery:", err);
-    }
-};
-
-window.triggerBaseline = async function() {
-    if (!confirm("Initiate manual filesystem re-baselining? This will re-hash critical system files for integrity verification.")) return;
-    try {
-        const res = await fetch(`${API_BASE}/agent/trigger-baseline`, { method: 'POST' });
-        if (res.ok) {
-            alert("Baseline scan started in background. Monitor activity feed for completion.");
-        }
-    } catch (err) {
-        console.error("Failed to trigger baseline:", err);
-    }
-};
-
-window.triggerRestorePoint = async function() {
-    if (!confirm("Create a system restore point now? This will create a local snapshot for rapid recovery.")) return;
-    try {
-        const res = await fetch(`${API_BASE}/agent/trigger-restore-point`, { method: 'POST' });
-        if (res.ok) {
-            alert("System restore point creation initiated. The system remains responsive during this process.");
-        }
-    } catch (err) {
-        console.error("Failed to trigger restore point:", err);
-    }
-};
 
 // Start the app
 document.addEventListener('DOMContentLoaded', init);
@@ -1205,25 +1099,11 @@ async function renderStoryView() {
 }
 
 /**
- * Trigger Repair Engine actions
+ * Navigate to the Forensic Story view from any button
  */
-window.triggerBaseline = async function() {
-    try {
-        await fetch(`${API_BASE}/agent/trigger-baseline`, { method: 'POST' });
-        setTimeout(updateDashboard, 1000); // Quick refresh to show 'pending' status
-    } catch(e) { console.warn('Baseline trigger failed:', e); }
-};
-
-window.triggerRestorePoint = async function() {
-    try {
-        await fetch(`${API_BASE}/agent/trigger-restore-point`, { method: 'POST' });
-        setTimeout(updateDashboard, 1000); // Quick refresh to show 'pending' status
-    } catch(e) { console.warn('Restore point trigger failed:', e); }
-};
-
-window.triggerPatchDiscovery = async function() {
-    try {
-        await fetch(`${API_BASE}/patch-trigger`, { method: 'POST' });
-        setTimeout(updateDashboard, 1000);
-    } catch(e) { console.warn('Patch discovery trigger failed:', e); }
-};
+function navigateToStory() {
+    const storyNav = document.querySelector('[data-view="story"]');
+    if (storyNav) {
+        storyNav.click();
+    }
+}
