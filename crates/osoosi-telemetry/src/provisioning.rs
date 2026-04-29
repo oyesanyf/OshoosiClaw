@@ -620,10 +620,110 @@ impl AgentProvisioner {
                 continue;
             }
 
+            // AUTO-ELEVATE: If not running as admin, retry with UAC elevation
+            if !Self::is_elevated() {
+                warn!("Sysmon command failed (not admin). Auto-elevating with UAC...");
+                return Self::run_elevated_sysmon(binary, current_args, cfg).await;
+            }
+
             return Err(anyhow::anyhow!(
                 "Sysmon command failed: {}",
                 combined.trim()
             ));
+        }
+    }
+
+    /// Check if the current process is running with admin/elevated privileges.
+    #[cfg(target_os = "windows")]
+    fn is_elevated() -> bool {
+        use windows::Win32::Foundation::HANDLE;
+        use windows::Win32::Security::{GetTokenInformation, TokenElevation, TOKEN_ELEVATION, TOKEN_QUERY};
+        use windows::Win32::System::Threading::{GetCurrentProcess, OpenProcessToken};
+
+        unsafe {
+            let mut token = HANDLE::default();
+            if OpenProcessToken(GetCurrentProcess(), TOKEN_QUERY, &mut token).is_err() {
+                return false;
+            }
+            let mut elevation = TOKEN_ELEVATION::default();
+            let mut returned = 0u32;
+            let size = std::mem::size_of::<TOKEN_ELEVATION>() as u32;
+            let ok = GetTokenInformation(
+                token,
+                TokenElevation,
+                Some(&mut elevation as *mut _ as *mut _),
+                size,
+                &mut returned,
+            );
+            let _ = windows::Win32::Foundation::CloseHandle(token);
+            ok.is_ok() && elevation.TokenIsElevated != 0
+        }
+    }
+
+    /// Run a Sysmon command elevated via ShellExecuteW with "runas" verb (triggers UAC prompt).
+    #[cfg(target_os = "windows")]
+    async fn run_elevated_sysmon(
+        binary: &Path,
+        args: &[&str],
+        cfg: Option<&Path>,
+    ) -> anyhow::Result<()> {
+        use windows::core::HSTRING;
+        use windows::Win32::UI::Shell::ShellExecuteW;
+        use windows::Win32::UI::WindowsAndMessaging::SW_HIDE;
+
+        let mut params = args.join(" ");
+        if let Some(c) = cfg {
+            params.push(' ');
+            params.push_str(&c.to_string_lossy());
+        }
+
+        let binary_str = HSTRING::from(binary.to_string_lossy().as_ref());
+        let params_str = HSTRING::from(params.as_str());
+        let verb = HSTRING::from("runas");
+
+        info!(
+            "Elevating Sysmon: {} {}",
+            binary.display(),
+            params
+        );
+
+        let result = unsafe {
+            ShellExecuteW(
+                None,
+                &verb,
+                &binary_str,
+                &params_str,
+                None,
+                SW_HIDE,
+            )
+        };
+
+        // ShellExecuteW returns HINSTANCE > 32 on success
+        let code = result.0 as usize;
+        if code > 32 {
+            // Wait for Sysmon to finish installing
+            info!("UAC elevation accepted. Waiting for Sysmon to install...");
+            tokio::time::sleep(std::time::Duration::from_secs(10)).await;
+
+            // Verify the service is now running
+            let svc = if Self::is_64bit_os() { "Sysmon64" } else { "Sysmon" };
+            let check = Command::new("sc").args(["query", svc]).output();
+            if let Ok(out) = check {
+                let text = String::from_utf8_lossy(&out.stdout);
+                if text.contains("RUNNING") {
+                    info!("Sysmon installed and running successfully via UAC elevation.");
+                    return Ok(());
+                }
+            }
+            // Even if sc query doesn't show RUNNING yet, the install may still be completing
+            info!("Sysmon elevation completed. Service may need a moment to start.");
+            Ok(())
+        } else {
+            Err(anyhow::anyhow!(
+                "UAC elevation failed or was declined (ShellExecute returned {}). \
+                 Run the agent as Administrator to install Sysmon.",
+                code
+            ))
         }
     }
 
