@@ -826,3 +826,65 @@ impl ThreatVoter for InjectionTelemetryVoter {
         }
     }
 }
+
+/// DNS Shield Voter
+///
+/// Evaluates DNS query telemetry from the `osoosi-dns` proxy.
+/// Detects:
+///   - Known-malicious domains (blocklist sinkholing)
+///   - DGA-generated domains (Shannon entropy analysis)
+///   - DNS tunneling (oversized labels / excessive depth)
+///   - Darknet TLD communication (.onion, .i2p, .bit)
+pub struct DnsShieldVoter;
+
+impl ThreatVoter for DnsShieldVoter {
+    fn name(&self) -> String {
+        "DNS-Shield".to_string()
+    }
+
+    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        // The DNS Shield tags events with "DnsQuery" in the HookSource field
+        let hook_source = event.data.get("HookSource").and_then(|v| v.as_str())?;
+        if hook_source != "DnsShield" {
+            return None;
+        }
+
+        let domain = event.data.get("DnsQuery").and_then(|v| v.as_str()).unwrap_or("");
+        let verdict = event.data.get("DnsVerdict").and_then(|v| v.as_str()).unwrap_or("");
+        let reason = event.data.get("DnsReason").and_then(|v| v.as_str()).unwrap_or("");
+        let entropy: f64 = event.data.get("DnsEntropy")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.0);
+        let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+
+        match verdict {
+            "BLOCKED" => {
+                // Determine severity based on block reason
+                let (confidence, weight) = if reason.contains("DGA") {
+                    (0.92, 0.85)
+                } else if reason.contains("tunneling") {
+                    (0.95, 0.9)
+                } else if reason.contains("Darknet") || reason.contains(".onion") {
+                    (0.9, 0.85)
+                } else {
+                    // Blocklist hit
+                    (0.88, 0.8)
+                };
+
+                Some(VoteResult {
+                    confidence,
+                    reason: format!("DNS Shield BLOCKED: process {} queried '{}'. {}", image, domain, reason),
+                    weight,
+                })
+            }
+            "SUSPICIOUS" => {
+                Some(VoteResult {
+                    confidence: 0.6,
+                    reason: format!("DNS Shield ALERT: process {} queried suspicious domain '{}' (entropy: {:.2}). {}", image, domain, entropy, reason),
+                    weight: 0.5,
+                })
+            }
+            _ => None,
+        }
+    }
+}

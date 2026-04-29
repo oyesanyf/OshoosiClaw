@@ -1,0 +1,16 @@
+[package]
+name = "osoosi-dns"
+version = "0.1.0"
+edition = "2021"
+description = "DNS Shield: local DNS proxy with sinkholing, DGA detection, and tunneling analysis"
+
+[dependencies]
+tokio = { workspace = true, features = ["full"] }
+tracing = { workspace = true }
+anyhow = { workspace = true }
+serde = { workspace = true }
+serde_json = { workspace = true }
+dashmap = "6.1"
+hickory-resolver = "0.24"
+hickory-server = "0.24"
+hickory-proto = "0.24"

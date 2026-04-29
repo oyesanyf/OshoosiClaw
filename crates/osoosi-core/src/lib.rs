@@ -911,6 +911,9 @@ impl EdrOrchestrator {
         // Injection Telemetry Voter: Processes inner-process hook events (BitBlt, CreateProcessW, send, ptrace, etc.)
         policy.add_voter(Box::new(osoosi_policy::voters::InjectionTelemetryVoter));
 
+        // DNS Shield Voter: Evaluates DNS query telemetry (DGA, tunneling, blocklist, darknet)
+        policy.add_voter(Box::new(osoosi_policy::voters::DnsShieldVoter));
+
         let deception_engine = Arc::new(tokio::sync::RwLock::new(
             osoosi_behavioral::deception::EntanglementEngine::new(),
         ));

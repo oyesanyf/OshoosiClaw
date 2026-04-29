@@ -18,7 +18,7 @@ members = [
     "crates/osoosi-sandbox",
     "crates/osoosi-behavioral", "crates/osoosi-dp",
     "crates/test-peer",
-    "crates/otx-taxii-rs", "crates/osoosi-inject",
+    "crates/otx-taxii-rs", "crates/osoosi-inject", "crates/osoosi-dns",
 ]
 
 [workspace.package]
