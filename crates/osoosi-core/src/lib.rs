@@ -908,6 +908,9 @@ impl EdrOrchestrator {
             memory: memory.clone(),
         }));
 
+        // Injection Telemetry Voter: Processes inner-process hook events (BitBlt, CreateProcessW, send, ptrace, etc.)
+        policy.add_voter(Box::new(osoosi_policy::voters::InjectionTelemetryVoter));
+
         let deception_engine = Arc::new(tokio::sync::RwLock::new(
             osoosi_behavioral::deception::EntanglementEngine::new(),
         ));
