@@ -4,6 +4,7 @@ version.workspace = true
 edition.workspace = true
 license.workspace = true
 description = "Behavioral detection from system/application logs using SecureBERT-style analysis"
+build = "build.rs"
 
 [dependencies]
 osoosi-types = { path = "../osoosi-types" }
