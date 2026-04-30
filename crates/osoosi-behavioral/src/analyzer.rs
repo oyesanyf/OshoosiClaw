@@ -265,7 +265,7 @@ impl BehavioralAnalyzer {
             let smollm_guard = self.smollm.read().await;
             if let Some(ref smollm) = *smollm_guard {
                 info!("Using native SmolLM2 for analytical response...");
-                let result = smollm.generate_text(prompt, 500)?;
+                let result = smollm.generate_text(prompt, 500).await?;
                 return Ok(result);
             }
         }

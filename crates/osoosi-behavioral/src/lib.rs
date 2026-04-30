@@ -14,7 +14,7 @@ pub mod forensics;
 pub mod llm_engine;
 mod log_reader;
 mod process_tree;
-mod reasoning;
+pub mod reasoning;
 mod sentence;
 pub mod spider_eyes;
 pub mod yara_analyzer;

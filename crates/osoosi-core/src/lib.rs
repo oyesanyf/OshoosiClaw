@@ -751,6 +751,7 @@ impl EdrOrchestrator {
         let static_analyzer = Arc::new(crate::static_analyzer::StaticAnalyzer::new(
             memory.clone(),
             task_executor.clone(),
+            malware_scanner.clone(),
         ));
         let correlator = Arc::new(crate::correlator::EventCorrelator::new());
         let ghost_nodes = Arc::new(osoosi_wire::GhostNodeManager::new(
@@ -1380,7 +1381,7 @@ impl EdrOrchestrator {
                                 );
                                 continue;
                             }
-                            if let Some(result) = orchestrator.malware_scanner.scan_file(path) {
+                            if let Some(result) = orchestrator.malware_scanner.scan_file(path).await {
                                 if result.clam_detected == Some(false) {
                                     orchestrator.audit.log(
                                         "CLAMAV_CLEAN",
@@ -1612,7 +1613,7 @@ impl EdrOrchestrator {
                             debug!("File Monitor: skipping non-malware asset {}", event.path);
                             continue;
                         }
-                        if let Some(result) = orchestrator.malware_scanner.scan_file(path) {
+                        if let Some(result) = orchestrator.malware_scanner.scan_file(path).await {
                             // 1. ClamAV says clean → let it go (trust ClamAV over ML/signatures)
                             if result.clam_detected == Some(false) {
                                 info!("ClamAV clean: {} — allowing (no action)", result.file_path);
@@ -2214,7 +2215,7 @@ impl EdrOrchestrator {
                 if should_skip_file_malware_scan(entry.path()) {
                     return;
                 }
-                if let Some(scan) = malware_scanner.scan_file(entry.path()) {
+                if let Some(scan) = malware_scanner.scan_file(entry.path()).await {
                     if scan.is_malware {
                         warn!(
                             "MALWARE GENERATED IN SANDBOX: {} (type={})",

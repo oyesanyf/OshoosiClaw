@@ -1,3 +1,4 @@
+use async_trait::async_trait;
 use crate::engine::{ThreatVoter, VoteResult};
 use osoosi_types::{SysmonEvent, SysmonEventId};
 use osoosi_dp::{DifferentialPrivacy, PrivacyConfig};
@@ -9,11 +10,12 @@ pub struct SemanticVoter {
     pub engine: crate::semantic::SemanticEngine,
 }
 
+#[async_trait]
 impl ThreatVoter for SemanticVoter {
     fn name(&self) -> String {
         "SemanticIntent".to_string()
     }
-    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         if let Some(cmd_line) = event.data.get("CommandLine").and_then(|c| c.as_str()) {
             let drift = self.engine.verify_intent(cmd_line);
             if drift > 0.8 {
@@ -34,11 +36,12 @@ pub struct OtxVoter {
     pub memory: Arc<osoosi_memory::MemoryStore>,
 }
 
+#[async_trait]
 impl ThreatVoter for OtxVoter {
     fn name(&self) -> String {
         "OTX-C2".to_string()
     }
-    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         let guard = self.indicators.read().ok()?;
         let hit = crate::otx_connection::otx_match_sysmon_event(&guard, &self.memory, event);
 
@@ -55,11 +58,12 @@ pub struct SigmaVoter {
     pub engine: Arc<std::sync::RwLock<crate::sigma::SigmaEngine>>,
 }
 
+#[async_trait]
 impl ThreatVoter for SigmaVoter {
     fn name(&self) -> String {
         "Sigma".to_string()
     }
-    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         if let Ok(guard) = self.engine.read() {
             let matches = guard.check(event);
             if !matches.is_empty() {
@@ -127,11 +131,12 @@ impl GemmaVoter {
     }
 }
 
+#[async_trait]
 impl ThreatVoter for GemmaVoter {
     fn name(&self) -> String {
         "LLM-Reasoning".to_string()
     }
-    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         let image = event
             .data
             .get("Image")
@@ -213,11 +218,12 @@ pub struct NativeVoter {
     pub memory: Arc<osoosi_memory::MemoryStore>,
 }
 
+#[async_trait]
 impl ThreatVoter for NativeVoter {
     fn name(&self) -> String {
         "Native-Instrumentation".to_string()
     }
-    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         // 1. Self-Protection: Check if unauthorized process is touching Oshoosi files/registry
         if let Some(path) = event.data.get("TargetFilename").and_then(|v| v.as_str()) {
             if osoosi_types::reg_utils::is_self_protection_file_path(path) {
@@ -298,11 +304,12 @@ fn sha1_from_sysmon_hashes(event: &SysmonEvent) -> Option<String> {
     None
 }
 
+#[async_trait]
 impl ThreatVoter for NsrlVoter {
     fn name(&self) -> String {
         "NSRL-Veto".to_string()
     }
-    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         let sha1 = sha1_from_sysmon_hashes(event)?;
         if self.cache.get(&sha1).map(|e| *e.value()).unwrap_or(false) {
             return Some(vote_result_nsrl_veto());
@@ -329,11 +336,12 @@ pub struct DecompileVoter {
     pub spider: Arc<osoosi_behavioral::SpiderEyes>,
 }
 
+#[async_trait]
 impl ThreatVoter for DecompileVoter {
     fn name(&self) -> String {
         "Decompile".to_string()
     }
-    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         // We only decompile on ProcessCreate or ImageLoad to catch entry-point intent
         if !matches!(event.event_id, SysmonEventId::ProcessCreate | SysmonEventId::ImageLoad) {
             return None;
@@ -342,7 +350,7 @@ impl ThreatVoter for DecompileVoter {
         let pid = event.process_id()?;
         
         // Deep analysis: SpiderEyes watches the process, disassembles, and reasons with Gemma 4
-        match self.spider.watch_process(pid) {
+        match self.spider.watch_process(pid).await {
             Ok(report) => {
                 let r_lower = report.to_lowercase();
                 if r_lower.contains("malicious") || r_lower.contains("attack") || r_lower.contains("injection") || r_lower.contains("hollowing") {
@@ -372,32 +380,37 @@ pub struct YaraXMemoryVoter {
     pub rules: yara_x::Rules,
 }
 
+#[async_trait]
 impl ThreatVoter for YaraXMemoryVoter {
     fn name(&self) -> String {
         "YaraX-Memory".to_string()
     }
-    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         #[cfg(target_os = "windows")]
         {
             use process_memory::{CopyAddress, TryIntoProcessHandle};
             if let Some(pid) = event.process_id() {
-                if let Ok(handle) = (pid as process_memory::Pid).try_into_process_handle() {
-                    // In a real implementation, we'd iterate through memory regions.
-                    // Here we'll do a focused scan of the first 1MB of the image base as a placeholder.
-                    let mut buffer = vec![0u8; 4096]; // Use a smaller 4KB buffer for testing
-                    if let Ok(_bytes) = handle.copy_address(0x400000, &mut buffer) {
-                        let mut scanner = yara_x::Scanner::new(&self.rules);
-                        let results = scanner.scan(&buffer).ok()?;
-                        if results.matching_rules().count() > 0 {
-                            return Some(VoteResult {
-                                confidence: 0.98,
-                                reason: "Yara-X: Detected C2 beacon pattern in process memory"
-                                    .to_string(),
-                                weight: 1.0,
-                            });
+                let rules = self.rules.clone();
+                return tokio::task::spawn_blocking(move || {
+                    if let Ok(handle) = (pid as process_memory::Pid).try_into_process_handle() {
+                        // In a real implementation, we'd iterate through memory regions.
+                        // Here we'll do a focused scan of the first 1MB of the image base as a placeholder.
+                        let mut buffer = vec![0u8; 4096]; // Use a smaller 4KB buffer for testing
+                        if let Ok(_bytes) = handle.copy_address(0x400000, &mut buffer) {
+                            let mut scanner = yara_x::Scanner::new(&rules);
+                            let results = scanner.scan(&buffer).ok()?;
+                            if results.matching_rules().count() > 0 {
+                                return Some(VoteResult {
+                                    confidence: 0.98,
+                                    reason: "Yara-X: Detected C2 beacon pattern in process memory"
+                                        .to_string(),
+                                    weight: 1.0,
+                                });
+                            }
                         }
                     }
-                }
+                    None
+                }).await.unwrap_or(None);
             }
         }
         None
@@ -512,11 +525,12 @@ pub struct KevVoter {
     pub config: osoosi_types::PolicyConfig,
 }
 
+#[async_trait]
 impl ThreatVoter for KevVoter {
     fn name(&self) -> String {
         "CISA-KEV".to_string()
     }
-    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         let full_path = event.data.get("Image").and_then(|v| v.as_str())?;
         let stem = std::path::Path::new(full_path)
             .file_stem()
@@ -643,12 +657,13 @@ impl PrivacyVoter {
     }
 }
 
+#[async_trait]
 impl ThreatVoter for PrivacyVoter {
     fn name(&self) -> String {
         "Privacy-Enforced-Voter".to_string()
     }
 
-    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         // 1. Calculate a base "suspicion" score (placeholder logic)
         let mut base_score = 0.0;
         if let Some(cmd) = event.data.get("CommandLine").and_then(|v| v.as_str()) {
@@ -690,12 +705,13 @@ impl ThreatVoter for PrivacyVoter {
 ///   - C2 beacon patterns in network send() payloads
 pub struct InjectionTelemetryVoter;
 
+#[async_trait]
 impl ThreatVoter for InjectionTelemetryVoter {
     fn name(&self) -> String {
         "Injection-Telemetry".to_string()
     }
 
-    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         // The hook payload tags events with a "HookSource" data field when it reports
         // intercepted API calls back to the orchestrator via the telemetry channel.
         let hook_source = event.data.get("HookSource").and_then(|v| v.as_str())?;
@@ -837,12 +853,13 @@ impl ThreatVoter for InjectionTelemetryVoter {
 ///   - Darknet TLD communication (.onion, .i2p, .bit)
 pub struct DnsShieldVoter;
 
+#[async_trait]
 impl ThreatVoter for DnsShieldVoter {
     fn name(&self) -> String {
         "DNS-Shield".to_string()
     }
 
-    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         // The DNS Shield tags events with "DnsQuery" in the HookSource field
         let hook_source = event.data.get("HookSource").and_then(|v| v.as_str())?;
         if hook_source != "DnsShield" {
@@ -905,12 +922,13 @@ pub struct SysmonDnsVoter {
     pub blocklist: std::sync::Arc<osoosi_dns::DnsBlocklist>,
 }
 
+#[async_trait]
 impl ThreatVoter for SysmonDnsVoter {
     fn name(&self) -> String {
-        "Sysmon-DNS".to_string()
+        "Sysmon-DNS-Voter".to_string()
     }
 
-    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         // Only process Sysmon Event ID 22 (DnsQuery)
         if event.event_id != SysmonEventId::DnsQuery {
             return None;

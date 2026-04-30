@@ -11,6 +11,7 @@ use dashmap::DashMap;
 use blake3::Hasher;
 
 /// THE BRAIN: Local LLM Mechanistic Analyst
+#[derive(Clone)]
 pub struct GemmaSupervisor {
     pub analyzer: Option<Arc<Gemma4Analyzer>>,
 }
@@ -43,9 +44,9 @@ impl GemmaSupervisor {
         Self { analyzer }
     }
 
-    pub fn analyze_intent(&self, asm: &str) -> String {
+    pub async fn analyze_intent(&self, asm: &str) -> String {
         if let Some(ref analyzer) = self.analyzer {
-            match analyzer.reason_about_attack(asm) {
+            match analyzer.reason_about_attack(asm).await {
                 Ok(report) => format!("AI ANALYSIS: {}", report),
                 Err(e) => {
                     error!("LLM inference failed: {}. Using fallback heuristic.", e);
@@ -118,6 +119,7 @@ impl GemmaSupervisor {
     }
 }
 
+#[derive(Clone)]
 pub struct SpiderEyes {
     supervisor: GemmaSupervisor,
     analysis_cache: DashMap<String, String>, // Hash -> Report
@@ -131,73 +133,81 @@ impl SpiderEyes {
         }
     }
 
-    /// ASLR-aware binary analysis of a running process.
-    pub fn watch_process(&self, target_pid: u32) -> anyhow::Result<String> {
-        // 1. Locate the process
-        let mut s = System::new();
-        let pid = Pid::from(target_pid as usize);
-        s.refresh_process(pid);
+    /// ASLR-aware binary analysis of a running process (Non-blocking).
+    pub async fn watch_process(&self, target_pid: u32) -> anyhow::Result<String> {
+        let spider = Arc::new(self.clone());
         
-        let process = s.process(pid)
-            .ok_or_else(|| anyhow::anyhow!("Process {} not found", target_pid))?;
-        
-        info!("🕸️  [OSHOOSI] Spider attached to: {}", process.name());
+        tokio::task::spawn_blocking(move || {
+            // 1. Locate the process
+            let mut s = System::new();
+            let pid = Pid::from(target_pid as usize);
+            s.refresh_process(pid);
+            
+            let process = s.process(pid)
+                .ok_or_else(|| anyhow::anyhow!("Process {} not found", target_pid))?;
+            
+            info!("🕸️  [OSHOOSI] Spider attached to: {}", process.name());
 
-        // 2. ASLR BYPASS: Find the primary executable memory segment
-        let maps = get_process_maps(target_pid as proc_maps::Pid)?;
-        let process_name = process.name().to_lowercase();
-        
-        // Try to find the segment that matches the process name and is executable
-        let exec_segment = maps.iter()
-            .find(|m| m.is_exec() && m.filename().map(|f| f.to_string_lossy().to_lowercase().contains(&process_name)).unwrap_or(false))
-            // Fallback to first executable segment with a filename if name-match fails
-            .or_else(|| maps.iter().find(|m| m.is_exec() && m.filename().is_some()))
-            .ok_or_else(|| anyhow::anyhow!("No executable code segment found for PID {}", target_pid))?;
+            // 2. ASLR BYPASS: Find the primary executable memory segment
+            let maps = get_process_maps(target_pid as proc_maps::Pid)?;
+            let process_name = process.name().to_lowercase();
+            
+            // Try to find the segment that matches the process name and is executable
+            let exec_segment = maps.iter()
+                .find(|m| m.is_exec() && m.filename().map(|f| f.to_string_lossy().to_lowercase().contains(&process_name)).unwrap_or(false))
+                // Fallback to first executable segment with a filename if name-match fails
+                .or_else(|| maps.iter().find(|m| m.is_exec() && m.filename().is_some()))
+                .ok_or_else(|| anyhow::anyhow!("No executable code segment found for PID {}", target_pid))?;
 
-        info!("🕸️  [ASLR] Executable segment found at: 0x{:x}", exec_segment.start());
+            info!("🕸️  [ASLR] Executable segment found at: 0x{:x}", exec_segment.start());
 
-        // 3. CAPTURE: Read from memory (platform-specific)
-        let (buffer, hash) = self.read_process_memory(target_pid, exec_segment.start(), exec_segment.size())?;
+            // 3. CAPTURE: Read from memory (platform-specific)
+            let (buffer, hash) = spider.read_process_memory(target_pid, exec_segment.start(), exec_segment.size())?;
 
-        // Check cache first
-        if let Some(cached_report) = self.analysis_cache.get(&hash) {
-            info!("🕸️  [CACHE-HIT] Re-using analysis for binary hash {}", hash);
-            return Ok(cached_report.clone());
-        }
+            // Check cache first
+            if let Some(cached_report) = spider.analysis_cache.get(&hash) {
+                info!("🕸️  [CACHE-HIT] Re-using analysis for binary hash {}", hash);
+                return Ok(cached_report.clone());
+            }
 
-        // 4. DISASSEMBLE: Translate bytes to assembly
-        // Determine mode based on pointer size (simplified heuristic)
-        let mode = if std::mem::size_of::<usize>() == 8 {
-            arch::x86::ArchMode::Mode64
-        } else {
-            arch::x86::ArchMode::Mode32
-        };
+            // 4. DISASSEMBLE: Translate bytes to assembly
+            // Determine mode based on pointer size (simplified heuristic)
+            let mode = if std::mem::size_of::<usize>() == 8 {
+                arch::x86::ArchMode::Mode64
+            } else {
+                arch::x86::ArchMode::Mode32
+            };
 
-        let cs = Capstone::new()
-            .x86()
-            .mode(mode)
-            .build()
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
+            let cs = Capstone::new()
+                .x86()
+                .mode(mode)
+                .build()
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
 
-        let insns = cs.disasm_all(&buffer, exec_segment.start() as u64)
-            .map_err(|e| anyhow::anyhow!("{}", e))?;
-        
-        let mut asm_output = String::new();
-        for i in insns.iter() {
-            asm_output.push_str(&format!("{} {}; ", i.mnemonic().unwrap_or(""), i.op_str().unwrap_or("")));
-        }
+            let insns = cs.disasm_all(&buffer, exec_segment.start() as u64)
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            
+            let mut asm_output = String::new();
+            for i in insns.iter() {
+                asm_output.push_str(&format!("{} {}; ", i.mnemonic().unwrap_or(""), i.op_str().unwrap_or("")));
+            }
 
-        // 5. LOCAL INFERENCE: LLM Mechanistic Interpretability
-        info!("🕸️  [LOCAL-AI] LLM Cortex analyzing assembly intent for PID {}...", target_pid);
-        let report = self.supervisor.analyze_intent(&asm_output);
-        
-        let final_report = format!("PID: {}\nNAME: {}\nSEGMENT: 0x{:x}\nDISASSEMBLY: {}\n\nREPORT:\n{}", 
-            target_pid, process.name(), exec_segment.start(), asm_output, report);
-        
-        // Save to cache
-        self.analysis_cache.insert(hash, final_report.clone());
-        
-        Ok(final_report)
+            // 5. LOCAL INFERENCE: LLM Mechanistic Interpretability
+            info!("🕸️  [LOCAL-AI] LLM Cortex analyzing assembly intent for PID {}...", target_pid);
+            
+            // We are in spawn_blocking, but we need to call an async function.
+            // Since we're in a tokio runtime, we can get a handle.
+            let rt = tokio::runtime::Handle::current();
+            let report = rt.block_on(spider.supervisor.analyze_intent(&asm_output));
+            
+            let final_report = format!("PID: {}\nNAME: {}\nSEGMENT: 0x{:x}\nDISASSEMBLY: {}\n\nREPORT:\n{}", 
+                target_pid, process.name(), exec_segment.start(), asm_output, report);
+            
+            // Save to cache
+            spider.analysis_cache.insert(hash, final_report.clone());
+            
+            Ok(final_report)
+        }).await?
     }
 
     /// Cross-platform process memory reader

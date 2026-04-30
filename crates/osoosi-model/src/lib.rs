@@ -6,6 +6,7 @@
 //! Also provides a malware detection system (PE analysis + ML + signatures).
 
 pub mod malconv;
+pub mod malconv_train;
 pub mod malware;
 pub mod nsrl;
 mod train;

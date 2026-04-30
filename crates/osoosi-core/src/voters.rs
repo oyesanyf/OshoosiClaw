@@ -1,4 +1,5 @@
 use osoosi_model::{MalwareScanResult, MalwareScanner};
+use async_trait::async_trait;
 use osoosi_policy::engine::{ThreatVoter, VoteResult};
 use osoosi_types::SysmonEvent;
 use std::path::Path;
@@ -100,12 +101,13 @@ pub struct ClamVoter {
     pub scanner: Arc<MalwareScanner>,
 }
 
+#[async_trait]
 impl ThreatVoter for ClamVoter {
     fn name(&self) -> String {
         "ClamAV-Consensus".to_string()
     }
 
-    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
             if scanner_skip_path(image_path) || trusted_identity_signal(event, image_path) {
                 return None;
@@ -116,7 +118,7 @@ impl ThreatVoter for ClamVoter {
             }
 
             // Perform scan via the shared MalwareScanner
-            if let Some(result) = self.scanner.scan_file(path) {
+            if let Some(result) = self.scanner.scan_file(path).await {
                 if result.clam_detected == Some(false) {
                     return Some(VoteResult {
                         confidence: 0.0, // This is a "clean" signal
@@ -152,12 +154,13 @@ pub struct MalConvVoter {
     pub scanner: Arc<MalwareScanner>,
 }
 
+#[async_trait]
 impl ThreatVoter for MalConvVoter {
     fn name(&self) -> String {
         "MalConv-ML".to_string()
     }
 
-    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         if std::env::var("OSOOSI_NO_AI")
             .map(|v| v == "1")
             .unwrap_or(false)
@@ -188,7 +191,7 @@ impl ThreatVoter for MalConvVoter {
                     continue;
                 }
             }
-            if let Some(res) = self.scanner.scan_file(path) {
+            if let Some(res) = self.scanner.scan_file(path).await {
                 let replace = best
                     .as_ref()
                     .map(|b| res.combined_score > b.combined_score)

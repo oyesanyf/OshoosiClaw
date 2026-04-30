@@ -23,6 +23,8 @@ pub struct StaticAnalyzer {
     signatures_path: PathBuf,
     /// Executor for running tools (Direct or OpenShell)
     executor: Arc<dyn osoosi_types::SecuredExecutor>,
+    /// Malware scanner for feedback loops
+    malware_scanner: Arc<osoosi_model::MalwareScanner>,
     /// In-memory session cache for static analysis results (SHA256 -> ThreatSignature)
     analysis_cache: dashmap::DashMap<String, Option<ThreatSignature>>,
 }
@@ -31,6 +33,7 @@ impl StaticAnalyzer {
     pub fn new(
         _memory: Arc<osoosi_memory::MemoryStore>,
         executor: Arc<dyn osoosi_types::SecuredExecutor>,
+        malware_scanner: Arc<osoosi_model::MalwareScanner>,
     ) -> Self {
         Self {
             capa_path: osoosi_types::resolve_capa_path(),
@@ -38,6 +41,7 @@ impl StaticAnalyzer {
             floss_path: osoosi_types::resolve_floss_path(),
             signatures_path: osoosi_types::resolve_capa_sigs_dir(),
             executor,
+            malware_scanner,
             analysis_cache: dashmap::DashMap::new(),
         }
     }
@@ -65,9 +69,11 @@ impl StaticAnalyzer {
         }
 
         // Calculate hash first for caching
-        let hash = self
-            .calculate_sha256(file_path)
-            .unwrap_or_else(|_| "unknown".to_string());
+        let path_buf = file_path.to_path_buf();
+        let hash = tokio::task::spawn_blocking(move || {
+            Self::calculate_sha256_sync(&path_buf).unwrap_or_else(|_| "unknown".to_string())
+        }).await.unwrap_or_else(|_| "unknown".to_string());
+
         if hash != "unknown" {
             if let Some(cached) = self.analysis_cache.get(&hash) {
                 return Ok(cached.clone());
@@ -80,7 +86,11 @@ impl StaticAnalyzer {
         );
 
         // 0. Calculate Shannon Entropy
-        let entropy = self.calculate_entropy(file_path).unwrap_or(0.0);
+        let path_buf_ent = file_path.to_path_buf();
+        let entropy = tokio::task::spawn_blocking(move || {
+            Self::calculate_entropy_sync(&path_buf_ent).unwrap_or(0.0)
+        }).await.unwrap_or(0.0);
+
         debug!(
             "Static Analyzer: File {:?} entropy: {:.2}",
             file_path, entropy
@@ -196,7 +206,7 @@ impl StaticAnalyzer {
         Ok(None)
     }
 
-    fn calculate_sha256(&self, path: &Path) -> anyhow::Result<String> {
+    fn calculate_sha256_sync(path: &Path) -> anyhow::Result<String> {
         use sha2::{Digest, Sha256};
         let mut file = File::open(path)?;
         let mut hasher = Sha256::new();
@@ -234,8 +244,14 @@ impl StaticAnalyzer {
                     .replace("FOUND", "")
                     .trim()
                     .to_string();
+                
+                // FEEDBACK LOOP: Report the malicious sample to MalConv for fine-tuning
+                let _ = self.malware_scanner.report_label_to_malconv(file_path, 1.0).await;
+
                 return Ok(Some(sig_name));
             }
+            
+            let _ = self.malware_scanner.report_label_to_malconv(file_path, 1.0).await;
             return Ok(Some("Generic Malware Signature".to_string()));
         }
 
@@ -459,8 +475,8 @@ impl StaticAnalyzer {
         Ok(None) // Return None until real integration is complete (prevents false positives)
     }
 
-    /// Calculate Shannon Entropy of a file to detect packing/encryption.
-    pub fn calculate_entropy(&self, path: &Path) -> anyhow::Result<f32> {
+    /// Calculate Shannon Entropy of a file to detect packing/encryption (Synchronous helper).
+    pub fn calculate_entropy_sync(path: &Path) -> anyhow::Result<f32> {
         let mut file = File::open(path)?;
         let mut buffer = Vec::new();
         file.read_to_end(&mut buffer)?;

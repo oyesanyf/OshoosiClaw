@@ -7,9 +7,10 @@ pub mod discovery;
 pub mod file_watch;
 pub mod hash;
 pub mod host_events;
+pub mod injector;
+pub mod native;
 pub mod provisioning;
 pub mod sysmon;
-pub mod injector;
 
 pub use discovery::*;
 pub use file_watch::*;

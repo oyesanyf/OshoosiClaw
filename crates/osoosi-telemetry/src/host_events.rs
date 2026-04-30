@@ -29,6 +29,11 @@ pub trait HostEventReader: Send + Sync {
 pub fn create_host_event_reader(channel_or_path: &str) -> anyhow::Result<Box<dyn HostEventReader>> {
     #[cfg(target_os = "windows")]
     {
+        // On Windows, we now prefer the Native Rust Engine (SysmonX Port)
+        // over the standard Event Log reader.
+        if channel_or_path == "default" || channel_or_path.is_empty() {
+            return Ok(Box::new(NativeETWReader::new()?));
+        }
         Ok(Box::new(WindowsEventReader::new(channel_or_path)?))
     }
     #[cfg(target_os = "linux")]
@@ -42,6 +47,53 @@ pub fn create_host_event_reader(channel_or_path: &str) -> anyhow::Result<Box<dyn
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         Err(anyhow::anyhow!("Unsupported OS for host event reading"))
+    }
+}
+
+// --- Native ETW (SysmonX Port) ---
+
+#[cfg(target_os = "windows")]
+pub struct NativeETWReader {
+    rx: tokio::sync::mpsc::Receiver<osoosi_types::SysmonEvent>,
+}
+
+#[cfg(target_os = "windows")]
+impl NativeETWReader {
+    pub fn new() -> anyhow::Result<Self> {
+        let (tx, rx) = tokio::sync::mpsc::channel(10_000);
+        let engine = super::native::NativeTelemetryEngine::new(tx);
+        
+        // Spawn the native engine in a background task
+        tokio::spawn(async move {
+            if let Err(e) = engine.run().await {
+                tracing::error!("Native Telemetry Engine failed: {}", e);
+            }
+        });
+        
+        Ok(Self { rx })
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl HostEventReader for NativeETWReader {
+    fn poll_events(&mut self) -> anyhow::Result<Vec<HostSecurityEvent>> {
+        let mut out = Vec::new();
+        // Drain the channel buffer
+        while let Ok(sysmon) = self.rx.try_recv() {
+            out.push(HostSecurityEvent {
+                source: HostEventSource::WindowsEventLog, // Keep tag for compatibility
+                event_id: sysmon.event_id as u32,
+                timestamp: sysmon.timestamp,
+                computer: sysmon.computer,
+                data: sysmon.data,
+                causal_parent: None,
+            });
+        }
+        Ok(out)
+    }
+
+    fn source_name(&self) -> String {
+        "native-kernel-etw".to_string()
     }
 }
 

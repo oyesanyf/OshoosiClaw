@@ -6,8 +6,8 @@ use crate::feed::OtxIndicators;
 use crate::graph::{GraphCorrelationEngine, Relationship};
 use crate::semantic::SemanticEngine;
 use dashmap::DashMap;
-use osoosi_memory::MemoryStore;
 use osoosi_types::{SysmonEvent, ThreatSignature};
+use futures::future::BoxFuture;
 use std::sync::Arc;
 use std::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -24,7 +24,7 @@ pub struct VoteResult {
 
 pub trait ThreatVoter: Send + Sync {
     fn name(&self) -> String;
-    fn vote(&self, event: &SysmonEvent) -> Option<VoteResult>;
+    fn vote(&self, event: &SysmonEvent) -> BoxFuture<'static, Option<VoteResult>>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -370,7 +370,7 @@ impl PolicyEngine {
     /// [`ThreatVoter`]s, typically through [`crate::voters::OtxVoter`]. If that voter is not
     /// registered, a matching [`Self::otx_ioc_match_for_event`] is merged in so TAXII-backed IOCs
     /// still affect consensus.
-    pub fn scan_event(&self, event: &SysmonEvent) -> Option<ThreatSignature> {
+    pub async fn scan_event(&self, event: &SysmonEvent) -> Option<ThreatSignature> {
         use osoosi_types::ResponseAction;
 
         let image_path = event_image_path(event).unwrap_or("unknown");
@@ -415,54 +415,66 @@ impl PolicyEngine {
         let mut evidence_votes: Vec<EvidenceVote> = Vec::new();
         const OTX_VOTER: &str = "OTX-C2";
 
-        if let Ok(voters_guard) = self.voters.read() {
+        // ADAPTIVE THREADING: Run all voters in parallel
+        let results = if let Ok(voters_guard) = self.voters.read() {
+            let mut futures = Vec::new();
+            let mut names = Vec::new();
             for voter in voters_guard.iter() {
-                let vname = voter.name();
-                if let Some(res) = voter.vote(event) {
-                    if res.weight < 0.0 {
-                        warn!(
-                            target: CONSENSUS_LOG_TARGET,
-                            voter = %vname,
-                            reason = %res.reason,
-                            "[CONSENSUS] veto — detection blocked"
-                        );
-                        vetoed = true;
-                        signature.add_reason(format!("Veto [{}]: {}", vname, res.reason));
-                        break;
-                    }
+                names.push(voter.name());
+                futures.push(voter.vote(event));
+            }
+            let res = futures::future::join_all(futures).await;
+            names.into_iter().zip(res.into_iter()).collect::<Vec<_>>()
+        } else {
+            Vec::new()
+        };
 
-                    let contribution = res.confidence * res.weight;
-                    info!(
+        for (vname, res_opt) in results {
+            if let Some(res) = res_opt {
+                if res.weight < 0.0 {
+                    warn!(
                         target: CONSENSUS_LOG_TARGET,
                         voter = %vname,
-                        conf = res.confidence,
-                        weight = res.weight,
-                        contribution,
                         reason = %res.reason,
-                        "[CONSENSUS] voter YIELD (counts toward score)"
+                        "[CONSENSUS] veto — detection blocked"
                     );
-                    total_score += contribution;
-                    vote_count += 1;
-                    signature.add_reason(format!("[{}]: {}", vname, res.reason));
-                    is_threat = true;
-                    if vname == OTX_VOTER {
-                        otx_voted = true;
-                    }
-                    let (class, reliability, strong_action) = classify_vote(&vname, &res, event);
-                    evidence_votes.push(EvidenceVote {
-                        result: res,
-                        class,
-                        reliability,
-                        strong_action,
-                    });
-                } else {
-                    debug!(
-                        target: CONSENSUS_LOG_TARGET,
-                        voter = %vname,
-                        event_id = ?event.event_id,
-                        "[CONSENSUS] voter abstain (no match)"
-                    );
+                    vetoed = true;
+                    signature.add_reason(format!("Veto [{}]: {}", vname, res.reason));
+                    // We don't break immediately here because we already ran them all, 
+                    // but we mark as vetoed.
                 }
+
+                let contribution = res.confidence * res.weight;
+                info!(
+                    target: CONSENSUS_LOG_TARGET,
+                    voter = %vname,
+                    conf = res.confidence,
+                    weight = res.weight,
+                    contribution,
+                    reason = %res.reason,
+                    "[CONSENSUS] voter YIELD (counts toward score)"
+                );
+                total_score += contribution;
+                vote_count += 1;
+                signature.add_reason(format!("[{}]: {}", vname, res.reason));
+                is_threat = true;
+                if vname == OTX_VOTER {
+                    otx_voted = true;
+                }
+                let (class, reliability, strong_action) = classify_vote(&vname, &res, event);
+                evidence_votes.push(EvidenceVote {
+                    result: res,
+                    class,
+                    reliability,
+                    strong_action,
+                });
+            } else {
+                debug!(
+                    target: CONSENSUS_LOG_TARGET,
+                    voter = %vname,
+                    event_id = ?event.event_id,
+                    "[CONSENSUS] voter abstain (no match)"
+                );
             }
         }
 

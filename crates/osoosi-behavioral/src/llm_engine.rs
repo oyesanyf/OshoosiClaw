@@ -11,7 +11,7 @@ use ort::session::builder::GraphOptimizationLevel;
 use ort::session::Session;
 use serde::Deserialize;
 use std::path::Path;
-use std::sync::Mutex;
+use std::sync::{Arc, Mutex};
 use tokenizers::Tokenizer;
 use tracing::{info, warn};
 
@@ -103,10 +103,21 @@ impl From<Config> for LlamaConfig {
 }
 
 pub struct SmolLMAnalyzer {
-    model: Mutex<Model>,
+    model: Arc<Mutex<Model>>,
     tokenizer: Tokenizer,
     device: Device,
-    cache: Mutex<Cache>,
+    cache: Arc<Mutex<Cache>>,
+}
+
+impl Clone for SmolLMAnalyzer {
+    fn clone(&self) -> Self {
+        Self {
+            model: self.model.clone(),
+            tokenizer: self.tokenizer.clone(),
+            device: self.device.clone(),
+            cache: self.cache.clone(),
+        }
+    }
 }
 
 impl SmolLMAnalyzer {
@@ -143,10 +154,10 @@ impl SmolLMAnalyzer {
         info!("SmolLM2-135M-Instruct loaded successfully on {:?}", device);
 
         Ok(Self {
-            model: Mutex::new(model),
+            model: Arc::new(Mutex::new(model)),
             tokenizer,
             device,
-            cache: Mutex::new(cache),
+            cache: Arc::new(Mutex::new(cache)),
         })
     }
 
@@ -201,7 +212,15 @@ impl SmolLMAnalyzer {
         Ok(score)
     }
 
-    pub fn generate_text(&self, prompt: &str, max_tokens: usize) -> Result<String> {
+    pub async fn generate_text(&self, prompt: &str, max_tokens: usize) -> Result<String> {
+        let analyzer = Arc::new(self.clone());
+        let p = prompt.to_string();
+        tokio::task::spawn_blocking(move || {
+            analyzer.generate_text_sync(&p, max_tokens)
+        }).await?
+    }
+
+    pub fn generate_text_sync(&self, prompt: &str, max_tokens: usize) -> Result<String> {
         let model = self.model.lock().unwrap();
 
         let tokens = self
@@ -246,17 +265,36 @@ impl SmolLMAnalyzer {
 /// Supports dual-engine: ONNX (Primary) and Candle/Transformer (Fallback).
 pub enum Gemma4Analyzer {
     Onnx {
-        session: std::sync::Mutex<Session>,
+        session: Arc<Mutex<Session>>,
         tokenizer: Tokenizer,
         device: Device,
     },
     Candle(SecurityJudge),
     NativeGGUF {
-        model: Mutex<Qwen2Weights>,
+        model: Arc<Mutex<Qwen2Weights>>,
         tokenizer: Tokenizer,
         device: Device,
     },
     OllamaFallback,
+}
+
+impl Clone for Gemma4Analyzer {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Onnx { session, tokenizer, device } => Self::Onnx {
+                session: session.clone(),
+                tokenizer: tokenizer.clone(),
+                device: device.clone(),
+            },
+            Self::Candle(judge) => Self::Candle(judge.clone()),
+            Self::NativeGGUF { model, tokenizer, device } => Self::NativeGGUF {
+                model: model.clone(),
+                tokenizer: tokenizer.clone(),
+                device: device.clone(),
+            },
+            Self::OllamaFallback => Self::OllamaFallback,
+        }
+    }
 }
 
 impl Gemma4Analyzer {
@@ -290,7 +328,7 @@ impl Gemma4Analyzer {
                     .commit_from_file(onnx_file)?;
                 
                 Ok(Self::Onnx {
-                    session: std::sync::Mutex::new(session),
+                    session: Arc::new(std::sync::Mutex::new(session)),
                     tokenizer,
                     device: Device::Cpu, // ONNX default
                 })
@@ -316,7 +354,7 @@ impl Gemma4Analyzer {
                     Ok((model, tokenizer)) => {
                         info!("Native GGUF model loaded on GPU. Ollama is NOT required.");
                         return Ok(Self::NativeGGUF {
-                            model: Mutex::new(model),
+                            model: Arc::new(Mutex::new(model)),
                             tokenizer,
                             device,
                         });
@@ -342,7 +380,7 @@ impl Gemma4Analyzer {
             match load_native_gguf(&gguf_path) {
                 Ok((model, tokenizer)) => {
                     return Ok(Self::NativeGGUF {
-                        model: Mutex::new(model),
+                        model: Arc::new(Mutex::new(model)),
                         tokenizer,
                         device: Device::Cpu,
                     });
@@ -363,79 +401,92 @@ impl Gemma4Analyzer {
         }
     }
 
-    pub fn reason_about_attack(&self, graph_summary: &str) -> Result<String> {
-        // Short, focused prompt to minimize prefill time on CPU
-        let prompt = format!(
-            "<|im_start|>system\nClassify this event as malicious, suspicious, or benign. One sentence max.\n<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
-            graph_summary
-        );
-        let raw = match self {
-            Self::Onnx { .. } => self.generate_text(&prompt, 48),
-            Self::Candle(judge) => judge.judge_artifact(&prompt),
-            Self::NativeGGUF { .. } => self.generate_text(&prompt, 48),
-            Self::OllamaFallback => {
-                let ai = osoosi_types::config::load_ai_config();
-                let model = ai.reasoning_model;
-                let timeout_secs = ai.llm_timeout_secs;
+    pub async fn reason_about_attack(&self, graph_summary: &str) -> Result<String> {
+        let analyzer = Arc::new(self.clone());
+        let summary = graph_summary.to_string();
 
-                // Use Ollama HTTP API via raw TCP (no extra deps, reuses loaded model)
-                let body = serde_json::json!({
-                    "model": model,
-                    "messages": [
-                        {"role": "system", "content": "You are the OshoosiClaw Autonomous Cortex. Analyze security events concisely. State if the process is malicious, suspicious, or benign. Be brief."},
-                        {"role": "user", "content": graph_summary}
-                    ],
-                    "stream": false
-                });
-                let body_str = serde_json::to_string(&body)?;
+        tokio::task::spawn_blocking(move || {
+            // Short, focused prompt to minimize prefill time on CPU
+            let prompt = format!(
+                "<|im_start|>system\nClassify this event as malicious, suspicious, or benign. One sentence max.\n<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
+                summary
+            );
+            let raw = match &*analyzer {
+                Self::Onnx { .. } => analyzer.generate_text_sync(&prompt, 48),
+                Self::Candle(judge) => judge.judge_artifact(&prompt),
+                Self::NativeGGUF { .. } => analyzer.generate_text_sync(&prompt, 48),
+                Self::OllamaFallback => {
+                    let ai = osoosi_types::config::load_ai_config();
+                    let model = ai.reasoning_model;
+                    let timeout_secs = ai.llm_timeout_secs;
 
-                // Parse host:port from reasoning_url
-                let url = &ai.reasoning_url;
-                let host_port = url
-                    .strip_prefix("http://").unwrap_or(url)
-                    .split('/').next().unwrap_or("127.0.0.1:11434");
-                let path = url
-                    .strip_prefix("http://").unwrap_or(url)
-                    .find('/').map(|i| &url.strip_prefix("http://").unwrap_or(url)[i..])
-                    .unwrap_or("/v1/chat/completions");
+                    // Use Ollama HTTP API via raw TCP (no extra deps, reuses loaded model)
+                    let body = serde_json::json!({
+                        "model": model,
+                        "messages": [
+                            {"role": "system", "content": "You are the OshoosiClaw Autonomous Cortex. Analyze security events concisely. State if the process is malicious, suspicious, or benign. Be brief."},
+                            {"role": "user", "content": summary}
+                        ],
+                        "stream": false
+                    });
+                    let body_str = serde_json::to_string(&body)?;
 
-                let timeout = std::time::Duration::from_secs(timeout_secs);
-                let stream = std::net::TcpStream::connect_timeout(
-                    &host_port.parse().unwrap_or_else(|_| "127.0.0.1:11434".parse().unwrap()),
-                    std::time::Duration::from_secs(5),
-                ).map_err(|e| anyhow::anyhow!("Ollama not reachable at {}: {}", host_port, e))?;
-                stream.set_read_timeout(Some(timeout)).ok();
-                stream.set_write_timeout(Some(std::time::Duration::from_secs(5))).ok();
+                    // Parse host:port from reasoning_url
+                    let url = &ai.reasoning_url;
+                    let host_port = url
+                        .strip_prefix("http://").unwrap_or(url)
+                        .split('/').next().unwrap_or("127.0.0.1:11434");
+                    let path = url
+                        .strip_prefix("http://").unwrap_or(url)
+                        .find('/').map(|i| &url.strip_prefix("http://").unwrap_or(url)[i..])
+                        .unwrap_or("/v1/chat/completions");
 
-                use std::io::{Write, Read};
-                let request = format!(
-                    "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                    path, host_port, body_str.len(), body_str
-                );
-                let mut stream = stream;
-                stream.write_all(request.as_bytes())?;
+                    let timeout = std::time::Duration::from_secs(timeout_secs);
+                    let stream = std::net::TcpStream::connect_timeout(
+                        &host_port.parse().unwrap_or_else(|_| "127.0.0.1:11434".parse().unwrap()),
+                        std::time::Duration::from_secs(5),
+                    ).map_err(|e| anyhow::anyhow!("Ollama not reachable at {}: {}", host_port, e))?;
+                    stream.set_read_timeout(Some(timeout)).ok();
+                    stream.set_write_timeout(Some(std::time::Duration::from_secs(5))).ok();
 
-                let mut response = String::new();
-                stream.read_to_string(&mut response).ok();
+                    use std::io::{Read, Write};
+                    let request = format!(
+                        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
+                        path, host_port, body_str.len(), body_str
+                    );
+                    let mut stream = stream;
+                    stream.write_all(request.as_bytes())?;
 
-                // Extract JSON body (after \r\n\r\n headers)
-                let json_body = response.split("\r\n\r\n").nth(1).unwrap_or(&response);
-                let json: serde_json::Value = serde_json::from_str(json_body)
-                    .map_err(|e| anyhow::anyhow!("Ollama JSON parse: {}", e))?;
+                    let mut response = String::new();
+                    stream.read_to_string(&mut response).ok();
 
-                let content = json["choices"][0]["message"]["content"]
-                    .as_str()
-                    .unwrap_or("No response");
+                    // Extract JSON body (after \r\n\r\n headers)
+                    let json_body = response.split("\r\n\r\n").nth(1).unwrap_or(&response);
+                    let json: serde_json::Value = serde_json::from_str(json_body)
+                        .map_err(|e| anyhow::anyhow!("Ollama JSON parse: {}", e))?;
 
-                Ok(strip_deepseek_thinking(content))
-            }
-        }?;
+                    let content = json["choices"][0]["message"]["content"]
+                        .as_str()
+                        .unwrap_or("No response");
 
-        // Strip thinking traces from all backends
-        Ok(strip_deepseek_thinking(&raw))
+                    Ok(strip_deepseek_thinking(content))
+                }
+            }?;
+
+            // Strip thinking traces from all backends
+            Ok(strip_deepseek_thinking(&raw))
+        }).await?
     }
 
-    pub fn generate_text(&self, prompt: &str, max_tokens: usize) -> Result<String> {
+    pub async fn generate_text(&self, prompt: &str, max_tokens: usize) -> Result<String> {
+        let analyzer = Arc::new(self.clone());
+        let p = prompt.to_string();
+        tokio::task::spawn_blocking(move || {
+            analyzer.generate_text_sync(&p, max_tokens)
+        }).await?
+    }
+
+    pub fn generate_text_sync(&self, prompt: &str, max_tokens: usize) -> Result<String> {
         match self {
             Self::Onnx { session, tokenizer, .. } => {
                 let mut tokens_vec = tokenizer.encode(prompt, true).map_err(anyhow::Error::msg)?.get_ids().to_vec();
@@ -751,10 +802,21 @@ impl SecureBertAnalyzer {
 /// Security Judge (Candle/Transformer fallback).
 /// Handles high-fidelity reasoning for complex forensic triage.
 pub struct SecurityJudge {
-    model: Model,
+    model: Arc<Model>,
     tokenizer: Tokenizer,
     device: Device,
-    cache: Mutex<Cache>,
+    cache: Arc<Mutex<Cache>>,
+}
+
+impl Clone for SecurityJudge {
+    fn clone(&self) -> Self {
+        Self {
+            model: self.model.clone(),
+            tokenizer: self.tokenizer.clone(),
+            device: self.device.clone(),
+            cache: self.cache.clone(),
+        }
+    }
 }
 
 impl SecurityJudge {
@@ -785,10 +847,10 @@ impl SecurityJudge {
         let cache = Cache::new(true, candle_core::DType::F32, &config, &device)?;
 
         Ok(Self {
-            model,
+            model: Arc::new(model),
             tokenizer,
             device,
-            cache: Mutex::new(cache),
+            cache: Arc::new(Mutex::new(cache)),
         })
     }
 

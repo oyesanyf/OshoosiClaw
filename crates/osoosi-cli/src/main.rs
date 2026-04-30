@@ -1629,10 +1629,14 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
     let malconv_dest = malware_dir.join("malconv.safetensors");
     if !malconv_dest.exists() {
         if let Some(ref url) = ai_cfg.malconv_weights_url {
-            info!("📥 Downloading MalConv weights from configured URL...");
+            info!("📥 Attempting MalConv download from primary URL...");
             let executor = DirectExecutor::new();
             if let Err(e) = executor.download(url.trim(), &malconv_dest, false).await {
-                warn!("MalConv download from malconv_weights_url failed: {}", e);
+                // Suppress warning if fallbacks are available; move to debug
+                tracing::debug!("Primary MalConv download failed: {}. Trying fallbacks...", e);
+                if e.to_string().contains("401") || e.to_string().contains("403") {
+                    info!("💡 Note: Primary MalConv repo may be private. Set HF_TOKEN environment variable to access restricted Hugging Face models.");
+                }
             }
         }
     }
@@ -1671,6 +1675,10 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
                 }
             }
         }
+    }
+
+    if !malconv_dest.exists() {
+        warn!("⚠️ MalConv weights could not be provisioned from any source. Static AI analysis will be degraded.");
     }
 
     // 4. SecureBERT (Behavioral Sentence Classification)
