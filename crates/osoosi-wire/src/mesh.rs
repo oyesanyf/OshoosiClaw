@@ -112,7 +112,7 @@ impl MeshNode {
             })?
             .with_swarm_config(|c| {
                 c.with_idle_connection_timeout(Duration::from_secs(60))
-                 .with_dial_concurrency(std::num::NonZeroU8::new(2).unwrap())
+                 .with_dial_concurrency_factor(std::num::NonZeroU8::new(2).unwrap())
             })
             .build();
 
