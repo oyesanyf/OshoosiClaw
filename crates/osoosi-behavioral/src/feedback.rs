@@ -17,6 +17,9 @@ pub struct FeedbackStore {
 
 impl FeedbackStore {
     pub fn new<P: AsRef<Path>>(path: P) -> Result<Self> {
+        if let Some(parent) = path.as_ref().parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
         let conn = Connection::open(path)?;
         conn.execute(
             "CREATE TABLE IF NOT EXISTS feedback (

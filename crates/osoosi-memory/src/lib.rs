@@ -34,6 +34,11 @@ fn normalize_asset_path(path: &str) -> String {
 
 impl MemoryStore {
     pub fn new(path: &str) -> anyhow::Result<Self> {
+        if path != ":memory:" {
+            if let Some(parent) = Path::new(path).parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+        }
         let conn = Connection::open(path)?;
 
         // SQLCipher: Apply encryption if available and DB is not in-memory
