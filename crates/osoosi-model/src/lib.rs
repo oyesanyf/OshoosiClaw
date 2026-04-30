@@ -9,8 +9,10 @@ pub mod malconv;
 pub mod malconv_train;
 pub mod malware;
 pub mod nsrl;
+pub mod sorel_ffnn;
 mod train;
 
 pub use malconv::{preprocess_binary, preprocess_bytes, MalConv};
 pub use malware::{MalwareScanResult, MalwareScanner, MalwareScannerStats};
+pub use sorel_ffnn::SorelFFNN;
 pub use train::{ModelConfig, ThreatModel};

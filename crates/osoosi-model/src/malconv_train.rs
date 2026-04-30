@@ -149,16 +149,47 @@ pub async fn download_and_extract_dataset(base_dir: &Path) -> Result<Vec<(PathBu
         
         // Correct API: Password is passed directly or via Password::from
         if let Err(e) = sevenz_rust::decompress_file_with_password(&archive_path, &dest_dir, password.into()) {
-             warn!("Extraction failed for {}: {}", filename, e);
+             warn!("Native extraction failed for {}: {}. Trying system 7z...", filename, e);
+             
+             // Fallback to system 7z if available
+             let candidates = [
+                 "7z",
+                 "tools\\7zip\\7z.exe",
+                 "C:\\tools\\7z.exe",
+                 "C:\\Program Files\\7-Zip\\7z.exe",
+             ];
+             
+             let mut success = false;
+             for cmd in candidates {
+                 let mut command = std::process::Command::new(cmd);
+                 command.arg("x")
+                        .arg("-y")
+                        .arg(format!("-p{}", password))
+                        .arg(format!("-o{}", dest_dir.display()))
+                        .arg(&archive_path);
+                 
+                 if let Ok(status) = command.status() {
+                     if status.success() {
+                         success = true;
+                         info!("System 7z successfully extracted {}", filename);
+                         break;
+                     }
+                 }
+             }
+             
+             if !success {
+                 warn!("All extraction methods failed for {}", filename);
+             }
         }
 
-        // Add extracted files to the list
+        // Add extracted files to the list recursively
         if dest_dir.exists() {
-            for entry in std::fs::read_dir(&dest_dir)? {
-                let entry = entry?;
-                let path = entry.path();
-                if path.is_file() {
-                    samples.push((path, label));
+            for entry in walkdir::WalkDir::new(&dest_dir) {
+                if let Ok(entry) = entry {
+                    let path = entry.path();
+                    if path.is_file() {
+                        samples.push((path.to_path_buf(), label));
+                    }
                 }
             }
         }

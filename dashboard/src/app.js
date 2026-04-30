@@ -13,7 +13,8 @@ const state = {
     searchQuery: '',
     network: null,
     otelNetwork: null,
-    telemetryChart: null
+    telemetryChart: null,
+    expandedDetails: new Set()
 };
 
 /**
@@ -387,7 +388,7 @@ function renderThreatsView(threats) {
                 </div>
             </div>
             
-            <div id="group-details-full-${t.id}" style="display: none; flex-direction: column; gap: 10px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 10px;">
+            <div id="group-details-full-${t.id}" style="display: ${state.expandedDetails.has('full-' + t.id) ? 'flex' : 'none'}; flex-direction: column; gap: 10px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 10px;">
                 ${t.entropy ? `
                     <div class="entropy-gauge">
                         <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); margin-bottom:4px;">
@@ -497,7 +498,7 @@ function renderMalwareView(detections) {
                 </div>
             </div>
 
-            <div id="malware-details-${detId}" style="display: none; flex-direction: column; gap: 10px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 10px;">
+            <div id="malware-details-${detId}" style="display: ${state.expandedDetails.has(detId) ? 'flex' : 'none'}; flex-direction: column; gap: 10px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 10px;">
                 ${det.entropy ? `
                     <div class="entropy-gauge">
                         <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); margin-bottom:4px;">
@@ -1085,9 +1086,27 @@ window.markTruePositive = async function(threatId) {
  * Global Interactivity Helpers
  */
 window.toggleGroupDetails = function(id) {
+    if (state.expandedDetails.has(id)) {
+        state.expandedDetails.delete(id);
+    } else {
+        state.expandedDetails.add(id);
+    }
     const el = document.getElementById(`group-details-${id}`);
     if (el) {
-        el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+        el.style.display = state.expandedDetails.has(id) ? 'flex' : 'none';
+        lucide.createIcons();
+    }
+};
+
+window.toggleMalwareDetails = function(id) {
+    if (state.expandedDetails.has(id)) {
+        state.expandedDetails.delete(id);
+    } else {
+        state.expandedDetails.add(id);
+    }
+    const el = document.getElementById(`malware-details-${id}`);
+    if (el) {
+        el.style.display = state.expandedDetails.has(id) ? 'flex' : 'none';
         lucide.createIcons();
     }
 };

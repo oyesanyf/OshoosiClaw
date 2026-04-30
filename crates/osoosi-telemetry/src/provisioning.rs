@@ -13,8 +13,8 @@ use tracing::{info, warn};
 
 /// Opt-in: download MalConv / SmolLM2 from `oyesanyf/OshoosiClaw-Weights` during provisioning. Default **off** — that bundle often 404s unless you publish it.
 fn use_bundled_hf_weights() -> bool {
-    std::env::var("OSOOSI_USE_BUNDLED_HF_WEIGHTS").map_or(false, |v| {
-        v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("yes")
+    std::env::var("OSOOSI_USE_BUNDLED_HF_WEIGHTS").map_or(true, |v| {
+        v != "0" && !v.eq_ignore_ascii_case("false") && !v.eq_ignore_ascii_case("no")
     })
 }
 

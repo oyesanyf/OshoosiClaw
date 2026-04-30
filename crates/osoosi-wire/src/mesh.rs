@@ -110,7 +110,10 @@ impl MeshNode {
                     upnp,
                 })
             })?
-            .with_swarm_config(|c| c.with_idle_connection_timeout(Duration::from_secs(60)))
+            .with_swarm_config(|c| {
+                c.with_idle_connection_timeout(Duration::from_secs(60))
+                 .with_dial_concurrency(std::num::NonZeroU8::new(2).unwrap())
+            })
             .build();
 
         let threat_topic = gossipsub::IdentTopic::new(format!("osoosi-threats-{}", zone));
@@ -223,6 +226,8 @@ impl MeshNode {
                         .add_address(&pid, maddr.clone());
                 }
                 let _ = swarm.dial(maddr);
+                // Backoff Strategy: Add delay between initial dials to prevent socket exhaustion burst
+                tokio::time::sleep(Duration::from_millis(500)).await;
             }
         }
 
@@ -299,7 +304,9 @@ impl MeshNode {
     {
         let mut quarantined: HashSet<PeerId> = HashSet::new();
         let mut approved: HashSet<PeerId> = HashSet::new();
-        let mut bootstrap_interval = tokio::time::interval(Duration::from_secs(60));
+        // Slow down "excitement": Increased bootstrap interval to 5 minutes
+        let mut bootstrap_interval = tokio::time::interval(Duration::from_secs(300));
+        let mut dial_backoff_secs = 0u64;
         loop {
             tokio::select! {
                 _ = bootstrap_interval.tick() => {
@@ -459,7 +466,11 @@ impl MeshNode {
                     SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                         let es = error.to_string();
                         if es.contains("10048") || es.contains("WSAEADDRINUSE") {
-                            warn!("Socket exhaustion detected (WSAEADDRINUSE). Reducing mesh dial frequency.");
+                            warn!("Socket exhaustion detected (WSAEADDRINUSE). Applying discovery backoff.");
+                            dial_backoff_secs = (dial_backoff_secs + 30).min(600);
+                            bootstrap_interval = tokio::time::interval(Duration::from_secs(300 + dial_backoff_secs));
+                            // Reset the interval to start from now with the new duration
+                            bootstrap_interval.tick().await; 
                         } else {
                             warn!("Outgoing connection error to {:?}: {}", peer_id, error);
                         }

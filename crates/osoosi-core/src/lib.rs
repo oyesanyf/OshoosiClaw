@@ -104,6 +104,7 @@ fn is_trusted_operational_image(image_path: &str) -> bool {
         "net",
         "git",
         "git-remote-https",
+        "git-remote-http",
         "capa",
         "hayabusa",
         "hollows_hunter",
@@ -121,6 +122,12 @@ fn is_trusted_operational_image(image_path: &str) -> bool {
         "python",
         "python3",
         "pip",
+        "powershell",
+        "pwsh",
+        "cmd",
+        "conhost",
+        "wt",
+        "svchost",
     ];
     let is_trusted_stem = TRUSTED_STEMS.contains(&stem.as_str());
     
@@ -345,6 +352,8 @@ pub struct EdrOrchestrator {
     spider_eyes: Arc<osoosi_behavioral::SpiderEyes>,
     /// Runtime config (db paths, sandboxes, etc.)
     runtime_config: osoosi_types::config::RuntimeConfig,
+    /// Alert suppression cache (PID -> Last Alert Time)
+    alert_suppression_cache: Arc<dashmap::DashMap<u32, Instant>>,
 }
 
 impl EdrOrchestrator {
@@ -972,6 +981,7 @@ impl EdrOrchestrator {
             task_executor,
             behavioral_debouncer,
             spider_eyes,
+            alert_suppression_cache: Arc::new(dashmap::DashMap::new()),
         })
     }
 
@@ -2231,6 +2241,8 @@ impl EdrOrchestrator {
                         );
                     }
                 }
+                // Throttling: Prevent system freeze by yielding during massive workspace scans
+                tokio::time::sleep(std::time::Duration::from_millis(10)).await;
             }
         });
 
@@ -2885,6 +2897,18 @@ impl EdrOrchestrator {
         signature: osoosi_types::ThreatSignature,
     ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
+
+        // PID-based Alert Suppression (Git Storm / Redundancy Prevention)
+        let pid = event.process_id().unwrap_or(0);
+        if pid != 0 {
+            if let Some(last) = self.alert_suppression_cache.get(&pid) {
+                if last.elapsed() < Duration::from_secs(300) {
+                    debug!("Suppressing redundant alert for PID {}: {}", pid, signature.id);
+                    return Ok(());
+                }
+            }
+            self.alert_suppression_cache.insert(pid, Instant::now());
+        }
 
         warn!(
             "ALARM: Threat identified on node {}: {:?}",

@@ -62,6 +62,11 @@ impl SecuredExecutor for DirectExecutor {
             return Err(anyhow::anyhow!("Download failed with status: {}", status));
         }
 
+        // Ensure parent directory exists before creating the file
+        if let Some(parent) = dest.parent() {
+            let _ = tokio::fs::create_dir_all(parent).await;
+        }
+
         let mut file = tokio::fs::OpenOptions::new()
             .create(true)
             .append(resume)

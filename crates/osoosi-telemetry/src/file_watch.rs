@@ -269,13 +269,21 @@ pub async fn build_os_file_hash_baseline(
 
     tokio::task::spawn_blocking(move || {
         for root in paths {
+            let mut count = 0;
             for entry in walkdir::WalkDir::new(&root)
                 .into_iter()
                 .filter_entry(|e| !should_skip_path(e.path(), &install_dir, &exclude_paths))
                 .filter_map(|e| e.ok())
             {
-                if entry.file_type().is_file() && tx.blocking_send(entry.into_path()).is_err() {
-                    return;
+                if entry.file_type().is_file() {
+                    if tx.blocking_send(entry.into_path()).is_err() {
+                        return;
+                    }
+                    count += 1;
+                    // Yield periodically to avoid pinning the CPU during large walks
+                    if count % 100 == 0 {
+                        std::thread::yield_now();
+                    }
                 }
             }
         }

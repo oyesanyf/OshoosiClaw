@@ -491,6 +491,8 @@ fn kev_quiet_benign_process_lifecycle(path: &str, stem: &str, config: &osoosi_ty
         "brave",
         "opera",
         "git",
+        "git-remote-http",
+        "git-remote-https",
         "devenv",
         "code",
         "code-insiders",
@@ -977,7 +979,7 @@ impl ThreatVoter for SysmonDnsVoter {
                     | "dns.exe" | "dnscache" | "systemd-resolved" | "mDNSResponder"
                     | "curl.exe" | "wget" | "powershell.exe" | "cmd.exe"
                     | "explorer.exe" | "teams.exe" | "slack.exe" | "outlook.exe"
-                    | "code.exe" | "osoosi" | "osoosi.exe"
+                    | "code.exe" | "osoosi" | "osoosi.exe" | "git.exe"
                 );
 
                 if is_unusual_resolver {
