@@ -169,7 +169,7 @@ impl ThreatVoter for GemmaVoter {
             image, version, cmd_line
         );
 
-        match self.analyzer.reason_about_attack(&summary) {
+        match self.analyzer.reason_about_attack(&summary).await {
             Ok(raw_reasoning) => {
                 // Strip DeepSeek <think>...</think> reasoning trace
                 let reasoning = strip_think_tags(&raw_reasoning);
@@ -377,7 +377,7 @@ impl ThreatVoter for DecompileVoter {
 
 /// Yara-X Memory Voter (C2 Beacon Scanning)
 pub struct YaraXMemoryVoter {
-    pub rules: yara_x::Rules,
+    pub rules: Arc<yara_x::Rules>,
 }
 
 #[async_trait]

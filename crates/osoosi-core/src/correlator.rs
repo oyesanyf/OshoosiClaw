@@ -345,7 +345,7 @@ impl EventCorrelator {
             summary
         );
 
-        let response = llm.generate_text(&prompt, 100)?;
+        let response = llm.generate_text(&prompt, 100).await?;
         debug!("LLM Investigation Response: {}", response);
 
         // Simple heuristic parsing (in production this would be more robust)

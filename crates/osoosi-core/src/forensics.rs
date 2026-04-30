@@ -144,7 +144,7 @@ impl ForensicStoryteller {
                 timeline_data
             );
 
-            match analyzer.generate_text(&prompt, 200) {
+            match analyzer.generate_text(&prompt, 200).await {
                 Ok(story) => story,
                 Err(e) => {
                     error!(

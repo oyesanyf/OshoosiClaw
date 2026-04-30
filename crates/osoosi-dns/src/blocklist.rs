@@ -5,7 +5,7 @@
 
 use dashmap::DashMap;
 use std::path::Path;
-use tracing::{info, warn};
+use tracing::info;
 
 /// Thread-safe DNS blocklist with O(1) lookups.
 pub struct DnsBlocklist {

@@ -8,7 +8,7 @@
 //! macOS: Relies on DYLD_INSERT_LIBRARIES or Endpoint Security
 
 use std::path::Path;
-use tracing::{info, warn, error};
+use tracing::info;
 
 #[derive(Debug, thiserror::Error)]
 pub enum InjectionError {

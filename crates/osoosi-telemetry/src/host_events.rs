@@ -26,7 +26,7 @@ pub trait HostEventReader: Send + Sync {
 }
 
 /// Create the appropriate reader for the current OS.
-pub fn create_host_event_reader(channel_or_path: &str) -> anyhow::Result<Box<dyn HostEventReader>> {
+pub fn create_host_event_reader(channel_or_path: &str) -> anyhow::Result<Box<dyn HostEventReader + Send + Sync>> {
     #[cfg(target_os = "windows")]
     {
         // On Windows, we now prefer the Native Rust Engine (SysmonX Port)

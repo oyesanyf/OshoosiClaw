@@ -5,6 +5,7 @@
 
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
+use hostname;
 
 /// Sysmon event ID — complete coverage of all Sysmon v15+ event types.
 /// Generic variant used for non-Sysmon sources (Linux audit, macOS, etc.).
@@ -155,6 +156,19 @@ pub struct FileCreateData {
 }
 
 impl SysmonEvent {
+    pub fn new(event_id: SysmonEventId) -> Self {
+        Self {
+            event_id,
+            timestamp: Utc::now(),
+            computer: hostname::get()
+                .ok()
+                .and_then(|h| h.into_string().ok())
+                .unwrap_or_else(|| "localhost".to_string()),
+            data: serde_json::json!({}),
+            product_version: None,
+        }
+    }
+
     pub fn process_id(&self) -> Option<u32> {
         self.data
             .get("ProcessId")

@@ -7,7 +7,7 @@ use crate::graph::{GraphCorrelationEngine, Relationship};
 use crate::semantic::SemanticEngine;
 use dashmap::DashMap;
 use osoosi_types::{SysmonEvent, ThreatSignature};
-use futures::future::BoxFuture;
+use osoosi_memory::MemoryStore;
 use std::sync::Arc;
 use std::sync::RwLock;
 use tracing::{debug, info, warn};
@@ -22,9 +22,12 @@ pub struct VoteResult {
     pub weight: f32,
 }
 
+use async_trait::async_trait;
+
+#[async_trait]
 pub trait ThreatVoter: Send + Sync {
     fn name(&self) -> String;
-    fn vote(&self, event: &SysmonEvent) -> BoxFuture<'static, Option<VoteResult>>;
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -279,7 +282,7 @@ pub struct PolicyEngine {
     /// Consensus cache to prevent duplicate notifications (Key: EventID+Path+Hash -> (Signature, Time))
     consensus_cache: Arc<DashMap<String, (ThreatSignature, std::time::Instant)>>,
     /// Multi-tool consensus voters
-    voters: RwLock<Vec<Box<dyn ThreatVoter>>>,
+    voters: Arc<tokio::sync::RwLock<Vec<Box<dyn ThreatVoter + Send + Sync>>>>,
     /// Global policy config (noise suppression, trusted paths)
     pub config: osoosi_types::PolicyConfig,
 }
@@ -295,22 +298,21 @@ impl PolicyEngine {
             sigma: Arc::new(RwLock::new(crate::sigma::SigmaEngine::new())),
             global_intel_rules: Arc::new(DashMap::new()),
             consensus_cache: Arc::new(DashMap::new()),
-            voters: RwLock::new(Vec::new()),
+            voters: Arc::new(tokio::sync::RwLock::new(Vec::new())),
             config,
         }
     }
 
-    pub fn add_voter(&self, voter: Box<dyn ThreatVoter>) {
-        if let Ok(mut guard) = self.voters.write() {
-            let name = voter.name();
-            guard.push(voter);
-            info!(
-                target: CONSENSUS_LOG_TARGET,
-                voter = %name,
-                total = guard.len(),
-                "[CONSENSUS] registered threat voter"
-            );
-        }
+    pub async fn add_voter(&self, voter: Box<dyn ThreatVoter + Send + Sync>) {
+        let mut guard = self.voters.write().await;
+        let name = voter.name();
+        guard.push(voter);
+        info!(
+            target: CONSENSUS_LOG_TARGET,
+            voter = %name,
+            total = guard.len(),
+            "[CONSENSUS] registered threat voter"
+        );
     }
 
     pub fn sigma_engine(&self) -> &Arc<RwLock<crate::sigma::SigmaEngine>> {
@@ -397,7 +399,7 @@ impl PolicyEngine {
             }
         }
 
-        let voters_len = self.voters.read().map(|v| v.len()).unwrap_or(0);
+        let voters_len = self.voters.read().await.len();
         debug!(
             target: CONSENSUS_LOG_TARGET,
             event_id = ?event.event_id,
@@ -416,7 +418,8 @@ impl PolicyEngine {
         const OTX_VOTER: &str = "OTX-C2";
 
         // ADAPTIVE THREADING: Run all voters in parallel
-        let results = if let Ok(voters_guard) = self.voters.read() {
+        let results = {
+            let voters_guard = self.voters.read().await;
             let mut futures = Vec::new();
             let mut names = Vec::new();
             for voter in voters_guard.iter() {
@@ -425,8 +428,6 @@ impl PolicyEngine {
             }
             let res = futures::future::join_all(futures).await;
             names.into_iter().zip(res.into_iter()).collect::<Vec<_>>()
-        } else {
-            Vec::new()
         };
 
         for (vname, res_opt) in results {

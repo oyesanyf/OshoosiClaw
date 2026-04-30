@@ -475,6 +475,11 @@ impl StaticAnalyzer {
         Ok(None) // Return None until real integration is complete (prevents false positives)
     }
 
+    /// Calculate Shannon Entropy of a file to detect packing/encryption.
+    pub fn calculate_entropy(&self, path: &Path) -> anyhow::Result<f32> {
+        Self::calculate_entropy_sync(path)
+    }
+
     /// Calculate Shannon Entropy of a file to detect packing/encryption (Synchronous helper).
     pub fn calculate_entropy_sync(path: &Path) -> anyhow::Result<f32> {
         let mut file = File::open(path)?;

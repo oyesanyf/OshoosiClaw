@@ -11,7 +11,7 @@ use crate::blocklist::DnsBlocklist;
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
-use tracing::{debug, error, info, warn};
+use tracing::{error, info, warn};
 use hickory_proto::op::{Message, MessageType, ResponseCode, Header};
 use hickory_proto::rr::{Name, RData, Record, RecordType};
 use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
@@ -253,7 +253,7 @@ fn build_sinkhole_response(id: u16, domain: &str, qtype: RecordType) -> Message 
                 RData::AAAA(hickory_proto::rr::rdata::AAAA(std::net::Ipv6Addr::UNSPECIFIED))
             };
 
-            let mut record = Record::from_rdata(name, 300, rdata);
+            let record = Record::from_rdata(name, 300, rdata);
             response.add_answer(record);
         }
     }

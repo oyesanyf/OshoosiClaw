@@ -220,7 +220,7 @@ fn try_build_c2_yara_voter() -> Option<osoosi_policy::voters::YaraXMemoryVoter> 
                 )
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
             Ok(YaraXMemoryVoter {
-                rules: compiler.build(),
+                rules: Arc::new(compiler.build()),
             })
         },
     ));
@@ -394,7 +394,7 @@ impl EdrOrchestrator {
             // 2. Try to find the live process to entangle
             if let Some(pid) = self.find_pid_by_name(&process_name).await {
                 // Perform Binary Analysis (Spider Eyes)
-                match self.spider_eyes.watch_process(pid) {
+                match self.spider_eyes.watch_process(pid).await {
                     Ok(analysis) => {
                         info!("🕸️  [SPIDER-EYES] Analysis for {}: \n{}", process_name, analysis);
                         
@@ -851,76 +851,76 @@ impl EdrOrchestrator {
         // Register Voters into Policy Engine for Multi-Detector Consensus
         policy.add_voter(Box::new(osoosi_policy::voters::SemanticVoter {
             engine: osoosi_policy::semantic::SemanticEngine::new(),
-        }));
+        })).await;
 
         policy.add_voter(Box::new(osoosi_policy::voters::SigmaVoter {
             engine: policy.sigma_engine().clone(),
-        }));
+        })).await;
 
         policy.add_voter(Box::new(osoosi_policy::voters::NsrlVoter {
             cache: nsrl_cache.clone(),
             memory: memory.clone(),
-        }));
+        })).await;
 
         policy.add_voter(Box::new(osoosi_policy::voters::OtxVoter {
             indicators: policy.otx_indicators_ref().clone(),
             memory: memory.clone(),
-        }));
+        })).await;
 
         if let Some(ref gemma) = gemma_cortex {
             policy.add_voter(Box::new(osoosi_policy::voters::GemmaVoter::new(
                 gemma.clone(),
-            )));
+            ))).await;
         }
 
         policy.add_voter(Box::new(osoosi_policy::voters::KevVoter {
             memory: memory.clone(),
             config: policy.config.clone(),
-        }));
+        })).await;
 
         // Decompile Voter: SpiderEyes binary analysis (LLM + Capstone)
         policy.add_voter(Box::new(osoosi_policy::voters::DecompileVoter {
             spider: spider_eyes.clone(),
-        }));
+        })).await;
 
         // Yara-X Memory Voter: wrap build in catch_unwind — yara-x can panic on some toolchains/rule edge cases.
         if let Some(voter) = try_build_c2_yara_voter() {
-            policy.add_voter(Box::new(voter));
+            policy.add_voter(Box::new(voter)).await;
         }
 
         // ClamAV Consensus Voter
         policy.add_voter(Box::new(crate::voters::ClamVoter {
             scanner: malware_scanner.clone(),
-        }));
+        })).await;
 
         // MalConv / ONNX malware model + YARA — same [`MalwareScanner`] as Clam; separate vote for ML path
         policy.add_voter(Box::new(crate::voters::MalConvVoter {
             scanner: malware_scanner.clone(),
-        }));
+        })).await;
 
         // Privacy-Enforced Voter: DP + Merkle Audit
         let privacy_config = osoosi_dp::PrivacyConfig::default();
         policy.add_voter(Box::new(osoosi_policy::voters::PrivacyVoter::new(
             privacy_config,
             audit.clone(),
-        )));
+        ))).await;
 
         // Native Instrumentation Voter: Ported from OpenEDR
         policy.add_voter(Box::new(osoosi_policy::voters::NativeVoter {
             memory: memory.clone(),
-        }));
+        })).await;
 
         // Injection Telemetry Voter: Processes inner-process hook events (BitBlt, CreateProcessW, send, ptrace, etc.)
-        policy.add_voter(Box::new(osoosi_policy::voters::InjectionTelemetryVoter));
+        policy.add_voter(Box::new(osoosi_policy::voters::InjectionTelemetryVoter)).await;
 
         // DNS Shield Voter: Evaluates DNS query telemetry (DGA, tunneling, blocklist, darknet)
-        policy.add_voter(Box::new(osoosi_policy::voters::DnsShieldVoter));
+        policy.add_voter(Box::new(osoosi_policy::voters::DnsShieldVoter)).await;
 
         // Sysmon DNS Voter (Event ID 22): Process-attributed DNS analysis with LLM context
         let dns_blocklist = Arc::new(osoosi_dns::DnsBlocklist::new());
         policy.add_voter(Box::new(osoosi_policy::voters::SysmonDnsVoter {
             blocklist: dns_blocklist,
-        }));
+        })).await;
 
         let deception_engine = Arc::new(tokio::sync::RwLock::new(
             osoosi_behavioral::deception::EntanglementEngine::new(),
@@ -2203,17 +2203,16 @@ impl EdrOrchestrator {
         let malware_scanner = self.malware_scanner.clone();
         let audit = self.audit.clone();
 
-        crate::spawn_rayon(move || {
-            use rayon::prelude::*;
+        tokio::spawn(async move {
             let entries: Vec<_> = walkdir::WalkDir::new(&workspace_dir)
                 .into_iter()
                 .filter_map(|e| e.ok())
                 .filter(|e| e.file_type().is_file())
                 .collect();
 
-            entries.into_par_iter().for_each(|entry| {
+            for entry in entries {
                 if should_skip_file_malware_scan(entry.path()) {
-                    return;
+                    continue;
                 }
                 if let Some(scan) = malware_scanner.scan_file(entry.path()).await {
                     if scan.is_malware {
@@ -2232,7 +2231,7 @@ impl EdrOrchestrator {
                         );
                     }
                 }
-            });
+            }
         });
 
         Ok(result)
@@ -2245,22 +2244,24 @@ impl EdrOrchestrator {
         use osoosi_types::ResponseAction;
 
         // --- MORPHIC ENTANGLEMENT INTERCEPTION ---
-        if let Some(pid) = event.process_id() {
-            let mut engine = self.deception_engine.write().await;
-            if engine.get_spider(pid as u32).is_some() {
-                match event.event_id {
-                    osoosi_types::SysmonEventId::FileCreate | osoosi_types::SysmonEventId::FileDeleteArchived | osoosi_types::SysmonEventId::FileDeleteLogged => {
-                        let path = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("");
-                        if let Some(res) = engine.handle_event(pid as u32, "io_access", path) {
-                            info!("🕸️ [ENTANGLED I/O] Intercepted access from PID {}: {}", pid, res);
-                        }
-                    },
-                    osoosi_types::SysmonEventId::NetworkConnect => {
-                        if let Some(_) = engine.handle_event(pid as u32, "exfil", "network") {
-                            info!("🕸️ [ENTANGLED EXFIL] Redirected network activity for PID {}", pid);
-                        }
-                    },
-                    _ => {}
+        {
+            if let Some(pid) = event.process_id() {
+                let mut engine = self.deception_engine.write().await;
+                if engine.get_spider(pid as u32).is_some() {
+                    match event.event_id {
+                        osoosi_types::SysmonEventId::FileCreate | osoosi_types::SysmonEventId::FileDeleteArchived | osoosi_types::SysmonEventId::FileDeleteLogged => {
+                            let path = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("");
+                            if let Some(res) = engine.handle_event(pid as u32, "io_access", path) {
+                                info!("🕸️ [ENTANGLED I/O] Intercepted access from PID {}: {}", pid, res);
+                            }
+                        },
+                        osoosi_types::SysmonEventId::NetworkConnect => {
+                            if let Some(_) = engine.handle_event(pid as u32, "exfil", "network") {
+                                info!("🕸️ [ENTANGLED EXFIL] Redirected network activity for PID {}", pid);
+                            }
+                        },
+                        _ => {}
+                    }
                 }
             }
         }
@@ -2287,17 +2288,16 @@ impl EdrOrchestrator {
             }
         }
 
-        // 1. Tier-1/2 on Rayon (policy + entropy) — see `hybrid_runtime::run_on_rayon`
-        let policy = self.policy.clone();
+        // 1. Tier-1/2 on Async Consensus (policy)
+        let mut signature = self.policy.scan_event(&event).await;
+
+        // 2. Entropy analysis on Rayon (CPU-bound)
         let static_analyzer = self.static_analyzer.clone();
         let event_clone = event.clone();
-
         let signature = crate::run_on_rayon(move || {
-            let mut signature = policy.scan_event(&event_clone);
-
             if let Some(image_path) = event_clone.data.get("Image").and_then(|v| v.as_str()) {
-                let path = std::path::Path::new(image_path);
-                if let Ok(entropy) = static_analyzer.calculate_entropy(path) {
+                let path = std::path::PathBuf::from(image_path);
+                if let Ok(entropy) = static_analyzer.calculate_entropy(&path) {
                     let is_browser = image_path.to_lowercase().contains("chrome.exe")
                         || image_path.to_lowercase().contains("msedge.exe")
                         || image_path.to_lowercase().contains("firefox.exe");

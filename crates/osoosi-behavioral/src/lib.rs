@@ -9,7 +9,7 @@ mod classifier;
 mod colog;
 pub mod deception;
 pub mod ebpf_monitor;
-pub mod ensemble;
+pub mod consensus;
 pub mod feedback;
 pub mod forensics;
 pub mod llm_engine;
