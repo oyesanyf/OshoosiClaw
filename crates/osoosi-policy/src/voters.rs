@@ -287,7 +287,75 @@ impl ThreatVoter for NativeVoter {
     }
 }
 
-/// NSRL "Known Good" Veto Voter (matches NIST **SHA-1** from Sysmon `Hashes`, same as the EDR fast-path).
+/// Trusted Vendor Voter (Signature Check)
+/// Verifies the Authenticode signature via Sysmon telemetry.
+/// If signed by a trusted vendor, subtracts from the threat score.
+pub struct TrustedVendorVoter;
+
+#[async_trait]
+impl ThreatVoter for TrustedVendorVoter {
+    fn name(&self) -> String {
+        "Trusted-Vendor".to_string()
+    }
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        let status = event.data.get("SignatureStatus").or_else(|| event.data.get("Signature Status"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        
+        let publisher = event.data.get("Signature").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+        
+        if status.to_lowercase() == "valid" || status.to_lowercase().contains("trusted") {
+            let trusted_publishers = [
+                "microsoft", "github, inc.", "google", "apple", "mozilla", 
+                "oracle", "amazon", "digicert", "sectigo", "comodo"
+            ];
+            
+            if trusted_publishers.iter().any(|&p| publisher.contains(p)) {
+                return Some(VoteResult {
+                    confidence: 0.0,
+                    reason: format!("Trusted Vendor: {} (Signature: {})", publisher, status),
+                    weight: -0.5, // Subtract significant amount from threat score
+                });
+            }
+        }
+        None
+    }
+}
+
+/// Git Noise Voter (Forensic "Allow-Strings")
+/// Specifically suppresses alerts for legitimate Git behavior (CRL checks, etc.)
+pub struct GitNoiseVoter;
+
+#[async_trait]
+impl ThreatVoter for GitNoiseVoter {
+    fn name(&self) -> String {
+        "Git-Noise-Filter".to_string()
+    }
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+        if image.contains("git.exe") || image.contains("git-remote-http.exe") {
+            // Check for known benign Git artifacts
+            let cmd_line = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+            let query = event.data.get("QueryName").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+            
+            let benign_git_strings = [
+                "crl.comodo.net", "crl.sectigo.com", "crl.digicert.com", 
+                "github.com", "bitbucket.org", "gitlab.com",
+                "git-receive-pack", "git-upload-pack"
+            ];
+            
+            if benign_git_strings.iter().any(|&s| cmd_line.contains(s) || query.contains(s)) {
+                return Some(VoteResult {
+                    confidence: 0.0,
+                    reason: "Benign Git Forensic Artifact: legitimate Git network/CRL behavior detected.".to_string(),
+                    weight: -1.0, // Significant suppression
+                });
+            }
+        }
+        None
+    }
+}
+
 pub struct NsrlVoter {
     pub cache: Arc<dashmap::DashMap<String, bool>>,
     pub memory: Arc<osoosi_memory::MemoryStore>,

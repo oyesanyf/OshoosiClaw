@@ -94,7 +94,10 @@ fn is_trusted_operational_image(image_path: &str) -> bool {
         || path.contains("\\oshoosiclaw\\target\\")
         || path.contains("/oshoosiclaw/tools/")
         || path.contains("/oshoosiclaw/target/")
-        || path.contains("\\appdata\\local\\programs\\python\\");
+        || path.contains("\\appdata\\local\\programs\\python\\")
+        || path.contains("\\program files\\git\\")
+        || path.contains("\\tools\\git\\cmd\\")
+        || path.contains("\\progra~1\\git\\");
 
     const TRUSTED_STEMS: &[&str] = &[
         "osoosi",
@@ -352,8 +355,8 @@ pub struct EdrOrchestrator {
     spider_eyes: Arc<osoosi_behavioral::SpiderEyes>,
     /// Runtime config (db paths, sandboxes, etc.)
     runtime_config: osoosi_types::config::RuntimeConfig,
-    /// Alert suppression cache (PID -> Last Alert Time)
-    alert_suppression_cache: Arc<dashmap::DashMap<u32, Instant>>,
+    /// Alert suppression cache (Hash -> Last Alert Time)
+    alert_suppression_cache: Arc<dashmap::DashMap<String, Instant>>,
 }
 
 impl EdrOrchestrator {
@@ -861,6 +864,9 @@ impl EdrOrchestrator {
         policy.add_voter(Box::new(osoosi_policy::voters::SemanticVoter {
             engine: osoosi_policy::semantic::SemanticEngine::new(),
         })).await;
+
+        policy.add_voter(Box::new(osoosi_policy::voters::TrustedVendorVoter)).await;
+        policy.add_voter(Box::new(osoosi_policy::voters::GitNoiseVoter)).await;
 
         policy.add_voter(Box::new(osoosi_policy::voters::SigmaVoter {
             engine: policy.sigma_engine().clone(),
@@ -2898,17 +2904,18 @@ impl EdrOrchestrator {
     ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
 
-        // PID-based Alert Suppression (Git Storm / Redundancy Prevention)
-        let pid = event.process_id().unwrap_or(0);
-        if pid != 0 {
-            if let Some(last) = self.alert_suppression_cache.get(&pid) {
-                if last.elapsed() < Duration::from_secs(300) {
-                    debug!("Suppressing redundant alert for PID {}: {}", pid, signature.id);
-                    return Ok(());
-                }
+        // Hash-based Alert Suppression (Git Storm / Redundancy Prevention)
+        let hash = signature.hash_blake3.clone()
+            .or_else(|| signature.id.split(':').next().map(|s| s.to_string())) // Fallback to prefix of ID
+            .unwrap_or_else(|| "unknown".to_string());
+            
+        if let Some(last) = self.alert_suppression_cache.get(&hash) {
+            if last.elapsed() < Duration::from_secs(600) { // 10 minute cooldown
+                debug!("Suppressing redundant alert for Hash {}: {}", hash, signature.id);
+                return Ok(());
             }
-            self.alert_suppression_cache.insert(pid, Instant::now());
         }
+        self.alert_suppression_cache.insert(hash, Instant::now());
 
         warn!(
             "ALARM: Threat identified on node {}: {:?}",
