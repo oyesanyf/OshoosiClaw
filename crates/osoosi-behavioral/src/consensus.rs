@@ -23,7 +23,7 @@ pub struct LLMExpert {
 }
 
 pub struct EnsembleOrchestrator {
-    experts: Vec<LLMExpert>,
+    _experts: Vec<LLMExpert>,
     /// cluster -> expert_name -> weight
     weight_matrix: HashMap<ThreatCluster, HashMap<String, f32>>,
 }
@@ -50,7 +50,7 @@ impl EnsembleOrchestrator {
         weight_matrix.insert(ThreatCluster::LateralMovement, lateral_weights);
 
         Self {
-            experts: vec![
+            _experts: vec![
                 LLMExpert { name: "DeepSeek-R1".to_string(), model_type: "remote".to_string() },
                 LLMExpert { name: "Gemma-2".to_string(), model_type: "local".to_string() },
                 LLMExpert { name: "SmolLM".to_string(), model_type: "local".to_string() },

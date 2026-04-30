@@ -295,7 +295,7 @@ pub extern "system" fn DllMain(
     if fdw_reason == DLL_PROCESS_ATTACH {
         // Initialize hooks in a new thread or carefully here
         unsafe {
-            if let Err(e) = init_hooks() {
+            if let Err(_e) = init_hooks() {
                 // Silently fail if hooks can't be established (standard EDR fallback)
                 // eprintln!("Hook init failed: {}", e);
             }
