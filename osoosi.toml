@@ -51,7 +51,7 @@ quarantine_exclude_paths = [".tmp.driveupload", "Google Drive", "OneDrive", "Dro
 
 [runtime]
 # SQLite database path for memory store
-# db_path = "./osoosi.db"
+db_path = "./database/osoosi.db"
 # Traps directory for deception engine
 # traps_path = "./traps"
 

@@ -47,7 +47,7 @@ impl BehavioralClassifier {
         let models_dir =
             std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
 
-        let feedback_path = std::env::var("OSOOSI_DATA_DIR").unwrap_or_else(|_| "data".to_string());
+        let feedback_path = std::env::var("OSOOSI_DATABASE_DIR").unwrap_or_else(|_| "database".to_string());
         let _ = std::fs::create_dir_all(&feedback_path);
         let feedback_db = Path::new(&feedback_path).join("behavioral_learning.db");
 

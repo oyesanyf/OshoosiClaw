@@ -1193,7 +1193,7 @@ fn default_max_memory() -> usize {
     8_388_608
 }
 fn default_db_path() -> String {
-    "./osoosi.db".to_string()
+    "./database/osoosi.db".to_string()
 }
 fn default_traps_path() -> String {
     "./traps".to_string()
