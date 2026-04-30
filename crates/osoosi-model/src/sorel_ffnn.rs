@@ -33,6 +33,23 @@ impl SorelFFNN {
     }
 
     pub fn load<P: AsRef<std::path::Path>>(path: P, device: &Device) -> anyhow::Result<Self> {
+        let path = path.as_ref();
+        
+        // Validation: Ensure file exists and is not an empty/malformed error page
+        let meta = std::fs::metadata(path)?;
+        if meta.len() < 1024 {
+            return Err(anyhow::anyhow!("SOREL weights at {:?} are suspiciously small ({} bytes). Likely a 404 error or corrupted download.", path, meta.len()));
+        }
+
+        // Magic Byte Check: PyTorch .pt files are usually ZIP archives (PK\x03\x04)
+        use std::io::Read;
+        let mut file = std::fs::File::open(path)?;
+        let mut magic = [0u8; 4];
+        file.read_exact(&mut magic)?;
+        if &magic != b"PK\x03\x04" {
+            return Err(anyhow::anyhow!("Invalid SOREL weights at {:?}: missing ZIP magic bytes. File might be an HTML error page.", path));
+        }
+
         let tensors = candle_core::pickle::read_all(path)?;
         let mut map = std::collections::HashMap::new();
         for (name, tensor) in tensors {

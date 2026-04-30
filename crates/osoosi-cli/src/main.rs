@@ -1627,16 +1627,15 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
 
     let ai_cfg = osoosi_types::load_ai_config();
     let malconv_dest = malware_dir.join("malconv.safetensors");
+    let sorel_dest = malware_dir.join("sorel_ffnn.pt");
+
+    // 3. MalConv Provisioning
     if !malconv_dest.exists() {
         if let Some(ref url) = ai_cfg.malconv_weights_url {
             info!("📥 Attempting MalConv download from primary URL...");
             let executor = DirectExecutor::new();
             if let Err(e) = executor.download(url.trim(), &malconv_dest, false).await {
-                // Suppress warning if fallbacks are available; move to debug
                 tracing::debug!("Primary MalConv download failed: {}. Trying fallbacks...", e);
-                if e.to_string().contains("401") || e.to_string().contains("403") {
-                    info!("💡 Note: Primary MalConv repo may be private. Set HF_TOKEN environment variable to access restricted Hugging Face models.");
-                }
             }
         }
     }
@@ -1653,25 +1652,88 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
             "oyesanyf/OshoosiClaw",
             "Xenova/malconv",
             "onnx-community/malconv",
-            "cycloevan/malconv",
         ];
         'malconv_hf: for repo_name in malconv_repos {
             let repo = api.model(repo_name.to_string());
             for file in malconv_files {
-                info!(
-                    "📥 Verifying MalConv AI component: `{}` / `{}`...",
-                    repo_name, file
-                );
+                info!("📥 Verifying MalConv AI component: `{}` / `{}`...", repo_name, file);
                 match repo.get(file).await {
                     Ok(downloaded) => {
-                        if fs::copy(downloaded, &malconv_dest).is_ok() {
-                            info!("✅ MalConv weights saved from {} ({}).", repo_name, file);
-                            break 'malconv_hf;
+                        if let Ok(meta) = std::fs::metadata(&downloaded) {
+                            if meta.len() < 1024 {
+                                warn!("Downloaded MalConv file is too small ({} bytes). Likely a 404 page. Skipping.", meta.len());
+                                continue;
+                            }
+                            if fs::copy(&downloaded, &malconv_dest).is_ok() {
+                                info!("✅ MalConv weights saved from {} ({}).", repo_name, file);
+                                break 'malconv_hf;
+                            }
                         }
                     }
-                    Err(e) => {
-                        tracing::debug!("MalConv HF get {} {}: {}", repo_name, file, e);
+                    Err(e) => tracing::debug!("MalConv HF get {} {}: {}", repo_name, file, e),
+                }
+            }
+        }
+    }
+
+    // 4. SOREL-20M Provisioning
+    let mut needs_sorel = !sorel_dest.exists();
+    if !needs_sorel {
+        if let Ok(meta) = std::fs::metadata(&sorel_dest) {
+            if meta.len() < 1024 {
+                needs_sorel = true;
+            } else {
+                // Check magic bytes (PK\x03\x04) for ZIP/PyTorch
+                let mut f = std::fs::File::open(&sorel_dest).ok();
+                let mut magic = [0u8; 4];
+                let has_magic = f.as_mut().and_then(|f| {
+                    use std::io::Read;
+                    f.read_exact(&mut magic).ok()
+                }).is_some() && &magic == b"PK\x03\x04";
+                
+                if !has_magic {
+                    warn!("Existing SOREL weights at {:?} lack magic bytes. Re-provisioning...", sorel_dest);
+                    needs_sorel = true;
+                }
+            }
+        }
+    }
+
+    if needs_sorel {
+        info!("📥 SOREL-20M weights missing or invalid. Attempting provisioning...");
+        let sorel_repos = [
+            "oyesanyf/OshoosiClaw-Weights",
+            "oyesanyf/OshoosiClaw",
+            "Xenova/sorel-20m",
+        ];
+        'sorel_hf: for repo_name in sorel_repos {
+            let repo = api.model(repo_name.to_string());
+            for file in ["sorel_ffnn.pt", "model.pt", "weights.pt"] {
+                match repo.get(file).await {
+                    Ok(downloaded) => {
+                        if let Ok(meta) = std::fs::metadata(&downloaded) {
+                            if meta.len() < 1024 { continue; }
+                            
+                            // Magic byte check (PK\x03\x04) for ZIP/PyTorch
+                            let mut f = std::fs::File::open(&downloaded).ok();
+                            let mut magic = [0u8; 4];
+                            if f.as_mut().and_then(|f| {
+                                use std::io::Read;
+                                f.read_exact(&mut magic).ok()
+                            }).is_some() {
+                                if &magic != b"PK\x03\x04" {
+                                    warn!("Downloaded SOREL file {} lacks ZIP magic bytes. Skipping.", file);
+                                    continue;
+                                }
+                            }
+
+                            if fs::copy(&downloaded, &sorel_dest).is_ok() {
+                                info!("✅ SOREL-20M weights saved from {} ({}).", repo_name, file);
+                                break 'sorel_hf;
+                            }
+                        }
                     }
+                    Err(e) => tracing::debug!("SOREL HF get {} {}: {}", repo_name, file, e),
                 }
             }
         }
@@ -1679,6 +1741,9 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
 
     if !malconv_dest.exists() {
         warn!("⚠️ MalConv weights could not be provisioned from any source. Static AI analysis will be degraded.");
+    }
+    if !sorel_dest.exists() {
+        warn!("⚠️ SOREL-20M weights could not be provisioned. Deep PE analysis will be degraded.");
     }
 
     // 4. SecureBERT (Behavioral Sentence Classification)
@@ -1788,6 +1853,8 @@ async fn ensure_ollama_model() {
 async fn ollama_available() -> bool {
     tokio::process::Command::new("ollama")
         .arg("--version")
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .await
         .map(|status| status.success())
