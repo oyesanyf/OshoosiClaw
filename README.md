@@ -34,7 +34,7 @@
 **OshoosiClaw** is a next-generation, autonomous **Endpoint Detection & Response (EDR)** agent built entirely in **Rust**. It implements a **Decentralized Immune System** model where:
 
 - 🔐 **Trust** is mathematically proven through Merkle Proofs and S2S Certificates
-- 🔬 **Detection** is powered by a **Unified Agentic Engine** (Shannon Entropy + OTel Tracing + EMBER ML + CAPA + FLOSS + HollowsHunter + YARA + ClamAV + Hayabusa + Chainsaw + Xori + RedBPF + Gemma4 + yara-x)
+- 🔬 **Detection** is powered by a **Unified Agentic Engine** (Shannon Entropy + OTel Tracing + SOREL-20M + EMBER v2 + CAPA + FLOSS + HollowsHunter + YARA + ClamAV + Hayabusa + Chainsaw + Xori + RedBPF + Gemma 2 + yara-x)
 - 🧠 **Intelligence** is shared peer-to-peer across a **Million-Node Mesh** with Zonal Sharding and Reputation Filtering
 - 🛡️ **Runtime Security** is hardened via **Native OS Sandboxing** (Landlock on Linux, Job Objects on Windows)
 - 🛡️ **Optional Sandboxing**: NVIDIA OpenShell (Docker required ONLY for Central Gateway nodes)
@@ -60,7 +60,7 @@ OshoosiClaw does not rely on a single ML model. It uses a **cascading AI pipelin
 | **File Identification** | [**Google Magika**](https://github.com/google/magika) | Deep learning-based pre-filtering. Identifies PE/ELF/Scripts before heavy analysis. |
 | **Precision Guardrail** | **Shannon Entropy** | Differentiates between legitimate browsers/tools and packed malware. |
 | **Forensic Storytelling**| **OpenTelemetry (OTel)** | Wraps suspicious events into a context-rich forensic story instead of disconnected alerts. |
-| **Static Malware Detection** | [**EMBER ML**](https://github.com/elastic/ember) | Gradient-boosted tree model trained on 54 PE features (sections, imports, entropy). |
+| **Static Malware Detection** | [**SOREL-20M**](https://github.com/sophos-ai/SOREL-20M) / [**EMBER**](https://github.com/elastic/ember) | Triple-model consensus (FFNN, LightGBM, MalConv) using 2,381-dimension EMBER v2 features. |
 | **Behavioral NLP** | [**SecureBERT**](https://huggingface.co/ehsanaghaei/SecureBERT) | Security-domain BERT model that classifies PowerShell, CLI commands, and log sentences. |
 | **Reasoning & Context** | [**Gemma 4 9B** / **Llama 3.1 8B**](https://ollama.com/) | Local LLMs (via Ollama) that reason about complex detection chains and decide on autonomous response. |
 
@@ -566,7 +566,7 @@ $env:OSOOSI_LLM_AGENT_ENABLED="1"
 | `ORT_DYLIB_PATH` | Auto-detect | Path to ONNX Runtime DLL |
 | `OSOOSI_MODELS_DIR` | `models/` | ML model directory |
 | `OSOOSI_SIGMA_DIR` | `sigma/` | Sigma rules directory |
-| `OSOOSI_DATA_DIR` | `data/` | Behavioral learning data |
+| `OSOOSI_DATABASE_DIR` | `database/` | Centralized database directory (Memory, Learning, Audit) |
 | `OSOOSI_OFFLINE_MODE` | `false` | Disable external API calls |
 | `OTX_API_KEY` | — | AlienVault OTX API key |
 | `NVD_API_KEY` | — | NIST NVD API key (optional; higher rate limits) |
@@ -725,4 +725,8 @@ Recent hardening efforts have focused on agent resilience and production stabili
 - **AlienVault OTX TAXII**: Full integration with the `otx-taxii-rs` crate, enabling real-time polling of AlienVault OTX feeds and immediate policy engine evaluation via the new `OtxVoter`.
 - **Yara-X Memory Scanning**: Introduced `YaraXMemoryVoter` for detecting C2 beacons in running process memory.
 - **Adaptive Telemetry Profiles**: Restructured Sysmon coverage into Silent, Normal, and Burst modes with robust coverage mappings for Anti-Injection, Persistence, Kernel Integrity, and Visibility.
-- **Reduced Verbosity**: Global `--debug` flag introduced, defaulting to `WARN` level to improve signal-to-noise ratio in operational environments.
+- **Reduced Verbosity**: Global --debug flag introduced, defaulting to WARN level to improve signal-to-noise ratio in operational environments.
+- **Triple-Model AI Consensus**: Integrated SOREL-20M FFNN and LightGBM models alongside MalConv, utilizing EMBER v2 2381-dimension feature extraction for state-of-the-art static analysis.
+- **Signature-Based Trust**: Automatic -0.5 threat score weighting for binaries with valid Authenticode signatures from trusted vendors (Microsoft, GitHub, etc.).
+- **Centralized Data Management**: All agent databases (SQLite memory store, behavioral feedback) now reside in a unified database/ directory for cleaner deployments.
+- **Concurrency Throttling**: Malware scanning is now limited to 2 concurrent tasks via Semaphore to prevent CPU saturation during high-volume file events.
