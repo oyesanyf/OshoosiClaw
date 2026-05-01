@@ -1786,9 +1786,9 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
                             // Accept if it has ZIP magic (standard .pt) OR if it starts with something other than '<' (to avoid HTML 404s)
                             let mut f = std::fs::File::open(&downloaded).ok();
                             let mut magic = [0u8; 4];
-                            if let Some(mut file) = f {
+                            if let Some(mut f_inner) = f {
                                 use std::io::Read;
-                                if file.read_exact(&mut magic).is_ok() {
+                                if f_inner.read_exact(&mut magic).is_ok() {
                                     if &magic != b"PK\x03\x04" && (magic[0] == b'<' || magic[0] == 0) {
                                         warn!("Downloaded SOREL file {} appears to be an HTML error page. Skipping.", file);
                                         continue;
