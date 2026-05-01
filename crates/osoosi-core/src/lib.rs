@@ -1629,7 +1629,7 @@ impl EdrOrchestrator {
                                     "File Monitor: local ledger allows {}; skipping AI scan.",
                                     event.path
                                 );
-                                continue;
+                                return;
                             }
                         }
 
@@ -1642,7 +1642,7 @@ impl EdrOrchestrator {
                                 .unwrap_or(false)
                         {
                             debug!("File Monitor: skipping non-malware asset {}", event.path);
-                            continue;
+                            return;
                         }
                         if let Some(result) = orchestrator.malware_scanner.scan_file(path).await {
                             // 1. ClamAV says clean → let it go (trust ClamAV over ML/signatures)
@@ -1657,7 +1657,7 @@ impl EdrOrchestrator {
                                         "action": "allowed",
                                     }),
                                 );
-                                continue;
+                                return;
                             }
 
                             // 2. Trigger Deep Static Analysis (CAPA, FLOSS, Falcon) for suspicious files or executables
@@ -1820,7 +1820,8 @@ impl EdrOrchestrator {
                                     info!("Malware detected but below quarantine threshold (conf={:.2} < {:.2}): alert only", result.combined_score, autonomy.quarantine_confidence_threshold);
                                 }
                             }
-                        });
+                        }
+                    });
                     }
                 }
                 while let Some(_) = set.join_next().await {}
