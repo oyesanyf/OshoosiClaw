@@ -6063,7 +6063,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-audit"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6079,7 +6079,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-behavioral"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "blake3",
@@ -6118,7 +6118,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-cli"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -6150,7 +6150,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-core"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6209,7 +6209,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-dashboard"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
@@ -6227,7 +6227,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-dns"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "dashmap 6.1.0",
@@ -6242,7 +6242,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-dp"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6256,7 +6256,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-exporter"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6275,7 +6275,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-inject"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "lazy_static",
  "libc",
@@ -6286,7 +6286,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-memory"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bloomfilter",
@@ -6310,7 +6310,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-model"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "candle-core",
@@ -6327,6 +6327,7 @@ dependencies = [
  "osoosi-memory",
  "osoosi-types",
  "pe-sign",
+ "rayon",
  "regex",
  "reqwest",
  "rusqlite",
@@ -6343,7 +6344,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-policy"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6381,7 +6382,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-repair"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6406,7 +6407,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-runtime"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
@@ -6427,7 +6428,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-sandbox"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "blake3",
@@ -6452,7 +6453,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-telemetry"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "blake3",
@@ -6481,7 +6482,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-trust"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "chrono",
@@ -6500,7 +6501,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-types"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6524,7 +6525,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-wire"
-version = "0.1.0"
+version = "0.1.1"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
