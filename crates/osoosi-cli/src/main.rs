@@ -10,7 +10,7 @@ use std::sync::Arc;
 use tracing::{error, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
-use tracing_subscriber::{fmt, EnvFilter};
+use tracing_subscriber::{fmt, EnvFilter, Layer};
 
 /// Fast `ATTACH`+`INSERT…SELECT` into the agent DB; on failure, fall back to loading all rows in Rust.
 async fn import_nsrl_with_fallback(
