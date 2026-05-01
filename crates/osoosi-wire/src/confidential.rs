@@ -30,7 +30,7 @@ pub struct ConfidentialOrchestrator {
 
 impl ConfidentialOrchestrator {
     pub fn new() -> Self {
-        let config = ConfigBuilder::default().build();
+        let config = ConfigBuilder::default_with_big_encryption().build();
         let (client_key, server_key) = generate_keys(config);
         Self {
             server_key,
@@ -49,8 +49,8 @@ impl ConfidentialOrchestrator {
     /// Perform a homomorphic addition of votes from the mesh.
     /// This allows us to reach consensus without knowing how individual nodes voted.
     pub fn tally_votes(&self, votes: Vec<Vec<u8>>) -> anyhow::Result<FheUint32> {
-        let mut total = FheUint32::encrypt(0u32, &self.client_key); // In reality, server key doesn't encrypt
         tfhe::set_server_key(self.server_key.clone());
+        let mut total = FheUint32::encrypt(0u32, &self.client_key);
 
         for v in votes {
             let encrypted_vote: FheUint32 = bincode::deserialize(&v)?;
@@ -58,6 +58,34 @@ impl ConfidentialOrchestrator {
         }
 
         Ok(total)
+    }
+
+    /// Aggregate threat confidence scores (0-100) from the mesh.
+    pub fn tally_scores(&self, encrypted_scores: Vec<Vec<u8>>) -> anyhow::Result<FheUint32> {
+        tfhe::set_server_key(self.server_key.clone());
+        let mut total = FheUint32::encrypt(0u32, &self.client_key);
+
+        for s in encrypted_scores {
+            let enc: FheUint32 = bincode::deserialize(&s)?;
+            total = &total + &enc;
+        }
+        Ok(total)
+    }
+
+    /// Decrypt the final tally and apply Differential Privacy noise.
+    /// This ensures that the collective intelligence is shared without leaking individual node contributions.
+    pub fn finalize_with_dp(&self, tally: FheUint32, count: u32, epsilon: f32) -> f32 {
+        let raw_sum: u32 = tally.decrypt(&self.client_key);
+        let avg = if count > 0 { raw_sum as f32 / count as f32 } else { 0.0 };
+        
+        // Apply Laplace noise from osoosi-dp
+        let dp_config = osoosi_dp::PrivacyConfig {
+            epsilon,
+            min_samples: 3,
+            sensitivity: 10.0, // Scores are 0-100, sensitivity for average of N is 100/N
+        };
+        let dp = osoosi_dp::DifferentialPrivacy::new(dp_config);
+        dp.add_noise(avg)
     }
 
     /// Decrypt the final tally (only the authority/mesh-leader can do this).

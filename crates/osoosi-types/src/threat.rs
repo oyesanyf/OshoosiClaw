@@ -100,6 +100,7 @@ pub struct ZeroDayDefense {
     pub severity: f32,           // 0.0 - 1.0
     pub learned_rule: String,    // YARA or Sigma rule content
     pub software_target: String, // e.g. "nginx", "openssl"
+    pub software_version: Option<String>, // e.g. "3.14"
     pub date_learned: DateTime<Utc>,
 }
 
@@ -175,6 +176,9 @@ pub struct ThreatSignature {
     /// Current state of the recommended action.
     #[serde(default)]
     pub action_state: ActionState,
+    /// Whether the originating binary is digitally signed.
+    #[serde(default)]
+    pub is_signed: bool,
 }
 
 impl ThreatSignature {
@@ -197,6 +201,7 @@ impl ThreatSignature {
             epsilon: None,
             require_approval: false,
             action_state: ActionState::Pending,
+            is_signed: false,
         }
     }
 

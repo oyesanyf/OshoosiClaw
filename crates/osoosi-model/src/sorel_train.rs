@@ -4,7 +4,7 @@ use anyhow::Result;
 use candle_core::{DType, Device, Module, Tensor};
 use candle_nn::{Optimizer, SGD, VarBuilder, VarMap};
 use std::path::{Path, PathBuf};
-use tracing::{info, warn};
+use tracing::info;
 
 pub struct SorelTrainer {
     varmap: VarMap,

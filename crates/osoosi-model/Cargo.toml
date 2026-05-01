@@ -5,6 +5,12 @@ edition.workspace = true
 license.workspace = true
 description = "Local ML model trained on self + peer threat data"
 
+[features]
+default = []
+cuda = []
+tensorrt = []
+directml = []
+
 [dependencies]
 osoosi-types = { path = "../osoosi-types" }
 osoosi-dp = { path = "../osoosi-dp" }

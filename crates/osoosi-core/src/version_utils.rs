@@ -41,9 +41,40 @@ fn get_windows_file_version(path: &Path) -> Option<String> {
     }
 }
 
+#[cfg(target_os = "windows")]
+pub fn get_pe_product_info(path: &Path) -> Option<(String, String)> {
+    use pelite::pe64::{Pe, PeFile};
+    let map = std::fs::read(path).ok()?;
+    let pe = PeFile::from_bytes(&map).ok()?;
+    
+    let mut product_name = String::new();
+    let mut version_str = String::new();
+
+    if let Ok(resources) = pe.resources() {
+        if let Ok(version_info) = resources.version_info() {
+            if let Some(fixed) = version_info.fixed() {
+                let v = fixed.dwFileVersion;
+                version_str = format!("{}.{}.{}", v.Major, v.Minor, v.Patch);
+            }
+
+            if let Some(lang) = version_info.translation().first() {
+                version_info.strings(*lang, |key, value| {
+                    if key == "ProductName" {
+                        product_name = value.to_string();
+                    }
+                });
+            }
+        }
+    }
+
+    if !product_name.is_empty() && !version_str.is_empty() {
+        Some((product_name, version_str))
+    } else {
+        None
+    }
+}
+
 #[cfg(not(target_os = "windows"))]
-fn get_unix_file_version(_path: &Path) -> Option<String> {
-    // Unix implementation would ideally check package manager (dpkg, rpm) or ELF headers.
-    // Placeholder for now.
+pub fn get_pe_product_info(_path: &Path) -> Option<(String, String)> {
     None
 }

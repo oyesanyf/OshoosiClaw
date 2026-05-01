@@ -1326,4 +1326,55 @@ impl ThreatFeedFetcher {
         );
         Ok(out)
     }
+    pub async fn query_cve_by_product(&self, product: &str, version: &str, api_key: Option<&str>) -> anyhow::Result<Vec<CveDetail>> {
+        if offline_mode() {
+            return Ok(Vec::new());
+        }
+
+        // NVD 2.0 API uses keywordSearch for broader matching
+        let url = format!("{}?keywordSearch={} {}", NVD_CVE_API_URL, product, version);
+        let mut req = self.client.get(&url)
+            .timeout(std::time::Duration::from_secs(10))
+            .header("User-Agent", "Oshoosi-Hybrid-Agent/1.0");
+            
+        if let Some(key) = api_key {
+            req = req.header("apiKey", key);
+        }
+
+        let response = req.send().await?;
+        if response.status() == 429 {
+            anyhow::bail!("NVD Rate limit exceeded. Please configure an API key.");
+        }
+
+        if !response.status().is_success() {
+            return Ok(Vec::new());
+        }
+
+        let json: Value = response.json().await?;
+        let mut details = Vec::new();
+
+        if let Some(vulnerabilities) = json.get("vulnerabilities").and_then(|v| v.as_array()) {
+            for v in vulnerabilities {
+                if let Some(cve) = v.get("cve") {
+                    let id = cve.get("id").and_then(|i| i.as_str()).unwrap_or_default().to_string();
+                    let summary = cve.get("descriptions")
+                        .and_then(|d| d.as_array())
+                        .and_then(|a| a.first())
+                        .and_then(|f| f.get("value"))
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("No description available")
+                        .to_string();
+                    
+                    details.push(CveDetail { id, summary });
+                }
+            }
+        }
+
+        Ok(details)
+    }
+}
+
+pub struct CveDetail {
+    pub id: String,
+    pub summary: String,
 }

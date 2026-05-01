@@ -114,6 +114,7 @@ windows = { version = "0.58", features = [
 ] }
 winapi = { version = "0.3", features = ["memoryapi", "processthreadsapi", "winnt", "handleapi"] }
 winreg = "0.52"
+pelite = "0.10"
 
 [profile.release]
 lto = true

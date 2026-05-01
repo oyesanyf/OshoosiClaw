@@ -26,10 +26,14 @@ reqwest = { workspace = true }
 futures = { workspace = true }
 bytes = { workspace = true }
 zip = { workspace = true }
+windows-sys = { version = "0.61.2", features = ["Win32_NetworkManagement_IpHelper", "Win32_Networking_WinSock", "Win32_Foundation"] }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 windows = { version = "0.58", features = [
-    "Win32_System_EventLog", 
+    "Win32_NetworkManagement_IpHelper",
+    "Win32_NetworkManagement_NetManagement",
+    "Win32_NetworkManagement_NetShell",
+    "Win32_Networking_WinSock",
     "Win32_System_Com",
     "Win32_System_Diagnostics_Debug",
     "Win32_System_Diagnostics_Etw",

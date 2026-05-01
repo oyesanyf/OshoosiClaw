@@ -262,7 +262,8 @@ pub fn clear_firewall_persistence() -> Result<()> {
 /// Open ports required for Oshoosi mesh/control traffic and dashboard access.
 pub fn open_mesh_ports() -> Result<()> {
     let ports = [
-        ("Osoosi-Mesh", 9000_u16),
+        ("Osoosi-Mesh-Main", 4001_u16),
+        ("Osoosi-Mesh-Control", 9000_u16),
         ("Osoosi-Mesh-Alt", 9876_u16),
         ("Osoosi-Dashboard", 3030_u16),
     ];

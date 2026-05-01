@@ -157,6 +157,7 @@ fn classify_vote(
             }
         }
         "CISA-KEV" => (EvidenceClass::ThreatIntel, 0.58, false),
+        "NVD-CVE-Lookup" => (EvidenceClass::ThreatIntel, 1.0, true), // High reliability, triggers strong action
         "Sigma" => (EvidenceClass::Behavior, 0.86, true),
         "SemanticIntent" | "LLM-Reasoning" => (EvidenceClass::Behavior, 0.78, true),
         "Decompile" => (EvidenceClass::Behavior, 0.96, true),
@@ -231,6 +232,13 @@ fn orchestrate_evidence(votes: &[EvidenceVote], event: &SysmonEvent) -> Evidence
         confidence = confidence.min(0.45);
     }
 
+    // NVD-Negative Suppression: if the CVE lookup explicitly found NO CVEs, and we only have static/intel evidence,
+    // lower the score to ensure we wait for behavioral evidence.
+    let nvd_negative = votes.iter().any(|v| v.result.reason.contains("No matching CVEs found") && v.result.weight < 0.0);
+    if nvd_negative && !has_behavior && !has_memory && !has_live_network {
+        confidence = confidence.min(0.35);
+    }
+
     let require_approval = confidence >= 0.70 && independent < 2;
     let action = if confidence >= 0.94 && independent >= 3 && strong_action {
         ResponseAction::Isolate
@@ -285,6 +293,10 @@ pub struct PolicyEngine {
     voters: Arc<tokio::sync::RwLock<Vec<Box<dyn ThreatVoter + Send + Sync>>>>,
     /// Global policy config (noise suppression, trusted paths)
     pub config: osoosi_types::PolicyConfig,
+    /// Shared threat feed fetcher
+    pub fetcher: Arc<crate::feed::ThreatFeedFetcher>,
+    /// Optional callback to broadcast discoveries to the mesh
+    pub intel_broadcaster: Arc<tokio::sync::RwLock<Option<Arc<dyn Fn(osoosi_types::GlobalIntelligence) + Send + Sync>>>>,
 }
 
 impl PolicyEngine {
@@ -300,7 +312,14 @@ impl PolicyEngine {
             consensus_cache: Arc::new(DashMap::new()),
             voters: Arc::new(tokio::sync::RwLock::new(Vec::new())),
             config,
+            fetcher: Arc::new(crate::feed::ThreatFeedFetcher::new()),
+            intel_broadcaster: Arc::new(tokio::sync::RwLock::new(None)),
         }
+    }
+
+    pub async fn set_intel_broadcaster(&self, broadcaster: Arc<dyn Fn(osoosi_types::GlobalIntelligence) + Send + Sync>) {
+        let mut guard = self.intel_broadcaster.write().await;
+        *guard = Some(broadcaster);
     }
 
     pub async fn add_voter(&self, voter: Box<dyn ThreatVoter + Send + Sync>) {

@@ -69,6 +69,7 @@ impl GossipSleuth {
                     kev.cve_id.replace("-", "_")
                 ),
                 software_target: kev.product.clone(),
+                software_version: None,
                 date_learned: Utc::now(),
             }),
             timestamp: Utc::now(),
@@ -101,6 +102,7 @@ impl GossipSleuth {
                 learned_rule: "rule block_smuggling { strings: $a = \"X-Gossip-Tag: SLEUTH\" ... }"
                     .to_string(),
                 software_target: "all-web-servers".to_string(),
+                software_version: None,
                 date_learned: Utc::now(),
             }),
             timestamp: Utc::now(),
@@ -144,6 +146,7 @@ impl GossipSleuth {
                     type_id, value
                 ),
                 software_target: "system".to_string(),
+                software_version: None,
                 date_learned: Utc::now(),
             }),
             timestamp: Utc::now(),

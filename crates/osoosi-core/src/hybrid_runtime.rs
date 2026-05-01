@@ -78,3 +78,16 @@ pub fn spawn_rayon(f: impl FnOnce() + Send + 'static) {
     init_hybrid_concurrency();
     rayon::spawn(f);
 }
+
+/// **Smart Concurrency:** Spawns a task that only begins execution after acquiring a permit 
+/// from the provided semaphore. This provides adaptive backpressure.
+pub fn spawn_smart<F, T>(semaphore: std::sync::Arc<tokio::sync::Semaphore>, task: F)
+where
+    F: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    tokio::spawn(async move {
+        let _permit = semaphore.acquire_owned().await.ok();
+        task.await;
+    });
+}

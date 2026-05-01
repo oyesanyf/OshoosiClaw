@@ -1784,7 +1784,7 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
                             if meta.len() < 1024 { continue; }
                             
                             // Accept if it has ZIP magic (standard .pt) OR if it starts with something other than '<' (to avoid HTML 404s)
-                            let mut f = std::fs::File::open(&downloaded).ok();
+                            let f = std::fs::File::open(&downloaded).ok();
                             let mut magic = [0u8; 4];
                             if let Some(mut f_inner) = f {
                                 use std::io::Read;

@@ -109,3 +109,48 @@ pub fn add_defender_exclusion(path: &str) -> anyhow::Result<()> {
         Ok(())
     }
 }
+/// Metadata and version info for a Windows PE file.
+pub struct BinaryMetadata {
+    pub product_name: String,
+    pub version: String,
+    pub is_signed: bool,
+}
+
+/// Extract metadata and version info from a Windows PE file.
+#[cfg(target_os = "windows")]
+pub fn get_pe_metadata(path: &Path) -> Option<BinaryMetadata> {
+    use pelite::pe64::{Pe, PeFile};
+    let map = std::fs::read(path).ok()?;
+    let pe = PeFile::from_bytes(&map).ok()?;
+    
+    let mut product_name = "Unknown".to_string();
+    let mut version = "0.0.0".to_string();
+
+    if let Ok(resources) = pe.resources() {
+        if let Ok(version_info) = resources.version_info() {
+            if let Some(fixed) = version_info.fixed() {
+                let v = fixed.dwFileVersion;
+                version = format!("{}.{}.{}", v.Major, v.Minor, v.Patch);
+            }
+
+            if let Some(lang) = version_info.translation().first() {
+                version_info.strings(*lang, |key, value| {
+                    if key == "ProductName" {
+                        product_name = value.to_string();
+                    }
+                });
+            }
+        }
+    }
+
+    // Check for Signature (Simplified for Oshoosi)
+    let security_dir = pe.data_directory()[pelite::image::IMAGE_DIRECTORY_ENTRY_SECURITY];
+    let is_signed = security_dir.VirtualAddress != 0;
+
+    Some(BinaryMetadata { product_name, version, is_signed })
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn get_pe_metadata(_path: &Path) -> Option<BinaryMetadata> {
+    None
+}

@@ -1,4 +1,4 @@
-use std::path::Path;
+// Removed unused import: use std::path::Path;
 
 /// Ported logic from OpenEDR's normalizeRegKeyName.
 /// Handles WOW64 redirection, HKLM/HKU mapping, and CurrentControlSet normalization.

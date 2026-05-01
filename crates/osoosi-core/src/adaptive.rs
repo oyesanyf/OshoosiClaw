@@ -4,8 +4,24 @@
 
 use std::sync::Arc;
 use sysinfo::System;
-use tokio::sync::RwLock;
+use tokio::sync::{RwLock, Semaphore};
 use tracing::{info, warn};
+
+pub struct ResourceGuard {
+    pub ai: Arc<Semaphore>,
+    pub io: Arc<Semaphore>,
+    pub net: Arc<Semaphore>,
+}
+
+impl ResourceGuard {
+    pub fn new() -> Self {
+        Self {
+            ai: Arc::new(Semaphore::new(4)),
+            io: Arc::new(Semaphore::new(16)),
+            net: Arc::new(Semaphore::new(32)),
+        }
+    }
+}
 
 #[derive(Debug, Clone, Copy, PartialEq)]
 pub enum TelemetryMode {
@@ -17,6 +33,7 @@ pub enum TelemetryMode {
 pub struct TelemetryController {
     current_mode: Arc<RwLock<TelemetryMode>>,
     sys: Arc<RwLock<System>>,
+    pub guard: Arc<ResourceGuard>,
 }
 
 impl TelemetryController {
@@ -24,6 +41,7 @@ impl TelemetryController {
         Self {
             current_mode: Arc::new(RwLock::new(TelemetryMode::Normal)),
             sys: Arc::new(RwLock::new(System::new_all())),
+            guard: Arc::new(ResourceGuard::new()),
         }
     }
 
@@ -124,6 +142,7 @@ impl Clone for TelemetryController {
         Self {
             current_mode: self.current_mode.clone(),
             sys: self.sys.clone(),
+            guard: self.guard.clone(),
         }
     }
 }

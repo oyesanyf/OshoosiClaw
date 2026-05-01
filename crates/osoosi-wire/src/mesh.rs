@@ -30,6 +30,9 @@ pub struct OsoosiBehavior {
     pub kademlia: kad::Behaviour<kad::store::MemoryStore>,
     pub autonat: autonat::Behaviour,
     pub upnp: upnp::tokio::Behaviour,
+    pub relay_client: libp2p::relay::client::Behaviour,
+    pub relay_server: libp2p::relay::Behaviour,
+    pub dcutr: libp2p::dcutr::Behaviour,
 }
 pub struct MeshNode {
     pub swarm: libp2p::Swarm<OsoosiBehavior>,
@@ -45,6 +48,7 @@ pub struct MeshNode {
     pub model_delta_topic: gossipsub::IdentTopic,
     pub zone: String,
     pub memory: Arc<osoosi_memory::MemoryStore>,
+    pub dial_semaphore: Arc<tokio::sync::Semaphore>,
 }
 
 impl MeshNode {
@@ -59,7 +63,9 @@ impl MeshNode {
                 noise::Config::new,
                 yamux::Config::default,
             )?
-            .with_behaviour(|key| {
+            .with_dns()?
+            .with_relay_client(noise::Config::new, yamux::Config::default)?
+            .with_behaviour(|key, relay_client| {
                 let message_id_fn = |message: &gossipsub::Message| {
                     let mut s = std::collections::hash_map::DefaultHasher::new();
                     std::hash::Hash::hash(&message.data, &mut s);
@@ -100,6 +106,14 @@ impl MeshNode {
                 );
 
                 let upnp = upnp::tokio::Behaviour::default();
+                
+                let dcutr = libp2p::dcutr::Behaviour::new(key.public().to_peer_id());
+
+                // Initialize Relay Server (allows this node to help others behind NAT)
+                let relay_server = libp2p::relay::Behaviour::new(
+                    key.public().to_peer_id(),
+                    libp2p::relay::Config::default(),
+                );
 
                 Ok(OsoosiBehavior {
                     gossipsub,
@@ -108,6 +122,9 @@ impl MeshNode {
                     kademlia,
                     autonat,
                     upnp,
+                    relay_client,
+                    relay_server,
+                    dcutr,
                 })
             })?
             .with_swarm_config(|c| {
@@ -260,7 +277,68 @@ impl MeshNode {
             model_delta_topic,
             zone,
             memory,
+            dial_semaphore: Arc::new(tokio::sync::Semaphore::new(16)),
         })
+    }
+
+    /// [NEW] Native Neighbor Discovery: Scrapes the OS ARP/Neighbor cache and
+    /// attempts to dial any potential Oshoosi siblings on the local segment.
+    /// Uses MAC-aware filtering to prioritize "trusted" hardware (Dell, Apple, Intel)
+    /// and avoid IoT noise.
+    pub async fn bootstrap_local_neighbors(&mut self) {
+        info!("[Mesh] Performing Intelligent Local Bootstrapping via ARP cache...");
+        let scraper = osoosi_telemetry::discovery::RouteScraper::new();
+        let neighbors = scraper.scrape_arp();
+        
+        let local_peer_id = *self.swarm.local_peer_id();
+        let mut dialed = 0;
+
+        // Example "Trusted" MAC Prefixes (OUI) for Laptops/Servers/VMs
+        // - b0:e4:d5, bc:df:58 (Common NICs)
+        // - 00:15:5d (Hyper-V / WSL)
+        let trusted_ouis = vec!["b0:e4:d5", "bc:df:58", "00:15:5d"];
+
+        for host in neighbors {
+            // Basic noise filtering: skip common multicast/broadcast patterns
+            if host.ip.starts_with("224.") || host.ip.starts_with("239.") || host.ip.ends_with(".255") {
+                continue;
+            }
+
+            // Skip gateway if it ends in .1 (heuristic)
+            if host.ip.ends_with(".1") {
+                continue;
+            }
+
+            // MAC Filtering: Only dial if the MAC prefix is in our trusted list
+            // If MAC is unknown (None), we still dial to ensure we don't miss peers 
+            // on interfaces that don't report MACs in the ARP table.
+            if let Some(ref mac) = host.mac {
+                if !trusted_ouis.iter().any(|oui| mac.starts_with(oui)) {
+                    debug!("[Mesh] Skipping non-trusted neighbor (MAC: {})", mac);
+                    continue;
+                }
+            }
+
+            // Construct Multiaddr for the standard Oshoosi port (4001)
+            let maddr_str = format!("/ip4/{}/tcp/4001", host.ip);
+            if let Ok(maddr) = maddr_str.parse::<Multiaddr>() {
+                if let Some(Protocol::P2p(peer_id)) = maddr.iter().last() {
+                    if peer_id == local_peer_id { continue; }
+                }
+
+                debug!("[Mesh] Knocking on potential sibling door: {}", maddr);
+                let _ = self.swarm.dial(maddr);
+                dialed += 1;
+                
+                if dialed % 5 == 0 {
+                    tokio::time::sleep(Duration::from_millis(100)).await;
+                }
+            }
+        }
+        
+        if dialed > 0 {
+            info!("[Mesh] ARP Discovery: Dialed {} trusted potential local siblings.", dialed);
+        }
     }
 
     /// Serialize and publish; never panics (unlike `unwrap()` on `serde_json::to_string`).
@@ -306,13 +384,30 @@ impl MeshNode {
         let mut approved: HashSet<PeerId> = HashSet::new();
         // Slow down "excitement": Increased bootstrap interval to 5 minutes
         let mut bootstrap_interval = tokio::time::interval(Duration::from_secs(300));
+        // [NEW] Local ARP Discovery Interval: Every 10 minutes
+        let mut arp_discovery_interval = tokio::time::interval(Duration::from_secs(600));
+        // Dynamic Crawler: Periodic random walk to discover new segments of the global mesh
+        let mut crawl_interval = tokio::time::interval(Duration::from_secs(60));
         let mut dial_backoff_secs = 0u64;
+
+        // Initial bootstrapping
+        self.bootstrap_local_neighbors().await;
+
         loop {
             tokio::select! {
+                _ = arp_discovery_interval.tick() => {
+                    self.bootstrap_local_neighbors().await;
+                }
                 _ = bootstrap_interval.tick() => {
                     // Zero-Config Discovery: Periodic DHT Bootstrap
                     let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
                     debug!("Oshoosi Mesh: Periodic Kademlia bootstrap triggered for autonomous discovery.");
+                }
+                _ = crawl_interval.tick() => {
+                    // Generate a random ID to force the DHT to explore new buckets
+                    let target_random = PeerId::random();
+                    debug!("[Crawler] Actively hunting for nodes near: {:?}", target_random);
+                    self.swarm.behaviour_mut().kademlia.get_closest_peers(target_random);
                 }
                 Some(cmd) = command_rx.recv() => match cmd {
                     MeshCommand::ApprovePeer(pid) => {
@@ -449,9 +544,17 @@ impl MeshNode {
                     }
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
                         if peer_id == *self.swarm.local_peer_id() { continue; }
-                        debug!("Identify: discovered {} from {:?}", peer_id, info.listen_addrs);
-                        for addr in info.listen_addrs {
-                            self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                        
+                        // THE IDENTIFY FINGERPRINT: Filter for Oshoosi protocol agents
+                        if info.agent_version.to_lowercase().contains("osoosi") {
+                            info!("[!] DYNAMIC DISCOVERY: Identified Oshoosi Node at {:?}", peer_id);
+                            for addr in info.listen_addrs {
+                                self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                            }
+                        } else {
+                            // Stealth: Disconnect from non-Oshoosi nodes to save resources and remain stealthy
+                            debug!("Identify: Disconnecting from non-Oshoosi peer {}", peer_id);
+                            let _ = self.swarm.disconnect_peer_id(peer_id);
                         }
                     }
                     SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
@@ -483,9 +586,22 @@ impl MeshNode {
                     }
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Kademlia(kad::Event::OutboundQueryProgressed { result, .. })) => {
                         if let kad::QueryResult::GetClosestPeers(Ok(kad::GetClosestPeersOk { peers, .. })) = result {
+                            let mut dial_count = 0;
                             for peer_info in peers {
                                 if peer_info.peer_id != *self.swarm.local_peer_id() {
                                     let _ = join_gate.on_peer_discovered(peer_info.peer_id, None);
+                                    
+                                    // SHODAN SCAN: Dial newly discovered peers to fingerprint them
+                                    // Limit to 5 dials per crawl cycle to prevent ISP throttling
+                                    // And use the global dial_semaphore for adaptive backpressure
+                                    if dial_count < 5 {
+                                        let sem = self.dial_semaphore.clone();
+                                        let permit = sem.try_acquire();
+                                        if permit.is_ok() {
+                                            let _ = self.swarm.dial(peer_info.peer_id);
+                                            dial_count += 1;
+                                        }
+                                    }
                                 }
                             }
                         }
@@ -505,6 +621,15 @@ impl MeshNode {
                     }
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Upnp(upnp::Event::GatewayNotFound)) => {
                         debug!("Oshoosi Mesh: UPnP gateway not found (manual port forwarding might be needed).");
+                    }
+                    SwarmEvent::Behaviour(OsoosiBehaviorEvent::Dcutr(ev)) => {
+                        debug!("[HolePunch] DCUtR event: {:?}", ev);
+                    }
+                    SwarmEvent::Behaviour(OsoosiBehaviorEvent::RelayClient(ev)) => {
+                        debug!("[Relay] Relay client event: {:?}", ev);
+                    }
+                    SwarmEvent::Behaviour(OsoosiBehaviorEvent::RelayServer(ev)) => {
+                        debug!("[RelayServer] Event: {:?}", ev);
                     }
                     _ => {}
                 }

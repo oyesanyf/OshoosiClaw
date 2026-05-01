@@ -4,6 +4,7 @@
 
 pub mod homomorphic;
 pub mod psi;
+pub mod tfhe_mesh;
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};

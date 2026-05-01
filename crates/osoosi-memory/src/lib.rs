@@ -255,6 +255,19 @@ impl MemoryStore {
             [],
         )?;
 
+        // CVE Cache: Stores results from NVD 2.0 API lookups
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS cve_cache (
+                product TEXT,
+                version TEXT,
+                cve_id TEXT,
+                summary TEXT,
+                cached_at TEXT,
+                PRIMARY KEY (product, version, cve_id)
+            )",
+            [],
+        )?;
+
         conn.execute(
             "CREATE TABLE IF NOT EXISTS training_samples (
                 id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -607,6 +620,31 @@ impl MemoryStore {
             out.push(row?);
         }
         Ok(out)
+    }
+
+    /// Retrieve cached CVEs for a specific product and version.
+    pub fn get_cached_cves(&self, product: &str, version: &str) -> anyhow::Result<Vec<(String, String)>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare("SELECT cve_id, summary FROM cve_cache WHERE product = ?1 AND version = ?2")?;
+        let rows = stmt.query_map(params![product, version], |row| {
+            Ok((row.get(0)?, row.get(1)?))
+        })?;
+
+        let mut out = Vec::new();
+        for row in rows {
+            out.push(row?);
+        }
+        Ok(out)
+    }
+
+    /// Cache CVE results from NVD lookup.
+    pub fn insert_cve_cache(&self, product: &str, version: &str, cve_id: &str, summary: &str) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT OR REPLACE INTO cve_cache (product, version, cve_id, summary, cached_at) VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![product, version, cve_id, summary, Utc::now().to_rfc3339()],
+        )?;
+        Ok(())
     }
 
     pub fn update_file_hash(&self, path: &str, hash: &str) -> anyhow::Result<()> {
@@ -986,6 +1024,7 @@ impl MemoryStore {
                 detector_count: 1,
                 require_approval: false,
                 action_state: ActionState::Executed,
+                is_signed: false,
             })
         })?;
         let mut out = Vec::new();

@@ -30,7 +30,7 @@ pub mod watchdog;
 pub mod yara_gen;
 pub use hybrid_runtime::{
     init_hybrid_concurrency, max_blocking_threads, rayon_thread_count, run_on_rayon, spawn_rayon,
-    tokio_worker_threads,
+    spawn_smart, tokio_worker_threads,
 };
 pub mod adaptive;
 pub mod blocking_manager;
@@ -893,6 +893,13 @@ impl EdrOrchestrator {
             config: policy.config.clone(),
         })).await;
 
+        policy.add_voter(Box::new(osoosi_policy::voters::CveLookupVoter {
+            fetcher: policy.fetcher.clone(),
+            memory: memory.clone(),
+            broadcaster: policy.intel_broadcaster.clone(),
+            node_id: node_id.clone(),
+        })).await;
+
         // Decompile Voter: SpiderEyes binary analysis (LLM + Capstone)
         policy.add_voter(Box::new(osoosi_policy::voters::DecompileVoter {
             spider: spider_eyes.clone(),
@@ -1011,6 +1018,18 @@ impl EdrOrchestrator {
             *mesh_tx = Some(tx.clone());
         }
 
+        // Connect policy engine to mesh for automated intel sharing
+        let mesh_tx_intel = tx.clone();
+        if let Some(_) = osoosi_types::resolve_nvd_api_key() {
+            info!("Oshoosi Hybrid: NVD API Key detected. Enhanced rate limits enabled.");
+        } else {
+            warn!("Oshoosi Hybrid: No NVD API Key found. Mesh will rely heavily on peer-to-peer intelligence to avoid public rate limits.");
+        }
+
+        self.policy.set_intel_broadcaster(Arc::new(move |intel| {
+            let _ = mesh_tx_intel.try_send(osoosi_wire::MeshCommand::BroadcastGlobalIntel(intel));
+        })).await;
+
         let mesh_config = osoosi_types::load_mesh_listen_config();
         let peer_rules = osoosi_types::load_peer_rules_config();
         let autonomy = osoosi_types::load_autonomy_config();
@@ -1098,12 +1117,18 @@ impl EdrOrchestrator {
                                     "summary": intel.summary,
                                 }),
                             );
-                            // If the intel carries a zero-day defense, log it for the repair engine
+                            // If the intel carries a zero-day defense, log it for the repair engine and cache it
                             if let Some(ref defense) = intel.defense {
                                 warn!(
                                     "Mesh Intel: Zero-day defense received for {} (severity: {:.2})",
                                     defense.cve_id, defense.severity
                                 );
+                                if !defense.software_target.is_empty() {
+                                    // Cache the shared CVE for product-based lookups
+                                    let version = defense.software_version.as_deref().unwrap_or("any");
+                                    let _ = orch_intel.memory.insert_cve_cache(&defense.software_target, version, &defense.cve_id, &defense.description);
+                                    info!("Mesh Intel: Cached shared CVE {} for product {} v{}", defense.cve_id, defense.software_target, version);
+                                }
                             }
                         },
                         move |sample| {
@@ -2240,10 +2265,11 @@ impl EdrOrchestrator {
             queue.extend(result.pending_approvals.clone());
         }
 
-        // Post-execution: scan the workspace for malicious payloads (Rayon = CPU / parallel I/O of many files)
+        // Post-execution: scan the workspace for malicious payloads (Adaptive Smart Concurrency)
         let workspace_dir = config.workspace_dir.clone();
         let malware_scanner = self.malware_scanner.clone();
         let audit = self.audit.clone();
+        let io_sem = self.adaptive.guard.io.clone();
 
         tokio::spawn(async move {
             let entries: Vec<_> = walkdir::WalkDir::new(&workspace_dir)
@@ -2252,11 +2278,25 @@ impl EdrOrchestrator {
                 .filter(|e| e.file_type().is_file())
                 .collect();
 
-            for entry in entries {
-                if should_skip_file_malware_scan(entry.path()) {
-                    continue;
-                }
-                if let Some(scan) = malware_scanner.scan_file(entry.path()).await {
+            use futures::StreamExt;
+            let mut stream = futures::stream::iter(entries)
+                .filter(|entry| {
+                    let skip = should_skip_file_malware_scan(entry.path());
+                    futures::future::ready(!skip)
+                })
+                .map(|entry| {
+                    let scanner = malware_scanner.clone();
+                    let sem = io_sem.clone();
+                    async move {
+                        let _permit = sem.acquire().await.ok();
+                        let scan = scanner.scan_file(entry.path()).await;
+                        (entry, scan)
+                    }
+                })
+                .buffer_unordered(8); // Max 8 concurrent scans to prevent IO thrashing
+
+            while let Some((entry, scan_result)) = stream.next().await {
+                if let Some(scan) = scan_result {
                     if scan.is_malware {
                         warn!(
                             "MALWARE GENERATED IN SANDBOX: {} (type={})",
@@ -2414,7 +2454,7 @@ impl EdrOrchestrator {
                         };
                         // Apply dynamic Sysmon block
                         let bm = self.blocking_manager.clone();
-                        tokio::spawn(async move {
+                        spawn_smart(self.adaptive.guard.io.clone(), async move {
                             if let Err(e) = bm.add_rule(rule).await {
                                 error!("Failed to apply autonomous block: {}", e);
                             }
@@ -2428,7 +2468,7 @@ impl EdrOrchestrator {
                             // Self-Healing: Rollback any file changes made by the malicious process
                             let self_healer = self.self_healing.clone();
                             let heal_pid = pid as u32;
-                            tokio::spawn(async move {
+                            spawn_smart(self.adaptive.guard.io.clone(), async move {
                                 match self_healer.rollback_process_actions(heal_pid).await {
                                     Ok(count) if count > 0 => {
                                         warn!("Self-Healing: Rolled back {} file(s) for terminated PID {}.", count, heal_pid);
@@ -2445,7 +2485,7 @@ impl EdrOrchestrator {
                     let orch = self.clone();
                     let ev = event.clone();
                     let sig = signature.clone();
-                    tokio::spawn(async move {
+                    spawn_smart(self.adaptive.guard.ai.clone(), async move {
                         if let Err(e) = orch.perform_action(&ev, &sig, action).await {
                             error!("Failed to perform response action {:?}: {}", action, e);
                         }
@@ -2929,6 +2969,17 @@ impl EdrOrchestrator {
         signature: osoosi_types::ThreatSignature,
     ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
+        let mut signature = signature;
+
+        // Enrich signature with binary metadata if available
+        if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
+            if let Some(meta) = osoosi_types::get_pe_metadata(std::path::Path::new(image_path)) {
+                signature.is_signed = meta.is_signed;
+                if signature.process_name.is_none() {
+                    signature.process_name = Some(meta.product_name);
+                }
+            }
+        }
 
         let hash = signature.hash_blake3.as_deref().unwrap_or("unknown");
         let suppression_key = format!("{}:{}:{}", 
@@ -2945,6 +2996,20 @@ impl EdrOrchestrator {
             }
         }
         self.alert_suppression_cache.insert(suppression_key, Instant::now());
+
+        // 0. Supreme Court: Use P2P mesh as an authority for lower-confidence local alerts.
+        // If our local models are unsure (confidence < 0.85), we check if the mesh "Supreme Court" 
+        // has already ruled on this binary hash.
+        if signature.confidence < 0.85 {
+            if let Some(hash) = signature.hash_blake3.as_deref() {
+                if self.memory.is_hash_known_malicious_fast(hash) {
+                    warn!("Supreme Court: Mesh consensus overrides low-confidence local alert for {}. Escalating confidence.", hash);
+                    signature.confidence = 0.95;
+                    signature.recommended_action = ResponseAction::Isolate;
+                    signature.add_reason("Mesh Consensus: Peer nodes have collectively identified this binary as high-risk (Supreme Court verdict).");
+                }
+            }
+        }
 
         warn!(
             "ALARM: Threat identified on node {}: {:?}",
@@ -2987,19 +3052,31 @@ impl EdrOrchestrator {
             }
         }
 
-        // 1. Broadcast to P2P Mesh immediately (Herd Immunity).
-        {
+        // 1. Aligned Messenger: Discerning what to share with the P2P Mesh
+        // Filter: Only gossip if confidence >= 0.85 OR if the file is unsigned.
+        // This avoids clogging the mesh with low-confidence noise or common false positives.
+        let should_broadcast = signature.confidence >= 0.85 || !signature.is_signed;
+        
+        if should_broadcast {
             let tx_guard = self.mesh_command_tx.lock().await;
             if let Some(ref tx) = *tx_guard {
+                // Anonymizer: Strip local file paths to protect node privacy.
+                // We ensure only the hash and process name are identifiable, never the directory structure.
+                let mut anonymized_sig = signature.clone();
+                if let Some(reason) = anonymized_sig.reason.as_mut() {
+                    *reason = self.anonymize_reason(reason);
+                }
+
                 // Military-Grade Hardening: Differential Privacy (DP) Broadcast
                 let dp_config = osoosi_dp::PrivacyConfig {
                     epsilon: 0.8,
                     min_samples: 3,
                     sensitivity: 1.0,
                 };
+                
                 let _ = tx
                     .send(MeshCommand::BroadcastNoisyThreat(
-                        signature.clone(),
+                        anonymized_sig,
                         dp_config,
                     ))
                     .await;
@@ -3007,7 +3084,11 @@ impl EdrOrchestrator {
                 // Phase 3: Shadow Chain (Distributed Audit Ledger)
                 let proof = self.audit.root();
                 let _ = tx.try_send(MeshCommand::BroadcastAuditProof(proof));
+                
+                info!("[Messenger] High-confidence intel shared with mesh: {:?}", signature.process_name);
             }
+        } else {
+            debug!("[Messenger] Intelligence suppressed: Confidence ({:.2}) below threshold and binary is signed.", signature.confidence);
         }
 
         // Auto-generated YARA from high-confidence detections
@@ -3802,6 +3883,7 @@ impl EdrOrchestrator {
             detector_count: 1,
             require_approval: false,
             action_state: osoosi_types::ActionState::Executed,
+            is_signed: false,
         })?;
 
         // 3. Call the confirm and entangle logic
@@ -4643,5 +4725,18 @@ impl EdrOrchestrator {
         let mem = Some(self.memory.clone());
         info!("Manual restore point creation initiated.");
         crate::backup::run_backup_on_start(&config, mem);
+    }
+
+    /// Strip local file paths from reason strings to preserve node privacy.
+    /// Replaces Windows (C:\...) and Unix (/...) paths with <PATH>.
+    fn anonymize_reason(&self, reason: &str) -> String {
+        use regex::Regex;
+        // Regex for Windows paths (supports C:\ and \\Server\share)
+        let win_path = Regex::new(r#"[a-zA-Z]:\\[^;,\n]*"#).unwrap();
+        // Regex for Unix paths (starts with / and contains alphanumeric/dashes/dots)
+        let unix_path = Regex::new(r#"/[\w\-\.]+(/[\w\-\.]+)+"#).unwrap();
+
+        let intermediate = win_path.replace_all(reason, "<PATH>");
+        unix_path.replace_all(&intermediate, "<PATH>").to_string()
     }
 }

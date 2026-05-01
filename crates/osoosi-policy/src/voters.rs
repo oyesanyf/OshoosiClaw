@@ -4,6 +4,7 @@ use osoosi_types::{SysmonEvent, SysmonEventId};
 use osoosi_dp::{DifferentialPrivacy, PrivacyConfig};
 use osoosi_audit::MerkleAuditTree;
 use std::sync::Arc;
+use tracing::{debug, warn};
 
 /// Semantic Intent Voter (Algorithm 2)
 pub struct SemanticVoter {
@@ -709,6 +710,123 @@ impl ThreatVoter for KevVoter {
             }
         }
         None
+    }
+}
+
+/// CveLookupVoter: Bridge to real-time NVD Vulnerability Intelligence.
+/// If a binary has a matching CVE, it provides the "tie-breaker" to elevate Alert to Isolate.
+pub struct CveLookupVoter {
+    pub fetcher: Arc<crate::feed::ThreatFeedFetcher>,
+    pub memory: Arc<osoosi_memory::MemoryStore>,
+    pub broadcaster: Arc<tokio::sync::RwLock<Option<Arc<dyn Fn(osoosi_types::GlobalIntelligence) + Send + Sync>>>>,
+    pub node_id: String,
+}
+
+#[async_trait]
+impl ThreatVoter for CveLookupVoter {
+    fn name(&self) -> String {
+        "NVD-CVE-Lookup".to_string()
+    }
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        let full_path = event.data.get("Image").and_then(|v| v.as_str())?;
+        
+        // 1. Extract Metadata (Product, Version, Signature) from PE
+        let meta = match osoosi_types::get_pe_metadata(std::path::Path::new(full_path)) {
+            Some(m) => m,
+            None => return None,
+        };
+
+        // 2. Check Local Cache first
+        let mut cached_cves = Vec::new();
+        if let Ok(cached) = self.memory.get_cached_cves(&meta.product_name, &meta.version) {
+            cached_cves.extend(cached);
+        }
+        // Fallback to "any" version cache
+        if cached_cves.is_empty() {
+            if let Ok(cached) = self.memory.get_cached_cves(&meta.product_name, "any") {
+                cached_cves.extend(cached);
+            }
+        }
+
+        if !cached_cves.is_empty() {
+            let mut confidence = 0.95;
+            let mut reason_note = " [CACHED]";
+            if meta.is_signed {
+                confidence = 0.65;
+                reason_note = " [CACHED, CONFIDENCE DOWNGRADED: SIGNED]";
+            }
+            let cve_list: Vec<String> = cached_cves.iter().take(3).map(|(id, summary)| format!("{} ({:.50}...)", id, summary)).collect();
+            return Some(VoteResult {
+                confidence,
+                reason: format!("Vulnerability Database Match: {} v{} has known CVEs: {}{}", meta.product_name, meta.version, cve_list.join(", "), reason_note),
+                weight: 1.5,
+            });
+        }
+
+        // 3. Query NVD API (or local cache via fetcher)
+        let api_key = osoosi_types::resolve_nvd_api_key();
+        match self.fetcher.query_cve_by_product(&meta.product_name, &meta.version, api_key.as_deref()).await {
+            Ok(cves) if !cves.is_empty() => {
+                let mut confidence = 0.95;
+                let mut reason_note = "";
+
+                // Downgrade confidence if binary is signed by a valid vendor
+                if meta.is_signed {
+                    confidence = 0.65;
+                    reason_note = " [CONFIDENCE DOWNGRADED: SIGNED BINARY]";
+                }
+
+                // Cache the results locally and broadcast to mesh
+                for cve in &cves {
+                    let _ = self.memory.insert_cve_cache(&meta.product_name, &meta.version, &cve.id, &cve.summary);
+                    
+                    let broadcaster_guard = self.broadcaster.read().await;
+                    if let Some(ref broadcast) = *broadcaster_guard {
+                        broadcast(osoosi_types::GlobalIntelligence {
+                            source_url: "https://nvd.nist.gov".to_string(),
+                            summary: format!("NVD Discovery: {} v{} has vulnerability {}", meta.product_name, meta.version, cve.id),
+                            defense: Some(osoosi_types::ZeroDayDefense {
+                                cve_id: cve.id.clone(),
+                                title: format!("NVD: {}", cve.id),
+                                description: cve.summary.clone(),
+                                severity: 0.8,
+                                learned_rule: "".to_string(),
+                                software_target: meta.product_name.clone(),
+                                software_version: Some(meta.version.clone()),
+                                date_learned: chrono::Utc::now(),
+                            }),
+                            timestamp: chrono::Utc::now(),
+                            source_node: self.node_id.clone(),
+                        });
+                    }
+                }
+
+                let cve_list: Vec<String> = cves.iter().take(3).map(|c| format!("{} ({:.50}...)", c.id, c.summary)).collect();
+                let cve_display = cve_list.join(", ");
+
+                Some(VoteResult {
+                    confidence,
+                    reason: format!("Vulnerability Database Match: {} v{} has known CVEs: {}{}", meta.product_name, meta.version, cve_display, reason_note),
+                    weight: 1.5, // Tie-breaker weight
+                })
+            }
+            Ok(_) => {
+                // If NO CVE found, we return a "neutral" or slightly negative vote to signify it's "clean" from known CVEs
+                Some(VoteResult {
+                    confidence: 0.0,
+                    reason: format!("NVD: No matching CVEs found for {} v{}", meta.product_name, meta.version),
+                    weight: -0.2, // Small negative weight for unknown-but-clean binaries
+                })
+            }
+            Err(e) if e.to_string().contains("Rate limit") => {
+                warn!("[CveLookupVoter] NVD API Rate Limit Hit: {}", e);
+                None // Abstain if rate limited
+            }
+            Err(e) => {
+                debug!("[CveLookupVoter] Query failed for {}: {}", meta.product_name, e);
+                None
+            }
+        }
     }
 }
 
