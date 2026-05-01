@@ -1753,16 +1753,15 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
             if meta.len() < 1024 {
                 needs_sorel = true;
             } else if check_path == &sorel_dest {
-                // Check magic bytes (PK\x03\x04) for ZIP/PyTorch
                 let mut f = std::fs::File::open(check_path).ok();
                 let mut magic = [0u8; 4];
-                let has_magic = f.as_mut().and_then(|f| {
+                let is_valid = f.as_mut().and_then(|f| {
                     use std::io::Read;
                     f.read_exact(&mut magic).ok()
-                }).is_some() && &magic == b"PK\x03\x04";
+                }).is_some() && (&magic == b"PK\x03\x04" || (magic[0] != b'<' && magic[0] != 0));
                 
-                if !has_magic {
-                    warn!("Existing SOREL weights at {:?} lack magic bytes. Re-provisioning...", check_path);
+                if !is_valid {
+                    warn!("Existing SOREL weights at {:?} appear to be invalid or HTML error pages. Re-provisioning...", check_path);
                     needs_sorel = true;
                 }
             }
@@ -1784,16 +1783,16 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
                         if let Ok(meta) = std::fs::metadata(&downloaded) {
                             if meta.len() < 1024 { continue; }
                             
-                            // Magic byte check (PK\x03\x04) for ZIP/PyTorch
+                            // Accept if it has ZIP magic (standard .pt) OR if it starts with something other than '<' (to avoid HTML 404s)
                             let mut f = std::fs::File::open(&downloaded).ok();
                             let mut magic = [0u8; 4];
-                            if f.as_mut().and_then(|f| {
+                            if let Some(mut file) = f {
                                 use std::io::Read;
-                                f.read_exact(&mut magic).ok()
-                            }).is_some() {
-                                if &magic != b"PK\x03\x04" {
-                                    warn!("Downloaded SOREL file {} lacks ZIP magic bytes. Skipping.", file);
-                                    continue;
+                                if file.read_exact(&mut magic).is_ok() {
+                                    if &magic != b"PK\x03\x04" && (magic[0] == b'<' || magic[0] == 0) {
+                                        warn!("Downloaded SOREL file {} appears to be an HTML error page. Skipping.", file);
+                                        continue;
+                                    }
                                 }
                             }
 
@@ -1812,8 +1811,15 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
     if !malconv_dest.exists() {
         warn!("⚠️ MalConv weights could not be provisioned from any source. Static AI analysis will be degraded.");
     }
-    if !sorel_dest.exists() {
-        warn!("⚠️ SOREL-20M weights could not be provisioned. Deep PE analysis will be degraded.");
+    if !sorel_dest.exists() && !sorel_st.exists() {
+        warn!("⚠️ SOREL-20M weights could not be provisioned from remote mirrors. Attempting local build from dataset folder...");
+        // Use a dummy path for the call; the function will resolve the dataset folder itself.
+        let sorel_handle = Arc::new(tokio::sync::RwLock::new(None));
+        if let Err(e) = osoosi_model::malware::MalwareScanner::provision_sorel_by_training(sorel_handle, &sorel_dest).await {
+             warn!("⚠️ Local SOREL build failed: {}. Deep PE analysis will be degraded.", e);
+        } else {
+             info!("✅ SOREL model built locally and provisioned.");
+        }
     }
 
     // 4. SecureBERT (Behavioral Sentence Classification)
