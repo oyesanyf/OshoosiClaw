@@ -62,6 +62,7 @@ osoosi.toml.sign
 # ---------- Runtime Data ----------
 /data/
 /models/
+!/models/malware/sorel_ffnn.pt
 /yara/
 /quarantine/
 /traps/
