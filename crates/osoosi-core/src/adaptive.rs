@@ -88,16 +88,34 @@ impl TelemetryController {
     }
 
     async fn apply_telemetry_profile(&self, mode: TelemetryMode) -> anyhow::Result<()> {
-        // Important: do **not** push a reduced Sysmon EventFiltering here. A previous version wrote
-        // minimal XML via `sysmon -c` on every mode change, which dropped most event IDs (only a
-        // handful remained). Full capture is defined by `osoosi_telemetry::full_fidelity_sysmon_xml`
-        // during `install-telemetry`; the agent must not undo that. `TelemetryMode` remains for
-        // in-app signaling / future gating only.
         info!(
             "Adaptive telemetry mode set to {:?} (Sysmon config unchanged — full event IDs remain enabled)",
             mode
         );
         Ok(())
+    }
+
+    /// Calculate a recommended concurrency limit for background tasks (e.g. file scanning, hashing).
+    pub async fn get_concurrency_limit(&self) -> usize {
+        let mut sys = self.sys.write().await;
+        sys.refresh_cpu();
+        let cpu_usage = sys.global_cpu_info().cpu_usage();
+        let mode = *self.current_mode.read().await;
+
+        let base = match mode {
+            TelemetryMode::Silent => 2,
+            TelemetryMode::Normal => 8,
+            TelemetryMode::Burst => 32,
+        };
+
+        // Scale down if CPU is high
+        if cpu_usage > 75.0 {
+            (base / 4).max(1)
+        } else if cpu_usage > 50.0 {
+            (base / 2).max(2)
+        } else {
+            base
+        }
     }
 }
 

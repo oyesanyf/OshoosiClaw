@@ -6121,6 +6121,7 @@ name = "osoosi-cli"
 version = "0.1.0"
 dependencies = [
  "anyhow",
+ "candle-core",
  "clap",
  "flate2",
  "hf-hub 0.4.3",
@@ -6130,6 +6131,7 @@ dependencies = [
  "osoosi-dashboard",
  "osoosi-exporter",
  "osoosi-memory",
+ "osoosi-model",
  "osoosi-policy",
  "osoosi-telemetry",
  "osoosi-types",

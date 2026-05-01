@@ -80,3 +80,16 @@ max_host_calls_per_session = 256
 # otx_api_key = ""
 # NVD API key (env: NVD_API_KEY)
 # nvd_api_key = ""
+
+[policy]
+# Paths to exclude from ALL scanning (suppresses all voters)
+# consensus_exclude_paths = ["C:\\Windows\\Temp", "D:\\backup"]
+
+# Path substrings to consider 'trusted' (caps confidence at 0.15)
+consensus_trusted_paths = ["\\OshoosiClaw\\target\\", "\\OshoosiClaw\\tools\\"]
+
+# Process stems to suppress (caps confidence at 0.15)
+consensus_noisy_stems = ["git", "rustc", "cargo", "node", "python", "code", "cursor"]
+
+# Alert suppression period in seconds (10 minutes)
+alert_suppression_secs = 600

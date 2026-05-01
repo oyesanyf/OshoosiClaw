@@ -41,15 +41,17 @@ impl SorelFFNN {
             return Err(anyhow::anyhow!("SOREL weights at {:?} are suspiciously small ({} bytes). Likely a 404 error or corrupted download.", path, meta.len()));
         }
 
-        // Magic Byte Check: PyTorch .pt files are usually ZIP archives (PK\x03\x04)
-        use std::io::Read;
-        let mut file = std::fs::File::open(path)?;
-        let mut magic = [0u8; 4];
-        file.read_exact(&mut magic)?;
-        if &magic != b"PK\x03\x04" {
-            return Err(anyhow::anyhow!("Invalid SOREL weights at {:?}: missing ZIP magic bytes. File might be an HTML error page.", path));
+        // Try Safetensors first (preferred for Rust-native training)
+        if path.extension().and_then(|s| s.to_str()) == Some("safetensors") || 
+           path.metadata()?.len() > 0 && std::fs::read(&path).map(|b| b.len() >= 8 && &b[0..8] != b"PK\x03\x04").unwrap_or(false) 
+        {
+            if let Ok(tensors) = candle_core::safetensors::load(path, device) {
+                let vb = VarBuilder::from_tensors(tensors, DType::F32, device);
+                return Ok(Self::new(vb)?);
+            }
         }
 
+        // Fallback to Pickle (PyTorch .pt)
         let tensors = candle_core::pickle::read_all(path)?;
         let mut map = std::collections::HashMap::new();
         for (name, tensor) in tensors {
@@ -57,6 +59,19 @@ impl SorelFFNN {
         }
         let vb = VarBuilder::from_tensors(map, DType::F32, device);
         Ok(Self::new(vb)?)
+    }
+
+    pub fn save<P: AsRef<std::path::Path>>(&self, path: P) -> anyhow::Result<()> {
+        let mut map = std::collections::HashMap::new();
+        for (i, layer) in self.layers.iter().enumerate() {
+            let prefix = format!("layers.{}", i * 2); // 0, 2, 4, 6, 8, 10
+            map.insert(format!("{}.weight", prefix), layer.weight().clone());
+            if let Some(bias) = layer.bias() {
+                map.insert(format!("{}.bias", prefix), bias.clone());
+            }
+        }
+        candle_core::safetensors::save(&map, path)?;
+        Ok(())
     }
 }
 

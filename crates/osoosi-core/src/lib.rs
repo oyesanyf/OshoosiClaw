@@ -1355,12 +1355,13 @@ impl EdrOrchestrator {
                 let memory_threshold = total_memory / 2; // 50%
                 let my_pid = Pid::from(std::process::id() as usize);
 
+                let mut set = tokio::task::JoinSet::new();
                 for (pid, process) in sys.processes() {
                     if *pid == my_pid {
                         continue; // NEVER scan self
                     }
 
-                    let process_name = process.name();
+                    let process_name = process.name().to_string();
                     // EXEMPTIONS: Critical system processes that legitimately spike during maintenance/updates
                     if process_name == "MsMpEng.exe"
                         || process_name == "TrustedInstaller.exe"
@@ -1374,75 +1375,82 @@ impl EdrOrchestrator {
 
                     // Higher thresholds for alerting (3.0 cores CPU, 50% RAM)
                     if cpu_usage > 300.0 || memory_usage > memory_threshold {
-                        let process_name = process.name();
-                        let exe_path = process.exe();
+                        let exe_path = process.exe().map(|p| p.to_path_buf());
+                        let orch = orchestrator.clone();
+                        let pid_val = pid.as_u32();
 
-                        warn!(
-                            "CyberShield Insight: Process {} (PID {}) exceeds resource thresholds (CPU: {:.1}%, Mem: {}KB).",
-                            process_name, pid, cpu_usage, memory_usage / 1024
-                        );
+                        let limit = orch.adaptive().get_concurrency_limit().await;
+                        while set.len() >= limit {
+                            let _ = set.join_next().await;
+                        }
 
-                        // Analyze the image path immediately using the CEREBUS-enhanced MalwareScanner
-                        if let Some(path) = exe_path {
-                            let path_str = path.to_string_lossy();
-                            if should_skip_file_malware_scan(path)
-                                || orchestrator
-                                    .memory
-                                    .is_internal_asset_path(&path_str)
-                                    .unwrap_or(false)
-                            {
-                                debug!(
-                                    "CyberShield: skipping trusted/internal image {}",
-                                    path.display()
-                                );
-                                continue;
-                            }
-                            if let Some(result) = orchestrator.malware_scanner.scan_file(path).await {
-                                if result.clam_detected == Some(false) {
-                                    orchestrator.audit.log(
-                                        "CLAMAV_CLEAN",
-                                        serde_json::json!({
-                                            "file_path": result.file_path,
-                                            "context": "CyberShield",
-                                            "process_name": process_name,
-                                            "action": "allowed",
-                                        }),
+                        set.spawn(async move {
+                            warn!(
+                                "CyberShield Insight: Process {} (PID {}) exceeds resource thresholds (CPU: {:.1}%, Mem: {}KB).",
+                                process_name, pid_val, cpu_usage, memory_usage / 1024
+                            );
+
+                            // Analyze the image path immediately using the CEREBUS-enhanced MalwareScanner
+                            if let Some(path) = exe_path {
+                                let path_str = path.to_string_lossy();
+                                if should_skip_file_malware_scan(&path)
+                                    || orch
+                                        .memory
+                                        .is_internal_asset_path(&path_str)
+                                        .unwrap_or(false)
+                                {
+                                    debug!(
+                                        "CyberShield: skipping trusted/internal image {}",
+                                        path.display()
                                     );
-                                    continue; // ClamAV says clean — let it go
+                                    return;
                                 }
-                                if result.is_malware {
-                                    warn!("CyberShield INTERCEPTION: High-resource process {} is MALICIOUS. Triggering active response.", process_name);
+                                if let Some(result) = orch.malware_scanner.scan_file(&path).await {
+                                    if result.clam_detected == Some(false) {
+                                        orch.audit.log(
+                                            "CLAMAV_CLEAN",
+                                            serde_json::json!({
+                                                "file_path": result.file_path,
+                                                "context": "CyberShield",
+                                                "process_name": process_name,
+                                                "action": "allowed",
+                                            }),
+                                        );
+                                        return; // ClamAV says clean — let it go
+                                    }
+                                    if result.is_malware {
+                                        warn!("CyberShield INTERCEPTION: High-resource process {} is MALICIOUS. Triggering active response.", process_name);
 
-                                    // NEW: Holographic Deception Sharding (HDS) activation
-                                    // Calculate "fake" attacker IP (prototype uses local loopback for testing)
-                                    let _ = orchestrator.activate_mesh_hologram("127.0.0.1").await;
+                                        // NEW: Holographic Deception Sharding (HDS) activation
+                                        // Calculate "fake" attacker IP (prototype uses local loopback for testing)
+                                        let _ = orch.activate_mesh_hologram("127.0.0.1").await;
 
-                                    // Tarpit the suspicious process
-                                    let _pid_str = pid.to_string();
-                                    // Rustify: Use native NT API to suspend process instead of powershell.exe
-                                    #[cfg(target_os = "windows")]
-                                    unsafe {
-                                        use windows::Win32::System::Threading::{OpenProcess, PROCESS_SUSPEND_RESUME};
-                                        use windows::Win32::Foundation::CloseHandle;
-                                        
-                                        if let Ok(handle) = OpenProcess(PROCESS_SUSPEND_RESUME, false, pid.as_u32()) {
-                                            // NtSuspendProcess is the most reliable way to suspend a whole process
-                                            let ntdll = windows::Win32::System::LibraryLoader::GetModuleHandleW(windows::core::w!("ntdll.dll")).unwrap_or_default();
-                                            if !ntdll.is_invalid() {
-                                                if let Some(nt_suspend) = windows::Win32::System::LibraryLoader::GetProcAddress(ntdll, windows::core::s!("NtSuspendProcess")) {
-                                                    let nt_suspend: extern "system" fn(windows::Win32::Foundation::HANDLE) -> i32 = std::mem::transmute(nt_suspend);
-                                                    let _ = nt_suspend(handle);
-                                                    info!("CyberShield: Suspended malicious process {} (PID {}) via native NT API.", process_name, pid);
+                                        // Tarpit the suspicious process
+                                        #[cfg(target_os = "windows")]
+                                        unsafe {
+                                            use windows::Win32::System::Threading::{OpenProcess, PROCESS_SUSPEND_RESUME};
+                                            use windows::Win32::Foundation::CloseHandle;
+                                            
+                                            if let Ok(handle) = OpenProcess(PROCESS_SUSPEND_RESUME, false, pid_val) {
+                                                // NtSuspendProcess is the most reliable way to suspend a whole process
+                                                let ntdll = windows::Win32::System::LibraryLoader::GetModuleHandleW(windows::core::w!("ntdll.dll")).unwrap_or_default();
+                                                if !ntdll.is_invalid() {
+                                                    if let Some(nt_suspend) = windows::Win32::System::LibraryLoader::GetProcAddress(ntdll, windows::core::s!("NtSuspendProcess")) {
+                                                        let nt_suspend: extern "system" fn(windows::Win32::Foundation::HANDLE) -> i32 = std::mem::transmute(nt_suspend);
+                                                        let _ = nt_suspend(handle);
+                                                        info!("CyberShield: Suspended malicious process {} (PID {}) via native NT API.", process_name, pid_val);
+                                                    }
                                                 }
+                                                let _ = CloseHandle(handle);
                                             }
-                                            let _ = CloseHandle(handle);
                                         }
                                     }
                                 }
                             }
-                        }
+                        });
                     }
                 }
+                while let Some(_) = set.join_next().await {}
             }
         });
     }
@@ -1596,8 +1604,15 @@ impl EdrOrchestrator {
         if let Some(mut rx) = rx_opt {
             tokio::spawn(async move {
                 info!("File Monitor: Real-time event loop started.");
+                let mut set = tokio::task::JoinSet::new();
                 while let Some(res) = rx.recv().await {
                     if let Ok(event) = res {
+                        let limit = orchestrator.adaptive().get_concurrency_limit().await;
+                        while set.len() >= limit {
+                            let _ = set.join_next().await;
+                        }
+                        let orchestrator = orchestrator.clone();
+                        set.spawn(async move {
                         info!(
                             "File change detected: {} (Hash: {})",
                             event.path, event.hash
@@ -1805,9 +1820,10 @@ impl EdrOrchestrator {
                                     info!("Malware detected but below quarantine threshold (conf={:.2} < {:.2}): alert only", result.combined_score, autonomy.quarantine_confidence_threshold);
                                 }
                             }
-                        }
+                        });
                     }
                 }
+                while let Some(_) = set.join_next().await {}
             });
         }
         Ok(())
@@ -1863,12 +1879,21 @@ impl EdrOrchestrator {
                                         resolved_source
                                     );
                                 }
+                                let mut set = tokio::task::JoinSet::new();
+                                let limit = orchestrator.adaptive().get_concurrency_limit().await;
                                 for ev in events {
-                                    let sysmon = ev.to_sysmon_event();
-                                    if let Err(e) = orchestrator.process_telemetry(sysmon).await {
-                                        error!("Failed to process host event: {}", e);
+                                    while set.len() >= limit {
+                                        let _ = set.join_next().await;
                                     }
+                                    let orch = orchestrator.clone();
+                                    set.spawn(async move {
+                                        let sysmon = ev.to_sysmon_event();
+                                        if let Err(e) = orch.process_telemetry(sysmon).await {
+                                            error!("Failed to process host event: {}", e);
+                                        }
+                                    });
                                 }
+                                while let Some(_) = set.join_next().await {}
                             }
                             Err(e) => {
                                 let is_access_denied = e.to_string().contains("access denied");
@@ -2904,18 +2929,21 @@ impl EdrOrchestrator {
     ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
 
-        // Hash-based Alert Suppression (Git Storm / Redundancy Prevention)
-        let hash = signature.hash_blake3.clone()
-            .or_else(|| signature.id.split(':').next().map(|s| s.to_string())) // Fallback to prefix of ID
-            .unwrap_or_else(|| "unknown".to_string());
+        let hash = signature.hash_blake3.as_deref().unwrap_or("unknown");
+        let suppression_key = format!("{}:{}:{}", 
+            hash, 
+            signature.process_name.as_deref().unwrap_or("unknown"),
+            signature.id.split(':').next().unwrap_or("generic")
+        );
             
-        if let Some(last) = self.alert_suppression_cache.get(&hash) {
-            if last.elapsed() < Duration::from_secs(600) { // 10 minute cooldown
-                debug!("Suppressing redundant alert for Hash {}: {}", hash, signature.id);
+        let cooldown = Duration::from_secs(self.policy.config.alert_suppression_secs);
+        if let Some(last) = self.alert_suppression_cache.get(&suppression_key) {
+            if last.elapsed() < cooldown {
+                debug!("Suppressing redundant alert for Key {}: {}", suppression_key, signature.id);
                 return Ok(());
             }
         }
-        self.alert_suppression_cache.insert(hash, Instant::now());
+        self.alert_suppression_cache.insert(suppression_key, Instant::now());
 
         warn!(
             "ALARM: Threat identified on node {}: {:?}",

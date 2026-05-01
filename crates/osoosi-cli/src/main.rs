@@ -148,6 +148,30 @@ enum Commands {
         #[arg(short, long)]
         limit: Option<usize>,
     },
+    /// Train local ML models from a dataset directory
+    Train {
+        #[command(subcommand)]
+        target: TrainTarget,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+pub enum TrainTarget {
+    /// Train the SOREL-20M FFNN model using PE samples in the dataset folder
+    Sorel {
+        /// Directory containing 'Benign PE Samples' and 'Malicious PE Samples'
+        #[arg(short, long, default_value = "./dataset")]
+        dataset: String,
+        /// Number of epochs to train
+        #[arg(short, long, default_value_t = 1)]
+        epochs: usize,
+        /// Batch size
+        #[arg(short, long, default_value_t = 32)]
+        batch_size: usize,
+        /// Learning rate
+        #[arg(short, long, default_value_t = 0.001)]
+        lr: f64,
+    },
 }
 
 #[derive(Subcommand, Clone)]
@@ -692,6 +716,44 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 }
             }
         }
+        Some(Commands::Train { target }) => match target {
+            TrainTarget::Sorel {
+                dataset,
+                epochs,
+                batch_size,
+                lr,
+            } => {
+                info!("Initializing SOREL-20M training on dataset: {}...", dataset);
+                let ds_path = Path::new(&dataset);
+                if !ds_path.exists() {
+                    error!("Dataset directory {:?} not found.", ds_path);
+                    return Ok(());
+                }
+
+                // 1. Extract samples if they are in 7z archives
+                info!("Preparing dataset samples (extracting if needed)...");
+                let samples =
+                    osoosi_model::malconv_train::download_and_extract_dataset(ds_path).await?;
+                if samples.is_empty() {
+                    error!("No samples found in {:?}. Ensure 'Benign PE Samples' and 'Malicious PE Samples' exist.", ds_path);
+                    return Ok(());
+                }
+
+                info!("Training on {} prepared samples...", samples.len());
+                let device = candle_core::Device::Cpu;
+                let mut trainer = osoosi_model::sorel_train::SorelTrainer::new(&device)?;
+                trainer
+                    .train(&samples, epochs, batch_size, lr)
+                    .await?;
+
+                let models_dir = osoosi_types::resolve_models_dir();
+                let out_path = models_dir.join("malware").join("sorel_ffnn.pt");
+                fs::create_dir_all(out_path.parent().unwrap())?;
+                
+                trainer.save(&out_path)?;
+                info!("✅ SOREL-20M model built and saved to {:?}", out_path);
+            }
+        },
         None => {
             if !cli.grant_access {
                 println!("No command specified. Use --help for usage.");
@@ -1458,10 +1520,16 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
     } else {
         tracing::Level::WARN
     };
-    let filter = EnvFilter::from_default_env()
-        .add_directive(level.into())
-        .add_directive("consensus=info".parse().expect("static directive"));
-    let console_layer = fmt::Layer::default().with_writer(std::io::stdout);
+    let mut filter = EnvFilter::from_default_env()
+        .add_directive(level.into());
+    
+    if debug {
+        filter = filter.add_directive("consensus=info".parse().expect("static directive"));
+    }
+
+    let console_layer = fmt::Layer::default()
+        .with_writer(std::io::stdout)
+        .with_filter(filter.clone());
     let file_layer = fmt::Layer::default()
         .with_writer(non_blocking)
         .with_ansi(false);
@@ -1677,14 +1745,16 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
     }
 
     // 4. SOREL-20M Provisioning
-    let mut needs_sorel = !sorel_dest.exists();
+    let sorel_st = malware_dir.join("sorel_ffnn.safetensors");
+    let mut needs_sorel = !sorel_dest.exists() && !sorel_st.exists();
     if !needs_sorel {
-        if let Ok(meta) = std::fs::metadata(&sorel_dest) {
+        let check_path = if sorel_st.exists() { &sorel_st } else { &sorel_dest };
+        if let Ok(meta) = std::fs::metadata(check_path) {
             if meta.len() < 1024 {
                 needs_sorel = true;
-            } else {
+            } else if check_path == &sorel_dest {
                 // Check magic bytes (PK\x03\x04) for ZIP/PyTorch
-                let mut f = std::fs::File::open(&sorel_dest).ok();
+                let mut f = std::fs::File::open(check_path).ok();
                 let mut magic = [0u8; 4];
                 let has_magic = f.as_mut().and_then(|f| {
                     use std::io::Read;
@@ -1692,7 +1762,7 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
                 }).is_some() && &magic == b"PK\x03\x04";
                 
                 if !has_magic {
-                    warn!("Existing SOREL weights at {:?} lack magic bytes. Re-provisioning...", sorel_dest);
+                    warn!("Existing SOREL weights at {:?} lack magic bytes. Re-provisioning...", check_path);
                     needs_sorel = true;
                 }
             }

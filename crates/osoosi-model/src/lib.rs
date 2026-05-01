@@ -10,6 +10,7 @@ pub mod malconv_train;
 pub mod malware;
 pub mod nsrl;
 pub mod sorel_ffnn;
+pub mod sorel_train;
 mod train;
 
 pub use malconv::{preprocess_binary, preprocess_bytes, MalConv};

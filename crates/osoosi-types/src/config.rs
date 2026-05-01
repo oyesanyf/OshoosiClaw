@@ -1132,6 +1132,13 @@ pub struct PolicyConfig {
     /// Executable stems (e.g. "git", "chrome") that are known to be noisy and should be suppressed by KEV/Intel voters.
     #[serde(default)]
     pub consensus_noisy_stems: Vec<String>,
+    /// Alert suppression period in seconds (cooldown). Default: 600 (10 minutes).
+    #[serde(default = "default_suppression_secs")]
+    pub alert_suppression_secs: u64,
+}
+
+fn default_suppression_secs() -> u64 {
+    600
 }
 
 impl Default for PolicyConfig {
@@ -1143,6 +1150,7 @@ impl Default for PolicyConfig {
             consensus_exclude_paths: Vec::new(),
             consensus_trusted_paths: Vec::new(),
             consensus_noisy_stems: Vec::new(),
+            alert_suppression_secs: 600,
         }
     }
 }

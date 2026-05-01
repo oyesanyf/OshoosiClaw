@@ -111,3 +111,5 @@ dashboard/node_modules/
 .antigravity/
 error.txt
 matches.txt
+dataset/
+crates/osoosi-model/models/

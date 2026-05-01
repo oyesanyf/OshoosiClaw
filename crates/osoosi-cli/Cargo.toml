@@ -14,6 +14,8 @@ osoosi-core = { path = "../osoosi-core" }
 osoosi-memory = { path = "../osoosi-memory" }
 osoosi-dashboard = { path = "../osoosi-dashboard" }
 osoosi-types = { path = "../osoosi-types" }
+osoosi-model = { path = "../osoosi-model" }
+candle-core = { workspace = true }
 clap = { workspace = true }
 tokio = { workspace = true }
 tracing = { workspace = true }

@@ -389,6 +389,11 @@ impl PolicyEngine {
             return None;
         }
 
+        // 0.1 Trusted Paths & Noisy Stems: Reduce sensitivity for known noise
+        let stem = event_stem(event);
+        let is_noisy = self.config.consensus_noisy_stems.iter().any(|s| s.eq_ignore_ascii_case(&stem))
+            || self.config.consensus_trusted_paths.iter().any(|p| path_lc.contains(&p.to_lowercase()));
+
         let cache_key = format!("{:?}:{:?}:{}", event.event_id, image_path, hash);
 
         // Deduplication: Avoid re-running consensus for the same event in a short window (30s)
@@ -532,6 +537,13 @@ impl PolicyEngine {
 
         let decision = orchestrate_evidence(&evidence_votes, event);
         signature.confidence = decision.confidence;
+        
+        // Apply suppression for noisy/trusted paths by capping confidence
+        if is_noisy {
+            signature.confidence = signature.confidence.min(0.15);
+            signature.add_reason("Suppressed: Matches consensus_noisy_stems or consensus_trusted_paths".to_string());
+        }
+
         signature.recommended_action = decision.action;
         signature.require_approval = decision.require_approval;
         signature.add_reason(decision.summary);
