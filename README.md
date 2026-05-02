@@ -38,6 +38,7 @@
 - 🧠 **Intelligence** is shared peer-to-peer across a **Million-Node Mesh** with Zonal Sharding and Reputation Filtering
 - 🛡️ **Runtime Security** is hardened via **Native OS Sandboxing** (Landlock on Linux, Job Objects on Windows)
 - 🛡️ **Optional Sandboxing**: NVIDIA OpenShell (Docker required ONLY for Central Gateway nodes)
+- 🔐 **Native Cryptography**: Integrated **`rust-openssl` (vendored)** for zero-dependency identity and trust management.
 - 🛡️ **Response** is autonomous — quarantine, tarpit, deceive, or heal — based on confidence thresholds
 
 ### Why Rust?
@@ -455,7 +456,8 @@ Automated provisioning pipeline:
 3. ✅ Provisions ClamAV, OpenSSL, Ollama
 4. ✅ Downloads **Mandiant FLOSS** (string de-obfuscation)
 5. ✅ Downloads **HollowsHunter** (memory forensics)
-6. ✅ Begins NSRL "Known Good" database download (121 GB, background)
+6. ✅ Generates internal cryptographic identity (OpenSSL-vendored)
+7. ✅ Begins NSRL "Known Good" database download (121 GB, background)
 
 ### `sandbox` — OpenShell CLI helpers
 
@@ -556,7 +558,6 @@ $env:OSOOSI_LLM_AGENT_ENABLED="1"
 | **Ollama** | Local LLM inference | ✅ Yes |
 | **FLOSS** | String de-obfuscation | ✅ Yes |
 | **HollowsHunter** | Memory forensics | ✅ Yes |
-| **OpenSSL** | Cryptographic operations | ✅ Yes |
 
 ### Environment Variables
 
@@ -730,3 +731,6 @@ Recent hardening efforts have focused on agent resilience and production stabili
 - **Signature-Based Trust**: Automatic -0.5 threat score weighting for binaries with valid Authenticode signatures from trusted vendors (Microsoft, GitHub, etc.).
 - **Centralized Data Management**: All agent databases (SQLite memory store, behavioral feedback) now reside in a unified database/ directory for cleaner deployments.
 - **Concurrency Throttling**: Malware scanning is now limited to 2 concurrent tasks via Semaphore to prevent CPU saturation during high-volume file events.
+- **Zero-Dependency OpenSSL**: Transitioned to the `rust-openssl` crate with the `vendored` feature. All CA, certificate, and signing operations are now performed natively without an external OpenSSL binary.
+- **Consensus Veto Hardening**: Updated `CveLookupVoter` and `PolicyEngine` to automatically skip Microsoft-signed binaries and NSRL "Known Good" artifacts, eliminating false-positive log spam.
+- **Mesh Connectivity Sync**: Synchronized the P2P mesh port to **4001** across neighbor discovery, listener, and firewall rules for reliable peer-to-peer bootstrapping.

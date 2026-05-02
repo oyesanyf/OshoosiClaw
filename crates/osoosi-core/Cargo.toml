@@ -21,6 +21,9 @@ osoosi-behavioral = { path = "../osoosi-behavioral" }
 osoosi-dp = { path = "../osoosi-dp" }
 osoosi-dns = { path = "../osoosi-dns" }
 ed25519-dalek = { workspace = true }
+hayabusa = { workspace = true }
+dotscope = { workspace = true }
+wasmtime = { workspace = true }
 sysinfo = { workspace = true }
 tfhe = { workspace = true }
 blake3 = { workspace = true }
@@ -47,6 +50,7 @@ thiserror = { workspace = true }
 dashmap = { workspace = true }
 chrono = { workspace = true }
 reqwest = { workspace = true }
+openssl = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 hmac = { workspace = true }

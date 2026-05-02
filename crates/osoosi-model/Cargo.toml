@@ -40,3 +40,4 @@ reqwest = { workspace = true, features = ["json"] }
 sevenz-rust = { workspace = true }
 dashmap = { workspace = true }
 rayon = { workspace = true }
+# nexus-shield = { workspace = true }

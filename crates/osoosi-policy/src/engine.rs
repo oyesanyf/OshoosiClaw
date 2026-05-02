@@ -161,8 +161,10 @@ fn classify_vote(
         "Sigma" => (EvidenceClass::Behavior, 0.86, true),
         "SemanticIntent" | "LLM-Reasoning" => (EvidenceClass::Behavior, 0.78, true),
         "Decompile" => (EvidenceClass::Behavior, 0.96, true),
-        "YaraX-Memory" => (EvidenceClass::Memory, 1.0, true),
-        name if name.contains("ClamAV") => (EvidenceClass::StaticArtifact, 0.9, true),
+        "YaraX-Memory" | "HollowsHunter-Memory" => (EvidenceClass::Memory, 1.0, true),
+        "Capa-Behavior" => (EvidenceClass::Behavior, 0.92, true),
+        "Floss-Artifact" => (EvidenceClass::StaticArtifact, 0.82, false),
+        name if name.contains("NexusShield") => (EvidenceClass::StaticArtifact, 0.95, true),
         name if name.contains("MalConv") || name.contains("ML") => {
             let weak_pe_signature =
                 reason_lc.contains("ml=0.000") && reason_lc.contains("sig=1.000");
@@ -406,6 +408,27 @@ impl PolicyEngine {
                 "[CONSENSUS] round skipped (path in consensus_exclude_paths)"
             );
             return None;
+        }
+
+        // NEW: Known-Good Bypass (NSRL + Analyst False Positives)
+        // If the binary is in the NSRL (National Software Reference Library) or has been manually 
+        // marked as a false positive, we bypass the consensus engine entirely to save CPU and stop log spam.
+        if let Some(h) = preferred_hash_from_event(event) {
+            let is_nsrl = self.memory.is_nsrl_known_good(&h).unwrap_or(false);
+            let proc_name = process_name_from_event(event);
+            let is_fp = self.memory.is_false_positive_pattern(proc_name.as_deref(), Some(&h)).unwrap_or(false);
+            
+            if is_nsrl || is_fp {
+                debug!(
+                    target: CONSENSUS_LOG_TARGET,
+                    path = %image_path,
+                    hash = %h,
+                    is_nsrl,
+                    is_fp,
+                    "[CONSENSUS] round bypassed (Known-Good match)"
+                );
+                return None;
+            }
         }
 
         // 0.1 Trusted Paths & Noisy Stems: Reduce sensitivity for known noise

@@ -49,11 +49,18 @@ hmac = "0.12"
 hex = "0.4"
 subtle = "2"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
+openssl = { version = "0.10" }
+# nexus-shield = { version = "0.4.4", default-features = false }
+hayabusa = { path = "./vendor/hayabusa" }
+dotscope = "0.1"
+wasmtime = "44.0"
+malchela = { git = "https://github.com/dwmetz/MalChela.git" }
+iced-x86 = "1"
+tiquery = { git = "https://github.com/dwmetz/tiquery.git" }
 rand = "0.8"
 rand_distr = "0.4"
 zeroize = { version = "1", features = ["derive"] }
-wasmtime = "41"
-wasmtime-wasi = "41"
+wasmtime-wasi = "44.0"
 async-trait = "0.1"
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls", "stream"] }
 bytes = "1"
@@ -91,16 +98,9 @@ git2 = "0.19"
 bloomfilter = "1.0.9"
 libloading = "0.8"
 yara-x = "1.15.0"
-hayabusa = { path = "vendor/hayabusa" }
-chainsaw = { git = "https://github.com/WithSecureLabs/chainsaw", tag = "v2.9.3" }
-die-rust = { package = "die", git = "https://github.com/elastic/die-rust" }
-falcon-analyzer = { package = "falcon", version = "0.6.0" }
-falcon-rs = "0.1"
-redbpf = "2.3.0"
-process-memory = "0.5.0"
-proc-maps = "0.4.0"
-capstone = "0.13.0"
-xori = { git = "https://github.com/endgameinc/xori" }
+# Legacy tools replaced by Zero-Process Stack
+# chainsaw = { git = "https://github.com/WithSecureLabs/chainsaw", tag = "v2.9.3" }
+# xori = { git = "https://github.com/endgameinc/xori" }
 # Windows-only crates — kept in workspace for version pinning;
 # individual crates reference them under [target.'cfg(windows)'.dependencies]
 windows = { version = "0.58", features = [
@@ -110,7 +110,7 @@ windows = { version = "0.58", features = [
     "Win32_Devices_Communication", "Win32_System_Threading",
     "Win32_UI_Shell", "Win32_UI_WindowsAndMessaging",
     "Win32_System_LibraryLoader", "Win32_Storage_FileSystem",
-    "Win32_System_Memory",
+    "Win32_System_Memory", "Win32_System_Diagnostics_Debug",
 ] }
 winapi = { version = "0.3", features = ["memoryapi", "processthreadsapi", "winnt", "handleapi"] }
 winreg = "0.52"

@@ -941,7 +941,7 @@ pub fn bootstrap_security_rules() {
                     "protocol=TCP",
                     "localport=4001",
                     "enable=yes",
-                    "profile=any",
+                    "profile=domain,private",
                 ])
                 .status();
             let _ = Command::new("netsh")

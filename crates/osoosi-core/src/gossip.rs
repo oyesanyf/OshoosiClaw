@@ -72,6 +72,7 @@ impl GossipSleuth {
                 software_version: None,
                 date_learned: Utc::now(),
             }),
+            priority: 0.9,
             timestamp: Utc::now(),
             source_node: self.node_id.clone(),
         };
@@ -105,6 +106,7 @@ impl GossipSleuth {
                 software_version: None,
                 date_learned: Utc::now(),
             }),
+            priority: 1.0,
             timestamp: Utc::now(),
             source_node: self.node_id.clone(),
         };
@@ -149,6 +151,7 @@ impl GossipSleuth {
                 software_version: None,
                 date_learned: Utc::now(),
             }),
+            priority: severity,
             timestamp: Utc::now(),
             source_node: self.node_id.clone(),
         };

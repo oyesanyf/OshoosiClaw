@@ -32,7 +32,7 @@ futures = { workspace = true }
 regex = { workspace = true }
 sysinfo = { workspace = true }
 yara-x = { workspace = true }
-process-memory = { workspace = true }
+# process-memory = { workspace = true }
 rand.workspace = true
 base64 = "0.22"
 version-compare = "0.2"
@@ -40,3 +40,4 @@ async-trait = { workspace = true }
 
 [target.'cfg(target_os = "windows")'.dependencies]
 win32-version-info = "0.3"
+windows = { workspace = true }

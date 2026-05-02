@@ -117,7 +117,6 @@ impl SandboxExecutor {
         let mut config = Config::new();
         config.consume_fuel(true);
         config.epoch_interruption(true);
-        config.async_support(true);
 
         let engine = Engine::new(&config)?;
         let native_host = Arc::new(native_host::NativeHost::new(
@@ -569,7 +568,7 @@ impl SandboxExecutor {
                         "duration_ms": start_time.elapsed().as_millis(),
                     }),
                 );
-                Err(e)
+                Err(e.into())
             }
         }
     }

@@ -254,12 +254,8 @@ impl MeshNode {
             .kademlia
             .set_mode(Some(kad::Mode::Server));
         // Start bootstrapping the DHT if we have peers
-        if swarm
-            .behaviour_mut()
-            .kademlia
-            .kbuckets()
-            .any(|b| b.num_entries() > 0)
-        {
+        let has_peers = swarm.behaviour_mut().kademlia.kbuckets().any(|b| b.num_entries() > 0);
+        if has_peers {
             let _ = swarm.behaviour_mut().kademlia.bootstrap();
         }
 
@@ -400,8 +396,14 @@ impl MeshNode {
                 }
                 _ = bootstrap_interval.tick() => {
                     // Zero-Config Discovery: Periodic DHT Bootstrap
-                    let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
-                    debug!("Oshoosi Mesh: Periodic Kademlia bootstrap triggered for autonomous discovery.");
+                    // Only trigger if we actually have some peers to bootstrap from, to avoid "No known peers" logs.
+                    let has_peers = self.swarm.behaviour_mut().kademlia.kbuckets().any(|b| b.num_entries() > 0);
+                    if has_peers {
+                        let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
+                        debug!("Oshoosi Mesh: Periodic Kademlia bootstrap triggered for autonomous discovery.");
+                    } else {
+                        debug!("Oshoosi Mesh: Kademlia bootstrap skipped (no known peers yet).");
+                    }
                 }
                 _ = crawl_interval.tick() => {
                     // Generate a random ID to force the DHT to explore new buckets

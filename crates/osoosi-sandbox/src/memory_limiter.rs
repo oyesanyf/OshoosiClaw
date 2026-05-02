@@ -29,7 +29,7 @@ impl wasmtime::ResourceLimiter for MemoryLimiter {
         _current: usize,
         desired: usize,
         _maximum: Option<usize>,
-    ) -> anyhow::Result<bool> {
+    ) -> wasmtime::Result<bool> {
         self.current_bytes = desired;
         if desired > self.max_memory_bytes {
             tracing::warn!(
@@ -48,7 +48,7 @@ impl wasmtime::ResourceLimiter for MemoryLimiter {
         _current: usize,
         desired: usize,
         _maximum: Option<usize>,
-    ) -> anyhow::Result<bool> {
+    ) -> wasmtime::Result<bool> {
         Ok(desired <= self.max_table_elements as usize)
     }
 }

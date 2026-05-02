@@ -33,13 +33,13 @@ rand_distr = { workspace = true }
 yara-x = { workspace = true }
 walkdir = { workspace = true }
 hayabusa = { workspace = true }
-chainsaw = { workspace = true }
-proc-maps = { workspace = true }
-capstone = { workspace = true }
+# chainsaw = { workspace = true }
+# proc-maps = { workspace = true }
+iced-x86 = { workspace = true }
 sysinfo = { workspace = true }
 winapi = { workspace = true }
 windows = { workspace = true }
 
 [target.'cfg(target_os = "linux")'.dependencies]
-redbpf = { workspace = true }
+# redbpf = { workspace = true }
 

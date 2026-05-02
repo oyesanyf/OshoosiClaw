@@ -457,22 +457,32 @@ impl ThreatVoter for YaraXMemoryVoter {
     async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
         #[cfg(target_os = "windows")]
         {
-            use process_memory::{CopyAddress, TryIntoProcessHandle};
+            use windows::Win32::System::Threading::{OpenProcess, PROCESS_VM_READ, PROCESS_QUERY_INFORMATION};
+            use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
+            use windows::Win32::Foundation::CloseHandle;
+
             if let Some(pid) = event.process_id() {
                 let rules = self.rules.clone();
                 return tokio::task::spawn_blocking(move || {
-                    if let Ok(handle) = (pid as process_memory::Pid).try_into_process_handle() {
-                        // In a real implementation, we'd iterate through memory regions.
-                        // Here we'll do a focused scan of the first 1MB of the image base as a placeholder.
-                        let mut buffer = vec![0u8; 4096]; // Use a smaller 4KB buffer for testing
-                        if let Ok(_bytes) = handle.copy_address(0x400000, &mut buffer) {
+                    unsafe {
+                        let proc_handle = OpenProcess(PROCESS_VM_READ | PROCESS_QUERY_INFORMATION, false, pid).ok()?;
+                        let mut buffer = vec![0u8; 8192]; // Use 8KB for better coverage
+                        let mut bytes_read = 0usize;
+                        
+                        // Placeholder: in a real EDR we'd walk the VAD (Virtual Address Descriptor) 
+                        // or use VirtualQueryEx to find executable/private regions.
+                        // Here we scan a 8KB chunk of the potential image base.
+                        let _ = ReadProcessMemory(proc_handle, 0x400000 as *const _, buffer.as_mut_ptr() as *mut _, buffer.len(), Some(&mut bytes_read));
+                        let _ = CloseHandle(proc_handle);
+
+                        if bytes_read > 0 {
+                            buffer.truncate(bytes_read);
                             let mut scanner = yara_x::Scanner::new(&rules);
                             let results = scanner.scan(&buffer).ok()?;
                             if results.matching_rules().count() > 0 {
                                 return Some(VoteResult {
                                     confidence: 0.98,
-                                    reason: "Yara-X: Detected C2 beacon pattern in process memory"
-                                        .to_string(),
+                                    reason: "Yara-X: Detected malicious pattern in process memory".to_string(),
                                     weight: 1.0,
                                 });
                             }
@@ -736,6 +746,23 @@ impl ThreatVoter for CveLookupVoter {
             None => return None,
         };
 
+        // NEW: Suppress NVD lookup for signed Microsoft binaries or system files to avoid Consensus Veto spam.
+        // We also check if the hash is in the NSRL known-good set.
+        let is_microsoft = meta.product_name.to_lowercase().contains("microsoft") || 
+                           meta.product_name.to_lowercase().contains("windows") ||
+                           full_path.to_lowercase().contains("\\windows\\system32");
+
+        if meta.is_signed && is_microsoft {
+            return None; // Abstain to prevent log spam/veto on core OS processes
+        }
+
+        let sha1 = event.data.get("SHA1").and_then(|v| v.as_str());
+        if let Some(s) = sha1 {
+            if self.memory.is_nsrl_known_good(s).unwrap_or(false) {
+                return None; // Abstain for known-good files
+            }
+        }
+
         // 2. Check Local Cache first
         let mut cached_cves = Vec::new();
         if let Ok(cached) = self.memory.get_cached_cves(&meta.product_name, &meta.version) {
@@ -785,6 +812,7 @@ impl ThreatVoter for CveLookupVoter {
                         broadcast(osoosi_types::GlobalIntelligence {
                             source_url: "https://nvd.nist.gov".to_string(),
                             summary: format!("NVD Discovery: {} v{} has vulnerability {}", meta.product_name, meta.version, cve.id),
+                            priority: 0.8,
                             defense: Some(osoosi_types::ZeroDayDefense {
                                 cve_id: cve.id.clone(),
                                 title: format!("NVD: {}", cve.id),

@@ -105,8 +105,7 @@ impl BehavioralAnalyzer {
     pub fn init_native_smollm(&self) {
         let smollm_lock = self.smollm.clone();
         tokio::task::spawn_blocking(move || {
-            let models_dir =
-                std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
+            let models_dir = osoosi_types::resolve_models_dir();
             let smollm_dir = std::path::Path::new(&models_dir).join("smollm");
             match SmolLMAnalyzer::new(&smollm_dir) {
                 Ok(s) => {

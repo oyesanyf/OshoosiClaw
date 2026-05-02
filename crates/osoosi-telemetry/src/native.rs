@@ -107,12 +107,43 @@ impl NativeTelemetryEngine {
             })
             .build();
 
-        // 3. Run the Trace
-        info!("🚀 [NATIVE-TELEMETRY] Starting Oshoosi Native Monitoring (SysmonX Port)...");
+        // 3. Define the Kernel Network Provider
+        let tx_net = self.tx.clone();
+        let network_provider = Provider::by_name("Microsoft-Windows-Kernel-Network")
+            .map_err(|e| anyhow::anyhow!("Failed to find network provider: {:?}", e))?
+            .add_callback(move |record, schema_locator| {
+                if record.event_id() == 10 || record.event_id() == 11 { // Send/Recv or Connect/Disconnect
+                    if let Ok(schema) = schema_locator.event_schema(record) {
+                        let parser = Parser::create(record, &schema);
+                        let pid = record.process_id();
+                        let dest_addr: String = parser.try_parse("daddr").unwrap_or_default();
+                        let dest_port: u16 = parser.try_parse("dport").unwrap_or(0);
+                        let src_addr: String = parser.try_parse("saddr").unwrap_or_default();
+                        let src_port: u16 = parser.try_parse("sport").unwrap_or(0);
+
+                        let mut sysmon_event = SysmonEvent::new(SysmonEventId::NetworkConnect);
+                        if let Some(obj) = sysmon_event.data.as_object_mut() {
+                            obj.insert("ProcessId".to_string(), serde_json::json!(pid));
+                            obj.insert("DestinationIp".to_string(), serde_json::json!(dest_addr));
+                            obj.insert("DestinationPort".to_string(), serde_json::json!(dest_port));
+                            obj.insert("SourceIp".to_string(), serde_json::json!(src_addr));
+                            obj.insert("SourcePort".to_string(), serde_json::json!(src_port));
+                            obj.insert("Protocol".to_string(), serde_json::json!("tcp")); // Heuristic
+                        }
+
+                        let _ = tx_net.try_send(sysmon_event);
+                    }
+                }
+            })
+            .build();
+
+        // 4. Run the Trace
+        info!("🚀 [NATIVE-TELEMETRY] Starting Oshoosi Native Monitoring (Zero-Process ETW)...");
         let trace = UserTrace::new()
             .named("OshoosiNativeTrace".to_string())
             .enable(process_provider)
-            .enable(file_provider);
+            .enable(file_provider)
+            .enable(network_provider);
 
         tokio::task::spawn_blocking(move || {
             if let Err(e) = trace.start() {

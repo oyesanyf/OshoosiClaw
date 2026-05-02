@@ -7,13 +7,12 @@ use osoosi_types::{AttestationChallenge, AttestationResponse, NodeDID};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
-use std::process::Command;
 use tracing::info;
 
 pub struct TrustManager {
     signing_key: SigningKey,
     did: NodeDID,
-    executor: std::sync::Arc<dyn osoosi_types::SecuredExecutor>,
+    _executor: std::sync::Arc<dyn osoosi_types::SecuredExecutor>,
 }
 
 impl TrustManager {
@@ -33,7 +32,7 @@ impl TrustManager {
         Ok(Self {
             signing_key,
             did,
-            executor,
+            _executor: executor,
         })
     }
 
@@ -47,56 +46,53 @@ impl TrustManager {
         &self.did
     }
 
-    /// Set up a local Certificate Authority (CA) using OpenSSL.
+    /// Set up a local Certificate Authority (CA) using OpenSSL library.
     pub async fn init_ca(&self, path: &str) -> anyhow::Result<()> {
+        use openssl::asn1::Asn1Time;
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::{X509NameBuilder, X509};
+
         let path = Path::new(path);
         if !path.exists() {
             fs::create_dir_all(path)?;
         }
 
-        info!("Initializing Osoosi Root CA...");
+        info!("Initializing Osoosi Root CA (library-based)...");
 
         // 1. Generate Root Key
-        let mut key_cmd = Command::new("openssl");
-        key_cmd.args([
-            "genrsa",
-            "-out",
-            path.join("rootCA.key").to_str().unwrap(),
-            "4096",
-        ]);
-        let output = self.executor.execute(key_cmd).await?;
-        if !output.status.success() {
-            return Err(anyhow::anyhow!(
-                "OpenSSL failed to generate CA key: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+        let rsa = Rsa::generate(4096)?;
+        let priv_key = PKey::from_rsa(rsa)?;
+        fs::write(path.join("rootCA.key"), priv_key.private_key_to_pem_pkcs8()?)?;
 
         // 2. Generate Root Certificate
-        let mut cert_cmd = Command::new("openssl");
-        cert_cmd.args([
-            "req",
-            "-x509",
-            "-new",
-            "-nodes",
-            "-key",
-            path.join("rootCA.key").to_str().unwrap(),
-            "-sha256",
-            "-days",
-            "3650",
-            "-out",
-            path.join("rootCA.crt").to_str().unwrap(),
-            "-subj",
-            "/C=US/ST=Cyber/L=Decentralized/O=Osoosi/OU=Security/CN=OsoosiRootCA",
-        ]);
-        let output = self.executor.execute(cert_cmd).await?;
+        let mut x509_name = X509NameBuilder::new()?;
+        x509_name.append_entry_by_text("C", "US")?;
+        x509_name.append_entry_by_text("ST", "Cyber")?;
+        x509_name.append_entry_by_text("L", "Decentralized")?;
+        x509_name.append_entry_by_text("O", "Osoosi")?;
+        x509_name.append_entry_by_text("OU", "Security")?;
+        x509_name.append_entry_by_text("CN", "OsoosiRootCA")?;
+        let x509_name = x509_name.build();
 
-        if !output.status.success() {
-            return Err(anyhow::anyhow!(
-                "OpenSSL failed to generate CA cert: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+        let mut cert_builder = X509::builder()?;
+        cert_builder.set_version(2)?;
+        let serial_number = openssl::bn::BigNum::from_u32(1)?.to_asn1_integer()?;
+        cert_builder.set_serial_number(&serial_number)?;
+        cert_builder.set_subject_name(&x509_name)?;
+        cert_builder.set_issuer_name(&x509_name)?;
+        cert_builder.set_pubkey(&priv_key)?;
+
+        let not_before = Asn1Time::days_from_now(0)?;
+        cert_builder.set_not_before(&not_before)?;
+        let not_after = Asn1Time::days_from_now(3650)?;
+        cert_builder.set_not_after(&not_after)?;
+
+        cert_builder.sign(&priv_key, MessageDigest::sha256())?;
+        let cert = cert_builder.build();
+
+        fs::write(path.join("rootCA.crt"), cert.to_pem()?)?;
 
         Ok(())
     }
@@ -108,66 +104,64 @@ impl TrustManager {
         peer_did: &str,
         output_path: &str,
     ) -> anyhow::Result<()> {
+        use openssl::asn1::Asn1Time;
+        use openssl::hash::MessageDigest;
+        use openssl::pkey::PKey;
+        use openssl::rsa::Rsa;
+        use openssl::x509::{X509NameBuilder, X509Req, X509};
+
         let ca_path = Path::new(ca_path);
         let out_path = Path::new(output_path);
         if !out_path.exists() {
             fs::create_dir_all(out_path)?;
         }
 
-        info!("Issuing S2S Certificate for node: {}", peer_did);
+        info!("Issuing S2S Certificate for node (library-based): {}", peer_did);
 
-        // 1. Generate Peer Key
-        let mut key_cmd = Command::new("openssl");
-        key_cmd.args([
-            "genrsa",
-            "-out",
-            out_path.join("peer.key").to_str().unwrap(),
-            "2048",
-        ]);
-        self.executor.execute(key_cmd).await?;
+        // 1. Load CA
+        let ca_cert_pem = fs::read(ca_path.join("rootCA.crt"))?;
+        let ca_cert = X509::from_pem(&ca_cert_pem)?;
+        let ca_key_pem = fs::read(ca_path.join("rootCA.key"))?;
+        let ca_key = PKey::private_key_from_pem(&ca_key_pem)?;
 
-        // 2. Generate CSR (include DID in Common Name)
-        let subj = format!("/C=US/ST=Cyber/L=Node/O=Osoosi/CN={}", peer_did);
-        let mut csr_cmd = Command::new("openssl");
-        csr_cmd.args([
-            "req",
-            "-new",
-            "-key",
-            out_path.join("peer.key").to_str().unwrap(),
-            "-out",
-            out_path.join("peer.csr").to_str().unwrap(),
-            "-subj",
-            &subj,
-        ]);
-        self.executor.execute(csr_cmd).await?;
+        // 2. Generate Peer Key
+        let rsa = Rsa::generate(2048)?;
+        let peer_key = PKey::from_rsa(rsa)?;
+        fs::write(out_path.join("peer.key"), peer_key.private_key_to_pem_pkcs8()?)?;
 
-        // 3. Sign with CA
-        // 3. Sign with CA
-        let mut sign_cmd = Command::new("openssl");
-        sign_cmd.args([
-            "x509",
-            "-req",
-            "-in",
-            out_path.join("peer.csr").to_str().unwrap(),
-            "-CA",
-            ca_path.join("rootCA.crt").to_str().unwrap(),
-            "-CAkey",
-            ca_path.join("rootCA.key").to_str().unwrap(),
-            "-CAcreateserial",
-            "-out",
-            out_path.join("peer.crt").to_str().unwrap(),
-            "-days",
-            "365",
-            "-sha256",
-        ]);
-        let output = self.executor.execute(sign_cmd).await?;
+        // 3. Generate CSR
+        let mut x509_name = X509NameBuilder::new()?;
+        x509_name.append_entry_by_text("C", "US")?;
+        x509_name.append_entry_by_text("ST", "Cyber")?;
+        x509_name.append_entry_by_text("L", "Node")?;
+        x509_name.append_entry_by_text("O", "Osoosi")?;
+        x509_name.append_entry_by_text("CN", peer_did)?;
+        let x509_name = x509_name.build();
 
-        if !output.status.success() {
-            return Err(anyhow::anyhow!(
-                "OpenSSL failed to sign peer cert: {}",
-                String::from_utf8_lossy(&output.stderr)
-            ));
-        }
+        let mut req_builder = X509Req::builder()?;
+        req_builder.set_subject_name(&x509_name)?;
+        req_builder.set_pubkey(&peer_key)?;
+        req_builder.sign(&peer_key, MessageDigest::sha256())?;
+        let req = req_builder.build();
+
+        // 4. Sign with CA
+        let mut cert_builder = X509::builder()?;
+        cert_builder.set_version(2)?;
+        let serial_number = openssl::bn::BigNum::from_u32(2)?.to_asn1_integer()?; // Simplified serial
+        cert_builder.set_serial_number(&serial_number)?;
+        cert_builder.set_subject_name(req.subject_name())?;
+        cert_builder.set_issuer_name(ca_cert.subject_name())?;
+        cert_builder.set_pubkey(&peer_key)?;
+
+        let not_before = Asn1Time::days_from_now(0)?;
+        cert_builder.set_not_before(&not_before)?;
+        let not_after = Asn1Time::days_from_now(365)?;
+        cert_builder.set_not_after(&not_after)?;
+
+        cert_builder.sign(&ca_key, MessageDigest::sha256())?;
+        let cert = cert_builder.build();
+
+        fs::write(out_path.join("peer.crt"), cert.to_pem()?)?;
 
         Ok(())
     }

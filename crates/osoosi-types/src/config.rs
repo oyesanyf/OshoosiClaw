@@ -663,6 +663,55 @@ pub fn resolve_models_dir() -> PathBuf {
         .join("models")
 }
 
+/// Resolve the database directory for persistent storage.
+/// Env override: OSOOSI_DATABASE_DIR.
+pub fn resolve_database_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("OSOOSI_DATABASE_DIR") {
+        return PathBuf::from(p.trim());
+    }
+
+    if let Some(root) = resolve_project_root() {
+        let d = root.join("database");
+        if d.is_dir() {
+            return d;
+        }
+    }
+
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("database")
+}
+
+/// Automatically sets critical OSOOSI_* environment variables by discovering the project root.
+/// This ensures that even if the agent is run from target/release or a nested directory,
+/// all internal logic and sub-processes correctly resolve their assets.
+pub fn persist_environment_paths() {
+    let models_dir = resolve_models_dir();
+    if std::env::var("OSOOSI_MODELS_DIR").is_err() {
+        std::env::set_var("OSOOSI_MODELS_DIR", models_dir.to_string_lossy().to_string());
+    }
+
+    let bin_dir = resolve_bin_dir();
+    if std::env::var("OSOOSI_BIN").is_err() {
+        std::env::set_var("OSOOSI_BIN", bin_dir.to_string_lossy().to_string());
+    }
+
+    let tools_dir = resolve_tools_dir();
+    if std::env::var("OSOOSI_TOOLS_ROOT").is_err() {
+        std::env::set_var("OSOOSI_TOOLS_ROOT", tools_dir.to_string_lossy().to_string());
+    }
+
+    let cache_dir = resolve_cache_dir();
+    if std::env::var("OSOOSI_CACHE_DIR").is_err() {
+        std::env::set_var("OSOOSI_CACHE_DIR", cache_dir.to_string_lossy().to_string());
+    }
+
+    let db_dir = resolve_database_dir();
+    if std::env::var("OSOOSI_DATABASE_DIR").is_err() {
+        std::env::set_var("OSOOSI_DATABASE_DIR", db_dir.to_string_lossy().to_string());
+    }
+}
+
 pub fn resolve_smollm_dir() -> PathBuf {
     resolve_models_dir().join("smollm")
 }
@@ -1086,7 +1135,7 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
     }
 
     if listen_addrs.is_empty() {
-        listen_addrs.push("/ip4/0.0.0.0/tcp/9000".to_string());
+        listen_addrs.push("/ip4/0.0.0.0/tcp/4001".to_string());
     }
 
     WireListenConfig {

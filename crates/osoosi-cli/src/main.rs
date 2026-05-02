@@ -229,6 +229,8 @@ pub enum SandboxAction {
 }
 
 fn main() -> anyhow::Result<()> {
+    osoosi_types::persist_environment_paths();
+
     // Rayon global pool for CPU-tier analysis (policy+entropy bridge, parallel scans). Must run before any `rayon::spawn`.
     osoosi_core::init_hybrid_concurrency();
     let worker_threads = osoosi_core::tokio_worker_threads();
@@ -380,7 +382,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
 
             let start_instant = std::time::Instant::now();
-            let orchestrator = osoosi_core::EdrOrchestrator::new().await?;
+            let orchestrator = Arc::new(osoosi_core::EdrOrchestrator::new().await?);
+            orchestrator.post_init_voters().await;
 
             // Start maintenance loop (DB pruning/vacuum)
             let maint_orch = orchestrator.clone();
@@ -398,7 +401,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                     .and_then(|s| s.parse::<u16>().ok())
                     .unwrap_or(3030);
                 kill_port_holder(dashboard_port);
-                let dash_orch = Arc::new(orchestrator.clone());
+                let dash_orch = orchestrator.clone();
                 let dash_gate = join_gate.clone();
                 tokio::spawn(async move {
                     let mut current_port = dashboard_port;
@@ -510,7 +513,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
         }
         Some(Commands::Story) => {
-            let orchestrator = EdrOrchestrator::new().await?;
+            let orchestrator = Arc::new(EdrOrchestrator::new().await?);
+            orchestrator.post_init_voters().await;
             println!("{}", orchestrator.generate_story().await);
         }
         Some(Commands::Dashboard { port }) => {
@@ -540,7 +544,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
         }
         Some(Commands::Trust { action }) => {
-            let orchestrator = EdrOrchestrator::new().await?;
+            let orchestrator = Arc::new(EdrOrchestrator::new().await?);
+            orchestrator.post_init_voters().await;
             let tm = orchestrator.trust();
             match action {
                 TrustAction::InitCa => {
@@ -595,7 +600,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             let _ = osoosi_core::firewall::remove_all_autoblock_rules();
         }
         Some(Commands::Rollback { last, patch }) => {
-            let orchestrator = EdrOrchestrator::new().await?;
+            let orchestrator = Arc::new(EdrOrchestrator::new().await?);
+            orchestrator.post_init_voters().await;
             match orchestrator.rollback_patch(patch.as_deref(), last).await {
                 Ok(_) => println!("Rollback successful."),
                 Err(e) => error!("Rollback failed: {}", e),
@@ -667,7 +673,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
         }
         Some(Commands::Merkle { verify, limit }) => {
-            let orchestrator = EdrOrchestrator::new().await?;
+            let orchestrator = Arc::new(EdrOrchestrator::new().await?);
+            orchestrator.post_init_voters().await;
             if verify {
                 let ok = orchestrator.verify_merkle_trail();
                 if ok {
@@ -1014,10 +1021,6 @@ async fn handle_grant_access() -> anyhow::Result<()> {
             warn!("Warning: Failed to provision AI models: {}", e);
         }
 
-        info!("GrantAccess pre-step: ensuring ClamAV is provisioned...");
-        if let Err(e) = provisioner.provision_clamav().await {
-            warn!("Warning: Failed to provision ClamAV: {}", e);
-        }
 
         info!("GrantAccess pre-step: ensuring OpenSSL is provisioned and validated...");
         if let Err(e) = provisioner.provision_openssl().await {
@@ -1025,64 +1028,44 @@ async fn handle_grant_access() -> anyhow::Result<()> {
         } else {
             // USER REQUEST: Validate it is used to sign stuff
             info!("Validating OpenSSL signing capabilities...");
-            let test_file = std::env::temp_dir().join("osoosi_sign_test.txt");
-            let test_sig = std::env::temp_dir().join("osoosi_sign_test.sig");
-            let _ = std::fs::write(&test_file, "Oshoosi OpenSSL Validation");
+            // Library-based validation
+            use openssl::hash::MessageDigest;
+            use openssl::pkey::PKey;
+            use openssl::rsa::Rsa;
+            use openssl::sign::{Signer, Verifier};
 
-            let mut gen_key = tokio::process::Command::new("openssl");
-            gen_key.args(["genrsa", "-out", "test_priv.pem", "2048"]);
+            info!("Validating Oshoosi Cryptographic Engine (OpenSSL Library)...");
+            
+            let res = (|| -> anyhow::Result<()> {
+                let rsa = Rsa::generate(2048)?;
+                let pkey = PKey::from_rsa(rsa)?;
+                
+                let data = b"Oshoosi OpenSSL Library Validation";
+                
+                // Sign
+                let mut signer = Signer::new(MessageDigest::sha256(), &pkey)?;
+                signer.update(data)?;
+                let signature = signer.sign_to_vec()?;
+                
+                // Verify
+                let mut verifier = Verifier::new(MessageDigest::sha256(), &pkey)?;
+                verifier.update(data)?;
+                if !verifier.verify(&signature)? {
+                    return Err(anyhow::anyhow!("OpenSSL library signature verification failed"));
+                }
+                
+                Ok(())
+            })();
 
-            let mut sign_cmd = tokio::process::Command::new("openssl");
-            sign_cmd.args([
-                "dgst",
-                "-sha256",
-                "-sign",
-                "test_priv.pem",
-                "-out",
-                &test_sig.to_string_lossy(),
-                &test_file.to_string_lossy(),
-            ]);
-
-            let mut verify_cmd = tokio::process::Command::new("openssl");
-            verify_cmd.args([
-                "dgst",
-                "-sha256",
-                "-verify",
-                "test_pub.pem",
-                "-signature",
-                &test_sig.to_string_lossy(),
-                &test_file.to_string_lossy(),
-            ]);
-
-            // Extract public key first
-            let mut pub_cmd = tokio::process::Command::new("openssl");
-            pub_cmd.args([
-                "rsa",
-                "-in",
-                "test_priv.pem",
-                "-pubout",
-                "-out",
-                "test_pub.pem",
-            ]);
-
-            let success = async {
-                let _ = gen_key.status().await;
-                let _ = pub_cmd.status().await;
-                let s = sign_cmd.status().await?.success();
-                Ok::<bool, anyhow::Error>(s)
-            }
-            .await
-            .unwrap_or(false);
-
+            let success = res.is_ok();
             if success {
-                info!("✓ OpenSSL Signing Validation: SUCCESS");
+                info!("Oshoosi Cryptographic Engine is operational.");
+                let _ = std::fs::remove_file("test_priv.pem");
+                let _ = std::fs::remove_file("test_pub.pem");
             } else {
-                warn!("! OpenSSL Signing Validation: FAILED");
+                error!("Oshoosi Cryptographic Engine failed validation.");
+                std::process::exit(1);
             }
-            let _ = std::fs::remove_file("test_priv.pem");
-            let _ = std::fs::remove_file("test_pub.pem");
-            let _ = std::fs::remove_file(&test_file);
-            let _ = std::fs::remove_file(&test_sig);
         }
 
         info!("GrantAccess pre-step: ensuring FLOSS is provisioned...");
@@ -1181,7 +1164,8 @@ async fn handle_grant_access() -> anyhow::Result<()> {
     let temp_dir = std::env::temp_dir().join("osoosi-nsrl-shared-cache");
     let fetcher = ThreatFeedFetcher::new();
     if let Ok(db_path) = fetcher.download_nsrl_streaming(&temp_dir).await {
-        let orchestrator = EdrOrchestrator::new().await?;
+        let orchestrator = Arc::new(EdrOrchestrator::new().await?);
+        orchestrator.post_init_voters().await;
         import_nsrl_with_fallback(&orchestrator.memory(), db_path.as_path(), &fetcher).await;
     }
     Ok(())
@@ -1548,32 +1532,129 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
 }
 
 fn run_yara_sanitizer() {
-    info!("Running automated YARA rule sanitization (pre-scan cleanup)...");
-    let script_name = "sanitize_yara.py";
+    info!("Running native Rust YARA rule sanitization (pre-scan cleanup)...");
 
-    if let Some(script_path) = resolve_script_path(script_name) {
-        info!("Found YARA sanitization script at {:?}", script_path);
-        let py = std::env::var("OSOOSI_PYTHON").unwrap_or_else(|_| {
-            if cfg!(windows) {
-                "python.exe".to_string()
-            } else {
-                "python3".to_string()
-            }
-        });
+    let search_paths = [
+        std::path::PathBuf::from("target").join("debug").join("yara"),
+        std::path::PathBuf::from("yara"),
+    ];
 
-        match std::process::Command::new(&py)
-            .arg(&script_path)
-            .stdout(std::process::Stdio::null())
-            .stderr(std::process::Stdio::null())
-            .status()
-        {
-            Ok(status) if status.success() => info!("YARA sanitization completed successfully."),
-            Ok(status) => warn!("YARA sanitization script exited with status: {} (Check if 'yara-python' or 'plyara' is needed)", status),
-            Err(e) => warn!("Failed to execute YARA sanitization script with '{}': {}. Is Python installed and on PATH?", py, e),
+    let mut count = 0;
+    for base_path in search_paths {
+        if !base_path.exists() {
+            continue;
         }
-    } else {
-        warn!("YARA sanitization script '{}' not found in CWD, EXE dir, or project root. Skipping automated cleanup.", script_name);
+
+        for entry in walkdir::WalkDir::new(base_path)
+            .into_iter()
+            .filter_map(|e| e.ok())
+        {
+            if entry.file_type().is_file() && entry.path().extension().map_or(false, |ext| ext == "yar") {
+                let path = entry.path();
+                match std::fs::read_to_string(path) {
+                    Ok(content) => {
+                        let sanitized = sanitize_yara_content(&content);
+                        if sanitized != content {
+                            if std::fs::write(path, sanitized).is_ok() {
+                                count += 1;
+                                info!("Sanitized (Native): {:?}", path);
+                            }
+                        }
+                    }
+                    Err(_) => {
+                        // Try reading with lossy UTF-8 if direct read fails (similar to 'ignore' errors in Python)
+                        if let Ok(bytes) = std::fs::read(path) {
+                            let content = String::from_utf8_lossy(&bytes).to_string();
+                            let sanitized = sanitize_yara_content(&content);
+                            if sanitized != content {
+                                if std::fs::write(path, sanitized).is_ok() {
+                                    count += 1;
+                                    info!("Sanitized (Native Lossy): {:?}", path);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
     }
+
+    if count > 0 {
+        info!("Total YARA files sanitized natively: {}", count);
+    }
+}
+
+fn sanitize_yara_content(content: &str) -> String {
+    let mut result = content.to_string();
+
+    // 1. Fix invalid escapes in strings and regexes
+    // Regex for strings: ".*?" (non-greedy)
+    let string_regex = regex::Regex::new(r#"(?s)".*?""#).unwrap();
+    result = string_regex.replace_all(&result, |caps: &regex::Captures| {
+        fix_yara_escapes(&caps[0])
+    }).to_string();
+
+    // Regex for regexes: /.*?/
+    let regex_decl_regex = regex::Regex::new(r"(?s)/.*?/").unwrap();
+    result = regex_decl_regex.replace_all(&result, |caps: &regex::Captures| {
+        fix_yara_escapes(&caps[0])
+    }).to_string();
+
+    // 2. Fix unescaped forward slashes in regex: /.../.../ -> /...\/.../
+    // Heuristic: looks for /.../ followed by modifiers or whitespace/newline/semicolon
+    let regex_fixer = regex::Regex::new(r"/[^ \n].*?/[ ]*(wide|ascii|nocase|fullword|\n|;)").unwrap();
+    result = regex_fixer.replace_all(&result, |caps: &regex::Captures| {
+        let r = &caps[0];
+        if r.len() < 3 { return r.to_string(); }
+        
+        // Find the second '/' (the end of the regex part)
+        if let Some(end_idx) = r[1..].find('/') {
+            let internal = &r[1..end_idx + 1];
+            let mut fixed_internal = String::with_capacity(internal.len());
+            let chars: Vec<char> = internal.chars().collect();
+            for i in 0..chars.len() {
+                if chars[i] == '/' && (i == 0 || chars[i-1] != '\\') {
+                    fixed_internal.push('\\');
+                    fixed_internal.push('/');
+                } else {
+                    fixed_internal.push(chars[i]);
+                }
+            }
+            format!("/{}/{}", fixed_internal, &r[end_idx + 2..])
+        } else {
+            r.to_string()
+        }
+    }).to_string();
+
+    // 3. Fix empty alternatives
+    result = result.replace("|/", "/");
+    result = result.replace("/|", "/");
+    result = result.replace("||", "|");
+
+    result
+}
+
+fn fix_yara_escapes(s: &str) -> String {
+    // Standard valid escapes in YARA + common regex escapes
+    let valid = "nrt\\\"\'xuUdwsDWSbB0123456789$^*+?()[]{}|.^/ ";
+    let mut result = String::with_capacity(s.len());
+    let chars: Vec<char> = s.chars().collect();
+    let mut i = 0;
+    while i < chars.len() {
+        if chars[i] == '\\' && i + 1 < chars.len() {
+            if !valid.contains(chars[i+1]) {
+                // Invalid escape: escape the backslash
+                result.push('\\');
+                result.push('\\');
+                result.push(chars[i+1]);
+                i += 2;
+                continue;
+            }
+        }
+        result.push(chars[i]);
+        i += 1;
+    }
+    result
 }
 
 fn open_browser(url: &str) {

@@ -41,12 +41,16 @@ pub fn sign_config_file(path: &Path) -> anyhow::Result<String> {
     Ok(hash)
 }
 
-/// [NEW] Sign a config file using OpenSSL (Asymmetric).
+/// [NEW] Sign a config file using OpenSSL (Asymmetric) library.
 pub async fn sign_config_with_openssl(
     path: &Path,
-    executor: &dyn osoosi_types::SecuredExecutor,
+    _executor: &dyn osoosi_types::SecuredExecutor,
     priv_key_path: &Path,
 ) -> anyhow::Result<()> {
+    use openssl::hash::MessageDigest;
+    use openssl::pkey::PKey;
+    use openssl::sign::Signer;
+
     let sig_path = path.with_extension(format!(
         "{}{}.openssl",
         path.extension()
@@ -55,26 +59,17 @@ pub async fn sign_config_with_openssl(
         SIG_EXTENSION
     ));
 
-    let mut cmd = std::process::Command::new("openssl");
-    cmd.args([
-        "dgst",
-        "-sha256",
-        "-sign",
-        &priv_key_path.to_string_lossy(),
-        "-out",
-        &sig_path.to_string_lossy(),
-        &path.to_string_lossy(),
-    ]);
+    let priv_key_pem = std::fs::read(priv_key_path)?;
+    let pkey = PKey::private_key_from_pem(&priv_key_pem)?;
+    let mut signer = Signer::new(MessageDigest::sha256(), &pkey)?;
 
-    let output = executor.execute(cmd).await?;
-    if !output.status.success() {
-        return Err(anyhow::anyhow!(
-            "OpenSSL signing failed: {}",
-            String::from_utf8_lossy(&output.stderr)
-        ));
-    }
+    let data = std::fs::read(path)?;
+    signer.update(&data)?;
+    let signature = signer.sign_to_vec()?;
 
-    info!("OpenSSL Signed config file: {:?}", path);
+    std::fs::write(&sig_path, &signature)?;
+
+    info!("OpenSSL Signed config file (library-based): {:?}", path);
     Ok(())
 }
 

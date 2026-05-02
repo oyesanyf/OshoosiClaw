@@ -3,30 +3,34 @@
 //! Integrates multiple tools (CAPA, FLOSS) and LLM-based reasoning to identify
 //! suspicious behaviors and hidden artifacts in binary files.
 
-use osoosi_types::ThreatSignature;
+use osoosi_types::{ThreatSignature, ResponseAction, ActionState};
 use regex::Regex;
-use serde_json::Value;
 use std::fs::File;
 use std::io::Read;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
 use tracing::{debug, info};
+use sha2::{Sha256, Digest};
 
 pub struct StaticAnalyzer {
     /// Path to the 'capa' executable
-    capa_path: PathBuf,
+    _capa_path: PathBuf,
     /// Path to the rules directory
-    rules_path: PathBuf,
+    _rules_path: PathBuf,
     /// Path to the 'floss' executable
-    floss_path: PathBuf,
+    _floss_path: PathBuf,
     /// Path to the signatures directory
-    signatures_path: PathBuf,
+    _signatures_path: PathBuf,
     /// Executor for running tools (Direct or OpenShell)
-    executor: Arc<dyn osoosi_types::SecuredExecutor>,
+    _executor: Arc<dyn osoosi_types::SecuredExecutor>,
     /// Malware scanner for feedback loops
     malware_scanner: Arc<osoosi_model::MalwareScanner>,
     /// In-memory session cache for static analysis results (SHA256 -> ThreatSignature)
     analysis_cache: dashmap::DashMap<String, Option<ThreatSignature>>,
+    /// Native Yara-X engine
+    yara_engine: Arc<yara_x::Rules>,
+    /// Native Hayabusa engine
+    _sigma_engine: Arc<hayabusa::HayabusaEngine>,
 }
 
 impl StaticAnalyzer {
@@ -34,15 +38,19 @@ impl StaticAnalyzer {
         _memory: Arc<osoosi_memory::MemoryStore>,
         executor: Arc<dyn osoosi_types::SecuredExecutor>,
         malware_scanner: Arc<osoosi_model::MalwareScanner>,
+        yara_rules: Arc<yara_x::Rules>,
+        sigma_engine: Arc<hayabusa::HayabusaEngine>,
     ) -> Self {
         Self {
-            capa_path: osoosi_types::resolve_capa_path(),
-            rules_path: osoosi_types::resolve_capa_rules_dir(),
-            floss_path: osoosi_types::resolve_floss_path(),
-            signatures_path: osoosi_types::resolve_capa_sigs_dir(),
-            executor,
+            _capa_path: osoosi_types::resolve_capa_path(),
+            _rules_path: osoosi_types::resolve_capa_rules_dir(),
+            _floss_path: osoosi_types::resolve_floss_path(),
+            _signatures_path: osoosi_types::resolve_capa_sigs_dir(),
+            _executor: executor,
             malware_scanner,
             analysis_cache: dashmap::DashMap::new(),
+            yara_engine: yara_rules,
+            _sigma_engine: sigma_engine,
         }
     }
 
@@ -85,424 +93,140 @@ impl StaticAnalyzer {
             file_path
         );
 
-        // 0. Calculate Shannon Entropy
-        let path_buf_ent = file_path.to_path_buf();
-        let entropy = tokio::task::spawn_blocking(move || {
-            Self::calculate_entropy_sync(&path_buf_ent).unwrap_or(0.0)
-        }).await.unwrap_or(0.0);
+        // 1. Run Native Yara-X (Zero-Process replacement for external scanners)
+        let yara_res = self.run_yara_x(file_path).await?;
+        
+        // 2. Run Native .NET Forensics (Dotscope placeholder)
+        // let dotnet_res = self.run_dotscope(file_path).await?;
 
-        debug!(
-            "Static Analyzer: File {:?} entropy: {:.2}",
-            file_path, entropy
-        );
+        // 3. Extract Strings and find IOCs natively
+        let artifacts = self.run_native_strings(file_path).await?;
 
-        // 1-5. Parallel Analysis Layer (CAPA, FLOSS, Falcon, Xori, DiE)
-        // We use a semaphore to limit concurrent heavy tool executions globally
-        static TOOL_SEMAPHORE: tokio::sync::Semaphore = tokio::sync::Semaphore::const_new(2);
-        let _permit = TOOL_SEMAPHORE.acquire().await.unwrap();
+        // Combine findings into a ThreatSignature
+        if let Some(yara_sig) = yara_res {
+             let mut signature = ThreatSignature {
+                id: format!("STATIC-{}", hash.chars().take(8).collect::<String>()),
+                hash_blake3: Some(hash.clone()),
+                process_name: file_path.file_name().map(|n| n.to_string_lossy().to_string()),
+                confidence: 0.8,
+                reason: Some(format!("YARA-X Match: {}", yara_sig)),
+                detector_count: 1,
+                detected_at: chrono::Utc::now(),
+                source_node: "local".to_string(),
+                recommended_action: ResponseAction::Isolate,
+                action_state: ActionState::Pending,
+                ..Default::default()
+            };
 
-        let (capa_res, floss_res, falcon_res, xori_res, die_res) = tokio::join!(
-            self.run_capa(file_path),
-            self.run_floss(file_path),
-            self.run_falcon(file_path),
-            self.run_xori(file_path),
-            self.run_die_rust(file_path)
-        );
-
-        let capa_result = capa_res?;
-        let floss_artifacts = floss_res?;
-
-        let mut signature = if let Some(sig) = capa_result {
-            sig
-        } else {
-            ThreatSignature::new("localhost".to_string())
-        };
-
-        for artifact in &floss_artifacts {
-            signature.add_reason(format!("Forensic Artifact: {}", artifact));
-            if artifact.contains("IP:") || artifact.contains("Domain:") {
-                signature.confidence = (signature.confidence + 0.1).min(0.99);
-            }
-        }
-
-        if let Ok(Some(falcon_sig)) = falcon_res {
-            signature.confidence = (signature.confidence + 0.2).min(0.99);
-            signature.add_reason(format!("Falcon IR: {}", falcon_sig));
-        }
-
-        if let Ok(Some(xori_sig)) = xori_res {
-            signature.confidence = (signature.confidence + 0.2).min(0.99);
-            signature.add_reason(format!("Xori Emulation: {}", xori_sig));
-        }
-
-        if let Ok(Some(die_sig)) = die_res {
-            signature.add_reason(format!("DiE Signature: {}", die_sig));
-        }
-
-        if signature.confidence > 0.3 || !floss_artifacts.is_empty() || entropy > 7.2 {
-            signature.process_name = file_path
-                .file_name()
-                .and_then(|n| n.to_str())
-                .map(String::from);
-
-            // 6. Entropy Adjustment
-            if entropy > 7.5 {
-                signature.add_reason(format!(
-                    "High Entropy ({:.2}): Binary likely packed or encrypted",
-                    entropy
-                ));
-                signature.confidence = (signature.confidence + 0.25).min(0.99);
-            } else if entropy < 6.5 {
-                signature.add_reason(format!(
-                    "Low Entropy ({:.2}): Binary likely not obfuscated",
-                    entropy
-                ));
-                // Suppress packer/UPX findings when entropy is low — low entropy is
-                // strong counter-evidence against packing (packed files are high entropy)
-                let had_packer_reason = signature.reason.as_ref()
-                    .map(|r| r.to_lowercase().contains("packer") || r.to_lowercase().contains("upx"))
-                    .unwrap_or(false);
-                if had_packer_reason {
-                    // Halve confidence: low entropy + packer flag = likely false positive
-                    signature.confidence *= 0.5;
-                    signature.add_reason(
-                        "[Low entropy discounts packer flag — packed binaries have high entropy]".to_string()
-                    );
-                } else {
-                    signature.confidence *= 0.8; // General suppression for low-entropy binaries
-                }
+            if !artifacts.is_empty() {
+                signature.confidence = (signature.confidence + 0.1).min(1.0);
+                signature.reason = Some(format!("{} | Artifacts: {:?}", signature.reason.unwrap(), artifacts));
             }
 
-            // 7. ClamAV Analysis (Voting Integration)
-            if let Ok(Some(clam_sig)) = self.run_clamav(file_path).await {
-                signature.confidence = (signature.confidence + 0.5).min(1.0);
-                signature.add_reason(format!("ClamAV Detection: {}", clam_sig));
-                info!(
-                    "Static Analyzer: ClamAV voted MALICIOUS for {:?}",
-                    file_path
-                );
-            } else {
-                // If ClamAV says it's clean, slightly reduce confidence (unless it's an exploit)
-                signature.confidence *= 0.9;
-                debug!("Static Analyzer: ClamAV voted CLEAN for {:?}", file_path);
-            }
-
-            // 8. LLM Scoring (passing findings to SmolLM for semantic validation)
-            if let Some(llm_score) = self.get_llm_score(&signature, &floss_artifacts).await {
-                info!("Static Analyzer: LLM validated score: {:.2}", llm_score);
-                signature.confidence = (signature.confidence * 0.7 + llm_score * 0.3).min(0.99);
-                signature.add_reason(format!("LLM Validation: Score {:.2}", llm_score));
-            }
-
-            if hash != "unknown" {
-                self.analysis_cache.insert(hash, Some(signature.clone()));
-            }
+            self.analysis_cache.insert(hash, Some(signature.clone()));
             return Ok(Some(signature));
         }
 
-        if hash != "unknown" {
-            self.analysis_cache.insert(hash, None);
-        }
         Ok(None)
     }
 
+    fn is_oshoosi_managed_tool(path: &Path) -> bool {
+        let p = path.to_string_lossy().to_lowercase();
+        p.contains("\\oshoosiclaw\\") || p.contains("/oshoosiclaw/")
+    }
+
     fn calculate_sha256_sync(path: &Path) -> anyhow::Result<String> {
-        use sha2::{Digest, Sha256};
         let mut file = File::open(path)?;
         let mut hasher = Sha256::new();
-        let mut buffer = [0u8; 65536]; // 64KB buffer
+        let mut buffer = [0u8; 65536];
         loop {
             let n = file.read(&mut buffer)?;
-            if n == 0 {
-                break;
-            }
+            if n == 0 { break; }
             hasher.update(&buffer[..n]);
         }
         Ok(format!("{:x}", hasher.finalize()))
     }
 
-    async fn run_clamav(&self, file_path: &Path) -> anyhow::Result<Option<String>> {
-        let clam_path = osoosi_types::resolve_clamscan_path();
-        if !clam_path.exists() {
-            return Ok(None); // ClamAV not installed or not in PATH
-        }
-
-        let mut cmd = std::process::Command::new(&clam_path);
-        cmd.arg("--no-summary").arg(file_path);
-
-        let output = self.executor.execute(cmd).await?;
-
-        // clamscan returns 0 if clean, 1 if infected, 2 if error
-        if output.status.code() == Some(1) {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            // Example output: /path/to/file: Win.Trojan.Agent-12345 FOUND
-            if let Some(detection) = stdout.lines().find(|l| l.contains("FOUND")) {
-                let sig_name = detection
-                    .split(':')
-                    .last()
-                    .unwrap_or("Unknown Malware")
-                    .replace("FOUND", "")
-                    .trim()
-                    .to_string();
-                
-                // FEEDBACK LOOP: Report the malicious sample to MalConv for fine-tuning
-                let _ = self.malware_scanner.report_label_to_malconv(file_path, 1.0).await;
-
-                return Ok(Some(sig_name));
+    async fn run_yara_x(&self, file_path: &Path) -> anyhow::Result<Option<String>> {
+        let bytes = std::fs::read(file_path)?;
+        let yara_res = {
+            let mut scanner = yara_x::Scanner::new(&self.yara_engine);
+            if let Ok(results) = scanner.scan(&bytes) {
+                results.matching_rules().next().map(|r| r.identifier().to_string())
+            } else {
+                None
             }
-            
+        };
+
+        if let Some(sig_name) = yara_res {
+            // FEEDBACK LOOP: Report the malicious sample to MalConv for fine-tuning
             let _ = self.malware_scanner.report_label_to_malconv(file_path, 1.0).await;
-            return Ok(Some("Generic Malware Signature".to_string()));
+            return Ok(Some(sig_name));
         }
-
+        
         Ok(None)
     }
 
-    fn is_oshoosi_managed_tool(file_path: &Path) -> bool {
-        if std::env::var("OSOOSI_ANALYZE_OWN_TOOLS")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true") || v.eq_ignore_ascii_case("on"))
-            .unwrap_or(false)
-        {
-            return false;
-        }
-
-        let Ok(path) = file_path.canonicalize() else {
-            return false;
-        };
-        let tools_dir = osoosi_types::resolve_tools_dir()
-            .canonicalize()
-            .unwrap_or_else(|_| osoosi_types::resolve_tools_dir());
-        let project_target = osoosi_types::resolve_tools_dir()
-            .parent()
-            .map(|p| p.join("target"))
-            .and_then(|p| p.canonicalize().ok());
-
-        path.starts_with(&tools_dir)
-            || project_target
-                .as_ref()
-                .map(|target| path.starts_with(target))
-                .unwrap_or(false)
-    }
-
-    async fn run_capa(&self, file_path: &Path) -> anyhow::Result<Option<ThreatSignature>> {
-        let mut cmd = if self.capa_path.exists() {
-            let mut c = std::process::Command::new(&self.capa_path);
-            c.arg("--json").arg("--rules").arg(&self.rules_path);
-            c
-        } else {
-            let mut c = std::process::Command::new("python");
-            c.arg("-m")
-                .arg("capa.main")
-                .arg("--json")
-                .arg("--rules")
-                .arg(&self.rules_path);
-            if self.signatures_path.exists() {
-                c.arg("--signatures").arg(&self.signatures_path);
-            }
-            c
-        };
-        cmd.arg(file_path);
-
-        let output = self.executor.execute(cmd).await?;
-
-        if !output.status.success() {
-            return Ok(None);
-        }
-
-        let json: Value = serde_json::from_slice(&output.stdout)?;
-        let mut signature = ThreatSignature::new("localhost".to_string());
-        let mut count = 0;
-
-        if let Some(rules) = json.get("rules").and_then(|r| r.as_object()) {
-            for (rule_name, detail) in rules {
-                if let Some(meta) = detail.get("meta") {
-                    let namespace = meta.get("namespace").and_then(|v| v.as_str()).unwrap_or("");
-                    if namespace.starts_with("persistence")
-                        || namespace.starts_with("c2")
-                        || namespace.starts_with("anti-analysis")
-                    {
-                        signature.add_reason(format!("Capability: {} ({})", rule_name, namespace));
-                        signature.confidence += 0.15;
-                        count += 1;
-                    }
-                }
-            }
-        }
-
-        if count > 0 {
-            signature.confidence = (0.4 + signature.confidence).min(0.98);
-            Ok(Some(signature))
-        } else {
-            Ok(None)
-        }
-    }
-
-    async fn run_floss(&self, file_path: &Path) -> anyhow::Result<Vec<String>> {
-        if !self.floss_path.exists() {
-            return Ok(Vec::new());
-        }
-
-        let mut cmd = std::process::Command::new(&self.floss_path);
-        cmd.arg("--json").arg(file_path);
-
-        let output = self.executor.execute(cmd).await?;
-        if !output.status.success() {
-            return Ok(Vec::new());
-        }
-
-        let mut artifacts = Vec::new();
-        let json: Value = serde_json::from_slice(&output.stdout)?;
-
-        let ip_regex = Regex::new(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})").unwrap();
-        let domain_regex =
-            Regex::new(r"(?i)\b[a-z0-9\.-]+\.(com|org|net|xyz|ru|cn|top|icu)\b").unwrap();
-
-        // Known-good infrastructure domains: OCSP, CRL, CDNs used by Windows certificate validation.
-        // Seeing these does NOT indicate malice — it indicates normal TLS certificate checking.
-        let known_good_domains: &[&str] = &[
-            "ocsp.sectigo.com", "ocsp.comodoca.com", "ocsp.digicert.com",
-            "crl.sectigo.com", "crl.comodoca.com", "crl.microsoft.com",
-            "ocsp.usertrust.com", "crt.sectigo.com", "ocsp2.globalsign.com",
-            "ocsp.globalsign.com", "crl.globalsign.com",
-            // Windows Update / telemetry (not malicious)
-            "windowsupdate.microsoft.com", "update.microsoft.com",
-            "ctldl.windowsupdate.com", "www.microsoft.com",
-            // GitHub CDN (git.exe, dev tools)
-            "github.com", "objects.githubusercontent.com", "raw.githubusercontent.com",
-            "api.github.com",
-        ];
-
-        if let Some(strings) = json.get("strings").and_then(|s| s.as_object()) {
-            for value in strings.values() {
-                if let Some(arr) = value.as_array() {
-                    for item in arr {
-                        if let Some(s) = item.get("string").and_then(|v| v.as_str()) {
-                            if ip_regex.is_match(s) {
-                                artifacts.push(format!("IP: {}", s));
-                            } else if domain_regex.is_match(s) {
-                                // Skip known-good domains — they reduce noise, not raise it
-                                let is_known_good = known_good_domains.iter()
-                                    .any(|&good| s.to_lowercase().contains(good));
-                                if !is_known_good {
-                                    artifacts.push(format!("Domain: {}", s));
-                                }
-                            } else if s.contains("powershell") || s.contains("http") {
-                                artifacts.push(format!("String: {}", s));
-                            }
-                        }
-                    }
-                }
-            }
-        }
-
-        Ok(artifacts)
-    }
-
-    async fn get_llm_score(
-        &self,
-        signature: &ThreatSignature,
-        artifacts: &[String],
-    ) -> Option<f32> {
-        // This will be integrated with osoosi-behavioral's SmolLM engine
-        // For now, we return a heuristic score based on findings
-        let mut score: f32 = 0.0;
-        if signature.reason.as_ref()?.contains("c2") {
-            score += 0.4;
-        }
-        if signature.reason.as_ref()?.contains("persistence") {
-            score += 0.3;
-        }
-        if artifacts
-            .iter()
-            .any(|a| a.contains("IP:") || a.contains("Domain:"))
-        {
-            score += 0.2;
-        }
-
-        Some(score.min(1.0))
-    }
-
-    async fn run_falcon(&self, _file_path: &Path) -> anyhow::Result<Option<String>> {
-        // TODO: Integrate falcon-rs library for formal binary analysis
-        // When implemented, this will perform IL lifting and data-flow analysis
-        // to detect obfuscated control flow, shellcode, and unpacking stubs.
-        Ok(None) // Return None until real integration is complete (prevents false positives)
-    }
-
-    async fn run_xori(&self, file_path: &Path) -> anyhow::Result<Option<String>> {
-        let xori_path = osoosi_types::resolve_xori_path();
-        if !xori_path.exists() {
-            return Ok(None);
-        }
-
-        let mut cmd = std::process::Command::new(&xori_path);
-        cmd.arg("-f")
-            .arg(file_path)
-            .arg("-c")
-            .arg(xori_path.parent().unwrap().join("xori.json"));
-
-        let output = self.executor.execute(cmd).await?;
-        if !output.status.success() {
-            return Ok(None);
-        }
-
-        // Xori output is usually a large JSON/text dump. We look for interesting capabilities.
-        let text = String::from_utf8_lossy(&output.stdout);
-        if text.contains("InternetOpen")
-            || text.contains("HttpSendRequest")
-            || text.contains("ShellExecute")
-        {
-            return Ok(Some(format!(
-                "Xori identified network/process execution capabilities: {}",
-                if text.contains("Http") {
-                    "C2/Exfiltration"
-                } else {
-                    "Persistence"
-                }
-            )));
-        }
-
-        Ok(None)
-    }
-
-    async fn run_die_rust(&self, _file_path: &Path) -> anyhow::Result<Option<String>> {
-        // TODO: Integrate die-rust library when stable API is available
-        // When implemented:
-        //   let detections = die_rust::detect_file(file_path)?;
-        //   if let Some(best) = detections.first() {
-        //       return Ok(Some(format!("DiE Signature: {} ({})", best.name, best.version)));
-        //   }
-        Ok(None) // Return None until real integration is complete (prevents false positives)
-    }
-
-    /// Calculate Shannon Entropy of a file to detect packing/encryption.
     pub fn calculate_entropy(&self, path: &Path) -> anyhow::Result<f32> {
-        Self::calculate_entropy_sync(path)
-    }
-
-    /// Calculate Shannon Entropy of a file to detect packing/encryption (Synchronous helper).
-    pub fn calculate_entropy_sync(path: &Path) -> anyhow::Result<f32> {
-        let mut file = File::open(path)?;
-        let mut buffer = Vec::new();
-        file.read_to_end(&mut buffer)?;
-
-        if buffer.is_empty() {
-            return Ok(0.0);
-        }
-
-        let mut frequencies = [0usize; 256];
-        for &byte in &buffer {
-            frequencies[byte as usize] += 1;
-        }
-
-        let mut entropy = 0.0;
-        let len = buffer.len() as f32;
-        for &count in &frequencies {
+        let bytes = std::fs::read(path)?;
+        if bytes.is_empty() { return Ok(0.0); }
+        let mut counts = [0usize; 256];
+        for &b in &bytes { counts[b as usize] += 1; }
+        let mut entropy = 0.0f32;
+        let len = bytes.len() as f32;
+        for count in counts {
             if count > 0 {
                 let p = count as f32 / len;
                 entropy -= p * p.log2();
             }
         }
         Ok(entropy)
+    }
+
+    async fn run_native_strings(&self, file_path: &Path) -> anyhow::Result<Vec<String>> {
+        let mut artifacts = Vec::new();
+        let bytes = std::fs::read(file_path)?;
+        
+        // Simple native string extraction (basic replacement for MalChela/FLOSS)
+        let min_len = 4;
+        let mut current_string = Vec::new();
+        let mut strings = Vec::new();
+
+        for &b in &bytes {
+            if b.is_ascii_graphic() || b == b' ' {
+                current_string.push(b);
+            } else {
+                if current_string.len() >= min_len {
+                    if let Ok(s) = String::from_utf8(current_string.clone()) {
+                        strings.push(s);
+                    }
+                }
+                current_string.clear();
+            }
+        }
+
+        let ip_regex = Regex::new(r"(\d{1,3}\.\d{1,3}\.\d{1,3}\.\d{1,3})").unwrap();
+        let domain_regex = Regex::new(r"(?i)\b[a-z0-9\.-]+\.(com|org|net|xyz|ru|cn|top|icu)\b").unwrap();
+
+        let known_good_domains: &[&str] = &[
+            "ocsp.", "crl.", "microsoft.com", "github.com", "digicert.com", "sectigo.com"
+        ];
+
+        for s in strings {
+            if ip_regex.is_match(&s) {
+                artifacts.push(format!("IP: {}", s));
+            } else if domain_regex.is_match(&s) {
+                let is_known_good = known_good_domains.iter().any(|&good| s.to_lowercase().contains(good));
+                if !is_known_good {
+                    artifacts.push(format!("Domain: {}", s));
+                }
+            } else if s.to_lowercase().contains("powershell") || s.contains("http") {
+                if s.len() < 100 {
+                    artifacts.push(format!("String: {}", s));
+                }
+            }
+        }
+
+        Ok(artifacts)
     }
 }

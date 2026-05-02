@@ -29,67 +29,13 @@ impl AgentProvisioner {
 
     /// Provision the agent's telemetry dependencies based on the host OS.
     pub async fn provision_telemetry(&self) -> anyhow::Result<()> {
-        #[cfg(target_os = "windows")]
-        {
-            self.provision_windows().await?;
-            self.provision_firewall().await?;
-            self.provision_malconv_weights().await?;
-            self.provision_behavioral_model().await?;
-            self.provision_hollows_hunter().await?;
-            self.provision_capa().await?;
-            self.provision_hayabusa().await?;
-            self.provision_chainsaw().await?;
-            self.provision_xori().await
-        }
-        #[cfg(target_os = "linux")]
-        {
-            self.provision_firewall().await?;
-            self.provision_linux().await?;
-            self.provision_malconv_weights().await?;
-            self.provision_behavioral_model().await?;
-            self.provision_capa().await?;
-            self.provision_hayabusa().await?;
-            self.provision_chainsaw().await
-        }
-        #[cfg(target_os = "macos")]
-        {
-            self.provision_firewall().await?;
-            self.provision_macos().await?;
-            self.provision_malconv_weights().await?;
-            self.provision_behavioral_model().await?;
-            self.provision_capa().await?;
-            self.provision_hayabusa().await?;
-            self.provision_chainsaw().await
-        }
-        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-        {
-            Err(anyhow::anyhow!(
-                "Unsupported operating system for automated provisioning."
-            ))
-        }
+        self.provision_firewall().await?;
+        self.provision_malconv_weights().await?;
+        self.provision_behavioral_model().await?;
+        self.provision_openssl().await?;
+        Ok(())
     }
 
-    /// Provision ClamAV validator (best-effort install per OS).
-    pub async fn provision_clamav(&self) -> anyhow::Result<()> {
-        #[cfg(target_os = "windows")]
-        {
-            self.provision_windows_clamav().await
-        }
-        #[cfg(target_os = "linux")]
-        {
-            self.provision_linux_clamav().await
-        }
-        #[cfg(target_os = "macos")]
-        {
-            self.provision_macos_clamav().await
-        }
-        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-        {
-            Err(anyhow::anyhow!(
-                "Unsupported operating system for automated ClamAV provisioning."
-            ))
-        }
-    }
 
     /// Provision OpenSSL (needed for X.509 / CSR generation).
     pub async fn provision_openssl(&self) -> anyhow::Result<()> {
@@ -252,27 +198,26 @@ impl AgentProvisioner {
         let urls = [
             (
                 "Win64 Full EXE",
-                "https://slproweb.com/download/Win64OpenSSL-4_0_0.exe",
+                "https://slproweb.com/download/Win64OpenSSL-3_4_5.exe",
             ),
             (
                 "Win64 Full MSI",
-                "https://slproweb.com/download/Win64OpenSSL-4_0_0.msi",
+                "https://slproweb.com/download/Win64OpenSSL-3_4_5.msi",
             ),
             (
                 "Win32 Light MSI",
-                "https://slproweb.com/download/Win32OpenSSL_Light-4_0_0.msi",
+                "https://slproweb.com/download/Win32OpenSSL_Light-3_4_5.msi",
             ),
             (
                 "Win32 Light EXE",
-                "https://slproweb.com/download/Win32OpenSSL_Light-4_0_0.exe",
+                "https://slproweb.com/download/Win32OpenSSL_Light-3_4_5.exe",
             ),
         ];
 
         for (name, url) in urls {
             info!("Attempting direct download of {}: {}...", name, url);
             let is_msi = url.ends_with(".msi");
-            let installer_path =
-                std::env::temp_dir().join(if is_msi { "openssl.msi" } else { "openssl.exe" });
+            let installer_path = std::env::temp_dir().join(if is_msi { "openssl.msi" } else { "openssl.exe" });
 
             if self
                 .download_with_resume(url, &installer_path)
@@ -475,7 +420,7 @@ impl AgentProvisioner {
     }
 
     #[cfg(target_os = "windows")]
-    async fn provision_windows(&self) -> anyhow::Result<()> {
+    async fn _provision_windows(&self) -> anyhow::Result<()> {
         info!("Provisioning Windows telemetry (Sysmon)...");
 
         let base_dir = osoosi_types::resolve_base_dir();
@@ -499,7 +444,7 @@ impl AgentProvisioner {
             full_fidelity_cfg
         };
 
-        self.ensure_windows_sysmon(Some(&cfg_path)).await
+        self._ensure_windows_sysmon(Some(&cfg_path)).await
     }
 
     #[cfg(target_os = "windows")]
@@ -525,9 +470,9 @@ impl AgentProvisioner {
     }
 
     #[cfg(target_os = "windows")]
-    async fn ensure_windows_sysmon(&self, config_path: Option<&Path>) -> anyhow::Result<()> {
+    async fn _ensure_windows_sysmon(&self, config_path: Option<&Path>) -> anyhow::Result<()> {
         let binary = self.ensure_sysmon_binary().await?;
-        self.fix_wrong_arch_sysmon(&binary).await;
+        self._fix_wrong_arch_sysmon(&binary).await;
         let is_installed = self.sysmon_service_active().await;
 
         if is_installed {
@@ -797,7 +742,7 @@ impl AgentProvisioner {
 
     /// Detect a stuck 32-bit Sysmon on 64-bit OS and remove it.
     #[cfg(target_os = "windows")]
-    async fn fix_wrong_arch_sysmon(&self, binary_64: &Path) {
+    async fn _fix_wrong_arch_sysmon(&self, binary_64: &Path) {
         if !Self::is_64bit_os() {
             return;
         }
@@ -871,75 +816,6 @@ impl AgentProvisioner {
         }
     }
 
-    #[cfg(target_os = "windows")]
-    async fn provision_windows_clamav(&self) -> anyhow::Result<()> {
-        if self.windows_clam_available() {
-            info!("ClamAV already available on Windows.");
-            return Ok(());
-        }
-
-        let version =
-            std::env::var("OSOOSI_CLAMAV_VERSION").unwrap_or_else(|_| "1.5.2".to_string());
-        let arch_flavor = if cfg!(target_arch = "aarch64") {
-            "win.arm64"
-        } else if cfg!(target_arch = "x86") {
-            "win.win32"
-        } else {
-            "win.x64"
-        };
-        let default_url = format!(
-            "https://www.clamav.net/downloads/production/clamav-{}.{}.msi",
-            version, arch_flavor
-        );
-        let download_url = std::env::var("OSOOSI_CLAMAV_URL_WINDOWS").unwrap_or(default_url);
-        let installer_path = std::env::temp_dir().join("osoosi-clamav.msi");
-        let installer_path_str = installer_path.to_string_lossy().to_string();
-
-        info!("ClamAV not found. Downloading installer from official ClamAV downloads...");
-        self.download_with_resume(&download_url, &installer_path)
-            .await?;
-
-        info!("Installing ClamAV silently...");
-        self.exec_with_retry(
-            "msiexec",
-            &["/i", &installer_path_str, "/qn", "/norestart"],
-            "ClamAV Installation",
-            2,
-        )
-        .await?;
-
-        let _ = std::fs::remove_file(&installer_path);
-
-        if self.windows_clam_available() {
-            info!("ClamAV installed successfully on Windows.");
-            Ok(())
-        } else {
-            Err(anyhow::anyhow!(
-                "ClamAV install finished, but clamscan was not detected. Ensure ClamAV bin folder is on PATH."
-            ))
-        }
-    }
-
-    #[cfg(target_os = "windows")]
-    fn windows_clam_available(&self) -> bool {
-        if Command::new("where")
-            .arg("clamscan")
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false)
-        {
-            return true;
-        }
-
-        let mut candidates = Vec::new();
-        if let Ok(pf) = std::env::var("ProgramFiles") {
-            candidates.push(Path::new(&pf).join("ClamAV").join("clamscan.exe"));
-        }
-        if let Ok(pf86) = std::env::var("ProgramFiles(x86)") {
-            candidates.push(Path::new(&pf86).join("ClamAV").join("clamscan.exe"));
-        }
-        candidates.iter().any(|p| p.is_file())
-    }
 
     /// Linux: Install Auditd
     #[cfg(target_os = "linux")]
@@ -1129,46 +1005,6 @@ impl AgentProvisioner {
         }
     }
 
-    #[cfg(target_os = "linux")]
-    async fn provision_linux_clamav(&self) -> anyhow::Result<()> {
-        if self.command_exists("clamscan").await {
-            info!("ClamAV already available on Linux.");
-            return Ok(());
-        }
-
-        warn!("ClamAV not found. Attempting Linux package installation...");
-        let candidates: &[(&str, &[&str])] = &[
-            ("sudo", &["apt-get", "update"]),
-            (
-                "sudo",
-                &["apt-get", "install", "-y", "clamav", "clamav-daemon"],
-            ),
-            ("sudo", &["dnf", "install", "-y", "clamav", "clamav-update"]),
-            ("sudo", &["yum", "install", "-y", "clamav", "clamav-update"]),
-            (
-                "sudo",
-                &["zypper", "--non-interactive", "install", "clamav"],
-            ),
-        ];
-
-        for (bin, args) in candidates {
-            let mut cmd = Command::new(bin);
-            cmd.args(*args);
-            if let Ok(output) = self.executor.execute(cmd).await {
-                if output.status.success() && self.command_exists("clamscan").await {
-                    let mut freshclam_cmd = Command::new("sudo");
-                    freshclam_cmd.args(["systemctl", "enable", "--now", "clamav-freshclam"]);
-                    let _ = self.executor.execute(freshclam_cmd).await;
-                    info!("Installed ClamAV using: {} {}", bin, args.join(" "));
-                    return Ok(());
-                }
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "Failed to install ClamAV on Linux. Install from distro packages or official binaries: https://www.clamav.net/downloads"
-        ))
-    }
 
     /// macOS: Check for Endpoint Security
     #[cfg(target_os = "macos")]
@@ -1179,29 +1015,6 @@ impl AgentProvisioner {
         Ok(())
     }
 
-    #[cfg(target_os = "macos")]
-    async fn provision_macos_clamav(&self) -> anyhow::Result<()> {
-        let has_clam = self.command_exists("clamscan").await;
-        if has_clam {
-            info!("ClamAV already available on macOS.");
-            return Ok(());
-        }
-
-        let has_brew = self.command_exists("brew").await;
-        if has_brew {
-            let mut cmd = Command::new("brew");
-            cmd.args(["install", "clamav"]);
-            let status = self.executor.execute(cmd).await?.status;
-            if status.success() {
-                info!("ClamAV installed via Homebrew.");
-                return Ok(());
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "Failed to install ClamAV on macOS. Install from Homebrew (`brew install clamav`) or official package: https://www.clamav.net/downloads"
-        ))
-    }
 
     /// Legacy support for explicit Sysmon installation (Windows only)
     pub async fn install<P: AsRef<Path>>(
@@ -2103,8 +1916,7 @@ impl AgentProvisioner {
     /// Default: **no** download — the historical Hugging Face bundle URL often 404s. Set
     /// `OSOOSI_USE_BUNDLED_HF_WEIGHTS=1` to attempt `oyesanyf/OshoosiClaw-Weights`, or place `malconv.safetensors` under `models/malware/`.
     pub async fn provision_malconv_weights(&self) -> anyhow::Result<()> {
-        let models_dir =
-            std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
+        let models_dir = osoosi_types::resolve_models_dir();
         let malconv_dir = Path::new(&models_dir).join("malware");
         let weight_path = malconv_dir.join("malconv.safetensors");
 
@@ -2147,8 +1959,7 @@ impl AgentProvisioner {
     /// SmolLM2 ONNX + tokenizer. Same opt-in as [`provision_malconv_weights`]: no HF hit unless
     /// `OSOOSI_USE_BUNDLED_HF_WEIGHTS=1` (or files already on disk / use `ensure_ai_models` public Hub paths).
     pub async fn provision_behavioral_model(&self) -> anyhow::Result<()> {
-        let models_dir =
-            std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
+        let models_dir = osoosi_types::resolve_models_dir();
         let smollm_dir = Path::new(&models_dir).join("smollm");
         let model_path = smollm_dir.join("smollm2-135m-it.onnx");
         let tokenizer_path = smollm_dir.join("tokenizer.json");

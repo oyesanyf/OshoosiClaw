@@ -27,7 +27,10 @@ pub mod tool_paths;
 pub mod triage;
 pub mod version_utils;
 pub mod watchdog;
+pub mod yara;
 pub mod yara_gen;
+pub mod pe_inspector;
+pub mod dotscope;
 pub use hybrid_runtime::{
     init_hybrid_concurrency, max_blocking_threads, rayon_thread_count, run_on_rayon, spawn_rayon,
     spawn_smart, tokio_worker_threads,
@@ -42,6 +45,8 @@ pub mod remediation;
 pub mod secured_executor;
 pub mod self_healing;
 pub mod voters;
+
+pub const CONSENSUS_LOG_TARGET: &str = "osoosi_core::consensus";
 
 use osoosi_audit::AuditTrail;
 use osoosi_memory::MemoryStore;
@@ -725,7 +730,7 @@ impl EdrOrchestrator {
             .and_then(|s| s.parse().ok())
             .unwrap_or(3); // 3 samples = enough for initial baseline; override with OSOOSI_MODEL_MIN_SAMPLES=N
         let model_config = ModelConfig {
-            models_dir: std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string()),
+            models_dir: osoosi_types::resolve_models_dir().to_string_lossy().to_string(),
             min_samples: min_train,
             ..Default::default()
         };
@@ -735,10 +740,13 @@ impl EdrOrchestrator {
         );
         let threat_model = Arc::new(tokio::sync::RwLock::new(ThreatModel::new(model_config)));
 
-        let malware_model_path = osoosi_types::resolve_models_dir()
-            .join("malware")
-            .join("malware_model.onnx");
-        let malware_scanner = Arc::new(MalwareScanner::new(&malware_model_path));
+        let yara_rules = Arc::new(crate::yara::load_rules());
+        let models_dir = osoosi_types::resolve_models_dir();
+        let model_path = models_dir.join("sorel_ffnn.onnx");
+        let malware_scanner = Arc::new(MalwareScanner::new(&model_path));
+        
+        let sigma_engine = Arc::new(hayabusa::HayabusaEngine::new());
+        let dotscope_analyzer = Arc::new(dotscope::DotscopeAnalyzer::new());
         let triage_store = crate::triage::new_triage_store();
         let baseline = Arc::new(crate::baseline::BehavioralBaseline::new());
         let sandbox = Arc::new(osoosi_sandbox::SandboxExecutor::new(
@@ -764,6 +772,8 @@ impl EdrOrchestrator {
             memory.clone(),
             task_executor.clone(),
             malware_scanner.clone(),
+            yara_rules.clone(),
+            sigma_engine.clone(),
         ));
         let correlator = Arc::new(crate::correlator::EventCorrelator::new());
         let ghost_nodes = Arc::new(osoosi_wire::GhostNodeManager::new(
@@ -779,9 +789,7 @@ impl EdrOrchestrator {
             audit.clone(),
             memory.clone(),
         ));
-        let models_dir = std::path::PathBuf::from(
-            std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string()),
-        );
+        let models_dir = osoosi_types::resolve_models_dir();
         let smollm_dir = std::env::var("OSOOSI_SMOLLM_DIR")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| {
@@ -910,14 +918,32 @@ impl EdrOrchestrator {
             policy.add_voter(Box::new(voter)).await;
         }
 
-        // ClamAV Consensus Voter
-        policy.add_voter(Box::new(crate::voters::ClamVoter {
-            scanner: malware_scanner.clone(),
+        // Native Voters (Zero-Process Stack)
+        policy.add_voter(Box::new(crate::voters::YaraXVoter {
+            rules: yara_rules.clone(),
+        })).await;
+        policy.add_voter(Box::new(crate::voters::SigmaVoter {
+            engine: sigma_engine.clone(),
+        })).await;
+        policy.add_voter(Box::new(crate::voters::DotscopeVoter {
+            analyzer: dotscope_analyzer.clone(),
+        })).await;
+        policy.add_voter(Box::new(crate::voters::MemoryInspectionVoter {
+            memory: memory.clone(),
         })).await;
 
         // MalConv / ONNX malware model + YARA — same [`MalwareScanner`] as Clam; separate vote for ML path
         policy.add_voter(Box::new(crate::voters::MalConvVoter {
             scanner: malware_scanner.clone(),
+        })).await;
+
+        // Mandiant Trio Voters (Capa + Floss)
+        policy.add_voter(Box::new(crate::voters::CapaVoter {
+            analyzer: static_analyzer.clone(),
+        })).await;
+
+        policy.add_voter(Box::new(crate::voters::FlossVoter {
+            analyzer: static_analyzer.clone(),
         })).await;
 
         // Privacy-Enforced Voter: DP + Merkle Audit
@@ -996,6 +1022,14 @@ impl EdrOrchestrator {
             spider_eyes,
             alert_suppression_cache: Arc::new(dashmap::DashMap::new()),
         })
+    }
+
+    /// Register voters that require an Arc reference to the orchestrator (post-initialization).
+    pub async fn post_init_voters(self: &Arc<Self>) {
+        info!(
+            target: crate::CONSENSUS_LOG_TARGET,
+            "[CONSENSUS] native voters registered and operational"
+        );
     }
 
     pub async fn run_maintenance_loop(&self) {
@@ -1274,7 +1308,7 @@ impl EdrOrchestrator {
         
         // 4. Host Security Events (Sysmon/Journald)
         let event_source = if cfg!(windows) {
-            "Microsoft-Windows-Sysmon/Operational".to_string()
+            "".to_string() // Triggers NativeETWReader (Zero-Process Stack)
         } else {
             "default".to_string()
         };
@@ -1431,9 +1465,9 @@ impl EdrOrchestrator {
                                     return;
                                 }
                                 if let Some(result) = orch.malware_scanner.scan_file(&path).await {
-                                    if result.clam_detected == Some(false) {
+                                    if !result.is_malware {
                                         orch.audit.log(
-                                            "CLAMAV_CLEAN",
+                                            "SCAN_CLEAN",
                                             serde_json::json!({
                                                 "file_path": result.file_path,
                                                 "context": "CyberShield",
@@ -1441,7 +1475,7 @@ impl EdrOrchestrator {
                                                 "action": "allowed",
                                             }),
                                         );
-                                        return; // ClamAV says clean — let it go
+                                        return; // Clean — let it go
                                     }
                                     if result.is_malware {
                                         warn!("CyberShield INTERCEPTION: High-resource process {} is MALICIOUS. Triggering active response.", process_name);
@@ -1670,20 +1704,7 @@ impl EdrOrchestrator {
                             return;
                         }
                         if let Some(result) = orchestrator.malware_scanner.scan_file(path).await {
-                            // 1. ClamAV says clean → let it go (trust ClamAV over ML/signatures)
-                            if result.clam_detected == Some(false) {
-                                info!("ClamAV clean: {} — allowing (no action)", result.file_path);
-                                orchestrator.audit.log(
-                                    "CLAMAV_CLEAN",
-                                    serde_json::json!({
-                                        "file_path": result.file_path,
-                                        "magika_label": result.magika_label,
-                                        "combined_score": result.combined_score,
-                                        "action": "allowed",
-                                    }),
-                                );
-                                return;
-                            }
+                            // ClamAV is decommissioned. Rely on native YaraX and ML scores.
 
                             // 2. Trigger Deep Static Analysis (CAPA, FLOSS, Falcon) for suspicious files or executables
                             let is_executable = result.magika_label.contains("exe")
@@ -1765,7 +1786,6 @@ impl EdrOrchestrator {
                                     && autonomy.auto_quarantine_malware
                                     && (result.combined_score
                                         >= autonomy.quarantine_confidence_threshold as f64
-                                        || result.clam_detected == Some(true)
                                         || result.malware_type.contains("EICAR"));
                                 if path_excluded && result.is_malware {
                                     info!("Malware in excluded path (cloud sync temp?): {} — alert only, no quarantine", result.file_path);
@@ -2373,15 +2393,21 @@ impl EdrOrchestrator {
         }
 
         // 1. Tier-1/2 on Async Consensus (policy)
-        let mut signature = self.policy.scan_event(&event).await;
+        let signature = self.policy.scan_event(&event).await;
 
         // 2. Entropy analysis on Rayon (CPU-bound)
         let static_analyzer = self.static_analyzer.clone();
         let event_clone = event.clone();
         let signature = crate::run_on_rayon(move || {
+            let mut signature = signature;
             if let Some(image_path) = event_clone.data.get("Image").and_then(|v| v.as_str()) {
                 let path = std::path::PathBuf::from(image_path);
+                // Entropy check for packed/obfuscated files
                 if let Ok(entropy) = static_analyzer.calculate_entropy(&path) {
+                    if entropy > 7.0 {
+                        warn!("High entropy detected (packed/encrypted): {} - {:.2}", path.display(), entropy);
+                    }
+                    
                     let is_browser = image_path.to_lowercase().contains("chrome.exe")
                         || image_path.to_lowercase().contains("msedge.exe")
                         || image_path.to_lowercase().contains("firefox.exe");
@@ -3675,6 +3701,7 @@ impl EdrOrchestrator {
         let intel = osoosi_types::GlobalIntelligence {
             source_url: "user_dashboard".to_string(),
             summary: summary.clone(),
+            priority: 1.0, // Default to high for manual broadcast
             defense: None,
             timestamp: chrono::Utc::now(),
             source_node: self.trust.did().to_string(),
@@ -4562,7 +4589,7 @@ impl EdrOrchestrator {
                 if let Some(pid) = event.data.get("ProcessId").and_then(|p| p.as_u64()) {
                     #[cfg(target_os = "windows")]
                     {
-                        let _ = self.execute_memory_scan(pid as u32).await;
+                        let _ = self.run_hollows_hunter_for_pid(pid as u32).await;
                     }
                     #[cfg(not(target_os = "windows"))]
                     {
@@ -4600,7 +4627,7 @@ impl EdrOrchestrator {
 
     /// Perform a deep memory scan using HollowsHunter (Windows only).
     #[cfg(target_os = "windows")]
-    pub async fn execute_memory_scan(&self, pid: u32) -> anyhow::Result<()> {
+    pub async fn run_hollows_hunter_for_pid(&self, pid: u32) -> anyhow::Result<osoosi_types::HollowsHunterResult> {
         let tools_dir = osoosi_types::resolve_tools_dir();
         let hh_exe = tools_dir.join("hollows_hunter").join("hollows_hunter.exe");
 
@@ -4623,22 +4650,54 @@ impl EdrOrchestrator {
                 "/dir",
                 &scan_dir.to_string_lossy(),
                 "/json",
+                "/quiet",
+                "/shellc",
+                "/iat",
             ])
             .output()?;
 
-        let stdout = String::from_utf8_lossy(&output.stdout);
-        info!("Memory scan result: {}", stdout);
+        let mut res = osoosi_types::HollowsHunterResult {
+            pid,
+            success: output.status.success(),
+            ..Default::default()
+        };
+
+        if output.status.success() {
+            let stdout = String::from_utf8_lossy(&output.stdout);
+            if let Ok(hh_json) = serde_json::from_str::<serde_json::Value>(&stdout) {
+                let replaced = hh_json.get("summary").and_then(|s| s.get("replaced")).and_then(|v| v.as_u64()).unwrap_or(0);
+                let implanted = hh_json.get("summary").and_then(|s| s.get("implanted")).and_then(|v| v.as_u64()).unwrap_or(0);
+                let hooks = hh_json.get("summary").and_then(|s| s.get("hooks")).and_then(|v| v.as_u64()).unwrap_or(0);
+                
+                res.replaced_modules = replaced;
+                res.implants_detected = implanted;
+                res.hooks_detected = hooks;
+
+                if let Some(scanned) = hh_json.get("scanned").and_then(|s| s.as_array()) {
+                    for proc_info in scanned.iter().take(10) {
+                        if let Some(name) = proc_info.get("name").and_then(|v| v.as_str()) {
+                            let r = proc_info.get("replaced").and_then(|v| v.as_u64()).unwrap_or(0);
+                            let i = proc_info.get("implanted").and_then(|v| v.as_u64()).unwrap_or(0);
+                            if r > 0 || i > 0 {
+                                res.details.push(format!("{}: {} replaced, {} implanted", name, r, i));
+                            }
+                        }
+                    }
+                }
+            }
+        }
 
         self.audit.log(
             "MEMORY_SCAN",
             serde_json::json!({
                 "pid": pid,
                 "scan_dir": scan_dir,
-                "success": output.status.success()
+                "success": res.success,
+                "implants": res.implants_detected
             }),
         );
 
-        Ok(())
+        Ok(res)
     }
 
     /// Get an aggregate summary of the security state of the entire zone.

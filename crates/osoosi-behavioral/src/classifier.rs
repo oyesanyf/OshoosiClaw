@@ -44,10 +44,9 @@ pub struct BehavioralClassifier {
 impl BehavioralClassifier {
     pub async fn new() -> Self {
         let suspicious_patterns = Self::build_suspicious_patterns();
-        let models_dir =
-            std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
+        let models_dir = osoosi_types::resolve_models_dir().to_string_lossy().to_string();
 
-        let feedback_path = std::env::var("OSOOSI_DATABASE_DIR").unwrap_or_else(|_| "database".to_string());
+        let feedback_path = osoosi_types::resolve_database_dir().to_string_lossy().to_string();
         let _ = std::fs::create_dir_all(&feedback_path);
         let feedback_db = Path::new(&feedback_path).join("behavioral_learning.db");
 
@@ -320,22 +319,55 @@ impl BehavioralClassifier {
         let mut reasons = Vec::new();
 
         // 0. Benign Allowlist (High-confidence benign events)
-        fn is_trusted_process(path: &str) -> bool {
-            let stem = std::path::Path::new(path)
-                .file_stem()
-                .and_then(|s| s.to_str())
-                .map(|s| s.to_lowercase())
-                .unwrap_or_default();
-            let trusted_tools = [
-                "git", "cargo", "rustc", "ollama", "npm", "node", "python", "pip", "conda",
-                "conhost", "cmd", "powershell", "pwsh", "explorer", "taskmgr", "regedit",
+        fn is_trusted_activity(sentence: &str) -> bool {
+            let lower = sentence.to_lowercase();
+            
+            // Common system/developer activity that is often noisy
+            let trusted_stems = [
+                "osoosi", "sysmon", "git", "cargo", "rustc", "ollama", "node", "python", 
+                "npm", "pwsh", "powershell", "cmd", "explorer", "taskmgr", "regedit",
+                "msedge", "chrome", "firefox", "svchost", "lsass", "services", "wininit",
+                "searchindexer", "mscorsvw", "tiworker", "driverquery", "wmic", "sc"
             ];
-            trusted_tools.contains(&stem.as_str())
+            
+            let is_system_path = lower.contains("\\windows\\system32\\") || 
+                                lower.contains("\\windows\\syswow64\\") ||
+                                lower.contains("\\program files\\");
+
+            if is_system_path {
+                // If it's in a system path, it must also be a known trusted stem to be auto-suppressed
+                for stem in &trusted_stems {
+                    if lower.contains(stem) {
+                        return true;
+                    }
+                }
+            }
+            
+            // General developer tools on common paths
+            for stem in &trusted_stems {
+                if lower.contains(&format!("\\{}.exe", stem)) || lower.contains(&format!("/{}.exe", stem)) {
+                    return true;
+                }
+            }
+
+            false
         }
 
         // Rule-based check against process list (if event implies process execution)
-        if is_trusted_process(sentence) {
-            return (false, 0.0, "Trusted process path".to_string());
+        if is_trusted_activity(sentence) {
+            // Even if trusted, if it matches a high-confidence pattern (like mimicatz), we still analyze.
+            // But for general baseline, we return neutral.
+            let mut high_confidence_match = false;
+            for re in &self.suspicious_patterns {
+                if re.is_match(sentence) {
+                    high_confidence_match = true;
+                    break;
+                }
+            }
+            
+            if !high_confidence_match {
+                return (false, 0.0, "Trusted process/path suppression".to_string());
+            }
         }
 
         // 2. Rule-based checks (IOAs)

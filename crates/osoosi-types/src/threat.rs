@@ -127,14 +127,33 @@ fn default_feature_version() -> String {
     "legacy".to_string()
 }
 
+/// In-memory forensic result from HollowsHunter.
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct HollowsHunterResult {
+    pub pid: u32,
+    pub implants_detected: u64,
+    pub replaced_modules: u64,
+    pub shellcode_detected: u64,
+    pub hooks_detected: u64,
+    pub details: Vec<String>,
+    pub success: bool,
+}
+
 /// Global Intelligence broadcast for mesh-wide "Gossip Sleuthing".
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct GlobalIntelligence {
     pub source_url: String,
     pub summary: String,
+    pub priority: f32, // 0.0 to 1.0
     pub defense: Option<ZeroDayDefense>,
     pub timestamp: DateTime<Utc>,
     pub source_node: String,
+}
+
+impl GlobalIntelligence {
+    pub fn is_critical(&self) -> bool {
+        self.priority >= 0.8
+    }
 }
 
 /// Federated Model Delta: Gossip-based shared feature weights (Privacy Preserving).

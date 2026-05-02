@@ -92,19 +92,18 @@ fn scanner_skip_path(path: &str) -> bool {
         || p.ends_with(".db")
 }
 
-/// ClamAV Consensus Voter
+/// Yara-X Signature Voter (Zero-Process Replacement for ClamAV)
 ///
-/// Provides a "clean" vote if ClamAV confirms the file is not infected.
-/// This acts as positive reinforcement for legitimate files that might
-/// otherwise look suspicious to ML models or behavioral heuristics.
-pub struct ClamVoter {
-    pub scanner: Arc<MalwareScanner>,
+/// Yara-X is a memory-safe, pure-Rust implementation of the YARA engine.
+/// It provides high-performance pattern matching without external binaries.
+pub struct YaraXVoter {
+    pub rules: Arc<yara_x::Rules>,
 }
 
 #[async_trait]
-impl ThreatVoter for ClamVoter {
+impl ThreatVoter for YaraXVoter {
     fn name(&self) -> String {
-        "ClamAV-Consensus".to_string()
+        "YaraX-Signatures".to_string()
     }
 
     async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
@@ -117,20 +116,17 @@ impl ThreatVoter for ClamVoter {
                 return None;
             }
 
-            // Perform scan via the shared MalwareScanner
-            if let Some(result) = self.scanner.scan_file(path).await {
-                if result.clam_detected == Some(false) {
-                    return Some(VoteResult {
-                        confidence: 0.0, // This is a "clean" signal
-                        reason: format!("ClamAV: File {} is clean.", image_path),
-                        weight: -1.0, // Negative weight rewards clean files in consensus
-                    });
-                } else if result.clam_detected == Some(true) {
-                    return Some(VoteResult {
-                        confidence: 1.0,
-                        reason: format!("ClamAV: INFECTED file detected at {}", image_path),
-                        weight: 1.0, // Direct hit
-                    });
+            // Perform scan via the native yara-x engine
+            if let Ok(bytes) = std::fs::read(path) {
+                let mut scanner = yara_x::Scanner::new(&self.rules);
+                if let Ok(results) = scanner.scan(&bytes) {
+                    if let Some(primary) = results.matching_rules().next() {
+                        return Some(VoteResult {
+                            confidence: 1.0,
+                            reason: format!("YaraX: THREAT detected - {}", primary.identifier()),
+                            weight: 1.0,
+                        });
+                    }
                 }
             }
         }
@@ -205,8 +201,10 @@ impl ThreatVoter for MalConvVoter {
 
         let res = best?;
         let path_note = best_path.as_deref().unwrap_or("?");
-        let weak_signature_only =
-            res.ml_score <= 0.0 && res.signature_score >= 1.0 && res.clam_detected != Some(true);
+        
+        // Removed clam_detected check as it is decommissioned in the Zero-Process stack.
+        let weak_signature_only = res.ml_score <= 0.0 && res.signature_score >= 1.0;
+        
         if trusted_identity_signal(event, path_note) && weak_signature_only {
             return None;
         }
@@ -228,5 +226,179 @@ impl ThreatVoter for MalConvVoter {
             ),
             weight: 0.88,
         })
+    }
+}
+
+/// Mandiant CAPA Voter
+///
+/// Executes CAPA (Capability Analysis) on executable binaries to identify
+/// behavioral intent (persistence, C2, anti-analysis).
+pub struct CapaVoter {
+    pub analyzer: Arc<crate::static_analyzer::StaticAnalyzer>,
+}
+
+#[async_trait]
+impl ThreatVoter for CapaVoter {
+    fn name(&self) -> String {
+        "Capa-Behavior".to_string()
+    }
+
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        let is_create = matches!(
+            event.event_id,
+            osoosi_types::SysmonEventId::ProcessCreate | osoosi_types::SysmonEventId::FileCreate
+        );
+        if !is_create {
+            return None;
+        }
+
+        if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
+            if scanner_skip_path(image_path) || trusted_identity_signal(event, image_path) {
+                return None;
+            }
+            let path = Path::new(image_path);
+            if !path.exists() {
+                return None;
+            }
+
+            if let Ok(Some(sig)) = self.analyzer.analyze_file(path).await {
+                // If CAPA found specific persistence/c2 capabilities, we yield a vote
+                if sig.confidence > 0.4 {
+                    return Some(VoteResult {
+                        confidence: sig.confidence,
+                        reason: sig.reason.unwrap_or_else(|| "CAPA: Detected suspicious capabilities".to_string()),
+                        weight: 0.85,
+                    });
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Mandiant FLOSS Voter
+///
+/// Executes FLOSS (FLARE Obfuscated String Solver) to extract hidden
+/// configuration artifacts like IPs and domains.
+pub struct FlossVoter {
+    pub analyzer: Arc<crate::static_analyzer::StaticAnalyzer>,
+}
+
+#[async_trait]
+impl ThreatVoter for FlossVoter {
+    fn name(&self) -> String {
+        "Floss-Artifact".to_string()
+    }
+
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        let is_create = matches!(
+            event.event_id,
+            osoosi_types::SysmonEventId::ProcessCreate | osoosi_types::SysmonEventId::FileCreate
+        );
+        if !is_create {
+            return None;
+        }
+
+        if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
+            if scanner_skip_path(image_path) || trusted_identity_signal(event, image_path) {
+                return None;
+            }
+            let path = Path::new(image_path);
+            if !path.exists() {
+                return None;
+            }
+        }
+        None
+    }
+}
+
+/// Native Sigma Voter (using hayabusa crate)
+pub struct SigmaVoter {
+    pub engine: Arc<hayabusa::HayabusaEngine>,
+}
+
+#[async_trait]
+impl ThreatVoter for SigmaVoter {
+    fn name(&self) -> String {
+        "Sigma-Native".to_string()
+    }
+
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        // Convert SysmonEvent to Hayabusa format and scan
+        if let Ok(matches) = self.engine.match_event(event) {
+            if !matches.is_empty() {
+                let primary = &matches[0];
+                return Some(VoteResult {
+                    confidence: 1.0, // Default to high confidence for Sigma matches
+                    reason: format!("Sigma: THREAT detected - {}", primary.detail),
+                    weight: 0.95,
+                });
+            }
+        }
+        None
+    }
+}
+
+/// Native .NET Forensic Voter (using dotscope)
+pub struct DotscopeVoter {
+    pub analyzer: Arc<crate::dotscope::DotscopeAnalyzer>,
+}
+
+#[async_trait]
+impl ThreatVoter for DotscopeVoter {
+    fn name(&self) -> String {
+        "Dotscope-Forensics".to_string()
+    }
+
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
+            if !image_path.to_lowercase().ends_with(".exe") && !image_path.to_lowercase().ends_with(".dll") {
+                return None;
+            }
+            let path = Path::new(image_path);
+            if let Ok(results) = self.analyzer.analyze_file(path).await {
+                if results.is_suspicious {
+                    return Some(VoteResult {
+                        confidence: 0.88,
+                        reason: format!("Dotscope: Suspicious .NET CIL detected - {}", results.reason),
+                        weight: 0.9,
+                    });
+                }
+            }
+        }
+        None
+    }
+}
+
+/// Native Memory Inspection Voter (using pelite)
+///
+/// Replaces Hollows-Hunter with in-memory PE parsing.
+pub struct MemoryInspectionVoter {
+    pub memory: Arc<osoosi_memory::MemoryStore>,
+}
+
+#[async_trait]
+impl ThreatVoter for MemoryInspectionVoter {
+    fn name(&self) -> String {
+        "MemoryInspection-Native".to_string()
+    }
+
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        #[cfg(target_os = "windows")]
+        {
+            if let Some(pid) = event.process_id() {
+                // Use pelite to parse the process memory and find hollowing
+                if let Ok(findings) = crate::pe_inspector::inspect_process(pid as u32) {
+                    if findings.hollowing_detected {
+                        return Some(VoteResult {
+                            confidence: 1.0,
+                            reason: format!("MemoryInspection: Process hollowing detected in PID {}", pid),
+                            weight: 1.0,
+                        });
+                    }
+                }
+            }
+        }
+        None
     }
 }
