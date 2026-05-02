@@ -1467,7 +1467,7 @@ impl EdrOrchestrator {
     pub fn start_maintenance_loop(&self) {
 
         tokio::spawn(async move {
-            info!("Starting Rule Maintenance Loop (YARA, Sigma, ClamAV)...");
+            info!("Starting Rule Maintenance Loop (YARA, ClamAV)...");
 
             // 1. YARA Update (Core Forge + Agentic Discovery) - offload to blocking pool
             tokio::task::spawn_blocking(|| {

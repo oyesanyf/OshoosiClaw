@@ -155,12 +155,15 @@ fn classify_vote(
         }
         "CISA-KEV" => (EvidenceClass::ThreatIntel, 0.58, false),
         "NVD-CVE-Lookup" => (EvidenceClass::ThreatIntel, 1.0, true), // High reliability, triggers strong action
-        "Sigma" => (EvidenceClass::Behavior, 0.86, true),
+        "BehavioralYara" => (EvidenceClass::Behavior, 0.88, true),
+        "YaraX-Signatures" | "YaraX-Memory" | "HollowsHunter-Memory" | "MemoryInspection-Native" => {
+            (EvidenceClass::Memory, 1.0, true)
+        }
         "SemanticIntent" | "LLM-Reasoning" => (EvidenceClass::Behavior, 0.78, true),
         "Decompile" => (EvidenceClass::Behavior, 0.96, true),
-        "YaraX-Memory" | "HollowsHunter-Memory" => (EvidenceClass::Memory, 1.0, true),
         "Capa-Behavior" => (EvidenceClass::Behavior, 0.92, true),
         "Floss-Artifact" => (EvidenceClass::StaticArtifact, 0.82, false),
+        "Dotscope-Forensics" => (EvidenceClass::StaticArtifact, 0.85, true),
         name if name.contains("NexusShield") => (EvidenceClass::StaticArtifact, 0.95, true),
         name if name.contains("MalConv") || name.contains("ML") => {
             let weak_pe_signature =
@@ -814,11 +817,11 @@ mod tests {
             EvidenceVote {
                 result: VoteResult {
                     confidence: 0.86,
-                    reason: "Sigma: suspicious outbound connection".to_string(),
+                    reason: "BehavioralYara: suspicious outbound connection".to_string(),
                     weight: 0.8,
                 },
                 class: EvidenceClass::Behavior,
-                reliability: 0.86,
+                reliability: 0.88,
                 strong_action: true,
             },
         ];
