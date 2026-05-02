@@ -682,6 +682,71 @@ pub fn resolve_database_dir() -> PathBuf {
         .join("database")
 }
 
+/// Resolve the rules directory (YARA, Sigma).
+/// Env override: OSOOSI_RULES_DIR.
+/// Defaults to project_root/rules or current_dir/rules if found.
+pub fn resolve_rules_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("OSOOSI_RULES_DIR") {
+        return PathBuf::from(p.trim());
+    }
+
+    if let Some(root) = resolve_project_root() {
+        let r = root.join("rules");
+        if r.is_dir() {
+            return r;
+        }
+    }
+
+    // Fallback to searching upward for 'rules' directory
+    let mut dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
+    loop {
+        let r = dir.join("rules");
+        if r.is_dir() {
+            return r;
+        }
+        if let Some(parent) = dir.parent() {
+            dir = parent.to_path_buf();
+        } else {
+            break;
+        }
+    }
+
+    // Ultimate fallback: current_dir/rules
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("rules")
+}
+
+/// Resolve the directory for YARA rules.
+pub fn resolve_yara_rules_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("OSOOSI_YARA_DIR") {
+        return PathBuf::from(p.trim());
+    }
+    let rules_dir = resolve_rules_dir();
+    // Check for rules/yara or use rules/ directly
+    let yara = rules_dir.join("yara");
+    if yara.is_dir() {
+        yara
+    } else {
+        rules_dir
+    }
+}
+
+/// Resolve the directory for Sigma rules.
+pub fn resolve_sigma_rules_dir() -> PathBuf {
+    if let Ok(p) = std::env::var("OSOOSI_SIGMA_DIR") {
+        return PathBuf::from(p.trim());
+    }
+    let rules_dir = resolve_rules_dir();
+    // Check for rules/sigma or use rules/ directly
+    let sigma = rules_dir.join("sigma");
+    if sigma.is_dir() {
+        sigma
+    } else {
+        rules_dir
+    }
+}
+
 /// Automatically sets critical OSOOSI_* environment variables by discovering the project root.
 /// This ensures that even if the agent is run from target/release or a nested directory,
 /// all internal logic and sub-processes correctly resolve their assets.
@@ -709,6 +774,16 @@ pub fn persist_environment_paths() {
     let db_dir = resolve_database_dir();
     if std::env::var("OSOOSI_DATABASE_DIR").is_err() {
         std::env::set_var("OSOOSI_DATABASE_DIR", db_dir.to_string_lossy().to_string());
+    }
+
+    let yara_dir = resolve_yara_rules_dir();
+    if std::env::var("OSOOSI_YARA_DIR").is_err() {
+        std::env::set_var("OSOOSI_YARA_DIR", yara_dir.to_string_lossy().to_string());
+    }
+
+    let sigma_dir = resolve_sigma_rules_dir();
+    if std::env::var("OSOOSI_SIGMA_DIR").is_err() {
+        std::env::set_var("OSOOSI_SIGMA_DIR", sigma_dir.to_string_lossy().to_string());
     }
 }
 

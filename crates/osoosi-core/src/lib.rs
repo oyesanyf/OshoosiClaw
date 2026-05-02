@@ -90,61 +90,95 @@ fn is_trusted_operational_image(image_path: &str) -> bool {
         .to_ascii_lowercase();
     let trusted_path = path.contains("\\windows\\system32\\")
         || path.contains("\\windows\\syswow64\\")
+        || path.contains("\\windows\\winsxs\\")
+        || path.contains("\\windows\\servicing\\")
+        || path.contains("\\windows\\systemapps\\")
         || path.contains("\\program files\\")
         || path.contains("\\program files (x86)\\")
         || path.contains("\\programdata\\chocolatey\\")
         || path.contains("\\programdata\\scoop\\")
+        || path.contains("\\programdata\\microsoft\\")
         || path.contains("\\tools\\git\\")
         || path.contains("\\oshoosiclaw\\tools\\")
         || path.contains("\\oshoosiclaw\\target\\")
         || path.contains("/oshoosiclaw/tools/")
         || path.contains("/oshoosiclaw/target/")
         || path.contains("\\appdata\\local\\programs\\python\\")
+        || path.contains("\\appdata\\local\\microsoft\\")
+        || path.contains("\\appdata\\local\\google\\chrome\\")
         || path.contains("\\program files\\git\\")
+        || path.contains("\\program files\\google\\chrome\\")
+        || path.contains("\\program files (x86)\\google\\chrome\\")
+        || path.contains("\\program files\\mozilla firefox\\")
+        || path.contains("\\program files\\microsoft office\\")
         || path.contains("\\tools\\git\\cmd\\")
         || path.contains("\\progra~1\\git\\");
 
+    // Comprehensive whitelist of known-good system and application processes.
+    // These are processes that should NEVER be treated as standalone ML-only threats.
     const TRUSTED_STEMS: &[&str] = &[
+        // ── OshoosiClaw / EDR Tools ──
         "osoosi",
-        "sysmon",
-        "sysmon64",
-        "smartscreen",
-        "net",
-        "git",
-        "git-remote-https",
-        "git-remote-http",
-        "capa",
-        "hayabusa",
-        "hollows_hunter",
-        "chainsaw",
-        "ollama",
-        "cargo",
-        "rustc",
-        "npm",
-        "node",
-        "code",
-        "cursor",
+        "sysmon", "sysmon64",
+        "capa", "hayabusa", "hollows_hunter", "chainsaw",
+        // ── Windows Core ──
+        "svchost", "csrss", "smss", "wininit", "winlogon", "lsass", "lsaiso",
+        "services", "spoolsv", "dwm", "explorer", "taskhostw", "taskhost",
+        "conhost", "cmd", "powershell", "pwsh", "wt", "sihost",
+        "runtimebroker", "backgroundtaskhost", "smartscreen",
+        "searchindexer", "searchprotocolhost", "searchfilterhost",
+        "wmiprvse", "wmiapsrv", "dllhost", "msiexec",
+        "tiworker", "trustedinstaller", "wuauclt", "usoclient", "musnotification",
+        "vssvc", "wbengine", "sppextcomobj", "sppsvc",
+        "ctfmon", "fontdrvhost", "dashost", "settingsynchost",
+        "securityhealthservice", "securityhealthsystray",
+        "sgrmbroker", "mpcmdrun", "msmpeng", "nissrv",
+        "systemsettings", "systemsettingsbroker",
+        "locationnotificationwindows", "locationnotification",
+        "applicationframehost", "shellexperiencehost",
+        "startmenuexperiencehost", "textinputhost",
+        "lockapp", "logonui", "credentialenrollmentmanager",
+        "audiodg", "audioses",
+        "net", "net1", "netstat", "ipconfig", "ping", "tracert", "nslookup",
+        "whoami", "hostname", "systeminfo", "tasklist", "taskmgr",
+        "reg", "regedit", "sc", "wmic", "bcdedit",
+        // ── Windows Servicing & Update ──
+        "wusa", "dism", "cleanmgr", "defrag",
+        // ── Microsoft Office / Apps ──
+        "winword", "excel", "powerpnt", "outlook", "onenote", "teams", "msedge",
+        "hxtsr", "hxoutlook", "hxcalendarappimm", "hxaccounts",
+        "filecoauth", "onedrive", "onedrivesetup",
+        // ── Common Browsers ──
+        "chrome", "firefox", "brave", "opera", "vivaldi", "msedge",
+        // ── Developer Tools ──
+        "git", "git-remote-https", "git-remote-http",
+        "cargo", "rustc", "rustup", "clippy-driver",
+        "npm", "node", "npx", "yarn", "pnpm",
+        "python", "python3", "pip", "pip3",
+        "java", "javaw", "javac",
+        "dotnet",
+        "code", "cursor",
         "antigravity",
         "language_server_windows_x64",
-        "filecoauth",
-        "python",
-        "python3",
-        "pip",
-        "powershell",
-        "pwsh",
-        "cmd",
-        "conhost",
-        "wt",
-        "svchost",
+        // ── AI / ML Tools ──
+        "ollama", "ollama_llama_server",
+        // ── Updaters ──
+        "updater", "googleupdate", "microsoftedgeupdate",
     ];
     let is_trusted_stem = TRUSTED_STEMS.contains(&stem.as_str());
     
     let is_venv = path.contains("\\.venv\\") || path.contains("/.venv/") || path.contains("\\site-packages\\") || path.contains("/site-packages/");
     
-    // Also skip if it's explicitly a tool directory regardless of stem
+    // Also skip if it's explicitly a tool/system directory regardless of stem
     let is_tool_dir = path.contains("\\tools\\git\\") || path.contains("/tools/git/") || path.contains("\\oshoosiclaw\\");
 
-    (is_trusted_stem && (trusted_path || is_venv)) || is_tool_dir
+    // For system paths (windows, program files), we trust ALL executables — not just stem-matched ones.
+    // This prevents ML false positives on any legitimate system binary.
+    let is_system_dir = path.contains("\\windows\\")
+        || path.contains("\\program files\\")
+        || path.contains("\\program files (x86)\\");
+
+    is_system_dir || (is_trusted_stem && (trusted_path || is_venv)) || is_tool_dir
 }
 
 fn should_skip_file_malware_scan(path: &std::path::Path) -> bool {
@@ -700,13 +734,15 @@ impl EdrOrchestrator {
         let telemetry = Arc::new(SysmonParser::new());
         let policy_config = osoosi_types::load_policy_config();
         let policy = Arc::new(PolicyEngine::new(memory.clone(), policy_config));
-        let sigma_dir = std::env::var("OSOOSI_SIGMA_DIR").unwrap_or_else(|_| "sigma".to_string());
+        
+        let sigma_rules_dir = osoosi_types::resolve_sigma_rules_dir();
         let policy_init = policy.clone();
         tokio::task::spawn_blocking(move || {
             let start = std::time::Instant::now();
-            policy_init.load_sigma_rules(std::path::Path::new(&sigma_dir));
-            debug!("Sigma rule loading took {:?}", start.elapsed());
+            policy_init.load_sigma_rules(&sigma_rules_dir);
+            debug!("PolicyEngine Sigma rule loading from {:?} took {:?}", sigma_rules_dir, start.elapsed());
         });
+
         let mesh = Arc::new(tokio::sync::Mutex::new(Some(
             MeshNode::new(memory.clone()).await?,
         )));
@@ -747,17 +783,18 @@ impl EdrOrchestrator {
         let malware_scanner = Arc::new(MalwareScanner::new(&model_path));
         
         let sigma_engine = match std::panic::catch_unwind(|| {
-            Arc::new(hayabusa::HayabusaEngine::new())
+            let engine = hayabusa::HayabusaEngine::new();
+            let rules_dir = osoosi_types::resolve_sigma_rules_dir();
+            if let Err(e) = engine.load_rules(&rules_dir) {
+                warn!("Hayabusa failed to load rules from {:?}: {}. Native Sigma detection might be degraded.", rules_dir, e);
+            } else {
+                info!("Hayabusa engine initialized with rules from {:?}.", rules_dir);
+            }
+            engine
         }) {
-            Ok(engine) => engine,
+            Ok(engine) => Arc::new(engine),
             Err(_) => {
-                error!("Hayabusa rule engine failed to initialize (panicked). Rule-based detection will be disabled.");
-                // Fallback to a dummy engine if possible, or just log and continue if the architecture allows
-                // For now, we'll use a dummy/empty engine if HayabusaEngine can be constructed safely otherwise
-                // or we might need to change the orchestrator to handle Option<Arc<HayabusaEngine>>.
-                // Given the current structure, we'll try to provide a "safe" instance if we can,
-                // or just re-panic with a better message if it's critical.
-                // But let's try to make Hayabusa itself safer.
+                error!("Hayabusa rule engine failed to initialize (panicked). Using silent fallback.");
                 Arc::new(hayabusa::HayabusaEngine::new_silent())
             }
         };
@@ -843,13 +880,22 @@ impl EdrOrchestrator {
         let gemma_dir = std::env::var("OSOOSI_GEMMA_DIR")
             .map(std::path::PathBuf::from)
             .unwrap_or_else(|_| {
-                let hf_dir = models_dir.join("models--onnx-community--gemma-4-E4B-it-ONNX").join("snapshots");
-                if let Ok(mut entries) = std::fs::read_dir(&hf_dir) {
-                    if let Some(Ok(entry)) = entries.next() {
-                        return entry.path().join("onnx");
+                let standard_dir = models_dir.join("gemma4-e4b");
+                if standard_dir.exists() && standard_dir.join("tokenizer.json").exists() {
+                    return standard_dir;
+                }
+
+                let hf_base = models_dir.join("models--onnx-community--gemma-4-E4B-it-ONNX");
+                let hf_dir = hf_base.join("snapshots");
+                if let Ok(entries) = std::fs::read_dir(&hf_dir) {
+                    for entry in entries.flatten() {
+                        let p = entry.path();
+                        if p.join("tokenizer.json").exists() {
+                            return p;
+                        }
                     }
                 }
-                models_dir.join("gemma4-e4b")
+                standard_dir
             });
 
         let spider_eyes = Arc::new(osoosi_behavioral::SpiderEyes::new(
@@ -2488,6 +2534,10 @@ impl EdrOrchestrator {
             match effective_action {
                 ResponseAction::Isolate => {
                     if let Some(image) = event.data.get("Image").and_then(|v| v.as_str()) {
+                        // SAFETY GUARD: Never autonomously block system-critical processes.
+                        if is_trusted_operational_image(image) {
+                            warn!("AUTONOMOUS BLOCK SKIPPED: {} is a trusted system/operational binary. Downgrading to Alert.", image);
+                        } else {
                         warn!("AUTONOMOUS BLOCK: Consensus threshold met for {}. Applying FileBlockExecutable.", image);
                         let rule = osoosi_types::BlockingRule {
                             path: image.to_string(),
@@ -2519,6 +2569,7 @@ impl EdrOrchestrator {
                                 }
                             });
                         }
+                        } // end safety guard else block
                     }
                 }
                 action => {

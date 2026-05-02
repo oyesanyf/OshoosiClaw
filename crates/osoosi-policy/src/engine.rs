@@ -98,42 +98,39 @@ fn event_stem(event: &SysmonEvent) -> String {
 fn is_trusted_operational_tool(event: &SysmonEvent) -> bool {
     let path = event_image_path(event).unwrap_or("").to_ascii_lowercase();
     let stem = event_stem(event);
-    let trusted_path = path.contains("\\windows\\system32\\")
-        || path.contains("\\windows\\syswow64\\")
+
+    // Trust ALL executables under system directories
+    let is_system_dir = path.contains("\\windows\\")
         || path.contains("\\program files\\")
-        || path.contains("\\program files (x86)\\")
-        || path.contains("\\programdata\\chocolatey\\")
+        || path.contains("\\program files (x86)\\");
+    if is_system_dir {
+        return true;
+    }
+
+    let trusted_path = path.contains("\\programdata\\chocolatey\\")
         || path.contains("\\programdata\\scoop\\")
+        || path.contains("\\programdata\\microsoft\\")
         || path.contains("\\tools\\git\\")
         || path.contains("\\oshoosiclaw\\tools\\")
         || path.contains("\\oshoosiclaw\\target\\")
         || path.contains("/oshoosiclaw/tools/")
-        || path.contains("/oshoosiclaw/target/");
+        || path.contains("/oshoosiclaw/target/")
+        || path.contains("\\appdata\\local\\microsoft\\")
+        || path.contains("\\appdata\\local\\google\\chrome\\")
+        || path.contains("\\appdata\\local\\programs\\python\\");
     if !trusted_path {
         return false;
     }
     const TRUSTED_STEMS: &[&str] = &[
-        "osoosi",
-        "sysmon",
-        "sysmon64",
-        "smartscreen",
-        "net",
-        "git",
-        "git-remote-https",
-        "capa",
-        "hayabusa",
-        "chainsaw",
-        "hollows_hunter",
-        "xori",
-        "rustc",
-        "cargo",
-        "python",
-        "node",
-        "code",
-        "cursor",
-        "antigravity",
+        "osoosi", "sysmon", "sysmon64", "smartscreen",
+        "net", "git", "git-remote-https",
+        "capa", "hayabusa", "chainsaw", "hollows_hunter", "xori",
+        "rustc", "cargo", "python", "node", "code", "cursor", "antigravity",
         "language_server_windows_x64",
-        "filecoauth",
+        "filecoauth", "onedrive",
+        "chrome", "firefox", "msedge", "brave",
+        "ollama", "ollama_llama_server",
+        "updater", "googleupdate", "microsoftedgeupdate",
     ];
     TRUSTED_STEMS.contains(&stem.as_str())
 }

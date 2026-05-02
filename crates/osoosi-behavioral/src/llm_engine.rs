@@ -317,9 +317,19 @@ impl Gemma4Analyzer {
             model_dir
         );
 
-        let model_path = model_dir.join("model.onnx");
-        let decoder_path = model_dir.join("decoder_model_merged.onnx");
-        let tokenizer_filename = model_dir.join("tokenizer.json");
+        let onnx_dir = if model_dir.join("onnx").is_dir() {
+            model_dir.join("onnx")
+        } else {
+            model_dir.to_path_buf()
+        };
+
+        let model_path = onnx_dir.join("model.onnx");
+        let decoder_path = onnx_dir.join("decoder_model_merged.onnx");
+        let tokenizer_filename = if model_dir.join("tokenizer.json").exists() {
+            model_dir.join("tokenizer.json")
+        } else {
+            onnx_dir.join("tokenizer.json")
+        };
 
         // The ONNX model requires multi-GB data shards alongside the manifest.
         // If the .onnx file is smaller than 10 MB it's just a manifest stub and
@@ -729,9 +739,27 @@ impl SecurityJudge {
         info!("Initializing Security Judge (Candle) from {:?}...", model_dir);
         let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
 
-        let config_path = model_dir.join("config.json");
-        let tokenizer_path = model_dir.join("tokenizer.json");
-        let weights_path = model_dir.join("model.safetensors");
+        let onnx_dir = if model_dir.join("onnx").is_dir() {
+            model_dir.join("onnx")
+        } else {
+            model_dir.to_path_buf()
+        };
+
+        let config_path = if model_dir.join("config.json").exists() {
+            model_dir.join("config.json")
+        } else {
+            onnx_dir.join("config.json")
+        };
+        let tokenizer_path = if model_dir.join("tokenizer.json").exists() {
+            model_dir.join("tokenizer.json")
+        } else {
+            onnx_dir.join("tokenizer.json")
+        };
+        let weights_path = if model_dir.join("model.safetensors").exists() {
+            model_dir.join("model.safetensors")
+        } else {
+            onnx_dir.join("model.safetensors")
+        };
 
         if !config_path.exists() || !tokenizer_path.exists() || !weights_path.exists() {
             anyhow::bail!("Security Judge model files missing in {:?}", model_dir);
