@@ -51,7 +51,7 @@ subtle = "2"
 ed25519-dalek = { version = "2", features = ["rand_core"] }
 rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
 # nexus-shield = { version = "0.4.4", default-features = false }
-hayabusa = { path = "./vendor/hayabusa" }
+# hayabusa = { path = "./vendor/hayabusa" }
 dotscope = "0.1"
 wasmtime = "44.0"
 malchela = { git = "https://github.com/dwmetz/MalChela.git" }

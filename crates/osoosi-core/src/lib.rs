@@ -289,6 +289,79 @@ fn try_build_c2_yara_voter() -> Option<osoosi_policy::voters::YaraXMemoryVoter> 
     }
 }
 
+/// Behavioral YARA-X rules: Matches on event JSON bytes to replace Sigma/Hayabusa logic.
+fn try_build_behavioral_yara_voter() -> Option<crate::voters::BehavioralYaraVoter> {
+    use crate::voters::BehavioralYaraVoter;
+    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
+        || -> anyhow::Result<BehavioralYaraVoter> {
+            let mut compiler = yara_x::Compiler::new();
+            
+            // Replicate core Sigma-style behavioral rules in YARA-X (matches on SysmonEvent JSON)
+            compiler
+                .add_source(
+                    r#"
+            rule Suspicious_Curl_Download {
+                strings:
+                    $curl = "curl.exe"
+                    $http = "http"
+                    $out = "-o"
+                condition:
+                    all of them
+            }
+            rule Encoded_PowerShell {
+                strings:
+                    $ps = "powershell"
+                    $enc = " -enc" nocase
+                    $encoded = " -EncodedCommand" nocase
+                condition:
+                    $ps and ($enc or $encoded)
+            }
+            rule Shadow_Copy_Deletion {
+                strings:
+                    $vss = "vssadmin" nocase
+                    $del = "delete" nocase
+                    $shadows = "shadows" nocase
+                condition:
+                    all of them
+            }
+            rule Credential_Dumping_LSASS {
+                strings:
+                    $proc = "EventID\":10"
+                    $lsass = "lsass.exe" nocase
+                    $access = "0x1410" // common dump access mask
+                condition:
+                    all of them
+            }
+        "#,
+                )
+                .map_err(|e| anyhow::anyhow!("{}", e))?;
+            
+            // Optionally load external rules if they exist
+            let behavioral_yar = osoosi_types::resolve_rules_dir().join("behavioral.yar");
+            if behavioral_yar.exists() {
+                if let Ok(src) = std::fs::read_to_string(&behavioral_yar) {
+                    let _ = compiler.add_source(src.as_str());
+                }
+            }
+
+            Ok(BehavioralYaraVoter {
+                rules: Arc::new(compiler.build()),
+            })
+        },
+    ));
+    match r {
+        Ok(Ok(v)) => Some(v),
+        Ok(Err(e)) => {
+            warn!("YARA-X: Behavioral rule compile error: {}; skipping BehavioralYaraVoter", e);
+            None
+        }
+        Err(_) => {
+            warn!("YARA-X: Behavioral rule build panicked; skipping BehavioralYaraVoter");
+            None
+        }
+    }
+}
+
 #[derive(Clone)]
 pub struct EdrOrchestrator {
     /// Memory: Local persistence
@@ -735,13 +808,7 @@ impl EdrOrchestrator {
         let policy_config = osoosi_types::load_policy_config();
         let policy = Arc::new(PolicyEngine::new(memory.clone(), policy_config));
         
-        let sigma_rules_dir = osoosi_types::resolve_sigma_rules_dir();
-        let policy_init = policy.clone();
-        tokio::task::spawn_blocking(move || {
-            let start = std::time::Instant::now();
-            policy_init.load_sigma_rules(&sigma_rules_dir);
-            debug!("PolicyEngine Sigma rule loading from {:?} took {:?}", sigma_rules_dir, start.elapsed());
-        });
+
 
         let mesh = Arc::new(tokio::sync::Mutex::new(Some(
             MeshNode::new(memory.clone()).await?,
@@ -782,21 +849,10 @@ impl EdrOrchestrator {
         let model_path = malware_dir.join("sorel.onnx");
         let malware_scanner = Arc::new(MalwareScanner::new(&model_path));
         
-        let sigma_engine = match std::panic::catch_unwind(|| {
-            let engine = hayabusa::HayabusaEngine::new();
-            let rules_dir = osoosi_types::resolve_sigma_rules_dir();
-            if let Err(e) = engine.load_rules(&rules_dir) {
-                warn!("Hayabusa failed to load rules from {:?}: {}. Native Sigma detection might be degraded.", rules_dir, e);
-            } else {
-                info!("Hayabusa engine initialized with rules from {:?}.", rules_dir);
-            }
-            engine
-        }) {
-            Ok(engine) => Arc::new(engine),
-            Err(_) => {
-                error!("Hayabusa rule engine failed to initialize (panicked). Using silent fallback.");
-                Arc::new(hayabusa::HayabusaEngine::new_silent())
-            }
+        let sigma_engine_voter = if let Some(voter) = try_build_behavioral_yara_voter() {
+            Some(Arc::new(voter))
+        } else {
+            None
         };
         let dotscope_analyzer = Arc::new(dotscope::DotscopeAnalyzer::new());
         let triage_store = crate::triage::new_triage_store();
@@ -825,7 +881,6 @@ impl EdrOrchestrator {
             task_executor.clone(),
             malware_scanner.clone(),
             yara_rules.clone(),
-            sigma_engine.clone(),
         ));
         let correlator = Arc::new(crate::correlator::EventCorrelator::new());
         let ghost_nodes = Arc::new(osoosi_wire::GhostNodeManager::new(
@@ -937,9 +992,7 @@ impl EdrOrchestrator {
         policy.add_voter(Box::new(osoosi_policy::voters::TrustedVendorVoter)).await;
         policy.add_voter(Box::new(osoosi_policy::voters::GitNoiseVoter)).await;
 
-        policy.add_voter(Box::new(osoosi_policy::voters::SigmaVoter {
-            engine: policy.sigma_engine().clone(),
-        })).await;
+
 
         policy.add_voter(Box::new(osoosi_policy::voters::NsrlVoter {
             cache: nsrl_cache.clone(),
@@ -983,9 +1036,9 @@ impl EdrOrchestrator {
         policy.add_voter(Box::new(crate::voters::YaraXVoter {
             rules: yara_rules.clone(),
         })).await;
-        policy.add_voter(Box::new(crate::voters::SigmaVoter {
-            engine: sigma_engine.clone(),
-        })).await;
+        if let Some(ref voter) = sigma_engine_voter {
+            policy.add_voter(Box::new((**voter).clone())).await;
+        }
         policy.add_voter(Box::new(crate::voters::DotscopeVoter {
             analyzer: dotscope_analyzer.clone(),
         })).await;
@@ -1412,7 +1465,7 @@ impl EdrOrchestrator {
 
     /// Background task for Rule Maintenance (YARA, Sigma, etc.)
     pub fn start_maintenance_loop(&self) {
-        let orchestrator = self.clone();
+
         tokio::spawn(async move {
             info!("Starting Rule Maintenance Loop (YARA, Sigma, ClamAV)...");
 
@@ -1426,15 +1479,7 @@ impl EdrOrchestrator {
                 interval.tick().await;
                 info!("Running periodic rule maintenance...");
 
-                // 2. Sigma Rule Refresh - offload to blocking pool
-                let sigma_dir =
-                    std::env::var("OSOOSI_SIGMA_DIR").unwrap_or_else(|_| "sigma".to_string());
-                let orch_clone = orchestrator.clone();
-                tokio::task::spawn_blocking(move || {
-                    orch_clone
-                        .policy
-                        .load_sigma_rules(std::path::Path::new(&sigma_dir));
-                });
+
 
                 // 3. ClamAV Health Check / Update
                 #[cfg(target_os = "windows")]

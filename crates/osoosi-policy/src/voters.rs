@@ -54,35 +54,7 @@ impl ThreatVoter for OtxVoter {
     }
 }
 
-/// Sigma Rule Voter
-pub struct SigmaVoter {
-    pub engine: Arc<std::sync::RwLock<crate::sigma::SigmaEngine>>,
-}
 
-#[async_trait]
-impl ThreatVoter for SigmaVoter {
-    fn name(&self) -> String {
-        "Sigma".to_string()
-    }
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
-        if let Ok(guard) = self.engine.read() {
-            let matches = guard.check(event);
-            if !matches.is_empty() {
-                let rule = &matches[0];
-                return Some(VoteResult {
-                    confidence: if rule.level == "critical" { 0.95 } else { 0.85 },
-                    reason: format!(
-                        "Sigma Rule [{}]: {}",
-                        rule.title,
-                        rule.description.as_deref().unwrap_or("No description")
-                    ),
-                    weight: 0.8,
-                });
-            }
-        }
-        None
-    }
-}
 
 /// LLM Reasoning Voter (The "Autonomous Cortex")
 /// Uses the configured LLM (DeepSeek R1, etc.) to reason about security events.

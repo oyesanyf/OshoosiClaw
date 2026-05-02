@@ -312,26 +312,30 @@ impl ThreatVoter for FlossVoter {
     }
 }
 
-/// Native Sigma Voter (using hayabusa crate)
-pub struct SigmaVoter {
-    pub engine: Arc<hayabusa::HayabusaEngine>,
+/// Behavioral YARA-X Voter
+/// 
+/// Replaces Hayabusa/Sigma with native YARA-X rules matching on event JSON.
+#[derive(Clone)]
+pub struct BehavioralYaraVoter {
+    pub rules: Arc<yara_x::Rules>,
 }
 
 #[async_trait]
-impl ThreatVoter for SigmaVoter {
+impl ThreatVoter for BehavioralYaraVoter {
     fn name(&self) -> String {
-        "Sigma-Native".to_string()
+        "BehavioralYara".to_string()
     }
 
     async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
-        // Convert SysmonEvent to Hayabusa format and scan
-        if let Ok(matches) = self.engine.match_event(event) {
-            if !matches.is_empty() {
-                let primary = &matches[0];
+        let json_bytes = serde_json::to_vec(event).ok()?;
+        let mut scanner = yara_x::Scanner::new(&self.rules);
+        
+        if let Ok(results) = scanner.scan(&json_bytes) {
+            if let Some(primary) = results.matching_rules().next() {
                 return Some(VoteResult {
-                    confidence: 1.0, // Default to high confidence for Sigma matches
-                    reason: format!("Sigma: THREAT detected - {}", primary.detail),
-                    weight: 0.95,
+                    confidence: 0.9,
+                    reason: format!("BehavioralYara: DETECTED - {}", primary.identifier()),
+                    weight: 0.8,
                 });
             }
         }

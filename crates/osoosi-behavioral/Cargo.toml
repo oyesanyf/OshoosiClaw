@@ -32,7 +32,7 @@ rand = { workspace = true }
 rand_distr = { workspace = true }
 yara-x = { workspace = true }
 walkdir = { workspace = true }
-hayabusa = { workspace = true }
+# hayabusa = { workspace = true }
 # chainsaw = { workspace = true }
 # proc-maps = { workspace = true }
 iced-x86 = { workspace = true }

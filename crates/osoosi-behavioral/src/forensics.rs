@@ -74,33 +74,7 @@ impl PacketForensics {
         }
     }
 
-    /// Run Hayabusa to detect C2 patterns in Windows Event Logs.
-    pub async fn run_hayabusa(&self, evtx_path: &std::path::Path) -> anyhow::Result<TriageResult> {
-        info!("FORENSICS: Running Hayabusa library on {:?}...", evtx_path);
 
-        // Hayabusa library integration
-        // Note: In a real implementation, we'd load rules from a specific directory.
-        // For this orchestration, we use the library's internal detection engine.
-
-        let mut detection_results = Vec::new();
-        // Simulation of library usage based on exported modules:
-        // let engine = hayabusa::detections::DetectionEngine::new(rules_path)?;
-        // let results = engine.scan_file(evtx_path)?;
-
-        // Since we are integrating as a library, we can perform high-speed in-memory scans.
-        detection_results.push(
-            "T1071.001 - Cobalt Strike beaconing pattern detected via Sigma rules".to_string(),
-        );
-
-        Ok(TriageResult {
-            tool_used: "Hayabusa (Native Library)".to_string(),
-            raw_output: format!(
-                "Scanned event log: {:?}. Identified behavioral anomalies.",
-                evtx_path
-            ),
-            detected_indicators: detection_results,
-        })
-    }
 
     /// Run Chainsaw for fast forensic triage of event logs and MFT.
     pub async fn run_chainsaw(&self, log_path: &std::path::Path) -> anyhow::Result<TriageResult> {

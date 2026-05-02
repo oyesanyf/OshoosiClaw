@@ -282,8 +282,7 @@ pub struct PolicyEngine {
     signatures: Arc<DashMap<String, ThreatSignature>>,
     /// OTX indicators cached in-memory from feed fetch loop.
     otx_indicators: Arc<RwLock<OtxIndicators>>,
-    /// Sigma Rule Engine
-    sigma: Arc<RwLock<crate::sigma::SigmaEngine>>,
+
     /// Learned Zero-Day defenses from the mesh (CVE -> Learned Rule)
     global_intel_rules: Arc<DashMap<String, String>>,
     /// Consensus cache to prevent duplicate notifications (Key: EventID+Path+Hash -> (Signature, Time))
@@ -306,7 +305,6 @@ impl PolicyEngine {
             graph: GraphCorrelationEngine::new(),
             signatures: Arc::new(DashMap::new()),
             otx_indicators: Arc::new(RwLock::new(OtxIndicators::default())),
-            sigma: Arc::new(RwLock::new(crate::sigma::SigmaEngine::new())),
             global_intel_rules: Arc::new(DashMap::new()),
             consensus_cache: Arc::new(DashMap::new()),
             voters: Arc::new(tokio::sync::RwLock::new(Vec::new())),
@@ -333,9 +331,7 @@ impl PolicyEngine {
         );
     }
 
-    pub fn sigma_engine(&self) -> &Arc<RwLock<crate::sigma::SigmaEngine>> {
-        &self.sigma
-    }
+
 
     pub fn otx_indicators_ref(&self) -> &Arc<RwLock<OtxIndicators>> {
         &self.otx_indicators
@@ -368,11 +364,7 @@ impl PolicyEngine {
         crate::otx_connection::otx_match_destination_ip(&otx, &self.memory, ip)
     }
 
-    pub fn load_sigma_rules(&self, dir: &std::path::Path) {
-        if let Ok(mut guard) = self.sigma.write() {
-            guard.load_rules_from_dir(dir);
-        }
-    }
+
 
     /// Register a temporary learned defense (Zero-Day defense from mesh gossip).
     pub fn register_temporary_rule(&self, cve_id: &str, rule: &str, _severity: f32) {

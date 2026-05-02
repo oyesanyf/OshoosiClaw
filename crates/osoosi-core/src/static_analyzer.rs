@@ -29,8 +29,6 @@ pub struct StaticAnalyzer {
     analysis_cache: dashmap::DashMap<String, Option<ThreatSignature>>,
     /// Native Yara-X engine
     yara_engine: Arc<yara_x::Rules>,
-    /// Native Hayabusa engine
-    _sigma_engine: Arc<hayabusa::HayabusaEngine>,
 }
 
 impl StaticAnalyzer {
@@ -39,7 +37,6 @@ impl StaticAnalyzer {
         executor: Arc<dyn osoosi_types::SecuredExecutor>,
         malware_scanner: Arc<osoosi_model::MalwareScanner>,
         yara_rules: Arc<yara_x::Rules>,
-        sigma_engine: Arc<hayabusa::HayabusaEngine>,
     ) -> Self {
         Self {
             _capa_path: osoosi_types::resolve_capa_path(),
@@ -50,7 +47,6 @@ impl StaticAnalyzer {
             malware_scanner,
             analysis_cache: dashmap::DashMap::new(),
             yara_engine: yara_rules,
-            _sigma_engine: sigma_engine,
         }
     }
 

@@ -9,7 +9,6 @@ pub mod graph;
 pub mod otx_connection;
 pub mod predictive;
 pub mod semantic;
-pub mod sigma;
 pub mod traffic_adapter;
 pub mod verified;
 pub mod voters;
@@ -25,5 +24,4 @@ pub use otx_connection::{
     otx_match_with_policy_state, OTX_CONSENSUS_CONFIDENCE,
 };
 pub use semantic::*;
-pub use sigma::*;
 pub use traffic_adapter::*;
