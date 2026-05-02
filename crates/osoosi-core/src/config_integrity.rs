@@ -41,35 +41,31 @@ pub fn sign_config_file(path: &Path) -> anyhow::Result<String> {
     Ok(hash)
 }
 
-/// [NEW] Sign a config file using OpenSSL (Asymmetric) library.
-pub async fn sign_config_with_openssl(
+/// [NEW] Sign a config file using Ed25519 (pure Rust).
+pub async fn sign_config_with_ed25519(
     path: &Path,
     _executor: &dyn osoosi_types::SecuredExecutor,
     priv_key_path: &Path,
 ) -> anyhow::Result<()> {
-    use openssl::hash::MessageDigest;
-    use openssl::pkey::PKey;
-    use openssl::sign::Signer;
+    use ed25519_dalek::{Signer, SigningKey};
 
     let sig_path = path.with_extension(format!(
-        "{}{}.openssl",
+        "{}{}.ed25519",
         path.extension()
             .map(|e| e.to_string_lossy().to_string())
             .unwrap_or_default(),
         SIG_EXTENSION
     ));
 
-    let priv_key_pem = std::fs::read(priv_key_path)?;
-    let pkey = PKey::private_key_from_pem(&priv_key_pem)?;
-    let mut signer = Signer::new(MessageDigest::sha256(), &pkey)?;
+    let priv_key_bytes = std::fs::read(priv_key_path)?;
+    let signing_key = SigningKey::from_bytes(priv_key_bytes.as_slice().try_into().map_err(|_| anyhow::anyhow!("Invalid Ed25519 private key"))?);
 
     let data = std::fs::read(path)?;
-    signer.update(&data)?;
-    let signature = signer.sign_to_vec()?;
+    let signature = signing_key.sign(&data);
 
-    std::fs::write(&sig_path, &signature)?;
+    std::fs::write(&sig_path, signature.to_bytes())?;
 
-    info!("OpenSSL Signed config file (library-based): {:?}", path);
+    info!("Ed25519 Signed config file (pure Rust): {:?}", path);
     Ok(())
 }
 

@@ -24,6 +24,8 @@ tracing-appender = { workspace = true }
 osoosi-telemetry = { path = "../osoosi-telemetry" }
 uuid = { workspace = true }
 anyhow = { workspace = true }
+ed25519-dalek = { workspace = true }
+rand = { workspace = true }
 ort = { workspace = true }
 osoosi-policy = { path = "../osoosi-policy" }
 reqwest = { workspace = true, features = ["json"] }
@@ -35,7 +37,6 @@ libloading = { workspace = true }
 hf-hub = { workspace = true }
 osoosi-exporter = { path = "../osoosi-exporter" }
 walkdir = { workspace = true }
-openssl = { workspace = true }
 regex = { workspace = true }
 
 [target.'cfg(windows)'.dependencies]

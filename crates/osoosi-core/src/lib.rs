@@ -742,10 +742,25 @@ impl EdrOrchestrator {
 
         let yara_rules = Arc::new(crate::yara::load_rules());
         let models_dir = osoosi_types::resolve_models_dir();
-        let model_path = models_dir.join("sorel_ffnn.onnx");
+        let malware_dir = models_dir.join("malware");
+        let model_path = malware_dir.join("sorel.onnx");
         let malware_scanner = Arc::new(MalwareScanner::new(&model_path));
         
-        let sigma_engine = Arc::new(hayabusa::HayabusaEngine::new());
+        let sigma_engine = match std::panic::catch_unwind(|| {
+            Arc::new(hayabusa::HayabusaEngine::new())
+        }) {
+            Ok(engine) => engine,
+            Err(_) => {
+                error!("Hayabusa rule engine failed to initialize (panicked). Rule-based detection will be disabled.");
+                // Fallback to a dummy engine if possible, or just log and continue if the architecture allows
+                // For now, we'll use a dummy/empty engine if HayabusaEngine can be constructed safely otherwise
+                // or we might need to change the orchestrator to handle Option<Arc<HayabusaEngine>>.
+                // Given the current structure, we'll try to provide a "safe" instance if we can,
+                // or just re-panic with a better message if it's critical.
+                // But let's try to make Hayabusa itself safer.
+                Arc::new(hayabusa::HayabusaEngine::new_silent())
+            }
+        };
         let dotscope_analyzer = Arc::new(dotscope::DotscopeAnalyzer::new());
         let triage_store = crate::triage::new_triage_store();
         let baseline = Arc::new(crate::baseline::BehavioralBaseline::new());

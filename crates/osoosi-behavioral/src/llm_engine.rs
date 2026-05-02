@@ -290,7 +290,6 @@ pub enum Gemma4Analyzer {
         tokenizer: Tokenizer,
         device: Device,
     },
-    OllamaFallback,
 }
 
 impl Clone for Gemma4Analyzer {
@@ -307,7 +306,6 @@ impl Clone for Gemma4Analyzer {
                 tokenizer: tokenizer.clone(),
                 device: device.clone(),
             },
-            Self::OllamaFallback => Self::OllamaFallback,
         }
     }
 }
@@ -379,19 +377,11 @@ impl Gemma4Analyzer {
                     }
                 }
             }
-        } else {
-            info!("No CUDA GPU detected. Skipping native GGUF (too slow on CPU). Checking Ollama...");
         }
 
-        // Priority 2: Ollama HTTP API (llama.cpp backend — optimized for CPU inference)
-        if std::process::Command::new("ollama").arg("--version").output().is_ok() {
-            info!("Ollama detected. Using Ollama HTTP API for AI reasoning (llama.cpp backend, fast on CPU).");
-            return Ok(Self::OllamaFallback);
-        }
-
-        // Priority 3: Native GGUF on CPU (last resort, slow but functional)
+        // Priority 2: Native GGUF on CPU (last resort, slow but functional)
         if let Some(gguf_path) = resolve_gguf_path(&ai_cfg.reasoning_model) {
-            warn!("No GPU, no Ollama. Loading GGUF natively on CPU (will be slow)...");
+            warn!("No GPU. Loading GGUF natively on CPU (will be slow)...");
             match load_native_gguf(&gguf_path) {
                 Ok((model, tokenizer)) => {
                     return Ok(Self::NativeGGUF {
@@ -430,62 +420,6 @@ impl Gemma4Analyzer {
                 Self::Onnx { .. } => analyzer.generate_text_sync(&prompt, 48),
                 Self::Candle(judge) => judge.judge_artifact(&prompt),
                 Self::NativeGGUF { .. } => analyzer.generate_text_sync(&prompt, 48),
-                Self::OllamaFallback => {
-                    let ai = osoosi_types::config::load_ai_config();
-                    let model = ai.reasoning_model;
-                    let timeout_secs = ai.llm_timeout_secs;
-
-                    // Use Ollama HTTP API via raw TCP (no extra deps, reuses loaded model)
-                    let body = serde_json::json!({
-                        "model": model,
-                        "messages": [
-                            {"role": "system", "content": "You are the OshoosiClaw Autonomous Cortex. Analyze security events concisely. State if the process is malicious, suspicious, or benign. Be brief."},
-                            {"role": "user", "content": summary}
-                        ],
-                        "stream": false
-                    });
-                    let body_str = serde_json::to_string(&body)?;
-
-                    // Parse host:port from reasoning_url
-                    let url = &ai.reasoning_url;
-                    let host_port = url
-                        .strip_prefix("http://").unwrap_or(url)
-                        .split('/').next().unwrap_or("127.0.0.1:11434");
-                    let path = url
-                        .strip_prefix("http://").unwrap_or(url)
-                        .find('/').map(|i| &url.strip_prefix("http://").unwrap_or(url)[i..])
-                        .unwrap_or("/v1/chat/completions");
-
-                    let timeout = std::time::Duration::from_secs(timeout_secs);
-                    let stream = std::net::TcpStream::connect_timeout(
-                        &host_port.parse().unwrap_or_else(|_| "127.0.0.1:11434".parse().unwrap()),
-                        std::time::Duration::from_secs(5),
-                    ).map_err(|e| anyhow::anyhow!("Ollama not reachable at {}: {}", host_port, e))?;
-                    stream.set_read_timeout(Some(timeout)).ok();
-                    stream.set_write_timeout(Some(std::time::Duration::from_secs(5))).ok();
-
-                    use std::io::{Read, Write};
-                    let request = format!(
-                        "POST {} HTTP/1.1\r\nHost: {}\r\nContent-Type: application/json\r\nContent-Length: {}\r\nConnection: close\r\n\r\n{}",
-                        path, host_port, body_str.len(), body_str
-                    );
-                    let mut stream = stream;
-                    stream.write_all(request.as_bytes())?;
-
-                    let mut response = String::new();
-                    stream.read_to_string(&mut response).ok();
-
-                    // Extract JSON body (after \r\n\r\n headers)
-                    let json_body = response.split("\r\n\r\n").nth(1).unwrap_or(&response);
-                    let json: serde_json::Value = serde_json::from_str(json_body)
-                        .map_err(|e| anyhow::anyhow!("Ollama JSON parse: {}", e))?;
-
-                    let content = json["choices"][0]["message"]["content"]
-                        .as_str()
-                        .unwrap_or("No response");
-
-                    Ok(strip_deepseek_thinking(content))
-                }
             }?;
 
             // Strip thinking traces from all backends
@@ -596,60 +530,16 @@ impl Gemma4Analyzer {
 
                 Ok(result_text)
             }
-            Self::OllamaFallback => {
-                let ai = osoosi_types::config::load_ai_config();
-                let model = ai.reasoning_model;
-                let timeout_secs = ai.llm_timeout_secs;
-
-                let mut child = std::process::Command::new("ollama")
-                    .args(["run", &model, prompt])
-                    .stdout(std::process::Stdio::piped())
-                    .stderr(std::process::Stdio::piped())
-                    .spawn()?;
-
-                let deadline = std::time::Instant::now() + std::time::Duration::from_secs(timeout_secs);
-                loop {
-                    match child.try_wait() {
-                        Ok(Some(status)) => {
-                            let out = child.wait_with_output()?;
-                            if status.success() {
-                                return Ok(String::from_utf8_lossy(&out.stdout).trim().to_string());
-                            } else {
-                                return Err(anyhow::anyhow!("Ollama failed: {}", String::from_utf8_lossy(&out.stderr)));
-                            }
-                        }
-                        Ok(None) => {
-                            if std::time::Instant::now() >= deadline {
-                                let _ = child.kill();
-                                return Err(anyhow::anyhow!("Ollama inference timed out after {}s", timeout_secs));
-                            }
-                            std::thread::sleep(std::time::Duration::from_millis(250));
-                        }
-                        Err(e) => return Err(e.into()),
-                    }
-                }
-            }
         }
     }
 }
 
-/// Resolve the GGUF blob path for an Ollama model (e.g. "deepseek-r1:1.5b").
+/// Resolve the GGUF blob path for a local model.
 fn resolve_gguf_path(model_name: &str) -> Option<std::path::PathBuf> {
-    // Try `ollama show <model> --modelfile` to get the FROM path
-    let output = std::process::Command::new("ollama")
-        .args(["show", model_name, "--modelfile"])
-        .output()
-        .ok()?;
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        let line = line.trim();
-        if line.starts_with("FROM ") {
-            let path_str = line.strip_prefix("FROM ")?.trim();
-            let path = std::path::PathBuf::from(path_str);
-            if path.exists() {
-                return Some(path);
-            }
-        }
+    let models_dir = osoosi_types::config::resolve_models_dir();
+    let model_path = models_dir.join(model_name).join("model.gguf");
+    if model_path.exists() {
+        return Some(model_path);
     }
     None
 }

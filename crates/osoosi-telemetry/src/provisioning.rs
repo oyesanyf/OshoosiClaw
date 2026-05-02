@@ -9,7 +9,7 @@ use osoosi_types::{extract_zip, SecuredExecutor};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Opt-in: download MalConv / SmolLM2 from `oyesanyf/OshoosiClaw-Weights` during provisioning. Default **off** — that bundle often 404s unless you publish it.
 fn use_bundled_hf_weights() -> bool {
@@ -32,32 +32,9 @@ impl AgentProvisioner {
         self.provision_firewall().await?;
         self.provision_malconv_weights().await?;
         self.provision_behavioral_model().await?;
-        self.provision_openssl().await?;
         Ok(())
     }
 
-
-    /// Provision OpenSSL (needed for X.509 / CSR generation).
-    pub async fn provision_openssl(&self) -> anyhow::Result<()> {
-        #[cfg(target_os = "windows")]
-        {
-            self.provision_windows_openssl().await
-        }
-        #[cfg(target_os = "linux")]
-        {
-            self.provision_linux_openssl().await
-        }
-        #[cfg(target_os = "macos")]
-        {
-            self.provision_macos_openssl().await
-        }
-        #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
-        {
-            Err(anyhow::anyhow!(
-                "Unsupported operating system for automated OpenSSL provisioning."
-            ))
-        }
-    }
 
     /// Provision Firewall rules for the Oshoosi Mesh.
     pub async fn provision_firewall(&self) -> anyhow::Result<()> {
@@ -150,127 +127,6 @@ impl AgentProvisioner {
         Ok(())
     }
 
-    #[cfg(target_os = "windows")]
-    async fn provision_windows_openssl(&self) -> anyhow::Result<()> {
-        if self.command_exists_win("openssl").await {
-            info!("OpenSSL already available on Windows.");
-            return Ok(());
-        }
-
-        info!("OpenSSL not found. Attempting non-interactive install via winget...");
-
-        // IDs to try in order
-        let ids = [
-            "ShiningLight.OpenSSL",
-            "ShiningLight.OpenSSL.PostgreSQL",
-            "OpenSSL.OpenSSL",
-        ];
-
-        for id in ids {
-            info!("Attempting winget install: {}...", id);
-            let mut cmd = Command::new("winget");
-            cmd.args([
-                "install",
-                "--id",
-                id,
-                "--silent",
-                "--accept-package-agreements",
-                "--accept-source-agreements",
-            ]);
-
-            // We use executor.execute here
-            match self.executor.execute(cmd).await {
-                Ok(output) => {
-                    if output.status.success() {
-                        if self.command_exists_win("openssl").await {
-                            info!("OpenSSL installer (ID: {}) finished successfully.", id);
-                            return Ok(());
-                        }
-                    }
-                }
-                Err(_) => {}
-            }
-        }
-
-        // 2. Fallback to direct download from slproweb.com
-        info!("OpenSSL winget entries failed. Using direct download from slproweb.com...");
-
-        let urls = [
-            (
-                "Win64 Full EXE",
-                "https://slproweb.com/download/Win64OpenSSL-3_4_5.exe",
-            ),
-            (
-                "Win64 Full MSI",
-                "https://slproweb.com/download/Win64OpenSSL-3_4_5.msi",
-            ),
-            (
-                "Win32 Light MSI",
-                "https://slproweb.com/download/Win32OpenSSL_Light-3_4_5.msi",
-            ),
-            (
-                "Win32 Light EXE",
-                "https://slproweb.com/download/Win32OpenSSL_Light-3_4_5.exe",
-            ),
-        ];
-
-        for (name, url) in urls {
-            info!("Attempting direct download of {}: {}...", name, url);
-            let is_msi = url.ends_with(".msi");
-            let installer_path = std::env::temp_dir().join(if is_msi { "openssl.msi" } else { "openssl.exe" });
-
-            if self
-                .download_with_resume(url, &installer_path)
-                .await
-                .is_ok()
-            {
-                info!("OpenSSL {} downloaded. Running silent setup...", name);
-                let res = if is_msi {
-                    self.exec_with_retry(
-                        "msiexec",
-                        &["/i", &installer_path.to_string_lossy(), "/qn", "/norestart"],
-                        &format!("OpenSSL {} Installation", name),
-                        2,
-                    )
-                    .await
-                } else {
-                    self.exec_with_retry(
-                        &installer_path.to_string_lossy(),
-                        &["/verysilent", "/sp-", "/suppressmsgboxes", "/norestart"],
-                        &format!("OpenSSL {} Installation", name),
-                        2,
-                    )
-                    .await
-                };
-
-                if res.is_ok() {
-                    let _ = std::fs::remove_file(&installer_path);
-                    if self.command_exists_win("openssl").await {
-                        info!("OpenSSL {} installed successfully.", name);
-                        // Validation step
-                        let mut verify_cmd = Command::new("openssl");
-                        verify_cmd.arg("version");
-                        if let Ok(output) = self.executor.execute(verify_cmd).await {
-                            if output.status.success() {
-                                info!(
-                                    "Validated OpenSSL: {}",
-                                    String::from_utf8_lossy(&output.stdout).trim()
-                                );
-                                return Ok(());
-                            }
-                        }
-                    }
-                }
-                let _ = std::fs::remove_file(&installer_path);
-            } else {
-                warn!("Failed to download {} from {}.", name, url);
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "Failed to install OpenSSL via winget or direct download variants. Please install manually from https://slproweb.com/products/Win32OpenSSL.html"
-        ))
-    }
 
     /// Helper to execute a command with a specified number of retries.
     async fn exec_with_retry(
@@ -335,85 +191,7 @@ impl AgentProvisioner {
         }
     }
 
-    #[cfg(target_os = "linux")]
-    async fn provision_linux_openssl(&self) -> anyhow::Result<()> {
-        if self.command_exists("openssl").await {
-            info!("OpenSSL already available on Linux.");
-            return Ok(());
-        }
 
-        warn!("OpenSSL not found. Attempting Linux package installation...");
-        let candidates: &[(&str, &[&str])] = &[
-            ("sudo", &["apt-get", "update"]),
-            (
-                "sudo",
-                &["apt-get", "install", "-y", "openssl", "libssl-dev"],
-            ),
-            (
-                "sudo",
-                &["dnf", "install", "-y", "openssl", "openssl-devel"],
-            ),
-            (
-                "sudo",
-                &["yum", "install", "-y", "openssl", "openssl-devel"],
-            ),
-            (
-                "sudo",
-                &[
-                    "zypper",
-                    "--non-interactive",
-                    "install",
-                    "openssl",
-                    "libopenssl-devel",
-                ],
-            ),
-        ];
-
-        for (bin, args) in candidates {
-            let mut cmd = Command::new(bin);
-            cmd.args(*args);
-            match self.executor.execute(cmd).await {
-                Ok(output) => {
-                    if output.status.success() && self.command_exists("openssl").await {
-                        info!("Installed OpenSSL using: {} {}", bin, args.join(" "));
-                        return Ok(());
-                    }
-                }
-                _ => continue,
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "Failed to install OpenSSL on Linux. Please install 'openssl' manually using your package manager."
-        ))
-    }
-
-    #[cfg(target_os = "macos")]
-    async fn provision_macos_openssl(&self) -> anyhow::Result<()> {
-        if self.command_exists("openssl").await
-            || self
-                .command_exists("/usr/local/opt/openssl/bin/openssl")
-                .await
-        {
-            info!("OpenSSL already available on macOS.");
-            return Ok(());
-        }
-
-        let has_brew = self.command_exists("brew").await;
-        if has_brew {
-            let mut cmd = Command::new("brew");
-            cmd.args(["install", "openssl"]);
-            let output = self.executor.execute(cmd).await?;
-            if output.status.success() {
-                info!("OpenSSL installed via Homebrew.");
-                return Ok(());
-            }
-        }
-
-        Err(anyhow::anyhow!(
-            "Failed to install OpenSSL on macOS. Install via Homebrew (`brew install openssl`) or manually."
-        ))
-    }
 
     pub fn generate_sysmon_xml(&self, rules: &[osoosi_types::BlockingRule]) -> String {
         full_fidelity_sysmon_xml(rules)
@@ -1939,10 +1717,34 @@ impl AgentProvisioner {
         std::fs::create_dir_all(&malconv_dir)?;
 
         // Try to use HF_TOKEN if available, otherwise just use the public URL
-        let url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/malconv.safetensors?download=true";
+        let mut urls = vec![
+            "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/malconv.safetensors?download=true".to_string(),
+            "https://huggingface.co/oyesanyf/OshoosiClaw/resolve/main/models/malware/malconv.safetensors?download=true".to_string(),
+        ];
         
-        // We use download_with_resume which uses the internal executor
-        self.download_with_resume(url, &weight_path).await?;
+        if let Ok(u) = std::env::var("OSOOSI_MALCONV_WEIGHTS_URL") {
+            if !u.trim().is_empty() {
+                urls.insert(0, u.trim().to_string());
+            }
+        }
+
+        let mut success = false;
+        for url in urls {
+            match self.download_with_resume(&url, &weight_path).await {
+                Ok(_) => {
+                    success = true;
+                    info!("Successfully provisioned MalConv weights from {}", url);
+                    break;
+                }
+                Err(e) => {
+                    warn!("Failed to download MalConv weights from {}: {}", url, e);
+                }
+            }
+        }
+
+        if !success {
+            return Err(anyhow::anyhow!("All MalConv weight mirrors failed. ML detection will be degraded."));
+        }
 
         if let Ok(m) = std::fs::metadata(&weight_path) {
             if m.len() < 1024 {
@@ -2022,6 +1824,14 @@ impl AgentProvisioner {
         info!("Extracting Hayabusa...");
         extract_zip(&zip_path, &hayabusa_dir)?;
         let _ = std::fs::remove_file(&zip_path);
+
+        // Ensure rules/config directory exists for library initialization
+        let config_dir = std::path::Path::new("rules").join("config");
+        if let Err(e) = std::fs::create_dir_all(&config_dir) {
+            warn!("Failed to create rules/config directory: {}. Hayabusa may fail to initialize.", e);
+        } else {
+            debug!("Initialized Hayabusa configuration directory at {:?}", config_dir);
+        }
 
         info!("Hayabusa provisioned successfully.");
         Ok(())

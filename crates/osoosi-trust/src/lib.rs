@@ -46,69 +46,46 @@ impl TrustManager {
         &self.did
     }
 
-    /// Set up a local Certificate Authority (CA) using OpenSSL library.
+    /// Set up a local Certificate Authority (CA) using rcgen (pure Rust).
     pub async fn init_ca(&self, path: &str) -> anyhow::Result<()> {
-        use openssl::asn1::Asn1Time;
-        use openssl::hash::MessageDigest;
-        use openssl::pkey::PKey;
-        use openssl::rsa::Rsa;
-        use openssl::x509::{X509NameBuilder, X509};
+        use rcgen::{CertificateParams, KeyPair, DistinguishedName, IsCa};
 
         let path = Path::new(path);
         if !path.exists() {
             fs::create_dir_all(path)?;
         }
 
-        info!("Initializing Osoosi Root CA (library-based)...");
+        info!("Initializing Osoosi Root CA (pure Rust)...");
 
-        // 1. Generate Root Key
-        let rsa = Rsa::generate(4096)?;
-        let priv_key = PKey::from_rsa(rsa)?;
-        fs::write(path.join("rootCA.key"), priv_key.private_key_to_pem_pkcs8()?)?;
+        // 1. Generate Root Key and Params
+        let mut params = CertificateParams::default();
+        params.is_ca = IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+        params.distinguished_name = DistinguishedName::new();
+        params.distinguished_name.push(rcgen::DnType::CountryName, "US");
+        params.distinguished_name.push(rcgen::DnType::StateOrProvinceName, "Cyber");
+        params.distinguished_name.push(rcgen::DnType::LocalityName, "Decentralized");
+        params.distinguished_name.push(rcgen::DnType::OrganizationName, "Osoosi");
+        params.distinguished_name.push(rcgen::DnType::OrganizationalUnitName, "Security");
+        params.distinguished_name.push(rcgen::DnType::CommonName, "OsoosiRootCA");
+        
+        let key_pair = KeyPair::generate()?;
+        fs::write(path.join("rootCA.key"), key_pair.serialize_pem())?;
 
         // 2. Generate Root Certificate
-        let mut x509_name = X509NameBuilder::new()?;
-        x509_name.append_entry_by_text("C", "US")?;
-        x509_name.append_entry_by_text("ST", "Cyber")?;
-        x509_name.append_entry_by_text("L", "Decentralized")?;
-        x509_name.append_entry_by_text("O", "Osoosi")?;
-        x509_name.append_entry_by_text("OU", "Security")?;
-        x509_name.append_entry_by_text("CN", "OsoosiRootCA")?;
-        let x509_name = x509_name.build();
-
-        let mut cert_builder = X509::builder()?;
-        cert_builder.set_version(2)?;
-        let serial_number = openssl::bn::BigNum::from_u32(1)?.to_asn1_integer()?;
-        cert_builder.set_serial_number(&serial_number)?;
-        cert_builder.set_subject_name(&x509_name)?;
-        cert_builder.set_issuer_name(&x509_name)?;
-        cert_builder.set_pubkey(&priv_key)?;
-
-        let not_before = Asn1Time::days_from_now(0)?;
-        cert_builder.set_not_before(&not_before)?;
-        let not_after = Asn1Time::days_from_now(3650)?;
-        cert_builder.set_not_after(&not_after)?;
-
-        cert_builder.sign(&priv_key, MessageDigest::sha256())?;
-        let cert = cert_builder.build();
-
-        fs::write(path.join("rootCA.crt"), cert.to_pem()?)?;
+        let cert = params.self_signed(&key_pair)?;
+        fs::write(path.join("rootCA.crt"), cert.pem())?;
 
         Ok(())
     }
 
-    /// Issue a Service-to-Service (S2S) Certificate for a peer.
+    /// Issue a Service-to-Service (S2S) Certificate for a peer using rcgen.
     pub async fn issue_certificate(
         &self,
         ca_path: &str,
         peer_did: &str,
         output_path: &str,
     ) -> anyhow::Result<()> {
-        use openssl::asn1::Asn1Time;
-        use openssl::hash::MessageDigest;
-        use openssl::pkey::PKey;
-        use openssl::rsa::Rsa;
-        use openssl::x509::{X509NameBuilder, X509Req, X509};
+        use rcgen::{CertificateParams, KeyPair, DistinguishedName, IsCa};
 
         let ca_path = Path::new(ca_path);
         let out_path = Path::new(output_path);
@@ -116,52 +93,33 @@ impl TrustManager {
             fs::create_dir_all(out_path)?;
         }
 
-        info!("Issuing S2S Certificate for node (library-based): {}", peer_did);
+        info!("Issuing S2S Certificate for node (pure Rust): {}", peer_did);
 
         // 1. Load CA
-        let ca_cert_pem = fs::read(ca_path.join("rootCA.crt"))?;
-        let ca_cert = X509::from_pem(&ca_cert_pem)?;
-        let ca_key_pem = fs::read(ca_path.join("rootCA.key"))?;
-        let ca_key = PKey::private_key_from_pem(&ca_key_pem)?;
+        let ca_cert_pem = fs::read_to_string(ca_path.join("rootCA.crt"))?;
+        let ca_key_pem = fs::read_to_string(ca_path.join("rootCA.key"))?;
+        
+        let ca_key_pair = KeyPair::from_pem(&ca_key_pem)?;
+        let ca_cert = CertificateParams::from_ca_cert_pem(&ca_cert_pem)?.self_signed(&ca_key_pair)?;
 
         // 2. Generate Peer Key
-        let rsa = Rsa::generate(2048)?;
-        let peer_key = PKey::from_rsa(rsa)?;
-        fs::write(out_path.join("peer.key"), peer_key.private_key_to_pem_pkcs8()?)?;
+        let peer_key_pair = KeyPair::generate()?;
+        fs::write(out_path.join("peer.key"), peer_key_pair.serialize_pem())?;
 
-        // 3. Generate CSR
-        let mut x509_name = X509NameBuilder::new()?;
-        x509_name.append_entry_by_text("C", "US")?;
-        x509_name.append_entry_by_text("ST", "Cyber")?;
-        x509_name.append_entry_by_text("L", "Node")?;
-        x509_name.append_entry_by_text("O", "Osoosi")?;
-        x509_name.append_entry_by_text("CN", peer_did)?;
-        let x509_name = x509_name.build();
-
-        let mut req_builder = X509Req::builder()?;
-        req_builder.set_subject_name(&x509_name)?;
-        req_builder.set_pubkey(&peer_key)?;
-        req_builder.sign(&peer_key, MessageDigest::sha256())?;
-        let req = req_builder.build();
+        // 3. Generate Peer Certificate Params
+        let mut params = CertificateParams::default();
+        params.distinguished_name = DistinguishedName::new();
+        params.distinguished_name.push(rcgen::DnType::CountryName, "US");
+        params.distinguished_name.push(rcgen::DnType::StateOrProvinceName, "Cyber");
+        params.distinguished_name.push(rcgen::DnType::LocalityName, "Node");
+        params.distinguished_name.push(rcgen::DnType::OrganizationName, "Osoosi");
+        params.distinguished_name.push(rcgen::DnType::CommonName, peer_did);
+        params.is_ca = IsCa::NoCa;
 
         // 4. Sign with CA
-        let mut cert_builder = X509::builder()?;
-        cert_builder.set_version(2)?;
-        let serial_number = openssl::bn::BigNum::from_u32(2)?.to_asn1_integer()?; // Simplified serial
-        cert_builder.set_serial_number(&serial_number)?;
-        cert_builder.set_subject_name(req.subject_name())?;
-        cert_builder.set_issuer_name(ca_cert.subject_name())?;
-        cert_builder.set_pubkey(&peer_key)?;
+        let cert = params.signed_by(&peer_key_pair, &ca_cert, &ca_key_pair)?;
 
-        let not_before = Asn1Time::days_from_now(0)?;
-        cert_builder.set_not_before(&not_before)?;
-        let not_after = Asn1Time::days_from_now(365)?;
-        cert_builder.set_not_after(&not_after)?;
-
-        cert_builder.sign(&ca_key, MessageDigest::sha256())?;
-        let cert = cert_builder.build();
-
-        fs::write(out_path.join("peer.crt"), cert.to_pem()?)?;
+        fs::write(out_path.join("peer.crt"), cert.pem())?;
 
         Ok(())
     }

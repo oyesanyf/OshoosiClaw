@@ -8,16 +8,6 @@
 # Enable AI features (ONNX, SmolLM, Ollama, etc.).
 enabled = true
 
-# Ollama model for autonomous reasoning / threat analysis.
-# Must be pre-pulled via `ollama pull <model>`.
-reasoning_model  = "deepseek-r1:1.5b"
-
-# Maximum seconds an LLM inference call may run before being killed.
-llm_timeout_secs = 90
-
-# Ollama API endpoint (used by the HTTP/chat-completions path).
-reasoning_url    = "http://127.0.0.1:11434/v1/chat/completions"
-
 # Ordered fallback list when the primary model is not available.
 fallback_models  = ["gemma3:1b", "gemma3:4b", "qwen2.5:1.5b", "phi3:mini"]
 

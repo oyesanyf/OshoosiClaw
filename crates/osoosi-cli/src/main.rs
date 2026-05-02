@@ -1022,48 +1022,20 @@ async fn handle_grant_access() -> anyhow::Result<()> {
         }
 
 
-        info!("GrantAccess pre-step: ensuring OpenSSL is provisioned and validated...");
-        if let Err(e) = provisioner.provision_openssl().await {
-            warn!("Warning: Failed to provision OpenSSL: {}", e);
-        } else {
-            // USER REQUEST: Validate it is used to sign stuff
-            info!("Validating OpenSSL signing capabilities...");
-            // Library-based validation
-            use openssl::hash::MessageDigest;
-            use openssl::pkey::PKey;
-            use openssl::rsa::Rsa;
-            use openssl::sign::{Signer, Verifier};
-
-            info!("Validating Oshoosi Cryptographic Engine (OpenSSL Library)...");
+        info!("GrantAccess pre-step: ensuring Cryptographic Engine is validated...");
+        {
+            use ed25519_dalek::{Signer, SigningKey, Verifier};
+            let mut csprng = rand::thread_rng();
+            let signing_key = SigningKey::generate(&mut csprng);
+            let verifying_key = signing_key.verifying_key();
             
-            let res = (|| -> anyhow::Result<()> {
-                let rsa = Rsa::generate(2048)?;
-                let pkey = PKey::from_rsa(rsa)?;
-                
-                let data = b"Oshoosi OpenSSL Library Validation";
-                
-                // Sign
-                let mut signer = Signer::new(MessageDigest::sha256(), &pkey)?;
-                signer.update(data)?;
-                let signature = signer.sign_to_vec()?;
-                
-                // Verify
-                let mut verifier = Verifier::new(MessageDigest::sha256(), &pkey)?;
-                verifier.update(data)?;
-                if !verifier.verify(&signature)? {
-                    return Err(anyhow::anyhow!("OpenSSL library signature verification failed"));
-                }
-                
-                Ok(())
-            })();
-
-            let success = res.is_ok();
-            if success {
-                info!("Oshoosi Cryptographic Engine is operational.");
-                let _ = std::fs::remove_file("test_priv.pem");
-                let _ = std::fs::remove_file("test_pub.pem");
+            let data = b"Oshoosi Pure-Rust Cryptographic Validation";
+            let signature = signing_key.sign(data);
+            
+            if verifying_key.verify(data, &signature).is_ok() {
+                info!("Oshoosi Pure-Rust Cryptographic Engine is operational.");
             } else {
-                error!("Oshoosi Cryptographic Engine failed validation.");
+                error!("Oshoosi Pure-Rust Cryptographic Engine failed validation.");
                 std::process::exit(1);
             }
         }

@@ -104,7 +104,7 @@ impl ThreatModel {
         // as these are likely noise or previous false positives that entered the gossip mesh.
         if let Some(ref p) = sig.process_name {
             let p = p.to_lowercase();
-            if p == "git.exe" || p == "node.exe" || p == "python.exe" || p == "net.exe" || p == "osoosi.exe" {
+            if p == "git.exe" || p == "node.exe" || p == "python.exe" || p == "net.exe" || p == "osoosi.exe" || p == "ollama.exe" || p == "rustc.exe" || p == "link.exe" {
                 return;
             }
         }
