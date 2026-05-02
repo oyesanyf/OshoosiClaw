@@ -839,11 +839,12 @@ impl ThreatVoter for CveLookupVoter {
                 })
             }
             Ok(_) => {
-                // If NO CVE found, we return a "neutral" or slightly negative vote to signify it's "clean" from known CVEs
+                // If NO CVE found, we return a "neutral" vote. We no longer veto,
+                // as missing CVE data is common for benign system processes.
                 Some(VoteResult {
                     confidence: 0.0,
                     reason: format!("NVD: No matching CVEs found for {} v{}", meta.product_name, meta.version),
-                    weight: -0.2, // Small negative weight for unknown-but-clean binaries
+                    weight: 0.0, 
                 })
             }
             Err(e) if e.to_string().contains("Rate limit") => {

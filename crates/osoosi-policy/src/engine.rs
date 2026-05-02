@@ -10,7 +10,7 @@ use osoosi_types::{SysmonEvent, ThreatSignature};
 use osoosi_memory::MemoryStore;
 use std::sync::Arc;
 use std::sync::RwLock;
-use tracing::{debug, info, warn};
+use tracing::{debug, info};
 
 /// `tracing` target for grep-friendly consensus / voting lines (`RUST_LOG=consensus=debug`).
 pub const CONSENSUS_LOG_TARGET: &str = "consensus";
@@ -480,7 +480,7 @@ impl PolicyEngine {
         for (vname, res_opt) in results {
             if let Some(res) = res_opt {
                 if res.weight < 0.0 {
-                    warn!(
+                    debug!(
                         target: CONSENSUS_LOG_TARGET,
                         voter = %vname,
                         reason = %res.reason,
