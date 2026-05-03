@@ -537,10 +537,10 @@ rule VM_Generic_Detection : AntiVM
     meta:
         description = "Tries to detect virtualized environments"
     strings:
-        $a0 = "HARDWARE\\DEVICEMAP\\Scsi\\Scsi Port 0\\Scsi Bus 0\\\\\\Target Id 0\\\\\\Logical Unit Id 0" nocase wide ascii
+        $a0 = "HARDWARE\\DEVICEMAP\\Scsi\\Scsi Port 0\\Scsi Bus 0\\\\\\\\\\\Target Id 0\\\\\\\\\\\Logical Unit Id 0" nocase wide ascii
         $a1 = "HARDWARE\\Description\\System" nocase wide ascii
-        $a2 = "SYSTEM\\\\\\CurrentControlSet\\\\\\Control\\SystemInformation" nocase wide ascii
-        $a3 = "SYSTEM\\\\\\CurrentControlSet\\\\\\Enum\\\\\\IDE" nocase wide ascii
+        $a2 = "SYSTEM\\\\\\\\\\\CurrentControlSet\\\\\\\\\\\Control\\SystemInformation" nocase wide ascii
+        $a3 = "SYSTEM\\\\\\\\\\\CurrentControlSet\\\\\\\\\\\Enum\\\\\\\\\\\IDE" nocase wide ascii
         $redpill = { 0F 01 0D 00 00 00 00 C3 } // Copied from the Cuckoo project
         
         // CLSIDs used to detect if speakers are present. Hoping this will not cause false positives.
@@ -665,11 +665,11 @@ rule VirtualBox_Detection : AntiVM
         $virtualbox_vid_1 = "VEN_80EE" nocase wide ascii
         
         // Registry keys
-        $virtualbox_reg_1 = "SOFTWARE\\\\\\Oracle\\\\\\VirtualBox Guest Additions" nocase wide ascii
-        $virtualbox_reg_2 = /HARDWARE\\\\\\ACPI\\(DSDT|FADT|RSDT)\\\\\\VBOX__\/ nocas\/ wid\/ asci\//        
+        $virtualbox_reg_1 = "SOFTWARE\\\\\\\\\\\Oracle\\\\\\\\\\\VirtualBox Guest Additions" nocase wide ascii
+        $virtualbox_reg_2 = /HARDWARE\\\\\\\\\\\ACPI\\(DSDT|FADT|RSDT)\\\\\\\\\\\VBOX__\/ nocas\/ wid\/ asci\//        
         // Other
-        $virtualbox_files = /C:\\Windows\\System32\\drivers\\\\\\vbox.{15}\.(sys|dll)\/ nocas\/ wid\/ asci\//        $virtualbox_services = "System\\\\\\ControlSet001\\Services\\\\\\VBox[A-Za-z]+" nocase wide ascii
-        $virtualbox_pipe = /\\\\.\\\\\\pipe\\(VBoxTrayIPC|VBoxMiniRdDN)\/ nocas\/ wid\/ asci\//        $virtualbox_window = /VBoxTrayToolWnd(Class)?\/ nocas\/ wid\/ asci\//    condition:
+        $virtualbox_files = /C:\\Windows\\System32\\drivers\\\\\\\\\\\vbox.{15}\.(sys|dll)\/ nocas\/ wid\/ asci\//        $virtualbox_services = "System\\\\\\\\\\\ControlSet001\\Services\\\\\\\\\\\VBox[A-Za-z]+" nocase wide ascii
+        $virtualbox_pipe = /\\\\.\\\\\\\\\\\pipe\\(VBoxTrayIPC|VBoxMiniRdDN)\/ nocas\/ wid\/ asci\//        $virtualbox_window = /VBoxTrayToolWnd(Class)?\/ nocas\/ wid\/ asci\//    condition:
         any of them
 }
 
@@ -704,7 +704,7 @@ rule Dropper_Strings
         description = "May have dropper capabilities"
         author = "Ivan Kwiatkowski (@JusticeRage)"
     strings:
-        $a0 = "CurrentVersion\\\\\\Run" nocase wide ascii
+        $a0 = "CurrentVersion\\\\\\\\\\\Run" nocase wide ascii
         $a1 = "CurrentControlSet\\Services" nocase wide ascii
         $a2 = "Programs\\Startup" nocase wide ascii
         $a3 = "%temp%" nocase wide ascii
@@ -1281,7 +1281,7 @@ rule Misc_Suspicious_Strings
         $a3 = "exploit" nocase ascii wide
         $a4 = "cmd.exe" nocase ascii wide
         $a5 = "CWSandbox" nocase wide ascii // Found in some Zeus/Citadel samples
-        $a6 = "System32\\\\drivers\\\\\\\\\etc\\\\\\\\\hosts" nocase wide ascii
+        $a6 = "System32\\\\drivers\\\\\\\\\\\\\\\\\\\etc\\\\\\\\\\\\\\\\\\\hosts" nocase wide ascii
     condition:
         any of them
 }

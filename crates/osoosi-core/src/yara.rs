@@ -13,6 +13,9 @@ pub fn load_rules() -> yara_x::Rules {
         return compiler.build();
     }
 
+    // Add the base directory to the include search path to resolve relative includes
+    compiler.add_include_dir(path);
+
     let mut count = 0;
     if let Ok(entries) = std::fs::read_dir(path) {
         for entry in entries.flatten() {
@@ -34,7 +37,8 @@ pub fn load_rules() -> yara_x::Rules {
     // Also load generated rules
     let gen_dir = path.join("osoosi_generated");
     if gen_dir.exists() {
-        if let Ok(entries) = std::fs::read_dir(gen_dir) {
+        compiler.add_include_dir(&gen_dir);
+        if let Ok(entries) = std::fs::read_dir(&gen_dir) {
             for entry in entries.flatten() {
                  let entry_path = entry.path();
                  if let Ok(content) = std::fs::read_to_string(&entry_path) {

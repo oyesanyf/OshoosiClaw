@@ -19995,7 +19995,7 @@ rule obsidium : Packer
 		description="Obsidium"
 
 	strings:
-		$str1={EB 02 [2] E8 25 00 00 00 EB 04 [4] EB 01 ?? 8B 54 24 0C EB 01 ?? 83 82 B8 00 00 00 23 EB 01 ?? 33 C0 EB 02 [2] C3 EB 02 [2] EB 04} /*EntryPoint*\//	condition:
+		$str1={EB 02 [2] E8 25 00 00 00 EB 04 [4] EB 01 ?? 8B 54 24 0C EB 01 ?? 83 82 B8 00 00 00 23 EB 01 ?? 33 C0 EB 02 [2] C3 EB 02 [2] EB 04} /*EntryPoint*/	condition:
 		$str1 at pe.entry_point
 }
 
@@ -20007,7 +20007,7 @@ rule pecompact2 : Packer
 		description="PECompact"
 
 	strings:
-		$str1={B8 [3] 00 50 64 FF 35 00 00 00 00 64 89 25 00 00 00 00 33 C0 89 08 50 45 43} /*EntryPoint*\//	condition:
+		$str1={B8 [3] 00 50 64 FF 35 00 00 00 00 64 89 25 00 00 00 00 33 C0 89 08 50 45 43} /*EntryPoint*/	condition:
 		$str1 at pe.entry_point
 }
 
@@ -20019,7 +20019,7 @@ rule aspack : Packer
 		description="ASPack"
 
 	strings:
-		$str1={60 E8 00 00 00 00 5D 81 ED 5D 3B 40 00 64 A1 30 00 00 00 0F B6 40 02 0A C0 74 04 33 C0 87 00 B9 [2] 00 00 8D BD B7 3B 40 00 8B F7 AC} /*EntryPoint*\//	condition:
+		$str1={60 E8 00 00 00 00 5D 81 ED 5D 3B 40 00 64 A1 30 00 00 00 0F B6 40 02 0A C0 74 04 33 C0 87 00 B9 [2] 00 00 8D BD B7 3B 40 00 8B F7 AC} /*EntryPoint*/	condition:
 		$str1 at pe.entry_point
 }
 
@@ -20031,7 +20031,7 @@ rule execryptor : Protector
 		description="EXECryptor"
 
 	strings:
-		$str1={E8 24 00 00 00 8B 4C 24 0C C7 01 17 00 01 00 C7 81 B8 00 00 00 00 00 00 00 31 C0 89 41 14 89 41 18 80 A1 C1 00 00 00 FE C3 31 C0 64 FF 30 64 89 20 64 8F 05 00 00 00 00} /*EntryPoint*\//	condition:
+		$str1={E8 24 00 00 00 8B 4C 24 0C C7 01 17 00 01 00 C7 81 B8 00 00 00 00 00 00 00 31 C0 89 41 14 89 41 18 80 A1 C1 00 00 00 FE C3 31 C0 64 FF 30 64 89 20 64 8F 05 00 00 00 00} /*EntryPoint*/	condition:
 		$str1 at pe.entry_point
 }
 

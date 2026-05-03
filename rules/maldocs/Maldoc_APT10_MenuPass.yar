@@ -6,7 +6,7 @@
    Reference: https://www.us-cert.gov/ncas/alerts/TA17-117A
 */
 
-/* Rule Set ----------------------------------------------------------------- *\//
+/* Rule Set ----------------------------------------------------------------- */
 import "hash"
 
 rule Maldoc_APT10_MenuPass {

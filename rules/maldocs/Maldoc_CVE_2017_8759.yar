@@ -17,7 +17,7 @@ private rule RTFFILE {
       uint32be(0) == 0x7B5C7274
 }
 
-/* Rule Set ----------------------------------------------------------------- *\//
+/* Rule Set ----------------------------------------------------------------- */
 rule CVE_2017_8759_Mal_HTA {
    meta:
       description = "Detects malicious files related to CVE-2017-8759 - file cmd.hta"
