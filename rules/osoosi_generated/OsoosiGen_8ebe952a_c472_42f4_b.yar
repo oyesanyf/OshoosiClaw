@@ -1,0 +1,11 @@
+rule OsoosiGen_8ebe952a_c472_42f4_b
+{
+    meta:
+        description = "Auto-generated from OpenỌ̀ṣọ́ọ̀sì detection"
+        confidence = 0.9840456 source_node = "DESKTOP-4MJ7SCN"
+    strings:
+        $proc = "ollama.exe" ascii wide
+
+    condition:
+        $proc
+}

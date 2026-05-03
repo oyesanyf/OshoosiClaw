@@ -57,54 +57,58 @@ impl MemoryScanner {
         if handle.is_null() {
             return Err(anyhow::anyhow!("Failed to open process {}", pid));
         }
+        let handle_val = handle as usize;
 
-        let mut base_addr = 0 as *mut _;
+        let mut base_addr_val = 0usize;
         loop {
-            let mut mem_info: winapi::um::winnt::MEMORY_BASIC_INFORMATION =
-                unsafe { std::mem::zeroed() };
-            let res = unsafe {
-                VirtualQueryEx(
-                    handle,
-                    base_addr,
-                    &mut mem_info,
-                    std::mem::size_of::<winapi::um::winnt::MEMORY_BASIC_INFORMATION>(),
-                )
+            let (is_commited, base_address, region_size) = {
+                let mut mem_info: winapi::um::winnt::MEMORY_BASIC_INFORMATION =
+                    unsafe { std::mem::zeroed() };
+                let res = unsafe {
+                    VirtualQueryEx(
+                        handle_val as *mut _,
+                        base_addr_val as *mut _,
+                        &mut mem_info,
+                        std::mem::size_of::<winapi::um::winnt::MEMORY_BASIC_INFORMATION>(),
+                    )
+                };
+                if res == 0 {
+                    break;
+                }
+                
+                let is_commited = mem_info.State == MEM_COMMIT
+                    && (mem_info.Protect & PAGE_NOACCESS) == 0
+                    && (mem_info.Protect & PAGE_GUARD) == 0;
+                    
+                (is_commited, mem_info.BaseAddress as usize, mem_info.RegionSize as usize)
             };
-            if res == 0 {
-                break;
-            }
 
-            // Only scan committed memory that is not protected
-            if mem_info.State == MEM_COMMIT
-                && (mem_info.Protect & PAGE_NOACCESS) == 0
-                && (mem_info.Protect & PAGE_GUARD) == 0
-            {
-                let mut buffer = vec![0u8; mem_info.RegionSize];
+            if is_commited {
+                let mut buffer = vec![0u8; region_size];
                 let mut bytes_read = 0;
                 unsafe {
                     winapi::um::memoryapi::ReadProcessMemory(
-                        handle,
-                        mem_info.BaseAddress,
+                        handle_val as *mut _,
+                        base_address as *mut _,
                         buffer.as_mut_ptr() as *mut _,
-                        mem_info.RegionSize,
+                        region_size,
                         &mut bytes_read,
                     );
                 }
                 if bytes_read > 0 {
                     if let Some(detection) = self.scan_buffer(&buffer[..bytes_read]).await {
                         results.push(format!(
-                            "Detection at {:p}: {}",
-                            mem_info.BaseAddress, detection
+                            "Detection at {:#x}: {}",
+                            base_address, detection
                         ));
                     }
                 }
             }
 
-            base_addr =
-                unsafe { (mem_info.BaseAddress as *mut u8).add(mem_info.RegionSize) as *mut _ };
+            base_addr_val = base_address + region_size;
         }
 
-        unsafe { CloseHandle(handle) };
+        unsafe { CloseHandle(handle_val as *mut _) };
         Ok(results)
     }
 

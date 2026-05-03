@@ -2597,6 +2597,31 @@ impl EdrOrchestrator {
 
         let mut signature: Option<osoosi_types::ThreatSignature> = correlated_sig;
 
+        // PII Scanning for File creations
+        if event.event_id == osoosi_types::SysmonEventId::FileCreate {
+            if let Some(target_filename) = event.data.get("TargetFilename").and_then(|v| v.as_str()) {
+                if self.pii_classifier.is_scannable(target_filename) {
+                    let pii_classifier = self.pii_classifier.clone();
+                    let file_path = target_filename.to_string();
+                    let computer = event.computer.clone();
+                    let mesh_tx_inner = self.mesh_command_tx.clone();
+                    self.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
+                        if let Ok(results) = pii_classifier.analyze_file(&file_path).await {
+                            if !results.is_empty() {
+                                tracing::warn!("PII Alert: Found {} sensitive entities in {}", results.len(), file_path);
+                                let mut sig = osoosi_types::ThreatSignature::new(computer);
+                                sig.confidence = 0.6;
+                                sig.add_reason(format!("PII Classifier found {} sensitive entities in file creation", results.len()));
+                                if let Some(ref tx) = *mesh_tx_inner.lock().await {
+                                    let _ = tx.send(osoosi_wire::MeshCommand::Broadcast(sig)).await;
+                                }
+                            }
+                        }
+                    });
+                }
+            }
+        }
+
         // 0. Bloom Filter "Known Malicious" Fast-Path:
         // Immediately flag hashes we've already identified as malicious across the mesh.
         if let Some(hashes) = event.data.get("Hashes").and_then(|h| h.as_str()) {
@@ -2906,128 +2931,59 @@ impl EdrOrchestrator {
             };
 
             if should_memory_scan {
-                let hh_path =
-                    osoosi_types::resolve_tool_path("hollows_hunter", "hollows_hunter.exe");
-                if hh_path.exists() {
-                    // Get the target PID for focused scanning
-                    let target_pid = event
-                        .data
-                        .get("TargetProcessId")
-                        .or_else(|| event.data.get("SourceProcessId"))
-                        .and_then(|v| v.as_str())
-                        .or_else(|| event.data.get("ProcessId").and_then(|v| v.as_str()));
+                // Get the target PID for focused scanning
+                let target_pid = event
+                    .data
+                    .get("TargetProcessId")
+                    .or_else(|| event.data.get("SourceProcessId"))
+                    .and_then(|v| v.as_str())
+                    .or_else(|| event.data.get("ProcessId").and_then(|v| v.as_str()));
 
-                    if let Some(pid) = target_pid {
+                if let Some(pid_str) = target_pid {
+                    if let Ok(pid) = pid_str.parse::<u32>() {
                         warn!(
-                            "MEMORY FORENSICS: Sysmon {:?} triggered HollowsHunter scan on PID {}",
+                            "MEMORY FORENSICS: Sysmon {:?} triggered native memory scan on PID {}",
                             event.event_id, pid
                         );
 
-                        let hh_path_clone = hh_path.clone();
-                        let pid_str = pid.to_string();
-                        let pid_display = pid_str.clone();
                         let computer = event.computer.clone();
+                        let target_image = event
+                            .data
+                            .get("TargetImage")
+                            .or_else(|| event.data.get("SourceImage"))
+                            .and_then(|v| v.as_str())
+                            .and_then(|p| std::path::Path::new(p).file_name())
+                            .and_then(|n| n.to_str())
+                            .map(String::from);
 
-                        // Run HollowsHunter in a blocking task to avoid blocking the async loop
-                        let hh_result = tokio::task::spawn_blocking(move || {
-                            std::process::Command::new(&hh_path_clone)
-                                .args(["/pid", &pid_str, "/json", "/quiet", "/shellc", "/iat"])
-                                .output()
-                        })
-                        .await;
+                        // Run Native Rust MemoryScanner
+                        let scanner = osoosi_memory::memory_scanner::MemoryScanner::new();
+                        match scanner.scan_process_memory(pid).await {
+                            Ok(results) => {
+                                if !results.is_empty() {
+                                    warn!("MEMORY FORENSICS ALERT: Native memory scanner found {} suspicious implants in PID {}",
+                                        results.len(), pid);
 
-                        match hh_result {
-                            Ok(Ok(output)) if output.status.success() => {
-                                let stdout = String::from_utf8_lossy(&output.stdout);
-                                // Parse HollowsHunter JSON output
-                                if let Ok(hh_json) =
-                                    serde_json::from_str::<serde_json::Value>(&stdout)
-                                {
-                                    let total_suspicious = hh_json
-                                        .get("summary")
-                                        .and_then(|s| s.get("replaced"))
-                                        .and_then(|v| v.as_u64())
-                                        .unwrap_or(0)
-                                        + hh_json
-                                            .get("summary")
-                                            .and_then(|s| s.get("implanted"))
-                                            .and_then(|v| v.as_u64())
-                                            .unwrap_or(0)
-                                        + hh_json
-                                            .get("summary")
-                                            .and_then(|s| s.get("hooks"))
-                                            .and_then(|v| v.as_u64())
-                                            .unwrap_or(0);
+                                    let mut mem_sig = osoosi_types::ThreatSignature::new(computer);
+                                    mem_sig.confidence = 0.95;
+                                    mem_sig.process_name = target_image;
+                                    mem_sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                                    mem_sig.add_reason(format!(
+                                        "Native Memory Scanner: {} in-memory implants detected",
+                                        results.len()
+                                    ));
 
-                                    if total_suspicious > 0 {
-                                        warn!("MEMORY FORENSICS ALERT: HollowsHunter found {} suspicious implants in PID {}",
-                                            total_suspicious, pid_display);
-
-                                        let mut mem_sig =
-                                            osoosi_types::ThreatSignature::new(computer);
-                                        mem_sig.confidence = 0.95;
-                                        mem_sig.process_name = event
-                                            .data
-                                            .get("TargetImage")
-                                            .or_else(|| event.data.get("SourceImage"))
-                                            .and_then(|v| v.as_str())
-                                            .and_then(|p| std::path::Path::new(p).file_name())
-                                            .and_then(|n| n.to_str())
-                                            .map(String::from);
-                                        mem_sig.recommended_action =
-                                            osoosi_types::ResponseAction::Isolate;
-                                        mem_sig.add_reason(format!(
-                                            "HollowsHunter: {} in-memory implants detected (replaced/injected PEs, shellcode, hooks)",
-                                            total_suspicious
-                                        ));
-
-                                        // Extract specific findings
-                                        if let Some(scanned) =
-                                            hh_json.get("scanned").and_then(|s| s.as_array())
-                                        {
-                                            for proc_info in scanned.iter().take(5) {
-                                                if let Some(name) =
-                                                    proc_info.get("name").and_then(|v| v.as_str())
-                                                {
-                                                    let replaced = proc_info
-                                                        .get("replaced")
-                                                        .and_then(|v| v.as_u64())
-                                                        .unwrap_or(0);
-                                                    let implanted = proc_info
-                                                        .get("implanted")
-                                                        .and_then(|v| v.as_u64())
-                                                        .unwrap_or(0);
-                                                    if replaced > 0 || implanted > 0 {
-                                                        mem_sig.add_reason(format!(
-                                                            "Process '{}': {} replaced modules, {} implanted",
-                                                            name, replaced, implanted
-                                                        ));
-                                                    }
-                                                }
-                                            }
-                                        }
-
-                                        // Override any existing signature with memory forensics finding
-                                        signature = Some(mem_sig);
-                                    } else {
-                                        debug!("HollowsHunter: PID {} clean — no in-memory implants found.", pid_display);
+                                    for res in results.iter().take(5) {
+                                        mem_sig.add_reason(format!("Detail: {}", res));
                                     }
+
+                                    signature = Some(mem_sig);
+                                } else {
+                                    debug!("Memory Scanner: PID {} clean — no in-memory implants found.", pid);
                                 }
                             }
-                            Ok(Ok(output)) => {
-                                debug!(
-                                    "HollowsHunter exited with status {} for PID {}",
-                                    output.status, pid_display
-                                );
-                            }
-                            Ok(Err(e)) => {
-                                debug!(
-                                    "HollowsHunter execution failed for PID {}: {}",
-                                    pid_display, e
-                                );
-                            }
                             Err(e) => {
-                                debug!("HollowsHunter task join failed: {}", e);
+                                debug!("Memory Scanner execution failed for PID {}: {}", pid, e);
                             }
                         }
                     }
@@ -4714,65 +4670,30 @@ impl EdrOrchestrator {
         Ok(())
     }
 
-    /// Perform a deep memory scan using HollowsHunter (Windows only).
+    /// Perform a deep memory scan using native MemoryScanner (Windows only).
     #[cfg(target_os = "windows")]
     pub async fn run_hollows_hunter_for_pid(&self, pid: u32) -> anyhow::Result<osoosi_types::HollowsHunterResult> {
-        let tools_dir = osoosi_types::resolve_tools_dir();
-        let hh_exe = tools_dir.join("hollows_hunter").join("hollows_hunter.exe");
-
-        if !hh_exe.exists() {
-            return Err(anyhow::anyhow!("HollowsHunter not found at {:?}", hh_exe));
-        }
-
-        let scan_dir = std::env::current_dir()?
-            .join("logs")
-            .join("memory_scans")
-            .join(format!("pid_{}", pid));
-        let _ = std::fs::create_dir_all(&scan_dir);
-
-        info!("Starting memory scan for PID {} into {:?}", pid, scan_dir);
-
-        let output = std::process::Command::new(hh_exe)
-            .args([
-                "/pid",
-                &pid.to_string(),
-                "/dir",
-                &scan_dir.to_string_lossy(),
-                "/json",
-                "/quiet",
-                "/shellc",
-                "/iat",
-            ])
-            .output()?;
-
+        info!("Starting native memory scan for PID {}", pid);
+        
+        let scanner = osoosi_memory::memory_scanner::MemoryScanner::new();
         let mut res = osoosi_types::HollowsHunterResult {
             pid,
-            success: output.status.success(),
+            success: false,
             ..Default::default()
         };
 
-        if output.status.success() {
-            let stdout = String::from_utf8_lossy(&output.stdout);
-            if let Ok(hh_json) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                let replaced = hh_json.get("summary").and_then(|s| s.get("replaced")).and_then(|v| v.as_u64()).unwrap_or(0);
-                let implanted = hh_json.get("summary").and_then(|s| s.get("implanted")).and_then(|v| v.as_u64()).unwrap_or(0);
-                let hooks = hh_json.get("summary").and_then(|s| s.get("hooks")).and_then(|v| v.as_u64()).unwrap_or(0);
-                
-                res.replaced_modules = replaced;
-                res.implants_detected = implanted;
-                res.hooks_detected = hooks;
-
-                if let Some(scanned) = hh_json.get("scanned").and_then(|s| s.as_array()) {
-                    for proc_info in scanned.iter().take(10) {
-                        if let Some(name) = proc_info.get("name").and_then(|v| v.as_str()) {
-                            let r = proc_info.get("replaced").and_then(|v| v.as_u64()).unwrap_or(0);
-                            let i = proc_info.get("implanted").and_then(|v| v.as_u64()).unwrap_or(0);
-                            if r > 0 || i > 0 {
-                                res.details.push(format!("{}: {} replaced, {} implanted", name, r, i));
-                            }
-                        }
+        match scanner.scan_process_memory(pid).await {
+            Ok(results) => {
+                res.success = true;
+                if !results.is_empty() {
+                    res.implants_detected = results.len() as u64;
+                    for r in results.into_iter().take(10) {
+                        res.details.push(r);
                     }
                 }
+            }
+            Err(e) => {
+                warn!("Native memory scan failed for PID {}: {}", pid, e);
             }
         }
 
@@ -4780,7 +4701,6 @@ impl EdrOrchestrator {
             "MEMORY_SCAN",
             serde_json::json!({
                 "pid": pid,
-                "scan_dir": scan_dir,
                 "success": res.success,
                 "implants": res.implants_detected
             }),
