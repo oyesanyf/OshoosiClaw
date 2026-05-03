@@ -4,7 +4,7 @@ use osoosi_types::ThreatSignature;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use tracing::{info, warn};
+use tracing::{info, debug};
 
 /// Configuration for model storage and training.
 #[derive(Debug, Clone)]
@@ -50,29 +50,51 @@ pub struct ThreatModel {
 
 impl ThreatModel {
     pub fn new(config: ModelConfig) -> Self {
-        let weights = Self::load_weights(&config).unwrap_or_default();
-        Self { config, weights }
+        let mut model = Self { 
+            config, 
+            weights: ModelWeights::default() 
+        };
+        let _ = model.load();
+        model
+    }
+
+    /// Load and merge all available threat intelligence models.
+    pub fn load(&mut self) -> anyhow::Result<()> {
+        // 1. Load manual threat model
+        let manual_path = Path::new(&self.config.models_dir).join("threat_model.json");
+        if manual_path.exists() {
+            if let Ok(data) = std::fs::read_to_string(&manual_path) {
+                if let Ok(w) = serde_json::from_str::<ModelWeights>(&data) {
+                    self.weights = w;
+                    debug!("Loaded manual threat model weights.");
+                }
+            }
+        }
+
+        // 2. Load and merge bulk threat model (The 100k Brain)
+        let bulk_path = Path::new(&self.config.models_dir).join("bulk_threat_model.json");
+        if bulk_path.exists() {
+            if let Ok(data) = std::fs::read_to_string(&bulk_path) {
+                if let Ok(bulk_w) = serde_json::from_str::<ModelWeights>(&data) {
+                    debug!("Integrating {} bulk-trained CVE features into threat model.", bulk_w.features.len());
+                    for (feat, &weight) in &bulk_w.features {
+                        // Merge logic: Average or Insert
+                        // Merge logic: Weighted Blend if exists, otherwise Insert
+                        let entry = self.weights.features.entry(feat.clone()).or_insert(weight);
+                        if *entry != weight {
+                            *entry = (*entry + weight) / 2.0;
+                        }
+                    }
+                    self.weights.sample_count += bulk_w.sample_count;
+                }
+            }
+        }
+
+        Ok(())
     }
 
     fn model_path(&self) -> std::path::PathBuf {
         Path::new(&self.config.models_dir).join(&self.config.model_file)
-    }
-
-    /// Load weights from models/ folder.
-    fn load_weights(config: &ModelConfig) -> anyhow::Result<ModelWeights> {
-        let path = Path::new(&config.models_dir).join(&config.model_file);
-        if path.exists() {
-            let data = std::fs::read_to_string(&path)?;
-            let w: ModelWeights = serde_json::from_str(&data)?;
-            info!(
-                "Loaded threat model from {} ({} features)",
-                path.display(),
-                w.features.len()
-            );
-            Ok(w)
-        } else {
-            Err(anyhow::anyhow!("Model file not found"))
-        }
     }
 
     /// Save weights to models/ folder.
@@ -98,66 +120,25 @@ impl ThreatModel {
         f
     }
 
-    /// Add a threat signature to training data and optionally retrain.
-    pub fn add_training_sample(&mut self, sig: &ThreatSignature) {
-        // Avoid model poisoning: don't learn from detections of trusted operational tools (git, node, etc.)
-        // as these are likely noise or previous false positives that entered the gossip mesh.
-        if let Some(ref p) = sig.process_name {
-            let p = p.to_lowercase();
-            if p == "git.exe" || p == "node.exe" || p == "python.exe" || p == "net.exe" || p == "osoosi.exe" || p == "ollama.exe" || p == "rustc.exe" || p == "link.exe" {
-                return;
-            }
-        }
-
-        let features = Self::features_from_signature(sig);
-        for feat in &features {
-            *self.weights.features.entry(feat.clone()).or_insert(0.0) += sig.confidence;
-        }
-        self.weights.sample_count += 1;
-    }
-
-    /// Train from a batch of threat signatures (self + peer data).
-    pub fn train(&mut self, samples: &[ThreatSignature]) -> anyhow::Result<()> {
+    /// Train model on provided labeled samples.
+    pub fn train(&mut self, samples: Vec<ThreatSignature>) -> anyhow::Result<()> {
         if samples.len() < self.config.min_samples {
-            warn!(
-                "Not enough samples to train ({} < {}). For development, lower the threshold with OSOOSI_MODEL_MIN_SAMPLES.",
-                samples.len(),
-                self.config.min_samples
-            );
             return Ok(());
         }
-
-        let mut feature_counts: HashMap<String, f32> = HashMap::new();
-        for sig in samples {
+        for sig in &samples {
             let features = Self::features_from_signature(sig);
             for feat in features {
-                *feature_counts.entry(feat).or_insert(0.0) += sig.confidence;
+                let entry = self.weights.features.entry(feat).or_insert(0.0);
+                // Simple online learning: increase weight for confirmed threats
+                if sig.confidence > 0.7 {
+                    *entry = (*entry + sig.confidence) / 2.0;
+                }
             }
         }
-
-        // Normalize: weight = count / total
-        let total: f32 = feature_counts.values().sum();
-        if total > 0.0 {
-            for (_k, v) in feature_counts.iter_mut() {
-                *v /= total;
-            }
-        }
-
-        // Apply Differential Privacy if configured
-        if let Some(ref dp_conf) = self.config.dp_config {
-            let dp = osoosi_dp::DifferentialPrivacy::new(dp_conf.clone());
-            dp.privatize_weights(&mut feature_counts);
-            info!(
-                "Applied Differential Privacy (epsilon={}) to model weights",
-                dp_conf.epsilon
-            );
-        }
-
-        self.weights.features = feature_counts;
         self.weights.sample_count = samples.len();
         self.weights.trained_at = Some(chrono::Utc::now().to_rfc3339());
         self.save()?;
-        info!(
+        debug!(
             "Trained model on {} samples, {} features",
             samples.len(),
             self.weights.features.len()
@@ -165,13 +146,54 @@ impl ThreatModel {
         Ok(())
     }
 
-    /// Infer threat score for given features (process_name, cve_id, etc).
-    pub fn infer(&self, process_name: Option<&str>, cve_id: Option<&str>) -> f32 {
-        let mut score = 0.0f32;
-        if let Some(p) = process_name {
-            let key = format!("proc:{}", p.to_lowercase());
-            score += self.weights.features.get(&key).copied().unwrap_or(0.0);
+    /// Add a single training sample (online learning).
+    pub fn add_training_sample(&mut self, sig: &ThreatSignature) {
+        let features = Self::features_from_signature(sig);
+        for feat in features {
+            let entry = self.weights.features.entry(feat).or_insert(0.0);
+            if sig.confidence > 0.7 {
+                // Online learning update rule
+                *entry = (*entry + sig.confidence) / 2.0;
+            }
         }
+        self.weights.sample_count += 1;
+    }
+
+    /// Infer threat score for given features (process_name, cve_id, version, parent_process, etc).
+    pub fn infer(&self, process_name: Option<&str>, cve_id: Option<&str>, version: Option<&str>, parent_process: Option<&str>) -> f32 {
+        let mut score = 0.0f32;
+
+        // 0. Baseline Awareness: If it's a known system binary, start with a tiny non-zero score 
+        // to show it was successfully audited as "Low Risk" rather than "Unknown".
+        if let Some(p) = process_name {
+            let p_low = p.to_lowercase();
+            if p_low == "cmd.exe" || p_low == "powershell.exe" || p_low == "svchost.exe" || p_low == "explorer.exe" || p_low == "lsass.exe" {
+                score = 0.01;
+            }
+        }
+
+        if let Some(p) = process_name {
+            let p_low = p.to_lowercase();
+            
+            // 1. Version-Specific Risk
+            if let Some(v) = version {
+                let ver_key = format!("ver:{}:{}", p_low, v.to_lowercase());
+                if let Some(&ver_score) = self.weights.features.get(&ver_key) {
+                    score += ver_score;
+                }
+            }
+
+            // 2. General Process-Level Risk
+            let proc_key = format!("proc:{}", p_low);
+            score += self.weights.features.get(&proc_key).copied().unwrap_or(0.0);
+        }
+
+        // 3. Parent Process Risk
+        if let Some(parent) = parent_process {
+            let parent_key = format!("parent:{}", parent.to_lowercase());
+            score += self.weights.features.get(&parent_key).copied().unwrap_or(0.0);
+        }
+
         if let Some(c) = cve_id {
             let key = format!("cve:{}", c.to_lowercase());
             score += self.weights.features.get(&key).copied().unwrap_or(0.0);
@@ -186,25 +208,30 @@ impl ThreatModel {
 
     /// Reload model from disk.
     pub fn reload(&mut self) -> anyhow::Result<()> {
-        self.weights = Self::load_weights(&self.config)?;
-        Ok(())
+        self.load()
     }
 
     /// Federated Learning: Merge a delta from a peer node.
     pub fn merge_delta(&mut self, delta: &osoosi_types::FederatedModelDelta) {
-        info!(
+        debug!(
             "Merging federated model delta from Node {} ({} features)",
             delta.source_node,
             delta.features.len()
         );
-
-        for (feat, weight) in &delta.features {
+        for (feat, &weight) in &delta.features {
             let entry = self.weights.features.entry(feat.clone()).or_insert(0.0);
-            // Average the weights (simplistic Federated Averaging)
-            *entry = (*entry + *weight) / 2.0;
+            // Influence blending: Give peer data significant weight
+            *entry = (*entry + weight) / 2.0;
         }
+    }
 
-        self.weights.sample_count += 1;
-        let _ = self.save();
+    /// Generate a delta of the current model for broadcast.
+    pub fn delta(&self, node_id: &str) -> osoosi_types::FederatedModelDelta {
+        osoosi_types::FederatedModelDelta {
+            source_node: node_id.to_string(),
+            features: self.weights.features.clone(),
+            epsilon: self.config.dp_config.as_ref().map(|c| c.epsilon).unwrap_or(0.0),
+            timestamp: chrono::Utc::now(),
+        }
     }
 }

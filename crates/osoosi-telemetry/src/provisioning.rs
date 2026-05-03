@@ -9,7 +9,7 @@ use osoosi_types::{extract_zip, SecuredExecutor};
 use std::path::Path;
 use std::process::Command;
 use std::sync::Arc;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// Opt-in: download MalConv / SmolLM2 from `oyesanyf/OshoosiClaw-Weights` during provisioning. Default **off** — that bundle often 404s unless you publish it.
 fn use_bundled_hf_weights() -> bool {

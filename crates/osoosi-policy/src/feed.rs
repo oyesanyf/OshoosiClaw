@@ -105,6 +105,7 @@ fn offline_mode() -> bool {
         .unwrap_or(false)
 }
 
+#[derive(Debug, Clone)]
 pub struct ThreatFeedFetcher {
     client: reqwest::Client,
 }

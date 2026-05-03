@@ -13,6 +13,13 @@ pub struct ResourceGuard {
     pub net: Arc<Semaphore>,
 }
 
+#[derive(Debug, Clone, Copy)]
+pub enum ResourceCategory {
+    AI,
+    IO,
+    Net,
+}
+
 impl ResourceGuard {
     pub fn new() -> Self {
         Self {
@@ -134,6 +141,20 @@ impl TelemetryController {
         } else {
             base
         }
+    }
+
+    /// Spawn a task with adaptive concurrency based on the resource category.
+    pub fn spawn_adaptive<F, T>(&self, category: ResourceCategory, task: F)
+    where
+        F: std::future::Future<Output = T> + Send + 'static,
+        T: Send + 'static,
+    {
+        let semaphore = match category {
+            ResourceCategory::AI => self.guard.ai.clone(),
+            ResourceCategory::IO => self.guard.io.clone(),
+            ResourceCategory::Net => self.guard.net.clone(),
+        };
+        crate::hybrid_runtime::spawn_smart(semaphore, task);
     }
 }
 

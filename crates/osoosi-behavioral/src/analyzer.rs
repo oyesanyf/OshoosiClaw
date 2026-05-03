@@ -56,7 +56,7 @@ pub struct BehavioralAnalyzer {
     api_key: String,
     api_base: String,
     model: String,
-    colog: Mutex<CoLogFilter>,
+    colog: Arc<Mutex<CoLogFilter>>,
     reasoning: ReasoningEngine,
     smollm: Arc<tokio::sync::RwLock<Option<Arc<SmolLMAnalyzer>>>>,
     embedder: Arc<Mutex<crate::process_tree::ProcessTreeEmbedder>>,
@@ -82,7 +82,7 @@ impl BehavioralAnalyzer {
             api_key,
             api_base,
             model,
-            colog: Mutex::new(CoLogFilter::new(100)),
+            colog: Arc::new(Mutex::new(CoLogFilter::new(100))),
             reasoning,
             smollm,
             embedder,
@@ -194,51 +194,57 @@ impl BehavioralAnalyzer {
     }
 
     /// Autonomous Tier 1 Check: Run CoLog anomaly detection and Process Tree ML analysis on incoming stream.
-    pub fn autonomous_check(&self, event: &LogEvent) -> f32 {
-        let mut base_score = if let Ok(mut colog) = self.colog.lock() {
-            colog.process(event)
-        } else {
-            0.0
-        };
+    pub async fn autonomous_check(&self, event: LogEvent) -> f32 {
+        let colog = self.colog.clone();
+        let embedder = self.embedder.clone();
 
-        // ML Layer: Process Tree Embedding (Candle)
-        if event.source == "Microsoft-Windows-Sysmon" {
-            let event_id = event
-                .data
-                .get("EventId")
-                .and_then(|v| v.as_i64())
-                .unwrap_or(0);
-            if event_id == 1 {
-                // Process Creation
-                let parent = event
-                    .data
-                    .get("ParentImage")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-                let child = event
-                    .data
-                    .get("Image")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("unknown");
-                let rel = crate::process_tree::ProcessRelationship {
-                    parent_name: parent.to_string(),
-                    child_name: child.to_string(),
-                    arguments: vec![],
-                    mitre_technique: None,
-                    confidence: 1.0,
-                };
+        tokio::task::spawn_blocking(move || {
+            let mut base_score = if let Ok(mut colog_guard) = colog.lock() {
+                colog_guard.process(&event)
+            } else {
+                0.0
+            };
 
-                if let Ok(embedder) = self.embedder.lock() {
-                    if let Ok(emb) = embedder.embed(&rel) {
-                        let ml_score = embedder.calculate_anomaly_score(&rel, &emb);
-                        // Weight the scores: higher ML score boosts the overall anomaly verdict
-                        base_score = (base_score * 0.5) + (ml_score * 0.5);
+            // ML Layer: Process Tree Embedding (Candle)
+            if event.source == "Microsoft-Windows-Sysmon" {
+                let event_id = event
+                    .data
+                    .get("EventId")
+                    .and_then(|v| v.as_i64())
+                    .unwrap_or(0);
+                if event_id == 1 {
+                    // Process Creation
+                    let parent = event
+                        .data
+                        .get("ParentImage")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let child = event
+                        .data
+                        .get("Image")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("unknown");
+                    let rel = crate::process_tree::ProcessRelationship {
+                        parent_name: parent.to_string(),
+                        child_name: child.to_string(),
+                        arguments: vec![],
+                        mitre_technique: None,
+                        confidence: 1.0,
+                    };
+
+                    if let Ok(embedder_guard) = embedder.lock() {
+                        if let Ok(emb) = embedder_guard.embed(&rel) {
+                            let ml_score = embedder_guard.calculate_anomaly_score(&rel, &emb);
+                            // Weight the scores: higher ML score boosts the overall anomaly verdict
+                            base_score = (base_score * 0.5) + (ml_score * 0.5);
+                        }
                     }
                 }
             }
-        }
-
-        base_score
+            base_score
+        })
+        .await
+        .unwrap_or(0.0)
     }
 
     fn format_events_for_llm(&self, events: &[LogEvent]) -> String {

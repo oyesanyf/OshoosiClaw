@@ -19,6 +19,7 @@ members = [
     "crates/osoosi-behavioral", "crates/osoosi-dp",
     "crates/test-peer",
     "crates/otx-taxii-rs", "crates/osoosi-inject", "crates/osoosi-dns",
+    "crates/osoosi-auditor",
 ]
 
 [workspace.package]
@@ -119,6 +120,5 @@ codegen-units = 1
 strip = true
 opt-level = 3
 
-[patch.crates-io]
-notatin = { git = "https://github.com/strozfriedberg/notatin" }
+
 

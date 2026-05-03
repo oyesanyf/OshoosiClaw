@@ -1838,6 +1838,12 @@ dependencies = [
 ]
 
 [[package]]
+name = "dotenvy"
+version = "0.15.7"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "1aaf95b3e5c8f23aa320147307562d361db0ae0d51242340f558153b4eb2439b"
+
+[[package]]
 name = "dotscope"
 version = "0.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5173,6 +5179,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "osoosi-auditor"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dotenvy",
+ "rand 0.8.6",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "tokio",
+ "uuid",
+ "walkdir",
+]
+
+[[package]]
 name = "osoosi-behavioral"
 version = "0.1.1"
 dependencies = [
@@ -5455,6 +5478,7 @@ dependencies = [
  "osoosi-dns",
  "osoosi-dp",
  "osoosi-memory",
+ "osoosi-model",
  "osoosi-telemetry",
  "osoosi-types",
  "otx-taxii-rs",
@@ -10525,8 +10549,3 @@ dependencies = [
  "cc",
  "pkg-config",
 ]
-
-[[patch.unused]]
-name = "notatin"
-version = "1.0.1"
-source = "git+https://github.com/strozfriedberg/notatin#ae3a70611bc37b2ca04637671ceb14ccab9d5a87"

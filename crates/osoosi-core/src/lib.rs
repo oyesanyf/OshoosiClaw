@@ -601,8 +601,11 @@ impl EdrOrchestrator {
     /// Explicitly trigger a patch discovery cycle.
     pub fn trigger_patch_discovery(&self) {
         let engine = self.patch_engine.clone();
+        let orch = self.clone();
         tokio::spawn(async move {
-            let _ = engine.run_discovery().await;
+            orch.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
+                let _ = engine.run_discovery().await;
+            });
         });
     }
 
@@ -1020,6 +1023,11 @@ impl EdrOrchestrator {
             memory: memory.clone(),
             broadcaster: policy.intel_broadcaster.clone(),
             node_id: node_id.clone(),
+        })).await;
+        
+        // Behavioral Threat Model Voter: Uses the bulk-trained CVE/Lineage model
+        policy.add_voter(Box::new(osoosi_policy::voters::BehavioralThreatVoter {
+            model: threat_model.clone(),
         })).await;
 
         // Decompile Voter: SpiderEyes binary analysis (LLM + Capstone)
@@ -1465,13 +1473,15 @@ impl EdrOrchestrator {
 
     /// Background task for Rule Maintenance (YARA, Sigma, etc.)
     pub fn start_maintenance_loop(&self) {
-
+        let orch = self.clone();
         tokio::spawn(async move {
             info!("Starting Rule Maintenance Loop (YARA, ClamAV)...");
 
             // 1. YARA Update (Core Forge + Agentic Discovery) - offload to blocking pool
-            tokio::task::spawn_blocking(|| {
-                osoosi_model::malware::MalwareScanner::update_yara_rules_on_startup();
+            orch.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
+                let _ = tokio::task::spawn_blocking(|| {
+                    osoosi_model::malware::MalwareScanner::update_yara_rules_on_startup();
+                }).await;
             });
 
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(3600 * 4)); // Every 4 hours
@@ -1479,22 +1489,13 @@ impl EdrOrchestrator {
                 interval.tick().await;
                 info!("Running periodic rule maintenance...");
 
-
-
                 // 3. ClamAV Health Check / Update
-                #[cfg(target_os = "windows")]
-                {
-                    tokio::task::spawn_blocking(|| {
+                let orch_inner = orch.clone();
+                orch_inner.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
+                    let _ = tokio::task::spawn_blocking(|| {
                         let _ = std::process::Command::new("freshclam").status();
-                    });
-                }
-
-                #[cfg(not(target_os = "windows"))]
-                {
-                    tokio::task::spawn_blocking(|| {
-                        let _ = std::process::Command::new("freshclam").status();
-                    });
-                }
+                    }).await;
+                });
             }
         });
     }
@@ -1520,7 +1521,6 @@ impl EdrOrchestrator {
                 let memory_threshold = total_memory / 2; // 50%
                 let my_pid = Pid::from(std::process::id() as usize);
 
-                let mut set = tokio::task::JoinSet::new();
                 for (pid, process) in sys.processes() {
                     if *pid == my_pid {
                         continue; // NEVER scan self
@@ -1544,12 +1544,7 @@ impl EdrOrchestrator {
                         let orch = orchestrator.clone();
                         let pid_val = pid.as_u32();
 
-                        let limit = orch.adaptive().get_concurrency_limit().await;
-                        while set.len() >= limit {
-                            let _ = set.join_next().await;
-                        }
-
-                        set.spawn(async move {
+                        orchestrator.adaptive().spawn_adaptive(crate::adaptive::ResourceCategory::AI, async move {
                             warn!(
                                 "CyberShield Insight: Process {} (PID {}) exceeds resource thresholds (CPU: {:.1}%, Mem: {}KB).",
                                 process_name, pid_val, cpu_usage, memory_usage / 1024
@@ -1615,7 +1610,6 @@ impl EdrOrchestrator {
                         });
                     }
                 }
-                while let Some(_) = set.join_next().await {}
             }
         });
     }
@@ -1627,7 +1621,7 @@ impl EdrOrchestrator {
         tokio::spawn(async move {
             let reader = osoosi_behavioral::BehavioralLogReader::new();
             let classifier = orchestrator.behavioral_classifier.clone();
-            let analyzer = &orchestrator.behavioral_analyzer;
+            let analyzer = orchestrator.behavioral_analyzer.clone();
             let interval_secs: u64 = std::env::var("OSOOSI_BEHAVIORAL_INTERVAL")
                 .ok()
                 .and_then(|s| s.parse().ok())
@@ -1639,9 +1633,10 @@ impl EdrOrchestrator {
             let mut interval = tokio::time::interval(std::time::Duration::from_secs(interval_secs));
             loop {
                 interval.tick().await;
-                match reader.poll_events() {
+                let reader_clone = reader.clone();
+                let poll_result = tokio::task::spawn_blocking(move || reader_clone.poll_events()).await;
+                match poll_result.unwrap_or(Err(anyhow::anyhow!("Poll task panicked"))) {
                     Ok(events) => {
-                        let mut set = tokio::task::JoinSet::new();
                         for event in events {
                             // Self-audit filter: skip events generated by osoosi itself
                             // to prevent feedback loops where our own log writes trigger
@@ -1660,10 +1655,11 @@ impl EdrOrchestrator {
                             let classifier_clone = classifier.clone();
                             let orchestrator_clone = orchestrator.clone();
                             let analyzer_clone = analyzer.clone();
+                            let event_clone = event.clone();
                             
-                            set.spawn(async move {
+                            orchestrator.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::AI, async move {
                                 // Tier 1: CoLog Autonomous Sequence Check
-                                let colog_score = analyzer_clone.autonomous_check(&event);
+                                let colog_score = analyzer_clone.autonomous_check(event_clone).await;
                                 if colog_score > 0.85 {
                                     warn!("COLOG ANOMALY: Sequence deviation detected (score={:.2}) for source {}", colog_score, event.source);
                                     orchestrator_clone.audit.log(
@@ -1712,7 +1708,6 @@ impl EdrOrchestrator {
                                 }
                             });
                         }
-                        while let Some(_) = set.join_next().await {}
                     }
                     Err(e) => {
                         tracing::debug!("Behavioral log poll failed: {}", e);
@@ -2031,21 +2026,15 @@ impl EdrOrchestrator {
                                         resolved_source
                                     );
                                 }
-                                let mut set = tokio::task::JoinSet::new();
-                                let limit = orchestrator.adaptive().get_concurrency_limit().await;
                                 for ev in events {
-                                    while set.len() >= limit {
-                                        let _ = set.join_next().await;
-                                    }
                                     let orch = orchestrator.clone();
-                                    set.spawn(async move {
+                                    orchestrator.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
                                         let sysmon = ev.to_sysmon_event();
                                         if let Err(e) = orch.process_telemetry(sysmon).await {
                                             error!("Failed to process host event: {}", e);
                                         }
                                     });
                                 }
-                                while let Some(_) = set.join_next().await {}
                             }
                             Err(e) => {
                                 let is_access_denied = e.to_string().contains("access denied");
@@ -2089,104 +2078,50 @@ impl EdrOrchestrator {
     pub async fn start_repair_loop(&self, interval_secs: u64, auto_apply: bool) {
         let engine = self.patch_engine.clone();
         let memory = self.memory.clone();
-        let mesh_tx = self.mesh_command_tx.clone();
-        let trust = self.trust.clone();
+        let orch = self.clone();
         tokio::spawn(async move {
             info!(
                 "Repair Engine started (interval: {}s, auto_apply: {})",
                 interval_secs, auto_apply
             );
             loop {
-                match engine.run_discovery().await {
-                    Ok(patches) => {
-                        let count = patches.len();
-                        if count > 0 {
-                            info!("Repair Engine: discovered {} missing patches", count);
-                            let _ = memory.set_repair_status("pending_count", &count.to_string());
-                            if auto_apply {
-                                let mut applied_count: usize = 0;
-                                for patch in patches {
-                                    match engine.apply_patch(patch).await {
-                                        Ok(tx) => {
-                                            if matches!(
-                                                tx.state,
-                                                osoosi_types::PatchState::Committed
-                                            ) {
-                                                applied_count += 1;
-                                                // Broadcast successful local repair to the mesh
-                                                let vote = osoosi_types::PolicyConsensusMessage::Vote(osoosi_types::PolicyHealthVote {
-                                                    policy_id: tx.patch.cve_id.clone(),
-                                                    voter_id: trust.did().id.clone(),
-                                                    status: osoosi_types::PolicyHealthStatus::Optimal,
-                                                    uptime_seconds: 0, // Placeholder
-                                                    timestamp: chrono::Utc::now(),
-                                                    work_nonce: None,
-                                                });
-                                                let tx_guard = mesh_tx.lock().await;
-                                                if let Some(ref tx_chan) = *tx_guard {
-                                                    let _ = tx_chan
-                                                        .send(MeshCommand::BroadcastConsensus(vote))
-                                                        .await;
+                let engine_inner = engine.clone();
+                let memory_inner = memory.clone();
+                let orch_inner = orch.clone();
+                
+                // Using spawn_adaptive to handle heavy discovery/patching logic
+                orch_inner.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
+                    match engine_inner.run_discovery().await {
+                        Ok(patches) => {
+                            let count = patches.len();
+                            if count > 0 {
+                                info!("Repair Engine: discovered {} missing patches", count);
+                                let _ = memory_inner.set_repair_status("pending_count", &count.to_string());
+                                if auto_apply {
+                                    let mut applied_count: usize = 0;
+                                    for patch in patches {
+                                        match engine_inner.apply_patch(patch).await {
+                                            Ok(tx) => {
+                                                if matches!(tx.state, osoosi_types::PatchState::Committed) {
+                                                    applied_count += 1;
                                                 }
+                                                let _ = memory_inner.set_repair_status("last_cve", &tx.patch.cve_id);
                                             }
-                                            let _ = memory
-                                                .set_repair_status("last_cve", &tx.patch.cve_id);
-                                            let _ = memory.set_repair_status(
-                                                "last_state",
-                                                &format!("{:?}", tx.state),
-                                            );
-                                            let _ = memory.set_repair_status(
-                                                "last_component",
-                                                &tx.patch.component,
-                                            );
-                                            if let Some(ref sid) = tx.snapshot_id {
-                                                let _ = memory
-                                                    .set_repair_status("last_snapshot_id", sid);
-                                            }
-                                            let sig_short = if tx.transaction_id.len() >= 12 {
-                                                format!(
-                                                    "0x{}...{}",
-                                                    &tx.transaction_id[..6],
-                                                    &tx.transaction_id
-                                                        [tx.transaction_id.len() - 4..]
-                                                )
-                                            } else {
-                                                tx.transaction_id.clone()
-                                            };
-                                            let _ =
-                                                memory.set_repair_status("last_sig", &sig_short);
-                                            let _ = memory.set_repair_status(
-                                                "last_at",
-                                                &tx.started_at.to_rfc3339(),
-                                            );
-                                            let _ = memory.set_repair_status("last_error", "");
-                                        }
-                                        Err(e) => {
-                                            let es = e.to_string();
-                                            if es.contains("Insufficient privilege") {
-                                                warn!(
-                                                    "Repair Engine auto-apply skipped (not elevated): {}",
-                                                    es
-                                                );
-                                            } else {
+                                            Err(e) => {
                                                 error!("Repair Engine apply failed: {}", e);
                                             }
-                                            let _ = memory
-                                                .set_repair_status("last_state", "ApplyFailed");
-                                            let _ = memory.set_repair_status("last_error", &es);
                                         }
                                     }
+                                    let remaining = count.saturating_sub(applied_count);
+                                    let _ = memory_inner.set_repair_status("pending_count", &remaining.to_string());
                                 }
-                                let remaining = count.saturating_sub(applied_count);
-                                let _ = memory
-                                    .set_repair_status("pending_count", &remaining.to_string());
+                            } else {
+                                let _ = memory_inner.set_repair_status("pending_count", "0");
                             }
-                        } else {
-                            let _ = memory.set_repair_status("pending_count", "0");
                         }
+                        Err(e) => error!("Repair Engine discovery failed: {}", e),
                     }
-                    Err(e) => error!("Repair Engine discovery failed: {}", e),
-                }
+                });
                 tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)).await;
             }
         });
@@ -2252,86 +2187,92 @@ impl EdrOrchestrator {
     }
 
     /// Background task to fetch latest threat feeds (KEV, NVD).
+    /// Background task to fetch latest threat feeds (KEV, NVD).
     pub async fn start_fetcher_loop(&self) {
         let fetcher = ThreatFeedFetcher::new();
         let orch = self.clone();
         tokio::spawn(async move {
             loop {
-                info!("Fetching latest threat intelligence feeds...");
-                match fetcher.fetch_kev().await {
-                    Ok(kevs) => {
-                        info!(
-                            "Successfully loaded {} known exploited vulnerabilities.",
-                            kevs.len()
-                        );
-                        if let Err(e) = orch.memory.insert_kevs_batch(&kevs) {
-                            error!("Failed to persist KEV batch: {} (will retry next cycle)", e);
-                        } else {
-                            info!("KEV batch persisted successfully.");
-                        }
-                    }
-                    Err(e) => error!("Failed to fetch CISA KEV feed: {}", e),
-                }
-
-                // Optional OTX feed: `OTX_API_KEY` or `[external_api].otx_api_key` in osoosi.toml.
-                match resolve_otx_api_key() {
-                    Some(ref key) => {
-                        OTX_FEED_KEY_SOURCE_LOG.call_once(|| {
-                            let from = if std::env::var("OTX_API_KEY")
-                                .ok()
-                                .map(|s| !s.trim().is_empty())
-                                .unwrap_or(false)
-                            {
-                                "environment (OTX_API_KEY)"
+                let fetcher_inner = fetcher.clone();
+                let orch_inner = orch.clone();
+                orch_inner.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::Net, async move {
+                    info!("Fetching latest threat intelligence feeds...");
+                    match fetcher_inner.fetch_kev().await {
+                        Ok(kevs) => {
+                            info!(
+                                "Successfully loaded {} known exploited vulnerabilities.",
+                                kevs.len()
+                            );
+                            if let Err(e) = orch_inner.memory.insert_kevs_batch(&kevs) {
+                                error!("Failed to persist KEV batch: {} (will retry next cycle)", e);
                             } else {
-                                "osoosi.toml [external_api]"
-                            };
-                            info!("OTX threat feed: enabled (API key from {})", from);
-                        });
-                        match fetcher.fetch_otx_indicators(key).await {
-                            Ok(indicators) => {
-                                let total = indicators.total_count();
-                                // Persist to encrypted SQLite database for cross-boot telemetry matching
-                                let indicators_vec = indicators.to_vec();
-                                if let Err(e) = orch.memory.upsert_otx_indicators(&indicators_vec) {
-                                    error!("Failed to persist OTX indicators to SQLite: {}", e);
+                                info!("KEV batch persisted successfully.");
+                            }
+                        }
+                        Err(e) => error!("Failed to fetch CISA KEV feed: {}", e),
+                    }
+
+                    // Optional OTX feed: `OTX_API_KEY` or `[external_api].otx_api_key` in osoosi.toml.
+                    match resolve_otx_api_key() {
+                        Some(ref key) => {
+                            OTX_FEED_KEY_SOURCE_LOG.call_once(|| {
+                                let from = if std::env::var("OTX_API_KEY")
+                                    .ok()
+                                    .map(|s| !s.trim().is_empty())
+                                    .unwrap_or(false)
+                                {
+                                    "environment (OTX_API_KEY)"
+                                } else {
+                                    "osoosi.toml [external_api]"
+                                };
+                                info!("OTX threat feed: enabled (API key from {})", from);
+                            });
+                            match fetcher_inner.fetch_otx_indicators(key).await {
+                                Ok(indicators) => {
+                                    let total = indicators.total_count();
+                                    // Persist to encrypted SQLite database for cross-boot telemetry matching
+                                    let indicators_vec = indicators.to_vec();
+                                    if let Err(e) = orch_inner.memory.upsert_otx_indicators(&indicators_vec) {
+                                        error!("Failed to persist OTX indicators to SQLite: {}", e);
+                                    }
+                                    orch_inner.policy.update_otx_indicators(indicators);
+                                    info!(
+                                        "Successfully loaded {} OTX indicators (persisted to SQLite).",
+                                        total
+                                    );
                                 }
-                                orch.policy.update_otx_indicators(indicators);
+                                Err(e) => error!("Failed to fetch OTX indicators: {}", e),
+                            }
+                        }
+                        None => {
+                            OTX_FEED_DISABLED_LOG.call_once(|| {
                                 info!(
-                                    "Successfully loaded {} OTX indicators (persisted to SQLite).",
-                                    total
+                                    "OTX threat feed: disabled — set OTX_API_KEY or [external_api].otx_api_key in osoosi.toml"
                                 );
-                            }
-                            Err(e) => error!("Failed to fetch OTX indicators: {}", e),
+                            });
                         }
                     }
-                    None => {
-                        OTX_FEED_DISABLED_LOG.call_once(|| {
-                            info!(
-                                "OTX threat feed: disabled — set OTX_API_KEY or [external_api].otx_api_key in osoosi.toml"
-                            );
-                        });
-                    }
-                }
 
-                // Optional NVD feed: `NVD_API_KEY` or `[external_api].nvd_api_key` in osoosi.toml.
-                let nvd_key = resolve_nvd_api_key();
-                match fetcher.fetch_nvd_cves(nvd_key.as_deref()).await {
-                    Ok(cves) => {
-                        if !cves.is_empty() {
-                            info!(
-                                "Successfully loaded {} NVD vulnerability records.",
-                                cves.len()
-                            );
-                            if let Err(e) = orch.memory.insert_kevs_batch(&cves) {
-                                error!("Failed to persist NVD records: {}", e);
+                    // Optional NVD feed: `NVD_API_KEY` or `[external_api].nvd_api_key` in osoosi.toml.
+                    let nvd_key = resolve_nvd_api_key();
+                    match fetcher_inner.fetch_nvd_cves(nvd_key.as_deref()).await {
+                        Ok(cves) => {
+                            if !cves.is_empty() {
+                                info!(
+                                    "Successfully loaded {} NVD vulnerability records.",
+                                    cves.len()
+                                );
+                                if let Err(e) = orch_inner.memory.insert_kevs_batch(&cves) {
+                                    error!("Failed to persist NVD records: {}", e);
+                                }
                             }
                         }
+                        Err(e) => error!("Failed to fetch NVD records: {}", e),
                     }
-                    Err(e) => error!("Failed to fetch NVD records: {}", e),
-                }
 
-                // Update cycle: Every 4 hours.
+                    // Update cycle: Every 4 hours.
+                    tokio::time::sleep(tokio::time::Duration::from_secs(14400)).await;
+                });
                 tokio::time::sleep(tokio::time::Duration::from_secs(14400)).await;
             }
         });
@@ -2590,7 +2531,7 @@ impl EdrOrchestrator {
                         };
                         // Apply dynamic Sysmon block
                         let bm = self.blocking_manager.clone();
-                        spawn_smart(self.adaptive.guard.io.clone(), async move {
+                        self.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
                             if let Err(e) = bm.add_rule(rule).await {
                                 error!("Failed to apply autonomous block: {}", e);
                             }
@@ -2604,7 +2545,7 @@ impl EdrOrchestrator {
                             // Self-Healing: Rollback any file changes made by the malicious process
                             let self_healer = self.self_healing.clone();
                             let heal_pid = pid as u32;
-                            spawn_smart(self.adaptive.guard.io.clone(), async move {
+                            self.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
                                 match self_healer.rollback_process_actions(heal_pid).await {
                                     Ok(count) if count > 0 => {
                                         warn!("Self-Healing: Rolled back {} file(s) for terminated PID {}.", count, heal_pid);
@@ -2622,7 +2563,7 @@ impl EdrOrchestrator {
                     let orch = self.clone();
                     let ev = event.clone();
                     let sig = signature.clone();
-                    spawn_smart(self.adaptive.guard.ai.clone(), async move {
+                    self.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::AI, async move {
                         if let Err(e) = orch.perform_action(&ev, &sig, action).await {
                             error!("Failed to perform response action {:?}: {}", action, e);
                         }
@@ -2821,7 +2762,7 @@ impl EdrOrchestrator {
                 .and_then(|c| c.as_str())
                 .map(String::from);
             let model = self.threat_model.read().await;
-            let score = model.infer(proc.as_deref(), cve.as_deref());
+            let score = model.infer(proc.as_deref(), cve.as_deref(), None, None);
             if score >= 0.75 {
                 let is_fp = self
                     .memory
@@ -4361,6 +4302,7 @@ impl EdrOrchestrator {
         }
         let memory = self.memory.clone();
         let threat_model = self.threat_model.clone();
+        let orch = self.clone();
         tokio::spawn(async move {
             info!(
                 "Model training loop started (interval: {}s, models in ./models/)",
@@ -4368,44 +4310,68 @@ impl EdrOrchestrator {
             );
             let _ = memory.set_model_training_status("status", "running");
             loop {
-                let _ = memory
-                    .set_model_training_status("last_attempt", &chrono::Utc::now().to_rfc3339());
-                match memory.get_threats_for_training(500) {
-                    Ok(samples) => {
-                        let _ = memory
-                            .set_model_training_status("sample_count", &samples.len().to_string());
-                        if samples.is_empty() {
-                            let _ =
-                                memory.set_model_training_status("status", "waiting_for_samples");
-                            let _ = memory.set_model_training_status("last_error", "");
-                        } else {
-                            let mut model = threat_model.write().await;
-                            if let Err(e) = model.train(&samples) {
-                                error!("Model training failed: {}", e);
-                                let _ = memory.set_model_training_status("status", "failed");
+                let memory_inner = memory.clone();
+                let threat_model_inner = threat_model.clone();
+                let orch_inner = orch.clone();
+                
+                orch_inner.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::AI, async move {
+                    let _ = memory_inner
+                        .set_model_training_status("last_attempt", &chrono::Utc::now().to_rfc3339());
+                    match memory_inner.get_threats_for_training(500) {
+                        Ok(samples) => {
+                            let _ = memory_inner
+                                .set_model_training_status("sample_count", &samples.len().to_string());
+                            if samples.is_empty() {
                                 let _ =
-                                    memory.set_model_training_status("last_error", &e.to_string());
+                                    memory_inner.set_model_training_status("status", "waiting_for_samples");
+                                let _ = memory_inner.set_model_training_status("last_error", "");
                             } else {
-                                let w = model.weights();
-                                let _ = memory.set_model_training_status("status", "running");
-                                let _ = memory.set_model_training_status(
-                                    "feature_count",
-                                    &w.features.len().to_string(),
-                                );
-                                if let Some(ref trained_at) = w.trained_at {
-                                    let _ = memory
-                                        .set_model_training_status("last_success", trained_at);
+                                // Offload training to Rayon to avoid blocking AI analysis
+                                let model_for_training = threat_model_inner.clone();
+                                let result = crate::hybrid_runtime::run_on_rayon(move || {
+                                    let mut model = model_for_training.blocking_write();
+                                    model.train(samples)
+                                }).await;
+
+                                match result {
+                                    Ok(Ok(())) => {
+                                        let model = threat_model_inner.read().await;
+                                        let w = model.weights();
+                                        let _ = memory_inner.set_model_training_status("status", "running");
+                                        let _ = memory_inner.set_model_training_status(
+                                            "feature_count",
+                                            &w.features.len().to_string(),
+                                        );
+                                        if let Some(ref trained_at) = w.trained_at {
+                                            let _ = memory_inner
+                                                .set_model_training_status("last_success", trained_at);
+                                        }
+                                        let _ = memory_inner.set_model_training_status("last_error", "");
+
+                                        // COLLABORATIVE CONTINUOUS LEARNING: Broadcast learned delta to mesh
+                                        let node_id = orch_inner.trust.did().to_string();
+                                        let delta = model.delta(&node_id);
+                                        if let Some(ref tx) = *orch_inner.mesh_command_tx.lock().await {
+                                            let _ = tx.send(osoosi_wire::MeshCommand::BroadcastModelDelta(delta)).await;
+                                            debug!("Broadcasted federated model delta to mesh.");
+                                        }
+                                    }
+                                    Ok(Err(e)) | Err(e) => {
+                                        error!("Model training failed: {}", e);
+                                        let _ = memory_inner.set_model_training_status("status", "failed");
+                                        let _ =
+                                            memory_inner.set_model_training_status("last_error", &e.to_string());
+                                    }
                                 }
-                                let _ = memory.set_model_training_status("last_error", "");
                             }
                         }
+                        Err(e) => {
+                            error!("Failed to get threats for training: {}", e);
+                            let _ = memory_inner.set_model_training_status("status", "failed");
+                            let _ = memory_inner.set_model_training_status("last_error", &e.to_string());
+                        }
                     }
-                    Err(e) => {
-                        error!("Failed to get threats for training: {}", e);
-                        let _ = memory.set_model_training_status("status", "failed");
-                        let _ = memory.set_model_training_status("last_error", &e.to_string());
-                    }
-                }
+                });
                 tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)).await;
             }
         });
@@ -4542,26 +4508,34 @@ impl EdrOrchestrator {
 
         let mesh_tx = self.mesh_command_tx.clone();
         let memory = self.memory.clone();
+        let orch = self.clone();
 
         tokio::spawn(async move {
             let mut interval_timer =
                 tokio::time::interval(std::time::Duration::from_secs(interval));
             loop {
                 interval_timer.tick().await;
-                info!("BrowserGuard: Periodic sweep running...");
-                let threats = guard.run_sweep().await;
-                for threat in threats {
-                    // 1. Log locally to MemoryStore and AuditTrail
-                    let _ = memory.log_threat(&threat);
-                    warn!("ALARM: Browser Security Threat Identified: {:?}", threat);
+                let guard_inner = guard.clone();
+                let memory_inner = memory.clone();
+                let mesh_tx_inner = mesh_tx.clone();
+                let orch_inner = orch.clone();
+                
+                orch_inner.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
+                    info!("BrowserGuard: Periodic sweep running...");
+                    let threats = guard_inner.run_sweep().await;
+                    for threat in threats {
+                        // 1. Log locally to MemoryStore and AuditTrail
+                        let _ = memory_inner.log_threat(&threat);
+                        warn!("ALARM: Browser Security Threat Identified: {:?}", threat);
 
-                    // 2. Broadcast to mesh if high confidence
-                    if threat.confidence > 0.8 {
-                        if let Some(ref tx) = *mesh_tx.lock().await {
-                            let _ = tx.send(osoosi_wire::MeshCommand::Broadcast(threat)).await;
+                        // 2. Broadcast to mesh if high confidence
+                        if threat.confidence > 0.8 {
+                            if let Some(ref tx) = *mesh_tx_inner.lock().await {
+                                let _ = tx.send(osoosi_wire::MeshCommand::Broadcast(threat)).await;
+                            }
                         }
                     }
-                }
+                });
             }
         });
     }

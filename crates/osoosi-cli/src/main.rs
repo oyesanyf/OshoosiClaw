@@ -153,6 +153,21 @@ enum Commands {
         #[command(subcommand)]
         target: TrainTarget,
     },
+    /// Audit a CVE or product against the local threat model
+    Audit {
+        /// CVE ID to query (e.g. CVE-2023-27350)
+        #[arg(long)]
+        cve: Option<String>,
+        /// Product name to query (e.g. papercut_mf)
+        #[arg(long)]
+        product: Option<String>,
+        /// Version to query (e.g. 16.0.0)
+        #[arg(long)]
+        version: Option<String>,
+        /// Parent process file name (e.g. cmd.exe)
+        #[arg(long)]
+        parent: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Clone)]
@@ -761,6 +776,32 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 info!("✅ SOREL-20M model built and saved to {:?}", out_path);
             }
         },
+        Some(Commands::Audit { cve, product, version, parent }) => {
+            let config = osoosi_model::ModelConfig::default();
+            let model = osoosi_model::ThreatModel::new(config);
+            let score = model.infer(product.as_deref(), cve.as_deref(), version.as_deref(), parent.as_deref());
+            
+            println!("\n----------------------------------------");
+            println!("      Oshoosi Threat Audit Results");
+            println!("----------------------------------------");
+            if let Some(c) = cve { println!("CVE ID:      {}", c); }
+            if let Some(p) = product { println!("Product:     {}", p); }
+            if let Some(v) = version { println!("Version:     {}", v); }
+            if let Some(pa) = parent { println!("Parent:      {}", pa); }
+            println!("Risk Score:  {:.4}", score);
+            println!("----------------------------------------");
+            
+            if score > 0.8 {
+                println!("⚠️  HIGH RISK: Significant threat activity recorded.");
+            } else if score > 0.4 {
+                println!("⚖️  MODERATE RISK: Known behavioral risk vector.");
+            } else if score > 0.0 {
+                println!("✅ LOW RISK: Minimal threat activity recorded.");
+            } else {
+                println!("❓ UNKNOWN: No data for this vector in model.");
+            }
+            println!("----------------------------------------\n");
+        }
         None => {
             if !cli.grant_access {
                 println!("No command specified. Use --help for usage.");
@@ -1398,39 +1439,6 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
     Ok(())
 }
 
-/// Helper to find a script (e.g. sanitize_yara.py) by searching upward from EXE and CWD.
-fn resolve_script_path(script_name: &str) -> Option<PathBuf> {
-    if let Ok(exe_path) = std::env::current_exe() {
-        let mut dir = exe_path.parent();
-        while let Some(d) = dir {
-            let candidate = d.join(script_name);
-            if candidate.exists() {
-                return Some(candidate);
-            }
-            // Also check 'scripts/' subdirectory
-            let candidate_scripts = d.join("scripts").join(script_name);
-            if candidate_scripts.exists() {
-                return Some(candidate_scripts);
-            }
-            dir = d.parent();
-        }
-    }
-    if let Ok(cwd) = std::env::current_dir() {
-        let mut dir = Some(cwd.as_path());
-        while let Some(d) = dir {
-            let candidate = d.join(script_name);
-            if candidate.exists() {
-                return Some(candidate);
-            }
-            let candidate_scripts = d.join("scripts").join(script_name);
-            if candidate_scripts.exists() {
-                return Some(candidate_scripts);
-            }
-            dir = d.parent();
-        }
-    }
-    None
-}
 
 /// Stable log directory: `OSOOSI_LOG_DIR`, else repo root `logs/` (walk up from exe for `Cargo.toml`/`.git`),
 /// else `logs/` next to the binary, else cwd `logs/`, else `%TEMP%/osoosi/logs`.

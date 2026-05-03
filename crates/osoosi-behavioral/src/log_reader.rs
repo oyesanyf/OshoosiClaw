@@ -19,6 +19,7 @@ pub struct LogEvent {
 
 /// Cross-platform behavioral log reader.
 /// Reads System, Application, and Security logs (Windows) or equivalents (Linux, macOS).
+#[derive(Clone)]
 pub struct BehavioralLogReader {
     #[cfg(target_os = "windows")]
     channels: Vec<String>,

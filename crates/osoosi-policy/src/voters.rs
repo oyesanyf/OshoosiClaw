@@ -3,6 +3,7 @@ use crate::engine::{ThreatVoter, VoteResult};
 use osoosi_types::{SysmonEvent, SysmonEventId};
 use osoosi_dp::{DifferentialPrivacy, PrivacyConfig};
 use osoosi_audit::MerkleAuditTree;
+use osoosi_model::ThreatModel;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
@@ -101,6 +102,46 @@ impl GemmaVoter {
         ];
 
         trusted_path || TRUSTED_STEMS.contains(&stem.as_str())
+    }
+}
+
+/// Behavioral Threat Model Voter (The "Learned Core")
+/// Uses the 100,000 CVE bulk-trained model to assess risk based on process name, version, and lineage.
+pub struct BehavioralThreatVoter {
+    pub model: Arc<tokio::sync::RwLock<ThreatModel>>,
+}
+
+#[async_trait]
+impl ThreatVoter for BehavioralThreatVoter {
+    fn name(&self) -> String {
+        "Behavioral-Threat-Model".to_string()
+    }
+    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+        let image = event.data.get("Image").and_then(|v| v.as_str());
+        let process_name = image.and_then(|p| std::path::Path::new(p).file_name()).and_then(|n| n.to_str());
+        let parent_image = event.data.get("ParentImage").and_then(|v| v.as_str());
+        let parent_name = parent_image.and_then(|p| std::path::Path::new(p).file_name()).and_then(|n| n.to_str());
+        let version = event.product_version.as_deref();
+
+        // Perform inference using the bulk-trained model
+        let model_read = self.model.read().await;
+        let score = model_read.infer(process_name, None, version, parent_name);
+
+        if score > 0.8 {
+            return Some(VoteResult {
+                confidence: score,
+                reason: format!("Behavioral Threat Model: High-risk pattern detected ({:.4}) based on process lineage and version context.", score),
+                weight: 1.0,
+            });
+        } else if score > 0.4 {
+            return Some(VoteResult {
+                confidence: score,
+                reason: format!("Behavioral Threat Model: Suspicious behavioral context ({:.4}).", score),
+                weight: 0.6,
+            });
+        }
+        
+        None
     }
 }
 
