@@ -14,14 +14,16 @@ pub struct GossipSleuth {
     fetcher: ThreatFeedFetcher,
     mesh_tx: mpsc::Sender<osoosi_wire::MeshCommand>,
     node_id: String,
+    privacy: Arc<crate::privacy::PrivacyLayer>,
 }
 
 impl GossipSleuth {
-    pub fn new(mesh_tx: mpsc::Sender<osoosi_wire::MeshCommand>, node_id: String) -> Self {
+    pub fn new(mesh_tx: mpsc::Sender<osoosi_wire::MeshCommand>, node_id: String, privacy: Arc<crate::privacy::PrivacyLayer>) -> Self {
         Self {
             fetcher: ThreatFeedFetcher::new(),
             mesh_tx,
             node_id,
+            privacy,
         }
     }
 
@@ -53,7 +55,7 @@ impl GossipSleuth {
     }
 
     async fn process_kev_intelligence(&self, kev: &osoosi_types::Kev) -> anyhow::Result<()> {
-        let intel = GlobalIntelligence {
+        let mut intel = GlobalIntelligence {
             source_url: "https://www.cisa.gov/known-exploited-vulnerabilities-catalog".to_string(),
             summary: format!(
                 "CISA ALERT: {} ({}) is being actively exploited.",
@@ -75,7 +77,11 @@ impl GossipSleuth {
             priority: 0.9,
             timestamp: Utc::now(),
             source_node: self.node_id.clone(),
+            merkle_proof: None,
+            epsilon: None,
         };
+
+        self.privacy.protect_intel(&mut intel);
 
         info!(
             "Gossip Sleuth: Broadcasting Learned Defense for {} to mesh.",
@@ -90,7 +96,7 @@ impl GossipSleuth {
 
     async fn scout_trending_vulnerabilities(&self) -> anyhow::Result<()> {
         // Mocking a discovery of a "Zero Day" from a security advisory
-        let mock_intel = GlobalIntelligence {
+        let mut mock_intel = GlobalIntelligence {
             source_url: "https://github.com/advisories".to_string(),
             summary: "Emerging RCE in popular web-server component detected in the wild."
                 .to_string(),
@@ -109,7 +115,11 @@ impl GossipSleuth {
             priority: 1.0,
             timestamp: Utc::now(),
             source_node: self.node_id.clone(),
+            merkle_proof: None,
+            epsilon: None,
         };
+
+        self.privacy.protect_intel(&mut mock_intel);
 
         let _ = self
             .mesh_tx
@@ -125,7 +135,7 @@ impl GossipSleuth {
         value: &str,
         severity: f32,
     ) -> anyhow::Result<()> {
-        let intel = GlobalIntelligence {
+        let mut intel = GlobalIntelligence {
             source_url: format!("local://{}", self.node_id),
             summary: format!(
                 "IOC ALERT: Detected malicious {} ({}) on node {}.",
@@ -154,7 +164,11 @@ impl GossipSleuth {
             priority: severity,
             timestamp: Utc::now(),
             source_node: self.node_id.clone(),
+            merkle_proof: None,
+            epsilon: None,
         };
+
+        self.privacy.protect_intel(&mut intel);
 
         info!(
             "Gossip Sleuth: Broadcasting signed IOC for {} to mesh.",

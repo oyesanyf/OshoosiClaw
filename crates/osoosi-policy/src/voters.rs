@@ -842,6 +842,8 @@ impl ThreatVoter for CveLookupVoter {
                             }),
                             timestamp: chrono::Utc::now(),
                             source_node: self.node_id.clone(),
+                            epsilon: None,
+                            merkle_proof: None,
                         });
                     }
                 }

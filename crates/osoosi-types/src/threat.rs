@@ -148,6 +148,12 @@ pub struct GlobalIntelligence {
     pub defense: Option<ZeroDayDefense>,
     pub timestamp: DateTime<Utc>,
     pub source_node: String,
+    /// Cryptographic proof that this intelligence is part of the sender's audit trail.
+    #[serde(default)]
+    pub merkle_proof: Option<crate::trust::MerkleProof>,
+    /// Privacy budget (epsilon) used for differential privacy noise.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub epsilon: Option<f32>,
 }
 
 impl GlobalIntelligence {

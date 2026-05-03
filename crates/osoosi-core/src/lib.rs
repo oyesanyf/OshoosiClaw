@@ -20,6 +20,7 @@ pub mod privilege;
 pub mod quarantine;
 pub mod relativistic;
 pub mod shield;
+pub mod privacy;
 pub mod software_replacement;
 pub mod static_analyzer;
 pub mod system_check;
@@ -394,6 +395,8 @@ pub struct EdrOrchestrator {
     >,
     /// Repair Engine: Patch discovery and application
     patch_engine: Arc<PatchEngine>,
+    /// Privacy: Differential Privacy + Merkle Proofs + Homomorphic Encryption
+    privacy: Arc<privacy::PrivacyLayer>,
     /// Local model trained on self + peer data (stored in models/)
     threat_model: Arc<tokio::sync::RwLock<ThreatModel>>,
     /// Malware scanner (PE features + ML + signatures)
@@ -1098,6 +1101,8 @@ impl EdrOrchestrator {
             osoosi_behavioral::deception::EntanglementEngine::new(),
         ));
 
+        let privacy = Arc::new(privacy::PrivacyLayer::new(trust.clone()));
+
         Ok(Self {
             memory,
             mesh_peer_count,
@@ -1112,6 +1117,7 @@ impl EdrOrchestrator {
             watcher,
             file_event_rx,
             patch_engine,
+            privacy,
             threat_model,
             malware_scanner,
             triage_store,
@@ -2442,6 +2448,9 @@ impl EdrOrchestrator {
                             sig.reason = Some(format!("Shield Self-Defense: Blocked process access violation from PID {} (Mask: {})", source_pid, access_mask_str));
                             sig.recommended_action = osoosi_types::ResponseAction::Isolate;
                             
+                            // Apply Merkle Proof and Differential Privacy noise
+                            self.privacy.protect_signature(&mut sig);
+
                             let tx_guard = self.mesh_command_tx.lock().await;
                             if let Some(ref tx_chan) = *tx_guard {
                                 let _ = tx_chan.send(MeshCommand::Broadcast(sig)).await;
@@ -3783,14 +3792,18 @@ impl EdrOrchestrator {
 
     /// Broadcast intelligence across the mesh network.
     pub async fn broadcast_intelligence(&self, summary: String) -> anyhow::Result<()> {
-        let intel = osoosi_types::GlobalIntelligence {
+        let mut intel = osoosi_types::GlobalIntelligence {
             source_url: "user_dashboard".to_string(),
             summary: summary.clone(),
             priority: 1.0, // Default to high for manual broadcast
             defense: None,
             timestamp: chrono::Utc::now(),
             source_node: self.trust.did().to_string(),
+            merkle_proof: None,
+            epsilon: None,
         };
+
+        self.privacy.protect_intel(&mut intel);
 
         info!("Broadcasting intelligence: {}", summary);
         self.audit.log(
@@ -4234,6 +4247,7 @@ impl EdrOrchestrator {
         let sleuth = Arc::new(crate::gossip::GossipSleuth::new(
             command_tx.clone(),
             self.trust.did().to_string(),
+            self.privacy.clone(),
         ));
         tokio::spawn(sleuth.start_sleuthing_loop());
 
