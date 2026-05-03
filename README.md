@@ -179,6 +179,22 @@ graph TD
     
     I & J & K & L & M & N --> O[Unified Consensus Score]
 ```
+
+### 🧬 Autonomous Forensics & Lineage Discovery (New)
+
+OshoosiClaw 1.2 introduces **Autonomous Lineage Auditing**, allowing the agent to reason about threats based on their full behavioral ancestry:
+
+- **Recursive Process Walking**: The agent walks up the host's process tree to build a complete lineage (e.g., `cmd.exe` ← `powershell.exe` ← `wsmprovhost.exe`).
+- **Contextual Risk Scoring**: The 100k-CVE brain scores processes based on the *combination* of product name, version, and ancestry.
+- **Dynamic Feature Learning**: The model extracts features from observed lineages and autonomously builds a "Baseline of Normality" for the host environment.
+- **PE-Native Discovery**: The `audit` command automatically extracts product information and versions directly from binary metadata, requiring zero user-provided metadata.
+
+```powershell
+# Perform an autonomous, lineage-aware forensic audit
+.\osoosi.exe audit --product git.exe
+```
+
+---
 ```
 
 ---
