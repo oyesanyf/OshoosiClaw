@@ -523,7 +523,7 @@ rule FASM : flat assembler {
 		author = "_pusher_"
 		date = "2016-01"
 		description = "http://flatassembler.net"
-	//strings:
+	 // strings:
 		//$c0 = { 55 89 E5 83 EC 1C 8D 45 E4 6A 1C 50 FF 75 08 FF 15 ?? ?? ?? ?? 8B 45 E8 C9 C2 04 00 }
 	condition:
 		(

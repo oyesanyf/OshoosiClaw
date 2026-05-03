@@ -21,7 +21,7 @@ rule emotet_packer {
       date = "2017-12-12"
     strings:
 		$pdb1 = "123EErrrtools.pdb"
-		$pdb2=  "gGEW\\\\\\\\\\\F???/.pdb"
+		$pdb2=  "gGEW\\\\\\\\\\\\\\F???/.pdb"
 
     condition:
        $pdb1 or $pdb2

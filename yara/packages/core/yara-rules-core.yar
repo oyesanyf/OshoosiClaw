@@ -135,7 +135,7 @@ rule R3C0NST_ATM_Malware_Xfscashncr : FILE
 		$StatusMessage2 = "[+] Ingrese numero de billetes" nocase ascii
 		$StatusMessage3 = "[!] FAIL.. dispensadores no encontrados" nocase ascii
 		$StatusMessage4 = "[!] Unable continue, IMPOSIBLE abrir dispenser" nocase ascii
-		$PDB = "C:\\Users\\\\\\\\\\\cyttek\\Downloads\\xfs_cashXP\\Debug\\xfs_cash_ncr.pdb" nocase ascii
+		$PDB = "C:\\Users\\\\\\\\\\\\\\cyttek\\Downloads\\xfs_cashXP\\Debug\\xfs_cash_ncr.pdb" nocase ascii
 		$LogFile = "XfsLog.txt" nocase ascii
 
 	condition:
@@ -521,10 +521,10 @@ rule R3C0NST_ATM_Malware_XFSADM : FILE
 		$Code1 = {68 88 13 00 00 FF 35 ?? ?? ?? ?? 68 CF 00 00 00 50 FF 15}
 		$Code2 = {68 98 01 00 00 50 FF 15}
 		$Mutex = "myXFSADM" nocase wide
-		$MSXFSDIR = "C:\\Windows\\System32\\\\\\\\\\\msxfs.dll" nocase ascii
+		$MSXFSDIR = "C:\\Windows\\System32\\\\\\\\\\\\\\msxfs.dll" nocase ascii
 		$XFSCommand1 = "WfsExecute" nocase ascii
 		$XFSCommand2 = "WfsGetInfo" nocase ascii
-		$PDB = "C:\\Work64\\\\\\\\\\\ADM\\\\\\\\\\\XFS\\\\\\\\\\\Release\\\\\\\\\\\XFS.pdb" nocase ascii
+		$PDB = "C:\\Work64\\\\\\\\\\\\\\ADM\\\\\\\\\\\\\\XFS\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\XFS.pdb" nocase ascii
 		$WindowName = "XFS ADM" nocase wide
 		$FindWindow = "ADM rec" nocase wide
 		$LogFile = "xfs.log" nocase ascii
@@ -555,7 +555,7 @@ rule R3C0NST_ATM_CINEO4060_Blackbox : FILE
 		$MyAgent2 = "javaagentsdemo/MyUtils.class" ascii fullword
 		$MyAgent3 = "javaagentsdemo/SimplestAgent.class" ascii fullword
 		$Hook = "### [HookAPI]: Switching context!" fullword ascii
-		$Delphi = "Borland\\Delphi\\\\\\\\\\\\\\\\RTL" fullword ascii
+		$Delphi = "Borland\\Delphi\\\\\\\\\\\\\\\\\\\\\\RTL" fullword ascii
 		$WMIHOOK1 = "TPM_SK.DLL" fullword ascii
 		$WMIHOOK2 = "GetPCData" fullword ascii
 		$WMIHOOK3 = {60 9C A3 E4 2B 41 00 E8 ?? ?? ?? ?? 9D 61 B8 02 00 00 00 C3}
@@ -611,7 +611,7 @@ rule R3C0NST_ATM_Malware_Loup : FILE
 		tags = "FILE"
 
 	strings:
-		$String1 = "C:\\Users\\\\\\\\\\\muham\\source\\repos\\\\\\\\\\\loup\\Debug\\\\\\\\\\\loup.pdb" ascii nocase
+		$String1 = "C:\\Users\\\\\\\\\\\\\\muham\\source\\repos\\\\\\\\\\\\\\loup\\Debug\\\\\\\\\\\\\\loup.pdb" ascii nocase
 		$String2 = "CurrencyDispenser1" ascii nocase
 		$Code = {50 68 C0 D4 01 00 8D 4D E8 51 68 2E 01 00 00 0F B7 55 08 52 E8}
 
@@ -2159,7 +2159,7 @@ rule CAPE_Hijackloaderstub
 	strings:
 		$stub1 = {50 83 C0 10 50 56 8D 85 [4] 50 E8 [4] 83 C7 30 8D 85 [4] 3B F8 74 08 8B 35 [4] EB D3}
 		$stub2 = {33 C5 89 45 ?? (C6 45 ?? 00|C7 45 ?? 61 7A 2D 2D) 8D 45 ?? FF 75 ?? C7 45 ?? 30 39 41 5A 50 8D 45 (??|?? C7 45 ?? 61 7A 2D 2D) 50 E8}
-		$app = "\\\\\\\\\\\app-" wide
+		$app = "\\\\\\\\\\\\\\app-" wide
 
 	condition:
 		2 of them
@@ -4372,10 +4372,10 @@ rule CAPE_Vidar : FILE
 		$s2 = "screenshot.jpg" fullword ascii wide
 		$s3 = "\\\\\\Local State" fullword ascii wide
 		$s4 = "Content-Disposition: form-data; name=\"" fullword ascii wide
-		$s5 = "CC\\\\\\\\\\\%s_%s.txt" fullword ascii wide
-		$s6 = "History\\\\\\\\\\\%s_%s.txt" fullword ascii wide
-		$s7 = "Autofill\\\\\\\\\\\%s_%s.txt" fullword ascii wide
-		$s8 = "Downloads\\\\\\\\\\\%s_%s.txt" fullword ascii wide
+		$s5 = "CC\\\\\\\\\\\\\\%s_%s.txt" fullword ascii wide
+		$s6 = "History\\\\\\\\\\\\\\%s_%s.txt" fullword ascii wide
+		$s7 = "Autofill\\\\\\\\\\\\\\%s_%s.txt" fullword ascii wide
+		$s8 = "Downloads\\\\\\\\\\\\\\%s_%s.txt" fullword ascii wide
 
 	condition:
 		uint16be( 0 ) == 0x4d5a and 6 of them
@@ -5030,8 +5030,8 @@ rule CAPE_Arkei : FILE
 		$string1 = "Windows_Antimalware_Host_System_Worker"
 		$string2 = "Arkei"
 		$string3 = "Bitcoin\\wallet.dat"
-		$string4 = "Ethereum\\\\\\\\\\\keystore"
-		$v1 = "C:\\Windows\\System32\\\\\\\\\\\cmd.exe" fullword ascii wide
+		$string4 = "Ethereum\\\\\\\\\\\\\\keystore"
+		$v1 = "C:\\Windows\\System32\\\\\\\\\\\\\\cmd.exe" fullword ascii wide
 		$v2 = "/c taskkill /im " fullword ascii
 		$v3 = "card_number_encrypted FROM credit_cards" ascii
 		$v4 = "\\wallet.dat" ascii
@@ -5734,7 +5734,7 @@ rule CAPE_Agentteslav3 : FILE
 		$m1 = "yyyy-MM-dd hh-mm-ssCookieapplication/zipSCSC_.jpegScreenshotimage/jpeg/log.tmpKLKL_.html<html></html>Logtext/html[]Time" ascii
 		$m2 = "%image/jpg:Zone.Identifier\\tmpG.tmp%urlkey%-f \\Data\\\\\\Tor\\torrcp=%PostURL%127.0.0.1POST+%2B" ascii
 		$m3 = ">{CTRL}</font>Windows RDPcredentialpolicyblobrdgchrome{{{0}}}CopyToComputeHashsha512CopySystemDrive\\WScript.ShellRegReadg401" ascii
-		$m4 = "%startupfolder%\\\\\\\\\\\%insfolder%\\\\\\\\\\\%insname%/\\\\\\%insfolder%\\Software\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\Run%insregname%SOFTWARE\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\Explorer\\StartupApproved\\\\\\RunTruehttp" ascii
+		$m4 = "%startupfolder%\\\\\\\\\\\\\\%insfolder%\\\\\\\\\\\\\\%insname%/\\\\\\%insfolder%\\Software\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\Run%insregname%SOFTWARE\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\Explorer\\StartupApproved\\\\\\RunTruehttp" ascii
 		$m5 = "\\WindowsLoad%ftphost%/%ftpuser%%ftppassword%STORLengthWriteCloseGetBytesOpera" ascii
 		$s_generic1 = "set_UseShellExecute" fullword ascii
 		$s_generic2 = "set_IsBodyHtml" fullword ascii
@@ -5837,7 +5837,7 @@ rule DEADBITS_KPOT_V2 : WINMALWARE INFOSTEALER FILE
 		$conf_re1 = /(SMTP|POP3|IMAP)\sServer\/ wid\//		$conf_re2 = /(SMTP|POP3|IMAP)\s(User|Password|Port)\/ wid\//		$conf01 = "*.config" ascii wide fullword
 		$conf02 = "HTTP Server URL" ascii wide fullword
 		$conf03 = "%s: %d" ascii wide fullword
-		$conf04 = "%s\\\\\\\\\\\Outlook.txt" ascii wide fullword
+		$conf04 = "%s\\\\\\\\\\\\\\Outlook.txt" ascii wide fullword
 
 	condition:
 		uint16( 0 ) == 0x5a4d and all of ( $str* ) and all of ( $conf_re* ) and all of ( $conf0* )
@@ -5943,11 +5943,11 @@ rule DEADBITS_Avemaria_Warzone : AVEMARIA WARZONE WINMALWARE INFOSTEALER FILE
 	strings:
 		$str1 = "cmd.exe /C ping 1.2.3.4 -n 2 -w 1000 > Nul & Del /f /q " ascii fullword
 		$str2 = "MsgBox.exe" wide fullword
-		$str4 = "\\System32\\\\\\\\\\\cmd.exe" wide fullword
+		$str4 = "\\System32\\\\\\\\\\\\\\cmd.exe" wide fullword
 		$str6 = "Ave_Maria" wide
-		$str7 = "SOFTWARE\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\CurrentVersion\\Winlogon\\SpecialAccounts\\UserList" ascii fullword
+		$str7 = "SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\CurrentVersion\\Winlogon\\SpecialAccounts\\UserList" ascii fullword
 		$str8 = "SMTP Password" wide fullword
-		$str11 = "\\\\\\\\\\\Google\\\\\\\\\\\Chrome\\User Data\\Default\\\\\\\\\\\Login Data" wide fullword
+		$str11 = "\\\\\\\\\\\\\\Google\\\\\\\\\\\\\\Chrome\\User Data\\Default\\\\\\\\\\\\\\Login Data" wide fullword
 		$str12 = "\\sqlmap.dll" wide fullword
 		$str14 = "SELECT * FROM logins" ascii fullword
 		$str16 = "Elevation:Administrator!new" wide
@@ -6009,7 +6009,7 @@ rule DEADBITS_APT34_LONGWATCH : APT34 WINMALWARE KEYLOGGER FILE
 		Description = "APT34 Keylogger"
 
 	strings:
-		$log = "c:\\windows\\temp\\\\\\\\\\\log.txt" ascii fullword
+		$log = "c:\\windows\\temp\\\\\\\\\\\\\\log.txt" ascii fullword
 		$clipboard = "---------------CLIPBOARD------------" ascii fullword
 		$func0 = "\"Main Invoked.\"" ascii fullword
 		$func1 = "\"Main Returned.\"" ascii fullword
@@ -6163,7 +6163,7 @@ rule DEADBITS_Jsworm : MALWARE FILE
 		$name00 = "JSWORM" nocase
 		$str00 = "DECRYPT.txt" nocase
 		$str02 = "cmd.exe"
-		$str03 = "/c reg add HKCU\\SOFTWARE\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\Run /v \"zapiska\" /d \"C:\\\\\\\ProgramData\\"
+		$str03 = "/c reg add HKCU\\SOFTWARE\\\\\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\\\\\\\Run /v \"zapiska\" /d \"C:\\\\\\\\\\ProgramData\\"
 		$str04 = /\/c taskkill.exe taskkill \/f \/im (store|sqlserver|dns|sqlwriter)\.exe\//		$str05 = "/c start C:\\\\\\ProgramData\\"
 		$str06 = "/c vssadmin.exe delete shadows /all /quiet"
 		$str07 = "/c bcdedit /set \{default\} bootstatuspolicy ignoreallfailures -y"
@@ -7030,8 +7030,8 @@ rule ESET_Apt_Windows_TA410_Flowcloud_Loader_Strings : FILE
 		$s18 = "auto_start_after_install" wide fullword
 		$s19 = "extern_config.dat" wide fullword
 		$s20 = "is_hhw" wide fullword
-		$s21 = "SYSTEM\\Setup\\\\\\\\\\\PrintResponsor" wide
-		$event = "Global\\\\\\\\\\\Event_{201a283f-e52b-450e-bf44-7dc436037e56}" wide ascii
+		$s21 = "SYSTEM\\Setup\\\\\\\\\\\\\\PrintResponsor" wide
+		$event = "Global\\\\\\\\\\\\\\Event_{201a283f-e52b-450e-bf44-7dc436037e56}" wide ascii
 		$s23 = "invalid encrypto hdr while decrypting"
 
 	condition:
@@ -7174,7 +7174,7 @@ rule ESET_Apt_Windows_TA410_Flowcloud_Pdb : FILE
 		version = "1"
 
 	condition:
-		uint16( 0 ) == 0x5a4d and ( pe.pdb_path contains "\\\\\\\\\\\FlowCloud\\trunk\\" or pe.pdb_path contains "\\\\\\\\\\\flowcloud\\trunk\\" )
+		uint16( 0 ) == 0x5a4d and ( pe.pdb_path contains "\\\\\\\\\\\\\\FlowCloud\\trunk\\" or pe.pdb_path contains "\\\\\\\\\\\\\\flowcloud\\trunk\\" )
 }
 rule ESET_Apt_Windows_TA410_Flowcloud_Shellcode_Decryption : FILE
 {
@@ -7268,7 +7268,7 @@ rule ESET_Apt_Windows_TA410_Flowcloud_Fcclientdll_Strings : FILE
 		$s1 = "http://%s/html/portlet/ext/draco/resources/draco_manager.swf/[[DYNAMIC]]/1"
 		$s2 = "Cookie: COOKIE_SUPPORT=true; JSESSIONID=5C7E7A60D01D2891F40648DAB6CB3DF4.jvm1; COMPANY_ID=10301; ID=666e7375545678695645673d; PASSWORD=7a4b48574d746470447a303d; LOGIN=6863303130; SCREEN_NAME=4a2b455377766b657451493d; GUEST_LANGUAGE_ID=en-US"
 		$fc_msg = ".fc_net.msg"
-		$s4 = "\\\\\\\\\\\pipe\\namedpipe_keymousespy_english" wide
+		$s4 = "\\\\\\\\\\\\\\pipe\\namedpipe_keymousespy_english" wide
 		$s5 = "8932910381748^&*^$58876$%^ghjfgsa413901280dfjslajflsdka&*(^7867=89^&*F(^&*5678f5ds765f76%&*%&*5"
 		$s6 = "cls_{CACB140B-0B82-4340-9B05-7983017BA3A4}" wide
 		$s7 = "HTTP/1.1 200 OK\x0d\nServer: Apache-Coyote/1.1\x0d\nPragma: No-cache\x0d\nCache-Control: no-cache\x0d\nExpires: Thu, 01 Jan 1970 08:00:00 CST\x0d\nLast-Modified: Fri, 27 Apr 2012 08:11:04 GMT\x0d\nContent-Type: application/xml\x0d\nContent-Length: %d\x0d\nDate: %s GMT"
@@ -8263,7 +8263,7 @@ rule ESET_IIS_Group06_ISN
 		$s4 = "isn7 log not deleted, ERROR 0x%X"
 		$s5 = "isn7 log NOT found"
 		$s6 = "isn_reloadconfig"
-		$s7 = "D:\\soft\\\\\\\\\\\Programming\\\\\\\\\\\C++\\\\\\\\\\\projects\\\\\\\\\\\isapi\\\\\\\\\\\isn7"
+		$s7 = "D:\\soft\\\\\\\\\\\\\\Programming\\\\\\\\\\\\\\C++\\\\\\\\\\\\\\projects\\\\\\\\\\\\\\isapi\\\\\\\\\\\\\\isn7"
 		$s8 = "get POST failed %d"
 		$s9 = "isn7.dll"
 
@@ -8452,10 +8452,10 @@ rule ESET_IIS_Group12
 		version = "1"
 
 	strings:
-		$s1 = "C:\\\\\\\\\\\inetpub\\temp\\\\\\\\\\\IIS Temporary Compressed Files\\"
+		$s1 = "C:\\\\\\\\\\\\\\inetpub\\temp\\\\\\\\\\\\\\IIS Temporary Compressed Files\\"
 		$s2 = "F5XFFHttpModule.dll"
 		$s3 = "gtest_redir"
-		$s4 = "\\\\\\\\\\\cmd.exe" nocase
+		$s4 = "\\\\\\\\\\\\\\cmd.exe" nocase
 		$s5 = "iuuq;00"
 		$s6 = "?xhost="
 		$s7 = "&reurl="
@@ -8608,7 +8608,7 @@ rule ESET_Apt_Windows_Invisimole_CPL_Loader : FILE
 		version = "1"
 
 	strings:
-		$s1 = "WScr%steObject(\"WScr%s.Run(\"::{20d04fe0-3a%s30309d}\\\\\\\\\\\\\::{21EC%sDD-08002B3030%s\", 0);"
+		$s1 = "WScr%steObject(\"WScr%s.Run(\"::{20d04fe0-3a%s30309d}\\\\\\\\\\\\\\\\::{21EC%sDD-08002B3030%s\", 0);"
 		$s2 = "\\\\\\Control.js" wide
 		$s3 = "\\\\\\Control Panel.lnk" wide
 		$s4 = "FPC 3.0.4 [2019/04/13] for x86_64 - Win64"
@@ -12341,7 +12341,7 @@ rule FIREEYE_RT_APT_Loader_Win32_Dshell_2 : FILE
 		$ss1 = "\x00CreateThread\x00"
 		$ss2 = "base64.d" fullword
 		$ss3 = "core.sys.windows" fullword
-		$ss4 = "C:\\Users\\\\\\\\\\\config.ini" fullword
+		$ss4 = "C:\\Users\\\\\\\\\\\\\\config.ini" fullword
 		$ss5 = "Invalid config file" fullword
 
 	condition:
@@ -13786,8 +13786,8 @@ rule GCTI_Cobaltstrike_Resources__Template_Vbs_V3_3_To_V4_X
 		$ea = "Excel.Application" nocase
 		$vis = "Visible = False" nocase
 		$wsc = "Wscript.Shell" nocase
-		$regkey1 = "HKEY_CURRENT_USER\\Software\\\\\\\\\\\Microsoft\\\\\\\\\\\Office\\" nocase
-		$regkey2 = "\\\\\\\\\\\Excel\\Security\\\\\\\\\\\AccessVBOM" nocase
+		$regkey1 = "HKEY_CURRENT_USER\\Software\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\Office\\" nocase
+		$regkey2 = "\\\\\\\\\\\\\\Excel\\Security\\\\\\\\\\\\\\AccessVBOM" nocase
 		$regwrite = ".RegWrite" nocase
 		$dw = "REG_DWORD"
 		$code = ".CodeModule.AddFromString"
@@ -79316,7 +79316,7 @@ rule TRELLIX_ARC_Cryptonar_Ransomware : RANSOMWARE FILE
 		actor_group = "Unknown"
 
 	strings:
-		$s1 = "C:\\narnar\\\\\\\\\\\CryptoNar\\\\\\\\\\\CryptoNarDecryptor\\\\\\\\\\\obj\\Debug\\\\\\\\\\\CryptoNar.pdb" fullword ascii
+		$s1 = "C:\\narnar\\\\\\\\\\\\\\CryptoNar\\\\\\\\\\\\\\CryptoNarDecryptor\\\\\\\\\\\\\\obj\\Debug\\\\\\\\\\\\\\CryptoNar.pdb" fullword ascii
 		$s2 = "CryptoNarDecryptor.exe" fullword wide
 		$s3 = "server will eliminate the key after 72 hours since its generation (since the moment your computer was infected). Once this has " fullword ascii
 		$s4 = "Do not delete this file, else the decryption process will be broken" fullword wide
@@ -79662,7 +79662,7 @@ rule TRELLIX_ARC_Nemty_Ransomware : RANSOMWARE FILE
 		$s5 = "recoveryenabled no & wbadmin delete catalog -quiet & wmic shadowcopy delete" fullword ascii
 		$s6 = "DECRYPT.txt" fullword ascii
 		$s7 = "pv3mi+NQplLqkkJpTNmji/M6mL4NGe5IHsRFJirV6HSyx8mC8goskf5lXH2d57vh52iqhhEc5maLcSrIKbukcnmUwym+In1OnvHp070=" fullword ascii
-		$s8 = "\\\\\\\\\\\NEMTY-DECRYPT.txt\"" fullword ascii
+		$s8 = "\\\\\\\\\\\\\\NEMTY-DECRYPT.txt\"" fullword ascii
 		$s9 = "rfyPvccxgVaLvW9OOY2J090Mq987N9lif/RoIDP89luS9Ouv9gUImpgCTVGWvJzrqiS8hQ5El02LdEvKcJ+7dn3DxiXSNG1PwLrY59KzGs/gUvXnYcmT6t34qfZmr8g8" ascii
 		$s10 = "IO.SYS" fullword wide
 		$s11 = "QgzjKXcD1Jh/cOLBh1OMb+rWxUbToys2ArG9laNWAWk0rNIv2dnIDpc+mSbp91E8qVN8Mv8K5jC3EBr4TB8jh5Ns/onBhPZ9rLXR7wIkaXGeTZi/4/XOtO3DFiad4+vf" ascii
@@ -79884,10 +79884,10 @@ rule TRELLIX_ARC_Loocipher_Ransomware : RANSOMWARE FILE
 		actor_group = "Unknown"
 
 	strings:
-		$x1 = "c:\\users\\usuario\\desktop\\\\\\\\\\\cryptolib\\\\\\\\\\\gfpcrypt.h" fullword ascii
-		$x2 = "c:\\users\\usuario\\desktop\\\\\\\\\\\cryptolib\\\\\\\\\\\eccrypto.h" fullword ascii
-		$s3 = "c:\\users\\usuario\\desktop\\\\\\\\\\\cryptolib\\\\\\\\\\\gf2n.h" fullword ascii
-		$s4 = "c:\\users\\usuario\\desktop\\\\\\\\\\\cryptolib\\\\\\\\\\\queue.h" fullword ascii
+		$x1 = "c:\\users\\usuario\\desktop\\\\\\\\\\\\\\cryptolib\\\\\\\\\\\\\\gfpcrypt.h" fullword ascii
+		$x2 = "c:\\users\\usuario\\desktop\\\\\\\\\\\\\\cryptolib\\\\\\\\\\\\\\eccrypto.h" fullword ascii
+		$s3 = "c:\\users\\usuario\\desktop\\\\\\\\\\\\\\cryptolib\\\\\\\\\\\\\\gf2n.h" fullword ascii
+		$s4 = "c:\\users\\usuario\\desktop\\\\\\\\\\\\\\cryptolib\\\\\\\\\\\\\\queue.h" fullword ascii
 		$s5 = "ThreadUserTimer: GetThreadTimes failed with error " fullword ascii
 		$s6 = "std::_Vector_const_iterator<class std::_Vector_val<struct std::_Simple_types<struct CryptoPP::ProjectivePoint> > >::operator *" fullword wide
 		$s7 = "std::_Vector_const_iterator<class std::_Vector_val<struct std::_Simple_types<struct CryptoPP::ProjectivePoint> > >::operator +=" fullword wide
@@ -80149,10 +80149,10 @@ rule TRELLIX_ARC_Ransom_Xinof : RANSOMWARE FILE
 
 	strings:
 		$s1 = "XINOF.exe" nocase ascii
-		$s2 = "C:\\Users\\\\\\\\\\\\\\\\Phoenix" nocase ascii
+		$s2 = "C:\\Users\\\\\\\\\\\\\\\\\\\\\\Phoenix" nocase ascii
 		$s3 = "How To Decrypt Files.hta" nocase ascii
-		$s4 = "C:\\\\\\\\\\\\\\\\ProgramData\\norunanyway" nocase ascii
-		$s5 = "C:\\\\\\\\\\\\\\\\ProgramData\\\\\\\\\\\\\\\\clast" nocase ascii
+		$s4 = "C:\\\\\\\\\\\\\\\\\\\\\\ProgramData\\norunanyway" nocase ascii
+		$s5 = "C:\\\\\\\\\\\\\\\\\\\\\\ProgramData\\\\\\\\\\\\\\\\\\\\\\clast" nocase ascii
 		$s6 = "fonix1" nocase ascii
 		$s7 = "C:\\Windows\\System32\\shatdown.exe" nocase ascii
 		$s8 = "XINOF Ransomw" nocase ascii
@@ -80264,7 +80264,7 @@ rule TRELLIX_ARC_Ransom_Egregor : RANSOMWARE FILE
 		$p2 = "testbuild.pdb" fullword ascii
 		$s1 = "M:\\" nocase ascii
 		$s2 = "1z1M9U9" fullword wide
-		$s3 = "C:\\\\\\\\\\\Logmein\\{888-8888-9999}\\\\\\\\\\\Logmein.log" fullword wide
+		$s3 = "C:\\\\\\\\\\\\\\Logmein\\{888-8888-9999}\\\\\\\\\\\\\\Logmein.log" fullword wide
 
 	condition:
 		uint16( 0 ) == 0x5a4d and filesize < 2000KB and hash.sha256 ( pe.rich_signature.clear_data ) == "b030ed1a7ca222a0923a59f321be7e55b8d0fc24c1134df1ba775bcf0994c79c" or ( pe.sections [ 4 ] . name == ".gfids" and pe.sections [ 5 ] . name == ".00cfg" ) and ( any of ( $p* ) or 2 of ( $s* ) )
@@ -80451,7 +80451,7 @@ rule TRELLIX_ARC_Shadowspawn_Utility : UTILITY FILE
 		actor_group = "Unknown"
 
 	strings:
-		$pdb = "C:\\data\\\\\\\\\\\projects\\shadowspawn\\src\\bin\\\\\\\\\\\Release-W2K3\\x64\\ShadowSpawn.pdb" fullword ascii
+		$pdb = "C:\\data\\\\\\\\\\\\\\projects\\shadowspawn\\src\\bin\\\\\\\\\\\\\\Release-W2K3\\x64\\ShadowSpawn.pdb" fullword ascii
 		$op0 = { e9 34 ea ff ff cc cc cc cc 48 8d 8a 20 }
 		$op1 = { 48 8b 85 e0 06 00 00 48 8d 34 00 48 8d 46 02 48 }
 		$op2 = { e9 34 c1 ff ff cc cc cc cc 48 8b 8a 68 }
@@ -80557,9 +80557,9 @@ rule TRELLIX_ARC_Lg_Utility_Lateral_Movement_Softcell : UTILITY FILE
 		actor_group = "Unknown"
 
 	strings:
-		$s1 = "lg \\\\\\\\\\\\\comp1\\users louise -add -r comp3" fullword ascii
-		$s2 = "lg \\\\\\\\\\\\\comp1\\users S-1-5-567-678-89765-456 -sid -add" fullword ascii
-		$s3 = "lg \\\\\\\\\\\\\comp1\\users -sidsout" fullword ascii
+		$s1 = "lg \\\\\\\\\\\\\\\\comp1\\users louise -add -r comp3" fullword ascii
+		$s2 = "lg \\\\\\\\\\\\\\\\comp1\\users S-1-5-567-678-89765-456 -sid -add" fullword ascii
+		$s3 = "lg \\\\\\\\\\\\\\\\comp1\\users -sidsout" fullword ascii
 		$s4 = "Enumerates members of localgroup users on localhost" fullword ascii
 		$s5 = "Adds SID resolved at comp3 for louise to localgroup users on comp1" fullword ascii
 		$s6 = "CodeGear C++ - Copyright 2008 Embarcadero Technologies" fullword ascii
@@ -80597,7 +80597,7 @@ rule TRELLIX_ARC_Mangzamel_Softcell : TROJAN FILE
 	strings:
 		$s1 = "Change Service Mode to user logon failure.code:%d" fullword ascii
 		$s2 = "spoolsvs.exe" fullword wide
-		$s3 = "System\\\\\\\\\\\CurrentControlSet\\Services\\\\\\\\\\\%s\\\\\\\\\\\parameters\\\\\\\\\\\%s" fullword ascii
+		$s3 = "System\\\\\\\\\\\\\\CurrentControlSet\\Services\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\parameters\\\\\\\\\\\\\\%s" fullword ascii
 		$s4 = "Please Correct [-s %s]" fullword ascii
 		$s5 = "Please Correct [-m %s]" fullword ascii
 		$op0 = { 59 8d 85 64 ff ff ff 50 c7 85 64 ff ff ff 94 }
@@ -81035,7 +81035,7 @@ rule TRELLIX_ARC_Malw_Eicar : EICAR
 		actor_group = "Unknown"
 
 	strings:
-		$s1 = "X5O!P%@AP[4\\\\\\\\\\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*" fullword ascii
+		$s1 = "X5O!P%@AP[4\\\\\\\\\\\\\\PZX54(P^)7CC)7}$EICAR-STANDARD-ANTIVIRUS-TEST-FILE!$H+H*" fullword ascii
 
 	condition:
 		any of them
@@ -81182,7 +81182,7 @@ rule TRELLIX_ARC_Rietspoof_Loader : RANSOMWARE FILE
 		actor_group = "Unknown"
 
 	strings:
-		$x1 = "\\Work\\d2Od7s43\\techloader\\\\\\\\\\\loader" fullword ascii
+		$x1 = "\\Work\\d2Od7s43\\techloader\\\\\\\\\\\\\\loader" fullword ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and all of them
@@ -81539,14 +81539,14 @@ rule ARKBIRD_SOLG_Ran_Mount_Locker_Nov_2020_1 : FILE
 		hash2 = "226a723ffb4a91d9950a8b266167c5b354ab0db1dc225578494917fe53867ef2"
 
 	strings:
-		$s1 = "C:\\\\\\\\\\\Program Files (x86)\\\\\\\\\\\Microsoft Visual Studio\\\\\\\\\\\VB98\\\\\\\\\\\VB6.OLB" fullword wide
+		$s1 = "C:\\\\\\\\\\\\\\Program Files (x86)\\\\\\\\\\\\\\Microsoft Visual Studio\\\\\\\\\\\\\\VB98\\\\\\\\\\\\\\VB6.OLB" fullword wide
 		$s2 = "VBA6.DLL" fullword ascii
 		$s3 = "MSComDlg.CommonDialog" fullword ascii
 		$s4 = "DllFunctionCall" fullword ascii
 		$s5 = { 00 2a 00 5c 00 41 00 43 00 3a 00 5c [35-160] 00 2e 00 76 00 62 00 70 }
-		$s6 = "C:\\\\\\\\\\\Program Files (x86)\\\\\\\\\\\Microsoft Visual Studio\\\\\\\\\\\VB98\\\\\\\\\\\COMCTL32.oca" fullword wide
-		$s7 = "C:\\\\\\\\\\\Program Files (x86)\\\\\\\\\\\Microsoft Visual Studio\\\\\\\\\\\VB98\\\\\\\\\\\MSFLXGRD.oca" fullword ascii
-		$s8 = "C:\\\\\\\\\\\Program Files (x86)\\\\\\\\\\\Microsoft Visual Studio\\\\\\\\\\\VB98\\\\\\\\\\\VB6.OLB" fullword ascii
+		$s6 = "C:\\\\\\\\\\\\\\Program Files (x86)\\\\\\\\\\\\\\Microsoft Visual Studio\\\\\\\\\\\\\\VB98\\\\\\\\\\\\\\COMCTL32.oca" fullword wide
+		$s7 = "C:\\\\\\\\\\\\\\Program Files (x86)\\\\\\\\\\\\\\Microsoft Visual Studio\\\\\\\\\\\\\\VB98\\\\\\\\\\\\\\MSFLXGRD.oca" fullword ascii
+		$s8 = "C:\\\\\\\\\\\\\\Program Files (x86)\\\\\\\\\\\\\\Microsoft Visual Studio\\\\\\\\\\\\\\VB98\\\\\\\\\\\\\\VB6.OLB" fullword ascii
 		$s9 = "SFLXGRD.OCX" fullword ascii
 		$s10 = "COMDLG32.OCX" fullword ascii
 		$s11 = "COMCTL32.OCX" fullword ascii
@@ -81756,10 +81756,10 @@ rule ARKBIRD_SOLG_MAL_Kpot_Oct_2020_1 : FILE
 
 	strings:
 		$olds1 = "%s | %s | %s | %s | %s | %s | %s | %d | %s" fullword ascii
-		$olds2 = "%s\\\\\\\\\\\%s\\\\\\\\\\\%s\\\\\\\\\\\%.6s_%d.dat" fullword wide
-		$olds3 = "%s\\\\\\\\\\\%s\\\\\\\\\\\%s-Qt" fullword wide
-		$olds4 = "%s\\\\\\\\\\\%s\\\\\\\\\\\%.6ss" fullword wide
-		$olds5 = "%s\\\\\\\\\\\%s\\\\\\\\\\\%s.vdf" fullword wide
+		$olds2 = "%s\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\%.6s_%d.dat" fullword wide
+		$olds3 = "%s\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\%s-Qt" fullword wide
+		$olds4 = "%s\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\%.6ss" fullword wide
+		$olds5 = "%s\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\%s.vdf" fullword wide
 		$olds6 = "https://%S/a/%S" fullword wide
 		$olds7 = { 4e 00 61 00 6d 00 65 00 3a 00 09 00 25 00 6c 00 73 00 0d 00 0a 00 43 00 6f 00 6d 00 6d 00 65 00 6e 00 74 00 3a 00 20 00 25 00 6c 00 73 00 0d 00 0a 00 55 00 73 00 65 00 72 00 3a 00 09 00 25 00 6c 00 73 00 0d 00 0a 00 44 00 61 00 74 00 61 00 3a 00 20 00 0d 00 0a 00 00 00 00 00 25 00 32 00 2e 00 32 00 58 00 20 00 00 00 00 00 25 00 2d 00 35 00 30 00 73 00 20 00 25 00 73 }
 		$debug1 = "4|Remote Desktop|%s|%s|%s|" fullword ascii
@@ -81808,8 +81808,8 @@ rule ARKBIRD_SOLG_Ran_Egregor_Sept_2020_1 : FILE
 
 	strings:
 		$x1 = "dmocx.dll" fullword ascii
-		$s2 = "C:\\\\\\\\\\\Logmein\\{888-8888-9999}\\\\\\\\\\\Logmein.log" fullword wide
-		$s3 = "M:\\sc\\\\\\\\\\\p\\testbuild.pdb" fullword ascii
+		$s2 = "C:\\\\\\\\\\\\\\Logmein\\{888-8888-9999}\\\\\\\\\\\\\\Logmein.log" fullword wide
+		$s3 = "M:\\sc\\\\\\\\\\\\\\p\\testbuild.pdb" fullword ascii
 		$s4 = "Type Descriptor'" fullword ascii
 		$s5 = "=$=`=h=p=t=x=|=" fullword ascii
 		$s6 = "--nop" fullword wide
@@ -81836,12 +81836,12 @@ rule ARKBIRD_SOLG_APT_NK_Lazarus_Stealer_Screencapture_June_2020_1 : FILE
 		hash1 = "6caa98870efd1097ee13ae9c21c6f6c9202a19ad049a9e65c60fce5c889dc4c8"
 
 	strings:
-		$s1 = "E:\\workspace\\\\\\\\\\\VS\\\\\\\\\\\crat_2\\\\\\\\\\\client\\Build\\Win32\\DllRelease\\ScreenCapture_Win32_DllRelease.pdb" fullword ascii
+		$s1 = "E:\\workspace\\\\\\\\\\\\\\VS\\\\\\\\\\\\\\crat_2\\\\\\\\\\\\\\client\\Build\\Win32\\DllRelease\\ScreenCapture_Win32_DllRelease.pdb" fullword ascii
 		$s2 = "CloseHandle ScreenCaptureMutex failure! %d" fullword ascii
 		$s3 = "ScreenCapture_Win32_DllRelease.dll" fullword ascii
 		$s4 = "ScreenCaptureMutex already created! %s\n" fullword ascii
 		$s5 = "Capturing screen...\n" fullword ascii
-		$s6 = "%s\\\\\\\\\\\P%02d%lu.tmp" fullword ascii
+		$s6 = "%s\\\\\\\\\\\\\\P%02d%lu.tmp" fullword ascii
 		$s7 = "ScreenCaptureThread finished!" fullword ascii
 		$s8 = "ScreenCaptureThread started!" fullword ascii
 		$s9 = "ScreenCapture start time set to %llu" fullword ascii
@@ -81876,7 +81876,7 @@ rule ARKBIRD_SOLG_APT_NK_Lazarus_Stealer_Keylog_June_2020_1 : FILE
 		hash1 = "6d461bf3e3ca68b2d6d850322b79d5e3e647b0d515cb10449935bf6d77d7d5f2"
 
 	strings:
-		$s1 = "E:\\workspace\\\\\\\\\\\VS\\\\\\\\\\\crat_2\\\\\\\\\\\client\\Build\\Win32\\DllRelease\\\\\\\\\\\KeyLog_Win32_DllRelease.pdb" fullword ascii
+		$s1 = "E:\\workspace\\\\\\\\\\\\\\VS\\\\\\\\\\\\\\crat_2\\\\\\\\\\\\\\client\\Build\\Win32\\DllRelease\\\\\\\\\\\\\\KeyLog_Win32_DllRelease.pdb" fullword ascii
 		$s2 = "CloseHandle KeyLogMutex failure! %d" fullword ascii
 		$s3 = "KeyLog_Win32_DllRelease.dll" fullword ascii
 		$s4 = "Key Log Mutex already created! %s\n" fullword ascii
@@ -81914,7 +81914,7 @@ rule ARKBIRD_SOLG_APT_NK_Lazarus_Stealer_Generic_June_2020_1 : FILE
 		hash2 = "6caa98870efd1097ee13ae9c21c6f6c9202a19ad049a9e65c60fce5c889dc4c8"
 
 	strings:
-		$s1 = "E:\\workspace\\\\\\\\\\\VS\\\\\\\\\\\crat_2\\\\\\\\\\\client\\Build\\Win32\\DllRelease" fullword ascii
+		$s1 = "E:\\workspace\\\\\\\\\\\\\\VS\\\\\\\\\\\\\\crat_2\\\\\\\\\\\\\\client\\Build\\Win32\\DllRelease" fullword ascii
 		$s2 = "Mutex failure! %d" fullword ascii
 		$s3 = "Win32_DllRelease.dll" fullword ascii
 		$s4 = "Mutex already created! %s\n" fullword ascii
@@ -82216,18 +82216,18 @@ rule ARKBIRD_SOLG_TA505_Maldoc_21Nov_2 : FILE
 		hash1 = "270b398b697f10b66828afe8d4f6489a8de48b04a52a029572412ae4d20ff89b"
 
 	strings:
-		$x1 = "C:\\Users\\\\\\\\\\\\\\\\J\\\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\\\Local\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\Temporary Internet Files\\\\\\\\\\\\\\\\Content.MSO\\\\\\\\\\\\\\\\AFFA0BDC.tmp" fullword wide
-		$x2 = "C:\\Users\\\\\\\\\\\\\\\\J\\\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\\\Local\\\\\\\\\\\\\\\\Temp\\\\\\\\\\\\\\\\AFFA0BDC.tmp" fullword wide
-		$x3 = "C:\\Windows\\system32\\\\\\\\\\\\\\\\FM20.DLL" fullword ascii
-		$x4 = "C:\\Users\\\\\\\\\\\\\\\\J\\\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\\\Local\\\\\\\\\\\\\\\\Temp\\\\\\\\\\\\\\\\VBE\\\\\\\\\\\\\\\\MSForms.exd" fullword ascii
-		$x5 = "C:\\\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\\\Common Files\\\\\\\\\\\\\\\\Microsoft Shared\\\\\\\\\\\\\\\\OFFICE16\\\\\\\\\\\\\\\\MSO.DLL" fullword ascii
-		$x6 = "C:\\\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\\\Common Files\\\\\\\\\\\\\\\\Microsoft Shared\\\\\\\\\\\\\\\\VBA\\\\\\\\\\\\\\\\VBA7.1\\\\\\\\\\\\\\\\VBE7.DLL" fullword ascii
-		$x7 = "*\\\\\\\\\\\\\\\\G{0D452EE1-E08F-101A-852E-02608C4D0BB4}#2.0#0#C:\\Windows\\system32\\\\\\\\\\\\\\\\FM20.DLL#Microsoft Forms 2.0 Object Library" fullword wide
-		$x8 = "*\\\\\\\\\\\\\\\\G{BA45F137-16B2-487D-9A21-F38179C0576C}#2.0#0#C:\\Users\\\\\\\\\\\\\\\\J\\\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\\\Local\\\\\\\\\\\\\\\\Temp\\\\\\\\\\\\\\\\VBE\\\\\\\\\\\\\\\\MSForms.exd#Microsoft Forms 2.0 Object" wide
-		$s9 = "*\\\\\\\\\\\\\\\\G{2DF8D04C-5BFA-101B-BDE5-00AA0044DE52}#2.8#0#C:\\\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\\\Common Files\\\\\\\\\\\\\\\\Microsoft Shared\\\\\\\\\\\\\\\\OFFICE16\\\\\\\\\\\\\\\\MSO.DLL#Microsoft " wide
+		$x1 = "C:\\Users\\\\\\\\\\\\\\\\\\\\\\J\\\\\\\\\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\\\\\\\\\Local\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\Temporary Internet Files\\\\\\\\\\\\\\\\\\\\\\Content.MSO\\\\\\\\\\\\\\\\\\\\\\AFFA0BDC.tmp" fullword wide
+		$x2 = "C:\\Users\\\\\\\\\\\\\\\\\\\\\\J\\\\\\\\\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\\\\\\\\\Local\\\\\\\\\\\\\\\\\\\\\\Temp\\\\\\\\\\\\\\\\\\\\\\AFFA0BDC.tmp" fullword wide
+		$x3 = "C:\\Windows\\system32\\\\\\\\\\\\\\\\\\\\\\FM20.DLL" fullword ascii
+		$x4 = "C:\\Users\\\\\\\\\\\\\\\\\\\\\\J\\\\\\\\\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\\\\\\\\\Local\\\\\\\\\\\\\\\\\\\\\\Temp\\\\\\\\\\\\\\\\\\\\\\VBE\\\\\\\\\\\\\\\\\\\\\\MSForms.exd" fullword ascii
+		$x5 = "C:\\\\\\\\\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\\\\\\\\\Common Files\\\\\\\\\\\\\\\\\\\\\\Microsoft Shared\\\\\\\\\\\\\\\\\\\\\\OFFICE16\\\\\\\\\\\\\\\\\\\\\\MSO.DLL" fullword ascii
+		$x6 = "C:\\\\\\\\\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\\\\\\\\\Common Files\\\\\\\\\\\\\\\\\\\\\\Microsoft Shared\\\\\\\\\\\\\\\\\\\\\\VBA\\\\\\\\\\\\\\\\\\\\\\VBA7.1\\\\\\\\\\\\\\\\\\\\\\VBE7.DLL" fullword ascii
+		$x7 = "*\\\\\\\\\\\\\\\\\\\\\\G{0D452EE1-E08F-101A-852E-02608C4D0BB4}#2.0#0#C:\\Windows\\system32\\\\\\\\\\\\\\\\\\\\\\FM20.DLL#Microsoft Forms 2.0 Object Library" fullword wide
+		$x8 = "*\\\\\\\\\\\\\\\\\\\\\\G{BA45F137-16B2-487D-9A21-F38179C0576C}#2.0#0#C:\\Users\\\\\\\\\\\\\\\\\\\\\\J\\\\\\\\\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\\\\\\\\\Local\\\\\\\\\\\\\\\\\\\\\\Temp\\\\\\\\\\\\\\\\\\\\\\VBE\\\\\\\\\\\\\\\\\\\\\\MSForms.exd#Microsoft Forms 2.0 Object" wide
+		$s9 = "*\\\\\\\\\\\\\\\\\\\\\\G{2DF8D04C-5BFA-101B-BDE5-00AA0044DE52}#2.8#0#C:\\\\\\\\\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\\\\\\\\\Common Files\\\\\\\\\\\\\\\\\\\\\\Microsoft Shared\\\\\\\\\\\\\\\\\\\\\\OFFICE16\\\\\\\\\\\\\\\\\\\\\\MSO.DLL#Microsoft " wide
 		$s10 = "lIySgefa86jIfdEkSZVDoSs5BDkcalCieNBN4EqfVaEs2wWD4OjpTiOBqDrL3d9WCaDAKZpoJPRnoacfQPhucmy69axznNmRbRY12v3ez5PdAAnpAl5m5NUqKHBKCYb5" ascii
 		$s11 = "35mvkZ9ZvIttuHSTUKWZCdOsh5j4Y1p2pJ3vi5onOXnMcEPIUIK1UWAYq3noPeaDtAdUOxKYvIlNZbqMpJjqpxhCidfpQ9GJXStKA44w7UFlKV9oMK8f5Tn6tKMKsviw" ascii
-		$s12 = "*\\\\\\\\\\\\\\\\G{000204EF-0000-0000-C000-000000000046}#4.2#9#C:\\\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\\\Common Files\\\\\\\\\\\\\\\\Microsoft Shared\\\\\\\\\\\\\\\\VBA\\\\\\\\\\\\\\\\VBA7.1\\\\\\\\\\\\\\\\VBE7.DLL#Visual" wide
+		$s12 = "*\\\\\\\\\\\\\\\\\\\\\\G{000204EF-0000-0000-C000-000000000046}#4.2#9#C:\\\\\\\\\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\\\\\\\\\Common Files\\\\\\\\\\\\\\\\\\\\\\Microsoft Shared\\\\\\\\\\\\\\\\\\\\\\VBA\\\\\\\\\\\\\\\\\\\\\\VBA7.1\\\\\\\\\\\\\\\\\\\\\\VBE7.DLL#Visual" wide
 		$s13 = "verkar.dll" fullword ascii
 		$s14 = "intc.dll" fullword ascii
 		$s15 = "YjAygups4wPzNU7lNIGBuFbv6Triw8rxEPLSjrYSKXdUV8QuzbwJvdHshfBvdh66er47iobvTX1FCqI8d6RuKRcBhsLdYCOC1hPEdTllabYHlcZ1FDsgyLuwoCZYM7Fq" ascii
@@ -82273,10 +82273,10 @@ rule ARKBIRD_SOLG_Mal_Stealer_NET_Redline_Aug_2020_1 : FILE
 		$s13 = "<IsProcessElevated>k__BackingField" fullword ascii
 		$s14 = "System.Collections.Generic.IEnumerable<RedLine.Logic.Json.JsonValue>.GetEnumerator" fullword ascii
 		$s15 = "System.Collections.Generic.IEnumerator<RedLine.Logic.Json.JsonValue>.get_Current" fullword ascii
-		$s16 = "HKEY_CURRENT_USER\\Software\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\App Paths\\browser.exe" fullword wide
+		$s16 = "HKEY_CURRENT_USER\\Software\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\App Paths\\browser.exe" fullword wide
 		$s17 = "ProcessExecutablePath" fullword ascii
 		$s18 = "IsProcessElevated" fullword ascii
-		$s19 = "HKEY_CURRENT_USER\\Software\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\App Paths\\\\\\\\\\\firefox.exe" fullword wide
+		$s19 = "HKEY_CURRENT_USER\\Software\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\App Paths\\\\\\\\\\\\\\firefox.exe" fullword wide
 		$s20 = "get_encryptedPassword" fullword ascii
 
 	condition:
@@ -82486,7 +82486,7 @@ rule ARKBIRD_SOLG_MAL_Shark_Aug_2021_1 : FILE
 		$s3 = { 40 00 45 00 43 00 48 00 4f 00 20 00 4f 00 46 00 46 00 0a 00 00 1d 74 00 61 00 73 00 6b 00 6b 00 69 00 6c 00 6c 00 20 00 2f 00 49 00 4d 00 20 00 22 00 00 17 22 00 20 00 2f 00 46 00 20 00 3e 00 20 00 6e 00 75 00 6c 00 0a 00 00 2b 70 00 69 00 6e 00 67 00 20 00 [12-28] 00 20 00 6e 00 75 00 6c }
 		$s4 = { 2a 00 65 00 78 00 65 00 00 0b 2a 00 70 00 72 00 6f 00 63 00 00 07 2a 00 6b 00 6c 00 00 07 64 00 69 00 72 00 00 11 66 00 69 00 6c 00 65 00 3a 00 2f 00 2f 00 2f }
 		$s5 = { 16 0a 2b 13 02 06 02 06 91 1f 2a 28 ?? 00 00 0a 61 d2 9c 06 17 58 0a 06 02 8e 69 }
-		$s6 = "HKEY_LOCAL_MACHINE\\SOFTWARE\\\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\\\Cryptography" fullword wide
+		$s6 = "HKEY_LOCAL_MACHINE\\SOFTWARE\\\\\\\\\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\\\\\\\\\Cryptography" fullword wide
 		$s7 = { 65 00 63 00 68 00 6f 00 20 00 [2-10] 20 00 7c 00 20 00 64 00 65 00 6c 00 20 00 [2-10] 2e 00 62 00 61 00 74 00 00 0f [2-10] 00 2e 00 62 00 61 00 74 }
 
 	condition:
@@ -82511,7 +82511,7 @@ rule ARKBIRD_SOLG_APT_Chimera_Sept_2020_1 : FILE
 
 	strings:
 		$header = { 4D 5A 41 52 55 48 89 E5 48 83 EC 20 48 83 E4 F0 E8 00 00 00 00 5B 48 81 C3 EB 18 00 00 FF D3 48 81 C3 00 09 03 00 49 89 D8 6A 04 5A FF D0 00 00 00 00 00 00 00 00 00 00 00 00 00 00 E8 }
-		$s1 = "\\\\\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\\\%s" fullword ascii
+		$s1 = "\\\\\\\\\\\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\\\\\\\\\%s" fullword ascii
 		$s2 = "%04x-%04x:%s" fullword wide
 		$core1 = "core_pivot_session_new" fullword ascii
 		$core2 = "core_pivot_session_died" fullword ascii
@@ -82738,11 +82738,11 @@ rule ARKBIRD_SOLG_Ran_Pay2Key_Nov_2020_1 : FILE
 		hash3 = "ea7ed9bb14a7bda590cf3ff81c8c37703a028c4fdb4599b6a283d68fdcb2613f"
 
 	strings:
-		$s1 = "F:\\2-Sources\\21-FinalCobalt\\Source\\\\\\\\\\\cobalt\\\\\\\\\\\Cobalt\\\\\\\\\\\Cobalt\\Win32\\\\\\\\\\\Release\\\\\\\\\\\Client\\\\\\\\\\\Cobalt.Client.pdb" fullword ascii
-		$s2 = ".\\\\\\\\\\\Cobalt-Client-log.txt" fullword ascii
-		$s3 = ".\\\\\\\\\\\Config.ini" fullword wide
+		$s1 = "F:\\2-Sources\\21-FinalCobalt\\Source\\\\\\\\\\\\\\cobalt\\\\\\\\\\\\\\Cobalt\\\\\\\\\\\\\\Cobalt\\Win32\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\Client\\\\\\\\\\\\\\Cobalt.Client.pdb" fullword ascii
+		$s2 = ".\\\\\\\\\\\\\\Cobalt-Client-log.txt" fullword ascii
+		$s3 = ".\\\\\\\\\\\\\\Config.ini" fullword wide
 		$s4 = "Local\\{C15730E2-145C-4c5e-B005-3BC753F42475}-once-flag" fullword ascii
-		$s5 = "\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\Themes\\\\\\\\\\\TranscodedWallpaper" fullword ascii
+		$s5 = "\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\Themes\\\\\\\\\\\\\\TranscodedWallpaper" fullword ascii
 		$s6 = { 40 00 63 00 6d 00 64 00 2e 00 65 00 78 00 65 00 20 00 2f 00 43 00 20 00 70 00 69 00 6e 00 67 00 20 00 31 00 2e 00 31 00 2e 00 31 00 2e 00 31 00 20 00 2d 00 6e 00 20 00 31 00 20 00 2d 00 77 00 20 00 33 00 30 00 30 00 30 00 20 00 3e 00 20 00 4e 00 75 00 6c 00 20 00 26 00 20 00 44 00 65 00 6c 00 20 00 2f 00 66 00 20 00 2f 00 71 00 20 00 22 00 25 00 73 00 22 }
 		$s7 = "%WINDRIVE%" fullword wide
 		$s8 = "%WINDIR%" fullword wide
@@ -82808,8 +82808,8 @@ rule ARKBIRD_SOLG_Malware_Casbaneiro_MSI : FILE
 		hash1 = "8e77a2e1d30600db01a8481d232b601581faee02b7ec44c1ad9d74ec3544ba7d"
 
 	strings:
-		$x1 = "C:\\Branch\\win\\\\\\\\\\\Release\\\\\\\\\\\custact\\x86\\\\\\\\\\\vmdetect.pdb" fullword ascii
-		$s2 = "C:\\Branch\\win\\\\\\\\\\\Release\\\\\\\\\\\custact\\\\x86\\\\\\\\\\\AICustAct.pdb" fullword ascii
+		$x1 = "C:\\Branch\\win\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\custact\\x86\\\\\\\\\\\\\\vmdetect.pdb" fullword ascii
+		$s2 = "C:\\Branch\\win\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\custact\\\\x86\\\\\\\\\\\\\\AICustAct.pdb" fullword ascii
 		$s3 = ";!@Install@!UTF-8!\\nTitle=\"Mozilla Firefox\"\\nRunProgram=\"setup-stub.exe\"\\n;!@InstallEnd@!7z" fullword ascii
 		$s4 = "__MOZCUSTOM__:campaign%3D%2528not%2Bset%2529%26content%3D%2528not%2Bset%2529%26medium%3Dreferral%26source%3Dwww.google.com" fullword ascii
 		$s5 = "https://www.mozilla.com0\\r" fullword wide
@@ -83354,7 +83354,7 @@ rule ARKBIRD_SOLG_APT_APT34_Dustman_Apr_2021_1 : FILE
 
 	strings:
 		$s1 = { 43 3a 5c 77 69 6e 64 6f 77 73 5c 73 79 73 74 65 6d 33 32 5c 63 6d 64 2e 65 78 65 00 00 00 00 00 2f 63 20 61 67 65 6e 74 2e 65 78 65 20 41 00 00 44 00 6f 00 77 00 6e 00 20 00 57 00 69 00 74 00 68 00 20 00 42 00 69 00 6e 00 20 00 53 00 61 00 6c 00 6d 00 61 00 6e 00 00 00 00 00 5c 00 }
-		$s2 = "\\\\\\\\\\\\\\\\assistant.sys" fullword wide
+		$s2 = "\\\\\\\\\\\\\\\\\\\\\\assistant.sys" fullword wide
 		$s3 = { 61 00 67 00 65 00 6e 00 74 00 2e 00 65 00 78 00 65 00 00 00 00 00 00 00 53 00 6f 00 66 00 74 00 77 00 61 00 72 00 65 00 5c 00 4f 00 72 00 61 00 63 00 6c 00 65 00 5c 00 56 00 69 00 72 00 74 00 75 00 61 00 6c 00 42 00 6f 00 78 00 00 00 00 00 54 68 65 20 4d 61 67 69 63 20 57 6f 72 64 21 00 56 00 42 00 6f 00 78 00 44 00 72 00 76 00 00 00 5c 00 44 00 65 00 76 00 69 00 63 00 65 00 00 00 56 00 42 00 6f 00 78 00 55 00 53 00 42 00 4d 00 6f 00 6e 00 00 00 00 00 56 00 42 00 6f 00 78 00 4e 00 65 00 74 00 41 00 64 00 70 00 00 00 00 00 56 00 42 00 6f 00 78 00 4e 00 65 00 74 00 4c 00 77 00 66 }
 		$s4 = { 5c 00 5c 00 2e 00 5c 00 25 00 73 }
 		$s5 = { 68 54 00 00 00 68 00 00 00 00 68 80 69 40 00 e8 f4 0f 00 00 83 c4 0c 68 00 00 00 00 e8 ed 0f 00 00 a3 84 69 40 00 68 00 00 00 00 68 00 10 00 00 68 00 00 00 00 e8 da 0f 00 00 a3 80 69 40 00 e8 fc 2f 00 00 e8 7d 2c 00 00 e8 7a 18 00 00 e8 1d 12 00 00 e8 40 2d 00 00 68 00 00 00 00 e8 78 2f 00 00 a3 8c 69 40 00 68 00 00 00 00 e8 8d 2f 00 00 a3 90 69 40 00 c7 05 94 69 40 00 5a 00 00 00 c7 05 98 69 40 00 14 00 00 00 8b 1d 8c 69 40 00 2b 1d 94 69 40 00 83 c3 ea 89 1d 9c 69 40 00 8b 1d 90 69 40 00 2b 1d 98 69 40 00 83 c3 cc 89 1d a0 69 40 00 68 00 00 c8 00 68 18 60 40 00 ff 35 98 69 40 00 ff 35 94 69 40 00 ff 35 a0 69 40 00 ff 35 9c 69 40 00 68 00 00 00 }
@@ -83421,7 +83421,7 @@ rule ARKBIRD_SOLG_MAL_Netfilter_Dropper_Jun_2021_1 : FILE
 		$seq1 = { b8 ff 00 00 00 50 b8 00 00 00 00 50 8d 85 dd fe ff ff 50 e8 ?? 0d 00 00 83 c4 0c b8 00 00 00 00 88 85 dc fd ff ff b8 ff 00 00 00 50 b8 00 00 00 00 50 8d 85 dd fd ff ff 50 e8 ?? 0d 00 00 83 c4 0c b8 00 00 50 00 50 e8 ?? 0d 00 00 83 c4 04 89 85 d8 fd ff ff 8b 85 d8 fd ff ff 89 85 d4 fd ff ff b8 00 00 50 00 50 b8 00 00 00 00 50 8b 85 d8 fd ff ff 50 e8 ?? 0c 00 00 83 c4 0c 8b 45 0c 8b 8d d8 fd ff ff 89 08 b8 3c 00 00 00 50 b8 00 00 00 00 50 8d 85 98 fd ff ff 50 e8 ?? 0c 00 00 83 c4 0c b8 3c 00 00 00 89 85 98 fd ff ff 8d 85 98 fd ff ff 83 c0 10 8d 8d dc fe ff ff 89 08 8d 85 98 fd ff ff 83 c0 14 b9 00 01 00 00 89 08 8d 85 98 fd ff ff 83 c0 2c 8d 8d dc fd ff ff 89 08 8d 85 98 fd ff ff 83 c0 30 b9 00 01 00 00 89 08 b8 0a 31 40 00 50 e8 ?? 0c 00 00 89 85 94 fd ff ff b8 16 31 40 00 50 8b 85 94 fd ff ff 50 e8 ?? 0c 00 00 89 45 fc b8 28 31 40 00 50 8b 85 94 fd ff ff 50 e8 ?? 0c 00 00 89 45 f8 b8 36 31 40 00 50 8b 85 94 fd ff ff 50 e8 [2] 00 00 89 45 f4 b8 47 31 40 00 50 8b 85 94 fd ff ff 50 e8 [2] 00 00 89 45 f0 b8 58 31 40 00 50 8b 85 94 fd ff ff 50 e8 ?? 0b 00 00 89 45 ec b8 69 31 40 00 50 8b 85 94 fd ff ff 50 e8 ?? 0b 00 00 89 45 e8 b8 7a 31 40 00 50 8b 85 94 fd ff ff 50 e8 ?? 0b 00 00 89 45 e4 b8 8e 31 40 00 50 8b 85 94 fd ff ff 50 e8 ?? 0b 00 00 89 45 e0 8b 45 08 50 e8 ?? 0b 00 00 83 c4 04 8d 8d 98 fd ff ff 51 b9 00 00 00 00 51 50 8b 45 08 50 8b 45 fc ff d0 85 }
 		$seq2 = { b8 00 00 00 00 89 85 90 fd ff ff b8 00 00 00 00 89 85 8c fd ff ff b8 00 00 00 00 89 85 88 fd ff ff b8 00 00 00 00 89 85 84 fd ff ff b8 04 00 00 00 89 85 80 fd ff ff b8 00 00 00 00 88 85 7f f5 ff ff b8 00 08 00 00 50 b8 00 00 00 00 50 8d 85 80 f5 ff ff 50 e8 ?? 0b 00 00 83 c4 0c b8 00 00 00 00 50 b8 00 00 00 00 50 b8 00 00 00 00 50 b8 00 00 00 00 50 b8 9d 31 40 00 50 8b 45 f8 ff d0 89 85 90 fd ff ff 8b 85 }
 		$s1 = "%s\\netfilter.sys" fullword ascii
-		$s2 = "SYSTEM\\\\\\\\\\\\\\\\CurrentControlSet\\Services\\netfilter" fullword ascii
+		$s2 = "SYSTEM\\\\\\\\\\\\\\\\\\\\\\CurrentControlSet\\Services\\netfilter" fullword ascii
 		$s3 = "\\\\.\\netfilter" fullword ascii
 
 	condition:
@@ -83449,7 +83449,7 @@ rule ARKBIRD_SOLG_APT_Molerats_Feb_2021_1 : FILE
 		$seq1 = { 55 8b ec 81 c4 60 fc ff ff 53 33 d2 89 95 60 fc ff ff 89 45 fc 33 c0 55 68 [1-3] 00 64 ff 30 64 89 20 8b 45 fc 83 78 44 00 0f 85 5d 01 00 00 b2 01 a1 [2] 44 00 e8 [3] ff 8b 55 fc 89 42 44 8b 45 fc 83 c0 48 e8 [3] ff 8d 85 ec fe ff ff 50 6a 40 e8 [3] ff 48 85 c0 0f 8c 18 01 00 00 40 89 45 f0 8d 85 ec fe ff ff 89 45 ec 8b 45 ec 8b 00 e8 35 ?? f5 ff 84 c0 0f 84 ec 00 00 00 8d 45 f4 50 68 19 00 02 00 6a 00 6a 00 8b 45 ec 0f b7 00 89 85 64 fc ff ff c6 85 68 fc ff ff 00 8d 8d 64 fc ff ff ba [3] 00 8d 85 6c fc ff ff e8 [3] ff 50 68 02 00 00 80 e8 [3] ff 85 c0 0f 85 a3 00 00 00 33 c0 55 68 [3] 00 64 ff 30 64 89 20 c7 45 f8 00 02 00 00 8d 45 f8 50 8d 85 ec fc ff ff 50 6a 00 6a 00 68 [3] 00 8b 45 f4 50 e8 [3] ff 85 c0 75 4f 8d 85 60 fc ff ff 8d 95 ec fc ff ff b9 00 01 00 00 e8 [3] ff 8b 95 60 fc ff ff 8b 45 ec 8b 08 8b 45 fc 8b 40 44 8b 18 ff 53 40 8b 45 ec 8b 00 8b 55 fc 3b 42 4c 75 16 8b 45 fc 83 c0 48 8d 95 ec fc ff ff b9 00 01 00 00 e8 [3] ff 33 c0 5a 59 59 64 89 10 68 [3] 00 8b 45 f4 50 e8 [3] ff }
 		$seq2 = { 55 8b ec 81 c4 e4 fd ff ff 53 8b da 89 45 fc 8b 45 fc e8 [2] ff ff 33 c0 55 68 [2] 40 00 64 ff 30 64 89 20 83 7d fc 00 75 15 68 05 01 00 00 8d 85 e6 fd ff ff 50 6a 00 e8 [2] ff ff eb 1a 8b 45 fc e8 [2] ff ff 8b c8 8d 85 e6 fd ff ff ba 05 01 00 00 e8 da f7 ff ff 66 83 bd e6 fd ff ff 00 0f 84 a7 01 00 00 33 c0 89 45 f8 8d 45 f4 50 68 19 00 0f 00 6a 00 68 [2] 40 00 68 01 00 00 80 e8 [2] ff ff 85 c0 0f 84 9a 00 00 00 8d 45 f4 50 68 19 00 0f 00 6a 00 68 [2] 40 00 68 02 00 00 80 e8 2b 5e ff ff 85 c0 74 7c 8d 45 f4 50 68 19 00 0f 00 6a 00 68 70 f6 40 00 68 01 00 00 80 e8 0d 5e ff ff 85 c0 74 5e 8d 45 f4 50 68 19 00 0f 00 6a 00 68 70 f6 40 00 68 02 00 00 80 e8 [2] ff ff 85 c0 74 40 8d 45 f4 50 68 19 00 0f 00 6a 00 68 [2] 40 00 68 01 00 00 80 e8 [2] ff ff 85 c0 74 22 8d 45 f4 50 68 19 00 0f 00 6a 00 68 [2] 40 00 68 01 00 00 80 e8 [2] ff ff 85 c0 0f 85 e6 00 00 00 33 c0 55 68 [2] 40 00 64 ff 30 64 89 20 8d 85 e6 fd ff ff ba 05 01 00 00 e8 c9 fc ff ff 8d 45 f0 50 6a 00 6a 00 6a 00 8d 85 e6 fd ff ff 50 8b 45 f4 50 e8 [2] ff ff 85 c0 75 33 8b 45 f0 e8 [2] ff ff 89 45 f8 8d 45 f0 50 8b 45 f8 50 6a 00 6a 00 8d 85 e6 fd ff ff 50 8b 45 f4 50 e8 [2] ff ff 8b c3 8b 55 f8 e8 [2] ff ff eb 4b 8d 45 f0 50 6a 00 6a 00 6a 00 68 [2] 40 00 8b 45 f4 50 e8 [2] ff ff 85 c0 75 2f 8b 45 f0 e8 [2] ff ff 89 45 f8 8d 45 f0 50 8b 45 f8 50 6a 00 6a 00 68 [2] 40 00 8b 45 f4 50 e8 [2] ff ff 8b c3 8b 55 f8 e8 [2] ff ff 33 c0 5a 59 59 64 89 10 68 [2] 40 00 83 7d f8 00 74 08 8b 45 f8 e8 [2] ff ff 8b 45 f4 50 e8 [2] ff ff }
 		$seq3 = { d1 f8 79 03 83 d0 00 03 45 80 89 45 d0 8b 45 a4 8b 80 e4 02 00 00 8b 40 10 01 45 d0 8b 45 a4 8b 80 e4 02 00 00 8b 40 04 29 45 d0 8b 75 8c 2b 75 d4 83 ee 02 8b 45 a4 8b 80 e4 02 00 00 2b 70 08 8b 45 a4 8b 80 e4 02 00 00 2b 70 0c 89 75 8c 6a 00 56 8b 45 d0 50 8b 45 ec e8 [2] fb ff 50 57 8b 85 68 ff ff ff 50 e8 [2] fc ff 84 db 0f 84 0d 03 00 00 a1 [3] 00 8b 00 e8 [2] 09 00 50 8b 45 b4 50 6a 23 e8 [3] ff 89 45 d8 8b 45 d8 01 45 90 83 45 94 0f 83 45 90 05 8b 45 f0 8b 40 08 8b 50 74 }
-		$s1 = "System\\\\\\\\\\\\\\\\CurrentControlSet\\\\\\\\\\\\\\\\Control\\\\\\\\\\\\\\\\Keyboard Layouts\\\\\\\\\\\\\\\\%.8x" fullword wide
+		$s1 = "System\\\\\\\\\\\\\\\\\\\\\\CurrentControlSet\\\\\\\\\\\\\\\\\\\\\\Control\\\\\\\\\\\\\\\\\\\\\\Keyboard Layouts\\\\\\\\\\\\\\\\\\\\\\%.8x" fullword wide
 		$s2 = { 45 00 72 00 72 00 6f 00 72 00 20 00 63 00 6f 00 6e 00 6e 00 65 00 63 00 74 00 69 00 6e 00 67 00 20 00 74 00 6f 00 20 00 73 00 65 00 72 00 76 00 65 00 72 00 3a 00 20 00 25 00 73 }
 		$s3 = { 45 00 72 00 72 00 6f 00 72 00 20 00 6f 00 70 00 65 00 6e 00 69 00 6e 00 67 00 20 00 72 00 65 00 71 00 75 00 65 00 73 00 74 00 3a 00 20 00 28 00 25 00 64 00 29 00 20 00 25 00 73 }
 		$s4 = { 43 00 61 00 6e 00 6e 00 6f 00 74 00 20 00 6f 00 70 00 65 00 6e 00 20 00 66 00 69 00 6c 00 65 00 20 00 22 00 25 00 73 00 22 00 2e 00 20 00 25 00 73 }
@@ -83517,7 +83517,7 @@ rule ARKBIRD_SOLG_APT_Kimsuky_Aug_2020_1 : FILE
 		$s7 = "Content-Type: multipart/form-data; boundary=----WebKitFormBoundarywhpFxMBe19cSjFnG" fullword ascii
 		$s8 = "Content-Disposition: form-data; name=\"MAX_FILE_SIZE\"" fullword ascii
 		$s9 = "Mozilla/4.0 (compatible; MSIE 8.0; Windows NT 6.1; Trident/4.0; .NET CLR 1.1.4322)" fullword ascii
-		$s10 = "\\\\\\\\\\\Microsoft\\\\\\\\\\\HNC" fullword ascii
+		$s10 = "\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\HNC" fullword ascii
 		$s11 = "Mozilla/5.0" fullword ascii
 
 	condition:
@@ -83983,21 +83983,21 @@ rule ARKBIRD_SOLG_Ran_Ruyk_Oct_2020_1 : FILE
 		hash3 = "e8a0e80dfc520bf7e76c33a90ed6d286e8729e9defe6bb7da2f38bc2db33f399"
 
 	strings:
-		$c1 = "\" /TR \"C:\\Windows\\System32\\\\\\\\\\\\\\\cmd.exe /c for /l %x in (1,1,50) do start wordpad.exe /p " fullword ascii
+		$c1 = "\" /TR \"C:\\Windows\\System32\\\\\\\\\\\\\\\\\\cmd.exe /c for /l %x in (1,1,50) do start wordpad.exe /p " fullword ascii
 		$c2 = "cmd.exe /c \"bootstatuspolicy ignoreallfailures\"" fullword ascii
-		$c3 = "C:\\Windows\\System32\\\\\\\\\\\cmd.exe" fullword ascii
+		$c3 = "C:\\Windows\\System32\\\\\\\\\\\\\\cmd.exe" fullword ascii
 		$c4 = "cmd.exe /c \"WMIC.exe shadowcopy delete\"" fullword ascii
 		$c5 = "cmd.exe /c \"vssadmin.exe Delete Shadows /all /quiet\"" fullword ascii
 		$c6 = "cmd.exe /c \"bcdedit /set \{default\} recoveryenabled No & bcdedit /set \{default\}\"" fullword ascii
-		$r1 = "/C REG ADD \"HKEY_CURRENT_USER\\SOFTWARE\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\Run\" /v \"EV\" /t REG_SZ /d \"" fullword wide
-		$r2 = "/C REG DELETE \"HKEY_CURRENT_USER\\SOFTWARE\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Run\" /v \"EV\" /f" fullword wide
+		$r1 = "/C REG ADD \"HKEY_CURRENT_USER\\SOFTWARE\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\\\Run\" /v \"EV\" /t REG_SZ /d \"" fullword wide
+		$r2 = "/C REG DELETE \"HKEY_CURRENT_USER\\SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Run\" /v \"EV\" /f" fullword wide
 		$ref1 = "lsaas.exe" fullword wide
 		$ref2 = "Ncsrss.exe" fullword wide
 		$ref3 = "$WGetCurrentProcess" fullword ascii
 		$ref4 = "lan.exe" fullword wide
 		$ref5 = "explorer.exe" fullword wide
 		$ref6 = "Ws2_32.dll" fullword ascii
-		$p1 = "\\users\\\\\\\\\\\\\\\\Public\\sys" fullword wide
+		$p1 = "\\users\\\\\\\\\\\\\\\\\\\\\\Public\\sys" fullword wide
 		$p2 = "\\Documents and Settings\\Default User\\sys" fullword wide
 
 	condition:
@@ -84030,7 +84030,7 @@ rule ARKBIRD_SOLG_Ran_Buran_Oct_2020_1 : FILE
 		$s2 = "!!! ENCLOCALPRIVKEY !!!" fullword ascii
 		$s3 = "!!! D !!!" fullword ascii
 		$s4 = { 8b 85 74 fd ff ff 8b 40 04 85 c0 74 05 83 e8 04 8b 00 8d 55 f4 92 e8 c1 aa fe ff 8b 85 74 fd ff ff 8b 78 04 85 ff 74 05 83 ef 04 8b 3f 8d 45 f4 e8 d3 a8 fe ff 8b d0 8b cf 8b 85 50 fd ff ff 8b 38 ff 57 0c 6a 00 6a 00 33 d2 8b 85 50 fd ff ff 8b 08 ff 51 18 8b 45 f4 8b 95 74 fd ff ff 8b 52 04 e8 da a7 fe ff 0f 84 7d 07 00 00 ff b5 4c fd ff ff ff b5 48 fd ff ff 33 d2 8b 85 50 fd ff ff 8b 08 ff 51 18 8b 85 74 fd ff ff 8b 78 04 85 ff 74 05 83 ef 04 8b 3f 8b 85 74 fd ff ff 83 c0 04 e8 63 a8 fe ff 8b d0 8b cf 8b 85 50 fd ff ff 8b 38 ff 57 10 6a 00 6a 00 33 d2 8b 85 50 fd ff ff 8b 08 ff 51 18 8b 85 74 fd ff ff 8b 78 04 85 ff 74 05 83 ef 04 8b 3f 8b 85 50 fd ff ff 8b 10 ff 12 52 50 8b c7 99 03 85 48 fd ff ff 13 95 4c fd ff ff 3b 54 24 04 75 03 3b 04 24 5a 58 0f 85 dc 06 00 00 ff b5 4c fd ff ff ff b5 48 fd ff ff 8b 85 50 fd ff ff e8 e6 cc fe ff 8b 85 74 fd ff ff 8b 40 28 85 c0 74 09 83 f8 0a 0f 85 00 01 00 00 8b 85 74 fd ff ff 83 c0 1c e8 fe a2 fe ff 8b 85 74 fd ff ff 83 c0 20 e8 f0 a2 fe ff c7 85 44 fd ff ff 01 00 00 00 b8 00 01 00 00 e8 78 44 ff ff 8b d0 8d 85 10 fd ff ff e8 b7 a4 fe ff 8b 95 10 fd ff ff 8b 85 74 fd ff ff 83 c0 20 e8 63 a5 fe ff 83 bd 44 fd ff ff 10 7f 2b b8 00 01 00 00 e8 44 44 ff ff 8b d0 8d 85 0c fd ff ff e8 83 a4 fe ff 8b 95 0c fd ff ff 8b 85 74 fd ff ff 83 c0 1c e8 2f a5 fe ff ff 85 44 fd ff ff 83 bd 44 fd ff ff 21 75 92 8b 85 74 fd ff ff 83 c0 24 50 8b 85 74 fd ff ff 8b 48 1c 8b 85 74 fd ff ff 8b 50 20 8d 85 08 fd ff ff e8 45 a5 fe ff 8b 85 08 fd ff ff 8b 95 74 fd ff ff 8d 4a 0c 8b 95 74 fd ff ff 83 c2 14 e8 c8 8f ff ff 8d 95 04 fd ff ff 8b 85 74 fd ff ff 8b 40 24 e8 0c 5c ff ff 8b 95 04 fd ff ff 8b 85 74 fd ff ff 83 c0 24 e8 60 a2 fe ff 8b 85 74 fd ff ff 83 78 28 0a 75 0d 8b 85 74 fd ff ff 33 d2 89 50 28 eb 09 8b 85 74 fd ff ff ff 40 28 8b c3 99 52 50 8b 85 48 fd ff ff 8b 95 4c fd ff ff e8 54 b2 fe ff 89 85 38 fd ff ff 89 95 3c fd ff ff 8b c3 99 52 50 8b 85 38 fd ff ff 8b 95 3c fd ff ff e8 0e b2 fe ff 52 50 8b c6 99 3b 54 24 04 75 09 3b 04 24 5a 58 73 18 eb 04 5a 58 7d 12 8b c6 99 f7 fb 99 89 85 38 fd ff ff 89 95 3c fd ff ff 83 bd 3c fd ff ff 00 75 07 83 bd 38 fd ff ff 00 74 31 ff b5 3c fd ff ff ff b5 38 fd ff ff 8b 85 48 fd ff ff 8b 95 4c fd ff ff e8 d9 b1 fe ff 89 85 30 fd ff ff 89 95 34 fd ff ff 89 9d 2c fd ff ff eb 38 c7 85 38 fd ff ff 01 00 00 00 c7 85 3c fd ff ff 00 00 00 00 8b 85 48 fd ff ff 89 85 30 fd ff ff 8b 85 4c fd ff ff 89 85 34 fd ff ff 8b 85 48 fd ff ff 89 85 2c fd ff ff 8d 45 f0 e8 05 a1 fe ff b2 01 a1 98 6f 40 00 e8 61 94 fe ff 89 85 1c fd ff ff 8b 9d 38 fd ff ff 85 db 0f 8e 9f 00 00 00 c7 85 44 fd ff ff 01 00 00 00 ff b5 34 fd ff ff ff b5 30 fd ff ff 8b 85 44 fd ff ff 48 99 e8 1e b1 fe ff 89 85 20 fd ff ff 89 95 24 fd ff ff 8d 95 20 fd ff ff b9 08 00 00 00 8b 85 1c fd ff ff 8b 30 ff 56 10 ff b5 24 fd ff ff ff b5 20 fd ff ff 33 d2 8b 85 50 fd ff ff 8b 08 ff 51 18 8d 45 f4 8b 95 2c fd ff ff e8 19 a7 fe ff 8d 45 f4 e8 3d a5 fe ff 8b d0 8b 8d 2c fd ff ff 8b 85 50 fd ff ff e8 e6 ca fe ff 8d 45 f0 8b 55 f4 e8 fb a2 fe ff ff 85 44 fd ff ff 4b 0f 85 6b ff ff ff 6a 00 6a 00 33 d2 8b 85 1c fd ff ff 8b 08 ff 51 18 8d 45 ec e8 2d a0 fe ff 8b 85 1c fd ff ff 8b 10 ff 12 89 85 18 fd ff ff 8d 45 ec 8b 95 18 fd ff ff e8 af a6 fe ff 8d 45 ec e8 d3 a4 fe ff 8b d0 8b 8d 18 fd ff ff 8b 85 1c fd ff ff 8b 18 ff 53 }
-		$s5 = ": :(:,:0:4:8:<:@:D:H:\\\\\\\\\\\:|:" fullword ascii
+		$s5 = ": :(:,:0:4:8:<:@:D:H:\\\\\\\\\\\\\\:|:" fullword ascii
 		$s6 = " remove '.' from {.$DEFINE ComplexBraces}" fullword ascii
 
 	condition:
@@ -84635,7 +84635,7 @@ rule ARKBIRD_SOLG_APT_UNC2452_Webshell_Chopper_Mar_2021_1 : FILE
 		$c1 = { 5c 4f 41 42 20 28 44 65 66 61 75 6c 74 20 57 65 62 20 53 69 74 65 29 }
 		$c2 = "ExternalUrl" fullword ascii
 		$c3 = { 49 49 53 3a 2f 2f [10-30] 2f 57 33 53 56 43 2f [1-3] 2f 52 4f 4f 54 2f 4f 41 42 }
-		$c4 = "FrontEnd\\\\\\\\\\\HttpProxy\\\\\\\\\\\OAB" fullword ascii
+		$c4 = "FrontEnd\\\\\\\\\\\\\\HttpProxy\\\\\\\\\\\\\\OAB" fullword ascii
 		$c5 = "/Configuration/Schema/ms-Exch-OAB-Virtual-Directory" fullword ascii
 
 	condition:
@@ -84896,8 +84896,8 @@ rule ARKBIRD_SOLG_APT_Evilnum_LNK_Jul_2021_1 : FILE
 
 	strings:
 		$s1 = "1-5-21-669817101-1001941732-3035937113-1000" fullword wide
-		$s2 = "*..\\..\\..\\..\\..\\..\\Windows\\System32\\\\\\\\\\\\\\\\cmd.exe" fullword wide
-		$s3 = "C:\\Windows\\System32\\\\\\\\\\\\\\\\cmd.exe" fullword wide
+		$s2 = "*..\\..\\..\\..\\..\\..\\Windows\\System32\\\\\\\\\\\\\\\\\\\\\\cmd.exe" fullword wide
+		$s3 = "C:\\Windows\\System32\\\\\\\\\\\\\\\\\\\\\\cmd.exe" fullword wide
 		$s4 = "System32 (C:\\Windows)" fullword wide
 		$s5 = { 3d 00 25 00 74 00 6d 00 70 00 25 00 5c 00 74 00 65 00 73 00 74 00 2e 00 63 00 26 }
 		$s6 = { 3c 00 22 00 25 [5] 25 00 6d 00 64 00 22 00 26 00 6e 00 65 00 74 00 73 00 74 00 61 00 74 00 20 00 2d }
@@ -85056,7 +85056,7 @@ rule ARKBIRD_SOLG_MAL_Jackofhearts_Jul_2021_1 : FILE
 		$s3 = { 43 3a 5c 55 73 65 72 73 5c [2-10] 5c 41 70 70 44 61 74 61 5c 52 6f 61 6d 69 6e 67 5c }
 		$s4 = "CreateServiceA" fullword ascii
 		$s5 = { 5c 00 53 00 74 00 72 00 69 00 6e 00 67 00 46 00 69 00 6c 00 65 00 49 00 6e 00 66 00 6f 00 5c 00 25 00 30 00 34 00 78 00 25 00 30 00 34 00 78 00 5c 00 46 00 69 00 6c 00 65 00 44 00 65 00 73 00 63 00 72 00 69 00 70 00 74 00 69 00 6f 00 6e }
-		$s6 = "\\\\\\\\\\\VarFileInfo\\\\\\\\\\\Translation" fullword wide
+		$s6 = "\\\\\\\\\\\\\\VarFileInfo\\\\\\\\\\\\\\Translation" fullword wide
 		$s7 = { 5c 00 46 00 69 00 6c 00 74 00 65 00 72 00 [2-8] 2e 00 6a 00 70 00 67 }
 		$s8 = "\\SetupUi" fullword wide
 		$s9 = { 43 6f 6e 74 65 6e 74 2d 4c 65 6e 67 74 68 3a 20 25 64 }
@@ -85120,7 +85120,7 @@ rule ARKBIRD_SOLG_MAL_Slothfulmedia_Jul_2021_1 : FILE
 
 	strings:
 		$s1 = { 5c 00 53 00 74 00 72 00 69 00 6e 00 67 00 46 00 69 00 6c 00 65 00 49 00 6e 00 66 00 6f 00 5c 00 25 00 30 00 34 00 78 00 25 00 30 00 34 00 78 00 5c 00 46 00 69 00 6c 00 65 00 44 00 65 00 73 00 63 00 72 00 69 00 70 00 74 00 69 00 6f 00 6e }
-		$s2 = "\\\\\\\\\\\VarFileInfo\\\\\\\\\\\Translation" fullword wide
+		$s2 = "\\\\\\\\\\\\\\VarFileInfo\\\\\\\\\\\\\\Translation" fullword wide
 		$s3 = { 5c 00 46 00 69 00 6c 00 74 00 65 00 72 00 [2-8] 2e 00 6a 00 70 00 67 }
 		$s4 = "\\SetupUi" fullword wide
 		$s5 = { 25 00 73 00 7c 00 25 00 73 00 7c 00 25 00 73 00 7c 00 25 00 73 }
@@ -85221,13 +85221,13 @@ rule ARKBIRD_SOLG_APT_Unknown_Middle_East_Feb_2020_1 : FILE
 		$seq1 = { 55 8b ec 83 e4 f8 81 ec 08 04 00 00 a1 34 45 49 00 33 c4 89 84 24 04 04 00 00 83 ec 08 ba [2] 48 00 b9 ?? 82 48 00 68 [2] 48 00 e8 af 9f ff ff 83 c4 04 ba [2] 48 00 b9 ?? 82 48 00 68 [2] 48 00 e8 98 9f ff ff 83 c4 04 ba [2] 48 00 b9 ?? 82 48 00 68 [2] 48 00 e8 81 9f ff ff 83 c4 0c 8d 04 24 68 00 04 00 00 6a 00 50 e8 [2] 01 00 83 c4 0c 8d 04 24 [4] 00 68 00 02 00 00 50 e8 [2] 02 00 83 c4 0c 8d 04 24 68 ?? ab 49 00 68 00 02 00 00 50 e8 [2] 02 00 83 c4 0c 8d 04 24 68 ?? 6c 48 00 68 00 02 00 00 50 e8 [2] 02 00 83 c4 0c 8d 04 24 68 ?? a9 49 00 68 00 02 00 00 50 e8 [2] 02 00 83 c4 0c 8d 04 24 68 ?? 83 48 00 68 00 02 00 00 50 e8 [2] 02 00 83 c4 0c 33 c0 66 89 84 24 fe 03 00 00 8d 04 24 68 [2] 48 00 68 00 02 00 00 50 e8 [2] 02 00 83 c4 0c 8d 04 24 68 ?? a6 49 00 68 00 02 00 00 50 e8 [2] 02 00 83 c4 0c 8d 04 24 68 ?? 83 48 00 68 00 02 00 00 50 e8 [2] 02 00 8d 4c 24 0c e8 6b a1 ff ff 83 c4 04 ba [2] 48 00 b9 ?? 83 48 00 68 [2] 48 00 e8 94 9e ff ff 8b 8c 24 10 04 00 00 83 c4 0c 33 cc e8 [2] 01 00 8b e5 5d }
 		$seq2 = { 55 8b ec 6a ff 68 [2] 47 00 64 a1 00 00 00 00 50 81 ec d8 00 00 00 a1 34 45 49 00 33 c5 89 45 f0 56 57 50 8d 45 f4 64 a3 00 00 00 00 8b 45 08 8b 75 14 c7 45 fc 00 00 00 00 89 85 34 ff ff ff 89 85 40 ff ff ff 33 c0 50 50 50 50 c7 85 3c ff ff ff 00 00 00 00 68 ?? 70 48 00 89 b5 6c ff ff ff c7 85 48 ff ff ff 00 00 00 00 c7 85 44 ff ff ff 00 00 00 00 89 85 50 ff ff ff ff 15 78 55 47 00 89 85 38 ff ff ff 85 c0 74 3f 6a 00 68 bb 01 00 00 68 ?? 6d 48 00 50 ff 15 8c 55 47 00 89 85 44 ff ff ff 85 c0 74 22 68 00 00 80 00 6a 00 6a 00 6a 00 68 ?? 71 48 00 68 ?? 6d 48 00 50 ff 15 90 55 47 00 89 85 50 ff ff ff 8b 3d 44 53 47 00 6a 00 6a 00 6a 00 6a 00 6a ff 56 6a 00 68 e9 fd 00 00 ff d7 8b f0 56 e8 ?? 35 01 00 83 c4 04 89 85 4c ff ff ff 6a 00 6a 00 56 50 6a ff ff b5 6c ff ff ff 6a 00 68 e9 fd 00 00 ff d7 68 80 00 00 00 8b f8 8d 85 70 ff ff ff 6a 00 50 e8 [2] 02 00 57 8d 85 70 ff ff ff 68 ?? 79 48 00 50 e8 ?? a3 00 00 83 c4 18 c7 85 64 ff ff ff 00 00 00 00 33 c0 c7 85 68 ff ff ff 07 00 00 00 8d 8d 54 ff ff ff 66 89 85 54 ff ff ff 6a 10 68 [2] 48 00 e8 ?? 84 00 00 8d 8d 70 ff ff ff c7 45 fc 01 00 00 00 8d 51 02 66 8b 01 83 c1 02 66 85 c0 75 f5 2b ca 8d 85 70 ff ff ff d1 f9 51 50 8d 8d 54 ff ff ff e8 89 63 00 00 6a 33 68 ?? 71 48 00 8d 8d 54 ff ff ff e8 77 63 00 00 8b b5 50 ff ff ff 85 f6 }
 		$s1 = "taskkill /im svehost.exe /t /f" fullword ascii
-		$s2 = "\\\\\\\\\\\AppData\\Windows\\svehost.exe" fullword ascii
+		$s2 = "\\\\\\\\\\\\\\AppData\\Windows\\svehost.exe" fullword ascii
 		$s3 = "svehost.exe" fullword wide
 		$s4 = "bdagent.exe" fullword wide
 		$s5 = "taskkill /im keepass.exe /t /f" fullword ascii
-		$s6 = "%s\\\\\\\\\\\\\\\\AppData\\Windows\\svehost" fullword ascii
-		$s7 = "\\\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\\\Roaming\\\\\\\\\\\\\\\\ViberPc" fullword wide
-		$s8 = "\\\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\\\Roaming\\Skype" fullword wide
+		$s6 = "%s\\\\\\\\\\\\\\\\\\\\\\AppData\\Windows\\svehost" fullword ascii
+		$s7 = "\\\\\\\\\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\\\\\\\\\Roaming\\\\\\\\\\\\\\\\\\\\\\ViberPc" fullword wide
+		$s8 = "\\\\\\\\\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\\\\\\\\\Roaming\\Skype" fullword wide
 
 	condition:
 		uint16( 0 ) == 0x5a4d and filesize > 200KB and 1 of ( $seq* ) and 4 of ( $s* )
@@ -85255,7 +85255,7 @@ rule ARKBIRD_SOLG_MAL_Windealer_Oct_2021_2 : FILE
 	strings:
 		$s1 = { 81 ec f0 03 00 00 53 55 8b d9 56 8d 44 24 0c 57 8d 4c 24 18 50 51 c7 44 24 18 f4 01 00 00 ff 15 0c [2] 10 85 c0 0f 85 ?? 01 00 00 68 [3] 10  }
 		$s2 = { 81 ec 24 03 00 00 53 56 8d 44 24 18 57 50 68 03 01 00 00 6a 00 68 [2] 03 10 68 01 00 00 80 c7 44 24 20 00 00 00 00 ff 15 10 [2] 10 85 c0 0f 85 ?? 01 00 00 8d 4c 24 0c 8d 54 24 20 51 52 8b 1d 00 [2] 10 50 68 3f 01 0f 00 50 50 50 8b 44 24 38 68 [2] 03 10 50 ff d3 85 c0 0f 85 ?? 01 00 00 8d 4c 24 0c 8d 54 24 10 51 52 50 68 3f 01 0f 00 50 50 50 8b 44 24 3c 68 [2] 03 10 50 ff d3 85 c0 0f 85 ?? 01 00 00 bf [2] 03 10 83 c9 ff f2 ae f7 d1 2b f9 8d ?? 24 }
-		$s3 = "%s\\\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\\\V5_History.dat" wide
+		$s3 = "%s\\\\\\\\\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\\\\\\\\\V5_History.dat" wide
 		$s4 = { 8b 8c 24 2c 02 00 00 8b 94 24 28 02 00 00 55 57 51 52 8d 44 24 24 53 50 89 74 24 2c e8 05 fb ff ff b9 41 00 00 00 33 c0 8d bc 24 34 01 00 00 83 c4 18 f3 ab 8d 8c 24 1c 01 00 00 51 68 04 01 00 00 ff 15 [2] 03 10 b9 41 00 00 00 33 c0 8d 7c 24 18 50 f3 ab [3] 01 }
 		$s5 = { 56 6a 10 e8 [3] 00 8b f0 85 f6 74 3a 8b 4c 24 0c 8d 46 04 85 c9 c7 06 [3] 10 c7 00 00 00 00 00 50 74 11 8b 44 24 0c 50 e8 [3] 00 89 46 08 8b c6 5e c3 8b 4c 24 0c 51 e8 [3] 00 89 46 08 8b c6 5e c3 33 }
 
@@ -85346,16 +85346,16 @@ rule ARKBIRD_SOLG_Backdoor_APT_Nazar_April_2020_1 : FILE
 		$s3 = { 70 73 73 64 6B ?? ?? 2E 73 79 73 }
 		$s4 = { 70 73 73 64 6B ?? ?? 2E 76 78 64 }
 		$s5 = "##$$%%&&''(())**++,,--..//0123456789:;<=>?" fullword ascii
-		$s6 = "SYSTEM\\\\\\\\\\\CurrentControlSet\\Services\\\\\\\\\\\VxD\\\\\\\\\\\MSTCP" fullword ascii
+		$s6 = "SYSTEM\\\\\\\\\\\\\\CurrentControlSet\\Services\\\\\\\\\\\\\\VxD\\\\\\\\\\\\\\MSTCP" fullword ascii
 		$s7 = "removehook" fullword ascii
 		$s8 = "installhook" fullword ascii
 		$s9 = "_crt_debugger_hook" fullword ascii
-		$s10 = "\\\\\\\\\\\Files.txt" fullword ascii
+		$s10 = "\\\\\\\\\\\\\\Files.txt" fullword ascii
 		$s11 = "\\report.txt" fullword ascii
-		$s12 = "\\\\\\\\\\\Programs.txt" fullword ascii
+		$s12 = "\\\\\\\\\\\\\\Programs.txt" fullword ascii
 		$s13 = "\\Devices.txt" fullword ascii
-		$s14 = "\\\\\\\\\\\music.mp3" fullword ascii
-		$s15 = "\\\\\\\\\\\z.png" fullword ascii
+		$s14 = "\\\\\\\\\\\\\\music.mp3" fullword ascii
+		$s15 = "\\\\\\\\\\\\\\z.png" fullword ascii
 
 	condition:
 		12 of them and filesize > 120KB
@@ -85511,7 +85511,7 @@ rule ARKBIRD_SOLG_Tool_Efspotatoe_Aug_2021_1 : FILE
 		$s3 = "WinSta0\\Default" fullword wide
 		$s4 = { 11 00 72 cc 01 00 70 28 06 00 00 0a 00 dd de 02 00 00 00 de 12 07 14 fe 01 13 0f 11 0f 2d 07 07 6f 0f 00 00 0a 00 dc 00 28 10 00 00 0a 13 10 12 10 72 16 02 00 70 28 11 00 00 0a 0d 72 1a 02 00 70 09 72 2e 02 00 70 28 12 00 00 0a 13 04 11 04 19 16 1f 0a 20 00 08 00 00 20 00 08 00 00 16 7e 0d 00 00 0a 28 06 00 00 06 13 05 11 05 15 73 13 00 00 0a 28 14 00 00 0a 16 fe 01 13 0f 11 0f 2d 25 00 72 48 02 00 70 28 0e 00 00 0a 73 15 00 00 0a 6f 16 00 00 0a 28 0a 00 00 0a 28 06 00 00 0a 00 38 4a 02 00 00 16 73 17 00 00 0a 13 06 14 fe 06 04 00 00 06 73 18 00 00 0a 73 19 00 00 0a 13 07 11 07 17 6f 1a 00 00 0a 00 11 07 18 8d 01 00 00 01 13 11 11 11 16 11 05 8c 15 00 00 01 a2 11 11 17 11 06 a2 11 11 6f 1b 00 00 0a 00 14 fe 06 03 00 00 06 73 18 00 00 0a 73 19 00 00 0a 13 08 11 08 17 6f 1a 00 00 0a 00 11 08 09 6f 1b 00 00 0a 00 11 06 20 e8 03 00 00 6f 1c 00 00 0a 16 fe 01 13 0f 11 0f 3a 93 01 00 00 00 11 05 28 08 00 00 06 16 fe 01 13 0f 11 0f 3a 7c 01 00 00 00 28 08 00 00 0a 6f 0b 00 00 0a 13 09 72 7c 02 00 70 11 09 8c 15 00 00 01 28 1d 00 00 0a 28 06 00 00 0a 00 12 0a fe 15 08 00 00 02 12 0a 11 0a 28 02 00 00 2b 7d 1d 00 00 04 12 0a 7e 0d 00 00 0a 7d 1e 00 00 04 12 0a 17 7d 1f 00 00 04 12 0b 12 0c 12 0a 20 00 04 00 00 28 0b 00 00 06 26 12 0d fe 15 06 00 00 02 12 0e fe 15 07 00 00 02 12 0e 11 0e 28 03 00 00 2b 7d 0b 00 00 04 12 0e 11 0c 7d 1c 00 00 04 12 0e 11 0c 7d 1b 00 00 04 12 0e 72 9c 02 00 70 7d 0d 00 00 04 12 0e 20 01 01 00 00 7d 16 00 00 04 12 0e 16 7d 17 00 00 04 }
 		$s5 = "EfsPotato <cmd>" wide
-		$s6 = "\\\\.\\\\\\\\\\\pipe\\" wide
+		$s6 = "\\\\.\\\\\\\\\\\\\\pipe\\" wide
 
 	condition:
 		uint16( 0 ) == 0x5a4d and filesize > 10KB and 5 of ( $s* )
@@ -85535,7 +85535,7 @@ rule ARKBIRD_SOLG_MAL_Loader_Lockfile_Aug_2021_1 : FILE
 		adversary = "Lockfile"
 
 	strings:
-		$s1 = "c:\\windows\\system32\\\\\\\\\\\\\\\\calc.exe" fullword ascii
+		$s1 = "c:\\windows\\system32\\\\\\\\\\\\\\\\\\\\\\calc.exe" fullword ascii
 		$s2 = { 49 48 85 c0 7f ec eb 0a 33 c9 66 89 0c 45 [2] 01 10 68 [2] 00 10 68 [2] 01 10 ff 15 [2] 00 10 6a 00 68 80 00 00 00 6a 03 6a 00 6a 02 68 00 00 00 80 68 [2] 01 10 ff 15 [2] 00 10 83 f8 ff 75 08 6a 00 ff 15 [2] 00 10 50 ff 15 [2] 00 10 c3 cc cc cc cc cc cc cc cc cc cc cc cc cc cc }
 		$s3 = "/proc/123/stat" fullword ascii
 		$s4 = { 33 c5 89 45 fc a1 [2] 00 10 8b 15 [2] 00 10 8b 0d [2] 00 10 56 89 45 dc 66 a1 [2] 00 10 57 89 55 e4 89 4d e0 8a 0d [2] 00 10 66 89 45 e8 33 c0 8d 55 dc 68 [2] 00 10 52 bf [2] 00 10 88 4d ea 89 45 eb 89 45 ef 89 45 f3 89 45 f7 88 45 fb e8 [2] 00 00 8b f0 83 c4 08 85 f6 74 44 8d 64 24 00 56 e8 [2] 00 00 83 c4 04 83 f8 ff 74 29 83 f8 28 75 ed 56 e8 [2] 00 00 83 c4 04 83 f8 ff 74 16 0f be 0f 3b c1 75 0f 56 47 e8 [2] 00 00 83 c4 04 83 f8 ff 75 ea 56 e8 [2] 00 00 83 c4 04 6a 00 ff 15 }
@@ -85791,7 +85791,7 @@ rule TELEKOM_SECURITY_Get_Windows_Proxy_Configuration : CAPABILITY HACKTOOL
 		tags = "CAPABILITY, HACKTOOL"
 
 	strings:
-		$a = "Software\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\Currentversion\\\\\\\\\\\\\\\\Internet Settings" ascii wide
+		$a = "Software\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\Currentversion\\\\\\\\\\\\\\\\\\\\\\Internet Settings" ascii wide
 		$b = "ProxyEnable" ascii wide
 		$c = "ProxyServer" ascii wide
 
@@ -86817,7 +86817,7 @@ rule VOLEXITY_Apt_Malware_Win_Lightspy_Orchestrator_Decoded_Core : BRAZENBAMBOO 
 		$s1 = "Enter RunWork......."
 		$s2 = "it's running......."
 		$s3 = "select ret = socket_error."
-		$s4 = "%s\\\\\\\\\\\\\\\\\\account.bin"
+		$s4 = "%s\\\\\\\\\\\\\\\\\\\\\\\\account.bin"
 		$s5 = "[CtrlLink]: get machine sn err:%d"
 		$s6 = "wmic path Win32_VideoController get CurrentHorizontalResolution,CurrentVerticalResolution /format:list | findstr /v \\\"^$\\\""
 		$s7 = "wmic csproduct get vendor,version /format:list | findstr /v \\\"^$\\\""
@@ -86832,8 +86832,8 @@ rule VOLEXITY_Apt_Malware_Win_Lightspy_Orchestrator_Decoded_Core : BRAZENBAMBOO 
 		$s16 = "ws open, and send logon info."
 		$s17 = "plugin_replay_handler"
 		$s18 = "light_x86.dll"
-		$pdb1 = "\\\\\\\\\\\\\\\\light\\bin\\\\\\\\\\\\\\\\light_x86.pdb"
-		$pdb2 = "\\\\\\\\\\\\\\\\light\\bin\\\\\\\\\\\\\\\\plugin"
+		$pdb1 = "\\\\\\\\\\\\\\\\\\\\\\light\\bin\\\\\\\\\\\\\\\\\\\\\\light_x86.pdb"
+		$pdb2 = "\\\\\\\\\\\\\\\\\\\\\\light\\bin\\\\\\\\\\\\\\\\\\\\\\plugin"
 		$pdb3 = "D:\\tmpWork\\"
 
 	condition:
@@ -87074,7 +87074,7 @@ rule VOLEXITY_Apt_Malware_Py_Dustpan_Pyloader : STORMBAMBOO FILE MEMORY
 		$s_8 = "tasklist | findstr mediainfo.exe"
 		$url_1 = "http://dl1.5kplayer.com/youtube/youtube_dl.png"
 		$url_2 = "http://dl1.5kplayer.com/youtube/youtube.ini?fire="
-		$path_1 = "C:\\\\\\\\\\\\\\\\\\ProgramData\\\\Digiarty\\\\\\\\\\\\\\\\\\mediainfo.exe"
+		$path_1 = "C:\\\\\\\\\\\\\\\\\\\\\\\\ProgramData\\\\Digiarty\\\\\\\\\\\\\\\\\\\\\\\\mediainfo.exe"
 
 	condition:
 		3 of ( $s_* ) or any of ( $url_* ) or $path_1
@@ -87860,8 +87860,8 @@ rule VOLEXITY_Apt_Malware_Win_Bluelight : INKYPINE FILE MEMORY
 	strings:
 		$pdb1 = "\\Development\\BACKDOOR\\ncov\\"
 		$pdb2 = "Release\\bluelight.pdb" nocase ascii
-		$pdb3 = "D:\\Development\\\\\\\\\\\GOLD-BACKDOOR\\\\\\\\\\\Release\\\\\\\\\\\FirstBackdoor.pdb"
-		$pdb4 = "GOLD-BACKDOOR\\\\\\\\\\\Release\\"
+		$pdb3 = "D:\\Development\\\\\\\\\\\\\\GOLD-BACKDOOR\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\FirstBackdoor.pdb"
+		$pdb4 = "GOLD-BACKDOOR\\\\\\\\\\\\\\Release\\"
 		$msg0 = "https://ipinfo.io" fullword
 		$msg1 = "country" fullword
 		$msg5 = "\"UserName\":\"" fullword
@@ -87938,7 +87938,7 @@ rule VOLEXITY_Malware_Win_Cobaltstrike_D : FILE MEMORY
 		$s1 = "%s (admin)" fullword
 		$s2 = {48 54 54 50 2F 31 2E 31 20 32 30 30 20 4F 4B 0D 0A 43 6F 6E 74 65 6E 74 2D 54 79 70 65 3A 20 61 70 70 6C 69 63 61 74 69 6F 6E 2F 6F 63 74 65 74 2D 73 74 72 65 61 6D 0D 0A 43 6F 6E 74 65 6E 74 2D 4C 65 6E 67 74 68 3A 20 25 64 0D 0A 0D 0A 00}
 		$s3 = "%02d/%02d/%02d %02d:%02d:%02d" fullword
-		$s4 = "%s as %s\\\\\\\\\\\%s: %d" fullword
+		$s4 = "%s as %s\\\\\\\\\\\\\\%s: %d" fullword
 		$s5 = "%s&%s=%s" fullword
 		$s6 = "rijndael" fullword
 		$s7 = "(null)"
@@ -88072,8 +88072,8 @@ rule VOLEXITY_Apt_Malware_Win_Avburner : DEVIOUSBAMBOO FILE MEMORY
 		$api1 = "PspCreateProcessNotifyRoutineAddress" wide
 		$api2 = "PspCreateThreadNotifyRoutineAddress" wide
 		$api3 = "PspLoadImageNotifyRoutineAddress" wide
-		$str1 = "\\\\.\\\\\\\\\\\\\\\\RTCORE64" wide
-		$str2 = "\\\\\\\\\\\\\\\\\\%ws/pipe/%ws" wide
+		$str1 = "\\\\.\\\\\\\\\\\\\\\\\\\\\\RTCORE64" wide
+		$str2 = "\\\\\\\\\\\\\\\\\\\\\\\\%ws/pipe/%ws" wide
 		$str3 = "CreateServerW Failed %u" wide
 		$str4 = "OpenSCManager Failed %u" wide
 		$str5 = "Get patternAddress" wide
@@ -88160,7 +88160,7 @@ rule VOLEXITY_Apt_Win_Iconicstealer : UTA0040
 		license = "See license at https://github.com/volexity/threat-intel/blob/main/LICENSE.txt"
 
 	strings:
-		$str1 = "\\3CXDesktopApp\\\\\\\\\\\config.json" wide
+		$str1 = "\\3CXDesktopApp\\\\\\\\\\\\\\config.json" wide
 		$str2 = "url, title FROM urls" wide
 		$str3 = "url, title FROM moz_places" wide
 
@@ -88405,7 +88405,7 @@ rule VOLEXITY_Apt_Win_Powerstar_Persistence_Batch : CHARMINGKITTEN
 		$s_1 = "e^c^h^o o^f^f"
 		$s_2 = "powershertxdll.ertxdxe"
 		$s_3 = "Get-Conrtxdtent -Prtxdath"
-		$s_4 = "%appdata%\\\\\\\\\\\Microsrtxdoft\\Windortxdws\\"
+		$s_4 = "%appdata%\\\\\\\\\\\\\\Microsrtxdoft\\Windortxdws\\"
 		$s_5 = "&(gcm i*x)$"
 
 	condition:
@@ -88439,8 +88439,8 @@ rule VOLEXITY_Apt_Win_Powerstar_Memonly : CHARMINGKITTEN
 		$f_2 = "Borjol \"$"
 		$f_3 = "Gorjol -text"
 		$f_4 = "function Borjoly{"
-		$f_6 = "$filename = $env:APPDATA+\"\\\\\\\Microsoft\\Windows\\DocumentPreview.pdf\";"
-		$f_7 = "$env:APPDATA+\"\\\\\\\Microsoft\\Windows\\npv.txt\""
+		$f_6 = "$filename = $env:APPDATA+\"\\\\\\\\\\Microsoft\\Windows\\DocumentPreview.pdf\";"
+		$f_7 = "$env:APPDATA+\"\\\\\\\\\\Microsoft\\Windows\\npv.txt\""
 		$f_8 = "\\\\\\Microsoft\\Windows\\Start Menu\\\\\\Programs\\Startup\\brt8ts74e.bat"
 		$f_9 = "\\\\\\Microsoft\\Windows\\s7qe52.txt"
 		$f_10 = "$yeolsoe2 = $yeolsoe"
@@ -88848,7 +88848,7 @@ rule SECUINFRA_OBFUS_VBS_Reverse_Startup : FILE
 		tags = "FILE"
 
 	strings:
-		$reverse = "\\\\\\\\\\\putratS\\smargorP\\uneM" wide nocase
+		$reverse = "\\\\\\\\\\\\\\putratS\\smargorP\\uneM" wide nocase
 
 	condition:
 		filesize < 200KB and $reverse
@@ -88879,7 +88879,7 @@ rule SECUINFRA_MAL_Njrat : FILE
 		$mutex_3 = "f7d3b79624476341312866012d0bbf19" wide
 		$a1 = "\"|'|'|\"" wide
 		$a2 = "SEE_MASK_NOZONECHECKS" wide
-		$b1 = "Software\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Run" wide
+		$b1 = "Software\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Run" wide
 		$b2 = "netsh firewall" wide
 		$b3 = "[ENTER]\\r\\n" wide
 		$b4 = "Execute ERROR" wide
@@ -89495,7 +89495,7 @@ rule RUSSIANPANDA_Smartapesg_JS_Netsupportrat_Stage2 : FILE
 	strings:
 		$x1 = "powershell.exe -Ex Bypass -NoP -C $"
 		$x2 = "Get-Random -Minimum -1000 -Maximum 1000"
-		$s1 = "HKCU:\\\\SOFTWARE\\\\\\\\\\\\\Microsoft\\\\Windows\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\Run"
+		$s1 = "HKCU:\\\\SOFTWARE\\\\\\\\\\\\\\\\Microsoft\\\\Windows\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\Run"
 		$s2 = "=new ActiveXObject('W"
 		$s3 = "System.Net.WebClient).DownloadString($"
 		$s4 = "FromBase64String"
@@ -89600,8 +89600,8 @@ rule RUSSIANPANDA_Getshellplugin : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "InfDefaultInstall.exe .\\\\\\\\\\\\\\\\vsock.inf"
-		$s2 = "InfDefaultInstall.exe .\\\\\\\\\\\\\\\\vmci.inf"
+		$s1 = "InfDefaultInstall.exe .\\\\\\\\\\\\\\\\\\\\\\vsock.inf"
+		$s2 = "InfDefaultInstall.exe .\\\\\\\\\\\\\\\\\\\\\\vmci.inf"
 		$s3 = "invalid SERVER_CID:PORT"
 
 	condition:
@@ -90263,7 +90263,7 @@ rule RUSSIANPANDA_Gh0Strat : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "SAM\\SAM\\Domains\\\\\\\\\\\Account\\Users\\\\\\\\\\\Names\\\\\\\\\\\%s"
+		$s1 = "SAM\\SAM\\Domains\\\\\\\\\\\\\\Account\\Users\\\\\\\\\\\\\\Names\\\\\\\\\\\\\\%s"
 		$s2 = "GetMP privilege::debug sekurlsa::logonpasswords exit"
 		$s3 = "Http/1.1 403 Forbidden"
 		$s4 = "WinSta0\\Default"
@@ -91795,11 +91795,11 @@ rule RUSSIANPANDA_Vidar_DLL_Embedded
 		$s = {50 4B 03 04 14 00 00 00 08 00 24 56 25 55 2B 6D 5C 08 39 7C 05}
 		$a1 = "https://t.me/mastersbots"
 		$a2 = "https://steamcommunity.com/profiles/76561199501059503"
-		$a3 = "%s\\\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\\\Local Storage\\\\\\\\\\\\\\\\leveldb"
-		$a4 = "\\\\\\\\\\\\\\\\Autofill\\\\\\\\\\\\\\\\%s_%s.txt"
-		$a5 = "\\Downloads\\\\\\\\\\\\\\\\%s_%s.txt"
-		$a6 = "\\\\\\\\\\\\\\\\CC\\\\\\\\\\\\\\\\%s_%s.txt"
-		$a7 = "Exodus\\\\\\\\\\\\\\\\exodus.wallet"
+		$a3 = "%s\\\\\\\\\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\\\\\\\\\Local Storage\\\\\\\\\\\\\\\\\\\\\\leveldb"
+		$a4 = "\\\\\\\\\\\\\\\\\\\\\\Autofill\\\\\\\\\\\\\\\\\\\\\\%s_%s.txt"
+		$a5 = "\\Downloads\\\\\\\\\\\\\\\\\\\\\\%s_%s.txt"
+		$a6 = "\\\\\\\\\\\\\\\\\\\\\\CC\\\\\\\\\\\\\\\\\\\\\\%s_%s.txt"
+		$a7 = "Exodus\\\\\\\\\\\\\\\\\\\\\\exodus.wallet"
 
 	condition:
 		$s and 5 of ( $a* )
@@ -92074,8 +92074,8 @@ rule CADOSECURITY_Wiper_Ukr_Feb_2022 : FILE
 	strings:
 		$ = "Hermetica Digital Ltd" wide ascii
 		$ = "DRV_XP_X64" wide ascii
-		$ = "Windows\\System32\\winevt\\\\\\\\\\\Logs" wide ascii
-		$ = "EPMNTDRV\\\\\\\\\\\%u" wide ascii
+		$ = "Windows\\System32\\winevt\\\\\\\\\\\\\\Logs" wide ascii
+		$ = "EPMNTDRV\\\\\\\\\\\\\\%u" wide ascii
 
 	condition:
 		uint16( 0 ) == 0x5A4D and all of them
@@ -92314,7 +92314,7 @@ rule CHECK_POINT_Injector_ZZ_Dotrunpex_Oldnew : FILE
 		$modulerefKernel2 = "kernel32"
 		$modulerefNtdll1 = "Ntdll"
 		$modulerefNtdll2 = "ntdll"
-		$regPath = "\\\\\\\\\\\Registry\\\\\\\\\\\Machine\\System\\\\\\\\\\\CurrentControlSet\\Services\\\\\\\\\\\TaskKill" wide
+		$regPath = "\\\\\\\\\\\\\\Registry\\\\\\\\\\\\\\Machine\\System\\\\\\\\\\\\\\CurrentControlSet\\Services\\\\\\\\\\\\\\TaskKill" wide
 		$rsrcName = "BIDEN_HARRIS_PERFECT_ASSHOLE" wide
 		$koiVM1 = "KoiVM"
 		$koiVM2 = "#Koi"
@@ -92379,7 +92379,7 @@ rule CHECK_POINT_Injector_ZZ_Dotrunpex : FILE
 		$modulerefNtdll2 = "ntdll"
 		$modulerefAdvapi1 = "Advapi32"
 		$modulerefAdvapi2 = "advapi32"
-		$regPath = "\\\\\\\\\\\Registry\\\\\\\\\\\Machine\\System\\\\\\\\\\\CurrentControlSet\\Services\\\\\\\\\\\TaskKill" wide
+		$regPath = "\\\\\\\\\\\\\\Registry\\\\\\\\\\\\\\Machine\\System\\\\\\\\\\\\\\CurrentControlSet\\Services\\\\\\\\\\\\\\TaskKill" wide
 		$rsrcName = "BIDEN_HARRIS_PERFECT_ASSHOLE" wide
 		$koiVM1 = "KoiVM"
 		$koiVM2 = "#Koi"
@@ -92594,8 +92594,8 @@ rule BLACKBERRY_Windealer_Library : FILE
 		license = "This Yara rule is provided under the Apache License 2.0 (https://www.apache.org/licenses/LICENSE-2.0) and open to any user or organization, as long as you use it under this license and ensure originator credit in any derivative to The BlackBerry Research & Intelligence Team"
 
 	strings:
-		$s1 = "C:\\Users\\\\\\\\\\\\\\\\Public\\Documents\\\\\\\\\\\\\\\\Tencent\\\\\\\\\\\\\\\\QQ\\UserDataInfo.ini"
-		$s2 = "Software\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\Explorer\\Shell Folders"
+		$s1 = "C:\\Users\\\\\\\\\\\\\\\\\\\\\\Public\\Documents\\\\\\\\\\\\\\\\\\\\\\Tencent\\\\\\\\\\\\\\\\\\\\\\QQ\\UserDataInfo.ini"
+		$s2 = "Software\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\\\Explorer\\Shell Folders"
 		$s3 = "SOFTWARE\\SogouInput\\red"
 		$s4 = "SOFTWARE\\SogouDesktopBar"
 		$s5 = "MozillaDll.dll"
@@ -93067,7 +93067,7 @@ rule CLUSTER25_UNC1222_Hermeticwiper_23433_10001 : FILE
 
 	strings:
 		$ = "tdrv.pdb" fullword ascii
-		$ = "\\\\.\\\\\\\\\\\EPMNTDRV\\\\\\\\\\\%u" fullword wide
+		$ = "\\\\.\\\\\\\\\\\\\\EPMNTDRV\\\\\\\\\\\\\\%u" fullword wide
 		$ = "PhysicalDrive%u" fullword wide
 		$ = "Hermetica Digital Ltd"
 
@@ -93097,7 +93097,7 @@ rule CLUSTER25_Ghostwriter_Microbackdoor_72632_00001 : FILE
 		$ = "client.dll" fullword ascii
 		$ = "ERROR: Unknown command" fullword ascii
 		$ = " *** ERROR: Timeout occured" fullword ascii
-		$ = "%s\\Software\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Internet Settings" fullword ascii
+		$ = "%s\\Software\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Internet Settings" fullword ascii
 		$ = "MIIDazCCAlOgAwIBAgIUWOftflCclQXpmWMnL1ewj2F5Y1AwDQYJKoZIhvcNAQEL" fullword ascii
 
 	condition:
@@ -93481,7 +93481,7 @@ rule NCSC_Sparrowdoor_Strings
 		hash1 = "c1890a6447c991880467b86a013dbeaa66cc615f"
 
 	strings:
-		$reg = "Software\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Run" ascii
+		$reg = "Software\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Run" ascii
 		$http_headers = {55 73 65 72 2D 41 67 65 6E 74 3A 20 4D 6F 7A 69 6C 6C 61 2F 34 2E 30 20 28 63 6F 6D 70 61 74 69 62 6C 65 3B 20 4D 53 49 45 20 35 2E 30 3B 20 57 69 6E 64 6F 77 73 20 4E 54 20 35 2E 30 29 0D 0A 41 63 63 65 70 74 2D 4C 61 6E 67 75 61 67 65 3A 20 65 6E 2D 55 53 0D 0A 41 63 63 65 70 74 3A 20 2A 2F 2A 0D 0A}
 		$http_proxy = "HTTPS=HTTPS://%s:%d" ascii
 		$debug = "SeDebugPrivilege" ascii
@@ -93816,7 +93816,7 @@ rule EMBEERESEARCH_Win_Medusa_Bytecodes
 
 	strings:
 		$s1 = {1F ?? 8D ?? ?? ?? 01 25 16 72 ?? ?? ?? 70 A2 25 17 72 ?? ?? ?? 70 28 ?? ?? ?? 0A A2 25 18 20 ?? ?? ?? 00 13 04 12 04 28 ?? ?? ?? 0A A2 25 19 20 ?? ?? ?? 00 13 ?? 12 }
-		$s2 = "\\\\\\\\\\\Medusa\\\\\\\\\\\obj\\\\\\\\\\\Release\\\\\\\\\\\Medusa.pdb" ascii
+		$s2 = "\\\\\\\\\\\\\\Medusa\\\\\\\\\\\\\\obj\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\Medusa.pdb" ascii
 
 	condition:
 		$s1 or $s2
@@ -95556,7 +95556,7 @@ rule SBOUSSEADEN_Adsync_Creddump_Xor
 		$a5 = "DecryptBase64ToString" xor
 		$a6 = "Cryptography.KeyManager" xor
 		$b1 = "mms_management_agent" xor
-		$b2 = "Microsoft Azure AD Sync\\Bin\\\\\\\\\\\mcrypt.dl" xor
+		$b2 = "Microsoft Azure AD Sync\\Bin\\\\\\\\\\\\\\mcrypt.dl" xor
 		$b3 = "xp_cmdshell" xor
 		$b4 = "Password" xor
 		$b5 = "forest-login-user" xor
@@ -95622,7 +95622,7 @@ rule SBOUSSEADEN_Adsync_Creddump_Xwide
 		$a5 = "DecryptBase64ToString" wide xor
 		$a6 = "Cryptography.KeyManager" wide xor
 		$b1 = "mms_management_agent" wide xor
-		$b2 = "Microsoft Azure AD Sync\\Bin\\\\\\\\\\\mcrypt.dl" wide xor
+		$b2 = "Microsoft Azure AD Sync\\Bin\\\\\\\\\\\\\\mcrypt.dl" wide xor
 		$b3 = "xp_cmdshell" wide xor
 		$b4 = "Password" wide xor
 		$b5 = "forest-login-user" wide xor
@@ -97709,7 +97709,7 @@ rule DITEKSHEN_MALWARE_Win_Limerat : FILE
 
 	strings:
 		$s1 = "schtasks /create /f /sc ONLOGON /RL HIGHEST /tn LimeRAT-Admin /tr" wide
-		$s2 = "\\\\\\\\\\\\\\\\vboxhook.dll" fullword wide
+		$s2 = "\\\\\\\\\\\\\\\\\\\\\\vboxhook.dll" fullword wide
 		$s3 = "Win32_Processor.deviceid=\"CPU0\"" fullword wide
 		$s4 = "select CommandLine from Win32_Process where Name='{0}'" wide
 		$s5 = "Minning..." fullword wide
@@ -97738,15 +97738,15 @@ rule DITEKSHEN_MALWARE_Win_Arkei : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "C:\\Windows\\System32\\\\\\\\\\\\\\\\cmd.exe" fullword ascii wide
+		$s1 = "C:\\Windows\\System32\\\\\\\\\\\\\\\\\\\\\\cmd.exe" fullword ascii wide
 		$s2 = "/c taskkill /im " fullword ascii
 		$s3 = "card_number_encrypted FROM credit_cards" ascii
 		$s4 = "\\wallet.dat" ascii
 		$s5 = "Arkei/" wide
-		$s6 = "files\\\\\\\\\\\passwords." ascii wide
-		$s7 = "files\\\\\\\\\\\cc_" ascii wide
-		$s8 = "files\\\\\\\\\\\autofill_" ascii wide
-		$s9 = "files\\\\\\\\\\\cookies_" ascii wide
+		$s6 = "files\\\\\\\\\\\\\\passwords." ascii wide
+		$s7 = "files\\\\\\\\\\\\\\cc_" ascii wide
+		$s8 = "files\\\\\\\\\\\\\\autofill_" ascii wide
+		$s9 = "files\\\\\\\\\\\\\\cookies_" ascii wide
 
 	condition:
 		uint16( 0 ) == 0x5a4d and all of them
@@ -97853,7 +97853,7 @@ rule DITEKSHEN_MALWARE_Win_Backnet : FILE
 		$s6 = "get_IgnoreMutex" fullword ascii
 		$s7 = "ListProcesses" fullword ascii
 		$s8 = "downloadurl" fullword wide
-		$pdb = "\\BackNet-master\\Slave\\\\\\\\\\\obj\\\\\\\\\\\Release\\Slave.pdb" ascii
+		$pdb = "\\BackNet-master\\Slave\\\\\\\\\\\\\\obj\\\\\\\\\\\\\\Release\\Slave.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and ( $pdb or all of ( $s* ) )
@@ -98060,8 +98060,8 @@ rule DITEKSHEN_MALWARE_Win_Konni : FILE
 		$s7 = "subject=%s&data=" fullword ascii
 		$s8 = "dll-x64.dll" fullword ascii
 		$s9 = "dll-x32.dll" fullword ascii
-		$pdb1 = "\\\\\\\\\\\virus-dropper\\\\\\\\\\\Release\\\\\\\\\\\virus-dropper.pdb" ascii
-		$pdb2 = "\\\\\\\\\\\virus-init\\\\\\\\\\\Release\\\\\\\\\\\virus-init.pdb" ascii
+		$pdb1 = "\\\\\\\\\\\\\\virus-dropper\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\virus-dropper.pdb" ascii
+		$pdb2 = "\\\\\\\\\\\\\\virus-init\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\virus-init.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and ( 7 of ( $s* ) or ( 3 of ( $s* ) and 1 of ( $pdb* ) ) )
@@ -98084,8 +98084,8 @@ rule DITEKSHEN_MALWARE_Win_Tjkeylogger : FILE
 
 	strings:
 		$s1 = "TJKeyLogger" fullword ascii
-		$s2 = "software\\\\\\\\\\\\\\\\microsoft\\windows\\\\\\\\\\\\\\\\currentversion\\run" fullword ascii
-		$s3 = "\\\\\\\\\\\\\\\\Passwords.txt" ascii
+		$s2 = "software\\\\\\\\\\\\\\\\\\\\\\microsoft\\windows\\\\\\\\\\\\\\\\\\\\\\currentversion\\run" fullword ascii
+		$s3 = "\\\\\\\\\\\\\\\\\\\\\\Passwords.txt" ascii
 		$s4 = "TJKeyLogItem" fullword ascii
 		$s5 = "TJKeyAsyncLog" fullword ascii
 		$s6 = "FM_GETDSKLST" fullword ascii
@@ -98149,11 +98149,11 @@ rule DITEKSHEN_MALWARE_Win_Tefosteal : FILE
 		$s5 = "TList<System.Zip.TZipHeader>." ascii
 		$s6 = "_Password.txt" fullword wide nocase
 		$s7 = "_Cookies.txt" fullword wide nocase
-		$f1 = "\\\\\\\\\\\InfoPC\\BSSID.txt" wide
-		$f2 = "\\\\\\\\\\\Files\\\\\\\\\\\Telegram\\" wide
-		$f3 = "\\\\\\\\\\\InfoPC\\Screenshot.png" wide
-		$f4 = "\\\\\\\\\\\InfoPC\\Systeminfo.txt" wide
-		$f5 = "\\Steam\\\\\\\\\\\config" wide
+		$f1 = "\\\\\\\\\\\\\\InfoPC\\BSSID.txt" wide
+		$f2 = "\\\\\\\\\\\\\\Files\\\\\\\\\\\\\\Telegram\\" wide
+		$f3 = "\\\\\\\\\\\\\\InfoPC\\Screenshot.png" wide
+		$f4 = "\\\\\\\\\\\\\\InfoPC\\Systeminfo.txt" wide
+		$f5 = "\\Steam\\\\\\\\\\\\\\config" wide
 		$f6 = "\\delete.vbs" wide
 
 	condition:
@@ -98251,7 +98251,7 @@ rule DITEKSHEN_MALWARE_Win_Vssdestroy : FILE
 		$o6 = "[ALL_LOCAL_KID]" wide
 		$o7 = "[DIRSCAN" wide
 		$o8 = "[GENKEY]" wide
-		$s1 = "\\\\\\\\\\\\\\\\cmd.exe" nocase wide
+		$s1 = "\\\\\\\\\\\\\\\\\\\\\\cmd.exe" nocase wide
 		$s2 = "/C powershell \"" nocase wide
 		$s3 = "%COMPUTERNAME%" wide
 		$s4 = "%USERNAME%" wide
@@ -98398,8 +98398,8 @@ rule DITEKSHEN_MALWARE_Joego : FILE
 
 	strings:
 		$go = "Go build ID:" ascii
-		$s1 = "%SystemRoot%\\system32\\\\\\\\\\\%v." ascii
-		$s2 = "REG ADD HKCU\\SOFTWARE\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Run /V" ascii
+		$s1 = "%SystemRoot%\\system32\\\\\\\\\\\\\\%v." ascii
+		$s2 = "REG ADD HKCU\\SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Run /V" ascii
 		$s3 = "/t REG_SZ /F /D %userprofile%\\" ascii
 		$s4 = "(sensitive) [recovered]" ascii
 		$s5 = "/dev/stderr/dev/stdout/index.html" ascii
@@ -98430,7 +98430,7 @@ rule DITEKSHEN_MALWARE_Win_Aurora : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "Software\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Run" fullword ascii wide
+		$s1 = "Software\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Run" fullword ascii wide
 		$s2 = "#DECRYPT_MY_FILES#.txt" fullword ascii
 		$s3 = "/gen.php?generate=" fullword ascii
 		$s4 = "geoplugin.net/php.gp" ascii
@@ -98475,7 +98475,7 @@ rule DITEKSHEN_MALWARE_Win_Buran : FILE
 		$h2 = "<br>to find where the text below" ascii
 		$h3 = "</a> files with these extensions (separate with semi-colons)" ascii
 		$h4 = "Need help with <a href=\"" ascii
-		$path = "\\work\\\\\\\\\\\cr\\nata\\\\\\\\\\\libs\\boost_" wide
+		$path = "\\work\\\\\\\\\\\\\\cr\\nata\\\\\\\\\\\\\\libs\\boost_" wide
 		$v2_1 = "(ShlObj" fullword ascii
 		$v2_2 = "\\StreamUnit" fullword ascii
 		$v2_3 = "TReadme" fullword ascii
@@ -98564,7 +98564,7 @@ rule DITEKSHEN_MALWARE_Win_Echelon : FILE
 		$s11 = "Passwords_Mozilla.txt" fullword wide
 		$s12 = "Passwords_Edge.txt" fullword wide
 		$s13 = "@madcod" ascii wide
-		$pdb = "\\\\\\\\\\\Echelon-Stealer-master\\\\\\\\\\\obj\\\\\\\\\\\Release\\\\\\\\\\\Echelon.pdb" ascii
+		$pdb = "\\\\\\\\\\\\\\Echelon-Stealer-master\\\\\\\\\\\\\\obj\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\Echelon.pdb" ascii
 
 	condition:
 		( uint16( 0 ) == 0x5a4d and ( 8 of ( $s* ) or $pdb ) ) or ( 8 of ( $s* ) or $pdb )
@@ -98595,14 +98595,14 @@ rule DITEKSHEN_MALWARE_Win_Qulab
 		$s1 = "\\Screen.jpg" ascii wide
 		$s2 = "attrib +s +h \"" ascii wide
 		$s3 = "\\x86_microsoft-windows-" ascii wide
-		$s4 = "\\\\\\\\\\\amd64_microsoft-windows-" ascii wide
+		$s4 = "\\\\\\\\\\\\\\amd64_microsoft-windows-" ascii wide
 		$s5 = "Desktop TXT File" ascii wide
-		$s6 = "\\\\\\\\\\\AutoFills.txt" ascii wide
-		$s7 = "\\\\\\\\\\\CreditCards.txt" ascii wide
+		$s6 = "\\\\\\\\\\\\\\AutoFills.txt" ascii wide
+		$s7 = "\\\\\\\\\\\\\\CreditCards.txt" ascii wide
 		$s8 = "a -y -mx9 -ssw" ascii wide
-		$s9 = "\\\\\\\\\\\Passwords.txt" ascii wide
-		$s10 = "\\\\\\\\\\\Information.txt" ascii wide
-		$s11 = "\\\\\\\\\\\getMe" ascii wide
+		$s9 = "\\\\\\\\\\\\\\Passwords.txt" ascii wide
+		$s10 = "\\\\\\\\\\\\\\Information.txt" ascii wide
+		$s11 = "\\\\\\\\\\\\\\getMe" ascii wide
 
 	condition:
 		9 of them or ( ( 1 of ( $x* ) and 4 of ( $s* ) ) or 1 of ( $x* ) )
@@ -98700,7 +98700,7 @@ rule DITEKSHEN_MALWARE_Win_S05Kitty : FILE
 		$x2 = "OneDll.dll" fullword ascii
 		$x3 = "kkd.bat" fullword ascii
 		$x4 = "%s\\regsvr32.exe /s \"%s\"" fullword ascii
-		$x5 = "\\\\\\\\\\\Microsoft\\Windows\\Start Menu\\\\\\\\\\\Programs\\Startup\\\\\\\\\\\fontchk.jse" fullword ascii
+		$x5 = "\\\\\\\\\\\\\\Microsoft\\Windows\\Start Menu\\\\\\\\\\\\\\Programs\\Startup\\\\\\\\\\\\\\fontchk.jse" fullword ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and ( 8 of ( $s* ) or all of ( $x* ) )
@@ -98802,8 +98802,8 @@ rule DITEKSHEN_MALWARE_Win_Rietspoof : FILE
 		$v2_3 = "M9h5an8f8zTjnyTwQVh6hYBdYsMqHiAz" fullword ascii
 		$v2_4 = "GET /%s?%s HTTP/1.1" fullword ascii
 		$v2_5 = "GET /?%s HTTP/1.1" fullword ascii
-		$pdb1 = "\\techloader\\\\\\\\\\\\\\\\loader\\\\\\\\\\\\\\\\loader.odb" ascii wide
-		$pdb2 = "\\\\\\\\\\\\\\\\loader\\\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\\\loader_v1.0.pdb" ascii wide
+		$pdb1 = "\\techloader\\\\\\\\\\\\\\\\\\\\\\loader\\\\\\\\\\\\\\\\\\\\\\loader.odb" ascii wide
+		$pdb2 = "\\\\\\\\\\\\\\\\\\\\\\loader\\\\\\\\\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\\\\\\\\\loader_v1.0.pdb" ascii wide
 
 	condition:
 		uint16( 0 ) == 0x5a4d and ( 7 of ( $c* ) and ( 3 of ( $v* ) or 1 of ( $pdb* ) ) )
@@ -98831,7 +98831,7 @@ rule DITEKSHEN_MALWARE_Win_Modirat : FILE
 		$s4 = "TelegramTitleDetect" fullword ascii
 		$s5 = "StartTitleTelegram" fullword ascii
 		$s6 = "Check_titles" fullword ascii
-		$s7 = "\\\\\\\\\\\MoDi RAT V" ascii
+		$s7 = "\\\\\\\\\\\\\\MoDi RAT V" ascii
 		$s8 = "IsBuzy" fullword ascii
 		$s9 = "Recording_Time" fullword wide
 
@@ -98889,8 +98889,8 @@ rule DITEKSHEN_MALWARE_Win_NETEAGLE : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "Software\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Internet Settings" fullword ascii
-		$s2 = "System\\\\\\\\\\\CurrentControlSet\\\\\\\\\\\control\\\\\\\\\\\ComputerName\\\\\\\\\\\ComputerName" fullword ascii
+		$s1 = "Software\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Internet Settings" fullword ascii
+		$s2 = "System\\\\\\\\\\\\\\CurrentControlSet\\\\\\\\\\\\\\control\\\\\\\\\\\\\\ComputerName\\\\\\\\\\\\\\ComputerName" fullword ascii
 		$s3 = "Mozilla/4.0 (compatible; MSIE 5.0; Win32)" fullword ascii
 		$s4 = "/index.htm" fullword ascii
 		$s5 = "Help_ME" fullword ascii
@@ -98916,7 +98916,7 @@ rule DITEKSHEN_MALWARE_WIN_BACKSPACE : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "Software\\\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\\\PnpSetup" ascii wide
+		$s1 = "Software\\\\\\\\\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\\\\\\\\\PnpSetup" ascii wide
 		$s2 = "Mutex_lnkword_little" ascii wide
 		$s3 = "(Prxy%c-%s:%u)" fullword ascii
 		$s4 = "(Prxy-No)" fullword ascii
@@ -98924,7 +98924,7 @@ rule DITEKSHEN_MALWARE_WIN_BACKSPACE : FILE
 		$s6 = "CONNECT %s:%d" ascii
 		$s7 = "\\$NtRecDoc$" fullword ascii
 		$s8 = "qazWSX123$%^" ascii
-		$s9 = "Software\\\\\\\\\\\Microsoft\\\\\\\\\\\Core" ascii wide
+		$s9 = "Software\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\Core" ascii wide
 		$s10 = "Mutex_lnkch" ascii wide
 		$s11 = "Event__lnkch__" ascii wide
 		$s12 = "User-Agent: Mozilla/4.0 (compatible; MSIE 6.0; Win32)" fullword ascii
@@ -98958,7 +98958,7 @@ rule DITEKSHEN_MALWARE_Win_Rhttpctrl : FILE
 		$s6 = "Error:SendRequest failed!/n" ascii
 		$s7 = ".exe a %s %s" ascii
 		$s8 = "Mozilla/5.0 (Windows NT 6.1; WOW64; rv:34.0) Gecko/20100101 Firefox/34.0" fullword wide
-		$pdb = "\\WorkSources\\\\\\\\\\\RHttpCtrl\\Server\\\\\\\\\\\Release\\svchost.pdb" ascii
+		$pdb = "\\WorkSources\\\\\\\\\\\\\\RHttpCtrl\\Server\\\\\\\\\\\\\\Release\\svchost.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and ( 5 of ( $s* ) or ( $pdb and 2 of ( $s* ) ) )
@@ -99016,7 +99016,7 @@ rule DITEKSHEN_MALWARE_Win_Blackshadesrat : FILE
 		$s4 = "SPY_NET_RATMUTEX" fullword wide
 		$s5 = "\\dump.txt" fullword wide
 		$s6 = "AUTHLOADERDEFAULT" fullword wide
-		$pdb = "*\\\\\\\\\\\AC:\\Users\\\\\\\\\\\Admin\\Desktop_old\\Blackshades project\\bs_bot\\bots\\bot\\bs_bot.vbp" fullword wide
+		$pdb = "*\\\\\\\\\\\\\\AC:\\Users\\\\\\\\\\\\\\Admin\\Desktop_old\\Blackshades project\\bs_bot\\bots\\bot\\bs_bot.vbp" fullword wide
 
 	condition:
 		uint16( 0 ) == 0x5a4d and ( 4 of ( $s* ) or ( $pdb and 2 of ( $s* ) ) )
@@ -99072,17 +99072,17 @@ rule DITEKSHEN_MALWARE_Win_Avalon : FILE
 		$s6 = "set_hidden" fullword ascii
 		$s7 = "set_system" fullword ascii
 		$l1 = "\\DomainDetect.txt" wide
-		$l2 = "\\\\\\\\\\\Grabber_Log.txt" wide
-		$l3 = "\\\\\\\\\\\Programs.txt" wide
-		$l4 = "\\\\\\\\\\\Passwords_Edge.txt" wide
-		$l5 = "\\\\\\\\\\\KL.txt" wide
+		$l2 = "\\\\\\\\\\\\\\Grabber_Log.txt" wide
+		$l3 = "\\\\\\\\\\\\\\Programs.txt" wide
+		$l4 = "\\\\\\\\\\\\\\Passwords_Edge.txt" wide
+		$l5 = "\\\\\\\\\\\\\\KL.txt" wide
 		$w1 = "dont touch" fullword wide
 		$w2 = "Grabber" fullword wide
 		$w3 = "Keylogger" fullword wide
 		$w4 = "password-check" fullword wide
 		$w5 = "H4sIAAAAAAAEA" wide
 		$p1 = "^(?!:\\/\\/)([a-zA-Z0-9-_]+\\.)*[a-zA-Z0-9][a-zA-Z0-9-_]+\\.[a-zA-Z]{2,11}?$" wide
-		$p2 = "^([a-zA-Z0-9_\\\\\\\\\\\-\\.]+)@([a-zA-Z0-9_\\\\\\\\\\\-\\.]+)\\.([a-zA-Z]{2,5})$" wide
+		$p2 = "^([a-zA-Z0-9_\\\\\\\\\\\\\\-\\.]+)@([a-zA-Z0-9_\\\\\\\\\\\\\\-\\.]+)\\.([a-zA-Z]{2,5})$" wide
 
 	condition:
 		uint16( 0 ) == 0x5a4d and 8 of them
@@ -99133,10 +99133,10 @@ rule DITEKSHEN_MALWARE_Win_Avaddon : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "\\\\\\\\\\\IMAGEM~1.%d\\\\\\\\\\\VISUA~1\\BIN\\\\\\\\\\\%s.exe" ascii
-		$s2 = "\\\\\\\\\\\IMAGEM~1.%.2d-\\\\\\\\\\\VISUA~1\\BIN\\\\\\\\\\\%s.exe" ascii
-		$s3 = "\\\\\\\\\\\IMAGEM~1.%d-Q\\\\\\\\\\\VISUA~1\\BIN\\\\\\\\\\\%s.exe" ascii
-		$s4 = "\\\\\\\\\\\IMAGEM~1.%d\\\\\\\\\\\%s.exe" ascii
+		$s1 = "\\\\\\\\\\\\\\IMAGEM~1.%d\\\\\\\\\\\\\\VISUA~1\\BIN\\\\\\\\\\\\\\%s.exe" ascii
+		$s2 = "\\\\\\\\\\\\\\IMAGEM~1.%.2d-\\\\\\\\\\\\\\VISUA~1\\BIN\\\\\\\\\\\\\\%s.exe" ascii
+		$s3 = "\\\\\\\\\\\\\\IMAGEM~1.%d-Q\\\\\\\\\\\\\\VISUA~1\\BIN\\\\\\\\\\\\\\%s.exe" ascii
+		$s4 = "\\\\\\\\\\\\\\IMAGEM~1.%d\\\\\\\\\\\\\\%s.exe" ascii
 		$s5 = "EW6]>mFXDS?YBi?W5] CY 4Z8Y BY7Y BZ8Z CY7Y AY8Z CZ8Y!Y:Z" ascii
 		$s6 = "FY  AY 'Z      ;W      @Y  @Y 'Z    Y  @Y (Z" ascii
 		$s7 = "\"rcid\":\"" fullword ascii
@@ -99242,7 +99242,7 @@ rule DITEKSHEN_MALWARE_Win_Agentteslav3 : FILE
 		$m1 = "yyyy-MM-dd hh-mm-ssCookieapplication/zipSCSC_.jpegScreenshotimage/jpeg/log.tmpKLKL_.html<html></html>Logtext/html[]Time" ascii
 		$m2 = "%image/jpg:Zone.Identifier\\tmpG.tmp%urlkey%-f \\Data\\\\\\Tor\\torrcp=%PostURL%127.0.0.1POST+%2B" ascii
 		$m3 = ">{CTRL}</font>Windows RDPcredentialpolicyblobrdgchrome{{{0}}}CopyToComputeHashsha512CopySystemDrive\\WScript.ShellRegReadg401" ascii
-		$m4 = "%startupfolder%\\\\\\\\\\\%insfolder%\\\\\\\\\\\%insname%/\\\\\\%insfolder%\\Software\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\Run%insregname%SOFTWARE\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\Explorer\\StartupApproved\\\\\\RunTruehttp" ascii
+		$m4 = "%startupfolder%\\\\\\\\\\\\\\%insfolder%\\\\\\\\\\\\\\%insname%/\\\\\\%insfolder%\\Software\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\Run%insregname%SOFTWARE\\\\\\Microsoft\\Windows\\\\\\CurrentVersion\\\\\\Explorer\\StartupApproved\\\\\\RunTruehttp" ascii
 		$m5 = "\\WindowsLoad%ftphost%/%ftpuser%%ftppassword%STORLengthWriteCloseGetBytesOpera" ascii
 
 	condition:
@@ -99271,9 +99271,9 @@ rule DITEKSHEN_MALWARE_Win_Taurus : FILE
 		$s4 = "MyAwesomePrefix" ascii
 		$txt1 = "LogInfo.txt" fullword ascii
 		$txt2 = "Information.txt" fullword ascii
-		$txt3 = "General\\\\\\\\\\\passwords.txt" fullword ascii
-		$txt4 = "General\\\\\\\\\\\forms.txt" fullword ascii
-		$txt5 = "General\\\\\\\\\\\cards.txt" fullword ascii
+		$txt3 = "General\\\\\\\\\\\\\\passwords.txt" fullword ascii
+		$txt4 = "General\\\\\\\\\\\\\\forms.txt" fullword ascii
+		$txt5 = "General\\\\\\\\\\\\\\cards.txt" fullword ascii
 		$txt6 = "Installed Software.txt" fullword ascii
 		$txt7 = "Crypto Wallets\\WalletInfo.txt" fullword ascii
 		$txt8 = "cookies.txt" fullword ascii
@@ -99347,11 +99347,11 @@ rule DITEKSHEN_MALWARE_Win_Slothfulmedia : FILE
 		$s1 = "Local Security Process" fullword wide
 		$s2 = "Global%s%d" fullword wide
 		$s3 = "%s%s_%d.dat" fullword wide
-		$s4 = "\\\\\\\\\\\AppIni" fullword wide
+		$s4 = "\\\\\\\\\\\\\\AppIni" fullword wide
 		$s5 = "%s.tmp" fullword wide
 		$s6 = "\\SetupUi" fullword wide
 		$s7 = "%s|%s|%s|%s" fullword wide
-		$s8 = "\\\\\\\\\\\ExtInfo" fullword wide
+		$s8 = "\\\\\\\\\\\\\\ExtInfo" fullword wide
 		$cnc1 = "/v?m=" fullword ascii
 		$cnc2 = "%s&i=%d" fullword ascii
 		$cnc3 = "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/68.0.3440.75" fullword ascii
@@ -99489,7 +99489,7 @@ rule DITEKSHEN_MALWARE_Win_Wshratplugin : FILE
 		$s5 = "saveKeyLog" fullword ascii
 		$s6 = "get_TotalKeyboardClick" fullword ascii
 		$s7 = "get_SessionMouseClick" fullword ascii
-		$pdb = "\\\\\\\\\\\Android\\documents\\\\\\\\\\\visual studio 2010\\\\\\\\\\\Projects\\\\\\\\\\\Keylogger\\\\\\\\\\\Keylogger\\\\\\\\\\\obj\\x86\\Debug\\\\\\\\\\\Keylogger.pdb" ascii
+		$pdb = "\\\\\\\\\\\\\\Android\\documents\\\\\\\\\\\\\\visual studio 2010\\\\\\\\\\\\\\Projects\\\\\\\\\\\\\\Keylogger\\\\\\\\\\\\\\Keylogger\\\\\\\\\\\\\\obj\\x86\\Debug\\\\\\\\\\\\\\Keylogger.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and filesize < 100KB and 4 of them
@@ -99799,10 +99799,10 @@ rule DITEKSHEN_MALWARE_Win_CRAT : FILE
 		$v2x_1 = "?timestamp=%u" wide
 		$v2x_2 = "config.txt" wide
 		$v2x_3 = "entdll.dll" wide
-		$v2x_4 = "\\\\\\\\\\\\\\\\cmd.exe" wide
+		$v2x_4 = "\\\\\\\\\\\\\\\\\\\\\\cmd.exe" wide
 		$v2x_5 = "[MyDocuments]" wide
 		$v2x_6 = "@SetWindowTextW FindFileExA" wide
-		$v2x_7 = "Microsoft\\Windows\\WinX\\\\\\\\\\\\\\\\Group1\\*.exe" wide
+		$v2x_7 = "Microsoft\\Windows\\WinX\\\\\\\\\\\\\\\\\\\\\\Group1\\*.exe" wide
 		$v2s_1 = "Installed Anti Virus Programs" ascii
 		$v2s_2 = "Running Processes" ascii
 		$v2s_3 = "id=%u&content=" ascii
@@ -99886,7 +99886,7 @@ rule DITEKSHEN_MALWARE_Win_Cratpluginscreencapture : FILE
 		$ai4 = "Analysis process detected!" fullword wide
 		$s1 = "User is inactive!, give up capture" wide
 		$s2 = "Capturing screen..." wide
-		$s3 = "%s\\\\\\\\\\\P%02d%lu.tmp" fullword wide
+		$s3 = "%s\\\\\\\\\\\\\\P%02d%lu.tmp" fullword wide
 		$s4 = "CloseHandle ScreenCaptureMutex failure! %d" fullword wide
 		$s5 = "ScreenCaptureMutex already created! %s" fullword wide
 		$s6 = "Create ScreenCaptureMutex %s failure %d" fullword wide
@@ -99911,10 +99911,10 @@ rule DITEKSHEN_MALWARE_Win_Cratpluginransomhansom : FILE
 
 	strings:
 		$cmd1 = "/f /im \"%s\"" wide
-		$cmd2 = "add HKLM\\\\\\\\\\\\\\\\%s /v %s /t REG_DWORD /d %d /F" wide
-		$cmd3 = "add HKCU\\\\\\\\\\\\\\\\%s /v %s /t REG_DWORD /d %d /F" wide
+		$cmd2 = "add HKLM\\\\\\\\\\\\\\\\\\\\\\%s /v %s /t REG_DWORD /d %d /F" wide
+		$cmd3 = "add HKCU\\\\\\\\\\\\\\\\\\\\\\%s /v %s /t REG_DWORD /d %d /F" wide
 		$cmd4 = "\"%s\" a -y -ep -k -r -s -ibck -df -m0 -hp%s -ri1:%d \"%s\" \"%s\"" wide
-		$s1 = "\\\\\\\\\\\\\\\\hansom.jpg" wide
+		$s1 = "\\\\\\\\\\\\\\\\\\\\\\hansom.jpg" wide
 		$s2 = "HansomMain" fullword ascii wide
 		$s3 = "ExtractHansom" fullword ascii wide
 		$s4 = "Hansom2008" fullword ascii
@@ -100080,8 +100080,8 @@ rule DITEKSHEN_MALWARE_Win_Polar : FILE
 		$s9 = "clearlog" fullword ascii
 		$s10 = "encryptFile" fullword ascii
 		$s11 = "changeBackPictrue" fullword ascii
-		$pdb1 = "\\\\\\\\\\\Ransomware_ALL_encode\\dir_file\\\\\\\\\\\obj\\x86\\\\\\\\\\\Release\\\\\\\\\\\Encode.pdb" ascii
-		$pdb2 = "\\\\\\\\\\\Ransomware_ALL_encode\\dir_file\\\\\\\\\\\obj\\x64\\\\\\\\\\\Release\\\\\\\\\\\Encode.pdb" ascii
+		$pdb1 = "\\\\\\\\\\\\\\Ransomware_ALL_encode\\dir_file\\\\\\\\\\\\\\obj\\x86\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\Encode.pdb" ascii
+		$pdb2 = "\\\\\\\\\\\\\\Ransomware_ALL_encode\\dir_file\\\\\\\\\\\\\\obj\\x64\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\Encode.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and ( 8 of ( $s* ) or ( 1 of ( $pdb* ) and 2 of ( $s* ) ) )
@@ -100116,7 +100116,7 @@ rule DITEKSHEN_MALWARE_Win_Poullight : FILE
 		$s8 = "Poullight.Properties" ascii
 		$s9 = "</ulfile>" fullword wide
 		$s10 = "{0}processlist.txt" fullword wide
-		$s11 = "{0}Browsers\\\\\\\\\\\Passwords.txt" fullword wide
+		$s11 = "{0}Browsers\\\\\\\\\\\\\\Passwords.txt" fullword wide
 
 	condition:
 		uint16( 0 ) == 0x5a4d and 7 of them
@@ -100206,13 +100206,13 @@ rule DITEKSHEN_MALWARE_Win_Stormkitty : FILE
 		clamav_sig = "MALWARE.Win.Trojan.StormKitty"
 
 	strings:
-		$x1 = "\\\\\\\\\\\\\\\\ARTIKA\\\\\\\\\\\\\\\\Videos\\\\\\\\\\\\\\\\Chrome-Password-Recovery" ascii
+		$x1 = "\\\\\\\\\\\\\\\\\\\\\\ARTIKA\\\\\\\\\\\\\\\\\\\\\\Videos\\\\\\\\\\\\\\\\\\\\\\Chrome-Password-Recovery" ascii
 		$x2 = "https://github.com/LimerBoy/StormKitty" fullword ascii
 		$x3 = "StormKitty" fullword ascii
 		$s1 = "GetBSSID" fullword ascii
 		$s2 = "GetAntivirus" fullword ascii
-		$s3 = "C:\\Users\\\\\\\\\\\\\\\\Public\\\\\\\\\\\\\\\\credentials.txt" fullword wide
-		$s4 = "^([a-zA-Z0-9_\\\\\\\\\\\\\\\\-\\.]+)@([a-zA-Z0-9_\\\\\\\\\\\\\\\\-\\.]+)\\.([a-zA-Z]{2,5})$" fullword wide
+		$s3 = "C:\\Users\\\\\\\\\\\\\\\\\\\\\\Public\\\\\\\\\\\\\\\\\\\\\\credentials.txt" fullword wide
+		$s4 = "^([a-zA-Z0-9_\\\\\\\\\\\\\\\\\\\\\\-\\.]+)@([a-zA-Z0-9_\\\\\\\\\\\\\\\\\\\\\\-\\.]+)\\.([a-zA-Z]{2,5})$" fullword wide
 		$s5 = "BCrypt.BCryptGetProperty() (get size) failed with status code:{0}" fullword wide
 		$s6 = "\"encrypted_key\":\"(.*?)\"" fullword wide
 
@@ -100348,7 +100348,7 @@ rule DITEKSHEN_MALWARE_Win_Egregor : FILE
 		clamav_sig = "MALWARE.Win.Ransomware.Egregor"
 
 	strings:
-		$s1 = "C:\\\\\\\\\\\\\\\\Logmein\\{888-8888-9999}\\\\\\\\\\\\\\\\Logmein.log" fullword wide
+		$s1 = "C:\\\\\\\\\\\\\\\\\\\\\\Logmein\\{888-8888-9999}\\\\\\\\\\\\\\\\\\\\\\Logmein.log" fullword wide
 		$p1 = "--deinstall" fullword wide
 		$p2 = "--del" fullword wide
 		$p3 = "--exit" fullword wide
@@ -100451,12 +100451,12 @@ rule DITEKSHEN_MALWARE_Win_Medusalocker : FILE
 		clamav_sig = "MALWARE.Win.Ransomware.MedusaLocker"
 
 	strings:
-		$x1 = "\\\\\\\\\\\MedusaLockerInfo\\\\\\\\\\\MedusaLockerProject\\\\\\\\\\\MedusaLocker\\\\\\\\\\\Release\\\\\\\\\\\MedusaLocker.pdb" ascii
-		$x2 = "SOFTWARE\\\\\\\\\\\Medusa" wide
+		$x1 = "\\\\\\\\\\\\\\MedusaLockerInfo\\\\\\\\\\\\\\MedusaLockerProject\\\\\\\\\\\\\\MedusaLocker\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\MedusaLocker.pdb" ascii
+		$x2 = "SOFTWARE\\\\\\\\\\\\\\Medusa" wide
 		$x3 = "=?utf-8?B?0RFQctTF0YDQcNC60IXQvdC+IEludGVybmV0IED4cGxvseVyIDEz?=" ascii
 		$s1 = "Recovery_Instructions.mht" fullword wide
 		$s2 = "README_LOCK.TXT" fullword wide
-		$s3 = "C:\\Users\\\\\\\\\\\Public\\Desktop" wide
+		$s3 = "C:\\Users\\\\\\\\\\\\\\Public\\Desktop" wide
 		$s4 = "[LOCKER] " wide
 		$s5 = "TmV3LUl0ZW0gJ2" ascii
 		$s6 = "<HEAD>=20" ascii
@@ -100558,7 +100558,7 @@ rule DITEKSHEN_MALWARE_Win_Bandook : FILE
 		$s1 = "\"%sLib\\dpx.pyc\" \"%ws\" \"%ws\" \"%ws\" \"%ws\" \"%ws\"" fullword wide
 		$s2 = "%s\\usd\\dv-%s.dat" fullword ascii
 		$s3 = "%sprd.dat" fullword ascii
-		$s4 = "%sfile\\shell\\\\\\\\\\\open\\\\\\\\\\\command" fullword ascii
+		$s4 = "%sfile\\shell\\\\\\\\\\\\\\open\\\\\\\\\\\\\\command" fullword ascii
 		$s5 = "explorer.exe , %s" fullword ascii
 		$f1 = "CaptureScreen" fullword ascii
 		$f2 = "StartShell" fullword ascii
@@ -100763,8 +100763,8 @@ rule DITEKSHEN_MALWARE_Linux_UNK02 : FILE
 		tags = "FILE"
 
 	strings:
-		$rf1 = "[]A\\\\\\\\\\\\\\\\A]A^A_" ascii
-		$rf2 = "[A\\\\\\\\\\\\\\\\A]A^A_]" ascii
+		$rf1 = "[]A\\\\\\\\\\\\\\\\\\\\\\A]A^A_" ascii
+		$rf2 = "[A\\\\\\\\\\\\\\\\\\\\\\A]A^A_]" ascii
 		$f1 = "/bin/basH" ascii fullword
 		$f2 = "/proc/seH" ascii fullword
 		$f3 = "/dev/ptsH" ascii fullword
@@ -100792,13 +100792,13 @@ rule DITEKSHEN_MALWARE_Win_Itranslatordll : FILE
 		clamav_sig = "MALWARE.Win.Trojan.iTranslator_DLL"
 
 	strings:
-		$d1 = "system32\\drivers\\\\\\\\\\\%S.sys" fullword wide
+		$d1 = "system32\\drivers\\\\\\\\\\\\\\%S.sys" fullword wide
 		$d2 = "\\windows\\system32\\winlogon.exe" fullword ascii
-		$d3 = "\\\\\\\\\\\Registry\\\\\\\\\\\Machine\\SYSTEM\\\\\\\\\\\ControlSet001\\services\\\\\\\\\\\%s" fullword wide
-		$d4 = "\\\\\\\\\\\Registry\\\\\\\\\\\Machine\\SYSTEM\\\\\\\\\\\ControlSet001\\services\\webssx" fullword wide
-		$d5 = "\\Device\\\\\\\\\\\CtrlSM" fullword wide
-		$d6 = "\\DosDevices\\\\\\\\\\\CtrlSM" fullword wide
-		$d7 = "\\driver_wfp\\\\\\\\\\\CbFlt\\Bin\\\\\\\\\\\CbFlt.pdb" ascii
+		$d3 = "\\\\\\\\\\\\\\Registry\\\\\\\\\\\\\\Machine\\SYSTEM\\\\\\\\\\\\\\ControlSet001\\services\\\\\\\\\\\\\\%s" fullword wide
+		$d4 = "\\\\\\\\\\\\\\Registry\\\\\\\\\\\\\\Machine\\SYSTEM\\\\\\\\\\\\\\ControlSet001\\services\\webssx" fullword wide
+		$d5 = "\\Device\\\\\\\\\\\\\\CtrlSM" fullword wide
+		$d6 = "\\DosDevices\\\\\\\\\\\\\\CtrlSM" fullword wide
+		$d7 = "\\driver_wfp\\\\\\\\\\\\\\CbFlt\\Bin\\\\\\\\\\\\\\CbFlt.pdb" ascii
 		$d8 = ".php" ascii
 
 	condition:
@@ -100851,7 +100851,7 @@ rule DITEKSHEN_MALWARE_Win_Rasftuby : FILE
 		$s1 = "/DCRS/main.php?data=active" fullword ascii wide
 		$s2 = "/socket.php?type=__ds_" ascii wide
 		$s3 = "/uploader.php" fullword ascii wide
-		$s4 = "del \\\"%USERPROFILE%\\\\\\\\\AppData\\\\\\\\\Roaming\\\\\\\\\Microsoft\\\\Windows\\\\Start Menu\\\\\\\\\Programs\\\\Startup\\\\System.lnk\\\"" fullword ascii wide
+		$s4 = "del \\\"%USERPROFILE%\\\\\\\\\\\\AppData\\\\\\\\\\\\Roaming\\\\\\\\\\\\Microsoft\\\\Windows\\\\Start Menu\\\\\\\\\\\\Programs\\\\Startup\\\\System.lnk\\\"" fullword ascii wide
 		$s5 = "Host:{0},Port:{1},User:{2},Pass:{3}<STR>" fullword ascii wide
 		$s6 = "keyloggerstart_status" fullword ascii wide
 		$s7 = "keyloggerstop_status" fullword ascii wide
@@ -100879,8 +100879,8 @@ rule DITEKSHEN_MALWARE_Win_Protonbot : FILE
 		clamav_sig = "MALWARE.Win.Trojan.ProtonBot"
 
 	strings:
-		$x1 = "\\\\\\\\\\\PROTON\\\\\\\\\\\Release\\build.pdb" ascii
-		$x2 = "\\\\\\\\\\\proton\\\\\\\\\\\proton bot\\\\\\\\\\\json.hpp" wide
+		$x1 = "\\\\\\\\\\\\\\PROTON\\\\\\\\\\\\\\Release\\build.pdb" ascii
+		$x2 = "\\\\\\\\\\\\\\proton\\\\\\\\\\\\\\proton bot\\\\\\\\\\\\\\json.hpp" wide
 		$x3 = "proton bot" ascii wide
 		$s1 = "endptr == token_buffer.data() + token_buffer.size()" fullword wide
 		$s2 = "ranges.size() == 2 or ranges.size() == 4 or ranges.size() == 6" fullword wide
@@ -100918,9 +100918,9 @@ rule DITEKSHEN_MALWARE_Win_Imminentrat : FILE
 		$s2 = "Anti-Virus: {0}" wide
 		$s3 = "File downloaded & executed" wide
 		$s4 = "Chat - You are speaking with" wide
-		$s5 = "\\\\\\\\\\\\\\\\Imminent\\\\\\\\\\\\\\\\Plugins" wide
-		$s6 = "\\\\\\\\\\\\\\\\Imminent\\\\\\\\\\\\\\\\Path.dat" wide
-		$s7 = "\\\\\\\\\\\\\\\\Imminent\\\\\\\\\\\\\\\\Geo.dat" wide
+		$s5 = "\\\\\\\\\\\\\\\\\\\\\\Imminent\\\\\\\\\\\\\\\\\\\\\\Plugins" wide
+		$s6 = "\\\\\\\\\\\\\\\\\\\\\\Imminent\\\\\\\\\\\\\\\\\\\\\\Path.dat" wide
+		$s7 = "\\\\\\\\\\\\\\\\\\\\\\Imminent\\\\\\\\\\\\\\\\\\\\\\Geo.dat" wide
 		$s8 = "DisableTaskManager = {0}" wide
 		$s9 = "This client is already mining" wide
 		$s10 = "Couldn't get AV!" wide
@@ -100949,9 +100949,9 @@ rule DITEKSHEN_MALWARE_Win_Warzonerat : FILE
 		$s1 = "RDPClip" fullword wide
 		$s2 = "Grabber" fullword wide
 		$s3 = "Ave_Maria Stealer OpenSource" wide
-		$s4 = "\\\\\\\\\\\\\\\\MidgetPorn\\workspace\\\\\\\\\\\\\\\\MsgBox.exe" wide
-		$s5 = "@\\\\\\\\\\\\\\\\cmd.exe" wide
-		$s6 = "/n:%temp%\\\\\\\\\\\ellocnak.xml" wide
+		$s4 = "\\\\\\\\\\\\\\\\\\\\\\MidgetPorn\\workspace\\\\\\\\\\\\\\\\\\\\\\MsgBox.exe" wide
+		$s5 = "@\\\\\\\\\\\\\\\\\\\\\\cmd.exe" wide
+		$s6 = "/n:%temp%\\\\\\\\\\\\\\ellocnak.xml" wide
 		$s7 = "Hey I'm Admin" wide
 		$s8 = "warzone160" fullword ascii
 
@@ -100977,7 +100977,7 @@ rule DITEKSHEN_MALWARE_Win_Karaganycore : FILE
 	strings:
 		$s1 = "127.0.0.1" fullword ascii
 		$s2 = "port" fullword ascii
-		$s3 = "C:\\Windows\\System32\\\\\\\\\\\Kernel32.dll" fullword ascii
+		$s3 = "C:\\Windows\\System32\\\\\\\\\\\\\\Kernel32.dll" fullword ascii
 		$s4 = "kernel32.dll" fullword ascii
 		$s5 = "http" ascii
 		$s6 = "Move" fullword ascii
@@ -101252,7 +101252,7 @@ rule DITEKSHEN_MALWARE_Win_STOP : FILE
 	strings:
 		$x1 = "C:\\SystemID\\\\\\PersonalID.txt" fullword wide
 		$x2 = "/deny *S-1-1-0:(OI)(CI)(DE,DC)" wide
-		$x3 = "e:\\doc\\\\\\\\\\\my work (c++)\\\\\\\\\\\_git\\\\\\\\\\\encryption\\" ascii wide nocase
+		$x3 = "e:\\doc\\\\\\\\\\\\\\my work (c++)\\\\\\\\\\\\\\_git\\\\\\\\\\\\\\encryption\\" ascii wide nocase
 		$s1 = "\" --AutoStart" fullword ascii wide
 		$s2 = "--ForNetRes" fullword wide
 		$s3 = "--Admin" fullword wide
@@ -101290,7 +101290,7 @@ rule DITEKSHEN_MALWARE_Win_Parallaxrat : FILE
 		$s4 = "Clipboard Start" wide
 		$s5 = "(Wscript.ScriptFullName)" wide
 		$s6 = "CSDVersion" fullword ascii
-		$s7 = "SOFTWARE\\\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\\\CurrentVersion" fullword ascii
+		$s7 = "SOFTWARE\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\\\\\\\\\CurrentVersion" fullword ascii
 		$x1 = { 2e 65 78 65 00 00 84 00 00 4d 5a 90 00 }
 		$x2 = "This program cannot be run in DOS mode" ascii
 
@@ -101316,7 +101316,7 @@ rule DITEKSHEN_MALWARE_Win_Meterpreter : FILE
 	strings:
 		$s1 = "PACKET TRANSMIT" fullword ascii
 		$s2 = "PACKET RECEIVE" fullword ascii
-		$s3 = "\\\\\\\\\\\\\%s\\\\\\\\\\\pipe\\\\\\\\\\\%s" fullword ascii wide
+		$s3 = "\\\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\%s" fullword ascii wide
 		$s4 = "%04x-%04x:%s" fullword wide
 		$s5 = "server.dll" fullword ascii
 
@@ -101346,9 +101346,9 @@ rule DITEKSHEN_MALWARE_Win_Trojan_Expresscms : FILE
 		$s3 = "jdlnb" fullword wide
 		$s4 = "Gkjfdshfkjjd: dsdjdsjdhv" fullword wide
 		$s5 = "--elevated" fullword wide
-		$s6 = "HARDWARE\\DESCRIPTION\\System\\\\\\\\\\\\\\\\CentralProcessor\\\\\\\\\\\\\\\\%d" wide
-		$s7 = "\\\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\\\Manager.exe" fullword wide
-		$s8 = "\\\\\\\\\\\\\\\\Microsoft\\svchost.exe" fullword wide
+		$s6 = "HARDWARE\\DESCRIPTION\\System\\\\\\\\\\\\\\\\\\\\\\CentralProcessor\\\\\\\\\\\\\\\\\\\\\\%d" wide
+		$s7 = "\\\\\\\\\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\\\\\\\\\Manager.exe" fullword wide
+		$s8 = "\\\\\\\\\\\\\\\\\\\\\\Microsoft\\svchost.exe" fullword wide
 
 	condition:
 		uint16( 0 ) == 0x5a4d and 6 of them
@@ -101507,7 +101507,7 @@ rule DITEKSHEN_MALWARE_Win_Fonix : FILE
 		$id3 = "XINOF4MUTEX" wide
 		$id4 = ":\\\\\\Fonix\\\\\\cryptoPP\\" ascii
 		$id5 = "schtasks /CREATE /SC ONLOGON /TN fonix" ascii
-		$id6 = "Ransomware\\\\\\\\\\\Fonix" ascii
+		$id6 = "Ransomware\\\\\\\\\\\\\\Fonix" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and ( 6 of ( $s* ) or 3 of ( $id* ) or ( 1 of ( $id* ) and 3 of ( $s* ) ) )
@@ -101813,7 +101813,7 @@ rule DITEKSHEN_MALWARE_Win_Jssloader : FILE
 		$e2 = "//e:jscript" wide
 		$e3 = "/c rundll32.exe" wide
 		$e4 = "/C powershell" wide
-		$e5 = "C:\\Windows\\System32\\\\\\\\\\\cmd.exe" wide
+		$e5 = "C:\\Windows\\System32\\\\\\\\\\\\\\cmd.exe" wide
 		$e6 = "echo del /f" wide
 		$e7 = "AT.U() {0}. format" wide
 
@@ -101855,16 +101855,16 @@ rule DITEKSHEN_MALWARE_Win_CHUWI_Seth : FILE
 		$cnc6 = "&command=open_link" ascii
 		$cnc7 = "&command=down_exec" ascii
 		$cnc8 = "&command=shell" ascii
-		$pdb = "\\Users\\\\\\\\\\\CHUWI\\Documents\\\\\\\\\\\CPROJ\\Downloader\\svchost" ascii
+		$pdb = "\\Users\\\\\\\\\\\\\\CHUWI\\Documents\\\\\\\\\\\\\\CPROJ\\Downloader\\svchost" ascii
 		$rcnc1 = "inc/check_command.php" ascii
 		$rcnc2 = "inc/get_command.php" ascii
 		$rcnc3 = "php?btc" ascii
 		$rcnc4 = "php?hwid" ascii
-		$x1 = "> %USERPROFILE%\\Desktop\\\\\\\\\\\HOW_DECRYPT_FILES.seth.txt" ascii
+		$x1 = "> %USERPROFILE%\\Desktop\\\\\\\\\\\\\\HOW_DECRYPT_FILES.seth.txt" ascii
 		$x2 = "/C dir /b %USERPROFILE%\\Documents > %temp%\\doc.txt" ascii
 		$x3 = "/C dir /b %USERPROFILE%\\Desktop > %temp%\\desk.txt" ascii
 		$x4 = "/C dir /b %USERPROFILE%\\Downloads > %temp%\\downs.txt" ascii
-		$x5 = "/C dir /b %USERPROFILE%\\\\\\\\\\\Pictures > %temp%\\\\\\\\\\\pics.txt" ascii
+		$x5 = "/C dir /b %USERPROFILE%\\\\\\\\\\\\\\Pictures > %temp%\\\\\\\\\\\\\\pics.txt" ascii
 		$x6 = "for /F \"delims=\" %%a in ('mshta.exe \"%~F0\"') do set \"HTA=%%a\"" ascii
 		$x7 = "\\svchost.exe" fullword ascii
 		$x8 = ".seth" fullword ascii
@@ -101962,7 +101962,7 @@ rule DITEKSHEN_MALWARE_Win_Gaudox : FILE
 
 	strings:
 		$s1 = "hdr=%s&tid;=%s&cid;=%s&trs;=%i" ascii wide
-		$s2 = "\\\\\\\\.\\\\\\\\\\\\\PhysicalDrive%u" ascii wide
+		$s2 = "\\\\\\\\.\\\\\\\\\\\\\\\\PhysicalDrive%u" ascii wide
 
 	condition:
 		uint16( 0 ) == 0x5a4d and all of them
@@ -102017,11 +102017,11 @@ rule DITEKSHEN_MALWARE_Win_Fatduke : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "\\\\?\\\\\\\\\\\Volume" fullword ascii
+		$s1 = "\\\\?\\\\\\\\\\\\\\Volume" fullword ascii
 		$s2 = "WINHTTP_AUTOPROXY_OPTIONS@@PAUWINHTTP_PROXY_INFO@@" ascii
 		$s3 = "WINHTTP_CURRENT_USER_IE_PROXY_CONFIG@@" ascii
 		$s4 = "Cannot write a Cannot find the too long string mber of records Log malfunction! Cannot create ain an invalid ra Internal sync iright function iWaitForSingleObjffsets" ascii
-		$pattern = "()$^.*+?[]|\\\\\\\\\\\-{},:=!" ascii
+		$pattern = "()$^.*+?[]|\\\\\\\\\\\\\\-{},:=!" ascii
 		$b64 = "eyJjb25maWdfaWQiOi" wide
 
 	condition:
@@ -102048,8 +102048,8 @@ rule DITEKSHEN_MALWARE_Win_Miniduke : FILE
 		$s2 = "term %5d" fullword ascii
 		$s3 = "pid %5d" fullword ascii
 		$s4 = "uptime %5d.%02dh" fullword ascii
-		$s5 = "login: %s\\\\\\\\\\\\\\\\%s" fullword ascii
-		$s6 = "Software\\\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\\\ApplicationManager" ascii
+		$s5 = "login: %s\\\\\\\\\\\\\\\\\\\\\\%s" fullword ascii
+		$s6 = "Software\\\\\\\\\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\\\\\\\\\ApplicationManager" ascii
 		$s7 = { 69 64 6c 65 ?? 00 73 74 6f 70 ?? 00 61 63 63 65 70 74 ?? 00 63 6f 6e 6e 65 63 74 ?? 00 6c 69 73 74 65 6e ?? 00 }
 		$net1 = "salesappliances.com" ascii
 		$net2 = "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/47.0.2526.111 Safari/537.36" fullword ascii
@@ -102144,7 +102144,7 @@ rule DITEKSHEN_MALWARE_Win_Quilclipper
 		$s5 = "CLIP( FUNC_" ascii
 		$s6 = "CLIPPUT (" ascii
 		$s7 = "FUNC _CLIPPUTFILE(" ascii
-		$s8 = "HKEY_LOCAL_MACHINE\\SYSTEM\\\\\\\\\\\CurrentControlSet\\Services\\Schedule" ascii
+		$s8 = "HKEY_LOCAL_MACHINE\\SYSTEM\\\\\\\\\\\\\\CurrentControlSet\\Services\\Schedule" ascii
 
 	condition:
 		all of ( $cnc* ) or all of ( $s* )
@@ -102367,7 +102367,7 @@ rule DITEKSHEN_MALWARE_Win_Killmbr : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "\\\\.\\\\\\\\\\\PhysicalDrive" ascii
+		$s1 = "\\\\.\\\\\\\\\\\\\\PhysicalDrive" ascii
 		$s2 = "/logger.php" ascii
 		$s3 = "Ooops! Your MBR was been rewritten" ascii
 		$s4 = "No, this ransomware dont encrypt your files, erases it" ascii
@@ -102465,7 +102465,7 @@ rule DITEKSHEN_MALWARE_Win_Thanos : FILE
 		$s1 = "Aditional KeyId:" wide
 		$s2 = "process call create cmd.exe /c \\\\" wide
 		$s3 = "/c rd /s /q %SYSTEMDRIVE%\\$Recycle.bin" wide
-		$s4 = "\\\\\\\\\\\HOW_TO_DECYPHER_FILES." wide
+		$s4 = "\\\\\\\\\\\\\\HOW_TO_DECYPHER_FILES." wide
 		$s5 = "Client Unique Identifier Key:" wide
 		$s6 = "/s /f /q c:\\*.VHD c:\\*.bac c:\\*.bak c:\\*.wbcat c:\\*.bkf c:\\Backup*.* c:\\backup*.* c:\\*.set c:\\*.win c:\\*.dsk" fullword wide
 		$s7 = "NtOpenProcess" fullword wide
@@ -102503,7 +102503,7 @@ rule DITEKSHEN_MALWARE_Win_Tmanager : FILE
 	strings:
 		$s1 = "WSAStartup Error!" fullword wide
 		$s2 = "KB3112342.LOG" fullword wide
-		$s3 = "\\\\\\\\\\\cmd.exe -c" fullword wide
+		$s3 = "\\\\\\\\\\\\\\cmd.exe -c" fullword wide
 		$s4 = "sock_hmutex" fullword wide
 		$s5 = "cmd_hmutex" fullword wide
 		$s6 = "powershell" fullword wide
@@ -102534,7 +102534,7 @@ rule DITEKSHEN_MALWARE_Win_Sn0Wlogger : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "\\SnowP\\\\\\\\\\\\\\\\Example\\Secured\\" ascii
+		$s1 = "\\SnowP\\\\\\\\\\\\\\\\\\\\\\Example\\Secured\\" ascii
 		$s2 = "{0}{3}Content-Type: {4}{3}Content-Disposition: form-data; name=\"{1}\"{3}{3}{2}{3}" wide
 		$s3 = "\"encrypted_key\":\"(.*?)\"" fullword wide
 		$s4 = "<SendToDiscord>d__" ascii
@@ -102564,12 +102564,12 @@ rule DITEKSHEN_MALWARE_Win_Klackring : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "%s\\\\\\\\\\\\\\\\%s.dll" fullword wide
+		$s1 = "%s\\\\\\\\\\\\\\\\\\\\\\%s.dll" fullword wide
 		$s2 = "cmd.exe /c move /Y %s %s" fullword wide
 		$s3 = "%s\\win32k.sys" fullword wide
 		$s4 = "NetSvcInst_Rundll32.dll" fullword ascii
 		$s5 = "Spectrum.dll" fullword ascii wide
-		$s6 = "%s\\\\\\\\\\\\\\\\cmd.exe" fullword wide
+		$s6 = "%s\\\\\\\\\\\\\\\\\\\\\\cmd.exe" fullword wide
 		$s7 = ".?AVA5Stream@@" fullword ascii
 
 	condition:
@@ -102598,7 +102598,7 @@ rule DITEKSHEN_MALWARE_Win_Suncrypt : FILE
 		$s4 = "-noservices" fullword wide
 		$s5 = "$Recycle.bin" fullword wide
 		$s6 = "YOUR_FILES_ARE_ENCRYPTED.HTML" fullword wide
-		$s7 = "\\\\?\\\\\\\\\\\%c:" fullword wide
+		$s7 = "\\\\?\\\\\\\\\\\\\\%c:" fullword wide
 		$s8 = "locker.exe" fullword ascii
 		$s9 = "DllRegisterServer" fullword ascii
 		$g1 = "main.EncFile" fullword ascii nocase
@@ -102662,7 +102662,7 @@ rule DITEKSHEN_MALWARE_Win_Zegost : FILE
 		$s16 = "??1_Winit@std@@QAE@XZ" fullword ascii
 		$s17 = "ClearEventLogA" fullword ascii
 		$s18 = "SeShutdownPrivilege" fullword ascii
-		$s19 = "%s\\shell\\\\\\\\\\\\\\\\open\\\\\\\\\\\\\\\\command" fullword ascii
+		$s19 = "%s\\shell\\\\\\\\\\\\\\\\\\\\\\open\\\\\\\\\\\\\\\\\\\\\\command" fullword ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and all of them
@@ -102687,7 +102687,7 @@ rule DITEKSHEN_MALWARE_Win_GENERIC01 : FILE
 		$s1 = "\\wmkawe_%d.data" ascii
 		$s2 = "\\resmon.resmoncfg" ascii
 		$s3 = "ByPassUAC" fullword ascii
-		$s4 = "rundll32.exe C:\\\\\\\\\\\ProgramData\\Sandboxie\\SbieMsg.dll,installsvc" fullword ascii nocase
+		$s4 = "rundll32.exe C:\\\\\\\\\\\\\\ProgramData\\Sandboxie\\SbieMsg.dll,installsvc" fullword ascii nocase
 		$s5 = "%s\\SbieMsg." ascii
 		$s6 = "Stupid Japanese" fullword ascii
 
@@ -102803,12 +102803,12 @@ rule DITEKSHEN_MALWARE_Win_Phorpiex : FILE
 	strings:
 		$s1 = "ShEllExECutE=__\\DriveMgr.exe" fullword wide nocase
 		$s2 = "/c start __ & __\\DriveMgr.exe & exit" fullword wide nocase
-		$s3 = "%s\\\\\\\\\\\\\\\\autorun.inf" fullword wide
+		$s3 = "%s\\\\\\\\\\\\\\\\\\\\\\autorun.inf" fullword wide
 		$s4 = "svchost." wide
-		$s5 = "%ls\\\\\\\\\\\\\\\\%d%d" wide
+		$s5 = "%ls\\\\\\\\\\\\\\\\\\\\\\%d%d" wide
 		$s6 = "bitcoincash:" ascii
 		$s7 = "%ls:*:Enabled:%ls" fullword wide
-		$s8 = "%s\\\\\\\\\\\\\\\\%s\\DriveMgr.exe" fullword wide
+		$s8 = "%s\\\\\\\\\\\\\\\\\\\\\\%s\\DriveMgr.exe" fullword wide
 		$s9 = "api.wipmania.com" ascii
 		$v1_1 = "%appdata%" fullword wide
 		$v1_2 = "(iPhone;" ascii
@@ -102835,7 +102835,7 @@ rule DITEKSHEN_MALWARE_Win_Vovalex : FILE
 
 	strings:
 		$s1 = "README.VOVALEX.txt" fullword ascii
-		$s2 = "\\src\\\\\\\\\\\\\\\\phobos\\std\\" ascii
+		$s2 = "\\src\\\\\\\\\\\\\\\\\\\\\\phobos\\std\\" ascii
 		$s3 = "LoadLibraryA(\"Advapi32.dll\")" fullword ascii
 		$s4 = "Failed to spawn process \"" fullword ascii
 		$s5 = "=== Bypassed ===" fullword ascii
@@ -102949,7 +102949,7 @@ rule DITEKSHEN_MALWARE_Win_Steamhook : FILE
 		$s3 = ".*?(ssfn\\d+)" fullword ascii
 		$s4 = "add cookie failed..." fullword ascii
 		$s5 = "Content-Type: multipart/form-data; boundary=--MULTI-PARTS-FORM-DATA-BOUNDARY" fullword ascii
-		$pdb1 = "\\SteamHook\\\\\\\\\\\Install\\" ascii
+		$pdb1 = "\\SteamHook\\\\\\\\\\\\\\Install\\" ascii
 		$pdb2 = "\\SteamHook\\dll\\" ascii
 
 	condition:
@@ -103509,8 +103509,8 @@ rule DITEKSHEN_MALWARE_Win_Legionlocker : FILE
 		$s4 = "Processhacker" wide
 		$s5 = "/k color 47 && del /f /s /q %userprofile%\\" wide
 		$s6 = "Submit code" fullword wide
-		$pdb1 = "\\\\\\\\\\\obj\\Debug\\\\\\\\\\\LegionLocker.pdb" ascii
-		$pdb2 = "\\\\\\\\\\\obj\\\\\\\\\\\Release\\\\\\\\\\\LegionLocker.pdb" ascii
+		$pdb1 = "\\\\\\\\\\\\\\obj\\Debug\\\\\\\\\\\\\\LegionLocker.pdb" ascii
+		$pdb2 = "\\\\\\\\\\\\\\obj\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\LegionLocker.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and ( 1 of ( $m* ) or 1 of ( $pdb* ) or 4 of ( $s* ) )
@@ -103589,7 +103589,7 @@ rule DITEKSHEN_MALWARE_Win_Iceid : FILE
 		$n5 = "; __io=" fullword wide
 		$n6 = "; _gid=" fullword wide
 		$n7 = "Cookie: __gads=" fullword wide
-		$s1 = "c:\\\\\\\\\\\ProgramData" ascii
+		$s1 = "c:\\\\\\\\\\\\\\ProgramData" ascii
 		$s2 = "loader_dll_64.dll" fullword ascii
 		$s3 = "loader_dll_32.dll" fullword ascii
 		$s4 = "/?id=%0.2X%0.8X%0.8X%s" ascii
@@ -103626,7 +103626,7 @@ rule DITEKSHEN_MALWARE_Win_Purge : FILE
 		$s1 = "%s\\SpyHunter Remove Ransomware" wide
 		$s2 = "$recycle.bin" fullword wide
 		$s3 = "TheEnd" fullword wide
-		$s4 = "%s\\\\\\\\\\\HELP_DECRYPT_YOUR_FILES.TXT" fullword wide
+		$s4 = "%s\\\\\\\\\\\\\\HELP_DECRYPT_YOUR_FILES.TXT" fullword wide
 		$s5 = "%s.id_%x%x_email_" wide
 		$s6 = "scmd" fullword wide
 		$s7 = "process call create \"%s\"" wide
@@ -103685,7 +103685,7 @@ rule DITEKSHEN_MALWARE_Win_Darktrackrat : FILE
 		$x2 = "I_AM_DT" ascii
 		$x3 = " Alien" ascii
 		$x4 = "Local Victim" ascii
-		$x5 = "Dtback\\\\\\\\\\\AlienEdition\\Server\\SuperObject.pas" ascii
+		$x5 = "Dtback\\\\\\\\\\\\\\AlienEdition\\Server\\SuperObject.pas" ascii
 		$x6 = "].encryptedUsername" ascii
 		$x7 = "].encryptedPassword" ascii
 		$x8 = { 49 41 4d [6] 44 41 52 [0-2] 4b [6] 44 54 41 43 4b }
@@ -103693,7 +103693,7 @@ rule DITEKSHEN_MALWARE_Win_Darktrackrat : FILE
 		$s2 = "AntiSpywareProduct" ascii
 		$s3 = "ConnectServer" ascii
 		$s4 = "ExecQuery" ascii
-		$s5 = "\\Drivers\\\\\\\\\\\Etc\\\\\\\\\\\Hosts" fullword ascii
+		$s5 = "\\Drivers\\\\\\\\\\\\\\Etc\\\\\\\\\\\\\\Hosts" fullword ascii
 		$s6 = "BTMemoryLoadLibary: Get DLLEntyPoint" ascii
 		$s7 = "\\\\.\\SyserDbgMsg" fullword ascii
 		$s8 = "\\\\.\\SyserBoot" fullword ascii
@@ -103750,12 +103750,12 @@ rule DITEKSHEN_MALWARE_Win_UNK03 : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "Software\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion" ascii
+		$s1 = "Software\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion" ascii
 		$s2 = "rundll32.exe C:\\Windows\\System32\\shimgvw.dll,ImageView_Fullscreen %s" ascii
 		$s3 = "%s.jpg" ascii
 		$s4 = "%s\\sz.txt" ascii
 		$s5 = "ChromeSecsv9867%d7.exe" ascii
-		$s6 = "%s\\\\\\\\\\\appl%c.jpg" ascii
+		$s6 = "%s\\\\\\\\\\\\\\appl%c.jpg" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and all of them
@@ -103778,7 +103778,7 @@ rule DITEKSHEN_MALWARE_Win_UNK04 : FILE
 
 	strings:
 		$x1 = "127.0.0.1/%d" fullword ascii
-		$x2 = "SYSTEM\\\\\\\\\\\CurrentControlSet\\SERVICES\\\\\\\\\\\PORTPROXY\\\\\\\\\\\V4TOV4\\\\\\\\\\\TCP" fullword ascii
+		$x2 = "SYSTEM\\\\\\\\\\\\\\CurrentControlSet\\SERVICES\\\\\\\\\\\\\\PORTPROXY\\\\\\\\\\\\\\V4TOV4\\\\\\\\\\\\\\TCP" fullword ascii
 		$x3 = "%s rundll32.exe" fullword ascii
 		$s1 = "kxetray.exe" fullword ascii
 		$s2 = "ksafe.exe" fullword ascii
@@ -104036,17 +104036,17 @@ rule DITEKSHEN_MALWARE_Win_Hyperbro02 : FILE
 
 	strings:
 		$s1 = "\\\\\\cmd.exe /A" fullword wide
-		$s2 = "C:\\windows\\\\\\\\\\\explorer.exe" fullword wide
-		$s3 = "\\\\.\\\\\\\\\\\pipe\\testpipe" fullword wide
+		$s2 = "C:\\windows\\\\\\\\\\\\\\explorer.exe" fullword wide
+		$s3 = "\\\\.\\\\\\\\\\\\\\pipe\\testpipe" fullword wide
 		$s4 = "Elevation:Administrator!new:{" wide
 		$s5 = "log.log" fullword wide
-		$s6 = "%s\\\\\\\\\\\%d.exe" fullword wide
+		$s6 = "%s\\\\\\\\\\\\\\%d.exe" fullword wide
 		$s7 = ".?AVTPipeProtocol@@" fullword ascii
 		$s8 = ".?AVTCaptureMgr@@" fullword ascii
 		$s9 = "system-%d" fullword wide
 		$s10 = "[test] %02d:%02d:%02d:%03d %s" fullword wide
 		$s11 = "\\..\\data.dat" fullword wide
-		$s12 = "\\..\\\\\\\\\\\config.ini" fullword wide
+		$s12 = "\\..\\\\\\\\\\\\\\config.ini" fullword wide
 		$s13 = { 73 00 76 00 63 00 68 00 6f 00 73 00 74 00 2e 00 65 00 78 00 65 00 00 00 20 00 2d 00 77 00 6f 00 72 00 6b 00 65 00 72 00 }
 		$s14 = { 73 00 76 00 63 00 68 00 6f 00 73 00 74 00 2e 00 65 00 78 00 65 00 00 00 20 00 2d 00 64 00 61 00 65 00 6d 00 6f 00 6e 00 }
 		$cnc1 = "https://%s:%d/ajax" fullword wide
@@ -104103,8 +104103,8 @@ rule DITEKSHEN_MALWARE_Win_Zeoticus : FILE
 
 	strings:
 		$s1 = "Dear %s" fullword wide
-		$s2 = "\\??\\UNC\\\\\\\\\\\%s\\\\\\\\\\\%s\\" wide
-		$s3 = "\\\\\\\\\\\\\%ws\\\\\\\\\\\admin$\\\\\\\\\\\%ws" wide
+		$s2 = "\\??\\UNC\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\%s\\" wide
+		$s3 = "\\\\\\\\\\\\\\\\%ws\\\\\\\\\\\\\\admin$\\\\\\\\\\\\\\%ws" wide
 		$s4 = "%s /node:\"%ws\" /user:\"%ws\" /password:" wide
 		$s5 = "process call create" wide
 		$s6 = ">----===Zeoticus" ascii
@@ -104136,7 +104136,7 @@ rule DITEKSHEN_MALWARE_Win_Dlagent11 : FILE
 		tags = "FILE"
 
 	strings:
-		$pdb = "\\\\\\\\\\\loader2\\\\\\\\\\\obj\\Debug\\\\\\\\\\\loader2.pdb" ascii
+		$pdb = "\\\\\\\\\\\\\\loader2\\\\\\\\\\\\\\obj\\Debug\\\\\\\\\\\\\\loader2.pdb" ascii
 		$s1 = "DownloadFile" fullword ascii
 		$s2 = "ZipFile" fullword ascii
 		$s3 = "WebClient" fullword ascii
@@ -104170,7 +104170,7 @@ rule DITEKSHEN_MALWARE_Win_Softcnapp : FILE
 		$s5 = ".?AVCHPCmd@@" fullword ascii
 		$s6 = ".?AVCHPExplorer@@" fullword ascii
 		$s7 = "%s\\svchost.exe -O" fullword wide
-		$s8 = "\"%s\\\\\\\\\\\\%s\" -P" fullword ascii
+		$s8 = "\"%s\\\\\\\\\\\\\\\\\\%s\" -P" fullword ascii
 		$n1 = "45.63.58.34" fullword ascii
 		$n2 = "127.0.0.1" fullword ascii
 
@@ -104350,8 +104350,8 @@ rule DITEKSHEN_MALWARE_Win_Infinitylock : FILE
 		$d3 = "ProgrammsX86" fullword ascii
 		$d4 = "UserDirs" fullword ascii
 		$d5 = "B_Drive" fullword ascii
-		$pdb1 = "F:\\DESKTOP!\\\\\\\\\\\ChkDsk\\\\\\\\\\\ChkDsk\\\\\\\\\\\obj\\" ascii
-		$pdb2 = "\\\\\\\\\\\ChkDsk\\\\\\\\\\\obj\\Debug\\\\\\\\\\\PremiereCrack.pdb" ascii
+		$pdb1 = "F:\\DESKTOP!\\\\\\\\\\\\\\ChkDsk\\\\\\\\\\\\\\ChkDsk\\\\\\\\\\\\\\obj\\" ascii
+		$pdb2 = "\\\\\\\\\\\\\\ChkDsk\\\\\\\\\\\\\\obj\\Debug\\\\\\\\\\\\\\PremiereCrack.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and ( ( all of ( $s* ) and 1 of ( $d* ) ) or ( 4 of ( $d* ) and 2 of ( $s* ) ) or ( any of ( $pdb* ) and 1 of ( $s* ) and 1 of ( $d* ) ) )
@@ -104547,7 +104547,7 @@ rule DITEKSHEN_MALWARE_Win_Buterat : FILE
 		$s2 = "/index.php" wide
 		$s3 = "Copy-Item -Path" wide
 		$s4 = ";Start-Process" wide
-		$s5 = "Microsoft\\Windows\\Start Menu\\\\\\\\\\\Programs\\Startup" wide
+		$s5 = "Microsoft\\Windows\\Start Menu\\\\\\\\\\\\\\Programs\\Startup" wide
 		$s6 = "LOCALAPPDATA" fullword wide
 		$s7 = "passwords.json" wide
 		$s8 = "Scripting.FileSystemObject" fullword wide
@@ -104577,8 +104577,8 @@ rule DITEKSHEN_MALWARE_Win_Cookiestealer : FILE
 		$s3 = "Set-Cookie: ([^\\r|^\\n]+)" fullword ascii
 		$s4 = "cmd.exe /c taskkill /f /im chrome.exe" fullword ascii
 		$s5 = "FIREFOX.EXE|Google Chrome|IEXPLORE.EXE" ascii
-		$pdb1 = "F:\\\\\\\\\\\facebook_svn\\trunk\\database\\\\\\\\\\\Release\\DiskScan.pdb" fullword ascii
-		$pdb2 = "D:\\\\\\\\\\\Projects\\\\\\\\\\\crxinstall\\trunk\\\\\\\\\\\Release\\spoofpref.pdb" fullword ascii
+		$pdb1 = "F:\\\\\\\\\\\\\\facebook_svn\\trunk\\database\\\\\\\\\\\\\\Release\\DiskScan.pdb" fullword ascii
+		$pdb2 = "D:\\\\\\\\\\\\\\Projects\\\\\\\\\\\\\\crxinstall\\trunk\\\\\\\\\\\\\\Release\\spoofpref.pdb" fullword ascii
 		$ua1 = "Mozilla/5.0 (Windows NT 6.1; WOW64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/64.0.3282.140 Safari/537.36" fullword ascii
 		$ua2 = "Mozilla/5.0 (Windows NT 6.1; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/73.0.3683.86 Safari/537.36" fullword ascii
 
@@ -104635,9 +104635,9 @@ rule DITEKSHEN_MALWARE_Win_FOXGRABBER : FILE
 		$s1 = "start grabbing" wide
 		$s2 = "end grabbing in" wide
 		$s3 = "error of copying files from comp:" wide
-		$s4 = "\\\\\\\\\\\Firefox\\" wide nocase
-		$pdb1 = "\\\\\\\\\\\obj\\Debug\\\\\\\\\\\grabff.pdb" ascii
-		$pdb2 = "\\\\\\\\\\\obj\\\\\\\\\\\Release\\\\\\\\\\\grabff.pdb" ascii
+		$s4 = "\\\\\\\\\\\\\\Firefox\\" wide nocase
+		$pdb1 = "\\\\\\\\\\\\\\obj\\Debug\\\\\\\\\\\\\\grabff.pdb" ascii
+		$pdb2 = "\\\\\\\\\\\\\\obj\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\grabff.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and ( all of ( $s* ) or ( 1 of ( $pdb* ) and 1 of ( $s* ) ) )
@@ -104688,7 +104688,7 @@ rule DITEKSHEN_MALWARE_Win_Deathransom : FILE
 	strings:
 		$s1 = "%s %f %c" fullword ascii
 		$pdb1 = ":\\wud.pdb" ascii
-		$spdb2 = "\\\\\\\\\\\crypt_server\\runtime\\\\\\\\\\\crypt" ascii
+		$spdb2 = "\\\\\\\\\\\\\\crypt_server\\runtime\\\\\\\\\\\\\\crypt" ascii
 		$spdb3 = "\\bin\\nuvin.pdb" ascii
 		$h1 = "#Dunubeyokunov" wide
 		$h2 = "^Neyot dehipijakeyelih" wide
@@ -104720,7 +104720,7 @@ rule DITEKSHEN_MALWARE_Win_Unlockyourfiles : FILE
 		$s1 = "filesx0" wide
 		$s2 = "_auto_file" wide
 		$s3 = "<EncyptedKey>" fullword wide
-		$s4 = "Software\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Explorer\\\\\\\\\\\FileExts\\" wide
+		$s4 = "Software\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Explorer\\\\\\\\\\\\\\FileExts\\" wide
 		$s5 = "DecryptAllFile" fullword ascii
 		$s6 = "AES_Only_Decrypt_File" fullword ascii
 		$m1 = "Free files decrypted" wide
@@ -105211,7 +105211,7 @@ rule DITEKSHEN_MALWARE_Win_DEADWOOD : FILE
 		$s6 = "CDPUserSvc_" wide
 		$s7 = "WpnUserService_" wide
 		$s8 = "User is :" wide
-		$s9 = "\\\\\\\\\\\params" fullword ascii
+		$s9 = "\\\\\\\\\\\\\\params" fullword ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and 6 of them
@@ -105275,10 +105275,10 @@ rule DITEKSHEN_MALWARE_Win_Dlagent14 : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "%ProgramData%\\\\\\\\\\\AVG" fullword wide
-		$s2 = "%ProgramData%\\\\\\\\\\\AVAST Software" fullword wide
-		$s3 = "%wS\\\\\\\\\\\%wS.vbs" fullword wide
-		$s4 = "%wS\\\\\\\\\\\%wS.exe" fullword wide
+		$s1 = "%ProgramData%\\\\\\\\\\\\\\AVG" fullword wide
+		$s2 = "%ProgramData%\\\\\\\\\\\\\\AVAST Software" fullword wide
+		$s3 = "%wS\\\\\\\\\\\\\\%wS.vbs" fullword wide
+		$s4 = "%wS\\\\\\\\\\\\\\%wS.exe" fullword wide
 		$s5 = "CL,FR,US,CY,FI,HR,HU,RO,PL,IT,PT,ES,CA,DK,AT,NL,AU,AR,NP,SE,BE,NZ,SK,GR,BG,NO,GE" ascii
 		$s6 = "= CreateObject(\"Microsoft.XMLHTTP\")" ascii
 
@@ -105340,10 +105340,10 @@ rule DITEKSHEN_MALWARE_Win_Klingonrat : FILE
 	strings:
 		$go = "Go build ID:" ascii
 		$s1 = "/UCRelease/src/client/uac/once/"
-		$s2 = "%T\\\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\\\Local\\Windows Update\\"
-		$s3 = "%TSoftware\\\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\Image File Execution Options\\"
+		$s2 = "%T\\\\\\\\\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\\\\\\\\\Local\\Windows Update\\"
+		$s3 = "%TSoftware\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\\\Image File Execution Options\\"
 		$s4 = "wmic /namespace:'\\\\root\\subscription' PATH"
-		$s5 = "C:\\Windows\\System32\\\\\\\\\\\fodhelper.exeCaption,ParentProcessId,ProcessId"
+		$s5 = "C:\\Windows\\System32\\\\\\\\\\\\\\fodhelper.exeCaption,ParentProcessId,ProcessId"
 		$s6 = "ldpro.exelsass.exeluall.exeluspt.exe"
 		$s7 = "scangui.exedeps/lsass.exeetrustcipe.exefile"
 		$s8 = "alogserv.exeaplica32.exeapvxdwin.exeatro55en.exeautodown.exeavconsol.exeavgserv9.exeavkwctl9.exeavltmain.exeavpdos32.exeavsynmgr.exeavwupd32.exeavwupsrv.exe"
@@ -105462,8 +105462,8 @@ rule DITEKSHEN_MALWARE_Win_Reverserat : FILE
 		tags = "FILE"
 
 	strings:
-		$pdb1 = "\\\\\\\\\\\\\\\\ReverseRat.pdb" ascii nocase
-		$pdb2 = "\\\\\\\\\\\\\\\\ReverseRat\\\\\\\\\\\\\\\\obj\\" ascii nocase
+		$pdb1 = "\\\\\\\\\\\\\\\\\\\\\\ReverseRat.pdb" ascii nocase
+		$pdb2 = "\\\\\\\\\\\\\\\\\\\\\\ReverseRat\\\\\\\\\\\\\\\\\\\\\\obj\\" ascii nocase
 		$s1 = "processCmd" fullword ascii
 		$s2 = "CmdOutputDataHandler" fullword ascii
 		$s3 = "sendingProcess" fullword ascii
@@ -105501,8 +105501,8 @@ rule DITEKSHEN_MALWARE_Win_Smokeloader : FILE
 		$s1 = "Azure-Update-Task" fullword wide
 		$s2 = "C:\\Windows\\System32\\schtasks.exe" fullword wide
 		$s3 = "/C /create /F /sc minute /mo 1 /tn \"" fullword wide
-		$s4 = "\\\\\\\\\\\Microsoft\\\\\\\\\\\Network" fullword wide
-		$s5 = "\\\\\\\\\\\Microsoft\\\\\\\\\\\TelemetryServices" fullword wide
+		$s4 = "\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\Network" fullword wide
+		$s5 = "\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\TelemetryServices" fullword wide
 		$s6 = "\" /tr \"" fullword wide
 		$e1 = "\\sqlcmd.exe" fullword wide
 		$e2 = "\\sihost.exe" fullword wide
@@ -105697,12 +105697,12 @@ rule DITEKSHEN_MALWARE_Win_Spyro : FILE
 	strings:
 		$s1 = "Decrypt-info.txt" ascii wide
 		$s2 = "AbolHidden" ascii wide
-		$s3 = "C:\\\\\\\\\\\ProgramData\\\\\\\\\\\prvkey" ascii wide
+		$s3 = "C:\\\\\\\\\\\\\\ProgramData\\\\\\\\\\\\\\prvkey" ascii wide
 		$s4 = ".?AV?$TF_CryptoSystemBase@VPK_Encryptor@CryptoPP" ascii
-		$s5 = "C:\\Users\\\\\\\\\\\LEGION\\" ascii
-		$s6 = "C:\\\\\\\\\\\ProgramData\\\\\\\\\\\pkey.txt" fullword ascii
+		$s5 = "C:\\Users\\\\\\\\\\\\\\LEGION\\" ascii
+		$s6 = "C:\\\\\\\\\\\\\\ProgramData\\\\\\\\\\\\\\pkey.txt" fullword ascii
 		$s7 = ".Spyro" fullword ascii
-		$m1 = "Go to C:\\\\\\\\\\\ProgramData\\ or in Your other Drives" wide
+		$m1 = "Go to C:\\\\\\\\\\\\\\ProgramData\\ or in Your other Drives" wide
 		$m2 = "saving prvkey.txt.key file will cause" wide
 		$m3 = "in Case of no Answer:" wide
 		$m4 = "send us prvkey*.txt.key" wide
@@ -105833,15 +105833,15 @@ rule DITEKSHEN_MALWARE_Win_Lilithrat : FILE
 		hash4 = "cebcda044c60b709ba4ee0fa9e1e7011a6ffc17285bcc0948d27f866ec8d8f20"
 
 	strings:
-		$pdb1 = "c:\\Users\\\\\\\\\\\Groovi\\Documents\\\\\\\\\\\Visual Studio 2008\\\\\\\\\\\Projects\\\\\\\\\\\TestDll\\" ascii
-		$pdb2 = "C:\\Users\\\\\\\\\\\iceberg\\Downloads\\\\\\\\\\\RAT-Server-master\\\\\\\\\\\RAT-Server-master\\\\\\\\\\\RAT\\Debug\\\\\\\\\\\RAT.pdb" ascii
-		$pdb3 = "C:\\Users\\Samy\\Downloads\\\\\\\\\\\Compressed\\\\\\\\\\\Lilith-master\\Debug\\\\\\\\\\\Lilith.pdb" ascii
+		$pdb1 = "c:\\Users\\\\\\\\\\\\\\Groovi\\Documents\\\\\\\\\\\\\\Visual Studio 2008\\\\\\\\\\\\\\Projects\\\\\\\\\\\\\\TestDll\\" ascii
+		$pdb2 = "C:\\Users\\\\\\\\\\\\\\iceberg\\Downloads\\\\\\\\\\\\\\RAT-Server-master\\\\\\\\\\\\\\RAT-Server-master\\\\\\\\\\\\\\RAT\\Debug\\\\\\\\\\\\\\RAT.pdb" ascii
+		$pdb3 = "C:\\Users\\Samy\\Downloads\\\\\\\\\\\\\\Compressed\\\\\\\\\\\\\\Lilith-master\\Debug\\\\\\\\\\\\\\Lilith.pdb" ascii
 		$s1 = "log.txt" fullword ascii
 		$s2 = "keylog.txt" fullword ascii
 		$s3 = "File Listing Completed Successfully." fullword ascii
 		$s4 = "Download Execute" fullword ascii
 		$s5 = "File Downloaded and Executed Successfully." fullword ascii
-		$s6 = "C:\\WINDOWS\\system32\\\\\\\\\\\cmd.exe" fullword ascii
+		$s6 = "C:\\WINDOWS\\system32\\\\\\\\\\\\\\cmd.exe" fullword ascii
 		$s7 = "CMD session closed" ascii
 		$s8 = "Restart requested: Restarting self" fullword ascii
 		$s9 = "Termination requested: Killing self" fullword ascii
@@ -106167,7 +106167,7 @@ rule DITEKSHEN_MALWARE_Win_A310Logger : FILE
 		$s8 = "] Error in" fullword wide
 		$s9 = "shell.application" fullword wide nocase
 		$s10 = "SetRequestHeader" fullword wide
-		$s11 = "\\\\\\\\\\\Ethereum\\\\\\\\\\\keystore" fullword wide
+		$s11 = "\\\\\\\\\\\\\\Ethereum\\\\\\\\\\\\\\keystore" fullword wide
 		$s12 = "@TITLE Removing" fullword wide
 		$s13 = "@RD /S /Q \"" fullword wide
 		$en1 = "Unsupported encryption" fullword wide
@@ -106262,7 +106262,7 @@ rule DITEKSHEN_MALWARE_Win_Deeprats : FILE
 		$s5 = "socks5://%s:%s@%s:%d" ascii
 		$s6 = "http://%s:%d" ascii
 		$s7 = "http://%s@%s:%d" ascii
-		$s8 = "%SystemRoot%\\system32\\\\\\\\\\\--CookieAuthentication" ascii
+		$s8 = "%SystemRoot%\\system32\\\\\\\\\\\\\\--CookieAuthentication" ascii
 		$s9 = "tor_addr_" ascii
 		$f1 = ".GetVnc" ascii
 		$f2 = ".GetCommand" ascii
@@ -106538,15 +106538,15 @@ rule DITEKSHEN_MALWARE_Win_Breakwin : FILE
 
 	strings:
 		$s1 = "Started wiping file %s with %s." fullword wide
-		$s2 = "C:\\\\\\\\\\\Program Files\\\\\\\\\\\Lock My PC" wide
+		$s2 = "C:\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\Lock My PC" wide
 		$s3 = "Stardust is still alive." fullword wide
 		$s4 = "Failed to terminate the locker process." fullword wide
-		$s5 = "C:\\Windows\\System32\\\\\\\\\\\cmd.exe" fullword wide
+		$s5 = "C:\\Windows\\System32\\\\\\\\\\\\\\cmd.exe" fullword wide
 		$s6 = "Process created successfully. Executed command: %s." fullword wide
 		$s7 = "locker_background_image_path" fullword ascii
 		$s8 = "takeown.exe /F \"C:\\Windows\\Web\\Screen\" /R /A /D Y" fullword ascii
 		$s9 = "icacls.exe \"C:\\Windows\\Web\\Screen\" /reset /T" fullword ascii
-		$s10 = "takeown.exe /F \"C:\\\\\\\\\\\ProgramData\\\\\\\\\\\Microsoft\\Windows\\SystemData\" /R /A /D Y" fullword ascii
+		$s10 = "takeown.exe /F \"C:\\\\\\\\\\\\\\ProgramData\\\\\\\\\\\\\\Microsoft\\Windows\\SystemData\" /R /A /D Y" fullword ascii
 		$s11 = ".?AVProcessSnapshotCreationFailedException@@" fullword ascii
 
 	condition:
@@ -106925,7 +106925,7 @@ rule DITEKSHEN_MALWARE_Win_Macoute : FILE
 		$s5 = "/ecoute/spool/%s-%lu" ascii
 		$s6 = "<f n=\"%s\" s=\"%lu\" d=\"%d-%d-%d\"/>" ascii
 		$s7 = "CMPT;%s;%s;%s;%s;%s" ascii
-		$s8 = "%s\\\\\\\\\\\apoScreen%lu.dll" ascii
+		$s8 = "%s\\\\\\\\\\\\\\apoScreen%lu.dll" ascii
 		$s9 = "/cap/%s%lu.jpg" ascii
 		$s10 = "INFO;%u;%u;%u;%d;%d;%d;%d;%d;%d;%d;%s" ascii
 		$s11 = "SUBJECT: %s is comming!" ascii
@@ -107027,7 +107027,7 @@ rule DITEKSHEN_MALWARE_Win_Vanillarat : FILE
 		$s2 = "Connected to chat" fullword wide
 		$s3 = "GetStoredPasswords" fullword wide
 		$s4 = "Started screen locker." fullword wide
-		$s5 = "[<\\\\\\\\\\\MOUSE>]" fullword wide
+		$s5 = "[<\\\\\\\\\\\\\\MOUSE>]" fullword wide
 		$s6 = "YOUR SCREEN HAS BEEN LOCKED!" fullword wide
 		$s7 = "record recsound" fullword wide
 		$f1 = "<StartRemoteDestkop>d__" ascii
@@ -107137,7 +107137,7 @@ rule DITEKSHEN_MALWARE_Win_Tomiris : FILE
 		$f4 = "main.configFileName" ascii
 		$s1 = "C:/Projects/go/src/Tomiris/main.go" ascii
 		$s2 = "C:/GO/go1.16.2/src/os/user/lookup_windows.go" ascii
-		$s3 = "C:\\\\\\\\\\\GO\\\\\\\\\\\go1.16.2" ascii
+		$s3 = "C:\\\\\\\\\\\\\\GO\\\\\\\\\\\\\\go1.16.2" ascii
 		$s4 = ".html.jpeg.json.wasm.webp/p/gf/p/kk1562515" ascii
 		$s5 = "\" /ST 10:00alarm clockassistQueueavx512vbmi2avx512vnniwbad" ascii
 		$s6 = "write /TR \" Value addr= alloc base  code= ctxt: curg= free  goid  jobs= list= m->p=" ascii
@@ -107145,8 +107145,8 @@ rule DITEKSHEN_MALWARE_Win_Tomiris : FILE
 		$t2 = "SCHTASKS /CREATE /SC DAILY /TN" ascii
 		$t3 = "SCHTASKS /CREATE /SC ONCE /TN \"%s\" /TR \"%s\" /ST %s" ascii
 		$t4 = "SCHTASKS /CREATE /SC ONCE /TN \"%s\" /TR \"'%s' %s\" /ST %s" ascii
-		$r1 = "SOFTWARE\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Time Zones" ascii
-		$r2 = "SOFTWARE\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Internet Settings" ascii
+		$r1 = "SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Time Zones" ascii
+		$r2 = "SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Internet Settings" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and ( ( all of ( $f* ) and 3 of ( $s* ) and 2 of ( $t* ) and 1 of ( $r* ) ) or ( 4 of ( $s* ) and 2 of ( $t* ) and 1 of ( $r* ) ) or 12 of them )
@@ -107446,10 +107446,10 @@ rule DITEKSHEN_MALWARE_Win_UNK_Infostealer : FILE
 		hash4 = "0a4cea763dffde451c75a434143fc5d014c32c6d1f8f34920ea5f2854e62118f"
 
 	strings:
-		$s1 = "%s\\\\\\\\\\\%s\\\\\\\\\\\%s-Qt" fullword wide
-		$s2 = "%s\\\\\\\\\\\%s.json" fullword wide
+		$s1 = "%s\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\%s-Qt" fullword wide
+		$s2 = "%s\\\\\\\\\\\\\\%s.json" fullword wide
 		$s3 = "*.mmd*" fullword wide
-		$s4 = "%s\\\\\\\\\\\%s.vdf" fullword wide
+		$s4 = "%s\\\\\\\\\\\\\\%s.vdf" fullword wide
 		$s5 = "%-50s %s" fullword wide
 		$s6 = "dISCORD|lOCAL" fullword ascii nocase
 		$s7 = "sTORAGE|LEVELDB" fullword ascii nocase
@@ -107521,7 +107521,7 @@ rule DITEKSHEN_MALWARE_Win_Windealer : FILE
 		$d3 = "content-type: monitor" fullword ascii
 		$d4 = "content-type: UsedType" fullword ascii
 		$d5 = "write command error" fullword ascii
-		$d6 = "C:\\WINDOWS\\system32\\\\\\\\\\\kernel32.dll" fullword ascii
+		$d6 = "C:\\WINDOWS\\system32\\\\\\\\\\\\\\kernel32.dll" fullword ascii
 		$l1 = "currentconfig" fullword ascii
 		$l2 = "remotedomain" fullword ascii
 		$l3 = "reserveip" fullword ascii
@@ -107531,11 +107531,11 @@ rule DITEKSHEN_MALWARE_Win_Windealer : FILE
 		$l7 = "localmachine" fullword ascii
 		$l8 = "remoteip" fullword ascii
 		$l9 = "datastate" fullword ascii
-		$l10 = "SYSTEM\\\\\\\\\\\CurrentControlSet\\\\\\\\\\\Control\\\\\\\\\\\Network\\{4D36E972-E325-11CE-BFC1-08002BE10318}\\\\\\\\\\\%s\\\\\\\\\\\Connection" fullword ascii
-		$s1 = "%s\\\\\\\\\\\%s\\\\\\\\\\\V5_History.dat" fullword wide
-		$s2 = "%s\\\\\\\\\\\%s\\\\\\\\\\\history2.dat" fullword wide
-		$s3 = "%s\\\\\\\\\\\%s\\\\\\\\\\\history.imw" fullword wide
-		$s4 = "%s\\\\\\\\\\\%s\\\\\\\\\\\main.imw" fullword wide
+		$l10 = "SYSTEM\\\\\\\\\\\\\\CurrentControlSet\\\\\\\\\\\\\\Control\\\\\\\\\\\\\\Network\\{4D36E972-E325-11CE-BFC1-08002BE10318}\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\Connection" fullword ascii
+		$s1 = "%s\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\V5_History.dat" fullword wide
+		$s2 = "%s\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\history2.dat" fullword wide
+		$s3 = "%s\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\history.imw" fullword wide
+		$s4 = "%s\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\main.imw" fullword wide
 		$s5 = "%s%d.%d.%d.%dWindows/%u" fullword ascii
 		$s6 = "%s\\\\\\%c_%s_tmp" fullword wide
 		$s7 = "%s\\\\\\%s\\\\\\main.db" fullword wide
@@ -107726,7 +107726,7 @@ rule DITEKSHEN_MALWARE_Win_Zombieboy : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = ":\\Users\\\\\\\\\\\ZombieBoy\\" ascii wide
+		$s1 = ":\\Users\\\\\\\\\\\\\\ZombieBoy\\" ascii wide
 		$s2 = "RookIE/1.0" fullword ascii wide
 
 	condition:
@@ -107794,7 +107794,7 @@ rule DITEKSHEN_MALWARE_Win_Rapid : FILE
 		$s2 = ".rapid" fullword ascii
 		$s3 = "BgIAAACkAABSU0E" ascii
 		$s4 = "IFdlIHNlbmQ" ascii
-		$s5 = "Software\\\\\\\\\\\EncryptKeys" fullword ascii
+		$s5 = "Software\\\\\\\\\\\\\\EncryptKeys" fullword ascii
 		$s6 = "local_enc_private_key" fullword ascii
 		$s7 = "local_public_key" fullword ascii
 		$s8 = "How Recovery Files.txt" ascii
@@ -107924,7 +107924,7 @@ rule DITEKSHEN_MALWARE_Win_Chinotto : FILE
 
 	strings:
 		$x1 = "xxxchinotto" ascii wide
-		$x2 = "\\\\\\\\\\\Chinotto.pdb" ascii wide
+		$x2 = "\\\\\\\\\\\\\\Chinotto.pdb" ascii wide
 		$x3 = { 50 4f 53 54 20 25 73 20 48 54 54 50 2f 31 2e 31
                 0d 0a 41 63 63 65 70 74 2d 45 6e 63 6f 64 69 6e
                 67 3a 20 67 7a 69 70 2c 20 64 65 66 6c 61 74 65
@@ -107997,7 +107997,7 @@ rule DITEKSHEN_MALWARE_Win_Tardigrade : FILE
 	strings:
 		$x1 = "cmd.exe /c echo kOJAdtQoDcMuogIZIl>\"%s\"&exit" fullword ascii
 		$x2 = "cmd.exe /c echo HBnBcZPeUevCDQmKGzXxYJHqpzRAbRCQCihOxiLi>\"%s\"&exit" fullword ascii
-		$x3 = "cmd.exe /c set kpUUCjoLWLZvJFc=3167 & reg add HKCU\\SOFTWARE\\\\\\\\\\\\\\\EQwIobTRgsJ /v PDMXPmqSYnUx /t REG_DWORD /d 10080 & exit" fullword ascii
+		$x3 = "cmd.exe /c set kpUUCjoLWLZvJFc=3167 & reg add HKCU\\SOFTWARE\\\\\\\\\\\\\\\\\\EQwIobTRgsJ /v PDMXPmqSYnUx /t REG_DWORD /d 10080 & exit" fullword ascii
 		$s1 = "ReplaceFileA" ascii
 		$s2 = "FlushFileBuffers" ascii
 		$s3 = "WaitNamedPipeA" ascii
@@ -108177,7 +108177,7 @@ rule DITEKSHEN_MALWARE_Win_Vulturi : FILE
                69 00 73 00 20 00 6f 00 6e 00 6c 00 69 00 6e 00
                65 00 }
 		$s2 = "Writing is not alowed" wide
-		$s3 = "System\\\\\\\\\\\ProcessList.txt" fullword wide
+		$s3 = "System\\\\\\\\\\\\\\ProcessList.txt" fullword wide
 		$s4 = "[X] GetSSL ::" fullword wide
 		$s5 = "Failed to steal " wide
 		$s6 = "StealerStub" fullword ascii
@@ -108206,7 +108206,7 @@ rule DITEKSHEN_MALWARE_Win_Tofsee : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "n%systemroot%\\system32\\\\\\\\\\\cmd.exe" fullword wide
+		$s1 = "n%systemroot%\\system32\\\\\\\\\\\\\\cmd.exe" fullword wide
 		$s2 = "loader_id" fullword ascii
 		$s3 = "start_srv" fullword ascii
 		$s4 = "lid_file_upd" fullword ascii
@@ -108357,10 +108357,10 @@ rule DITEKSHEN_MALWARE_Win_Nplusminer
 		snort_sid = "920284"
 
 	strings:
-		$s1 = "$Core | Add-Member @{IsReadOnly = $((Get-ItemProperty -Path \".\\\\\\\\\\\\Includes\\\\\\\\\\\\Core.ps1\").IsReadOnly)} -Force" fullword ascii
-		$s2 = "$Core | Add-Member @{MinerCustomConfig = $((Get-Content \".\\\\\\\\\\\\Config\\\\\\\\\\\\MinerCustomConfig.json\" -Raw))} -Force" fullword ascii
+		$s1 = "$Core | Add-Member @{IsReadOnly = $((Get-ItemProperty -Path \".\\\\\\\\\\\\\\\\\\Includes\\\\\\\\\\\\\\\\\\Core.ps1\").IsReadOnly)} -Force" fullword ascii
+		$s2 = "$Core | Add-Member @{MinerCustomConfig = $((Get-Content \".\\\\\\\\\\\\\\\\\\Config\\\\\\\\\\\\\\\\\\MinerCustomConfig.json\" -Raw))} -Force" fullword ascii
 		$s3 = "If ($Variables.CheatGuy -and $Core.corehash -in $Hashes -and $Core.ScriptStartDate -le (Get-Date)" ascii
-		$s4 = "Try{(Get-ItemProperty -Path \".\\\\\\\\\\\\Includes\\\\\\\\\\\\Core.ps1\").IsReadOnly = $false} catch {}" fullword ascii
+		$s4 = "Try{(Get-ItemProperty -Path \".\\\\\\\\\\\\\\\\\\Includes\\\\\\\\\\\\\\\\\\Core.ps1\").IsReadOnly = $false} catch {}" fullword ascii
 		$s5 = " NPlusMiner/" ascii
 
 	condition:
@@ -108383,7 +108383,7 @@ rule DITEKSHEN_MALWARE_Win_PWSH_Poshcookiestealer
 		tags = ""
 
 	strings:
-		$s1 = "\\User Data\\default\\\\\\\\\\\Network\\\\\\\\\\\Cookies" ascii nocase
+		$s1 = "\\User Data\\default\\\\\\\\\\\\\\Network\\\\\\\\\\\\\\Cookies" ascii nocase
 		$s2 = "Send-ToEmail" ascii
 		$s3 = "[Security.Cryptography.ProtectedData]::Unprotect($" ascii
 		$s4 = "$($env:LOCALAPPDATA)\\" ascii
@@ -108592,7 +108592,7 @@ rule DITEKSHEN_MALWARE_Win_Lorenz : FILE
 		$s1 = "to->_What == nullptr && to->_DoFree == false" fullword wide
 		$s2 = "*it == '\\0'" fullword wide
 		$s3 = "process call create 'cmd.exe /c" ascii
-		$s4 = "\\\\\\\\\\\Control Panel\\Desktop\" /V Wallpaper /T REG_SZ /F /D" ascii
+		$s4 = "\\\\\\\\\\\\\\Control Panel\\Desktop\" /V Wallpaper /T REG_SZ /F /D" ascii
 		$s5 = "HELP_SECURITY_EVENT.html" ascii
 		$s6 = "<br>[+] Whats Happen?" ascii
 		$s7 = /\.Lorenz\.sz\d+$\/ fullwor\/ asci\//		$s8 = "TW9Vc29Db3JlV29ya2VyLmV4ZQ==" fullword ascii
@@ -108625,7 +108625,7 @@ rule DITEKSHEN_MALWARE_Win_Blackcat : FILE
 
 	strings:
 		$x1 = "{\"config_id\":\"\",\"public_key\":\"MIIBIjANBgkqhkiG9w0BAQEFAAO" ascii
-		$x2 = "C:\\Users\\\\\\\\\\\Public\\\\\\\\\\\All Usersdeploy_note_and_image_for_all_users=" fullword ascii
+		$x2 = "C:\\Users\\\\\\\\\\\\\\Public\\\\\\\\\\\\\\All Usersdeploy_note_and_image_for_all_users=" fullword ascii
 		$s1 = "encrypt_app::windows" ascii
 		$s2 = /locker::core::os::windows::(desktop_note|self_propagation|privilege_escalation|psexec|shadow_copy)\/ asci\//		$s3 = "uac_bypass::shell_exec=" ascii
 		$s4 = "-u-p-s-d-f-cpropagate::attempt=" ascii
@@ -108658,7 +108658,7 @@ rule DITEKSHEN_MALWARE_Win_Timetime : FILE
 	strings:
 		$s1 = "@_DECRYPTOR_@" ascii wide
 		$s2 = "@__RECOVER_YOUR_FILES__@" wide
-		$s3 = "\\\\\\\\\\\\\\\\TimeTime.pdb" ascii
+		$s3 = "\\\\\\\\\\\\\\\\\\\\\\TimeTime.pdb" ascii
 		$s4 = "runCommand" fullword ascii
 		$s5 = "decryptor_file_name" fullword ascii
 		$s6 = "encryption_hiding_process" fullword ascii
@@ -108691,9 +108691,9 @@ rule DITEKSHEN_MALWARE_Win_Strifewater : FILE
 		$s3 = "*elev:" fullword ascii
 		$s4 = "*uname:" fullword ascii
 		$s5 = "--BoundrySign" ascii
-		$s6 = "000000c:\\users\\\\\\\\\\\\\\\\public\\\\\\\\\\\\\\\\libraries\\tmp.bi" ascii
+		$s6 = "000000c:\\users\\\\\\\\\\\\\\\\\\\\\\public\\\\\\\\\\\\\\\\\\\\\\libraries\\tmp.bi" ascii
 		$s7 = "9c4arSBr32g6IOni" fullword ascii
-		$pdb = "\\win8\\Desktop\\\\\\\\\\\\\\\\ishdar_win8\\" ascii
+		$pdb = "\\win8\\Desktop\\\\\\\\\\\\\\\\\\\\\\ishdar_win8\\" ascii
 		$xn1 = "techzenspace.com" fullword wide
 		$xn2 = "87.120.8.210" wide
 		$xn3 = "192.168.40.27" wide
@@ -108730,8 +108730,8 @@ rule DITEKSHEN_MALWARE_Win_Surtr : FILE
 		$s4 = "src=\"data:image/jpeg; base64,/9j/4AAQSkZJRgABAQEAYABgAAD/2wCEAAgICAgJCAkKCgkNDgwODRMREBARExwUFhQWFBwrGx8bGx8bKyYuJSMlLiZENS8v" ascii
 		$s5 = "4rbgxisigb4pxnloxzc265rmzaj7fslrhyouegtrph2a7xhh55r6xaid.onion" ascii
 		$s6 = "schtasks /CREATE /SC ONLOGON /TN svchos" wide
-		$s7 = "reg add HKEY_CURRENT_USER\\SOFTWARE\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Run\\ /v \"svchos" ascii
-		$s8 = "reg add HKEY_CURRENT_USER\\SOFTWARE\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\RunOnce\\ /v \"svchos" ascii
+		$s7 = "reg add HKEY_CURRENT_USER\\SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Run\\ /v \"svchos" ascii
+		$s8 = "reg add HKEY_CURRENT_USER\\SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\RunOnce\\ /v \"svchos" ascii
 		$s9 = "SURTR_README.txt" wide
 		$s10 = "surtr-decrypt.top" ascii
 		$s11 = /(Public|Private|ID)_DATA\.surt\/ wid\/\//	condition:
@@ -108754,7 +108754,7 @@ rule DITEKSHEN_MALWARE_Win_Udprat : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "\\\\\\\\\\\code\\UDP\\\\\\\\\\\Client\\" ascii
+		$s1 = "\\\\\\\\\\\\\\code\\UDP\\\\\\\\\\\\\\Client\\" ascii
 		$s2 = "ssdp:discover" ascii
 		$s3 = ": Device:" ascii
 		$s4 = "for the SNMP U encountered" ascii
@@ -108884,7 +108884,7 @@ rule DITEKSHEN_MALWARE_Win_Lockdown : FILE
 	strings:
 		$s1 = "BgIAAACkAABSU0E" wide
 		$s2 = ".cantopen" fullword wide
-		$s3 = "\\\\\\\\\\\\\\\\HELP_DECRYPT_YOUR_FILES.txt" wide
+		$s3 = "\\\\\\\\\\\\\\\\\\\\\\HELP_DECRYPT_YOUR_FILES.txt" wide
 		$s4 = "SALT" fullword wide
 		$s5 = "$4e677664-9a63-458e-a365-deb792509557" fullword ascii
 		$s6 = "CreateEncryptor" fullword ascii
@@ -108944,7 +108944,7 @@ rule DITEKSHEN_MALWARE_Win_Mystic : FILE
 		$s3 = "credit_cards" ascii wide
 		$s4 = "number_of_processors" ascii wide
 		$s5 = "computername" ascii wide
-		$p1 = "G:\\\\\\\\\\\\\\\\Projects\\\\\\\\\\\\\\\\Python\\\\\\\\\\\\\\\\morpher\\" ascii wide
+		$p1 = "G:\\\\\\\\\\\\\\\\\\\\\\Projects\\\\\\\\\\\\\\\\\\\\\\Python\\\\\\\\\\\\\\\\\\\\\\morpher\\" ascii wide
 		$p2 = /G:\\\\\\Projects\\stealer\\.{15}\\\\\\Release\\.{5,25}\.pdb\/ asci\/ wid\/\//	condition:
 		( uint16( 0 ) == 0x5a4d and ( 4 of ( $s* ) or ( 1 of ( $p* ) and 3 of ( $s* ) ) ) ) or ( all of ( $s* ) )
 }
@@ -108992,12 +108992,12 @@ rule DITEKSHEN_MALWARE_Win_Commonmagic : FILE
 		tags = "FILE"
 
 	strings:
-		$p1 = "\\\\.\\\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\\\PipeMd" wide
-		$p2 = "\\\\.\\\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\\\PipeCrDtMd" wide
-		$p3 = "\\\\.\\\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\\\PipeDtMd" wide
+		$p1 = "\\\\.\\\\\\\\\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\\\\\\\\\PipeMd" wide
+		$p2 = "\\\\.\\\\\\\\\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\\\\\\\\\PipeCrDtMd" wide
+		$p3 = "\\\\.\\\\\\\\\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\\\\\\\\\PipeDtMd" wide
 		$s1 = "graph.microsoft.com" fullword wide
 		$s2 = "CreateNamedPipe" ascii
-		$s3 = "\\\\\\\\\\\\\\\\CommonCommand\\" wide
+		$s3 = "\\\\\\\\\\\\\\\\\\\\\\CommonCommand\\" wide
 		$ua1 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/100.0.4896.75 Safari/537.36" wide
 		$ua2 = "Mozilla/5.0 (Windows NT 10.0) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/42.0.2311.135 Safari/537.36 Edge/12.10136" wide
 
@@ -109029,8 +109029,8 @@ rule DITEKSHEN_MALWARE_Win_Greetingghoul : FILE
 		$s6 = "{\"method\": \"%s\"%s}" ascii
 		$s7 = "/app/manager/%s" ascii
 		$s8 = "X-VNC-STATUS" fullword ascii
-		$s9 = "%s\\\\\\\\\\\%lu.zip" fullword ascii
-		$s10 = "\\??\\\\\\\\\\\%programdata%\\" wide
+		$s9 = "%s\\\\\\\\\\\\\\%lu.zip" fullword ascii
+		$s10 = "\\??\\\\\\\\\\\\\\%programdata%\\" wide
 
 	condition:
 		uint16( 0 ) == 0x5a4d and 6 of them
@@ -109143,7 +109143,7 @@ rule DITEKSHEN_MALWARE_Win_Truebot : FILE
 		$s2 = "ChkdskExs" fullword wide
 		$s3 = "n=%s&o=%s&a=%d&u=%s&p=%s&d=%s" ascii
 		$s4 = "KLLS" fullword ascii
-		$s5 = "%s\\\\\\\\\\\%08x-%08x.ps1" fullword ascii
+		$s5 = "%s\\\\\\\\\\\\\\%08x-%08x.ps1" fullword ascii
 		$s6 = ".JSONIP" ascii
 		$s7 = "CreateProcessAsUserW res %d err %d" fullword ascii
 		$s8 = "ldr_sys64.dll" fullword ascii
@@ -109181,7 +109181,7 @@ rule DITEKSHEN_MALWARE_Win_Lummastealer : FILE
 		$s5 = "Software.txt" fullword wide
 		$s6 = "SysmonDrv" fullword
 		$s7 = "*.eml" fullword wide nocase
-		$s8 = "SOFTWARE\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\CurrentVersion\\Uninstall" wide
+		$s8 = "SOFTWARE\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\Uninstall" wide
 		$s9 = "- Screen Resoluton:" ascii
 		$s10 = "lid=%s" ascii
 		$s11 = "&ver=" ascii
@@ -109208,7 +109208,7 @@ rule DITEKSHEN_MALWARE_Win_Dotrunpex : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "\\\\\\\\\\\Registry\\\\\\\\\\\Machine\\System\\\\\\\\\\\CurrentControlSet\\Services\\\\\\\\\\\TaskKill" fullword wide
+		$s1 = "\\\\\\\\\\\\\\Registry\\\\\\\\\\\\\\Machine\\System\\\\\\\\\\\\\\CurrentControlSet\\Services\\\\\\\\\\\\\\TaskKill" fullword wide
 		$s2 = "KoiVM" ascii
 		$s3 = "RunpeX.Stub.Framework" wide
 		$s4 = "ExceptionServices.ExceptionDispatchInfo" wide
@@ -109234,7 +109234,7 @@ rule DITEKSHEN_MALWARE_Win_Cyberstealer : FILE
 		tags = "FILE"
 
 	strings:
-		$x1 = "\\\\\\\\\\\\\\\\Cyber Stealer\\" ascii
+		$x1 = "\\\\\\\\\\\\\\\\\\\\\\Cyber Stealer\\" ascii
 		$s1 = "[Virtualization]" fullword wide
 		$s2 = "\"encryptedPassword\":\"([^\"]+)\"" fullword wide
 		$s3 = "CreditCard" fullword ascii
@@ -109246,7 +109246,7 @@ rule DITEKSHEN_MALWARE_Win_Cyberstealer : FILE
 		$s9 = "GrabberImages" fullword ascii
 		$r1 = "^1[a-km-zA-HJ-NP-Z1-9]{25,34}$" wide
 		$r2 = "^3[a-km-zA-HJ-NP-Z1-9]{25,34}$" wide
-		$r3 = "^([a-zA-Z0-9_\\\\\\\\\\\-\\.]+)@([a-zA-Z0-9_\\\\\\\\\\\-\\.]+)\\.([a-zA-Z]{2,5})$" wide
+		$r3 = "^([a-zA-Z0-9_\\\\\\\\\\\\\\-\\.]+)@([a-zA-Z0-9_\\\\\\\\\\\\\\-\\.]+)\\.([a-zA-Z]{2,5})$" wide
 		$r4 = "^(?!:\\/\\/)([a-zA-Z0-9-_]+\\.)*[a-zA-Z0-9][a-zA-Z0-9-_]+\\.[a-zA-Z]{2,11}?$" wide
 
 	condition:
@@ -109430,7 +109430,7 @@ rule DITEKSHEN_MALWARE_Win_Hakunamatata : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "SOFTWARE\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Run" wide
+		$s1 = "SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Run" wide
 		$s2 = "(?:[13]{1}[a-km-zA-HJ-NP-Z1-9]{26,33}|bc1[a-z0-9]{39,59})" wide
 		$s3 = "<RSAKeyValue><Modulus>" wide
 		$s4 = "HAKUNA MATATA" ascii wide
@@ -109496,11 +109496,11 @@ rule DITEKSHEN_MALWARE_Win_Twarbot : FILE
 	strings:
 		$x1 = "TWarBot" fullword ascii
 		$s1 = "PRIVMSG #" ascii
-		$s2 = "C:\\\\\\\\\\\\\\\\marijuana.txt" fullword ascii
+		$s2 = "C:\\\\\\\\\\\\\\\\\\\\\\marijuana.txt" fullword ascii
 		$s3 = "C:\\rar.bat" fullword ascii
-		$s4 = "C:\\\\\\\\\\\\\\\\zip.bat" fullword ascii
-		$s5 = "software\\\\\\\\\\\\\\\\microsoft\\windows\\\\\\\\\\\\\\\\currentversion\\\\\\\\\\\\\\\\app paths\\winzip32.exe" ascii
-		$s6 = "software\\\\\\\\\\\\\\\\microsoft\\windows\\\\\\\\\\\\\\\\currentversion\\\\\\\\\\\\\\\\app paths\\WinRAR.exe" ascii
+		$s4 = "C:\\\\\\\\\\\\\\\\\\\\\\zip.bat" fullword ascii
+		$s5 = "software\\\\\\\\\\\\\\\\\\\\\\microsoft\\windows\\\\\\\\\\\\\\\\\\\\\\currentversion\\\\\\\\\\\\\\\\\\\\\\app paths\\winzip32.exe" ascii
+		$s6 = "software\\\\\\\\\\\\\\\\\\\\\\microsoft\\windows\\\\\\\\\\\\\\\\\\\\\\currentversion\\\\\\\\\\\\\\\\\\\\\\app paths\\WinRAR.exe" ascii
 		$s7 = "a -idp -inul -c- -m5" ascii
 
 	condition:
@@ -109544,11 +109544,11 @@ rule DITEKSHEN_MALWARE_Win_G0Crypt : FILE
 		$s2 = ".README.txt"
 		$s3 = "\\BRSPATH.exe"
 		$s4 = "taskkill /F /IM sql*"
-		$s5 = "C:\\\\\\\\\\\\\\\\inetpub\\\\\\\\\\\\\\\\logs\\"
+		$s5 = "C:\\\\\\\\\\\\\\\\\\\\\\inetpub\\\\\\\\\\\\\\\\\\\\\\logs\\"
 		$s6 = "shutdown /r"
-		$s7 = ":\\\\\\\\\\\Program Files\\\\\\\\\\\VMware\\"
-		$s8 = "reg add HKCU\\Software\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Run /v Message /t REG_SZ /d"
-		$s9 = "reg add HKCU\\Software\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\Run /v DelLogSoft /t REG_SZ /d"
+		$s7 = ":\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\VMware\\"
+		$s8 = "reg add HKCU\\Software\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Run /v Message /t REG_SZ /d"
+		$s9 = "reg add HKCU\\Software\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\\\Run /v DelLogSoft /t REG_SZ /d"
 
 	condition:
 		uint16( 0 ) == 0x5a4d and ( 2 of ( $x* ) or 7 of ( $f* ) or ( 1 of ( $x* ) and ( 5 of ( $f* ) or 5 of ( $s* ) ) ) or ( 6 of ( $f* ) and 4 of ( $s* ) ) or 12 of them )
@@ -109571,10 +109571,10 @@ rule DITEKSHEN_MALWARE_Win_Akira : FILE
 
 	strings:
 		$x1 = "https://akira" ascii
-		$x2 = ":\\\\\\\\\\\\\\\\akira\\" ascii
+		$x2 = ":\\\\\\\\\\\\\\\\\\\\\\akira\\" ascii
 		$x3 = ".akira" ascii
 		$x4 = "akira_readme.txt" ascii
-		$x5 = "\\\\\\\\\\\\\\\\akira\\\\\\\\\\\\\\\\asio\\\\\\\\\\\\\\\\include\\\\\\\\\\\\\\\\asio\\\\\\\\\\\\\\\\impl\\\\\\\\\\\\\\\\co_spawn.hpp" ascii
+		$x5 = "\\\\\\\\\\\\\\\\\\\\\\akira\\\\\\\\\\\\\\\\\\\\\\asio\\\\\\\\\\\\\\\\\\\\\\include\\\\\\\\\\\\\\\\\\\\\\asio\\\\\\\\\\\\\\\\\\\\\\impl\\\\\\\\\\\\\\\\\\\\\\co_spawn.hpp" ascii
 		$s1 = "Get-WmiObject Win32_Shadowcopy | Remove-WmiObject" ascii
 		$s2 = "Win32_ProcessStartup" fullword wide
 		$s3 = /Failed\sto\smake\s(part|full|spot)\sencrypt\/ asci\/ wid\//		$s4 = "--encryption_" ascii
@@ -109607,7 +109607,7 @@ rule DITEKSHEN_MALWARE_Linux_Akira : FILE
 
 	strings:
 		$x1 = "https://akira" ascii
-		$x2 = ":\\\\\\\\\\\akira\\" ascii
+		$x2 = ":\\\\\\\\\\\\\\akira\\" ascii
 		$x3 = ".akira" ascii
 		$x4 = "akira_readme.txt" ascii
 		$s1 = "--encryption_" ascii
@@ -109687,8 +109687,8 @@ rule DITEKSHEN_MALWARE_Win_Romcom_Dropper : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "\\\\\\\\\\\REGISTRY\\\\\\\\\\\MACHINE\\SOFTWARE\\\\\\\\\\\Classes" wide nocase
-		$s2 = "\\\\\\\\\\\REGISTRY\\USER" wide nocase
+		$s1 = "\\\\\\\\\\\\\\REGISTRY\\\\\\\\\\\\\\MACHINE\\SOFTWARE\\\\\\\\\\\\\\Classes" wide nocase
+		$s2 = "\\\\\\\\\\\\\\REGISTRY\\USER" wide nocase
 		$s3 = "BINARY" fullword wide
 		$s4 = "POST" fullword wide
 
@@ -109719,7 +109719,7 @@ rule DITEKSHEN_MALWARE_Win_Arcrypt : FILE
 		$c5 = "process call create cmd /c START" wide
 		$c6 = "net config server /autodisconnect:" wide
 		$c7 = "/NOBREAK>NUL) ELSE (START /b \"\" cmd /c DEL \"%~f" ascii
-		$c8 = ":\\\\\\\\\\\_ARC\\\\\\\\\\\_WorkSolution\\\\\\\\\\\cryptopp" ascii
+		$c8 = ":\\\\\\\\\\\\\\_ARC\\\\\\\\\\\\\\_WorkSolution\\\\\\\\\\\\\\cryptopp" ascii
 		$e1 = /\.crYpt([A-F]{0,1}(\d+)?)?\/ fullwor\/ wid\//		$e2 = ".dnt___.crYpt" wide nocase
 		$s1 = "create_directory" fullword ascii
 		$s2 = "create_directories" fullword ascii
@@ -109780,7 +109780,7 @@ rule DITEKSHEN_MALWARE_Win_Espioloader : FILE
 		clamav_sig = "MALWARE.Win.EspioLoader"
 
 	strings:
-		$pdb = /\\\\\\\\\\\\\\\\loader\\x64\\(Release|Debug)\\\\\\\\\\\\\\\\Espio\.pdb\/ asci\//		$s1 = "obfuscatedPayload" fullword wide
+		$pdb = /\\\\\\\\\\\\\\\\\\\\\\loader\\x64\\(Release|Debug)\\\\\\\\\\\\\\\\\\\\\\Espio\.pdb\/ asci\//		$s1 = "obfuscatedPayload" fullword wide
 		$s2 = "OBFUSCATEDPAYLOAD" fullword wide
 		$s3 = "\\??\\\\\\C:\\Windows\\System32\\werfault.exe" fullword wide
 		$s4 = "C:\\windows\\system32\\ntdll.dll" fullword ascii
@@ -109805,7 +109805,7 @@ rule DITEKSHEN_MALWARE_Win_Celestybinderloader : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "\\DarkCoderSc\\Desktop\\\\\\\\\\\Celesty Binder\\Stub\\STATIC\\Stub.pdb" ascii
+		$s1 = "\\DarkCoderSc\\Desktop\\\\\\\\\\\\\\Celesty Binder\\Stub\\STATIC\\Stub.pdb" ascii
 		$s2 = "DROPIN" fullword ascii wide
 		$s3 = "EXEC" fullword ascii wide
 		$s4 = "RBIND" fullword ascii wide
@@ -110048,7 +110048,7 @@ rule DITEKSHEN_MALWARE_Win_Rustystealer : FILE
 	strings:
 		$s1 = "EdgeMicrosoftedgechromiumChromium7star7StaramigoAmigobraveBrave" ascii
 		$s2 = "BrowserchromeChromekometaKometaorbitumOrbitumsputnikSputniktorchTorchucozmediaUranuCozMediavivaldiVivaldiatom" ascii
-		$s3 = ".kdbx.pdf.doc.docx.xls.xlsx.ppt.pptx.odt.odp\\\\\\\\\\\\\\\\logscx\\sensfiles.zip" ascii
+		$s3 = ".kdbx.pdf.doc.docx.xls.xlsx.ppt.pptx.odt.odp\\\\\\\\\\\\\\\\\\\\\\logscx\\sensfiles.zip" ascii
 		$s4 = "dumper.rs" ascii
 		$s5 = "decryption_core.rs" ascii
 		$s6 = "anti_emulation.rs" ascii
@@ -110082,7 +110082,7 @@ rule DITEKSHEN_MALWARE_Win_Simplepacker : FILE
 		tags = "FILE"
 
 	strings:
-		$p1 = "\\\\\\\\\\\cloud-compiler-" ascii
+		$p1 = "\\\\\\\\\\\\\\cloud-compiler-" ascii
 		$p2 = "\\deps\\simplepacker.pdb" ascii
 		$s1 = "uespemosarenegylmodnarodsetybdetqueue" ascii
 		$s2 = "None{\"" ascii
@@ -110227,7 +110227,7 @@ rule DITEKSHEN_MALWRE_Win_Darkgate : FILE
 		$x2 = "-u 0xDark" ascii
 		$x3 = "DarkGate" ascii
 		$x4 = "/c cmdkey /generic:\"127.0.0.2\" /user:\"SafeMode\" /pass:\"darkgatepassword0\"" ascii
-		$s1 = "c:\\temp\\\\\\\\\\\crash.txt" ascii
+		$s1 = "c:\\temp\\\\\\\\\\\\\\crash.txt" ascii
 		$s2 = "/cookiesfile \"" ascii
 		$s3 = "/c rmdir /s /q \"" ascii
 		$s4 = "/c xcopy /E /I /Y \"%s\" \"%s\" && exit" ascii
@@ -110288,7 +110288,7 @@ rule DITEKSHEN_MALWARE_Win_Fiber : FILE
 		$x1 = "Fiber.dll" fullword ascii
 		$s1 = "-WindowStyle Hidden Copy-Item -Path *.vbs -Destination" wide
 		$s2 = "-WindowStyle Hidden {0} -WindowStyle Hidden Start-Sleep 5; Start-Process {1}" wide
-		$s3 = "SOFTWARE\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Run" wide
+		$s3 = "SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Run" wide
 		$s4 = "WScript.Shell" fullword wide
 		$s5 = "{0}_{1:N}.lnk" fullword wide
 		$s6 = "notepad.exe,0" fullword wide
@@ -110369,7 +110369,7 @@ rule DITEKSHEN_MALWARE_Win_LOLKEK : FILE
 
 	strings:
 		$s1 = "$Recycle.bin" fullword wide
-		$s2 = "\\\\?\\\\\\\\\\\%c:" fullword wide
+		$s2 = "\\\\?\\\\\\\\\\\\\\%c:" fullword wide
 		$s3 = ".MMM" fullword wide
 		$s4 = "ReadMe.txt" fullword wide
 		$s5 = "select * from Win32_ShadowCopy" fullword wide
@@ -110491,7 +110491,7 @@ rule DITEKSHEN_MALWARE_Win_Qwixxrat : FILE
 		$s1 = /Qwixx(\s)?Stealer\/ asci\/ wid\//		$s2 = "discord.gg/UXVFHzTjYe" wide
 		$s3 = "t.me/QwixxTwixx" wide
 		$s4 = "Secret Qwixx" wide
-		$s5 = "\\\\\\\\\\\Qwixx Rat\\" ascii
+		$s5 = "\\\\\\\\\\\\\\Qwixx Rat\\" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and 2 of them
@@ -110544,8 +110544,8 @@ rule DITEKSHEN_MALWARE_Win_Rdpcredsstealerinjector : FILE
 		clamav1 = "MALWARE.Win.Trojan.RDPCredsStealer-Injector"
 
 	strings:
-		$s1 = "\\\\\\\\\\\APIHookInjectorBin\\" ascii
-		$s2 = "\\\\\\\\\\\RDPCredsStealerDLL.dll" ascii
+		$s1 = "\\\\\\\\\\\\\\APIHookInjectorBin\\" ascii
+		$s2 = "\\\\\\\\\\\\\\RDPCredsStealerDLL.dll" ascii
 		$s3 = "DLL Injected" ascii
 		$s4 = "Code Injected" ascii
 		$s5 = /(OpenProcess|VirtualAllocEx|CreateRemoteThread)\(\) failed:\/ fullwor\/ asci\/\//	condition:
@@ -110757,7 +110757,7 @@ rule DITEKSHEN_MALWARE_Win_TOITOIN_Downloader : FILE
 		clamav = "ditekSHen.MALWARE.Win.Trojan.TOITOIN"
 
 	strings:
-		$p1 = ":\\\\\\\\\\\Trabalho_2023\\\\\\\\\\\OFF_2023\\" ascii
+		$p1 = ":\\\\\\\\\\\\\\Trabalho_2023\\\\\\\\\\\\\\OFF_2023\\" ascii
 		$s1 = { 20 2f 63 20 22 [6-15] 63 00 6d 00 64 00 00 00 6f 00 70 00 65 00 6e }
 		$o1 = { 48 83 fa 10 72 34 48 8b 8d 10 ?? 00 00 48 ff c2 }
 
@@ -110812,7 +110812,7 @@ rule DITEKSHEN_MALWARE_Win_Sapphirestealer : FILE
 		$s1 = "Sapphire.Modules." ascii
 		$s2 = "sapphire\\" wide
 		$s3 = "by r3vengerx0" wide
-		$s4 = "Sapphire\\\\\\\\\\\\\\\\obj\\" ascii
+		$s4 = "Sapphire\\\\\\\\\\\\\\\\\\\\\\obj\\" ascii
 		$s5 = "[ERROR_GETSECRETKEY_METHOD]" fullword wide
 		$s6 = "[ERROR_CANT_GET_PASSWORD]" fullword wide
 		$s7 = "<h2>------NEW LOGS------</h2>" wide
@@ -110848,7 +110848,7 @@ rule DITEKSHEN_MALWARE_Win_R77 : FILE
 		$s4 = "service_names" fullword wide
 		$s5 = "tcp_local" fullword wide
 		$s6 = "tcp_remote" fullword wide
-		$s7 = "\\\\.\\\\\\\\\\\\\\\\pipe\\" wide
+		$s7 = "\\\\.\\\\\\\\\\\\\\\\\\\\\\pipe\\" wide
 		$s8 = "SOFTWARE\\" wide
 
 	condition:
@@ -110974,14 +110974,14 @@ rule DITEKSHEN_MALWARE_Win_Nppspy : FILE
 		$s1 = "ntskrnl.dll" fullword ascii
 		$s2 = "PasswordStealing.dll" fullword ascii
 		$s3 = "ntoskrnl.dll" fullword ascii
-		$s4 = "\\\\\\\\\\\\\\\\programdata\\\\\\\\\\\\\\\\packag~" ascii
+		$s4 = "\\\\\\\\\\\\\\\\\\\\\\programdata\\\\\\\\\\\\\\\\\\\\\\packag~" ascii
 		$s5 = "NPPSPY.dll" fullword ascii
 		$s6 = "MSControll.dll" fullword ascii
-		$s7 = "\\Windows\\\\\\\\\\\\\\\\Temp\\" ascii
-		$s8 = "\\\\\\\\\\\\\\\\NPPSpy\\" ascii
+		$s7 = "\\Windows\\\\\\\\\\\\\\\\\\\\\\Temp\\" ascii
+		$s8 = "\\\\\\\\\\\\\\\\\\\\\\NPPSpy\\" ascii
 		$s9 = "NPGetCaps" fullword ascii
 		$s10 = "NPLogonNotify" fullword ascii
-		$path = "\\\\\\\\\\\\\\\\GrzegorzTworek\\" ascii
+		$path = "\\\\\\\\\\\\\\\\\\\\\\GrzegorzTworek\\" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and ( ( pe.is_dll ( ) and filesize < 110KB and pe.number_of_exports == 2 and ( ( pe.exports ( "NPGetCaps" ) and pe.exports ( "NPLogonNotify" ) ) or ( 1 of ( $s* ) and ( pe.exports ( "NPGetCaps" ) or pe.exports ( "NPLogonNotify" ) ) ) ) ) or ( ( $path ) and any of ( $s* ) ) )
@@ -111040,7 +111040,7 @@ rule DITEKSHEN_MALWARE_Win_Simda : FILE
 		$s5 = "name=%s&port=%u" ascii
 		$s6 = "id=%s&ver=4.0.1&up=%u&os=%03u&rights=%s&ltime=%s%d&token=%d" ascii
 		$s7 = "{BotVer:" fullword ascii
-		$s8 = "software\\\\\\\\\\\microsoft\\windows nt\\\\\\\\\\\currentversion\\winlogon" ascii
+		$s8 = "software\\\\\\\\\\\\\\microsoft\\windows nt\\\\\\\\\\\\\\currentversion\\winlogon" ascii
 		$s9 = /(!|&|data_)inject(=ok)?\/ fullwor\/ asci\/\//	condition:
 		uint16( 0 ) == 0x5a4d and 6 of them
 }
@@ -111246,7 +111246,7 @@ rule DITEKSHEN_MALWARE_Win_Lighthand : FILE
 		$x1 = "27.102." ascii
 		$x2 = "109.248.150.179" fullword ascii
 		$s1 = /Hello (Client|Server)\/ fullwor\/ asci\//		$s2 = "%s|%s|%s|%s|%s|%s|" fullword wide
-		$s3 = "%s\\\\\\\\\\\cmd.exe" fullword wide
+		$s3 = "%s\\\\\\\\\\\\\\cmd.exe" fullword wide
 		$s4 = "Remote PC" fullword wide
 		$s5 = { 2e 62 61 74 [3-4] 3a 4c 31 0d 0a 64 65 6c
                 20 2f 46 20 22 25 73 22 0d 0a 69 66 20 65 78 69
@@ -112869,14 +112869,14 @@ rule DITEKSHEN_INDICATOR_RTF_Exploit_Scripting : CVE_2017_8759 CVE_2017_8570 FIL
 		$ole4 = "640a300a630a660a310a310a650a300a610a310a620a310a310a610a650a31"
 		$ole5 = { 64 30 63 66 [0-2] 31 31 65 30 61 31 62 31 31 61 65 31 }
 		$ole6 = "D0cf11E" ascii nocase
-		$obj1 = "\\\\\\\\\\\objhtml" ascii
-		$obj2 = "\\\\\\\\\\\objdata" ascii
-		$obj3 = "\\\\\\\\\\\objupdate" ascii
-		$obj4 = "\\\\\\\\\\\objemb" ascii
-		$obj5 = "\\\\\\\\\\\objautlink" ascii
-		$obj6 = "\\\\\\\\\\\objlink" ascii
-		$obj7 = "\\\\\\\\\\\mmath" ascii
-		$obj8 = "\\\\\\\\\\\objclass htmlfile" ascii
+		$obj1 = "\\\\\\\\\\\\\\objhtml" ascii
+		$obj2 = "\\\\\\\\\\\\\\objdata" ascii
+		$obj3 = "\\\\\\\\\\\\\\objupdate" ascii
+		$obj4 = "\\\\\\\\\\\\\\objemb" ascii
+		$obj5 = "\\\\\\\\\\\\\\objautlink" ascii
+		$obj6 = "\\\\\\\\\\\\\\objlink" ascii
+		$obj7 = "\\\\\\\\\\\\\\mmath" ascii
+		$obj8 = "\\\\\\\\\\\\\\objclass htmlfile" ascii
 		$sct1 = { 33 (43|63) (3533|3733) (3433|3633) (3532|3732) (3439|3639)( 3530|3730) (3534|3734) (3443|3643) (3435|3635) (3534|3734) }
 		$sct2 = { (3737|3537) (3733|3533) (3633|3433) (3732|3532) (3639|3439) (3730|3530) (3734|3534) (3245|3265) (3733|3533) (3638|3438) (3635|3435) (3643|3443) (3643|3443) }
 
@@ -112907,13 +112907,13 @@ rule DITEKSHEN_INDICATOR_RTF_Embedded_Excel_Sheetmacroenabled : FILE
 		$ole2 = "d0cf11e0a1b11ae1" ascii nocase
 		$ole3 = "64306366313165306131623131616531" ascii
 		$ole4 = "640a300a630a660a310a310a650a300a610a310a620a310a310a610a650a31"
-		$obj1 = "\\\\\\\\\\\\\\\\objhtml" ascii
-		$obj2 = "\\\\\\\\\\\\\\\\objdata" ascii
-		$obj3 = "\\\\\\\\\\\\\\\\objupdate" ascii
-		$obj4 = "\\\\\\\\\\\\\\\\objemb" ascii
-		$obj5 = "\\\\\\\\\\\\\\\\objautlink" ascii
-		$obj6 = "\\\\\\\\\\\\\\\\objlink" ascii
-		$obj7 = "\\\\\\\\\\\\\\\\mmath" ascii
+		$obj1 = "\\\\\\\\\\\\\\\\\\\\\\objhtml" ascii
+		$obj2 = "\\\\\\\\\\\\\\\\\\\\\\objdata" ascii
+		$obj3 = "\\\\\\\\\\\\\\\\\\\\\\objupdate" ascii
+		$obj4 = "\\\\\\\\\\\\\\\\\\\\\\objemb" ascii
+		$obj5 = "\\\\\\\\\\\\\\\\\\\\\\objautlink" ascii
+		$obj6 = "\\\\\\\\\\\\\\\\\\\\\\objlink" ascii
+		$obj7 = "\\\\\\\\\\\\\\\\\\\\\\mmath" ascii
 
 	condition:
 		uint32( 0 ) == 0x74725c7b and ( 1 of ( $ex* ) and 1 of ( $ole* ) and 2 of ( $obj* ) )
@@ -112967,13 +112967,13 @@ rule DITEKSHEN_INDICATOR_RTF_Equation_Bitsadmin_Downloader : FILE
 	strings:
 		$eq = "0200000002CE020000000000C000000000000046" ascii nocase
 		$ba = "6269747361646d696e" ascii nocase
-		$obj1 = "\\\\\\\\\\\\\\\\objhtml" ascii
-		$obj2 = "\\\\\\\\\\\\\\\\objdata" ascii
-		$obj3 = "\\\\\\\\\\\\\\\\objupdate" ascii
-		$obj4 = "\\\\\\\\\\\\\\\\objemb" ascii
-		$obj5 = "\\\\\\\\\\\\\\\\objautlink" ascii
-		$obj6 = "\\\\\\\\\\\\\\\\objlink" ascii
-		$obj7 = "\\\\\\\\\\\\\\\\mmath" ascii
+		$obj1 = "\\\\\\\\\\\\\\\\\\\\\\objhtml" ascii
+		$obj2 = "\\\\\\\\\\\\\\\\\\\\\\objdata" ascii
+		$obj3 = "\\\\\\\\\\\\\\\\\\\\\\objupdate" ascii
+		$obj4 = "\\\\\\\\\\\\\\\\\\\\\\objemb" ascii
+		$obj5 = "\\\\\\\\\\\\\\\\\\\\\\objautlink" ascii
+		$obj6 = "\\\\\\\\\\\\\\\\\\\\\\objlink" ascii
+		$obj7 = "\\\\\\\\\\\\\\\\\\\\\\mmath" ascii
 
 	condition:
 		uint32( 0 ) == 0x74725c7b and ( ( $eq and $ba ) and 1 of ( $obj* ) )
@@ -113000,13 +113000,13 @@ rule DITEKSHEN_INDICATOR_RTF_Equation_Certutil_Downloader : FILE
 	strings:
 		$eq = "0200000002CE020000000000C000000000000046" ascii nocase
 		$cu = "636572747574696c" ascii nocase
-		$obj1 = "\\\\\\\\\\\objhtml" ascii
-		$obj2 = "\\\\\\\\\\\objdata" ascii
-		$obj3 = "\\\\\\\\\\\objupdate" ascii
-		$obj4 = "\\\\\\\\\\\objemb" ascii
-		$obj5 = "\\\\\\\\\\\objautlink" ascii
-		$obj6 = "\\\\\\\\\\\objlink" ascii
-		$obj7 = "\\\\\\\\\\\mmath" ascii
+		$obj1 = "\\\\\\\\\\\\\\objhtml" ascii
+		$obj2 = "\\\\\\\\\\\\\\objdata" ascii
+		$obj3 = "\\\\\\\\\\\\\\objupdate" ascii
+		$obj4 = "\\\\\\\\\\\\\\objemb" ascii
+		$obj5 = "\\\\\\\\\\\\\\objautlink" ascii
+		$obj6 = "\\\\\\\\\\\\\\objlink" ascii
+		$obj7 = "\\\\\\\\\\\\\\mmath" ascii
 
 	condition:
 		uint32( 0 ) == 0x74725c7b and ( ( $eq and $cu ) and 1 of ( $obj* ) )
@@ -113033,13 +113033,13 @@ rule DITEKSHEN_INDICATOR_RTF_Equation_Powershell_Downloader : FILE
 	strings:
 		$eq = "0200000002CE020000000000C000000000000046" ascii nocase
 		$ps = "706f7765727368656c6c" ascii nocase
-		$obj1 = "\\\\\\\\\\\\\\\\objhtml" ascii
-		$obj2 = "\\\\\\\\\\\\\\\\objdata" ascii
-		$obj3 = "\\\\\\\\\\\\\\\\objupdate" ascii
-		$obj4 = "\\\\\\\\\\\\\\\\objemb" ascii
-		$obj5 = "\\\\\\\\\\\\\\\\objautlink" ascii
-		$obj6 = "\\\\\\\\\\\\\\\\objlink" ascii
-		$obj7 = "\\\\\\\\\\\\\\\\mmath" ascii
+		$obj1 = "\\\\\\\\\\\\\\\\\\\\\\objhtml" ascii
+		$obj2 = "\\\\\\\\\\\\\\\\\\\\\\objdata" ascii
+		$obj3 = "\\\\\\\\\\\\\\\\\\\\\\objupdate" ascii
+		$obj4 = "\\\\\\\\\\\\\\\\\\\\\\objemb" ascii
+		$obj5 = "\\\\\\\\\\\\\\\\\\\\\\objautlink" ascii
+		$obj6 = "\\\\\\\\\\\\\\\\\\\\\\objlink" ascii
+		$obj7 = "\\\\\\\\\\\\\\\\\\\\\\mmath" ascii
 
 	condition:
 		uint32( 0 ) == 0x74725c7b and ( ( $ps and $eq ) and 1 of ( $obj* ) )
@@ -113117,7 +113117,7 @@ rule DITEKSHEN_INDICATOR_PUB_MSIEXEC_Remote : FILE
 		$s4 = "/norestart" ascii
 		$s5 = "/i http" ascii
 		$s6 = "Wscript.Shell" fullword ascii
-		$s7 = "\\\\\\\\\\\VBE6.DLL#" wide
+		$s7 = "\\\\\\\\\\\\\\VBE6.DLL#" wide
 
 	condition:
 		uint16( 0 ) == 0xcfd0 and 6 of them
@@ -113142,8 +113142,8 @@ rule DITEKSHEN_INDICATOR_RTF_Ancalog_Exploit_Builder_Document : FILE
 		clamav_sig = "INDICATOR.RTF.AncalogExploitBuilderDocument"
 
 	strings:
-		$builder1 = "{\\*\\\\\\\\\\\ancalog" ascii
-		$builder2 = "\\\\\\\\\\\ancalog" ascii
+		$builder1 = "{\\*\\\\\\\\\\\\\\ancalog" ascii
+		$builder2 = "\\\\\\\\\\\\\\ancalog" ascii
 
 	condition:
 		uint32( 0 ) == 0x74725c7b and 1 of ( $builder* )
@@ -113165,13 +113165,13 @@ rule DITEKSHEN_INDICATOR_RTF_Threadkit_Exploit_Builder_Document : FILE
 		tags = "FILE"
 
 	strings:
-		$obj1 = "\\\\\\\\\\\\\\\\objhtml" ascii
-		$obj2 = "\\\\\\\\\\\\\\\\objdata" ascii
-		$obj3 = "\\\\\\\\\\\\\\\\objupdate" ascii
-		$obj4 = "\\\\\\\\\\\\\\\\objemb" ascii
-		$obj5 = "\\\\\\\\\\\\\\\\objautlink" ascii
-		$obj6 = "\\\\\\\\\\\\\\\\objlink" ascii
-		$obj7 = "\\\\\\\\\\\\\\\\mmath" ascii
+		$obj1 = "\\\\\\\\\\\\\\\\\\\\\\objhtml" ascii
+		$obj2 = "\\\\\\\\\\\\\\\\\\\\\\objdata" ascii
+		$obj3 = "\\\\\\\\\\\\\\\\\\\\\\objupdate" ascii
+		$obj4 = "\\\\\\\\\\\\\\\\\\\\\\objemb" ascii
+		$obj5 = "\\\\\\\\\\\\\\\\\\\\\\objautlink" ascii
+		$obj6 = "\\\\\\\\\\\\\\\\\\\\\\objlink" ascii
+		$obj7 = "\\\\\\\\\\\\\\\\\\\\\\mmath" ascii
 		$pat1 = /\\\\\\objupdate\\\\\\v[\\\s\n\r]\/ asci\/\//	condition:
 		uint32( 0 ) == 0x74725c7b and 2 of ( $obj* ) and 1 of ( $pat* )
 }
@@ -113365,12 +113365,12 @@ rule DITEKSHEN_INDICATOR_RTF_Malver_Objects : FILE
 		tags = "FILE"
 
 	strings:
-		$obj1 = "\\\\\\\\\\\\\\\\objhtml" ascii
-		$obj2 = "\\\\\\\\\\\\\\\\objdata" ascii
-		$obj3 = "\\\\\\\\\\\\\\\\objupdate" ascii
-		$obj4 = "\\\\\\\\\\\\\\\\objemb" ascii
-		$obj5 = "\\\\\\\\\\\\\\\\objautlink" ascii
-		$obj6 = "\\\\\\\\\\\\\\\\objlink" ascii
+		$obj1 = "\\\\\\\\\\\\\\\\\\\\\\objhtml" ascii
+		$obj2 = "\\\\\\\\\\\\\\\\\\\\\\objdata" ascii
+		$obj3 = "\\\\\\\\\\\\\\\\\\\\\\objupdate" ascii
+		$obj4 = "\\\\\\\\\\\\\\\\\\\\\\objemb" ascii
+		$obj5 = "\\\\\\\\\\\\\\\\\\\\\\objautlink" ascii
+		$obj6 = "\\\\\\\\\\\\\\\\\\\\\\objlink" ascii
 
 	condition:
 		uint32( 0 ) == 0x74725c7b and ( ( not uint8( 4 ) == 0x66 or not uint8( 5 ) == 0x31 or not uint8( 6 ) == 0x5c ) and 1 of ( $obj* ) )
@@ -113396,15 +113396,15 @@ rule DITEKSHEN_INDICATOR_PPT_Mastermana : FILE
 		$a2 = "autoclose" ascii nocase
 		$a3 = "auto_open" ascii nocase
 		$a4 = "autoopen" ascii nocase
-		$vb1 = "\\\\\\\\\\\VBE7.DLL" ascii
+		$vb1 = "\\\\\\\\\\\\\\VBE7.DLL" ascii
 		$vb2 = { 41 74 74 72 69 62 75 74 ?? 65 20 56 42 5f 4e 61 6d ?? 65 }
 		$clsid = "000204EF-0000-0000-C000-000000000046" wide nocase
 		$i1 = "@j.mp/" ascii wide
 		$i2 = "j.mp/" ascii wide
-		$i3 = "\\\\\\\\\\\pm.j\\\\\\\\\\\\\:" ascii wide
+		$i3 = "\\\\\\\\\\\\\\pm.j\\\\\\\\\\\\\\\\:" ascii wide
 		$i4 = ".zz.ht/" ascii wide
 		$i5 = "/pm.j@" ascii wide
-		$i6 = "\\\\\\\\\\\pm.j@" ascii wide
+		$i6 = "\\\\\\\\\\\\\\pm.j@" ascii wide
 
 	condition:
 		uint16( 0 ) == 0xcfd0 and 1 of ( $i* ) and $clsid and 1 of ( $a* ) and 1 of ( $vb* )
@@ -113630,8 +113630,8 @@ rule DITEKSHEN_INDICATOR_TOOL_PWS_Credstealer : FILE
 
 	strings:
 		$s1 = "PYTHON27.DLL" fullword wide
-		$s2 = "C:\\\\\\\\\\\Python27\\\\\\\\\\\lib\\site-packages\\\\\\\\\\\py2exe\\boot_common.pyR" fullword ascii
-		$s3 = "C:\\\\\\\\\\\Python27\\\\\\\\\\\lib\\site-packages\\\\\\\\\\\py2exe\\boot_common.pyt" fullword ascii
+		$s2 = "C:\\\\\\\\\\\\\\Python27\\\\\\\\\\\\\\lib\\site-packages\\\\\\\\\\\\\\py2exe\\boot_common.pyR" fullword ascii
+		$s3 = "C:\\\\\\\\\\\\\\Python27\\\\\\\\\\\\\\lib\\site-packages\\\\\\\\\\\\\\py2exe\\boot_common.pyt" fullword ascii
 		$s4 = "subprocess.pyc" fullword ascii
 		$s5 = "MyGetProcAddress(%p, %p(%s)) -> %p" fullword ascii
 		$p1 = "Dump SAM hashes from target systemss" fullword ascii
@@ -113666,7 +113666,7 @@ rule DITEKSHEN_INDICATOR_TOOL_PWS_Fgdump : FILE
 		$s2 = "dump on server %s" ascii
 		$s3 = "dump passwords: %s" ascii
 		$s4 = "Dumping cache" nocase ascii
-		$s5 = "SECURITY\\\\\\\\\\\\\\\\Cache" ascii
+		$s5 = "SECURITY\\\\\\\\\\\\\\\\\\\\\\Cache" ascii
 		$s6 = "LSASS.EXE process" ascii
 		$s7 = " AntiVirus " nocase ascii
 		$s8 = " IPC$ " ascii
@@ -113696,7 +113696,7 @@ rule DITEKSHEN_INDICATOR_TOOL_PWS_Blackbone : FILE
 		$s1 = "BlackBone: %s: " ascii
 		$s2 = "\\BlackBoneDrv\\" ascii
 		$s3 = "\\DosDevices\\BlackBone" fullword wide
-		$s4 = "\\\\\\\\\\\Temp\\BBImage.manifest" wide
+		$s4 = "\\\\\\\\\\\\\\Temp\\BBImage.manifest" wide
 		$s5 = "\\Device\\BlackBone" fullword wide
 		$s6 = "BBExecuteInNewThread" fullword ascii
 		$s7 = "BBHideVAD" fullword ascii
@@ -113727,7 +113727,7 @@ rule DITEKSHEN_INDICATOR_TOOL_PWS_Mimikatz : FILE
 		$s1 = "mimilib.dll" ascii
 		$s2 = "mimidrv.sys" ascii
 		$s3 = "mimikatz.exe" ascii
-		$s4 = "\\\\\\\\\\\\\\\\mimidrv.pdb" ascii
+		$s4 = "\\\\\\\\\\\\\\\\\\\\\\mimidrv.pdb" ascii
 		$s5 = "mimikatz" ascii
 		$s6 = { 6d 00 69 00 6d 00 69 00 6b 00 61 00 74 00 7a }
 		$s7 = { 5c 00 6d 00 69 00 6d 00 69 00 64 00 72 00 76 }
@@ -113795,9 +113795,9 @@ rule DITEKSHEN_INDICATOR_TOOL_PWS_Sniffpass : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "\\\\\\\\\\\\\\\\Release\\SniffPass.pdb" ascii
+		$s1 = "\\\\\\\\\\\\\\\\\\\\\\Release\\SniffPass.pdb" ascii
 		$s2 = "Password   Sniffer" fullword wide
-		$s3 = "Software\\\\\\\\\\\\\\\\NirSoft\\SniffPass" fullword ascii
+		$s3 = "Software\\\\\\\\\\\\\\\\\\\\\\NirSoft\\SniffPass" fullword ascii
 		$s4 = "Sniffed PasswordsCFailed to start" wide
 		$s5 = "Pwpcap.dll" fullword ascii
 		$s6 = "nmwifi.exe" fullword ascii
@@ -113892,7 +113892,7 @@ rule DITEKSHEN_INDICATOR_TOOL_LTM_Sharpexec : FILE
 		$s4 = /WINSTA_(ACCESSCLIPBOARD|WINSTA_ALL_ACCESS)\/ fullwor\/ asci\//		$s5 = /NETBIND(ADD|DISABLE|ENABLE|REMOVE)\/ fullwor\/ asci\//		$s6 = /SERVICE_(ALL_ACCESS|WIN32_OWN_PROCESS|INTERROGATE)\/ fullwor\/ asci\//		$s7 = /(Sharp|PS|smb)Exec\/ fullwor\/ asci\//		$s8 = "lpszPassword" fullword ascii
 		$s9 = "lpszDomain" fullword ascii
 		$s10 = "wmiexec" fullword ascii
-		$s11 = "\\\\\\\\\\\\\\\\C$\\\\\\\\\\\\\\\\__LegitFile" wide
+		$s11 = "\\\\\\\\\\\\\\\\\\\\\\C$\\\\\\\\\\\\\\\\\\\\\\__LegitFile" wide
 		$s12 = "LOGON32_LOGON_NEW_CREDENTIALS" fullword ascii
 
 	condition:
@@ -114064,7 +114064,7 @@ rule DITEKSHEN_INDICATOR_TOOL_SCN_Smbtouch : FILE
 		$w4 = "RedirectedTargetPort" fullword ascii
 		$w5 = "RedirectedTargetIp" fullword ascii
 		$w6 = "NtlmHash" fullword ascii
-		$w7 = "\\\\\\\\\\\\\\\\PIPE\\\\\\\\\\\\\\\\LANMAN" fullword ascii
+		$w7 = "\\\\\\\\\\\\\\\\\\\\\\PIPE\\\\\\\\\\\\\\\\\\\\\\LANMAN" fullword ascii
 		$w8 = "UserRejected: " fullword ascii
 
 	condition:
@@ -114348,7 +114348,7 @@ rule DITEKSHEN_INDICATOR_TOOL_HFS_Webserver : FILE
 
 	strings:
 		$s1 = "SOFTWARE\\Borland\\Delphi\\" ascii
-		$s2 = "C:\\\\\\\\\\\code\\\\\\\\\\\mine\\\\\\\\\\\hfs\\scriptLib.pas" fullword ascii
+		$s2 = "C:\\\\\\\\\\\\\\code\\\\\\\\\\\\\\mine\\\\\\\\\\\\\\hfs\\scriptLib.pas" fullword ascii
 		$s3 = "hfs.*;*.htm*;descript.ion;*.comment;*.md5;*.corrupted;*.lnk" ascii
 		$s4 = "Server: HFS" ascii
 
@@ -114486,7 +114486,7 @@ rule DITEKSHEN_INDICATOR_TOOL_PWS_Securityxploded_Browserpassworddumper : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "\\\\\\\\\\\projects\\windows\\BrowserPasswordDump\\\\\\\\\\\Release\\\\\\\\\\\FireMaster.pdb" ascii
+		$s1 = "\\\\\\\\\\\\\\projects\\windows\\BrowserPasswordDump\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\FireMaster.pdb" ascii
 		$s2 = "%s: Dumping passwords" fullword ascii
 		$s3 = "%s - Found login data file...dumping the passwords from file %s" fullword ascii
 		$s4 = "%s Dumping secrets from login json file %s" fullword ascii
@@ -114512,7 +114512,7 @@ rule DITEKSHEN_INDICATOR_TOOL_PWS_Securityxploded_Ftppassworddumper : FILE
 
 	strings:
 		$s1 = "\\\\\\projects\\windows\\\\\\FTPPasswordDump\\\\\\Release\\\\\\FireMaster.pdb" ascii
-		$s2 = "//Dump all the FTP passwords to a file \"c:\\\\\\\passlist.txt\"" ascii
+		$s2 = "//Dump all the FTP passwords to a file \"c:\\\\\\\\\\passlist.txt\"" ascii
 		$s3 = "//Dump all the FTP passwords to console" ascii
 		$s4 = "FTP Password Dump" fullword wide
 
@@ -114536,8 +114536,8 @@ rule DITEKSHEN_INDICATOR_TOOL_PWS_Securityxploded_Emailpassworddumper : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "\\\\\\\\\\\projects\\windows\\\\\\\\\\\EmailPasswordDump\\\\\\\\\\\Release\\\\\\\\\\\FireMaster.pdb" ascii
-		$s2 = "//Dump all the Email passwords to a file \"c:\\\\\\\\\\\\passlist.txt\"" ascii
+		$s1 = "\\\\\\\\\\\\\\projects\\windows\\\\\\\\\\\\\\EmailPasswordDump\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\FireMaster.pdb" ascii
+		$s2 = "//Dump all the Email passwords to a file \"c:\\\\\\\\\\\\\\\\\\passlist.txt\"" ascii
 		$s3 = "EmailPasswordDump" fullword wide
 		$s4 = "//Dump all the Email passwords to console" ascii
 		$s5 = "Email Password Dump" fullword wide
@@ -114624,8 +114624,8 @@ rule DITEKSHEN_INDICATOR_TOOL_Sharpnopsexec : FILE
 		$s4 = "uPayload" fullword ascii
 		$s5 = "pcbBytesNeeded" fullword ascii
 		$s6 = "SharpNoPSExec" ascii wide
-		$pdb1 = "SharpNoPSExec\\\\\\\\\\\obj\\Debug\\SharpNoPSExec.pdb" ascii
-		$pdb2 = "SharpNoPSExec\\\\\\\\\\\obj\\\\\\\\\\\Release\\SharpNoPSExec.pdb" ascii
+		$pdb1 = "SharpNoPSExec\\\\\\\\\\\\\\obj\\Debug\\SharpNoPSExec.pdb" ascii
+		$pdb2 = "SharpNoPSExec\\\\\\\\\\\\\\obj\\\\\\\\\\\\\\Release\\SharpNoPSExec.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and ( 4 of ( $s* ) or ( 1 of ( $pdb* ) and 1 of ( $s* ) ) )
@@ -114709,7 +114709,7 @@ rule DITEKSHEN_INDICATOR_TOOL_Backstab : FILE
 	strings:
 		$s1 = "NtLoadDriver: %x" fullword ascii
 		$s2 = "POSIXLY_CORRECT" fullword ascii
-		$s3 = "\\\\.\\\\\\\\\\\PROCEXP" ascii
+		$s3 = "\\\\.\\\\\\\\\\\\\\PROCEXP" ascii
 		$s4 = "ProcExpOpenProtectedProcess.DeviceIoControl: %" ascii
 		$s5 = "ProcExpKillHandle.DeviceIoControl" ascii
 		$s6 = "[%#llu] [%ws]: %ws" fullword ascii
@@ -114771,9 +114771,9 @@ rule DITEKSHEN_INDICATOR_TOOL_REC_Adfind : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "\\\\\\\\\\\AdFind\\\\\\\\\\\AdFind\\\\\\\\\\\AdFind.h" ascii
-		$s2 = "\\\\\\\\\\\AdFind\\\\\\\\\\\AdFind\\\\\\\\\\\AdFind.cpp" ascii
-		$s3 = "\\\\\\\\\\\AdFind\\\\\\\\\\\Release\\\\\\\\\\\AdFind.pdb" ascii
+		$s1 = "\\\\\\\\\\\\\\AdFind\\\\\\\\\\\\\\AdFind\\\\\\\\\\\\\\AdFind.h" ascii
+		$s2 = "\\\\\\\\\\\\\\AdFind\\\\\\\\\\\\\\AdFind\\\\\\\\\\\\\\AdFind.cpp" ascii
+		$s3 = "\\\\\\\\\\\\\\AdFind\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\AdFind.pdb" ascii
 		$s4 = "joeware_default_adfind.cf" ascii
 
 	condition:
@@ -114824,8 +114824,8 @@ rule DITEKSHEN_INDICATOR_TOOL_ANT_Invizzzible : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "\\\\.\\\\\\\\\\\pipe\\task_sched_se" fullword wide
-		$s2 = "\\\\\\.\\\\\\\\\\\NPF_NdisWanIp" fullword wide
+		$s1 = "\\\\.\\\\\\\\\\\\\\pipe\\task_sched_se" fullword wide
+		$s2 = "\\\\\\.\\\\\\\\\\\\\\NPF_NdisWanIp" fullword wide
 		$s3 = /--action --(dtt|mra|user-input|cfg|dan|evt|pid|exc|wmi|tsh)\/ fullwor\/ wid\//		$s4 = "cuckoo_%lu.ini" fullword wide
 		$s5 = "sandbox evasion" wide nocase
 		$s6 = "UnbalancedStack" fullword ascii
@@ -115194,8 +115194,8 @@ rule DITEKSHEN_INDICATOR_TOOL_Nsudo : FILE
 
 	strings:
 		$x1 = "cmd /c start \"NSudo." wide
-		$x2 = "*\\shell\\\\\\\\\\\\\\\\NSudo" fullword wide
-		$x3 = "Projects\\\\\\\\\\\\\\\\NSudo\\\\\\\\\\\\\\\\Output\\\\\\\\\\\\\\\\Release\\x64\\\\\\\\\\\\\\\\NSudo.pdb" ascii
+		$x2 = "*\\shell\\\\\\\\\\\\\\\\\\\\\\NSudo" fullword wide
+		$x3 = "Projects\\\\\\\\\\\\\\\\\\\\\\NSudo\\\\\\\\\\\\\\\\\\\\\\Output\\\\\\\\\\\\\\\\\\\\\\Release\\x64\\\\\\\\\\\\\\\\\\\\\\NSudo.pdb" ascii
 		$s1 = "-ShowWindowMode=Hide" wide
 		$s2 = "?what@exception@@UEBAPEBDXZ" fullword ascii
 		$s3 = "NSudo.RunAs." ascii
@@ -115335,25 +115335,25 @@ rule DITEKSHEN_INDICATOR_Tool_Forensia : FILE
 
 	strings:
 		$c1 = "for /F \"tokens=*\" %1 in ('wevtutil.exe el') DO wevtutil.exe cl \"%1\"" ascii
-		$c2 = "del /F /Q C:\\Windows\\\\\\\\\\\\\\\\Prefetch\\*" ascii
-		$c3 = "del C:\\Windows\\\\\\\\\\\\\\\\AppCompat\\\\\\\\\\\\\\\\Programs\\\\\\\\\\\\\\\\RecentFileCache.bcf" ascii
-		$c4 = "del /F /Q %APPDATA%\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\Recent\\*" ascii
-		$c5 = "del /F /Q %APPDATA%\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\Recent\\\\\\\\\\\\\\\\CustomDestinations\\*" ascii
-		$c6 = "del /F /Q %APPDATA%\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\Recent\\\\\\\\\\\\\\\\AutomaticDestinations\\*" ascii
+		$c2 = "del /F /Q C:\\Windows\\\\\\\\\\\\\\\\\\\\\\Prefetch\\*" ascii
+		$c3 = "del C:\\Windows\\\\\\\\\\\\\\\\\\\\\\AppCompat\\\\\\\\\\\\\\\\\\\\\\Programs\\\\\\\\\\\\\\\\\\\\\\RecentFileCache.bcf" ascii
+		$c4 = "del /F /Q %APPDATA%\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\Recent\\*" ascii
+		$c5 = "del /F /Q %APPDATA%\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\Recent\\\\\\\\\\\\\\\\\\\\\\CustomDestinations\\*" ascii
+		$c6 = "del /F /Q %APPDATA%\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\Recent\\\\\\\\\\\\\\\\\\\\\\AutomaticDestinations\\*" ascii
 		$c7 = "fsutil.exe usn deletejournal /D C:" ascii
-		$r1 = "\\\\\\\\\\\Memory Management\\\\\\\\\\\PrefetchParameters" wide
-		$r2 = "\\\\\\\\\\\Explorer\\\\\\\\\\\Advanced" wide
-		$r3 = "\\Services\\\\\\\\\\\EventLog" wide
+		$r1 = "\\\\\\\\\\\\\\Memory Management\\\\\\\\\\\\\\PrefetchParameters" wide
+		$r2 = "\\\\\\\\\\\\\\Explorer\\\\\\\\\\\\\\Advanced" wide
+		$r3 = "\\Services\\\\\\\\\\\\\\EventLog" wide
 		$r4 = "\\Shell\\BagMRU" wide
-		$r5 = "\\\\\\\\\\\Control\\\\\\\\\\\FileSystem" wide
-		$r6 = "\\Setup\\\\\\\\\\\VC" wide
+		$r5 = "\\\\\\\\\\\\\\Control\\\\\\\\\\\\\\FileSystem" wide
+		$r6 = "\\Setup\\\\\\\\\\\\\\VC" wide
 		$s1 = "[LOG] - %s" wide
-		$s2 = "\\\\\\\\\\\forensia\\regedit.hpp" wide
+		$s2 = "\\\\\\\\\\\\\\forensia\\regedit.hpp" wide
 		$s3 = "NtfsDisableLastAccessUpdate" wide
 		$s4 = "Melting The Executable" wide
 		$s5 = "Sysmon Unloader" wide
 		$s6 = "Rundll32.exe apphelp.dll,ShimFlushCache" ascii
-		$s7 = "\\Debug\\\\\\\\\\\forensia.pdb" ascii
+		$s7 = "\\Debug\\\\\\\\\\\\\\forensia.pdb" ascii
 		$s8 = { 55 00 00 00 aa 00 00 00 92 49 24 00 49 24 92 00
                 24 92 49 00 00 00 00 00 11 00 00 00 22 00 00 00
                 33 00 00 00 44 00 00 00 66 00 00 00 88 00 00 00
@@ -115468,9 +115468,9 @@ rule DITEKSHEN_INDICATOR_TOOL_Gogoprocdump : FILE
 		$s1 = "C:\\temp" ascii
 		$s2 = "gogo" fullword ascii
 		$s3 = "/DumpLsass-master/SilentProcessExit/" ascii
-		$s4 = "SOFTWARE\\\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\Time Zone" ascii
-		$s5 = "SOFTWARE\\\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\\\CurrentVersion\\SilentProcessExit\\\\\\\\\\\\\\\\lsass.exe" ascii
-		$s6 = "SOFTWARE\\\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\Image File Execution Options\\\\\\\\\\\\\\\\lsass.exe" ascii
+		$s4 = "SOFTWARE\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\\\Time Zone" ascii
+		$s5 = "SOFTWARE\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\SilentProcessExit\\\\\\\\\\\\\\\\\\\\\\lsass.exe" ascii
+		$s6 = "SOFTWARE\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\\\Image File Execution Options\\\\\\\\\\\\\\\\\\\\\\lsass.exe" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and 4 of them
@@ -115523,7 +115523,7 @@ rule DITEKSHEN_INDICATOR_TOOL_BURTNCIGAR : FILE
 	strings:
 		$s1 = "Kill PID =" ascii
 		$s2 = "CreateFile Error =" ascii
-		$s3 = "\\\\\\\\\\\KillAV" ascii
+		$s3 = "\\\\\\\\\\\\\\KillAV" ascii
 		$s4 = "DeviceIoControl" ascii
 
 	condition:
@@ -115617,9 +115617,9 @@ rule DITEKSHEN_INDICATOR_TOOL_Pandora : FILE
 		$s2 = "Dump file created:" fullword wide
 		$s3 = "System.Security.AccessControl.FileSystemAccessRule('Everyone', 'FullControl', 'Allow')" ascii
 		$s4 = "{[math]::Round($_.PrivateMemorySize64" ascii
-		$s5 = "rundll32.exe C:\\Windows\\System32\\\\\\\\\\\\\\\\comsvcs.dll, MiniDump $" ascii
+		$s5 = "rundll32.exe C:\\Windows\\System32\\\\\\\\\\\\\\\\\\\\\\comsvcs.dll, MiniDump $" ascii
 		$s6 = "\"payload\":{\"logins\":" ascii
-		$s7 = "\\\\\\\\\\\\\\\\pandora.pdb" ascii
+		$s7 = "\\\\\\\\\\\\\\\\\\\\\\pandora.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and 5 of them
@@ -115672,7 +115672,7 @@ rule DITEKSHEN_INDICATOR_TOOLS_Localpotato : FILE
 		$s1 = "{00000306-0000-0000-c000-000000000046}" wide
 		$s2 = "{854A20FB-2D44-457D-992F-EF13785D2B51}" wide
 		$s3 = "cifs/127.0.0.1" wide
-		$s4 = "\\\\127.0.0.1\\\\\\\\\\\\\\\\c$" wide
+		$s4 = "\\\\127.0.0.1\\\\\\\\\\\\\\\\\\\\\\c$" wide
 		$s5 = "complete failed: 0x%08x" ascii
 		$s6 = "Authorization: NTLM %s" ascii
 		$s7 = "Objref Moniker Display Name = %S" ascii
@@ -115713,7 +115713,7 @@ rule DITEKSHEN_INDICATOR_TOOLS_Edrsandblast : FILE
 
 	strings:
 		$s1 = "credguard" fullword wide
-		$s2 = "\\\\\\\\\\\cmd.exe" fullword wide
+		$s2 = "\\\\\\\\\\\\\\cmd.exe" fullword wide
 		$s3 = "ci_%s.dll" fullword wide
 		$s4 = "cmd /c sc" wide
 		$s5 = "fltmgr_%s.sys" fullword wide
@@ -115822,7 +115822,7 @@ rule DITEKSHEN_INDICATOR_TOOL_Sharpghosttask : FILE
 
 	strings:
 		$x1 = "Ghosted" wide
-		$x2 = /--target(binary|task)\/ fullwor\/ wid\//		$x3 = "SOFTWARE\\\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\\\CurrentVersion\\Schedule\\\\\\\\\\\\\\\\TaskCache\\\\\\\\\\\\\\\\T" wide nocase
+		$x2 = /--target(binary|task)\/ fullwor\/ wid\//		$x3 = "SOFTWARE\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\Schedule\\\\\\\\\\\\\\\\\\\\\\TaskCache\\\\\\\\\\\\\\\\\\\\\\T" wide nocase
 		$s4 = "__GhostTask|" ascii
 
 	condition:
@@ -115850,8 +115850,8 @@ rule DITEKSHEN_INDICATOR_TOOL_Krbrelay : FILE
 		$s3 = "GetProcessIdFromIPid" fullword ascii
 		$g1 = "hello.stg" fullword wide
 		$g2 = "DSInternals.Common" fullword ascii
-		$g3 = "C:\\Windows\\System32\\DriverStore\\\\\\\\\\\FileRepository\\ntprint.inf_amd64_7b3eed059f4c3e41\\\\\\\\\\\Amd64\\UNIDRV.DLL" fullword wide
-		$g4 = "C:\\Windows\\System32\\\\\\\\\\\kernelbase.dll" fullword wide
+		$g3 = "C:\\Windows\\System32\\DriverStore\\\\\\\\\\\\\\FileRepository\\ntprint.inf_amd64_7b3eed059f4c3e41\\\\\\\\\\\\\\Amd64\\UNIDRV.DLL" fullword wide
+		$g4 = "C:\\Windows\\System32\\\\\\\\\\\\\\kernelbase.dll" fullword wide
 		$g5 = "get_UnsupportedSecretEncryptionType" fullword ascii
 		$g6 = "CoInitializeSecurity Error: 0x{0:X8}. Exploit will fail." fullword wide
 		$g7 = "AuthnSvc: {0} - PrincName: {1}" fullword wide
@@ -115876,7 +115876,7 @@ rule DITEKSHEN_INDICATOR_TOOL_Edrsilencer : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "block \"C:\\Windows\\System32\\\\\\\curl.exe\"" ascii
+		$s1 = "block \"C:\\Windows\\System32\\\\\\\\\\curl.exe\"" ascii
 		$s2 = "blockedr" fullword ascii
 		$s3 = "edrProcess" fullword ascii
 		$s4 = "BlockEdrProcessTraffic" fullword ascii
@@ -116054,8 +116054,8 @@ rule DITEKSHEN_INDICATOR_RMM_Connectwise_Screenconnect : FILE
 		$s1 = "FILESYSCREENCONNECT.CORE, VERSION=" wide
 		$s2 = "feedback.screenconnect.com/Feedback.axd" wide
 		$s3 = /ScreenConnect (Software|Client)\/ wid\//		$s4 = "ScreenConnect.InstallerActions!ScreenConnect." wide
-		$s5 = "\\\\.\\\\\\\\\\\Pipe\\\\\\\\\\\TerminalServer\\SystemExecSrvr\\" wide
-		$s6 = "\\\\\\\\\\\jmorgan\\Source\\\\\\\\\\\cwcontrol\\\\\\\\\\\Custom\\DotNetRunner\\" wide
+		$s5 = "\\\\.\\\\\\\\\\\\\\Pipe\\\\\\\\\\\\\\TerminalServer\\SystemExecSrvr\\" wide
+		$s6 = "\\\\\\\\\\\\\\jmorgan\\Source\\\\\\\\\\\\\\cwcontrol\\\\\\\\\\\\\\Custom\\DotNetRunner\\" wide
 		$s7 = "ScreenConnect." ascii
 		$s8 = "\\ScreenConnect.Core.pdb" ascii
 		$s9 = "relay.screenconnect.com" ascii
@@ -116133,12 +116133,12 @@ rule DITEKSHEN_INDICATOR_RMM_Fleetdeck_Commander : FILE
 		clamav1 = "INDICATOR.Win.RMM.FleetDeckCommander"
 
 	strings:
-		$s1 = "Software\\\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\\\FleetDeck Commander" ascii
+		$s1 = "Software\\\\\\\\\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\\\\\\\\\FleetDeck Commander" ascii
 		$s2 = "fleetdeck.io/prototype3/" ascii
 		$s3 = "fleetdeck_commander_launcher.exe" ascii
 		$s4 = "fleetdeck_commander_svc.exe" ascii
 		$s5 = "|FleetDeck Commander" ascii
-		$s6 = "c:\\\\\\\\\\\\\\\\agent\\\\\\\\\\\\\\\\_work\\66\\s\\" ascii
+		$s6 = "c:\\\\\\\\\\\\\\\\\\\\\\agent\\\\\\\\\\\\\\\\\\\\\\_work\\66\\s\\" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and 4 of them
@@ -116162,7 +116162,7 @@ rule DITEKSHEN_INDICATOR_RMM_Fleetdeck_Commander_SVC : FILE
 
 	strings:
 		$s1 = "fleetdeckfork/execfuncargs(" ascii
-		$s2 = "REG ADD HKEY_CLASSES_ROOT\\\\\\\\\\\%s /V \"URL Protocol\" /T REG_SZ /F" ascii
+		$s2 = "REG ADD HKEY_CLASSES_ROOT\\\\\\\\\\\\\\%s /V \"URL Protocol\" /T REG_SZ /F" ascii
 		$s3 = "proceed: *.fleetdeck.io" ascii
 		$s4 = "fleetdeck.io/prototype3/commander_svc" ascii
 		$s5 = "commanderupdate.fleetdeck.io" ascii
@@ -116241,10 +116241,10 @@ rule DITEKSHEN_INDICATOR_RMM_Pdqconnect_Agent : FILE
 		$s3 = "pdq-connect-agent" ascii
 		$s4 = "PDQ Connect Agent" ascii
 		$s5 = "PDQConnectAgent" ascii
-		$s6 = "PDQConnectAgentsrc\\\\\\\\\\\logger.rs" ascii
+		$s6 = "PDQConnectAgentsrc\\\\\\\\\\\\\\logger.rs" ascii
 		$s7 = "-PDQ-Key-IdsUser-Agent" ascii
-		$s8 = "\\\\\\\\\\\PDQ\\\\\\\\\\\PDQConnectAgent\\" ascii
-		$s9 = "\\\\\\\\\\\pdq_connect_agent.pdb" ascii
+		$s8 = "\\\\\\\\\\\\\\PDQ\\\\\\\\\\\\\\PDQConnectAgent\\" ascii
+		$s9 = "\\\\\\\\\\\\\\pdq_connect_agent.pdb" ascii
 		$s10 = "task_ids[]PDQ rover" ascii
 		$s11 = "https://app.pdq.com/" ascii
 
@@ -116368,14 +116368,14 @@ rule DITEKSHEN_INDICATOR_RMM_Manageengine_Zohomeeting : FILE
 		clamav1 = "INDICATOR.Win.RMM.ManageEngine-ZohoMeeting"
 
 	strings:
-		$s1 = "bin\\\\\\\\\\\\\\\\ClientAuthHandler.dll" wide
+		$s1 = "bin\\\\\\\\\\\\\\\\\\\\\\ClientAuthHandler.dll" wide
 		$s2 = "AgentHook.dll" wide
 		$s3 = "UEMS - Remote Control" wide
 		$s4 = "Install hook...." wide
 		$s5 = "india.adventnet.com/meet.sas?k=" ascii
 		$s6 = "dcTcpSocket::" ascii
 		$s7 = "%s/%s?clientId=%s&sessionId=%s&clientName=%s&ticket=%s&connectionId=%s" ascii
-		$s8 = ".\\\\\\\\\\\\\\\\engines\\\\\\\\\\\\\\\\ccgost\\\\\\\\\\\\\\\\gost_" ascii
+		$s8 = ".\\\\\\\\\\\\\\\\\\\\\\engines\\\\\\\\\\\\\\\\\\\\\\ccgost\\\\\\\\\\\\\\\\\\\\\\gost_" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and 5 of them
@@ -116398,12 +116398,12 @@ rule DITEKSHEN_INDICATOR_RMM_Atera : FILE
 		clamav1 = "INDICATOR.Win.RMM.Atera"
 
 	strings:
-		$s1 = "SOFTWARE\\\\\\\\\\\\\\\\ATERA Networks\\\\\\\\\\\\\\\\AlphaAgent" wide
+		$s1 = "SOFTWARE\\\\\\\\\\\\\\\\\\\\\\ATERA Networks\\\\\\\\\\\\\\\\\\\\\\AlphaAgent" wide
 		$s2 = "Monitoring & Management Agent by ATERA" ascii wide
 		$s3 = "agent-api-{0}.atera.com" wide
 		$s4 = "agent-api.atera.com" wide
 		$s5 = "acontrol.atera.com" wide
-		$s6 = /Agent\/(PingReply|GetCommandsFallback|GetCommands|GetTime|GetEnvironmentStatus|GetRecurringPackages|AgentStarting|AcknowledgeCommands)\/ wid\//		$s7 = "\\\\\\\\\\\AlphaControlAgent\\\\\\\\\\\obj\\\\\\\\\\\Release\\\\\\\\\\\AteraAgent.pdb" ascii
+		$s6 = /Agent\/(PingReply|GetCommandsFallback|GetCommands|GetTime|GetEnvironmentStatus|GetRecurringPackages|AgentStarting|AcknowledgeCommands)\/ wid\//		$s7 = "\\\\\\\\\\\\\\AlphaControlAgent\\\\\\\\\\\\\\obj\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\AteraAgent.pdb" ascii
 		$s8 = "AteraWebAddress" ascii
 		$s9 = "AlphaControlAgent.CloudLogsManager+<>" ascii
 
@@ -116449,7 +116449,7 @@ rule DITEKSHEN_INDICATOR_RMM_Splashtopstreamer : FILE
 		clamav1 = "INDICATOR.Win.RMM.SplashtopStreamer"
 
 	strings:
-		$s1 = "\\slave\\workspace\\\\\\\\\\\GIT_WIN_SRS_Formal\\Source\\\\\\\\\\\irisserver\\" ascii
+		$s1 = "\\slave\\workspace\\\\\\\\\\\\\\GIT_WIN_SRS_Formal\\Source\\\\\\\\\\\\\\irisserver\\" ascii
 		$s2 = ".api.splashtop.com" wide
 		$s3 = "Software\\Splashtop Inc.\\Splashtop" wide
 		$s4 = "restarted the streamer.%nApp version: %1" wide
@@ -116497,10 +116497,10 @@ rule DITEKSHEN_INDICATOR_RMM_Aeroadmin : FILE
 		clamav1 = "INDICATOR.Win.RMM.AeroAdmin"
 
 	strings:
-		$s1 = "\\\\\\\\\\\AeroAdmin" wide
+		$s1 = "\\\\\\\\\\\\\\AeroAdmin" wide
 		$s2 = ".aeroadmin.com" ascii wide
 		$s3 = "XAeroadminAppRestarter" wide
-		$s4 = "SYSTEM\\\\\\\\\\\ControlSet001\\\\\\\\\\\Control\\SafeBoot\\\\\\\\\\\Network\\\\\\\\\\\AeroadminService" wide
+		$s4 = "SYSTEM\\\\\\\\\\\\\\ControlSet001\\\\\\\\\\\\\\Control\\SafeBoot\\\\\\\\\\\\\\Network\\\\\\\\\\\\\\AeroadminService" wide
 		$s5 = "AeroAdmin {}" ascii
 		$s6 = "FAeroAdmin.cpp" fullword ascii
 		$s7 = "Referer: http://900100.net" ascii
@@ -116966,8 +116966,8 @@ rule WITHSECURELABS_Ducktail_Artifacts : FILE
 		hash3 = "b98170b18b906aee771dbd4dbd31e5963a90a50e"
 
 	strings:
-		$pdb_path_1 = /[a-z]\\\\\\\\\\\\\\\:\\\\\\\\\\\\\\\\projects\\(viruttest|virot)\\/i nocase ascii
-		$pdb_path_2 = /[a-z]\\\\\\\\\\\\\\\:\\users\\ductai\\/i nocase ascii
+		$pdb_path_1 = /[a-z]\\\\\\\\\\\\\\\\\\\\\\:\\\\\\\\\\\\\\\\\\\\\\projects\\(viruttest|virot)\\/i nocase ascii
+		$pdb_path_2 = /[a-z]\\\\\\\\\\\\\\\\\\\\\\:\\users\\ductai\\/i nocase ascii
 		$pdb_path_3 = "\\dataextractor.pdb" nocase ascii
 		$email = "ductai2308@gmail.com" wide ascii
 
@@ -117060,7 +117060,7 @@ rule HARFANGLAB_Masepie_Campaign_Htmlstarter : FILE
 
 	strings:
 		$s1 = "<link rel=\"stylesheet\" href=\"a.css\">" ascii wide fullword
-		$s2 = "src=\".\\\\\\\Capture" ascii wide
+		$s2 = "src=\".\\\\\\\\\\Capture" ascii wide
 
 	condition:
 		filesize > 600 and filesize < 5KB and ( all of them )
@@ -117085,7 +117085,7 @@ rule HARFANGLAB_Masepie_Campaign_Webdavlnk : FILE
 
 	strings:
 		$a1 = "[system.Diagnostics.Process]::Start('msedge','http" wide nocase fullword
-		$a2 = "\\\\\\\\\\\Microsoft\\\\\\\\\\\Edge\\\\\\\\\\\Application\\\\\\\\\\\msedge.exe" wide nocase fullword
+		$a2 = "\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\Edge\\\\\\\\\\\\\\Application\\\\\\\\\\\\\\msedge.exe" wide nocase fullword
 		$a3 = "powershell.exe" ascii wide fullword
 		$s1 = "win-j5ggokh35ap" ascii fullword
 		$s2 = "desktop-q0f4sik" ascii fullword
@@ -117296,8 +117296,8 @@ rule HARFANGLAB_Nhas_Reverse_Shell_Pe_Inmem_Large
 		context = "memory"
 
 	strings:
-		$s1 = "\\rprichard\\\\\\\\\\\proj\\winpty\\src\\\\\\\\\\\agent\\" ascii
-		$s2 = "\\Users\\\\\\\\\\\mail\\source\\winpty\\src\\" ascii
+		$s1 = "\\rprichard\\\\\\\\\\\\\\proj\\winpty\\src\\\\\\\\\\\\\\agent\\" ascii
+		$s2 = "\\Users\\\\\\\\\\\\\\mail\\source\\winpty\\src\\" ascii
 		$s3 = "Successfully connnected" ascii
 		$s4 = "*main.decFunc" ascii fullword
 		$s6 = "keepalive-rssh@golang.org" ascii fullword
@@ -117520,7 +117520,7 @@ rule HARFANGLAB_Samecoin_Campaign_Tasksspreader : FILE
 		$b1 = "$dc1b29f0-9a87-4383-ad8b-01285614def1" ascii fullword
 		$b2 = "Windows Defender Agent" ascii fullword
 		$b3 = "Windows Defender Agent.exe" wide ascii fullword
-		$b4 = /(\\)?C(:|\$)\\Users\\\\\\\\\\\\\\\\Public\\\\\\\\\\\\\\\\Microsoft System Agent\.exe\/ wid\/ fullwor\//		$b5 = "MicrosoftEdgeUpdateTaskMachinesCores" wide fullword
+		$b4 = /(\\)?C(:|\$)\\Users\\\\\\\\\\\\\\\\\\\\\\Public\\\\\\\\\\\\\\\\\\\\\\Microsoft System Agent\.exe\/ wid\/ fullwor\//		$b5 = "MicrosoftEdgeUpdateTaskMachinesCores" wide fullword
 		$b6 = "WindowsUpdate" wide fullword
 		$c1 = "RegisterTaskDefinition" wide fullword
 		$c2 = "DisallowStartIfOnBatteries" wide fullword
@@ -117581,7 +117581,7 @@ rule HARFANGLAB_Supposed_Grasshopper_Downloader : FILE
 		context = "file,memory"
 
 	strings:
-		$pdb_path = "C:\\Users\\\\\\\\\\\or\\Desktop\\nim-" ascii
+		$pdb_path = "C:\\Users\\\\\\\\\\\\\\or\\Desktop\\nim-" ascii
 		$code = "helo.nim" ascii
 		$function_1 = "DownloadExecute" ascii fullword
 		$function_2 = "toByteSeq" ascii fullword
@@ -118092,7 +118092,7 @@ rule HARFANGLAB_Iis_Module_Hijackserver_Native : FILE
 		$s6 = "no excute " ascii
 		$s7 = "\\b(\\d{1,2})-(\\d{1,2})-(\\d{4})\\b" ascii fullword
 		$s8 = "/Tqpn0tGX550fVwt5D6g4CGWP6" ascii
-		$s9 = "\\\\\\\\\\\IISCPP-GM\\" ascii
+		$s9 = "\\\\\\\\\\\\\\IISCPP-GM\\" ascii
 		$s10 = "\\Dongtai.pdb\x00" ascii
 		$s11 = "_FAB234CD3-09434-88" ascii
 		$s12 = "<input type='text' name='cmdml' place" ascii
@@ -118130,9 +118130,9 @@ rule HARFANGLAB_Iis_Module_Hijackserver_Dotnet : FILE
 		$s3 = /\.cseo\d{1,3}\.com\/config\/\/ wid\//		$s4 = ":(80|443)(?=/$)" wide fullword
 		$s5 = "clean?type=all" wide fullword
 		$s6 = "DealRequest" ascii
-		$s7 = "\\\\\\\\\\\\\\\\Tiquan\\\\\\\\\\\\\\\\CustomIISModule\\" ascii
-		$s8 = "\\\\\\\\\\\\\\\\CustomIISModule.pdb\x00" ascii
-		$s9 = "\\\\\\\\\\\\\\\\Temp\\\\\\\\\\\\\\\\AcpLogs\\\\\\\\\\\\\\\\conf\\" wide
+		$s7 = "\\\\\\\\\\\\\\\\\\\\\\Tiquan\\\\\\\\\\\\\\\\\\\\\\CustomIISModule\\" ascii
+		$s8 = "\\\\\\\\\\\\\\\\\\\\\\CustomIISModule.pdb\x00" ascii
+		$s9 = "\\\\\\\\\\\\\\\\\\\\\\Temp\\\\\\\\\\\\\\\\\\\\\\AcpLogs\\\\\\\\\\\\\\\\\\\\\\conf\\" wide
 		$s10 = "RobotTxtServer" ascii fullword
 		$s11 = "HijackServer" ascii fullword
 		$s12 = "WebdllServer" ascii fullword
@@ -118233,7 +118233,7 @@ rule HARFANGLAB_Wingtb_Rootkit : FILE
 		$s7 = "Kbj_FangxingImages" wide fullword
 		$s8 = "Kbj_BaohuImages" wide fullword
 		$s9 = "Kbj_WinkbjImages" wide fullword
-		$pdb = "D:\\DriverSpace\\\\\\\\\\\hidden\\x64\\\\\\\\\\\Release\\Winkbj.pdb" fullword
+		$pdb = "D:\\DriverSpace\\\\\\\\\\\\\\hidden\\x64\\\\\\\\\\\\\\Release\\Winkbj.pdb" fullword
 
 	condition:
 		uint16be( 0 ) == 0x4d5a and filesize < 1MB and ( ( 1 of ( $a* ) and 6 of ( $s* ) ) or $pdb )
@@ -118260,7 +118260,7 @@ rule HARFANGLAB_Wingtb_Rootkit_Commandline_Tool_Wingtbcli : FILE
 		$s1 = ".?AVCommandUnignore@@" fullword
 		$s2 = ".?AVCommandUnprotect@@" fullword
 		$s3 = ".?AVCommandYinshen@@" fullword
-		$s4 = "System\\\\\\\\\\\CurrentControlSet\\Services\\Wingtb" wide fullword
+		$s4 = "System\\\\\\\\\\\\\\CurrentControlSet\\Services\\Wingtb" wide fullword
 		$s5 = "/buxiaoshi" wide fullword
 		$s6 = "/fangxing" wide fullword
 		$s7 = "/bufangxing" wide fullword
@@ -118273,7 +118273,7 @@ rule HARFANGLAB_Wingtb_Rootkit_Commandline_Tool_Wingtbcli : FILE
 		$s14 = "Kbj_FangxingImages" wide fullword
 		$s15 = "Kbj_Zhuangtai" wide fullword
 		$s16 = "\\\\.\\WinkbjDamen" wide fullword
-		$pdb = "D:\\DriverSpace\\\\\\\\\\\hidden\\x64\\\\\\\\\\\Release\\\\\\\\\\\HiddenCLI.pdb" fullword
+		$pdb = "D:\\DriverSpace\\\\\\\\\\\\\\hidden\\x64\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\HiddenCLI.pdb" fullword
 
 	condition:
 		uint16be( 0 ) == 0x4d5a and filesize < 1MB and ( 8 of ( $s* ) or $pdb )
@@ -119840,11 +119840,11 @@ rule SEKOIA_Infostealer_Win_Raccoon_Str_Takemypainback : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$str0 = "\\\\\\\\\\\ffcookies.txt" wide
+		$str0 = "\\\\\\\\\\\\\\ffcookies.txt" wide
 		$str1 = "TakeMyPainBack" wide
 		$str2 = "wallet.dat" wide
-		$str3 = "SOFTWARE\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\Uninstall" wide
-		$str4 = "Network\\\\\\\\\\\Cookies" wide
+		$str3 = "SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\Uninstall" wide
+		$str4 = "Network\\\\\\\\\\\\\\Cookies" wide
 
 	condition:
 		uint16( 0 ) == 0x5a4d and 4 of them
@@ -120046,8 +120046,8 @@ rule SEKOIA_Ransomware_Win_Fonix : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$s1 = "Ransomware\\\\\\\\\\\Fonix" ascii
-		$s2 = "Release\\\\\\\\\\\Fonix.pdb" ascii
+		$s1 = "Ransomware\\\\\\\\\\\\\\Fonix" ascii
+		$s2 = "Release\\\\\\\\\\\\\\Fonix.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5A4D and all of them
@@ -120370,7 +120370,7 @@ rule SEKOIA_Tool_Exploit_Comahawk_Strings : FILE
 		$ = "sc config UsoSvc binpath=" wide
 		$ = "binpath= \"cmd.exe /c net localgroup administrators /add"
 		$ = "[+] Command executed."
-		$ = "Release\\\\\\\\\\\COMahawk.pdb"
+		$ = "Release\\\\\\\\\\\\\\COMahawk.pdb"
 		$ = " is added as an admin."
 
 	condition:
@@ -120834,7 +120834,7 @@ rule SEKOIA_Ransomware_Win_Redeemer : FILE
 
 	strings:
 		$str0 = "RedeemerMutex" ascii
-		$str1 = "SOFTWARE\\\\\\\\\\\Redeemer" ascii
+		$str1 = "SOFTWARE\\\\\\\\\\\\\\Redeemer" ascii
 		$str2 = "-----BEGIN REDEEMER PUBLIC KEY-----" ascii
 		$str3 = "dnNzYWRtaW4gZGVsZXRlIHNoYWRvd3MgL0FsbCAvUXVpZXQ=" ascii
 		$str4 = "d2V2dHV0aWwgY2xlYXItbG9nIEFwcGxpY2F0aW9u" ascii
@@ -120842,7 +120842,7 @@ rule SEKOIA_Ransomware_Win_Redeemer : FILE
 		$str6 = "YXNzb2MgLnJlZGVlbT1yZWRlZW1lcg==" ascii
 		$str7 = "UmVkZWVtZXIgUmFuc29td2FyZSAtIFlvdXIgRGF0YSBJcyBFbmNyeXB0ZWQ=" ascii
 		$str8 = "redeemer\\DefaultIcon" wide
-		$str9 = "\\\\\\\\\\\Redeemer.sys" wide
+		$str9 = "\\\\\\\\\\\\\\Redeemer.sys" wide
 
 	condition:
 		uint16( 0 ) == 0x5A4D and 2 of them
@@ -121346,11 +121346,11 @@ rule SEKOIA_Trojan_Win_Bbtok_Dll1_Sep23 : FILE
 		$str01 = "C:\\Windows\\System32\\rundll32.exe" wide
 		$str02 = "C:\\\\\\ProgramData\\\\\\mmd.exe" wide
 		$str03 = "REG ADD HKCU\\Software\\\\\\Classes\\.pwn\\Shell\\\\\\Open\\\\\\command -ve /d" wide
-		$str04 = "C:\\\\\\\\\\\ProgramData\\\\\\\\\\\mmd.exe \\\\" wide
-		$str05 = "\\\\\\\\\\\file\\\\\\\\\\\Trammy.dll" wide
-		$str06 = "Dacl & REG DELETE HKCU\\Software\\\\\\\\\\\Classes\\\\\\\\\\\ms-settings /f" wide
+		$str04 = "C:\\\\\\\\\\\\\\ProgramData\\\\\\\\\\\\\\mmd.exe \\\\" wide
+		$str05 = "\\\\\\\\\\\\\\file\\\\\\\\\\\\\\Trammy.dll" wide
+		$str06 = "Dacl & REG DELETE HKCU\\Software\\\\\\\\\\\\\\Classes\\\\\\\\\\\\\\ms-settings /f" wide
 		$str07 = "REG DELETE  HKCU\\Software\\\\\\Classes\\.pwn /f" wide
-		$str08 = "REG ADD HKCU\\Software\\\\\\\\\\\Classes\\\\\\\\\\\ms-settings\\\\\\\\\\\CurVer -ve /d \".pwn\" /f" wide
+		$str08 = "REG ADD HKCU\\Software\\\\\\\\\\\\\\Classes\\\\\\\\\\\\\\ms-settings\\\\\\\\\\\\\\CurVer -ve /d \".pwn\" /f" wide
 		$str09 = "timeout /t 3 >nul & start /MIN computerdefaults.exe" wide
 		$str10 = "set_StartInfo" ascii
 		$str11 = "set_WindowStyle" ascii
@@ -121619,7 +121619,7 @@ rule SEKOIA_Apt_Sidecopy_Cheex : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$ = "C:\\Users\\Dead Snake\\source\\repos\\\\\\\\\\\\\\\\cheex" ascii fullword
+		$ = "C:\\Users\\Dead Snake\\source\\repos\\\\\\\\\\\\\\\\\\\\\\cheex" ascii fullword
 
 	condition:
 		uint16be( 0 ) == 0x4d5a and all of them
@@ -121873,7 +121873,7 @@ rule SEKOIA_Loader_Win_Aresloader : FILE
 		$str01 = "{\\\"ip\\\": '%s', \\\"UID\\\": '%s', \\\"geo\\\": '%s', \\\"service\\\": '%s', \\\"owner_token\\\": '%s'}" ascii
 		$str02 = "AresLdr_v_3" ascii
 		$str03 = "https://ipinfo.io/ip" ascii
-		$str04 = "C:\\Users\\\\\\\\\\\%s\\\\\\\\\\\AppData\\\\\\\\\\\Roaming\\\\\\\\\\\%s\\\\\\\\\\\%s" ascii
+		$str04 = "C:\\Users\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\Roaming\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\%s" ascii
 		$str05 = "/manager/payload" ascii
 		$str06 = "/manager/loader" ascii
 		$str07 = "/manager/legit" ascii
@@ -122080,12 +122080,12 @@ rule SEKOIA_Rootkit_Win_Purplefox_Svchost_Txt : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$str0 = "C:\\\\\\\\\\\ProgramData\\dll.dll,luohua" wide
-		$str1 = "C:\\\\\\\\\\\ProgramData\\7z.exe" wide
-		$str2 = "F:\\\\\\\\\\\hidden-master\\x64\\Debug\\\\\\\\\\\QAssist.pdb" ascii
-		$str3 = "F:\\\\\\\\\\\Root\\sources\\\\\\\\\\\MedaiUpdateV8\\\\\\\\\\\Release\\\\\\\\\\\MedaiUpdateV8.pdb" ascii
+		$str0 = "C:\\\\\\\\\\\\\\ProgramData\\dll.dll,luohua" wide
+		$str1 = "C:\\\\\\\\\\\\\\ProgramData\\7z.exe" wide
+		$str2 = "F:\\\\\\\\\\\\\\hidden-master\\x64\\Debug\\\\\\\\\\\\\\QAssist.pdb" ascii
+		$str3 = "F:\\\\\\\\\\\\\\Root\\sources\\\\\\\\\\\\\\MedaiUpdateV8\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\MedaiUpdateV8.pdb" ascii
 		$str4 = "cmd.exe /c RunDll32.exe InetCpl.cpl,ClearMyTracksByProcess 255" ascii
-		$str5 = "del /s /f %appdata%\\\\\\\\\\\\\\\\Mozilla\\\\\\\\\\\\\\\\Firefox\\\\\\\\\\\\\\\\Profiles\\*.db" ascii
+		$str5 = "del /s /f %appdata%\\\\\\\\\\\\\\\\\\\\\\Mozilla\\\\\\\\\\\\\\\\\\\\\\Firefox\\\\\\\\\\\\\\\\\\\\\\Profiles\\*.db" ascii
 
 	condition:
 		4 of ( $str* ) and filesize > 7000KB and filesize < 9500KB
@@ -122247,8 +122247,8 @@ rule SEKOIA_Ransomware_Win_Voidcrypt : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$s1 = "C:\\\\\\\\\\\ProgramData\\\\\\\\\\\pkey.txt" ascii
-		$s2 = "C:\\\\\\\\\\\ProgramData\\\\\\\\\\\IDk.txt" ascii
+		$s1 = "C:\\\\\\\\\\\\\\ProgramData\\\\\\\\\\\\\\pkey.txt" ascii
+		$s2 = "C:\\\\\\\\\\\\\\ProgramData\\\\\\\\\\\\\\IDk.txt" ascii
 		$s3 = "fuckyoufuckyoufuckyoufuckyou" ascii
 
 	condition:
@@ -122475,10 +122475,10 @@ rule SEKOIA_Apt_Badmagic_Commonmagic_Generic_1 : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$ = "\\\\\\\\\\\\\\\\CommonCommand\\\\\\\\\\\\\\\\Clean\\"
-		$ = "\\\\\\\\\\\\\\\\CommonCommand\\\\\\\\\\\\\\\\Overall\\"
-		$ = "\\\\\\\\\\\\\\\\CommonCommand\\\\\\\\\\\\\\\\Other\\"
-		$ = "\\\\\\\\\\\\\\\\CommonCommand\\\\\\\\\\\\\\\\Other\\*"
+		$ = "\\\\\\\\\\\\\\\\\\\\\\CommonCommand\\\\\\\\\\\\\\\\\\\\\\Clean\\"
+		$ = "\\\\\\\\\\\\\\\\\\\\\\CommonCommand\\\\\\\\\\\\\\\\\\\\\\Overall\\"
+		$ = "\\\\\\\\\\\\\\\\\\\\\\CommonCommand\\\\\\\\\\\\\\\\\\\\\\Other\\"
+		$ = "\\\\\\\\\\\\\\\\\\\\\\CommonCommand\\\\\\\\\\\\\\\\\\\\\\Other\\*"
 
 	condition:
 		uint16be( 0 ) == 0x4d5a and filesize < 1MB and all of them
@@ -122923,11 +122923,11 @@ rule SEKOIA_Ransomware_Win_Wing : FILE
 		$str06 = "' stopped and configured to start automatically." wide
 		$str07 = "Error processing service '" wide
 		$str08 = "$RECYCLE.BIN" wide
-		$str09 = "SOFTWARE\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\Run" wide
+		$str09 = "SOFTWARE\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\\\Run" wide
 		$str10 = "UniqueID:" wide
 		$str11 = "PersonalID:" wide
-		$ran01 = "C:\\\\\\\\\\\\\\\\Readme.txt" wide
-		$ran02 = "C:\\\\\\\\\\\\\\\\LockBIT\\systemID" wide
+		$ran01 = "C:\\\\\\\\\\\\\\\\\\\\\\Readme.txt" wide
+		$ran02 = "C:\\\\\\\\\\\\\\\\\\\\\\LockBIT\\systemID" wide
 		$ran03 = "Your system has been encrypted by our team, and your files have been locked using our proprietary algorithm !" wide
 		$ran04 = "* Please read this message carefully and patiently *" wide
 		$ran05 = "* If you use any tools, programs, or methods to recover your files and they get damaged, we will not be responsible for any harm to your files !" wide
@@ -123848,7 +123848,7 @@ rule SEKOIA_Win_Loader_Astasialoader_Strings : FILE
 
 	strings:
 		$s1 = "newuploaders" wide
-		$s2 = "\\\\\\\\\\\infected.exe" wide
+		$s2 = "\\\\\\\\\\\\\\infected.exe" wide
 		$s3 = "AstasiaLoader" wide
 		$s4 = "Astasia.pdb" ascii
 		$s5 = "ip-api.com/line/?fields=hosting" wide
@@ -123882,9 +123882,9 @@ rule SEKOIA_Loader_Win_Gcleaner : FILE
 		$str02 = "3.  Click \"Run G-Cleaner\"" ascii
 		$str03 = "Garbage_Cleaner" ascii
 		$str04 = "GCleaner.Properties" ascii
-		$str05 = "SOFTWARE\\\\\\\\\\\GCleaner\\\\\\\\\\\Install" wide
-		$str06 = "SOFTWARE\\\\\\\\\\\GCleaner\\\\\\\\\\\Trial" wide
-		$str07 = "SOFTWARE\\\\\\\\\\\GCleaner\\\\\\\\\\\License" wide
+		$str05 = "SOFTWARE\\\\\\\\\\\\\\GCleaner\\\\\\\\\\\\\\Install" wide
+		$str06 = "SOFTWARE\\\\\\\\\\\\\\GCleaner\\\\\\\\\\\\\\Trial" wide
+		$str07 = "SOFTWARE\\\\\\\\\\\\\\GCleaner\\\\\\\\\\\\\\License" wide
 		$str08 = "G-Cleaner activation" wide
 
 	condition:
@@ -124403,7 +124403,7 @@ rule SEKOIA_Loader_Amadey_Standalone_May23 : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$str01 = "\\\\\\\\\\\Amadey\\\\\\\\\\\Release\\\\\\\\\\\Amadey.pdb" ascii
+		$str01 = "\\\\\\\\\\\\\\Amadey\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\Amadey.pdb" ascii
 		$hex01 = { 6E 74 64 6C 6C 2E 64 6C  6C 00 00 00 72 75 6E 61 73 }
 
 	condition:
@@ -124489,7 +124489,7 @@ rule SEKOIA_Apt_Implant_Xdealer_Vbs_Launcher_Strings : FILE
 	strings:
 		$s1 = "Dim objws"
 		$s2 = "Set objws="
-		$s3 = "objws.Run \"\"\"C:\\\\\\\\\\\\ProgramData\\"
+		$s3 = "objws.Run \"\"\"C:\\\\\\\\\\\\\\\\\\ProgramData\\"
 
 	condition:
 		$s1 at 0 and all of them and filesize < 200
@@ -124681,7 +124681,7 @@ rule SEKOIA_Infostealer_Win_Spacestealer : FILE
 		$str14 = "/api/passwords?auth=" ascii
 		$str15 = "/api/autofill?auth=" ascii
 		$str16 = "/api/creditcards?auth=" ascii
-		$str17 = "\\\\\\\\\\\Yandex\\\\\\\\\\\YandexBrowser\\User Data\\\\\\\\\\\Guest Profile\\\\\\\\\\\Network\\" ascii
+		$str17 = "\\\\\\\\\\\\\\Yandex\\\\\\\\\\\\\\YandexBrowser\\User Data\\\\\\\\\\\\\\Guest Profile\\\\\\\\\\\\\\Network\\" ascii
 
 	condition:
 		uint16( 0 ) == 0x5A4D and filesize > 10MB and 13 of them
@@ -125336,15 +125336,15 @@ rule SEKOIA_Infostealer_Win_Blustealer : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$cha01 = "@top\\\\\\\\\\\LOGGERS\\DARKCLOUD" wide
+		$cha01 = "@top\\\\\\\\\\\\\\LOGGERS\\DARKCLOUD" wide
 		$cha02 = "===============DARKCLOUD===============" wide
 		$cha03 = "#######################################DARKCLOUD#######################################" wide
 		$cha04 = "fireballsabadafirebricksfisherboat" ascii
 		$cha05 = "Moonchild Pro2ductions" wide
-		$str01 = "\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\Templates\\\\\\\\\\\credentials.txt" wide
-		$str02 = "\\\\\\\\\\\NETGATE Technologies\\BlackHawK\\\\\\\\\\\Profiles" wide
+		$str01 = "\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\Templates\\\\\\\\\\\\\\credentials.txt" wide
+		$str02 = "\\\\\\\\\\\\\\NETGATE Technologies\\BlackHawK\\\\\\\\\\\\\\Profiles" wide
 		$str03 = "SysWOW64\\winsqlite3.dll" wide
-		$str04 = "HKCU\\SOFTWARE\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\RunOnce\\*RD_" wide
+		$str04 = "HKCU\\SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\RunOnce\\*RD_" wide
 		$str05 = "Expiry Date;" wide
 		$str06 = "SELECT c0subject, c3author, c4recipients, c1body  FROM messagesText_content" wide
 		$str07 = "http://www.mediacollege.com/internet/utilities/show-ip.shtml" wide
@@ -125438,10 +125438,10 @@ rule SEKOIA_Apt_Badmagic_Commonmagic_Generic_2 : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$ = "\\\\\\\\\\\CommonCommand\\" ascii wide
-		$ = "\\\\.\\\\\\\\\\\pipe\\\\\\\\\\\PipeMd" ascii wide fullword
-		$ = "\\\\.\\\\\\\\\\\pipe\\\\\\\\\\\PipeDtMd" ascii wide fullword
-		$ = "\\\\.\\\\\\\\\\\pipe\\\\\\\\\\\PipeCrDtMd" ascii wide fullword
+		$ = "\\\\\\\\\\\\\\CommonCommand\\" ascii wide
+		$ = "\\\\.\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\PipeMd" ascii wide fullword
+		$ = "\\\\.\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\PipeDtMd" ascii wide fullword
+		$ = "\\\\.\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\PipeCrDtMd" ascii wide fullword
 
 	condition:
 		uint16be( 0 ) == 0x4d5a and filesize < 1MB and 2 of them
@@ -125526,9 +125526,9 @@ rule SEKOIA_Trojan_Win_Bbtok_Lnk_Sep23 : FILE
 
 	strings:
 		$lnk = {4C 00 00 00}
-		$str01 = "%ProgramFiles(x86)%\\\\\\\\\\\Microsoft\\\\\\\\\\\Edge\\\\\\\\\\\Application\\\\\\\\\\\msedge.exe" ascii wide
+		$str01 = "%ProgramFiles(x86)%\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\Edge\\\\\\\\\\\\\\Application\\\\\\\\\\\\\\msedge.exe" ascii wide
 		$str02 = ".pdf /Y & start" wide
-		$str03 = "\\\\\\\\\\\\\\\\Microsoft.NET\\\\\\\\\\\\\\\\Framework\\\\\\\\\\\\\\\\v4.0.30319\\\\\\\\\\\\\\\\MSBuild.exe -nologo" wide
+		$str03 = "\\\\\\\\\\\\\\\\\\\\\\Microsoft.NET\\\\\\\\\\\\\\\\\\\\\\Framework\\\\\\\\\\\\\\\\\\\\\\v4.0.30319\\\\\\\\\\\\\\\\\\\\\\MSBuild.exe -nologo" wide
 
 	condition:
 		all of them and filesize < 10KB
@@ -125653,8 +125653,8 @@ rule SEKOIA_Malware_Valleyrat_1Ststage_Strings : FILE
 
 	strings:
 		$ = "%016llX.DLL" wide
-		$ = "%s\\\\\\\\\\\%s" wide
-		$ = "%016llX\\\\\\\\\\\%s" wide
+		$ = "%s\\\\\\\\\\\\\\%s" wide
+		$ = "%016llX\\\\\\\\\\\\\\%s" wide
 		$ = "connection already in progress"
 		$ = "SleepConditionVariableSRW"
 
@@ -125792,7 +125792,7 @@ rule SEKOIA_Apt_Sidecopy_Malicious_Macro : FILE
 	strings:
 		$ = "htmlFile$"
 		$ = "Gecko/20100101 Firefox/91.0"
-		$ = "Start Menu\\\\\\\\\\\\\\\\Programs\\Startup\\"
+		$ = "Start Menu\\\\\\\\\\\\\\\\\\\\\\Programs\\Startup\\"
 		$ = "Document_Close"
 		$ = "ThisDocument" wide
 		$ = "ServerXMLHTTP.6.0"
@@ -125932,13 +125932,13 @@ rule SEKOIA_Apt_Gamaredon_Ddrdoh_Vbs_Downloader : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$a1 = "==([0-9\\\\\\\\\\\\\\\\@]+)==" ascii
+		$a1 = "==([0-9\\\\\\\\\\\\\\\\\\\\\\@]+)==" ascii
 		$a2 = "data\"\":\"\"(.*?)" ascii
 		$a3 = ", vbcr ,\"\")" ascii
 		$a4 = ", vblf ,\"\")" ascii
 		$a5 = ", \"&&\" ,\"\")" ascii
 		$a6 = "ru-RU,ru;q=0.8,en-US;q=0.6,en;q=0.4" ascii
-		$b1 = "==([0-9\\\\\\\\\\\\\\\\@]+)==" base64
+		$b1 = "==([0-9\\\\\\\\\\\\\\\\\\\\\\@]+)==" base64
 		$b2 = "data\"\":\"\"(.*?)" base64
 		$b3 = ", vbcr ,\"\")" base64
 		$b4 = ", vblf ,\"\")" base64
@@ -125990,7 +125990,7 @@ rule SEKOIA_Truesightkiller_Avkiller_Strings : FILE
 		$ = "This is a PoC, use it at your own risk!" wide
 		$ = "[-] Failed to set CTRL+C handler. Exiting..." wide
 		$ = "ntdll.dll" wide
-		$ = "\\\\.\\\\\\\\\\\\\\\\TrueSight" wide
+		$ = "\\\\.\\\\\\\\\\\\\\\\\\\\\\TrueSight" wide
 		$ = "[-] CreateFileA failed" wide
 		$ = " not running" wide
 		$ = "[-] Process name: " wide
@@ -126112,16 +126112,16 @@ rule SEKOIA_Infostealer_Win_Banditstealer : FILE
 		$spe08 = "main.sendZipToTelegram" ascii
 		$str01 = "json:\"city\"" ascii
 		$str02 = "UAC disabled" ascii
-		$str03 = "\\\\\\\\\\\\\\\\OpenVPN Connect\\\\\\\\\\\\\\\\profiles\\" ascii
-		$str04 = "\\Documents\\\\\\\\\\\\\\\\Monero\\wallets\\" ascii
+		$str03 = "\\\\\\\\\\\\\\\\\\\\\\OpenVPN Connect\\\\\\\\\\\\\\\\\\\\\\profiles\\" ascii
+		$str04 = "\\Documents\\\\\\\\\\\\\\\\\\\\\\Monero\\wallets\\" ascii
 		$str05 = "cookies.sqlite" ascii
 		$str06 = "creditcard.txt" ascii
 		$str07 = "vmware.exe" ascii
 		$str08 = "aeachknmefphepccionboohckonoeemg" ascii
-		$str09 = "\\Documents\\\\\\\\\\\\\\\\NetSarang\\\\\\\\\\\\\\\\Xftp\\Sessions\\" ascii
-		$str10 = "\\WhatsApp\\\\\\\\\\\\\\\\Local Storage\\\\\\\\\\\\\\\\leveldb\\" ascii
+		$str09 = "\\Documents\\\\\\\\\\\\\\\\\\\\\\NetSarang\\\\\\\\\\\\\\\\\\\\\\Xftp\\Sessions\\" ascii
+		$str10 = "\\WhatsApp\\\\\\\\\\\\\\\\\\\\\\Local Storage\\\\\\\\\\\\\\\\\\\\\\leveldb\\" ascii
 		$str11 = "Visited Time: %s" ascii
-		$str12 = "\\\\\\\\\\\\\\\\Google\\\\\\\\\\\\\\\\Chrome\\User Data\\\\\\\\\\\\\\\\Telegram Desktop\\tdata\\" ascii
+		$str12 = "\\\\\\\\\\\\\\\\\\\\\\Google\\\\\\\\\\\\\\\\\\\\\\Chrome\\User Data\\\\\\\\\\\\\\\\\\\\\\Telegram Desktop\\tdata\\" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and 2 of ( $spe* ) and 6 of ( $str* )
@@ -126173,7 +126173,7 @@ rule SEKOIA_Downloader_Win_Curl_Agent
 		classification = "TLP:CLEAR"
 
 	strings:
-		$ = "%s\\\\\\\\\\\marcoor.dll" wide
+		$ = "%s\\\\\\\\\\\\\\marcoor.dll" wide
 		$ = "curl -A cur1-agent -L %s -s -d dl"
 		$ = "curl -A cur1-agent -L %s -s -d da"
 		$ = "cmd /c timeout /t 10 & rundll32 \"%s\" #1" wide
@@ -126348,7 +126348,7 @@ rule SEKOIA_Apt_Kimsuky_Malicious_Vba : FILE
 
 	strings:
 		$ = "Certutil -decode %TMP%"
-		$ = "%LOCALAPPDATA%\\\\\\\\\\\Microsoft\\\\\\\\\\\Office"
+		$ = "%LOCALAPPDATA%\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\Office"
 
 	condition:
 		uint32be( 0 ) == 0xD0CF11E0 and filesize < 1MB and all of them
@@ -126434,7 +126434,7 @@ rule SEKOIA_Rat_Win_Babylon : FILE
 	strings:
 		$str01 = "ParadoxRAT_Client" ascii
 		$str02 = "*** in database %s ***" ascii
-		$str03 = "\\drivers\\\\\\\\\\\etc\\\\\\\\\\\HOSTS" ascii
+		$str03 = "\\drivers\\\\\\\\\\\\\\etc\\\\\\\\\\\\\\HOSTS" ascii
 		$str04 = "Babylon RAT Client" wide
 		$str05 = "ClipBoard.txt" wide
 		$str06 = "a,ccs=UTF-16LE" wide
@@ -126718,7 +126718,7 @@ rule SEKOIA_Rat_Win_Ratel_Strings : FILE
 		$s5 = "MOD_PERSISTENCE" wide
 		$s6 = "MOD_DESTRUCTION:" wide
 		$s7 = "MOD_RECONNECT" wide
-		$s8 = "Software\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\Run" wide
+		$s8 = "Software\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\\\Run" wide
 		$s9 = "powershell.exe -command \"([Security.Principal.WindowsPrincipal] [Security.Principal.WindowsIdentity]::GetCurrent()).IsInRole([Security.Principal.WindowsBuiltInRole] 'Administrator')\"" wide
 		$s10 = "The command was executed successfully but no data was returned."
 		$s11 = "[-] TIMEOUT IN CREATEPROCESS, but all the processes in the name of: " ascii
@@ -127086,19 +127086,19 @@ rule SEKOIA_Infostealer_Win_Vulturi : FILE
 		$vul = "Vulturi_" ascii
 		$str01 = "/C chcp 65001 && ping 127.0.0.1 && DEL /F /S /Q /A" wide
 		$str02 = "SELECT ExecutablePath, ProcessID FROM Win32_Process" wide
-		$str03 = "Apps\\\\\\\\\\\\\\\\Gaming\\\\\\\\\\\\\\\\Minecraft" wide
-		$str04 = "Apps\\\\\\\\\\\\\\\\Gaming\\Steam\\\\\\\\\\\\\\\\Apps" wide
-		$str05 = "Messengers\\\\\\\\\\\\\\\\Facebook\\\\\\\\\\\\\\\\Contacts.txt" wide
-		$str06 = "Messengers\\Discord\\\\\\\\\\\\\\\\Tokens.txt" wide
-		$str07 = "Apps\\\\\\\\\\\\\\\\VPN\\\\\\\\\\\\\\\\NordVPN\\\\\\\\\\\\\\\\accounts.txt" wide
-		$str08 = "Apps\\\\\\\\\\\\\\\\VPN\\DUC\\\\\\\\\\\\\\\\credentials.txt" wide
+		$str03 = "Apps\\\\\\\\\\\\\\\\\\\\\\Gaming\\\\\\\\\\\\\\\\\\\\\\Minecraft" wide
+		$str04 = "Apps\\\\\\\\\\\\\\\\\\\\\\Gaming\\Steam\\\\\\\\\\\\\\\\\\\\\\Apps" wide
+		$str05 = "Messengers\\\\\\\\\\\\\\\\\\\\\\Facebook\\\\\\\\\\\\\\\\\\\\\\Contacts.txt" wide
+		$str06 = "Messengers\\Discord\\\\\\\\\\\\\\\\\\\\\\Tokens.txt" wide
+		$str07 = "Apps\\\\\\\\\\\\\\\\\\\\\\VPN\\\\\\\\\\\\\\\\\\\\\\NordVPN\\\\\\\\\\\\\\\\\\\\\\accounts.txt" wide
+		$str08 = "Apps\\\\\\\\\\\\\\\\\\\\\\VPN\\DUC\\\\\\\\\\\\\\\\\\\\\\credentials.txt" wide
 		$str09 = "System\\Screenshots\\Webcam.png" wide
 		$str10 = "System\\Screenshots\\Desktop.png" wide
 		$str11 = "GTA San Andreas User Files\\SAMP\\USERDATA.DAT" wide
 		$str12 = "http://ip-api.com/line?fields=query" wide
 		$str13 = "Wireshark" wide
 		$str14 = "KeePass.config.xml" wide
-		$str15 = "Apps\\\\\\\\\\\TheBat!" wide
+		$str15 = "Apps\\\\\\\\\\\\\\TheBat!" wide
 		$str16 = "Vulturi" wide
 		$str17 = "StealerStub" wide
 
@@ -127126,7 +127126,7 @@ rule SEKOIA_Infostealer_Win_Enigma_Loader_Module : FILE
 
 	strings:
 		$str01 = "Enigma.Loader.Driver_x64.dll" ascii
-		$str02 = "C:\\\\\\\\\\\\\\\\projects\\driver\\Driver\\x64\\\\\\\\\\\\\\\\Release\\driver.pdb" ascii
+		$str02 = "C:\\\\\\\\\\\\\\\\\\\\\\projects\\driver\\Driver\\x64\\\\\\\\\\\\\\\\\\\\\\Release\\driver.pdb" ascii
 		$str03 = "/getFile?file_id=" ascii
 		$str04 = "/file/bot" ascii
 		$str05 = "Fatal error: failed to acquire SE_LOAD_DRIVER_PRIVILEGE. Make sure you are running as administrator." wide
@@ -127134,7 +127134,7 @@ rule SEKOIA_Infostealer_Win_Enigma_Loader_Module : FILE
 		$str07 = "Telegram request failed" wide
 		$str08 = "Vul driver data destroyed before unlink" wide
 		$str09 = "GetExportAddress hash not found: %x" wide
-		$str10 = "\\\\\\\\\\\REGISTRY\\\\\\\\\\\MACHINE\\\\\\\\\\\HARDWARE\\\\\\\\\\\RESOURCEMAP\\\\\\\\\\\PnP Manager\\\\\\\\\\\PnpManager" wide
+		$str10 = "\\\\\\\\\\\\\\REGISTRY\\\\\\\\\\\\\\MACHINE\\\\\\\\\\\\\\HARDWARE\\\\\\\\\\\\\\RESOURCEMAP\\\\\\\\\\\\\\PnP Manager\\\\\\\\\\\\\\PnpManager" wide
 
 	condition:
 		uint16( 0 ) == 0x5A4D and 4 of them
@@ -127238,7 +127238,7 @@ rule SEKOIA_Stealer_Win_Luca : FILE
 		$ = "/Default/Network/CookiesUser Data/Default/Network/Cookies_cookies"
 		$ = "/Default/Web DataUser Data/Default/Web Data_webdata"
 		$ = "SELECT action_url, username_value, password_value FROM loginsSELECT card_number_encrypted, name_on_card, expiration_month, expiration_year FROM credit_cardsSELECT host_key, name, encrypted_value, path, expires_utc, is_secure FROM cookiesLOCALAPPDATA"
-		$ = "\\\\\\\\\\\\\\\\logsxc\\\\\\\\\\\\\\\\passwords_.txt"
+		$ = "\\\\\\\\\\\\\\\\\\\\\\logsxc\\\\\\\\\\\\\\\\\\\\\\passwords_.txt"
 		$ = " Name:"
 		$ = "User: "
 		$ = "Installed Languages:  "
@@ -127297,11 +127297,11 @@ rule SEKOIA_Infostealer_Win_Redline_Strings : FILE
 		$spe1 = "[AString-ZaString-z\\d]{2String4}\\.[String\\w-]{String6}\\.[\\wString-]{2String7}" wide
 		$spe2 = "AFileSystemntivFileSystemirusPrFileSystemoduFileSystemct|AntiFileSystemSpyWFileSystemareProFileSystemduct|FireFileSystemwallProdFileSystemuct" wide
 		$spe3 = "OpHandlerenVPHandlerN ConHandlernect%DSK_23%Opera GXcookies" wide
-		$spe4 = "//settinString.Removeg[@name=\\\\\\\\\\\\\\\\PasswString.Removeord\\]/valuString.RemoveeROOT\\SecurityCenter" wide
+		$spe4 = "//settinString.Removeg[@name=\\\\\\\\\\\\\\\\\\\\\\PasswString.Removeord\\]/valuString.RemoveeROOT\\SecurityCenter" wide
 		$spe5 = "ROOT\\SecurityCenter2Web DataSteamPath" wide
 		$spe6 = "windows-1251, CommandLine:" wide
 		$spe7 = "OFileInfopeFileInfora GFileInfoX StabFileInfole" wide
-		$spe8 = "ApGenericpDaGenericta\\\\\\\\\\\RGenericoamiGenericng\\" wide
+		$spe8 = "ApGenericpDaGenericta\\\\\\\\\\\\\\RGenericoamiGenericng\\" wide
 		$spe9 = "*wallet*" wide
 		$typ01 = "359A00EF6C789FD4C18644F56C5D3F97453FFF20" ascii
 		$typ02 = "F413CEA9BAA458730567FE47F57CC3C94DDF63C0" ascii
@@ -127399,8 +127399,8 @@ rule SEKOIA_Infostealer_Win_Phoenix : FILE
 
 	strings:
 		$str01 = "nkbihfbeogaeaoehlefnkodbefgpgknn" ascii
-		$str02 = "Discord\\\\\\\\\\\Tokens.txt" ascii
-		$str03 = "SOFTWARE\\\\\\\\\\\OpenVP" ascii
+		$str02 = "Discord\\\\\\\\\\\\\\Tokens.txt" ascii
+		$str03 = "SOFTWARE\\\\\\\\\\\\\\OpenVP" ascii
 		$str04 = "config_dir" ascii
 		$str05 = "| Last Login:" ascii
 		$str06 = "| Games:" ascii
@@ -127409,7 +127409,7 @@ rule SEKOIA_Infostealer_Win_Phoenix : FILE
 		$str09 = "| User:" ascii
 		$str10 = "| Pass:" ascii
 		$str11 = "Grabber.rar" ascii
-		$str12 = "\\\\\\\\\\\GHISLER\\wcx_ftp.ini" ascii
+		$str12 = "\\\\\\\\\\\\\\GHISLER\\wcx_ftp.ini" ascii
 		$str13 = "Clipboard.txt" ascii
 		$str14 = "PROCESSOR_ARCHITECTURE" ascii
 		$str15 = "PROCESSOR_IDENTIFIER" ascii
@@ -127441,7 +127441,7 @@ rule SEKOIA_Apt_Badmagic_Commonmagic_Main : FILE
 	strings:
 		$ = "graph.microsoft.com" ascii wide
 		$ = "children?select=name,size" ascii wide fullword
-		$ = "\\\\.\\\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\\\PipeCrDtMd" ascii wide fullword
+		$ = "\\\\.\\\\\\\\\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\\\\\\\\\PipeCrDtMd" ascii wide fullword
 
 	condition:
 		uint16be( 0 ) == 0x4d5a and filesize < 1MB and all of them
@@ -127597,11 +127597,11 @@ rule SEKOIA_Wiper_Win_Nominatus_Toxicbattery : FILE
 		$ = "HAHAH"
 		$ = "Damage"
 		$ = "fastInfector"
-		$ = "d:\\\\\\\\\\\again\\SharpDevelop Projects\\\\\\\\\\\RInjector\\\\\\\\\\\Virus.win32RozbehStrike\\\\\\\\\\\obj\\Debug\\\\\\\\\\\Nominatus_ToxicBattery.pdb"
-		$ = "SOFTWARE\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Run" wide
-		$ = "SOFTWARE\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\CurrentVersion\\Winlogon" wide
-		$ = "\\\\\\\\\\\Antivirus.bat" wide
-		$ = "\\\\\\\\\\\Antivirus3.vbs" wide
+		$ = "d:\\\\\\\\\\\\\\again\\SharpDevelop Projects\\\\\\\\\\\\\\RInjector\\\\\\\\\\\\\\Virus.win32RozbehStrike\\\\\\\\\\\\\\obj\\Debug\\\\\\\\\\\\\\Nominatus_ToxicBattery.pdb"
+		$ = "SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Run" wide
+		$ = "SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\CurrentVersion\\Winlogon" wide
+		$ = "\\\\\\\\\\\\\\Antivirus.bat" wide
+		$ = "\\\\\\\\\\\\\\Antivirus3.vbs" wide
 		$ = "vssadmin Delete Shadows /all /quiet" wide
 
 	condition:
@@ -127627,7 +127627,7 @@ rule SEKOIA_Infostealer_Win_Nekostealer : FILE
 
 	strings:
 		$nek = "NekoStealer.Stealing" ascii
-		$str01 = "\\\\\\\\\\\\\\\\Local Storage\\\\\\\\\\\\\\\\leveldb" wide
+		$str01 = "\\\\\\\\\\\\\\\\\\\\\\Local Storage\\\\\\\\\\\\\\\\\\\\\\leveldb" wide
 		$str02 = "======================= Discord Tokens =======================" wide
 		$str03 = "======================== IP Information ========================" wide
 		$str04 = "https://ipapi.co/" wide
@@ -128001,7 +128001,7 @@ rule SEKOIA_Apt_Mustangpanda_Malicious_Lnk_Worm : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$s1 = "RECYCLER.BIN\\1\\\\\\\\\\\CEFHelper.exe" wide
+		$s1 = "RECYCLER.BIN\\1\\\\\\\\\\\\\\CEFHelper.exe" wide
 
 	condition:
 		uint32be( 0 ) == 0x4C000000 and 1 of them
@@ -128031,7 +128031,7 @@ rule SEKOIA_Xworm_Dotnet_Injector
 		$rijndael_key3 = { e6 9b b2 e6 b0 8f e5 ba b5 e5 a3 ab e9 97 95 e5 be b7 e6 96 af e8 9b 8b }
 		$s1 = "fullofdick"
 		$s2 = "holdmeback"
-		$s3 = "C:\\Windows\\\\\\\\\\\\\\\\Microsoft.NET\\\\\\\\\\\\\\\\Framework\\\\\\\\\\\\\\\\v4.0.30319\\\\\\\\\\\\\\\\RegAsm.exe" wide
+		$s3 = "C:\\Windows\\\\\\\\\\\\\\\\\\\\\\Microsoft.NET\\\\\\\\\\\\\\\\\\\\\\Framework\\\\\\\\\\\\\\\\\\\\\\v4.0.30319\\\\\\\\\\\\\\\\\\\\\\RegAsm.exe" wide
 
 	condition:
 		($first_payload and all of ( $rijndael_key* ) ) or 2 of ( $s* )
@@ -128125,7 +128125,7 @@ rule SEKOIA_Rat_Win_Asyncrat : FILE
 		$str09 = "Stub.exe" wide
 		$str10 = "timeout 3 > NUL" wide
 		$str11 = "/c schtasks /create /f /sc onlogon /rl highest /tn " wide
-		$str12 = "\\nuR\\noisreVtnerruC\\swodniW\\tfosorciM\\\\\\\\\\\erawtfoS" wide
+		$str12 = "\\nuR\\noisreVtnerruC\\swodniW\\tfosorciM\\\\\\\\\\\\\\erawtfoS" wide
 
 	condition:
 		uint16( 0 ) == 0x5A4D and 9 of them
@@ -128619,16 +128619,16 @@ rule SEKOIA_Infostealer_Win_Phoenixwave : FILE
 		$str6 = "virustotal" wide
 		$str7 = "SELECT * FROM win32_operatingsystem" wide
 		$str8 = "SELECT * FROM Win32_VideoController" wide
-		$app0 = "\\discordcanary\\\\\\\\\\\Local Storage\\\\\\\\\\\leveldb" wide
-		$app1 = "\\discordptb\\\\\\\\\\\Local Storage\\\\\\\\\\\leveldb" wide
-		$app2 = "\\discorddevelopment\\\\\\\\\\\Local Storage\\\\\\\\\\\leveldb" wide
+		$app0 = "\\discordcanary\\\\\\\\\\\\\\Local Storage\\\\\\\\\\\\\\leveldb" wide
+		$app1 = "\\discordptb\\\\\\\\\\\\\\Local Storage\\\\\\\\\\\\\\leveldb" wide
+		$app2 = "\\discorddevelopment\\\\\\\\\\\\\\Local Storage\\\\\\\\\\\\\\leveldb" wide
 		$app3 = "\\D877F783D5D3EF8C\\" wide
-		$app4 = "\\\\\\\\\\\IndexedDB\\\\\\\\\\\file__0.indexeddb.leveldb" wide
-		$app5 = "\\Steam\\\\\\\\\\\Games.txt" wide
+		$app4 = "\\\\\\\\\\\\\\IndexedDB\\\\\\\\\\\\\\file__0.indexeddb.leveldb" wide
+		$app5 = "\\Steam\\\\\\\\\\\\\\Games.txt" wide
 		$app6 = "nkbihfbeogaeaoehlefnkodbefgpgknn" wide
 		$app7 = "fhbohimaelbohpjbbldcngcnapndodjp" wide
 		$app8 = "fnjhmkhhmkbjkkabndcnnogagogbneec" wide
-		$app9 = "\\\\\\\\\\\Opera Software\\\\\\\\\\\Opera GX Stable" wide
+		$app9 = "\\\\\\\\\\\\\\Opera Software\\\\\\\\\\\\\\Opera GX Stable" wide
 
 	condition:
 		uint16( 0 ) == 0x5A4D and 7 of ( $str* ) and 8 of ( $app* )
@@ -129014,7 +129014,7 @@ rule SEKOIA_Apt_Cerana_Keeper_Yk0130 : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$pdb = "C:\\Users\\\\\\\\\\\admin\\source\\repos\\\\\\\\\\\YK0130" ascii fullword
+		$pdb = "C:\\Users\\\\\\\\\\\\\\admin\\source\\repos\\\\\\\\\\\\\\YK0130" ascii fullword
 
 	condition:
 		uint16be( 0 ) == 0x4d5a and all of them and filesize < 300KB
@@ -129430,7 +129430,7 @@ rule SEKOIA_Storm_1811_Files_Dat
 		$s6 = "Update completed" ascii fullword
 		$s7 = "Updates installed" ascii fullword
 		$s8 = "update_log.tgz uploaded ok" ascii fullword
-		$s9 = "HKCU\\SOFTWARE\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\Run" ascii fullword
+		$s9 = "HKCU\\SOFTWARE\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\\\Run" ascii fullword
 		$s10 = "runtimebroker_connect" ascii fullword
 
 	condition:
@@ -129485,14 +129485,14 @@ rule SEKOIA_Infostealer_Win_Irontiger_Chrome_Stealer : FILE
 		$ = "CryptUnprotectData: 0x%08x"
 		$ = "cookies.txt"
 		$ = "decrypt to %s"
-		$ = ".\\\\\\\\\\\\\\\\chromedb_tmp" wide ascii
+		$ = ".\\\\\\\\\\\\\\\\\\\\\\chromedb_tmp" wide ascii
 		$ = "SELECT ORIGIN_URL,USERNAME_VALUE,PASSWORD_VALUE FROM LOGINS;"
 		$ = "decrypt successful!"
 		$ = "url: %s"
 		$ = "user: %s"
 		$ = "pass: %s"
 		$ = "aes key:"
-		$ = "\\\\\\\\\\\\\\\\Google\\\\\\\\\\\\\\\\Chrome\\User Data\\Default\\\\\\\\\\\\\\\\Login Data" wide
+		$ = "\\\\\\\\\\\\\\\\\\\\\\Google\\\\\\\\\\\\\\\\\\\\\\Chrome\\User Data\\Default\\\\\\\\\\\\\\\\\\\\\\Login Data" wide
 		$ = "password file %s" wide
 		$ = "cookies file %s" wide
 		$ = "keyfile: %s" wide
@@ -129644,9 +129644,9 @@ rule SEKOIA_Malware_Remcom_Strings : FILE
 		$ = "RemComSvc"
 		$ = "RemCom_stderr"
 		$ = "RemCom_stdin"
-		$ = "\\\\.\\\\\\\\\\\pipe\\\\\\\\\\\%s%s%d"
+		$ = "\\\\.\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\%s%s%d"
 		$ = "RemCom_stdout"
-		$ = "\\\\.\\\\\\\\\\\pipe\\\\\\\\\\\RemCom_communicaton"
+		$ = "\\\\.\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\RemCom_communicaton"
 
 	condition:
 		uint16be( 0 ) == 0x4d5a and filesize < 1MB and 4 of them
@@ -129777,12 +129777,12 @@ rule SEKOIA_Hacktool_Win_Powertool : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$str0 = "C:\\dev\\\\\\\\\\\pt64_en\\\\\\\\\\\Release\\\\\\\\\\\PowerTool.pdb" ascii
+		$str0 = "C:\\dev\\\\\\\\\\\\\\pt64_en\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\PowerTool.pdb" ascii
 		$str1 = "Chage language nedd to restart PowerTool" ascii
 		$str2 = "(http://twitter.com/ithurricanept && https://www.linkedin.com/in/powertool)" wide
 		$str3 = "Infected=Before Fix, whether to back up the drive files will be fixed?" wide
 		$str4 = "Infected?-Are you sure to Fix the Infected Driver File?" wide
-		$str5 = "shellex\\\\\\\\\\\\\\\\ContextMenuHandlers\\\\\\\\\\\\\\\\PowerTool" wide
+		$str5 = "shellex\\\\\\\\\\\\\\\\\\\\\\ContextMenuHandlers\\\\\\\\\\\\\\\\\\\\\\PowerTool" wide
 		$str6 = "[PowerTool] name=%s, size=%d, %d" ascii
 
 	condition:
@@ -129817,7 +129817,7 @@ rule SEKOIA_Infostealer_Win_Vidar_Strings_Nov23 : FILE
 		$str08 = "%s\\*" ascii
 		$str09 = "Select * From AntiVirusProduct" ascii
 		$str10 = "SELECT target_path, tab_url from downloads" ascii
-		$str11 = "Software\\\\\\\\\\\\\\\\Martin Prikryl\\WinSCP 2\\\\\\\\\\\\\\\\Configuration" ascii
+		$str11 = "Software\\\\\\\\\\\\\\\\\\\\\\Martin Prikryl\\WinSCP 2\\\\\\\\\\\\\\\\\\\\\\Configuration" ascii
 		$str12 = "UseMasterPassword" ascii
 		$str13 = "Soft: WinSCP" ascii
 		$str14 = "<Pass encoding=\"base64\">" ascii
@@ -129874,7 +129874,7 @@ rule SEKOIA_Rat_Win_Remcos : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$str01 = "/k %windir%\\System32\\reg.exe ADD HKLM\\SOFTWARE\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\Policies\\System /v EnableLUA /t REG_DWORD /d 0 /f" ascii
+		$str01 = "/k %windir%\\System32\\reg.exe ADD HKLM\\SOFTWARE\\\\\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\\\\\\\Policies\\System /v EnableLUA /t REG_DWORD /d 0 /f" ascii
 		$str02 = "Disconnection occurred, retrying to connect..." ascii
 		$str03 = "[Following text has been pasted from clipboard:]" ascii
 		$str04 = "[Following text has been copied to clipboard:]" ascii
@@ -129908,7 +129908,7 @@ rule SEKOIA_Apt_Kimsuky_Sharpext_Compromised_Securepreferences
 
 	strings:
 		$ = "\"devtools\", \"tabs\", \"webNavigation\", \"webRequest\", \"webRequestBlocking\""
-		$ = "AppData\\\\\\\\\\\\\Roaming"
+		$ = "AppData\\\\\\\\\\\\\\\\Roaming"
 		$ = "https://*/*"
 
 	condition:
@@ -130087,7 +130087,7 @@ rule SEKOIA_Installer_Win_Minibus : FILE
 		hash2 = "90fa29cc98be1d715df26d22079bdb8ce1d1fd3ce6a4efb39a4c192134e01020"
 
 	strings:
-		$ = "\\\\\\\\\\\\\\\\essential.dat"
+		$ = "\\\\\\\\\\\\\\\\\\\\\\essential.dat"
 		$ = "TorvaldInitial.dll"
 
 	condition:
@@ -130221,8 +130221,8 @@ rule SEKOIA_Dropper_Win_Ninerat
 		hash2 = "f91188d23b14526676706a5c9ead05c1a91ea0b9d6ac902623bc565e1c200a59"
 
 	strings:
-		$ = "\\x64\\\\\\\\\\\\\\\\Release\\Dropper.pdb"
-		$ = "TelegramRat\\\\\\\\\\\\\\\\lastest\\Dropper"
+		$ = "\\x64\\\\\\\\\\\\\\\\\\\\\\Release\\Dropper.pdb"
+		$ = "TelegramRat\\\\\\\\\\\\\\\\\\\\\\lastest\\Dropper"
 
 	condition:
 		all of them or pe.imphash ( ) == "92b8e9dea06fd5719e29a510e95b92ac" or hash.md5 ( pe.rich_signature.clear_data ) == "ba1ea20fe779ef0b747e5073c0881a99" or for any i in ( 0 .. pe.number_of_sections -1 ) : ( hash.md5 ( pe.sections [ i ] . raw_data_offset , pe.sections [ i ] . raw_data_size ) == "c0471e0a78eef692b567cd89eeaddf08" or hash.md5 ( pe.sections [ i ] . raw_data_offset , pe.sections [ i ] . raw_data_size ) == "965dc8b7c98325ca3d3371ced8424823" ) or for any i in ( 0 .. pe.number_of_resources -1 ) : ( hash.sha256 ( pe.resources [ i ] . offset , pe.resources [ i ] . length ) == "bae1db350e313bf7bbd3b2178b20e6f6dd9b0331780099374edae5a99625bc5b" or hash.sha256 ( pe.resources [ i ] . offset , pe.resources [ i ] . length ) == "1abb447513b4435837029933e722b6ed92222291571a8ce0a306c9f6a335aa19" or hash.sha256 ( pe.resources [ i ] . offset , pe.resources [ i ] . length ) == "ffbcd5bbe6c02aa5c993886811d7597f020abd6665fc82af133c5756ab72fb0a" )
@@ -130531,8 +130531,8 @@ rule SEKOIA_Infostealer_Win_Eternity : FILE
 	strings:
 		$str0 = "Sending info to Eternity.." wide
 		$str1 = "Debug mode, dont share this stealer anywhere." wide
-		$str2 = "\\\\\\\\\\\Growtopia.exe" wide
-		$str3 = "Software\\\\\\\\\\\Growtopia" wide
+		$str2 = "\\\\\\\\\\\\\\Growtopia.exe" wide
+		$str3 = "Software\\\\\\\\\\\\\\Growtopia" wide
 		$str4 = "Corrupting Growtopia.." wide
 		$str5 = "Disabling Task Manager.." wide
 		$str6 = "Deleting previous file from startup and copying new one." wide
@@ -130814,7 +130814,7 @@ rule SEKOIA_Infostealer_Win_Xehook_Str : FILE
 		$str03 = "__  _____| |__   ___   ___ | | __" wide
 		$str04 = "\\ \\/ / _ \\ '_ \\ / _ \\ / _ \\| / /" wide
 		$str05 = " >  <  __/ | | | (_) | (_) |   <" wide
-		$str06 = "/_/\\\\\\_\\\\\\___|_| |_|\\\\\\___/ \\\\\\\\\\\\\\\___/_|\\\\\\_\\" wide
+		$str06 = "/_/\\\\\\_\\\\\\___|_| |_|\\\\\\___/ \\\\\\\\\\\\\\\\\\___/_|\\\\\\_\\" wide
 		$str07 = "https://t.me/xehook" wide
 		$str08 = "About PC.txt" wide
 		$str09 = "Browser: {4} v{5} ({6})" wide
@@ -131266,7 +131266,7 @@ rule SEKOIA_Rat_Win_Reverserat
 	strings:
 		$ = "SELECT maxclockspeed,  datawidth, name, manufacturer FROM Win32_Processor" wide
 		$ = "select * from Win32_PhysicalMemory" wide
-		$ = "SOFTWARE\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\Uninstall" wide
+		$ = "SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\Uninstall" wide
 
 	condition:
 		all of them
@@ -131486,10 +131486,10 @@ rule SEKOIA_Apt_Sandworm_Notpetya_Strings : FILE
 	strings:
 		$ = "wevtutil cl Security &" wide
 		$ = "wevtutil cl System &" wide
-		$ = "u%s \\\\\\\\\\\%s -accepteula -s" wide
-		$ = "\\\\\\\\\\\\\%ws\\\\\\\\\\\admin$\\\\\\\\\\\%ws" wide
-		$ = "\\\\\\\\\\\\\%s\\\\\\\\\\\admin$" wide
-		$ = "C:\\Windows\\System32\\rundll32.exe \"C:\\Windows\\\\\\\\\\\\%s\",#1" wide
+		$ = "u%s \\\\\\\\\\\\\\%s -accepteula -s" wide
+		$ = "\\\\\\\\\\\\\\\\%ws\\\\\\\\\\\\\\admin$\\\\\\\\\\\\\\%ws" wide
+		$ = "\\\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\admin$" wide
+		$ = "C:\\Windows\\System32\\rundll32.exe \"C:\\Windows\\\\\\\\\\\\\\\\\\%s\",#1" wide
 
 	condition:
 		uint16be( 0 ) == 0x4d5a and 3 of them
@@ -131540,7 +131540,7 @@ rule SEKOIA_Loader_Win_Bumblebee : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$str0 = "Z:\\\\\\\\\\\hooker2\\\\\\\\\\\Common\\\\\\\\\\\md5.cpp" wide
+		$str0 = "Z:\\\\\\\\\\\\\\hooker2\\\\\\\\\\\\\\Common\\\\\\\\\\\\\\md5.cpp" wide
 		$str1 = "3C29FEA2-6FE8-4BF9-B98A-0E3442115F67" wide
 		$str2 = "bumblebee" ascii
 
@@ -131725,7 +131725,7 @@ rule SEKOIA_Apt_Unc4990_Explorer_Ps1
 
 	strings:
 		$s0 = "$(get-location).Path"
-		$s1 = "+ \"\\\\\\\Runtime Broker.exe"
+		$s1 = "+ \"\\\\\\\\\\Runtime Broker.exe"
 		$s2 = "Start-Process -FilePath"
 		$s3 = "-Wait;"
 		$s4 = "Start-Sleep -s"
@@ -132127,7 +132127,7 @@ rule SEKOIA_Apt_Badmagic_Malicious_Lnk : FILE
 	strings:
 		$ = "/i http" wide
 		$ = ".msi /quiet" wide
-		$ = "%WINDIR%\\System32\\\\\\\\\\\msiexec.exe"
+		$ = "%WINDIR%\\System32\\\\\\\\\\\\\\msiexec.exe"
 
 	condition:
 		uint32be( 0 ) == 0x4c000000 and filesize < 1KB and all of them
@@ -132153,7 +132153,7 @@ rule SEKOIA_Tool_Masky_Strings : FILE
 	strings:
 		$s1 = "caa1aa2e-8a2a-4f98-bc51-b7cf10663fa9" ascii
 		$s2 = "Masky" ascii
-		$s3 = "\\Windows\\\\\\\\\\\\\\\\Temp\\" wide
+		$s3 = "\\Windows\\\\\\\\\\\\\\\\\\\\\\Temp\\" wide
 		$s4 = "Length must be non-negative" wide
 		$s5 = "CSP does not contain a private key" wide
 
@@ -132277,7 +132277,7 @@ rule SEKOIA_Implant_Mul_Alchimist : FILE
 		$str02 = "pm3/apps/Insekt/main.go" ascii
 		$str03 = "generate new insekt err" ascii
 		$str04 = "[SHELLCODE][filesize]:[scan]" ascii
-		$str05 = "\\Device\\\\\\\\\\\NamedPipe\\\\\\\\\\\cygwinbad" ascii
+		$str05 = "\\Device\\\\\\\\\\\\\\NamedPipe\\\\\\\\\\\\\\cygwinbad" ascii
 		$str06 = "pm3/utils.GetTmpDir" ascii
 		$str07 = "os/exec.Command" ascii
 
@@ -132359,7 +132359,7 @@ rule SEKOIA_Tool_Win_Sharpshares : FILE
 		$str03 = "get_AccessControlType" ascii
 		$str04 = "get_IdentityReference" ascii
 		$str05 = "get_PropertiesToLoad" ascii
-		$str06 = "SharpShares\\\\\\\\\\\\\\\\obj\\\\\\\\\\\\\\\\Release\\SharpShares.pdb" ascii
+		$str06 = "SharpShares\\\\\\\\\\\\\\\\\\\\\\obj\\\\\\\\\\\\\\\\\\\\\\Release\\SharpShares.pdb" ascii
 		$str07 = "/filter:SYSVOL,NETLOGON,IPC$,PRINT$" wide
 		$str08 = "/threads:50 /ldap:servers" wide
 		$str09 = "SharpShares.exe" ascii wide
@@ -132507,7 +132507,7 @@ rule SEKOIA_Infostealer_Win_Leaf : FILE
 		$str04 = "**[Click to copy](https://superfurrycdn.nl/copy/" ascii
 		$str05 = "Early_Verified_Bot_Developer" ascii
 		$str06 = "getCookie.<locals>.<genexpr>" ascii
-		$str07 = "C:\\\\\\\\\\\\\\\\Program Files (x86)\\Steam\\\\\\\\\\\\\\\\config" ascii
+		$str07 = "C:\\\\\\\\\\\\\\\\\\\\\\Program Files (x86)\\Steam\\\\\\\\\\\\\\\\\\\\\\config" ascii
 		$str08 = "[crunchyroll](https://crunchyroll.com)" ascii
 		$str09 = "-m pip install" ascii
 		$str10 = "taskkill /im " ascii
@@ -132576,7 +132576,7 @@ rule SEKOIA_Infostealer_Win_Bebra : FILE
 		$str06 = "\"flow\":\"REAUTH_FLOW_YT_STUDIO_COLD_LOAD\"," ascii
 		$str07 = "\"xguardClientStatus\":0" ascii
 		$str08 = "SAPISIDHASH" ascii
-		$str09 = "system32\\\\\\\\\\\\\\\\cmd.exe /C choice /C Y /N /D Y /T 0 &Del" ascii
+		$str09 = "system32\\\\\\\\\\\\\\\\\\\\\\cmd.exe /C choice /C Y /N /D Y /T 0 &Del" ascii
 		$str10 = "/new.php" ascii
 		$str11 = "github.com/mattn/go-sqlite3" ascii
 
@@ -132602,12 +132602,12 @@ rule SEKOIA_Clipper_Win_Cryptoclippy : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$str01 = "C:\\\\\\\\\\\mbedtls\\\\\\\\\\\library\\" ascii
+		$str01 = "C:\\\\\\\\\\\\\\mbedtls\\\\\\\\\\\\\\library\\" ascii
 		$str02 = "udp://8.8.8.8:53" ascii
 		$str03 = "Upgrade: websocket" ascii
-		$str04 = "%s\\\\\\\\\\\%s.lnk" ascii
-		$str05 = "%s\\\\\\\\\\\%s.ps1" ascii
-		$str06 = "%s\\\\\\\\\\\%s.bat" ascii
+		$str04 = "%s\\\\\\\\\\\\\\%s.lnk" ascii
+		$str05 = "%s\\\\\\\\\\\\\\%s.ps1" ascii
+		$str06 = "%s\\\\\\\\\\\\\\%s.bat" ascii
 		$str07 = "set PSExecutionPolicyPreference=Unrestricted" ascii
 		$str08 = "schtasks /delete /tn \"%ls\" /f" ascii
 		$str09 = "SetClipboardData" ascii
@@ -132641,7 +132641,7 @@ rule SEKOIA_Loader_Amadey_Clipper_Plugin : FILE
 		$str04 = "Main" ascii fullword
 		$str05 = "OpenClipboard" ascii
 		$str06 = "GetClipboardData" ascii
-		$str07 = "D:\\\\\\\\\\\Mktmp\\\\\\\\\\\Amadey\\\\\\\\\\\ClipperDLL\\\\\\\\\\\Release\\\\\\\\\\\CLIPPERDLL.pdb" ascii
+		$str07 = "D:\\\\\\\\\\\\\\Mktmp\\\\\\\\\\\\\\Amadey\\\\\\\\\\\\\\ClipperDLL\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\CLIPPERDLL.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5A4D and 5 of them
@@ -132966,7 +132966,7 @@ rule SEKOIA_Tool_Tokenplayer_Strings : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$ = "[*]Spawning Process as user: %s\\\\\\\\\\\%s" wide
+		$ = "[*]Spawning Process as user: %s\\\\\\\\\\\\\\%s" wide
 		$ = "[-]Target isn't vulnerable!"
 		$ = "[+]Process spawned!"
 		$ = "[+]Process Spawned"
@@ -133026,7 +133026,7 @@ rule SEKOIA_Apt_Susp_Apt28_Uac0063_Malicious_Doc : FILE
 
 	strings:
 		$ = "Sub pop() : : End Sub" ascii fullword
-		$ = "%localappdata%\\\\\\\\\\\Temp" ascii fullword
+		$ = "%localappdata%\\\\\\\\\\\\\\Temp" ascii fullword
 		$ = "rthedbv" ascii fullword
 
 	condition:
@@ -133167,7 +133167,7 @@ rule SEKOIA_Infostealer_Win_Solarmarker_Powershell : FILE
 		$ps0 = "return -join (0..(10..30|Get-Random)|%{[char]((65..90)+(97..122)|Get-Random)})" ascii
 		$ps1 = /new-item -path \$[a-zA-Z0-9_]* -itemtype registrykey -force;\//		$ps2 = /set-item -path \$[a-zA-Z0-9_]* -value \$[a-zA-Z0-9_]*;\//		$str0 = "[IO.File]::WriteAllText($" ascii
 		$str1 = "CreateShortcut($env:appdata+" ascii
-		$str2 = "Registry::HKEY_CURRENT_USER\\Software\\\\\\\\\\\Classes\\" ascii
+		$str2 = "Registry::HKEY_CURRENT_USER\\Software\\\\\\\\\\\\\\Classes\\" ascii
 		$str3 = "New-Object System.Security.Cryptography.AesCryptoServiceProvider" ascii
 		$str4 = "[Convert]::FromBase64String([IO.File]::ReadAllText(" ascii
 
@@ -133287,7 +133287,7 @@ rule SEKOIA_Apt_Lazarus_Gopuram_Backdoor : FILE
 		hash2 = "beb775af5196f30e0ee021790a4978ca7a7ac2a7cf970a5a620ffeb89cc60b2c"
 
 	strings:
-		$x1 = "%s\\\\\\\\\\\config\\\\\\\\\\\TxR\\\\\\\\\\\%s.TxR.0.regtrans-ms"
+		$x1 = "%s\\\\\\\\\\\\\\config\\\\\\\\\\\\\\TxR\\\\\\\\\\\\\\%s.TxR.0.regtrans-ms"
 		$xop = {D1 E8 33 C3 D1 EB A8 01 74 ?? 81 F3 25 A3 87 DE D1 E8 33 C3 D1 EB A8 01 74 ?? 81 F3 25 A3 87 DE D1 E8 33 C3 D1 EB A8 01 74 ?? 81 F3 25 A3 87 DE D1 E8 33 C3 D1 EB A8 01 74 ?? 81 F3 25 A3 87 DE}
 		$opa1 = {48 89 44 24 ?? 45 33 C9 45 33 C0 33 D2 89 5C 24 ?? 48 89 74 24 ?? 48 89 5C 24 ?? 89 7C 24 ?? FF 15 ?? ?? ?? ?? 85 C0 74 ?? 48 8B 4C 24 ?? 4C 8D 4C 24 ?? 44 8D 43 ??}
 		$opa2 = {48 89 B4 24 ?? ?? ?? ?? 44 8D 43 ?? 33 D2 48 89 BC 24 ?? ?? ?? ?? 4C 89 B4 24 ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B 4C 24 ?? E8 ?? ?? ?? ?? 48 8B 4C 24 ?? 45 33 C0 33 D2 8B F8 E8 ?? ?? ?? ?? 8D 4F ?? E8 ?? ?? ?? ?? 4C 8B 4C 24 ?? 44 8D 43 ?? 48 8B C8 8B D7 48 8B F0 44 8B F7 E8 ?? ?? ?? ?? 48 8B 4C 24 ?? E8 ?? ?? ??}
@@ -133315,7 +133315,7 @@ rule SEKOIA_Backdoor_Win_Feedload : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$s1 = "                                        C:\\\\\\\\\\\\\\\\LibreSS5\\\\\\\\\\\\\\\\crypto\\"
+		$s1 = "                                        C:\\\\\\\\\\\\\\\\\\\\\\LibreSS5\\\\\\\\\\\\\\\\\\\\\\crypto\\"
 
 	condition:
 		uint16be( 0 ) == 0x4d5a and #s1 > 200
@@ -133424,9 +133424,9 @@ rule SEKOIA_Tool_Paexec_Strings : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$ = "\\\\\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\\\PAExec_Move%u.dat" wide
+		$ = "\\\\\\\\\\\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\\\\\\\\\PAExec_Move%u.dat" wide
 		$ = "PAExec_Move%u.dat" wide
-		$ = "Usage: PAExec [\\\\\\\\\\\\\\\\\\computer[,computer2[,...]]" wide
+		$ = "Usage: PAExec [\\\\\\\\\\\\\\\\\\\\\\\\computer[,computer2[,...]]" wide
 		$ = "PAExec returning exit code %d" wide
 
 	condition:
@@ -133515,7 +133515,7 @@ rule SEKOIA_Dotnet_Injector_New_Payload : FILE
 		$f6 = "StringToByteArray" ascii
 		$s1 = "Admin" wide
 		$s2 = "User" wide
-		$p1 = "\\\\\\\\\\\\\\\\Microsoft\\Windows\\Start Menu\\\\\\\\\\\\\\\\Programs\\Startup\\" wide
+		$p1 = "\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\Start Menu\\\\\\\\\\\\\\\\\\\\\\Programs\\Startup\\" wide
 		$p2 = ".lnk" wide
 
 	condition:
@@ -133778,17 +133778,17 @@ rule SEKOIA_Infostealer_Win_Aurora_Str : FILE
 	strings:
 		$str01 = "Logs.tar" ascii
 		$str02 = "*main.StealerData" ascii
-		$str03 = "AppData\\\\\\\\\\\\\\\\Roaming\\\\\\\\\\\\\\\\Armory" ascii
-		$str04 = "AppData\\\\\\\\\\\\\\\\Local\\BraveSoftware\\Brave-Browser\\User Data" ascii
+		$str03 = "AppData\\\\\\\\\\\\\\\\\\\\\\Roaming\\\\\\\\\\\\\\\\\\\\\\Armory" ascii
+		$str04 = "AppData\\\\\\\\\\\\\\\\\\\\\\Local\\BraveSoftware\\Brave-Browser\\User Data" ascii
 		$str05 = "github.com/TheTitanrain/w32" ascii
 		$str06 = "github.com/mattn/go-sqlite3" ascii
 		$str07 = "ScreenShot" ascii
 		$str08 = "*sql.stmtConnGrabber" ascii
-		$str09 = "Default\\\\\\\\\\\\\\\\Network\\\\\\\\\\\\\\\\Cookies" ascii
+		$str09 = "Default\\\\\\\\\\\\\\\\\\\\\\Network\\\\\\\\\\\\\\\\\\\\\\Cookies" ascii
 		$str10 = "BuildID" ascii
 		$str11 = "Clipper" ascii
 		$str12 = "GeoPos" ascii
-		$str13 = "AppData\\\\\\\\\\\\\\\\Roaming\\\\\\\\\\\\\\\\Exodus\\\\\\\\\\\\\\\\exodus.wallet" ascii
+		$str13 = "AppData\\\\\\\\\\\\\\\\\\\\\\Roaming\\\\\\\\\\\\\\\\\\\\\\Exodus\\\\\\\\\\\\\\\\\\\\\\exodus.wallet" ascii
 		$str14 = "FileGrabber\\Documents" ascii
 		$str15 = "193.233.48." ascii
 		$str16 = "ShellExecute" ascii
@@ -133904,16 +133904,16 @@ rule SEKOIA_Infostealer_Win_Aurora : FILE
 		$str00 = "I'm a teapot" ascii
 		$str01 = "wmic cpu get name" ascii
 		$str02 = "wmic path win32_VideoController get" ascii
-		$str03 = "SOFTWARE\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Time Zones" ascii
-		$str04 = "Exodus\\\\\\\\\\\exodus.wallet" ascii
+		$str03 = "SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Time Zones" ascii
+		$str04 = "Exodus\\\\\\\\\\\\\\exodus.wallet" ascii
 		$str05 = "PaliWallet" ascii
 		$str06 = "cookies.sqlite" ascii
 		$str07 = "Startup\\Documents\\User Data" ascii
-		$str08 = "atomic\\\\\\\\\\\Local Storage\\\\\\\\\\\leveldb" ascii
-		$str09 = "com.liberty.jaxx\\\\\\\\\\\IndexedDB" ascii
-		$str10 = "Guarda\\\\\\\\\\\Local Storage\\\\\\\\\\\leveldb" ascii
-		$str11 = "AppData\\\\\\\\\\\Roaming\\\\\\\\\\\Telegram Desktop\\tdata" ascii
-		$str12 = "Ethereum\\\\\\\\\\\keystore" ascii
+		$str08 = "atomic\\\\\\\\\\\\\\Local Storage\\\\\\\\\\\\\\leveldb" ascii
+		$str09 = "com.liberty.jaxx\\\\\\\\\\\\\\IndexedDB" ascii
+		$str10 = "Guarda\\\\\\\\\\\\\\Local Storage\\\\\\\\\\\\\\leveldb" ascii
+		$str11 = "AppData\\\\\\\\\\\\\\Roaming\\\\\\\\\\\\\\Telegram Desktop\\tdata" ascii
+		$str12 = "Ethereum\\\\\\\\\\\\\\keystore" ascii
 		$str13 = "Coin98" ascii
 		$str14 = ".bat.cmd.com.css.exe.gif.htm.jpg.mjs.pdf.png.svg.xml.zip" ascii
 		$str15 = "type..eq.main.Grabber" ascii
@@ -133950,9 +133950,9 @@ rule SEKOIA_Backdoor_Win_Sponsor : FILE
 
 	strings:
 		$ = "Content-Type: application/x-www-form-urlencoded"
-		$ = "SYSTEM\\\\\\\\\\\CurrentControlSet\\\\\\\\\\\Control\\\\\\\\\\\TimeZoneInformation"
+		$ = "SYSTEM\\\\\\\\\\\\\\CurrentControlSet\\\\\\\\\\\\\\Control\\\\\\\\\\\\\\TimeZoneInformation"
 		$ = "\\Uninstall.bat"
-		$ = "\\\\\\\\\\\config.txt"
+		$ = "\\\\\\\\\\\\\\config.txt"
 		$ = "\\node.txt"
 
 	condition:
@@ -133978,14 +133978,14 @@ rule SEKOIA_Trojan_Win_Grandoreiro : FILE
 
 	strings:
 		$mut = "ZTP@11" wide
-		$reg01 = "Software\\\\\\\\\\\\\\\\Embarcadero\\\\\\\\\\\\\\\\Locales" wide
-		$reg02 = "Software\\\\\\\\\\\\\\\\CodeGear\\\\\\\\\\\\\\\\Locales" wide
-		$reg03 = "Software\\Borland\\\\\\\\\\\\\\\\Locales" wide
-		$reg04 = "Software\\Borland\\Delphi\\\\\\\\\\\\\\\\Locale" wide
-		$reg05 = "SOFTWARE\\\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\FontSubstitutes" wide
+		$reg01 = "Software\\\\\\\\\\\\\\\\\\\\\\Embarcadero\\\\\\\\\\\\\\\\\\\\\\Locales" wide
+		$reg02 = "Software\\\\\\\\\\\\\\\\\\\\\\CodeGear\\\\\\\\\\\\\\\\\\\\\\Locales" wide
+		$reg03 = "Software\\Borland\\\\\\\\\\\\\\\\\\\\\\Locales" wide
+		$reg04 = "Software\\Borland\\Delphi\\\\\\\\\\\\\\\\\\\\\\Locale" wide
+		$reg05 = "SOFTWARE\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows NT\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\\\FontSubstitutes" wide
 		$str01 = "SELECT * FROM AntiVirusProduct" wide
 		$str02 = "GetTickCount64" wide
-		$str03 = "C:\\\\\\\\\\\\\\\\Program Files (x86)\\\\\\\\\\\\\\\\Embarcadero\\Studio\\20.0\\\\\\\\\\\\\\\\lib\\\\\\\\\\\\\\\\Clever Internet Suite" wide
+		$str03 = "C:\\\\\\\\\\\\\\\\\\\\\\Program Files (x86)\\\\\\\\\\\\\\\\\\\\\\Embarcadero\\Studio\\20.0\\\\\\\\\\\\\\\\\\\\\\lib\\\\\\\\\\\\\\\\\\\\\\Clever Internet Suite" wide
 		$str04 = "{43826D1E-E718-42EE-BC55-A1E261C37BFE}" wide
 
 	condition:
@@ -134211,12 +134211,12 @@ rule SEKOIA_Infostealer_Win_Doenerium_Str : FILE
 		$str03 = "<================[WiFi connections]>================>" ascii
 		$str04 = "<================[Executable Info]>================>" ascii
 		$str05 = "<================[ Network Data ]>================>" ascii
-		$str06 = "\\\\\\\\\\\\\\\\Network Data.txt" ascii
+		$str06 = "\\\\\\\\\\\\\\\\\\\\\\Network Data.txt" ascii
 		$str07 = "\\Update.exe\" --processStart" ascii
 		$str09 = "\\WiFi Connections.txt" ascii
 		$str10 = "\\User Info.txt" ascii
-		$str11 = "\\\\\\\\\\\Executable Info.txt" ascii
-		$str12 = "\\\\\\\\\\\Found Wallets.txt" ascii
+		$str11 = "\\\\\\\\\\\\\\Executable Info.txt" ascii
+		$str12 = "\\\\\\\\\\\\\\Found Wallets.txt" ascii
 		$str13 = "SELECT origin_url, username_value, password_value FROM logins" ascii
 		$str14 = "https://cdn.discordapp.com/embed/avatars/0.png" ascii
 		$str15 = "detectClipboard" ascii
@@ -134467,20 +134467,20 @@ rule SEKOIA_Ransomware_Win_Chaos : FILE
 
 	strings:
 		$rep00 = "\\Desktop" wide
-		$rep01 = "\\\\\\\\\\\Links" wide
-		$rep02 = "\\\\\\\\\\\Contacts" wide
+		$rep01 = "\\\\\\\\\\\\\\Links" wide
+		$rep02 = "\\\\\\\\\\\\\\Contacts" wide
 		$rep03 = "\\Documents" wide
 		$rep04 = "\\Downloads" wide
-		$rep05 = "\\\\\\\\\\\Pictures" wide
-		$rep06 = "\\\\\\\\\\\Music" wide
-		$rep07 = "\\\\\\\\\\\OneDrive" wide
+		$rep05 = "\\\\\\\\\\\\\\Pictures" wide
+		$rep06 = "\\\\\\\\\\\\\\Music" wide
+		$rep07 = "\\\\\\\\\\\\\\OneDrive" wide
 		$rep08 = "\\Saved Games" wide
-		$rep09 = "\\\\\\\\\\\Favorites" wide
+		$rep09 = "\\\\\\\\\\\\\\Favorites" wide
 		$rep10 = "\\Searches" wide
-		$rep11 = "\\\\\\\\\\\Videos" wide
+		$rep11 = "\\\\\\\\\\\\\\Videos" wide
 		$rep12 = "C:\\Users\\" wide
 		$str0 = "svchost.exe" wide
-		$str1 = "\\\\\\\\\\\privateKey.chaos" wide
+		$str1 = "\\\\\\\\\\\\\\privateKey.chaos" wide
 		$str2 = "Chaos Ransomware" wide
 		$str3 = "read_it.txt" wide
 		$str4 = "<EncryptedKey>" wide
@@ -134644,8 +134644,8 @@ rule SEKOIA_Apt_Dark_Pink_Pdb_Path : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$s1 = "C:\\Users\\\\\\\\\\\hoang\\source\\repos\\\\\\\\\\\Cucky\\\\\\\\\\\Cucky\\\\\\\\\\\obj\\\\\\\\\\\Release\\net46\\\\\\\\\\\Cucky.pdb" wide ascii
-		$s2 = "C:\\Users\\build\\source\\repos\\\\\\\\\\\CtealWebCredential\\\\\\\\\\\Release\\\\\\\\\\\CtealWebCredential.pdb" wide ascii
+		$s1 = "C:\\Users\\\\\\\\\\\\\\hoang\\source\\repos\\\\\\\\\\\\\\Cucky\\\\\\\\\\\\\\Cucky\\\\\\\\\\\\\\obj\\\\\\\\\\\\\\Release\\net46\\\\\\\\\\\\\\Cucky.pdb" wide ascii
+		$s2 = "C:\\Users\\build\\source\\repos\\\\\\\\\\\\\\CtealWebCredential\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\CtealWebCredential.pdb" wide ascii
 
 	condition:
 		( uint32be( 0 ) == 0x7f454c46 or uint16be( 0 ) == 0x4d5a ) and filesize < 5MB and any of them
@@ -134682,11 +134682,11 @@ rule SEKOIA_Backdoor_Win_Volgmer : FILE
 		$ = "%.1fKB" wide
 		$ = "%.1fMB" wide
 		$ = "%s\\*.*" wide
-		$ = "%s\\\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\\\%s" wide
-		$ = "%s\\\\\\\\\\\\\\\\%s%s" wide
+		$ = "%s\\\\\\\\\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\\\\\\\\\%s" wide
+		$ = "%s\\\\\\\\\\\\\\\\\\\\\\%s%s" wide
 		$ = "Remote PC" wide
 		$ = "%s|%s|%s|%s|%s|%s|" wide
-		$ = "%s\\\\\\\\\\\\\\\\cmd.exe" wide
+		$ = "%s\\\\\\\\\\\\\\\\\\\\\\cmd.exe" wide
 
 	condition:
 		uint16be( 0 ) == 0x4d5a and all of them
@@ -134871,9 +134871,9 @@ rule SEKOIA_Infostealer_Win_Cinoshistealer : FILE
 		$str09 = "formhistory.sqlite" wide
 		$str10 = "logins.json" wide
 		$str11 = "\\nss3.dll" wide
-		$str12 = "\\\\\\\\\\\cookies.sqlite" wide
-		$str13 = "\\\\\\\\\\\places.sqlite" wide
-		$str14 = "\\\\\\\\\\\autofill-profiles.json" wide
+		$str12 = "\\\\\\\\\\\\\\cookies.sqlite" wide
+		$str13 = "\\\\\\\\\\\\\\places.sqlite" wide
+		$str14 = "\\\\\\\\\\\\\\autofill-profiles.json" wide
 
 	condition:
 		uint16( 0 ) == 0x5a4d and 9 of them and filesize > 400KB
@@ -135002,7 +135002,7 @@ rule SEKOIA_Loader_Win_Operationmagalenha_Vbs
 		$vbs02 = "Set obj" ascii nocase
 		$vbs03 = "Dim obj" ascii nocase
 		$vbs04 = "https://tinyurl.com" ascii nocase
-		$vbs05 = "C:\\Users\\\\\\\\\\\\\\\\Public" ascii nocase
+		$vbs05 = "C:\\Users\\\\\\\\\\\\\\\\\\\\\\Public" ascii nocase
 		$vbs06 = "CreateObject(\"WScript.Shell\")" ascii nocase
 		$vbs07 = ".SaveToFile" ascii nocase
 
@@ -135556,7 +135556,7 @@ rule SEKOIA_Ransomware_Win_Blackcat : FILE
 
 	strings:
 		$s1 = "desktop_image::set_desktop_wallpaper=" ascii
-		$s2 = "C:\\Users\\\\\\\\\\\Public\\\\\\\\\\\All Usersdeploy_note_and_image_for_all_users=" ascii
+		$s2 = "C:\\Users\\\\\\\\\\\\\\Public\\\\\\\\\\\\\\All Usersdeploy_note_and_image_for_all_users=" ascii
 		$s3 = "propagate::none" ascii
 		$s4 = "propagate::failed=" ascii
 		$s5 = "propagate::ok=" ascii
@@ -135682,7 +135682,7 @@ rule SEKOIA_Backdoor_Win_Minibus : FILE
 		$dll_150_1 = "TorvaldsPersist.dll"
 		$dll_150_2 = "FileCoAuth.exe"
 		$dll_50_1 = "TorvaldInitial.dll"
-		$dll_50_2 = "\\\\\\\\\\\essential.dat"
+		$dll_50_2 = "\\\\\\\\\\\\\\essential.dat"
 
 	condition:
 		( uint16( 0 ) == 0x5A4D and all of ( $dll_150_* ) or for any i in ( 0 .. pe.number_of_resources -1 ) : ( hash.sha256 ( pe.resources [ i ] . offset , pe.resources [ i ] . length ) == "2cf9797b1cfb5795d0fb892b7c371d506a5dd8b7c64fdc82975b3fde6d997df0" ) ) or ( uint16( 0 ) == 0x5A4D and all of ( $dll_50_* ) or for any i in ( 0 .. pe.number_of_resources -1 ) : ( hash.sha256 ( pe.resources [ i ] . offset , pe.resources [ i ] . length ) == "de3fb5d4419eb6b943872dd6e3dd93d19584ef2b158aa3158b3b09f0a9b628ef" ) )
@@ -136002,7 +136002,7 @@ rule SEKOIA_Tool_Dynamicwrapper_Strings : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$ = "Software\\\\\\\\\\\Classes\\DynamicWrapperX" ascii
+		$ = "Software\\\\\\\\\\\\\\Classes\\DynamicWrapperX" ascii
 		$ = "DllRegisterServer" ascii
 		$ = "GoLink, GoAsm" ascii
 
@@ -136108,7 +136108,7 @@ rule SEKOIA_Hacktool_Win_Gmer : FILE
 	strings:
 		$pac = "IDI_GMER" wide
 		$str0 = "---- Processes - GMER %s ----" ascii
-		$str1 = "E:\\\\\\\\\\\projects\\\\\\\\\\\cpp\\\\\\\\\\\gmer\\\\\\\\\\\Release\\\\\\\\\\\gmer.pdb" ascii
+		$str1 = "E:\\\\\\\\\\\\\\projects\\\\\\\\\\\\\\cpp\\\\\\\\\\\\\\gmer\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\gmer.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5A4D and ( ( $pac and for any i in ( 0 .. pe.number_of_sections -1 ) : ( pe.sections [ i ] . name == "UPX0" ) ) or any of ( $str* ) ) and filesize < 900KB
@@ -136817,10 +136817,10 @@ rule SEKOIA_Apt_Sugardump_Credentials_Stealer_Http : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$ = "\\\\\\\\\\\Google\\\\\\\\\\\Chrome\\User Data" wide
+		$ = "\\\\\\\\\\\\\\Google\\\\\\\\\\\\\\Chrome\\User Data" wide
 		$ = "\\DebugLogWindowsDefender.txt" wide
-		$ = "Opera Software\\\\\\\\\\\Opera Stable" wide
-		$ = "Microsoft\\\\\\\\\\\Edge\\User Data" wide
+		$ = "Opera Software\\\\\\\\\\\\\\Opera Stable" wide
+		$ = "Microsoft\\\\\\\\\\\\\\Edge\\User Data" wide
 		$ = "\"encrypted_key\":\"(.*?)\\" wide
 		$ = "Url:" wide
 		$ = "Username:" wide
@@ -136993,7 +136993,7 @@ rule SEKOIA_Loader_Win_Squirrelwaffle : FILE
 
 	strings:
 		$s1 = "AEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEEE" ascii
-		$s2 = "c:\\\\\\\\\\\equal\\\\\\\\\\\True\\bird_Select\\780\\true.pdb" ascii
+		$s2 = "c:\\\\\\\\\\\\\\equal\\\\\\\\\\\\\\True\\bird_Select\\780\\true.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5A4D and all of them
@@ -137110,12 +137110,12 @@ rule SEKOIA_Stealer_Win_Demotryspy : FILE
 
 	strings:
 		$demotry1 = "DemoTry.exe"
-		$demotry2 = "DemoTry\\\\\\\\\\\Release\\DemoTry.pdb"
-		$wide1 = "\\\\\\\\\\\loc.tmp" wide
-		$wide2 = "\\\\\\\\\\\log.tmp" wide
-		$wide3 = "\\\\\\\\\\\Google\\\\\\\\\\\Chrome\\User Data" wide
-		$wide4 = "\\Default\\\\\\\\\\\Login data" wide
-		$wide5 = "\\\\\\\\\\\Local State" wide
+		$demotry2 = "DemoTry\\\\\\\\\\\\\\Release\\DemoTry.pdb"
+		$wide1 = "\\\\\\\\\\\\\\loc.tmp" wide
+		$wide2 = "\\\\\\\\\\\\\\log.tmp" wide
+		$wide3 = "\\\\\\\\\\\\\\Google\\\\\\\\\\\\\\Chrome\\User Data" wide
+		$wide4 = "\\Default\\\\\\\\\\\\\\Login data" wide
+		$wide5 = "\\\\\\\\\\\\\\Local State" wide
 
 	condition:
 		uint16be( 0 ) == 0x4d5a and ( 1 of ( $demotry* ) or all of ( $wide* ) )
@@ -137150,7 +137150,7 @@ rule SEKOIA_Infostealer_Win_Enigma_Stealer_Module : FILE
 		$str06 = "--- ClipperBCH ---" wide
 		$str07 = "//setting[@name='Username']/value" wide
 		$str08 = "Stealer >> Failed recursive remove directory with passwords" wide
-		$str09 = "[a-zA-Z0-9]{24}\\.[a-zA-Z0-9]{6}\\.[a-zA-Z0-9_\\\\\\\\\\\-]{27}|mfa\\.[a-zA-Z0-9_\\\\\\\\\\\-]{84}" wide
+		$str09 = "[a-zA-Z0-9]{24}\\.[a-zA-Z0-9]{6}\\.[a-zA-Z0-9_\\\\\\\\\\\\\\-]{27}|mfa\\.[a-zA-Z0-9_\\\\\\\\\\\\\\-]{84}" wide
 		$str10 = "^(5018|5020|5038|6304|6759|6761|6763)[0-9]{8,15}$" wide
 
 	condition:
@@ -137387,7 +137387,7 @@ rule SEKOIA_Downloader_Win_Search : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$ = "C:\\Users\\\\\\\\\\\\\\\\pc\\source\\repos\\Search\\Search\\\\\\\\\\\\\\\\obj\\Debug\\Search.pdb"
+		$ = "C:\\Users\\\\\\\\\\\\\\\\\\\\\\pc\\source\\repos\\Search\\Search\\\\\\\\\\\\\\\\\\\\\\obj\\Debug\\Search.pdb"
 
 	condition:
 		uint16be( 0 ) == 0x4d5a and all of them
@@ -137448,7 +137448,7 @@ rule SEKOIA_Ransomware_Win_Avoslocker : FILE
 	strings:
 		$s1 = "cryptopp850\\rijndael_simd.cpp" ascii
 		$s2 = "cryptopp850\\sha_simd.cpp" ascii
-		$s3 = "cryptopp850\\\\\\\\\\\\\\\\gf2n_simd.cpp" ascii
+		$s3 = "cryptopp850\\\\\\\\\\\\\\\\\\\\\\gf2n_simd.cpp" ascii
 		$s4 = "cryptopp850\\sse_simd.cpp" ascii
 
 	condition:
@@ -137569,7 +137569,7 @@ rule SEKOIA_Implant_Win_Lyceum : FILE
 
 	strings:
 		$ = "$02c7afab-7f96-4dfa-b452-832e3624e270" ascii
-		$ = "C:\\Users\\u1\\Downloads\\\\\\\\\\\Compressed\\\\\\\\\\\article_src\\DnsDig\\DnsDig\\\\\\\\\\\obj\\\\\\\\\\\Release\\DnsDig.pdb" ascii
+		$ = "C:\\Users\\u1\\Downloads\\\\\\\\\\\\\\Compressed\\\\\\\\\\\\\\article_src\\DnsDig\\DnsDig\\\\\\\\\\\\\\obj\\\\\\\\\\\\\\Release\\DnsDig.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5A4D and 1 of them or for any i in ( 0 .. pe.number_of_sections -1 ) : ( hash.md5 ( pe.sections [ i ] . raw_data_offset , pe.sections [ i ] . raw_data_size ) == "d0e0c140e4831f835bcdcc6b463f3acc" ) or for any i in ( 0 .. pe.number_of_resources -1 ) : ( hash.sha256 ( pe.resources [ i ] . offset , pe.resources [ i ] . length ) == "22c92a1ba6ffd828637d7045261db7a45608ddd6d7c85836af011b3c679c725f" )
@@ -137621,7 +137621,7 @@ rule SEKOIA_Tool_Exploit_Badpotato_Strings : FILE
 		$ = "RpcBindingFromStringBinding failed with status 0x" wide
 		$ = "RpcBindingSetAuthInfoEx failed with status 0x" wide
 		$ = "RpcBindingSetOption failed with status 0x" wide
-		$ = "\\\\.\\\\\\\\\\\pipe\\{0}\\\\\\\\\\\pipe\\spoolss" wide
+		$ = "\\\\.\\\\\\\\\\\\\\pipe\\{0}\\\\\\\\\\\\\\pipe\\spoolss" wide
 		$ = "[*] {0} Success! ProcessPid:{1}" wide
 
 	condition:
@@ -137678,8 +137678,8 @@ rule SEKOIA_Tool_Win_Blackfly_Proxy_Config : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$ = "c:\\\\\\\\\\\ProgramData\\\\\\\\\\\l.dat"
-		$ = "C:\\\\\\\\\\\ProgramData\\b.dat"
+		$ = "c:\\\\\\\\\\\\\\ProgramData\\\\\\\\\\\\\\l.dat"
+		$ = "C:\\\\\\\\\\\\\\ProgramData\\b.dat"
 		$ = "winmm_DotNetfile.dll"
 
 	condition:
@@ -138750,7 +138750,7 @@ rule SEKOIA_Apt_Ir_Sugarush_Implant : FILE
 
 	strings:
 		$ = "You are offline at " wide
-		$ = "\\\\\\\\\\\Logs\\ServiceLog_" wide
+		$ = "\\\\\\\\\\\\\\Logs\\ServiceLog_" wide
 		$ = "Service is recall at" wide
 		$ = "add_OutputDataReceived" ascii
 		$ = "get_CurrentDomain" ascii
@@ -138865,7 +138865,7 @@ rule SEKOIA_Vpn_Mul_Softether
 		classification = "TLP:CLEAR"
 
 	strings:
-		$ = "SOFTWARE\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\Uninstall\\softether_se%s"
+		$ = "SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\Uninstall\\softether_se%s"
 		$ = "GET /vgc_download_dat/ HTTP/1.1"
 		$ = "http://x%c.x%c.client.api.vpngate2.jp/api/"
 		$ = "http://x0.x0.client.api.vpngate2.jp/check/check.txt"
@@ -138950,7 +138950,7 @@ rule SEKOIA_Builder_Win_Royalroad_Rtf : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$ = "{\\\\\\\\\\\\\\\\object\\\\\\\\\\\\\\\\objocx{\\\\\\\\\\\\\\\\objdata"
+		$ = "{\\\\\\\\\\\\\\\\\\\\\\object\\\\\\\\\\\\\\\\\\\\\\objocx{\\\\\\\\\\\\\\\\\\\\\\objdata"
 		$ = "ods0000"
 
 	condition:
@@ -139044,7 +139044,7 @@ rule SEKOIA_Infostealer_Win_Stealc_Str_Oct24 : FILE
 		$str08 = "url:" ascii
 		$str09 = "login:" ascii
 		$str10 = "password:" ascii
-		$str11 = "C:\\\\\\\\\\\Program Files\\\\\\\\\\\Google\\\\\\\\\\\Chrome\\\\\\\\\\\Application\\\\\\\\\\\chrome.exe" ascii
+		$str11 = "C:\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\Google\\\\\\\\\\\\\\Chrome\\\\\\\\\\\\\\Application\\\\\\\\\\\\\\chrome.exe" ascii
 		$str12 = "ChromeFuckNewCookies" ascii
 		$str13 = "/c timeout /t 10 & del /f /q \"" ascii
 
@@ -139073,15 +139073,15 @@ rule SEKOIA_Infostealer_Win_Vidar_Str_Jul22 : FILE
 	strings:
 		$str01 = "vcruntime140.dll" ascii
 		$str02 = "\\screenshot.jpg" ascii
-		$str03 = "HARDWARE\\DESCRIPTION\\System\\\\\\\\\\\CentralProcessor" ascii
-		$str04 = "SOFTWARE\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\Uninstall" ascii
-		$str05 = "%s\\\\\\\\\\\%s\\\\\\\\\\\%s\\\\\\\\\\\chrome-extension_%s_0.indexeddb.leveldb" ascii
-		$str06 = "\\\\\\\\\\\CC\\\\\\\\\\\%s_%s.txt" ascii
-		$str07 = "\\\\\\\\\\\Autofill\\\\\\\\\\\%s_%s.txt" ascii
-		$str08 = "\\\\\\\\\\\History\\\\\\\\\\\%s_%s.txt" ascii
-		$str09 = "\\Downloads\\\\\\\\\\\%s_%s.txt" ascii
+		$str03 = "HARDWARE\\DESCRIPTION\\System\\\\\\\\\\\\\\CentralProcessor" ascii
+		$str04 = "SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\Uninstall" ascii
+		$str05 = "%s\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\chrome-extension_%s_0.indexeddb.leveldb" ascii
+		$str06 = "\\\\\\\\\\\\\\CC\\\\\\\\\\\\\\%s_%s.txt" ascii
+		$str07 = "\\\\\\\\\\\\\\Autofill\\\\\\\\\\\\\\%s_%s.txt" ascii
+		$str08 = "\\\\\\\\\\\\\\History\\\\\\\\\\\\\\%s_%s.txt" ascii
+		$str09 = "\\Downloads\\\\\\\\\\\\\\%s_%s.txt" ascii
 		$str10 = "Content-Disposition: form-data; name=" ascii
-		$str11 = "Exodus\\\\\\\\\\\exodus.wallet" ascii
+		$str11 = "Exodus\\\\\\\\\\\\\\exodus.wallet" ascii
 		$str12 = "*%DRIVE_REMOVABLE%*" ascii
 		$opc = {55 8b ec 51 56 8b 75 ?? 33 c0 c7 46 14 ?? ?? ?? ?? 89 46 ?? 68 ?? ?? ?? ?? 8b ce 89 45 ?? 88 06 e8 1f b6 ff ff 8b c6 5e c9 c2 ?? ??}
 
@@ -139134,9 +139134,9 @@ rule SEKOIA_Infostealer_Win_Nosu : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$str0 = "C:\\xampp\\\\\\\\\\\htdocs\\nosu\\\\\\\\\\\core\\release\\\\\\\\\\\lilly.pdb" ascii
+		$str0 = "C:\\xampp\\\\\\\\\\\\\\htdocs\\nosu\\\\\\\\\\\\\\core\\release\\\\\\\\\\\\\\lilly.pdb" ascii
 		$str1 = "{\"gp\":\"%s\",\"app\":\"%S\"," ascii
-		$str2 = "stored in zip:\\\\\\\\\\\%s" wide
+		$str2 = "stored in zip:\\\\\\\\\\\\\\%s" wide
 
 	condition:
 		uint16( 0 ) == 0x5A4D and 1 of them and filesize < 1MB
@@ -139299,7 +139299,7 @@ rule SEKOIA_Trojan_Win_Bbtok_Iso_Sep23 : FILE
 	strings:
 		$iso = {43 44 30 30 31}
 		$str01 = "POWERISO" ascii
-		$str02 = "%ProgramFiles(x86)%\\\\\\\\\\\Microsoft\\\\\\\\\\\Edge\\\\\\\\\\\Application\\\\\\\\\\\msedge.exe" ascii wide
+		$str02 = "%ProgramFiles(x86)%\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\Edge\\\\\\\\\\\\\\Application\\\\\\\\\\\\\\msedge.exe" ascii wide
 		$str03 = ".pdf /Y & start" wide
 		$str04 = "\\\\\\MSBuild.exe -nologo \\\\" ascii wide
 
@@ -139328,7 +139328,7 @@ rule SEKOIA_Wiper_Win_Dnwipe : FILE
 	strings:
 		$ = "dnWIPE"
 		$ = "dnWIPE" wide
-		$ = "C:\\Users\\\\\\\\\\\Admin1\\source\\repos\\dnWIPE\\dnWIPE\\\\\\\\\\\obj\\Debug\\dnWIPE.pdb"
+		$ = "C:\\Users\\\\\\\\\\\\\\Admin1\\source\\repos\\dnWIPE\\dnWIPE\\\\\\\\\\\\\\obj\\Debug\\dnWIPE.pdb"
 
 	condition:
 		uint16( 0 ) == 0x5A4D and all of them and filesize < 50KB or for any i in ( 0 .. pe.number_of_resources -1 ) : ( hash.sha256 ( pe.resources [ i ] . offset , pe.resources [ i ] . length ) == "93290ef6447b0a16b92e50a1652ac3eb8f1237cc5f8005e080750fb58c19d230" )
@@ -139642,7 +139642,7 @@ rule SEKOIA_Infostealer_Win_Blackguard_Mar23 : FILE
 		$str02 = "/concerts/disk.php" wide
 		$str03 = "/concerts/memory.php" wide
 		$str04 = "/loader_v2.txt" wide
-		$str05 = "io.solarwallet.app\\\\\\\\\\\Local Storage\\\\\\\\\\\leveldb" wide
+		$str05 = "io.solarwallet.app\\\\\\\\\\\\\\Local Storage\\\\\\\\\\\\\\leveldb" wide
 		$str06 = "costura.dotnetzip.dll.compressed" ascii wide
 		$str07 = "set_Laskakakaska" ascii
 		$str08 = "get_Yliana" ascii
@@ -139943,12 +139943,12 @@ rule SEKOIA_Backdoor_Win_Ketrum2
 	strings:
 		$ = "powershell.exe" wide
 		$ = "cmd.exe" wide
-		$ = "%s\\\\\\\\\\\adult.sft" wide
-		$ = "%s\\\\\\\\\\\Notice" wide
-		$ = "%s\\\\\\\\\\\Message" wide
-		$ = "\\\\\\\\\\\Microsoft\\\\\\\\\\\Media Player" wide
-		$ = "Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Explorer\\Shell Folders" wide ascii
-		$ = "Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\Internet Settings" wide ascii
+		$ = "%s\\\\\\\\\\\\\\adult.sft" wide
+		$ = "%s\\\\\\\\\\\\\\Notice" wide
+		$ = "%s\\\\\\\\\\\\\\Message" wide
+		$ = "\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\Media Player" wide
+		$ = "Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Explorer\\Shell Folders" wide ascii
+		$ = "Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\Internet Settings" wide ascii
 
 	condition:
 		all of them and for any i in ( 0 .. pe.number_of_resources -1 ) : ( hash.sha256 ( pe.resources [ i ] . offset , pe.resources [ i ] . length ) == "49a60be4b95b6d30da355a0c124af82b35000bce8f24f957d1c09ead47544a1e" )
@@ -140577,9 +140577,9 @@ rule SEKOIA_Launcher_Win_Mistcloak : FILE
 
 	strings:
 		$ = "\\usb.ini"
-		$ = "autorun.inf\\\\\\\\\\\Protection for Autorun\\System Volume Information"
-		$ = "G:\\\\\\\\\\\project\\\\\\\\\\\APT\\U"
-		$ = "\\new\\u2ec\\\\\\\\\\\Release\\u2ec.pdb"
+		$ = "autorun.inf\\\\\\\\\\\\\\Protection for Autorun\\System Volume Information"
+		$ = "G:\\\\\\\\\\\\\\project\\\\\\\\\\\\\\APT\\U"
+		$ = "\\new\\u2ec\\\\\\\\\\\\\\Release\\u2ec.pdb"
 		$ = "CheckUsbService"
 
 	condition:
@@ -140703,7 +140703,7 @@ rule SEKOIA_Tool_Cheat_Engine : FILE
 		$s3 = "PsRemoveCreateThreadNotifyRoutine" wide
 		$s4 = "PsSuspendProcess" wide
 		$s5 = "PsResumeProcess" wide
-		$s6 = "\\device\\\\\\\\\\\physicalmemory" wide
+		$s6 = "\\device\\\\\\\\\\\\\\physicalmemory" wide
 		$log = "%sCPU%d.trace" wide
 		$ioctl_code = {04 E1 22 00}
 
@@ -140842,9 +140842,9 @@ rule SEKOIA_Apt_Sandworm_Olympicdestroyer : FILE
 
 	strings:
 		$ = "cmd.exe /c (ping 0.0.0.0 > nul)" wide
-		$ = "if exist %programdata%\\\\\\\\\\\evtchk.txt" wide
-		$ = "\\\\.\\\\\\\\\\\pipe\\\\\\\\\\\%ls" wide
-		$ = "%ProgramData%\\\\\\\\\\\%COMPUTERNAME%.exe" wide
+		$ = "if exist %programdata%\\\\\\\\\\\\\\evtchk.txt" wide
+		$ = "\\\\.\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\%ls" wide
+		$ = "%ProgramData%\\\\\\\\\\\\\\%COMPUTERNAME%.exe" wide
 		$ = "(exit 5) else ( type nul >" wide
 		$ = "Select * From Win32_ProcessStopTrace" nocase
 
@@ -140902,7 +140902,7 @@ rule SEKOIA_Apt_Gamaredon_Gammaload_Maliciouslnk : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$mshta = "System32\\\\\\\\\\\mshta.exe"
+		$mshta = "System32\\\\\\\\\\\\\\mshta.exe"
 		$trait = { 0D 0A ?? ?? ?? ?? ?? ?? ?? ?? ?? ?? 0D 0A }
 
 	condition:
@@ -140956,7 +140956,7 @@ rule SEKOIA_Infostealer_Win_Fwit_Strings : FILE
 		classification = "TLP:CLEAR"
 
 	strings:
-		$s1 = "C:\\\\\\\\\\\ProgramData\\\\\\\\\\\Temp" wide
+		$s1 = "C:\\\\\\\\\\\\\\ProgramData\\\\\\\\\\\\\\Temp" wide
 		$s2 = "{:08x}" wide
 		$s3 = "CURL_SSLVERSION" ascii
 
@@ -141021,14 +141021,14 @@ rule SEKOIA_Loader_Amadey_Stealer_Plugin : FILE
 		$str03 = "Content-Disposition: form-data; name=\"data\"; filename=\"" ascii
 		$str04 = "tar.exe -cf \"" ascii
 		$str05 = "SELECT origin_url, username_value, password_value FROM logins" ascii
-		$str06 = "\\\\\\\\\\\Google\\\\\\\\\\\Chrome\\User Data\\Default\\\\\\\\\\\Login Data" ascii
-		$str07 = "\\SputnikLab\\Sputnik\\User Data\\Default\\\\\\\\\\\Login Data" ascii
-		$str08 = "\\\\\\\\\\\Mozilla\\\\\\\\\\\Firefox\\\\\\\\\\\Profiles\\" ascii
+		$str06 = "\\\\\\\\\\\\\\Google\\\\\\\\\\\\\\Chrome\\User Data\\Default\\\\\\\\\\\\\\Login Data" ascii
+		$str07 = "\\SputnikLab\\Sputnik\\User Data\\Default\\\\\\\\\\\\\\Login Data" ascii
+		$str08 = "\\\\\\\\\\\\\\Mozilla\\\\\\\\\\\\\\Firefox\\\\\\\\\\\\\\Profiles\\" ascii
 		$str09 = "\"hostname\":\"([^\"]+)\"" ascii
 		$str10 = "\"encryptedUsername\":\"([^\"]+)\"" ascii
 		$str11 = "\"encryptedPassword\":\"([^\"]+)\"" ascii
 		$str12 = "&cred=" fullword ascii
-		$str13 = "D:\\\\\\\\\\\\\\\\Mktmp\\\\\\\\\\\\\\\\Amadey\\StealerDLL\\x64\\\\\\\\\\\\\\\\Release\\STEALERDLL.pdb" ascii
+		$str13 = "D:\\\\\\\\\\\\\\\\\\\\\\Mktmp\\\\\\\\\\\\\\\\\\\\\\Amadey\\StealerDLL\\x64\\\\\\\\\\\\\\\\\\\\\\Release\\STEALERDLL.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5A4D and 7 of them
@@ -141742,7 +141742,7 @@ rule SIGNATURE_BASE_MAL_XMR_Miner_May19_1 : HIGHVOL FILE
 		$x1 = "donate.ssl.xmrig.com" fullword ascii
 		$x2 = "* COMMANDS     'h' hashrate, 'p' pause, 'r' resume" fullword ascii
 		$s1 = "[%s] login error code: %d" fullword ascii
-		$s2 = "\\\\?\\\\\\\\\\\\\\\\pipe\\uv\\\\\\\\\\\\\\\\%p-%lu" fullword ascii
+		$s2 = "\\\\?\\\\\\\\\\\\\\\\\\\\\\pipe\\uv\\\\\\\\\\\\\\\\\\\\\\%p-%lu" fullword ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and filesize < 14000KB and ( pe.imphash ( ) == "25d9618d1e16608cd5d14d8ad6e1f98e" or 1 of ( $x* ) or 2 of them )
@@ -141786,7 +141786,7 @@ rule SIGNATURE_BASE_SUSP_PDB_CN_Threat_Actor_May19_1 : FILE
 		hash1 = "01c3882e8141a25abe37bb826ab115c52fd3d109c4a1b898c0c78cee8dac94b4"
 
 	strings:
-		$x1 = "C:\\Users\\\\\\\\\\\\\\\\zcg\\Desktop\\" ascii
+		$x1 = "C:\\Users\\\\\\\\\\\\\\\\\\\\\\zcg\\Desktop\\" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and filesize < 400KB and 1 of them
@@ -141883,8 +141883,8 @@ rule SIGNATURE_BASE_EXPL_Strings_CVE_POC_May19_1 : FILE
 		hash1 = "01c3882e8141a25abe37bb826ab115c52fd3d109c4a1b898c0c78cee8dac94b4"
 
 	strings:
-		$x1 = "\\Debug\\\\\\\\\\\\\\\\poc_cve_20" ascii
-		$x2 = "\\\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\\\poc_cve_20" ascii
+		$x1 = "\\Debug\\\\\\\\\\\\\\\\\\\\\\poc_cve_20" ascii
+		$x2 = "\\\\\\\\\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\\\\\\\\\poc_cve_20" ascii
 		$x3 = "alloc fake fail: %x!" fullword ascii
 		$x4 = "Allocate fake tagWnd fail!" fullword ascii
 
@@ -142040,7 +142040,7 @@ rule SIGNATURE_BASE_APT_Turlamosquito_MAL_Oct22_1 : FILE
 		$s1 = "Logger32.dll" ascii fullword
 		$s4 = " executing %u command on drive %martCommand : CWin32ApiErrorExce" wide
 		$s5 = "Unsupported drive!!!" ascii fullword
-		$s7 = "D:\\Build_SVN\\\\\\\\\\\PC_MAGICIAN_4." ascii fullword
+		$s7 = "D:\\Build_SVN\\\\\\\\\\\\\\PC_MAGICIAN_4." ascii fullword
 		$op1 = { 40 cc 8b 8b 06 cc 55 00 70 8b 10 10 33 51 04 46 04 64 }
 		$op2 = { c3 10 e8 50 04 00 cc ff 8d 00 69 8d 75 ff 68 ec 6a 4d }
 		$op3 = { e8 64 a1 6e 00 64 a1 c2 04 08 75 40 73 1d 8b ff cc 10 89 cc 8b c3 cc af }
@@ -142099,7 +142099,7 @@ rule SIGNATURE_BASE_Crime_Ole_Loadswf_Cve_2018_4878 : PURPORTED_NORTH_KOREAN_ACT
 	strings:
 		$header = "rdf:RDF" wide ascii
 		$title = "Adobe Flex" wide ascii
-		$pdb = "F:\\work\\\\\\\\\\\\\\\\flash\\\\\\\\\\\\\\\\obfuscation\\\\\\\\\\\\\\\\loadswf\\src" wide ascii
+		$pdb = "F:\\work\\\\\\\\\\\\\\\\\\\\\\flash\\\\\\\\\\\\\\\\\\\\\\obfuscation\\\\\\\\\\\\\\\\\\\\\\loadswf\\src" wide ascii
 		$s0 = "URLRequest" wide ascii
 		$s1 = "URLLoader" wide ascii
 		$s2 = "loadswf" wide ascii
@@ -142404,8 +142404,8 @@ rule SIGNATURE_BASE_APT_MAL_NK_3CX_ICONIC_Stealer_Mar23_1 : FILE
 	strings:
 		$s1 = "{\"HostName\": \"%s\", \"DomainName\": \"%s\", \"OsVersion\": \"%d.%d.%d\"}" wide fullword
 		$s2 = "******************************** %s ******************************" wide fullword
-		$s3 = "AppData\\\\\\\\\\\\\\\\Local\\BraveSoftware\\Brave-Browser\\User Data" wide fullword
-		$s4 = "AppData\\\\\\\\\\\\\\\\Roaming\\\\\\\\\\\\\\\\Mozilla\\\\\\\\\\\\\\\\Firefox\\\\\\\\\\\\\\\\Profiles" wide fullword
+		$s3 = "AppData\\\\\\\\\\\\\\\\\\\\\\Local\\BraveSoftware\\Brave-Browser\\User Data" wide fullword
+		$s4 = "AppData\\\\\\\\\\\\\\\\\\\\\\Roaming\\\\\\\\\\\\\\\\\\\\\\Mozilla\\\\\\\\\\\\\\\\\\\\\\Firefox\\\\\\\\\\\\\\\\\\\\\\Profiles" wide fullword
 		$s5 = "SELECT url, title FROM urls ORDER BY id DESC LIMIT 500" wide fullword
 		$s6 = "TEXT value in %s.%s" ascii fullword
 		$op1 = { 48 63 d1 48 63 ce 49 03 d1 49 03 cd 4c 63 c7 e8 87 1f 09 00 8b 45 d0 44 8d 04 37 }
@@ -142486,7 +142486,7 @@ rule SIGNATURE_BASE_APT_MAL_VEILEDSIGNAL_Backdoor_Apr23_2
 		tags = ""
 
 	strings:
-		$sa1 = "\\.\\\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\\\gecko.nativeMessaging" ascii
+		$sa1 = "\\.\\\\\\\\\\\\\\\\\\\\\\pipe\\\\\\\\\\\\\\\\\\\\\\gecko.nativeMessaging" ascii
 		$sa2 = "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/95.0.4638.54 Safari/537.36 Edg/95.0.1020.40" ascii
 		$sa3 = "application/json, text/javascript, */*; q=0.01" ascii
 		$op1 = { 89 7? 24 ?? 44 8B CD 4C 8B C? 48 89 44 24 ?? 33 D2 33 C9 FF 15}
@@ -142884,9 +142884,9 @@ rule SIGNATURE_BASE_APT_EXPL_Sharepoint_CVE_2025_53770_Forensicartefact_Jul25_2 
 
 	strings:
 		$x1 = "-EncodedCommand JABiAGEAcwBlADYANABTAHQAcgBpAG4AZwAgAD0" ascii wide
-		$x2 = "TEMPLATE\\\\\\\\\\\\\\\\LAYOUTS\\spinstall" ascii wide
-		$x3 = "TEMPLATE\\\\\\\\\\\\\\\\LAYOUTS\\\\\\\\\\\\\\\\ghostfile" ascii wide
-		$x4 = "TEMPLATE\\\\\\\\\\\\\\\\LAYOUTS\\1.css" ascii wide
+		$x2 = "TEMPLATE\\\\\\\\\\\\\\\\\\\\\\LAYOUTS\\spinstall" ascii wide
+		$x3 = "TEMPLATE\\\\\\\\\\\\\\\\\\\\\\LAYOUTS\\\\\\\\\\\\\\\\\\\\\\ghostfile" ascii wide
+		$x4 = "TEMPLATE\\\\\\\\\\\\\\\\\\\\\\LAYOUTS\\1.css" ascii wide
 		$x5 = "Mozilla/5.0+(Windows+NT+10.0;+Win64;+x64;+rv:120.0)+Gecko/20100101+Firefox/120.0 /_layouts/SignOut.aspx" ascii wide
 		$xe1 = "TQBJAEMAUgBPAFMAfgAxAFwAVwBFAEIAUwBFAFIAfgAxAFwAMQA2AFwAVABFAE0AUABMAEEAVABFAFwATABBAFkATwBVAFQAUwBcA"
 		$xe2 = "0ASQBDAFIATwBTAH4AMQBcAFcARQBCAFMARQBSAH4AMQBcADEANgBcAFQARQBNAFAATABBAFQARQBcAEwAQQBZAE8AVQBUAFMAXA"
@@ -143723,7 +143723,7 @@ rule SIGNATURE_BASE_APT_NK_Lazarus_Network_Backdoor_Unpacked : FILE
 		$str_netsh_2 = "netsh firewall delete portopening TCP %d" ascii wide nocase
 		$str_mask_1 = "cmd.exe /c \"%s >> %s 2>&1\"" ascii wide
 		$str_mask_2 = "cmd.exe /c \"%s 2>> %s\"" ascii wide
-		$str_mask_3 = "%s\\\\\\\\\\\%s\\\\\\\\\\\%s" ascii wide
+		$str_mask_3 = "%s\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\%s" ascii wide
 		$str_other_1 = "perflog.dat" ascii wide nocase
 		$str_other_2 = "perflog.evt" ascii wide nocase
 		$str_other_3 = "cbstc.log" ascii wide nocase
@@ -143839,7 +143839,7 @@ rule SIGNATURE_BASE_APT_Winnti_MAL_Dec19_2
 		$a4 = "NDIS.SYS" ascii fullword
 		$a5 = "ntoskrnl.exe" ascii fullword
 		$a6 = "\\BaseNamedObjects\\{B2B87CCA-66BC-4C24-89B2-C23C9EAC2A66}" wide
-		$a7 = "\\Device\\\\\\\\\\\Null" wide
+		$a7 = "\\Device\\\\\\\\\\\\\\Null" wide
 		$a8 = "\\Device" wide
 		$a9 = "\\Driver" wide
 		$b1 = { 66 81 7? ?? 70 17 }
@@ -144417,7 +144417,7 @@ rule SIGNATURE_BASE_APT_MAL_Revil_Kaseya_Jul21_1 : FILE
 
 	strings:
 		$s1 = "Mpsvc.dll" wide fullword
-		$s2 = ":0:4:8:<:@:D:H:L:P:T:X:\\\\\\\\\\\:`:d:h:l:p:t:x:H<L<P<\\\\\\\\\\\<`<" ascii fullword
+		$s2 = ":0:4:8:<:@:D:H:L:P:T:X:\\\\\\\\\\\\\\:`:d:h:l:p:t:x:H<L<P<\\\\\\\\\\\\\\<`<" ascii fullword
 		$op1 = { 40 87 01 c3 6a 08 68 f8 0e 41 00 e8 ae db ff ff be 80 25 41 00 39 35 ?? 32 41 00 }
 		$op2 = { 8b 40 04 2b c2 c1 f8 02 3b c8 0f 84 56 ff ff ff 68 15 50 40 00 2b c1 6a 04 }
 		$op3 = { 74 73 db e2 e8 ad 07 00 00 68 60 1a 40 00 e8 8f 04 00 00 e8 3a 05 00 00 50 e8 25 26 00 00 }
@@ -145066,10 +145066,10 @@ rule SIGNATURE_BASE_MAL_ME_Rawdisk_Agent_Jan20_2 : FILE
 	strings:
 		$x1 = "\\\\\\Release\\Dustman.pdb" ascii
 		$x2 = "/c agent.exe A" fullword ascii
-		$s1 = "C:\\windows\\system32\\\\\\\\\\\cmd.exe" fullword ascii
+		$s1 = "C:\\windows\\system32\\\\\\\\\\\\\\cmd.exe" fullword ascii
 		$s2 = "The Magic Word!" fullword ascii
-		$s3 = "Software\\\\\\\\\\\Oracle\\\\\\\\\\\VirtualBox" fullword wide
-		$s4 = "\\\\\\\\\\\assistant.sys" wide
+		$s3 = "Software\\\\\\\\\\\\\\Oracle\\\\\\\\\\\\\\VirtualBox" fullword wide
+		$s4 = "\\\\\\\\\\\\\\assistant.sys" wide
 		$s5 = "Down With Bin Salman" fullword wide
 		$sc1 = { 00 5C 00 5C 00 2E 00 5C 00 25 00 73 }
 		$op1 = { 49 81 c6 ff ff ff 7f 4c 89 b4 24 98 }
@@ -145164,7 +145164,7 @@ rule SIGNATURE_BASE_EXPL_LOG_Commvault_CVE_2025_57791_Indicator_Shell_Drop_Aug25
 		tags = ""
 
 	strings:
-		$xr1 = /Results written to \[[C-Z]:\\\\\\\\\\\Program Files\\\\\\\\\\\Commvault\\\\\\\\\\\ContentStore\\\\\\\\\\\Apache\\webapps\\\\\\\\\\\ROOT\\[^\\]{1,20}\.jsp\]\/\//	condition:
+		$xr1 = /Results written to \[[C-Z]:\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\Commvault\\\\\\\\\\\\\\ContentStore\\\\\\\\\\\\\\Apache\\webapps\\\\\\\\\\\\\\ROOT\\[^\\]{1,20}\.jsp\]\/\//	condition:
 		$xr1
 }
 rule SIGNATURE_BASE_MAL_Github_Repo_Compromise_Myjino_Ru_Aug22
@@ -145327,7 +145327,7 @@ rule SIGNATURE_BASE_MAL_WIPER_Isaacwiper_Mar22_1 : FILE
 		hash2 = "7bcd4ec18fc4a56db30e0aaebd44e2988f98f7b5d8c14f6689f650b4f11e16c0"
 
 	strings:
-		$s1 = "C:\\\\\\\\\\\\\\\\ProgramData\\\\\\\\\\\\\\\\log.txt" wide fullword
+		$s1 = "C:\\\\\\\\\\\\\\\\\\\\\\ProgramData\\\\\\\\\\\\\\\\\\\\\\log.txt" wide fullword
 		$s2 = "Cleaner.dll" ascii fullword
 		$s3 = "-- system logical drive: " wide fullword
 		$s4 = "-- FAILED" wide fullword
@@ -145430,8 +145430,8 @@ rule SIGNATURE_BASE_Hvs_APT27_Hyperbro_Stage3_Persistence
 		hash1 = "624e85bd669b97bc55ed5c5ea5f6082a1d4900d235a5d2e2a5683a04e36213e8"
 
 	strings:
-		$ = "SOFTWARE\\WOW6432Node\\\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\\\config_" ascii
-		$ = "SOFTWARE\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\Run\\windefenders" ascii
+		$ = "SOFTWARE\\WOW6432Node\\\\\\\\\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\\\\\\\\\config_" ascii
+		$ = "SOFTWARE\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\\\\\\\\\Run\\windefenders" ascii
 
 	condition:
 		1 of them
@@ -145907,12 +145907,12 @@ rule SIGNATURE_BASE_SUSP_PDB_Path_Keywords : FILE
 		$ = "\\ShellcodeLauncher" ascii
 		$ = "\\ShellCodeLauncher" ascii
 		$ = "Fucker.pdb" ascii
-		$ = "\\\\\\\\\\\AVFucker\\" ascii
+		$ = "\\\\\\\\\\\\\\AVFucker\\" ascii
 		$ = "ratTest.pdb" ascii
-		$ = "Debug\\\\\\\\\\\CVE_" ascii
-		$ = "Release\\\\\\\\\\\CVE_" ascii
-		$ = "Debug\\\\\\\\\\\cve_" ascii
-		$ = "Release\\\\\\\\\\\cve_" ascii
+		$ = "Debug\\\\\\\\\\\\\\CVE_" ascii
+		$ = "Release\\\\\\\\\\\\\\CVE_" ascii
+		$ = "Debug\\\\\\\\\\\\\\cve_" ascii
+		$ = "Release\\\\\\\\\\\\\\cve_" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and 1 of them
@@ -145936,7 +145936,7 @@ rule SIGNATURE_BASE_SUSP_Disable_ETW_Jun20_1
 	strings:
 		$x1 = "set COMPlus_ETWEnabled=0" ascii wide fullword
 		$x2 = "$env:COMPlus_ETWEnabled=0" ascii wide fullword
-		$s1 = "Software\\\\\\\\\\\\\\\\Microsoft.NETFramework" ascii wide
+		$s1 = "Software\\\\\\\\\\\\\\\\\\\\\\Microsoft.NETFramework" ascii wide
 		$sa1 = "/v ETWEnabled" ascii wide fullword
 		$sa2 = " /d 0" ascii wide
 		$sb4 = "-Name ETWEnabled"
@@ -146678,7 +146678,7 @@ rule SIGNATURE_BASE_SUSP_Nullsoftinst_Combo_Oct20_1 : FILE
 		$b2 = "Apache Software Foundation" ascii wide fullword
 		$b3 = "Simon Tatham" wide fullword
 		$fp1 = "nsisinstall" fullword ascii
-		$fp2 = "\\\\\\\\\\\REGISTRY\\\\\\\\\\\MACHINE\\Software\\" wide
+		$fp2 = "\\\\\\\\\\\\\\REGISTRY\\\\\\\\\\\\\\MACHINE\\Software\\" wide
 		$fp3 = "Apache Tomcat" wide fullword
 		$fp4 = "Bot Framework Emulator" wide fullword
 		$fp5 = "Firefox Helper" wide fullword
@@ -147238,7 +147238,7 @@ rule SIGNATURE_BASE_APT_MAL_BKA_Goldenspy_Aug20_1 : FILE
 		$str01 = {c78510ffffff00000000 c78514ffffff0f000000 c68500ffffff00 c78528ffffff00000000 c7852cffffff0f000000 c68518ffffff00 c78540ffffff00000000 c78544ffffff0f000000 c68530ffffff00 c645fc14 80bd04feffff00}
 		$str02 = "Ryeol HTTP Client Class" ascii
 		$str03 = "----RYEOL-FB3B405B7EAE495aB0C0295C54D4E096-" ascii
-		$str04 = "SOFTWARE\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\CurrentVersion\\\\\\\\\\\App Paths\\\\\\\\\\\fwkp.exe" ascii
+		$str04 = "SOFTWARE\\\\\\\\\\\\\\Microsoft\\Windows\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\App Paths\\\\\\\\\\\\\\fwkp.exe" ascii
 		$str05 = "svmm" ascii
 		$str06 = "PROTOCOL_" ascii
 		$str07 = "softList" ascii
@@ -147370,7 +147370,7 @@ rule SIGNATURE_BASE_APT_MAL_Gopuram_Backdoor_Apr23 : FILE
 		hash2 = "97b95b4a5461f950e712b82783930cb2a152ec0288c00a977983ca7788342df7"
 
 	strings:
-		$x1 = "%s\\\\\\\\\\\config\\\\\\\\\\\TxR\\\\\\\\\\\%s.TxR.0.regtrans-m" ascii
+		$x1 = "%s\\\\\\\\\\\\\\config\\\\\\\\\\\\\\TxR\\\\\\\\\\\\\\%s.TxR.0.regtrans-m" ascii
 		$xop = { D1 E8 33 C3 D1 EB A8 01 74 ?? 81 F3 25 A3 87 DE D1 E8 33 C3 D1 EB A8 01 74 ?? 81 F3 25 A3 87 DE D1 E8 33 C3 D1 EB A8 01 74 ?? 81 F3 25 A3 87 DE D1 E8 33 C3 D1 EB A8 01 74 ?? 81 F3 25 A3 87 DE }
 		$opa1 = { 48 89 44 24 ?? 45 33 C9 45 33 C0 33 D2 89 5C 24 ?? 48 89 74 24 ?? 48 89 5C 24 ?? 89 7C 24 ?? FF 15 ?? ?? ?? ?? 85 C0 74 ?? 48 8B 4C 24 ?? 4C 8D 4C 24 ?? 44 8D 43 }
 		$opa2 = { 48 89 B4 24 ?? ?? ?? ?? 44 8D 43 ?? 33 D2 48 89 BC 24 ?? ?? ?? ?? 4C 89 B4 24 ?? ?? ?? ?? E8 ?? ?? ?? ?? 48 8B 4C 24 ?? E8 ?? ?? ?? ?? 48 8B 4C 24 ?? 45 33 C0 33 D2 8B F8 E8 ?? ?? ?? ?? 8D 4F ?? E8 ?? ?? ?? ?? 4C 8B 4C 24 ?? 44 8D 43 ?? 48 8B C8 8B D7 48 8B F0 44 8B F7 E8 ?? ?? ?? ?? 48 8B 4C 24 ?? E8  }
@@ -148251,7 +148251,7 @@ rule SIGNATURE_BASE_HKTL_Redmimicry_Agent
 		$reg1 = "HKEY_LOCAL_MACHINE\\" ascii
 		$reg2 = "HKEY_CURRENT_CONFIG\\" ascii
 		$reg3 = "HKEY_CLASSES_ROOT\\" ascii
-		$cmd0 = "C:\\Windows\\System32\\\\\\\\\\\cmd.exe" ascii fullword
+		$cmd0 = "C:\\Windows\\System32\\\\\\\\\\\\\\cmd.exe" ascii fullword
 		$lua0 = "client_recv" ascii fullword
 		$lua1 = "client_send" ascii fullword
 		$lua2 = "$LuaVersion: " ascii
@@ -148589,7 +148589,7 @@ rule SIGNATURE_BASE_MAL_Katz_Stealer_May25 : FILE
 		$s3 = "reg export \"%s\" \"%s\" /y" ascii
 		$s4 = ").request({ hostname: '" ascii
 		$s5 = "Type: Removable"
-		$s6 = "%s\\\\\\\\\\\Microsoft\\Windows Live Mail" ascii
+		$s6 = "%s\\\\\\\\\\\\\\Microsoft\\Windows Live Mail" ascii
 
 	condition:
 		uint16( 0 ) == 0x5a4d and filesize < 300KB and 4 of them
@@ -148745,7 +148745,7 @@ rule SIGNATURE_BASE_APT_SAP_Netweaver_Exploitation_Activity_Apr25_2 : SCRIPT CVE
 		tags = "SCRIPT, CVE-2025-31324, FILE"
 
 	strings:
-		$x03 = "MSBuild.exe c:\\\\\\\\\\\programdata\\" ascii wide
+		$x03 = "MSBuild.exe c:\\\\\\\\\\\\\\programdata\\" ascii wide
 
 	condition:
 		filesize < 20MB and 1 of them
@@ -148806,7 +148806,7 @@ rule SIGNATURE_BASE_MAL_CRIME_RANSOM_Dearcry_Mar21_1 : FILE
 		$s1 = "dear!!!" ascii fullword
 		$s2 = "EncryptFile.exe.pdb" ascii fullword
 		$s3 = "/readme.txt" ascii fullword
-		$s4 = "C:\\Users\\\\\\\\\\\john\\" ascii
+		$s4 = "C:\\Users\\\\\\\\\\\\\\john\\" ascii
 		$s5 = "And please send me the following hash!" ascii fullword
 		$op1 = { 68 e0 30 52 00 6a 41 68 a5 00 00 00 6a 22 e8 81 d0 f8 ff 83 c4 14 33 c0 5e }
 		$op2 = { 68 78 6a 50 00 6a 65 6a 74 6a 10 e8 d9 20 fd ff 83 c4 14 33 c0 5e }
@@ -148836,7 +148836,7 @@ rule SIGNATURE_BASE_SUSP_Fake_AMSI_DLL_Jun23_1 : FILE
 		$a1 = "Microsoft.Antimalware.Scan.Interface" ascii
 		$a2 = "Amsi.pdb" ascii fullword
 		$a3 = "api-ms-win-core-sysinfo-" ascii
-		$a4 = "Software\\\\\\\\\\\Microsoft\\\\\\\\\\\AMSI\\\\\\\\\\\Providers" wide
+		$a4 = "Software\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\AMSI\\\\\\\\\\\\\\Providers" wide
 		$a5 = "AmsiAntimalware@" ascii
 		$a6 = "AMSI UAC Scan" ascii
 		$fp1 = "Wine builtin DLL"
@@ -148932,18 +148932,18 @@ rule SIGNATURE_BASE_APT_UA_Hermetic_Wiper_Artefacts_Feb22_1
 		tags = ""
 
 	strings:
-		$sx1 = "/c powershell -c \"rundll32 C:\\windows\\system32\\\\\\\\\\\\comsvcs.dll MiniDump" ascii wide
-		$sx2 = "appdata\\\\\\\\\\\\\\\\local\\\\\\\\\\\\\\\\microsoft\\windows\\winupd.log" ascii wide
-		$sx3 = "AppData\\\\\\\\\\\\\\\\Local\\\\\\\\\\\\\\\\Microsoft\\Windows\\Winupd.log" ascii wide
+		$sx1 = "/c powershell -c \"rundll32 C:\\windows\\system32\\\\\\\\\\\\\\\\\\comsvcs.dll MiniDump" ascii wide
+		$sx2 = "appdata\\\\\\\\\\\\\\\\\\\\\\local\\\\\\\\\\\\\\\\\\\\\\microsoft\\windows\\winupd.log" ascii wide
+		$sx3 = "AppData\\\\\\\\\\\\\\\\\\\\\\Local\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows\\Winupd.log" ascii wide
 		$sx4 = "CSIDL_SYSTEM_DRIVE\\temp\\sys.tmp1" ascii wide
-		$sx5 = "\\\\\\\\\\\\\\\\policydefinitions\\\\\\\\\\\\\\\\postgresql.exe" ascii wide
+		$sx5 = "\\\\\\\\\\\\\\\\\\\\\\policydefinitions\\\\\\\\\\\\\\\\\\\\\\postgresql.exe" ascii wide
 		$sx6 = "powershell -v 2 -exec bypass -File text.ps1" ascii wide
 		$sx7 = "powershell -exec bypass gp.ps1" ascii wide
 		$sx8 = "powershell -exec bypass -File link.ps1" ascii wide
-		$sx9 = " 1> \\\\127.0.0.1\\\\\\\\\\\\\\\\ADMIN$\\\\\\\\\\\\\\\\__16" ascii wide
+		$sx9 = " 1> \\\\127.0.0.1\\\\\\\\\\\\\\\\\\\\\\ADMIN$\\\\\\\\\\\\\\\\\\\\\\__16" ascii wide
 		$sa1 = "(New-Object System.Net.WebClient).DownloadFile(" ascii wide
 		$sa2 = "CSIDL_SYSTEM_DRIVE\\temp\\" ascii wide
-		$sa3 = "1> \\\\127.0.0.1\\\\\\\\\\\\\\\\ADMIN$" ascii wide
+		$sa3 = "1> \\\\127.0.0.1\\\\\\\\\\\\\\\\\\\\\\ADMIN$" ascii wide
 		$fp1 = "<html" ascii
 
 	condition:
@@ -148968,7 +148968,7 @@ rule SIGNATURE_BASE_APT_UA_Hermetic_Wiper_Scheduled_Task_Feb22_1
 	strings:
 		$a0 = "<Task version=" ascii wide
 		$sa1 = "CSIDL_SYSTEM_DRIVE\\temp" ascii wide
-		$sa2 = "postgresql.exe 1> \\\\127.0.0.1\\\\\\\\\\\\\\\\ADMIN$" ascii wide
+		$sa2 = "postgresql.exe 1> \\\\127.0.0.1\\\\\\\\\\\\\\\\\\\\\\ADMIN$" ascii wide
 		$sa3 = "cmd.exe /Q /c move CSIDL_SYSTEM_DRIVE" ascii wide
 
 	condition:
@@ -149901,7 +149901,7 @@ rule SIGNATURE_BASE_SUSP_ENV_Folder_Root_File_Jan23_1 : SCRIPT FILE
 		tags = "SCRIPT, FILE"
 
 	strings:
-		$xr1 = /%([Aa]pp[Dd]ata|APPDATA)%\\[A-Za-z0-9_\\\\\\\\\\-]{1,20}\.[a-zA-Z0-9]{1,4}[^\\]\/ wid\/ asci\//		$xr2 = /%([Pp]ublic|PUBLIC)%\\[A-Za-z0-9_\\\\\\\\\\\\\\-]{1,20}\.[a-zA-Z0-9]{1,4}[^\\]\/ wid\/ asci\//		$xr4 = /%([Pp]rogram[Dd]ata|PROGRAMDATA)%\\[A-Za-z0-9_\\\\\\\\\\-]{1,20}\.[a-zA-Z0-9]{1,4}[^\\]\/ wid\/ asci\//		$fp1 = "perl -MCPAN " ascii
+		$xr1 = /%([Aa]pp[Dd]ata|APPDATA)%\\[A-Za-z0-9_\\\\\\\\\\\\\\-]{1,20}\.[a-zA-Z0-9]{1,4}[^\\]\/ wid\/ asci\//		$xr2 = /%([Pp]ublic|PUBLIC)%\\[A-Za-z0-9_\\\\\\\\\\\\\\\\\\\\-]{1,20}\.[a-zA-Z0-9]{1,4}[^\\]\/ wid\/ asci\//		$xr4 = /%([Pp]rogram[Dd]ata|PROGRAMDATA)%\\[A-Za-z0-9_\\\\\\\\\\\\\\-]{1,20}\.[a-zA-Z0-9]{1,4}[^\\]\/ wid\/ asci\//		$fp1 = "perl -MCPAN " ascii
 		$fp2 = "CCleaner" ascii
 
 	condition:
@@ -150188,7 +150188,7 @@ rule SIGNATURE_BASE_EXPL_RAR_Archive_With_Path_Traversal_Aug25 : CVE_2025_8088 C
 		tags = "CVE-2025-8088, CVE-2025-6218, FILE"
 
 	strings:
-		$s1 = "..\\\\..\\\\\\\\\\\AppData\\\\\\\\\\\Roaming\\\\\\\\\\\Microsoft\\Windows\\Start Menu"
+		$s1 = "..\\\\..\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\Roaming\\\\\\\\\\\\\\Microsoft\\Windows\\Start Menu"
 		$s2 = "..//../AppData/Roaming/Microsoft/Windows/Start Menu"
 		$s3 = "/.. /.. /AppData/Roaming/Microsoft/Windows/Start Menu/"
 
@@ -150221,7 +150221,7 @@ rule SIGNATURE_BASE_HKTL_EDR_Freeze_Sep25_2 : FILE
 	strings:
 		$x1 = "EDR-Freeze.exe <TargetPID> <SleepTime>" wide fullword
 		$x2 = "Successfully created PPL process with PID:" wide fullword
-		$x3 = "\\\\\\\\\\\EDR-Freeze.pdb" ascii
+		$x3 = "\\\\\\\\\\\\\\EDR-Freeze.pdb" ascii
 		$sa1 = "C:\\Windows\\System32\\WerFaultSecure.exe" wide fullword
 		$sa2 = "Failed to create dump files: " wide fullword
 		$sb1 = " /encfile" wide fullword
@@ -150471,7 +150471,7 @@ rule SIGNATURE_BASE_APT_CN_MAL_Reddelta_Shellcode_Loader_Oct20_1 : FILE
 		$s1 = "DotNetLoader.exe" wide ascii fullword
 		$s2 = "clipboardinject" ascii fullword
 		$s3 = "download.php?raw=1" wide
-		$s4 = "Windows NT\\\\\\\\\\\CurrentVersion\\\\\\\\\\\AppCompatFlags\\\\\\\\\\\TelemetryController\\\\\\\\\\\Levint" wide
+		$s4 = "Windows NT\\\\\\\\\\\\\\CurrentVersion\\\\\\\\\\\\\\AppCompatFlags\\\\\\\\\\\\\\TelemetryController\\\\\\\\\\\\\\Levint" wide
 		$s5 = "FlashUpdate.exe" wide
 		$s6 = "raw_cc_url" ascii fullword
 		$op1 = { 48 8b 4c 24 78 48 89 01 e9 1a ff ff ff 48 8b 44 }
@@ -150500,7 +150500,7 @@ rule SIGNATURE_BASE_APT_CN_MAL_Reddelta_Shellcode_Loader_Oct20_2 : FILE
 		hash3 = "b3fd750484fca838813e814db7d6491fea36abe889787fb7cf3fb29d9d9f5429"
 
 	strings:
-		$x1 = "\\\\\\\\\\\CLRLoader.exe" wide fullword
+		$x1 = "\\\\\\\\\\\\\\CLRLoader.exe" wide fullword
 		$x2 = "/callback.php?token=%s&computername=%s&username=%s" ascii fullword
 		$s1 = "DotNetLoader.Program" wide fullword
 		$s2 = "/download.php?api=40" ascii fullword
@@ -150533,8 +150533,8 @@ rule SIGNATURE_BASE_APT_CN_MAL_Reddelta_Shellcode_Loader_Oct20_3 : FILE
 	strings:
 		$s1 = "Taskschd.dll" ascii fullword
 		$s2 = "AddTaskPlanDllVerson.dll" ascii fullword
-		$s3 = "\\\\\\\\\\\FlashUpdate.exe" ascii
-		$s4 = "D:\\\\\\\\\\\Project\\\\\\\\\\\FBIRedTeam" ascii fullword
+		$s3 = "\\\\\\\\\\\\\\FlashUpdate.exe" ascii
+		$s4 = "D:\\\\\\\\\\\\\\Project\\\\\\\\\\\\\\FBIRedTeam" ascii fullword
 		$s5 = "Error %s:%d, ErrorCode: %x" ascii fullword
 
 	condition:
@@ -150846,13 +150846,13 @@ rule SIGNATURE_BASE_APT_IIS_Config_Proxyshell_Artifacts : FILE
 	strings:
 		$a1 = "<site name=" ascii
 		$a2 = "<sectionGroup name=\"system.webServer\">" ascii
-		$sa1 = " physicalPath=\"C:\\\\\\\ProgramData\\\\\\\COM" ascii
+		$sa1 = " physicalPath=\"C:\\\\\\\\\\ProgramData\\\\\\\\\\COM" ascii
 		$sa2 = " physicalPath=\"C:\\ProgramData\\WHO" ascii
-		$sa3 = " physicalPath=\"C:\\\\\\\ProgramData\\\\\\\ZING" ascii
+		$sa3 = " physicalPath=\"C:\\\\\\\\\\ProgramData\\\\\\\\\\ZING" ascii
 		$sa4 = " physicalPath=\"C:\\ProgramData\\ZOO" ascii
-		$sa5 = " physicalPath=\"C:\\\\\\\ProgramData\\\\\\\XYZ" ascii
+		$sa5 = " physicalPath=\"C:\\\\\\\\\\ProgramData\\\\\\\\\\XYZ" ascii
 		$sa6 = " physicalPath=\"C:\\ProgramData\\AUX" ascii
-		$sa7 = " physicalPath=\"C:\\\\\\\ProgramData\\\\\\\CON\\" ascii
+		$sa7 = " physicalPath=\"C:\\\\\\\\\\ProgramData\\\\\\\\\\CON\\" ascii
 		$sb1 = " physicalPath=\"C:\\Users\\All Users\\" ascii
 
 	condition:
@@ -150963,7 +150963,7 @@ rule SIGNATURE_BASE_SUSP_IIS_Config_Proxyshell_Artifacts : FILE
 	strings:
 		$a1 = "<site name=" ascii
 		$a2 = "<sectionGroup name=\"system.webServer\">" ascii
-		$s1 = " physicalPath=\"C:\\\\\\\\\\\\ProgramData\\" ascii
+		$s1 = " physicalPath=\"C:\\\\\\\\\\\\\\\\\\ProgramData\\" ascii
 
 	condition:
 		filesize < 500KB and all of ( $a* ) and 1 of ( $s* )
@@ -151053,7 +151053,7 @@ rule SIGNATURE_BASE_SUSP_BAT_OBFUSC_Jul24_3 : FILE
 		tags = "FILE"
 
 	strings:
-		$s1 = "% \\\\\\\\\\\\\%"
+		$s1 = "% \\\\\\\\\\\\\\\\%"
 		$s2 = { 3D ?? 26 26 73 65 74 20 }
 
 	condition:
@@ -151080,7 +151080,7 @@ rule SIGNATURE_BASE_SUSP_LNK_Embedded_Worddoc : FILE
 
 	strings:
 		$doc_header = {D0 CF 11 E0 A1 B1 1A E1}
-		$icon_loc = "C:\\\\\\\\\\\Program Files\\\\\\\\\\\Microsoft Office\\\\\\\\\\\Office16\\WINWORD.exe" ascii wide
+		$icon_loc = "C:\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\Microsoft Office\\\\\\\\\\\\\\Office16\\WINWORD.exe" ascii wide
 
 	condition:
 		uint32be( 0x0 ) == 0x4C000000 and filesize > 10KB and any of them
@@ -151134,7 +151134,7 @@ rule SIGNATURE_BASE_MAL_Janicab_LNK
 
 	strings:
 		$j_pdf1 = "%PDF-1.5" ascii wide
-		$j_cmd = "\\Windows\\System32\\\\\\\\\\\cmd.exe" ascii wide
+		$j_cmd = "\\Windows\\System32\\\\\\\\\\\\\\cmd.exe" ascii wide
 		$j_pdf_stream = "endstream" ascii wide
 		$j_pdb_obj = "endobj" ascii wide
 		$dimensions = {02 00 00 A0 ?? 00 ?? ?? 01 00 01 00 01}
@@ -151195,7 +151195,7 @@ rule SIGNATURE_BASE_MAL_GOLDBACKDOOR_LNK
 
 	strings:
 		$doc_header = {D0 CF 11 E0 A1 B1 1A E1}
-		$doc_icon_loc = "C:\\\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\\\Microsoft Office\\\\\\\\\\\\\\\\Office16\\WINWORD.exe" ascii wide
+		$doc_icon_loc = "C:\\\\\\\\\\\\\\\\\\\\\\Program Files\\\\\\\\\\\\\\\\\\\\\\Microsoft Office\\\\\\\\\\\\\\\\\\\\\\Office16\\WINWORD.exe" ascii wide
 		$script_apionedrivecom_hex_enc_str = "6170692e6f6e6564726976652e636f6d" wide
 		$script_kernel32dll_hex_enc_str = "6b65726e656c33322e646c6c" wide
 		$script_GlobalAlloc_hex_enc_str = "476c6f62616c416c6c6f63" wide
@@ -151228,7 +151228,7 @@ rule SIGNATURE_BASE_MAL_EXE_Prestigeransomware : FILE
 
 	strings:
 		$x_ransom_email = "Prestige.ranusomeware@Proton.me" wide
-		$x_reg_ransom_note = "C:\\Windows\\System32\\reg.exe add HKCR\\\\\\\\\\\\\\\\enc\\shell\\\\\\\\\\\\\\\\open\\\\\\\\\\\\\\\\command /ve /t REG_SZ /d \"C:\\Windows\\\\\\Notepad.exe C:\\Users\\\\\\Public\\\\\\README\" /f" wide
+		$x_reg_ransom_note = "C:\\Windows\\System32\\reg.exe add HKCR\\\\\\\\\\\\\\\\\\\\\\enc\\shell\\\\\\\\\\\\\\\\\\\\\\open\\\\\\\\\\\\\\\\\\\\\\command /ve /t REG_SZ /d \"C:\\Windows\\\\\\Notepad.exe C:\\Users\\\\\\Public\\\\\\README\" /f" wide
 		$ransom_message01 = "To decrypt all the data, you will need to purchase our decryption software." wide
 		$ransom_message02 = "Contact us {}. In the letter, type your ID = {:X}." wide
 		$ransom_message03 = "- Do not try to decrypt your data using third party software, it may cause permanent data loss." wide
@@ -151416,7 +151416,7 @@ rule SIGNATURE_BASE_APT_RANSOM_Lockbit_Forensicartifacts_Nov23
 
 	strings:
 		$x1 = "taskkill /f /im sqlwriter.exe /im winmysqladmin.exe /im w3sqlmgr.exe"
-		$x2 = " 1> \\\\127.0.0.1\\\\\\\\\\\\\\\\admin$\\\\\\\\\\\\\\\\__"
+		$x2 = " 1> \\\\127.0.0.1\\\\\\\\\\\\\\\\\\\\\\admin$\\\\\\\\\\\\\\\\\\\\\\__"
 
 	condition:
 		1 of ( $x* )
@@ -151514,10 +151514,10 @@ rule SIGNATURE_BASE_SUSP_Screenconnect_Exploitation_Artefacts_Feb24 : SCRIPT
 
 	strings:
 		$x01 = "-c foreach ($disk in Get-WmiObject Win32_Logicaldisk){Add-MpPreference -ExclusionPath $disk.deviceid}"
-		$x02 = ".msi c:\\\\\\\\\\\\\\\\mpyutd.msi"
+		$x02 = ".msi c:\\\\\\\\\\\\\\\\\\\\\\mpyutd.msi"
 		$x03 = "/MyUserName_$env:UserName"
-		$x04 = " -OutFile C:\\Windows\\\\\\\\\\\Help\\"
-		$x05 = "/Create /TN \\\\\\\\\\\\\Microsoft\\\\Windows\\\\Wininet\\\\UserCache_"
+		$x04 = " -OutFile C:\\Windows\\\\\\\\\\\\\\Help\\"
+		$x05 = "/Create /TN \\\\\\\\\\\\\\\\Microsoft\\\\Windows\\\\Wininet\\\\UserCache_"
 		$x06 = "$e = $r + \"ssh.exe\""
 		$x07 = "Start-Process -f $e -a $args -PassThru -WindowStyle Hidden).Id"
 		$x08 = "-R 9595:localhost:3389 -p 443 -N -oStrictHostKeyChecking=no "
@@ -151525,16 +151525,16 @@ rule SIGNATURE_BASE_SUSP_Screenconnect_Exploitation_Artefacts_Feb24 : SCRIPT
 		$x10 = "9595; iwr -UseBasicParsing "
 		$x11 = "curl  https://cmctt.]com/pub/media/wysiwyg/"
 		$x12 = ":8080/servicetest2.dll"
-		$x13 = "/msappdata.msi c:\\\\\\\\\\\mpyutd.msi"
+		$x13 = "/msappdata.msi c:\\\\\\\\\\\\\\mpyutd.msi"
 		$x14 = "/svchost.exe -OutFile "
 		$x15 = "curl http://minish.wiki.gd"
 		$x16 = " -Headers @{'ngrok-skip-browser-warning'='true'} -OutFile "
 		$x17 = "rundll32.exe' -Headers @"
 		$x18 = "/nssm.exe' -Headers @"
-		$x19 = "c:\\\\\\\\\\\programdata\\update.dat UpdateSystem"
+		$x19 = "c:\\\\\\\\\\\\\\programdata\\update.dat UpdateSystem"
 		$x20 = "::size -eq 4){\\\"TVqQAA" ascii wide
 		$x21 = "::size -eq 4){\"TVqQAA" ascii wide
-		$x22 = "-nop -c [System.Reflection.Assembly]::Load(([WmiClass]'root\\\\\\\\\\\cimv2:System_"
+		$x22 = "-nop -c [System.Reflection.Assembly]::Load(([WmiClass]'root\\\\\\\\\\\\\\cimv2:System_"
 		$xp0 = "/add default test@2021! /domain"
 		$xp1 = "/add default1 test@2021! /domain"
 		$xp2 = "oldadmin Pass8080!!"
@@ -151918,7 +151918,7 @@ rule SIGNATURE_BASE_HKTL_NET_Adcollector_Sep22_1 : FILE
 		$x1 = "ADCollector.exe --SPNs --Term key --Acls 'CN=Domain Admins,CN=Users,DC=lab,DC=local'" wide fullword
 		$s1 = "ADCollector.exe" wide fullword
 		$s2 = "ENCRYPTED_TEXT_PASSWORD_ALLOWED" ascii fullword
-		$s3 = "\\\\\\\\\\\\\\\\Policies\\{31B2F340-016D-11D2-945F-00C04FB984F9}\\\\\\\\\\\\\\\\MACHINE\\\\\\\\\\\\\\\\Microsoft\\Windows NT\\SecEdit\\\\\\\\\\\\\\\\GptTmpl.inf" wide
+		$s3 = "\\\\\\\\\\\\\\\\\\\\\\Policies\\{31B2F340-016D-11D2-945F-00C04FB984F9}\\\\\\\\\\\\\\\\\\\\\\MACHINE\\\\\\\\\\\\\\\\\\\\\\Microsoft\\Windows NT\\SecEdit\\\\\\\\\\\\\\\\\\\\\\GptTmpl.inf" wide
 		$s4 = "[-] Password Does Not Expire Accounts:" wide
 		$s5 = "  * runAs:       {0}" wide fullword
 
@@ -153099,7 +153099,7 @@ rule SIGNATURE_BASE_MAL_RANSOM_Venus_Nov22_1 : FILE
 		$x2 = "xXBLTZKmAu9pjcfxrIK4gkDp/J9XXATjuysFRXG4rH4=" ascii fullword
 		$x3 = "%s%x%x%x%x.goodgame" wide fullword
 		$s1 = "/c ping localhost -n 3 > nul & del %s" ascii fullword
-		$s2 = "C:\\Windows\\\\\\\\\\\%s.png" wide
+		$s2 = "C:\\Windows\\\\\\\\\\\\\\%s.png" wide
 		$op1 = { 8b 4c 24 24 46 8b 7c 24 14 41 8b 44 24 30 81 c7 00 04 00 00 81 44 24 10 00 04 00 00 40 }
 		$op2 = { 57 c7 45 fc 00 00 00 00 7e 3f 50 33 c0 74 03 9b 6e }
 		$op3 = { 66 89 45 d4 0f 11 45 e8 e8 a8 e7 ff ff 83 c4 14 8d 45 e8 50 8d 45 a4 50 }
@@ -153471,7 +153471,7 @@ rule SIGNATURE_BASE_APT_NK_MAL_Keylogger_Unknown_Nov19_1 : FILE
                66 61 69 6C 65 64 }
 		$s1 = "%s\\\\\\cmd.exe /c %s" fullword ascii
 		$s2 = "File upload error occured in [CFSDlg::ProcessResultMessage]." fullword ascii
-		$s3 = "\\SAM\\Domains\\\\\\\\\\\Account\\Users\\\\\\\\\\\Names" ascii
+		$s3 = "\\SAM\\Domains\\\\\\\\\\\\\\Account\\Users\\\\\\\\\\\\\\Names" ascii
 		$s4 = "%s_hist%d:%d:%s:%s:::" fullword ascii
 		$s5 = "CARAT_Ws2_32.dll" fullword ascii
 		$s6 = "PID [%s], open process failed." fullword ascii
@@ -153725,7 +153725,7 @@ rule SIGNATURE_BASE_APT_APT29_NOBELIUM_Boombox_May21_1 : FILE
 		$a1 = "]::FromBase64String($" ascii wide
 		$xa1 = "123do3y4r378o5t34onf7t3o573tfo73" ascii wide fullword
 		$xa2 = "1233t04p7jn3n4rg" ascii wide fullword
-		$s1 = "\\\\\\\\\\\\\\\\Release\\BOOM.pdb" ascii
+		$s1 = "\\\\\\\\\\\\\\\\\\\\\\Release\\BOOM.pdb" ascii
 		$s2 = "/files/upload" ascii
 		$s3 = "/tmp/readme.pdf" ascii fullword
 		$s4 = "/new/{0}" ascii fullword
@@ -153752,7 +153752,7 @@ rule SIGNATURE_BASE_APT_APT29_NOBELIUM_Nativezone_Loader_May21_1 : FILE
 		hash1 = "136f4083b67bc8dc999eb15bb83042aeb01791fc0b20b5683af6b4ddcf0bbc7d"
 
 	strings:
-		$s1 = "\\SystemCertificates\\\\\\\\\\\\\\\\Lib\\\\\\\\\\\\\\\\CertPKIProvider.dll" ascii
+		$s1 = "\\SystemCertificates\\\\\\\\\\\\\\\\\\\\\\Lib\\\\\\\\\\\\\\\\\\\\\\CertPKIProvider.dll" ascii
 		$s2 = "rundll32.exe %s %s" ascii fullword
 		$s3 = "eglGetConfigs" ascii fullword
 		$op1 = { 80 3d 74 8c 01 10 00 0f 85 96 00 00 00 33 c0 40 b9 6c 8c 01 10 87 01 33 db 89 5d fc }
@@ -153782,11 +153782,11 @@ rule SIGNATURE_BASE_APT_APT29_NOBELIUM_Boombox_May21_2 : FILE
 		hash3 = "cf1d992f776421f72eabc31d5afc2f2067ae856f1c9c1d6dc643a67cb9349d8c"
 
 	strings:
-		$x1 = "\\\\\\\\\\\Microsoft\\\\\\\\\\\NativeCache\\\\\\\\\\\NativeCacheSvc.dll" wide
-		$x2 = "\\\\\\\\\\\NativeCacheSvc.dll _configNativeCache" wide
+		$x1 = "\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\NativeCache\\\\\\\\\\\\\\NativeCacheSvc.dll" wide
+		$x2 = "\\\\\\\\\\\\\\NativeCacheSvc.dll _configNativeCache" wide
 		$a1 = "/content.dropboxapi.com" wide fullword
 		$s1 = "rundll32.exe {0} {1}" wide fullword
-		$s2 = "\\\\\\\\\\\\\\\\\\CertPKIProvider.dll" wide
+		$s2 = "\\\\\\\\\\\\\\\\\\\\\\\\CertPKIProvider.dll" wide
 		$s3 = "/tmp/readme.pdf" wide
 		$s4 = "temp/[^\"]*)\"" wide fullword
 		$op1 = { 00 78 00 2d 00 41 00 50 00 49 00 2d 00 41 00 72 00 67 00 01 2f 4f 00 72 00 }
@@ -154673,17 +154673,17 @@ rule SIGNATURE_BASE_APT_MAL_DTRACK_Oct19_1 : FILE
                72 6F 33 38 6F 65 72 41 5E 74 40 23 00 00 00 00
                63 3A 5C 00 25 73 5C 25 63 2E 74 6D 70 }
 		$sx1 = "%02d.%02d.%04d - %02d:%02d:%02d:%03d : " fullword ascii
-		$sx2 = "%s\\\\\\\\\\\%c.tmp" fullword ascii
+		$sx2 = "%s\\\\\\\\\\\\\\%c.tmp" fullword ascii
 		$sx3 = "dkwero38oerA" fullword ascii
 		$sx4 = "awz2qr21yfbj" fullword ascii
 		$s1 = "Execute_%s.log" ascii
-		$s2 = "%s\\\\\\\\\\\%s\\\\\\\\\\\AppData\\\\\\\\\\\Roaming\\\\\\\\\\\Mozilla\\\\\\\\\\\Firefox\\\\\\\\\\\Profiles" fullword ascii
+		$s2 = "%s\\\\\\\\\\\\\\%s\\\\\\\\\\\\\\AppData\\\\\\\\\\\\\\Roaming\\\\\\\\\\\\\\Mozilla\\\\\\\\\\\\\\Firefox\\\\\\\\\\\\\\Profiles" fullword ascii
 		$s3 = "CCS_Mozilla/5.0" fullword ascii
-		$s4 = "\\\\\\\\\\\\\\\\C$\\Windows\\\\\\\\\\\\\\\\Temp\\\\\\\\\\\\\\\\MpLogs\\" ascii
+		$s4 = "\\\\\\\\\\\\\\\\\\\\\\C$\\Windows\\\\\\\\\\\\\\\\\\\\\\Temp\\\\\\\\\\\\\\\\\\\\\\MpLogs\\" ascii
 		$s5 = "127.0.0.1 >NUL & echo EEEE > \"%s\"" fullword ascii
 		$s6 = "[+] DownloadCommand" fullword ascii
 		$s7 = "DC-Error: Too long cmd length" fullword ascii
-		$s8 = "%s\\\\\\\\\\\\\\\\~%d.tmp" fullword ascii
+		$s8 = "%s\\\\\\\\\\\\\\\\\\\\\\~%d.tmp" fullword ascii
 		$s9 = "%02X:%02X:%02X:%02X:%02X:%02X" ascii fullword
 		$op1 = { 0f b6 8d a3 fc ff ff 85 c9 74 09 8b 55 f4 83 c2 }
 		$op2 = { 6a 00 8d 85 28 fc ff ff 50 6a 04 8d 4d f8 51 8b }
@@ -154733,9 +154733,9 @@ rule SIGNATURE_BASE_APT_KE3CHANG_TMPFILE : APT KE3CHANG TMPFILE FILE
 		hash1 = "4ef11e84d5203c0c425d1a76d4bf579883d40577c2e781cdccc2cc4c8a8d346f"
 
 	strings:
-		$pps1 = "PSParentPath             : Microsoft.PowerShell.Core\\\\\\\\\\\Registry::HKEY_CURRENT_USE" fullword ascii
-		$pps2 = "PSPath                   : Microsoft.PowerShell.Core\\\\\\\\\\\Registry::HKEY_CURRENT_USE" fullword ascii
-		$psp1 = ": Microsoft.PowerShell.Core\\\\\\\\\\\Registry" ascii
+		$pps1 = "PSParentPath             : Microsoft.PowerShell.Core\\\\\\\\\\\\\\Registry::HKEY_CURRENT_USE" fullword ascii
+		$pps2 = "PSPath                   : Microsoft.PowerShell.Core\\\\\\\\\\\\\\Registry::HKEY_CURRENT_USE" fullword ascii
+		$psp1 = ": Microsoft.PowerShell.Core\\\\\\\\\\\\\\Registry" ascii
 		$s4 = "PSChildName  : PhishingFilter" fullword ascii
 		$s1 = "DisableFirstRunCustomize : 2" fullword ascii
 		$s7 = "PSChildName  : 3" fullword ascii
@@ -155020,7 +155020,7 @@ rule SIGNATURE_BASE_APT_MAL_CN_Wocao_Keylogger_Py
 
 	strings:
 		$a = "c:\\windows\\temp\\tap.tmp"
-		$b = "c:\\windows\\temp\\\\\\\\\\\\\\\\mrteeh.tmp"
+		$b = "c:\\windows\\temp\\\\\\\\\\\\\\\\\\\\\\mrteeh.tmp"
 		$c = "GenFileName"
 		$d = "outfile"
 		$e = "[PASTE:%d]"
@@ -155261,7 +155261,7 @@ rule SIGNATURE_BASE_APT_MAL_CN_Wocao_Getos_Py
 		$code_3 = "re.split('[\\x00-,]+', y[-4])" ascii wide
 		$code_4 = "('').join(sblob[off:off + hlen].split('\\x00'))" ascii wide
 		$code_5 = "banner = '%s    %s' % (hostname, native)" ascii wide
-		$code_6 = "banner = '%s\\\\\\\\\\\\\\\\\\%s    %s' % (dm, hostname, native)" ascii wide
+		$code_6 = "banner = '%s\\\\\\\\\\\\\\\\\\\\\\\\%s    %s' % (dm, hostname, native)" ascii wide
 		$tsk_1 = "PushTask" ascii wide
 		$tsk_2 = "parse_task" ascii wide
 		$tsk_3 = "commit_task" ascii wide
@@ -163596,7 +163596,7 @@ rule SIGNATURE_BASE_LOG_Exchange_Forensic_Artefacts_Cleanup_Activity_Mar21_1 : L
 
 	strings:
 		$x1 = "cmd.exe /c cd /d C:/inetpub/wwwroot/aspnet_client" ascii wide
-		$x2 = "cmd.exe /c cd /d C:\\\\\\\\\\\inetpub\\wwwroot\\\\\\\\\\\aspnet_client" ascii wide
+		$x2 = "cmd.exe /c cd /d C:\\\\\\\\\\\\\\inetpub\\wwwroot\\\\\\\\\\\\\\aspnet_client" ascii wide
 		$s1 = "aspnet_client&del '"
 		$s2 = "aspnet_client&attrib +h +s +r "
 		$s3 = "&echo [S]"
@@ -163649,7 +163649,7 @@ rule SIGNATURE_BASE_MAL_Netfilter_Dropper_Jun_2021_1_1 : FILE
 		$seq1 = { b8 ff 00 00 00 50 b8 00 00 00 00 50 8d 85 dd fe ff ff 50 e8 ?? 0d 00 00 83 c4 0c b8 00 00 00 00 88 85 dc fd ff ff b8 ff 00 00 00 50 b8 00 00 00 00 50 8d 85 dd fd ff ff 50 e8 ?? 0d 00 00 83 c4 0c b8 00 00 50 00 50 e8 ?? 0d 00 00 83 c4 04 89 85 d8 fd ff ff 8b 85 d8 fd ff ff 89 85 d4 fd ff ff b8 00 00 50 00 50 b8 00 00 00 00 50 8b 85 d8 fd ff ff 50 e8 ?? 0c 00 00 83 c4 0c 8b 45 0c 8b 8d d8 fd ff ff 89 08 b8 3c 00 00 00 50 b8 00 00 00 00 50 8d 85 98 fd ff ff 50 e8 ?? 0c 00 00 83 c4 0c b8 3c 00 00 00 89 85 98 fd ff ff 8d 85 98 fd ff ff 83 c0 10 8d 8d dc fe ff ff 89 08 8d 85 98 fd ff ff 83 c0 14 b9 00 01 00 00 89 08 8d 85 98 fd ff ff 83 c0 2c 8d 8d dc fd ff ff 89 08 8d 85 98 fd ff ff 83 c0 30 b9 00 01 00 00 89 08 b8 0a 31 40 00 50 e8 ?? 0c 00 00 89 85 94 fd ff ff b8 16 31 40 00 50 8b 85 94 fd ff ff 50 e8 ?? 0c 00 00 89 45 fc b8 28 31 40 00 50 8b 85 94 fd ff ff 50 e8 ?? 0c 00 00 89 45 f8 b8 36 31 40 00 50 8b 85 94 fd ff ff 50 e8 [2] 00 00 89 45 f4 b8 47 31 40 00 50 8b 85 94 fd ff ff 50 e8 [2] 00 00 89 45 f0 b8 58 31 40 00 50 8b 85 94 fd ff ff 50 e8 ?? 0b 00 00 89 45 ec b8 69 31 40 00 50 8b 85 94 fd ff ff 50 e8 ?? 0b 00 00 89 45 e8 b8 7a 31 40 00 50 8b 85 94 fd ff ff 50 e8 ?? 0b 00 00 89 45 e4 b8 8e 31 40 00 50 8b 85 94 fd ff ff 50 e8 ?? 0b 00 00 89 45 e0 8b 45 08 50 e8 ?? 0b 00 00 83 c4 04 8d 8d 98 fd ff ff 51 b9 00 00 00 00 51 50 8b 45 08 50 8b 45 fc ff d0 85 }
 		$seq2 = { b8 00 00 00 00 89 85 90 fd ff ff b8 00 00 00 00 89 85 8c fd ff ff b8 00 00 00 00 89 85 88 fd ff ff b8 00 00 00 00 89 85 84 fd ff ff b8 04 00 00 00 89 85 80 fd ff ff b8 00 00 00 00 88 85 7f f5 ff ff b8 00 08 00 00 50 b8 00 00 00 00 50 8d 85 80 f5 ff ff 50 e8 ?? 0b 00 00 83 c4 0c b8 00 00 00 00 50 b8 00 00 00 00 50 b8 00 00 00 00 50 b8 00 00 00 00 50 b8 9d 31 40 00 50 8b 45 f8 ff d0 89 85 90 fd ff ff 8b 85 }
 		$s1 = "%s\\netfilter.sys" fullword ascii
-		$s2 = "SYSTEM\\\\\\\\\\\CurrentControlSet\\Services\\netfilter" fullword ascii
+		$s2 = "SYSTEM\\\\\\\\\\\\\\CurrentControlSet\\Services\\netfilter" fullword ascii
 		$s3 = "\\\\.\\netfilter" fullword ascii
 
 	condition:
@@ -163945,9 +163945,9 @@ rule SIGNATURE_BASE_LOG_EXPL_SUSP_Teamcity_CVE_2023_42793_Oct23_1 : CVE_2023_427
 
 	strings:
 		$sa1 = "File edited: "
-		$sa2 = "\\\\\\\\\\\TeamCity\\\\\\\\\\\config\\\\\\\\\\\internal.properties by user with id="
+		$sa2 = "\\\\\\\\\\\\\\TeamCity\\\\\\\\\\\\\\config\\\\\\\\\\\\\\internal.properties by user with id="
 		$sb1 = "s.buildServer.ACTIVITIES.AUDIT - server_file_change: File "
-		$sb2 = "\\\\\\\\\\\TeamCity\\\\\\\\\\\config\\\\\\\\\\\internal.properties was modified by \"user with id"
+		$sb2 = "\\\\\\\\\\\\\\TeamCity\\\\\\\\\\\\\\config\\\\\\\\\\\\\\internal.properties was modified by \"user with id"
 
 	condition:
 		all of ( $sa* ) or all of ( $sb* )
@@ -164564,8 +164564,8 @@ rule SIGNATURE_BASE_MAL_APT_NK_Andariel_Grease2 : FILE
 		tags = "FILE"
 
 	strings:
-		$str_rdpconf = "emp\\\\\\\\\\\RDPConf.exe"
-		$str_rdpwinst = "emp\\\\\\\\\\\RDPWInst.exe"
+		$str_rdpconf = "emp\\\\\\\\\\\\\\RDPConf.exe"
+		$str_rdpwinst = "emp\\\\\\\\\\\\\\RDPWInst.exe"
 		$str_net_user = "net user"
 		$str_admins_add = "net localgroup administrators"
 
@@ -164745,7 +164745,7 @@ rule SIGNATURE_BASE_HKTL_Koh_Tokenstealer : FILE
 		$s1 = "[*] Already SYSTEM, not elevating" wide fullword
 		$s2 = "S-1-[0-59]-\\d{2}-\\d{8,10}-\\d{8,10}-\\d{8,10}-[1-9]\\d{2}" wide
 		$s3 = "0x[0-9A-Fa-f]+$" wide
-		$s4 = "\\\\\\\\\\\Koh.pdb" ascii
+		$s4 = "\\\\\\\\\\\\\\Koh.pdb" ascii
 
 	condition:
 		uint16( 0 ) == 0x5A4D and 1 of ( $x* ) or 3 of them
@@ -165488,7 +165488,7 @@ rule SIGNATURE_BASE_SUSP_Doc_RTF_Ole2Link_Jun22 : FILE
 		tags = "FILE"
 
 	strings:
-		$sa = "\\\\\\\\\\\\\\\\objdata" ascii nocase
+		$sa = "\\\\\\\\\\\\\\\\\\\\\\objdata" ascii nocase
 		$sb1 = "4f4c45324c696e6b" ascii
 		$sb2 = "4F4C45324C696E6B" ascii
 		$sc1 = "d0cf11e0a1b11ae1" ascii
@@ -165656,8 +165656,8 @@ rule SIGNATURE_BASE_Irontiger_Getpassword_X64 : FILE
 
 	strings:
 		$str1 = "(LUID ERROR)" wide ascii
-		$str2 = "Users\\\\\\\\\\\K8team\\Desktop\\\\\\\\\\\GetPassword" wide ascii
-		$str3 = "Debug x64\\\\\\\\\\\GetPassword.pdb" ascii
+		$str2 = "Users\\\\\\\\\\\\\\K8team\\Desktop\\\\\\\\\\\\\\GetPassword" wide ascii
+		$str3 = "Debug x64\\\\\\\\\\\\\\GetPassword.pdb" ascii
 		$bla1 = "Authentication Package:" wide ascii
 		$bla2 = "Authentication Domain:" wide ascii
 		$bla3 = "* Password:" wide ascii
@@ -165752,7 +165752,7 @@ rule SIGNATURE_BASE_APT_Crywiper_Dec22
 	strings:
 		$x1 = "Software\\Sysinternals\\BrowserUpdate"
 		$sx1 = "taskkill.exe /f /im MSExchange*"
-		$s1 = "SYSTEM\\\\\\\\\\\CurrentControlSet\\\\\\\\\\\Control\\\\\\\\\\\Terminal Server" ascii
+		$s1 = "SYSTEM\\\\\\\\\\\\\\CurrentControlSet\\\\\\\\\\\\\\Control\\\\\\\\\\\\\\Terminal Server" ascii
 		$s2 = "fDenyTSConnections" ascii
 
 	condition:
@@ -166392,7 +166392,7 @@ rule SIGNATURE_BASE_APT_APT41_POISONPLUG_3 : FILE
 	strings:
 		$s1 = "Rundll32.exe \"%s\", DisPlay 64" fullword ascii
 		$s2 = "tcpview.exe" fullword ascii
-		$s3 = "nuR\\noisreVtnerruC\\swodniW\\tfosorciM\\\\\\\\\\\erawtfoS" fullword ascii
+		$s3 = "nuR\\noisreVtnerruC\\swodniW\\tfosorciM\\\\\\\\\\\\\\erawtfoS" fullword ascii
 		$s4 = "AxEeulaVteSgeR" fullword ascii
 		$s5 = "%04d-%02d-%02d_%02d-%02d-%02d.dmp" fullword ascii
 
@@ -166523,7 +166523,7 @@ rule SIGNATURE_BASE_APT_APT41_HIGHNOON : FILE
 
 	strings:
 		$x1 = "workdll64.dll" fullword ascii
-		$s1 = "\\\\\\\\\\\Fonts\\\\\\\\\\\Error.log" ascii
+		$s1 = "\\\\\\\\\\\\\\Fonts\\\\\\\\\\\\\\Error.log" ascii
 		$s2 = "[%d/%d/%d/%d:%d:%d]" fullword ascii
 		$s3 = "work_end" fullword ascii
 		$s4 = "work_start" fullword ascii
@@ -167057,8 +167057,8 @@ rule SIGNATURE_BASE_APT_WEBSHELL_HAFNIUM_Secchecker_Mar21_1 : FILE
 		hash1 = "b75f163ca9b9240bf4b37ad92bc7556b40a17e27c2b8ed5c8991385fe07d17d0"
 
 	strings:
-		$x1 = "<%if(System.IO.File.Exists(\"c:\\\\\\\\\\\\\\program files (x86)\\\\\\\\\\\\\\fireeye\\\\xagt.exe" ascii
-		$x2 = "\\\\\\\\\\\\\\\\csfalconservice.exe\"))\{Response.Write( \"3\");\}%></head>" ascii fullword
+		$x1 = "<%if(System.IO.File.Exists(\"c:\\\\\\\\\\\\\\\\\\\\program files (x86)\\\\\\\\\\\\\\\\\\\\fireeye\\\\xagt.exe" ascii
+		$x2 = "\\\\\\\\\\\\\\\\\\\\\\csfalconservice.exe\"))\{Response.Write( \"3\");\}%></head>" ascii fullword
 
 	condition:
 		uint16( 0 ) == 0x253c and filesize < 1KB and 1 of them or 2 of them
@@ -167618,10 +167618,10 @@ rule SIGNATURE_BASE_ATM_Malware_XFSADM_1 : FILE
 		$Code1 = {68 88 13 00 00 FF 35 ?? ?? ?? ?? 68 CF 00 00 00 50 FF 15}
 		$Code2 = {68 98 01 00 00 50 FF 15}
 		$Mutex = "myXFSADM" wide
-		$MSXFSDIR = "C:\\Windows\\System32\\\\\\\\\\\msxfs.dll" ascii
+		$MSXFSDIR = "C:\\Windows\\System32\\\\\\\\\\\\\\msxfs.dll" ascii
 		$XFSCommand1 = "WfsExecute" ascii
 		$XFSCommand2 = "WfsGetInfo" ascii
-		$PDB = "C:\\Work64\\\\\\\\\\\ADM\\\\\\\\\\\XFS\\\\\\\\\\\Release\\\\\\\\\\\XFS.pdb" ascii
+		$PDB = "C:\\Work64\\\\\\\\\\\\\\ADM\\\\\\\\\\\\\\XFS\\\\\\\\\\\\\\Release\\\\\\\\\\\\\\XFS.pdb" ascii
 		$WindowName = "XFS ADM" wide
 		$FindWindow = "ADM rec" wide
 		$LogFile = "xfs.log" ascii
@@ -167697,10 +167697,10 @@ rule SIGNATURE_BASE_MAL_Ransom_Ragnarlocker_July_2020_1 : FILE
 		$r4 = "RAGNRPW" fullword ascii
 		$r5 = "---END KEY R_R---" fullword ascii
 		$a1 = "+RhRR!-uD8'O&Wjq1_P#Rw<9Oy?n^qSP6N\{BngxNK!:TG*\}\\|W]o?/]H*8z;26X0" fullword ascii
-		$a2 = "\\\\.\\\\\\\\\\\\\\\\PHYSICALDRIVE%d" fullword wide
+		$a2 = "\\\\.\\\\\\\\\\\\\\\\\\\\\\PHYSICALDRIVE%d" fullword wide
 		$a3 = "WinSta0\\Default" fullword wide
 		$a4 = "%s-%s-%s-%s-%s" fullword wide
-		$a5 = "SOFTWARE\\\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\\\Cryptography" fullword wide
+		$a5 = "SOFTWARE\\\\\\\\\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\\\\\\\\\Cryptography" fullword wide
 		$c1 = "-backup" fullword wide
 		$c2 = "-force" fullword wide
 		$c3 = "-vmback" fullword wide
@@ -169365,8 +169365,8 @@ rule SIGNATURE_BASE_HKTL_Venom_LIB_Dec22 : FILE
 		$ss1 = "WS2_32.dll" fullword ascii
 		$ss2 = "WSASocketW" fullword ascii
 		$ss3 = "WSADuplicateSocketW" fullword ascii
-		$ss5 = "\\Device\\\\\\\\\\\Afd" wide fullword
-		$sx1 = "C:\\\\\\\\\\\Program Files (x86)\\\\\\\\\\\Microsoft\\\\\\\\\\\Edge\\\\\\\\\\\Application\\\\\\\\\\\msedge.exe --no-startup-window" fullword wide
+		$ss5 = "\\Device\\\\\\\\\\\\\\Afd" wide fullword
+		$sx1 = "C:\\\\\\\\\\\\\\Program Files (x86)\\\\\\\\\\\\\\Microsoft\\\\\\\\\\\\\\Edge\\\\\\\\\\\\\\Application\\\\\\\\\\\\\\msedge.exe --no-startup-window" fullword wide
 		$sx2 = "[ + ] Data sent!" fullword ascii
 		$sx3 = "[ + ] Socket obtained!" fullword ascii
 		$op1 = { 4c 8b f0 48 3b c1 48 b8 ff ff ff ff ff ff ff 7f }
@@ -169449,7 +169449,7 @@ rule SIGNATURE_BASE_HKTL_Cobaltstrike_Beacon_Strings
 	strings:
 		$s1 = "%02d/%02d/%02d %02d:%02d:%02d"
 		$s2 = "Started service %s on %s"
-		$s3 = "%s as %s\\\\\\\\\\\\\\\\%s: %d"
+		$s3 = "%s as %s\\\\\\\\\\\\\\\\\\\\\\%s: %d"
 
 	condition:
 		2 of them
@@ -169471,12 +169471,12 @@ rule SIGNATURE_BASE_HKTL_Cobaltstrike_Beacon_XOR_Strings
 		tags = ""
 		xor_s1 = "%02d/%02d/%02d %02d:%02d:%02d"
 		xor_s2 = "Started service %s on %s"
-		xor_s3 = "%s as %s\\\\\\\\\\\%s: %d"
+		xor_s3 = "%s as %s\\\\\\\\\\\\\\%s: %d"
 
 	strings:
 		$s1 = "%02d/%02d/%02d %02d:%02d:%02d" xor(0x01-0xff)
 		$s2 = "Started service %s on %s" xor(0x01-0xff)
-		$s3 = "%s as %s\\\\\\\\\\\%s: %d" xor(0x01-0xff)
+		$s3 = "%s as %s\\\\\\\\\\\\\\%s: %d" xor(0x01-0xff)
 		$fp1 = "MalwareRemovalTool"
 
 	condition:
@@ -169526,7 +169526,7 @@ rule SIGNATURE_BASE_HKTL_Win_Cobaltstrike : COMMODITY
 		$s1 = "%s (admin)" fullword
 		$s2 = {48 54 54 50 2F 31 2E 31 20 32 30 30 20 4F 4B 0D 0A 43 6F 6E 74 65 6E 74 2D 54 79 70 65 3A 20 61 70 70 6C 69 63 61 74 69 6F 6E 2F 6F 63 74 65 74 2D 73 74 72 65 61 6D 0D 0A 43 6F 6E 74 65 6E 74 2D 4C 65 6E 67 74 68 3A 20 25 64 0D 0A 0D 0A 00}
 		$s3 = "%02d/%02d/%02d %02d:%02d:%02d" fullword
-		$s4 = "%s as %s\\\\\\\\\\\%s: %d" fullword
+		$s4 = "%s as %s\\\\\\\\\\\\\\%s: %d" fullword
 		$s5 = "%s&%s=%s" fullword
 		$s6 = "rijndael" fullword
 		$s7 = "(null)"
@@ -170320,7 +170320,7 @@ rule SIGNATURE_BASE_EXPL_CVE_2021_31166_Accept_Encoding_May21_1 : CVE_2021_31166
 		tags = "CVE-2021-31166"
 
 	strings:
-		$xr1 = /[Aa]ccept\\\\\\\\\\\\\\\-[Ee]ncoding: [a-z\\\\\\\\\\\\\\\-]{1,16},([a-z\\\\\\\\\\\\\\\-\s]{1,16},|)*[\s]{1,20},\/\//	condition:
+		$xr1 = /[Aa]ccept\\\\\\\\\\\\\\\\\\\\\\-[Ee]ncoding: [a-z\\\\\\\\\\\\\\\\\\\\\\-]{1,16},([a-z\\\\\\\\\\\\\\\\\\\\\\-\s]{1,16},|)*[\s]{1,20},\/\//	condition:
 		1 of them
 }
 rule SIGNATURE_BASE_MAL_Qbot_HTML_Smuggling_Indicators_Oct22_1 : FILE
@@ -170392,7 +170392,7 @@ rule SIGNATURE_BASE_EXPL_Cleo_Exploitation_Log_Indicators_Dec24 : SCRIPT
 		tags = "SCRIPT"
 
 	strings:
-		$x1 = "Note: Processing autorun file 'autorun\\\\\\\\\\\health" ascii wide
+		$x1 = "Note: Processing autorun file 'autorun\\\\\\\\\\\\\\health" ascii wide
 		$x2 = "60282967-dc91-40ef-a34c-38e992509c2c.xml" ascii wide
 		$x3 = "<Detail level=\"1\">Executing 'cmd.exe /c \"powershell -NonInteractive -EncodedCommand " ascii wide
 
@@ -170604,7 +170604,7 @@ rule SIGNATURE_BASE_EXPL_Cleo_Exploitation_PS1_Indicators_Dec24 : SCRIPT
 		tags = "SCRIPT"
 
 	strings:
-		$xe1 = "Start-Process -WindowStyle Hidden -FilePath jre\\bin\\\\\\\\\\\\\\\\java.exe" base64 ascii wide
+		$xe1 = "Start-Process -WindowStyle Hidden -FilePath jre\\bin\\\\\\\\\\\\\\\\\\\\\\java.exe" base64 ascii wide
 		$xe2 = "$f=\"cleo." base64 ascii wide
 		$xe3 = "<Detail level=\"1\">Executing 'cmd.exe /c \"powershell -NonInteractive -EncodedCommand " base64 ascii wide
 		$x1 = "$f=\"cleo." ascii wide

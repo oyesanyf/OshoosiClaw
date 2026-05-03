@@ -1591,16 +1591,55 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
 fn run_yara_sanitizer() {
     info!("Running native Rust YARA rule sanitization (pre-scan cleanup)...");
 
-    let search_paths = [
-        std::path::PathBuf::from("target").join("debug").join("yara"),
-        std::path::PathBuf::from("yara"),
-    ];
+    // 1. Resolve search paths correctly by looking for project root if necessary
+    let mut search_paths = Vec::new();
+    
+    // Add current directory targets
+    search_paths.push(PathBuf::from("yara"));
+    search_paths.push(PathBuf::from("rules"));
+    
+    // Add relative path from executable (if we are in target/release)
+    if let Ok(exe) = std::env::current_exe() {
+        if let Some(mut dir) = exe.parent().map(|p| p.to_path_buf()) {
+            for _ in 0..10 {
+                if dir.join("rules").is_dir() {
+                    search_paths.push(dir.join("rules"));
+                }
+                if dir.join("yara").is_dir() {
+                    search_paths.push(dir.join("yara"));
+                }
+                if dir.join(".git").is_dir() || dir.join("Cargo.toml").is_file() {
+                    break;
+                }
+                match dir.parent() {
+                    Some(p) => dir = p.to_path_buf(),
+                    None => break,
+                }
+            }
+        }
+    }
+
+    if let Ok(yara_dir) = std::env::var("OSOOSI_YARA_DIR") {
+        search_paths.push(PathBuf::from(yara_dir));
+    }
 
     let mut count = 0;
+    let mut visited = std::collections::HashSet::new();
+
     for base_path in search_paths {
         if !base_path.exists() {
             continue;
         }
+        
+        let canonical = match base_path.canonicalize() {
+            Ok(p) => p,
+            Err(_) => base_path.clone(),
+        };
+        if !visited.insert(canonical) {
+            continue;
+        }
+
+        info!("Sweeping YARA rules in: {:?}", base_path);
 
         for entry in walkdir::WalkDir::new(base_path)
             .into_iter()
@@ -1688,6 +1727,15 @@ fn sanitize_yara_content(content: &str) -> String {
     result = result.replace("/|", "/");
     result = result.replace("||", "|");
 
+    // 4. Fix regexes followed immediately by keywords (prevents 'c' being seen as modifier)
+    // Use regex to find slashes followed by keywords, ensuring we catch things like /condition: or //condition:
+    let re_boundary = regex::Regex::new(r"(/+)(condition:|strings:|meta:|rule\b)").unwrap();
+    result = re_boundary.replace_all(&result, " $1 $2").to_string();
+
+    // Specific common cases that might have escaped the regex
+    result = result.replace("/condition:", "/ condition:");
+    result = result.replace("//condition:", " // condition:");
+
     result
 }
 
@@ -1699,11 +1747,24 @@ fn fix_yara_escapes(s: &str) -> String {
     let mut i = 0;
     while i < chars.len() {
         if chars[i] == '\\' && i + 1 < chars.len() {
-            if !valid.contains(chars[i+1]) {
-                // Invalid escape: escape the backslash
+            let next = chars[i+1];
+            if next == '\\' {
+                // Literal backslash: valid, push both and skip
                 result.push('\\');
                 result.push('\\');
-                result.push(chars[i+1]);
+                i += 2;
+                continue;
+            } else if valid.contains(next) {
+                // Other valid escape: push both and skip
+                result.push('\\');
+                result.push(next);
+                i += 2;
+                continue;
+            } else {
+                // Invalid escape: escape the backslash itself
+                result.push('\\');
+                result.push('\\');
+                result.push(next);
                 i += 2;
                 continue;
             }
