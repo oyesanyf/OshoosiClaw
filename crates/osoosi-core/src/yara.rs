@@ -16,10 +16,13 @@ pub fn load_rules() -> yara_x::Rules {
     let mut count = 0;
     if let Ok(entries) = std::fs::read_dir(path) {
         for entry in entries.flatten() {
-            if entry.path().extension().map(|e| e == "yar" || e == "yara").unwrap_or(false) {
-                if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                    if let Err(e) = compiler.add_source(content.as_str()) {
-                        warn!("Failed to compile YARA rule {:?}: {}", entry.path(), e);
+            let entry_path = entry.path();
+            if entry_path.extension().map(|e| e == "yar" || e == "yara").unwrap_or(false) {
+                if let Ok(content) = std::fs::read_to_string(&entry_path) {
+                    let source = yara_x::SourceCode::from(content.as_str())
+                        .with_origin(entry_path.to_string_lossy().as_ref());
+                    if let Err(e) = compiler.add_source(source) {
+                        warn!("Failed to compile YARA rule {:?}: {}", entry_path, e);
                     } else {
                         count += 1;
                     }
@@ -33,8 +36,11 @@ pub fn load_rules() -> yara_x::Rules {
     if gen_dir.exists() {
         if let Ok(entries) = std::fs::read_dir(gen_dir) {
             for entry in entries.flatten() {
-                 if let Ok(content) = std::fs::read_to_string(entry.path()) {
-                    let _ = compiler.add_source(content.as_str());
+                 let entry_path = entry.path();
+                 if let Ok(content) = std::fs::read_to_string(&entry_path) {
+                    let source = yara_x::SourceCode::from(content.as_str())
+                        .with_origin(entry_path.to_string_lossy().as_ref());
+                    let _ = compiler.add_source(source);
                     count += 1;
                 }
             }

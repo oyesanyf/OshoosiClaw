@@ -156,6 +156,20 @@ impl TelemetryController {
         };
         crate::hybrid_runtime::spawn_smart(semaphore, task);
     }
+
+    /// Execute a task with adaptive concurrency and return the result.
+    pub async fn run_adaptive<F, T>(&self, category: ResourceCategory, task: F) -> anyhow::Result<T>
+    where
+        F: std::future::Future<Output = T> + Send + 'static,
+        T: Send + 'static,
+    {
+        let semaphore = match category {
+            ResourceCategory::AI => self.guard.ai.clone(),
+            ResourceCategory::IO => self.guard.io.clone(),
+            ResourceCategory::Net => self.guard.net.clone(),
+        };
+        crate::hybrid_runtime::run_smart(semaphore, task).await
+    }
 }
 
 impl Clone for TelemetryController {

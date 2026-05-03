@@ -1043,6 +1043,7 @@ impl EdrOrchestrator {
         // Native Voters (Zero-Process Stack)
         policy.add_voter(Box::new(crate::voters::YaraXVoter {
             rules: yara_rules.clone(),
+            adaptive: adaptive.clone(),
         })).await;
         if let Some(ref voter) = sigma_engine_voter {
             policy.add_voter(Box::new((**voter).clone())).await;
@@ -1057,6 +1058,7 @@ impl EdrOrchestrator {
         // MalConv / ONNX malware model + YARA — same [`MalwareScanner`] as Clam; separate vote for ML path
         policy.add_voter(Box::new(crate::voters::MalConvVoter {
             scanner: malware_scanner.clone(),
+            adaptive: adaptive.clone(),
         })).await;
 
         // Mandiant Trio Voters (Capa + Floss)

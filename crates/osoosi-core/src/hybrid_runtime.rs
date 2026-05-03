@@ -91,3 +91,14 @@ where
         task.await;
     });
 }
+
+/// **Smart Concurrency (with result):** Executes a task after acquiring a permit 
+/// from the provided semaphore and returns the result.
+pub async fn run_smart<F, T>(semaphore: std::sync::Arc<tokio::sync::Semaphore>, task: F) -> anyhow::Result<T>
+where
+    F: std::future::Future<Output = T> + Send + 'static,
+    T: Send + 'static,
+{
+    let _permit = semaphore.acquire_owned().await.map_err(|_| anyhow::anyhow!("Semaphore closed"))?;
+    Ok(task.await)
+}

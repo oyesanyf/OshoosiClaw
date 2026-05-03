@@ -98,6 +98,7 @@ fn scanner_skip_path(path: &str) -> bool {
 /// It provides high-performance pattern matching without external binaries.
 pub struct YaraXVoter {
     pub rules: Arc<yara_x::Rules>,
+    pub adaptive: Arc<crate::adaptive::TelemetryController>,
 }
 
 #[async_trait]
@@ -111,24 +112,32 @@ impl ThreatVoter for YaraXVoter {
             if scanner_skip_path(image_path) || trusted_identity_signal(event, image_path) {
                 return None;
             }
-            let path = Path::new(image_path);
-            if !path.exists() {
+            let path_buf = std::path::PathBuf::from(image_path);
+            if !path_buf.exists() {
                 return None;
             }
 
-            // Perform scan via the native yara-x engine
-            if let Ok(bytes) = std::fs::read(path) {
-                let mut scanner = yara_x::Scanner::new(&self.rules);
-                if let Ok(results) = scanner.scan(&bytes) {
-                    if let Some(primary) = results.matching_rules().next() {
-                        return Some(VoteResult {
-                            confidence: 1.0,
-                            reason: format!("YaraX: THREAT detected - {}", primary.identifier()),
-                            weight: 1.0,
-                        });
+            // Perform scan via the native yara-x engine with adaptive concurrency
+            let rules = self.rules.clone();
+            let adaptive = self.adaptive.clone();
+            
+            let scan_result = adaptive.run_adaptive(crate::adaptive::ResourceCategory::AI, async move {
+                if let Ok(bytes) = std::fs::read(&path_buf) {
+                    let mut scanner = yara_x::Scanner::new(&rules);
+                    if let Ok(results) = scanner.scan(&bytes) {
+                        if let Some(primary) = results.matching_rules().next() {
+                            return Some(VoteResult {
+                                confidence: 1.0,
+                                reason: format!("YaraX: THREAT detected - {}", primary.identifier()),
+                                weight: 1.0,
+                            });
+                        }
                     }
                 }
-            }
+                None
+            }).await.ok().flatten();
+
+            return scan_result;
         }
         None
     }
@@ -148,6 +157,7 @@ fn malconv_vote_min_combined() -> f64 {
 /// the same `[CONSENSUS]` registry as OTX, Sigma, KEV, etc.
 pub struct MalConvVoter {
     pub scanner: Arc<MalwareScanner>,
+    pub adaptive: Arc<crate::adaptive::TelemetryController>,
 }
 
 #[async_trait]
@@ -168,38 +178,52 @@ impl ThreatVoter for MalConvVoter {
         }
 
         const MAX_BYTES: u64 = 48 * 1024 * 1024;
-        let mut best: Option<MalwareScanResult> = None;
-        let mut best_path: Option<String> = None;
-
+        let adaptive = self.adaptive.clone();
+        let scanner = self.scanner.clone();
+        
+        // Extract paths before the async block to avoid lifetime issues
+        let mut paths_to_scan = Vec::new();
         for key in ["Image", "TargetImage", "TargetFilename"] {
-            let Some(p) = event.data.get(key).and_then(|v| v.as_str()) else {
-                continue;
-            };
-            if scanner_skip_path(p) {
-                continue;
-            }
-            let path = Path::new(p);
-            if !path.is_file() {
-                continue;
-            }
-            if let Ok(m) = path.metadata() {
-                if m.len() > MAX_BYTES {
-                    continue;
-                }
-            }
-            if let Some(res) = self.scanner.scan_file(path).await {
-                let replace = best
-                    .as_ref()
-                    .map(|b| res.combined_score > b.combined_score)
-                    .unwrap_or(true);
-                if replace {
-                    best_path = Some(p.to_string());
-                    best = Some(res);
+            if let Some(p) = event.data.get(key).and_then(|v| v.as_str()) {
+                if !scanner_skip_path(p) {
+                    paths_to_scan.push(p.to_string());
                 }
             }
         }
 
-        let res = best?;
+        if paths_to_scan.is_empty() {
+            return None;
+        }
+
+        let best_result = adaptive.run_adaptive(crate::adaptive::ResourceCategory::AI, async move {
+            let mut best: Option<MalwareScanResult> = None;
+            let mut best_path: Option<String> = None;
+
+            for p in paths_to_scan {
+                let path = Path::new(&p);
+                if !path.is_file() {
+                    continue;
+                }
+                if let Ok(m) = path.metadata() {
+                    if m.len() > MAX_BYTES {
+                        continue;
+                    }
+                }
+                if let Some(res) = scanner.scan_file(path).await {
+                    let replace = best
+                        .as_ref()
+                        .map(|b| res.combined_score > b.combined_score)
+                        .unwrap_or(true);
+                    if replace {
+                        best_path = Some(p.clone());
+                        best = Some(res);
+                    }
+                }
+            }
+            best.map(|b| (b, best_path))
+        }).await.ok().flatten();
+
+        let (res, best_path) = best_result?;
         let path_note = best_path.as_deref().unwrap_or("?");
         
         // Removed clam_detected check as it is decommissioned in the Zero-Process stack.
