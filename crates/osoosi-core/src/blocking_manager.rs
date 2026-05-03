@@ -46,4 +46,25 @@ impl BlockingManager {
     pub async fn get_rules(&self) -> Vec<BlockingRule> {
         self.rules.read().await.clone()
     }
+
+    /// Autonomous termination of a process by its PID.
+    pub async fn block_by_pid(&self, pid: u32) -> anyhow::Result<()> {
+        info!("BlockingManager: Autonomous termination triggered for PID {}", pid);
+        
+        #[cfg(target_os = "windows")]
+        {
+            let _ = std::process::Command::new("taskkill")
+                .args(["/F", "/PID", &pid.to_string()])
+                .status();
+        }
+
+        #[cfg(target_os = "linux")]
+        {
+            let _ = std::process::Command::new("kill")
+                .args(["-9", &pid.to_string()])
+                .status();
+        }
+
+        Ok(())
+    }
 }

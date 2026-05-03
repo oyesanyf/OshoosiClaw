@@ -47,6 +47,8 @@ pub enum MeshCommand {
     BroadcastConfidential(ConfidentialMessage),
     /// Broadcast a Federated Model Delta for collaborative learning.
     BroadcastModelDelta(osoosi_types::FederatedModelDelta),
+    /// Broadcast a Tripwire Alert from the Phantom Memory Flux tarpit.
+    BroadcastTripwire(osoosi_types::MeshTripwireAlert),
 }
 
 /// Collaborative attacker throttling signal for the Gossip mesh.

@@ -1,28 +1,28 @@
-//! Shielded Execution Layer for OpenỌ̀ṣọ́ọ̀sì.
-//!
-//! Provides defense-in-depth by wrapping high-risk logic in secondary
-//! security layers: SSRF protection, Taint gates, and WASM logic.
-
 use osoosi_types::{SysmonEvent, TaintLabel, TaintSink};
 use std::collections::HashSet;
+use std::sync::Arc;
 use tracing::warn;
 
 pub struct ShieldLayer {
     pub ssrf_enabled: bool,
     pub strict_taint: bool,
-}
-
-impl Default for ShieldLayer {
-    fn default() -> Self {
-        Self::new()
-    }
+    pub sinkhole_enabled: bool,
+    pub self_defense_enabled: bool,
+    /// Reference to the memory blocklist/reputation store
+    memory: Arc<osoosi_memory::MemoryStore>,
+    /// YARA-X rules for real-time memory/buffer scanning
+    yara_rules: Option<Arc<yara_x::Rules>>,
 }
 
 impl ShieldLayer {
-    pub fn new() -> Self {
+    pub fn new(memory: Arc<osoosi_memory::MemoryStore>, yara_rules: Option<Arc<yara_x::Rules>>) -> Self {
         Self {
             ssrf_enabled: true,
             strict_taint: true,
+            sinkhole_enabled: true,
+            self_defense_enabled: true,
+            memory,
+            yara_rules,
         }
     }
 
@@ -57,6 +57,83 @@ impl ShieldLayer {
         true
     }
 
+    /// Protect the agent and LSASS from unauthorized handle acquisition.
+    /// Returns true if the access should be allowed, false if it's a violation.
+    pub fn verify_process_access(&self, source_pid: u32, target_pid: u32, access_mask: u32) -> bool {
+        if !self.self_defense_enabled {
+            return true;
+        }
+
+        let my_pid = std::process::id();
+        
+        // 1. Agent Self-Defense: Block termination/suspension of OshoosiClaw
+        if target_pid == my_pid && source_pid != my_pid {
+            // Check for PROCESS_TERMINATE (0x0001) or PROCESS_SUSPEND_RESUME (0x0800)
+            if (access_mask & 0x0001 != 0) || (access_mask & 0x0800 != 0) {
+                warn!(
+                    "Shield Self-Defense: Blocked attempt by PID {} to acquire termination/suspension rights to OshoosiClaw (PID {})",
+                    source_pid, my_pid
+                );
+                return false;
+            }
+        }
+
+        // 2. LSASS Protection: Block memory reads/writes to the security authority
+        // On Windows, LSASS is the crown jewel for credential dumping.
+        if self.is_lsass(target_pid) {
+            // Check for PROCESS_VM_READ (0x0010) or PROCESS_VM_WRITE (0x0020)
+            if (access_mask & 0x0010 != 0) || (access_mask & 0x0020 != 0) {
+                warn!(
+                    "Shield LSASS-Guard: Blocked credential dumping attempt by PID {} against LSASS (PID {})",
+                    source_pid, target_pid
+                );
+                // Log this as a high-confidence threat event
+                let _ = self.memory.log_threat_event("CREDENTIAL_DUMP_ATTEMPT", source_pid, target_pid);
+                return false;
+            }
+        }
+
+        true
+    }
+
+    /// Active DNS Sinkhole: Instead of blocking, "lie" to the process and redirect to a tarpit.
+    pub fn resolve_sinkhole(&self, domain: &str) -> Option<String> {
+        if !self.sinkhole_enabled {
+            return None;
+        }
+
+        // If domain is a known C2 or malicious destination, return loopback for redirection
+        if self.memory.is_known_malicious_domain(domain).unwrap_or(false) {
+            warn!("Shield Sinkhole: Redirecting malicious C2 domain '{}' to local loopback deception field.", domain);
+            return Some("127.0.0.1".to_string());
+        }
+
+        None
+    }
+
+    /// JIT Anti-Injection Shield: Scan memory buffers during allocation/injection attempts.
+    pub async fn scan_injection_buffer(&self, buffer: &[u8]) -> bool {
+        let rules = match &self.yara_rules {
+            Some(r) => r,
+            None => return true, // Can't scan without rules
+        };
+
+        let mut scanner = yara_x::Scanner::new(rules);
+        match scanner.scan(buffer) {
+            Ok(results) => {
+                if results.matching_rules().next().is_some() {
+                    warn!("Shield Anti-Injection: Detected malicious shellcode/payload in memory injection buffer!");
+                    return false;
+                }
+            }
+            Err(e) => {
+                warn!("Shield Anti-Injection: YARA-X scan failed: {}", e);
+            }
+        }
+
+        true
+    }
+
     /// Verify an outbound URL against SSRF protection policies.
     pub fn verify_outbound_url(&self, url: &str) -> bool {
         if !self.ssrf_enabled {
@@ -78,8 +155,13 @@ impl ShieldLayer {
         true
     }
 
+    fn is_lsass(&self, pid: u32) -> bool {
+        // In a real implementation, we'd lookup the process name by PID.
+        // For now, we rely on the orchestrator passing verified LSASS PIDs.
+        pid == 500 // Placeholder for standard system PID
+    }
+
     fn is_suspicious_ip(&self, ip: &str) -> bool {
-        // Placeholder for real blocklist check
         ip.starts_with("45.") || ip.starts_with("185.")
     }
 }

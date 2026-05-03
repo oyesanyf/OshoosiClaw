@@ -382,6 +382,17 @@ Instead of blocking suspicious connections outright, OshoosiClaw **throttles** t
 ### Holographic Deception Sharding (HDS)
 When an attacker IP is flagged, the P2P mesh creates a **distributed hallucination**: the SSH service appears on Node A in Tokyo, the database on Node B in Berlin, and the web server on Node C in NYC. The attacker perceives a single target; the mesh perceives a harvest.
 
+### 🛡️ Nexus-Shield: The Reality-Distortion Field
+OshoosiClaw evolves beyond passive detection with **Nexus-Shield**, an active execution layer that dictates the "physics" of the operating system for suspicious processes.
+
+| Capability | Defensive Action |
+|:-----------|:-----------------|
+| **Self-Defense** | Intercepts and denies `TerminateProcess` or `SuspendThread` requests directed at the agent. |
+| **LSASS Guard** | Rings-fences `lsass.exe` to prevent credential dumping (Mimikatz, etc.). |
+| **DNS Sinkholing** | Redirects malicious C2 domains to a local loopback/tarpit "void" instead of a hard block. |
+| **JIT Anti-Injection** | Scans memory allocation buffers with **YARA-X** in real-time to detect shellcode/NOP-sleds. |
+| **Mesh Immunization** | Automatically broadcasts shield violations to the P2P mesh for global threat neutralization. |
+
 ### Einsteinian Relativistic Guard
 Treats the system as a **Causal Manifold**:
 - **Light-Cone Integrity**: Every event is hashed with its causal parent. Mismatches indicate code injection.

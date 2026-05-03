@@ -866,7 +866,7 @@ impl EdrOrchestrator {
             malware_scanner.clone(),
         )?);
         let approval_queue = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-        let shield = Arc::new(crate::shield::ShieldLayer::new());
+        let shield = Arc::new(crate::shield::ShieldLayer::new(memory.clone(), Some(yara_rules.clone())));
         let node_id = trust.did().to_string();
         let holograph = Arc::new(osoosi_wire::holograph::HolographEngine::new(
             node_id.clone(),
@@ -1217,6 +1217,7 @@ impl EdrOrchestrator {
             let orch_sample = orch.clone();
             let orch_tarpit = orch.clone();
             let orch_delta = orch.clone();
+            let orch_tripwire = orch.clone();
 
             tokio::spawn(async move {
                 mesh_node
@@ -1376,6 +1377,23 @@ impl EdrOrchestrator {
                                 model.merge_delta(&delta);
                             });
                         },
+                        move |alert| {
+                            let orch_clone = orch_tripwire.clone();
+                            tokio::spawn(async move {
+                                warn!("Mesh Tripwire: Peer {} triggered a phantom memory trap! Offender: {} ({})", alert.source_node_id, alert.offender.name, alert.offender.blake3_hash);
+                                // Mark the hash as malicious so we don't execute it
+                                orch_clone.memory.mark_hash_known_malicious(&alert.offender.blake3_hash);
+                                
+                                orch_clone.audit.log(
+                                    "MESH_TRIPWIRE_RECEIVED",
+                                    serde_json::json!({
+                                        "source_node": alert.source_node_id,
+                                        "offender": alert.offender.name,
+                                        "hash": alert.offender.blake3_hash,
+                                    }),
+                                );
+                            });
+                        },
                     )
                     .await;
             });
@@ -1513,6 +1531,11 @@ impl EdrOrchestrator {
 
             // Auto-start browser auditor alongside cybershield
             orchestrator.start_browser_auditor();
+
+            // Auto-start Phantom Memory Flux (Deceptive Memory Tarpit)
+            let flux_regions = std::sync::Arc::new(tokio::sync::RwLock::new(std::collections::HashSet::new()));
+            let tarpit_manager = osoosi_runtime::TarpitManager::new();
+            tarpit_manager.start_phantom_memory_flux(flux_regions.clone());
 
             let mut interval = tokio::time::interval(Duration::from_secs(30));
             loop {
@@ -2395,6 +2418,58 @@ impl EdrOrchestrator {
         mut event: osoosi_types::SysmonEvent,
     ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
+
+        // --- SHIELD LAYER INTERCEPTION (Reality-Distortion & Self-Defense) ---
+        {
+            match event.event_id {
+                // 1. Process Access Guard (Self-Defense & LSASS Protection)
+                osoosi_types::SysmonEventId::ProcessAccess => {
+                    if let (Some(source_pid), Some(target_pid), Some(access_mask_str)) = (
+                        event.data.get("SourceProcessId").and_then(|v| v.as_u64()),
+                        event.data.get("TargetProcessId").and_then(|v| v.as_u64()),
+                        event.data.get("GrantedAccess").and_then(|v| v.as_str()),
+                    ) {
+                        let mask = u32::from_str_radix(access_mask_str.trim_start_matches("0x"), 16).unwrap_or(0);
+                        if !self.shield.verify_process_access(source_pid as u32, target_pid as u32, mask) {
+                            warn!("Shield violation detected! Blocking access from PID {} to target PID {}.", source_pid, target_pid);
+                            
+                            // Log to local memory store
+                            let _ = self.memory.log_threat_event("SHIELD_ACCESS_VIOLATION", source_pid as u32, target_pid as u32);
+                            
+                            // BROADCAST TO MESH: Create a high-confidence signature and send to peers
+                            let mut sig = osoosi_types::ThreatSignature::new("local".to_string());
+                            sig.confidence = 1.0;
+                            sig.reason = Some(format!("Shield Self-Defense: Blocked process access violation from PID {} (Mask: {})", source_pid, access_mask_str));
+                            sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                            
+                            let tx_guard = self.mesh_command_tx.lock().await;
+                            if let Some(ref tx_chan) = *tx_guard {
+                                let _ = tx_chan.send(MeshCommand::Broadcast(sig)).await;
+                            }
+
+                            // Neutralize locally
+                            let _ = self.blocking_manager.block_by_pid(source_pid as u32).await;
+                            return Ok(()); 
+                        }
+                    }
+                },
+                // 2. DNS Sinkhole & Redirection
+                osoosi_types::SysmonEventId::DnsQuery => {
+                    if let Some(query) = event.data.get("QueryName").and_then(|v| v.as_str()) {
+                        if let Some(sinkhole_ip) = self.shield.resolve_sinkhole(query) {
+                            info!("Shield Redirection: DNS Query for '{}' sinkholed to {}.", query, sinkhole_ip);
+                            // Log the redirection in audit
+                            self.audit.log("DNS_SINKHOLE_REDIRECTION", serde_json::json!({
+                                "query": query,
+                                "redirected_to": sinkhole_ip,
+                                "source_pid": event.process_id()
+                            }));
+                        }
+                    }
+                },
+                _ => {}
+            }
+        }
 
         // --- MORPHIC ENTANGLEMENT INTERCEPTION ---
         {
@@ -4046,6 +4121,7 @@ impl EdrOrchestrator {
         let sample_tx = malware_sample_tx.clone();
         let autonomy_conf = autonomy.clone();
         let self_clone = self.clone();
+        let orch_tripwire = self.clone();
         let mesh_future = Box::pin(async move {
             mesh.run_loop(
                 join_gate_clone,
@@ -4080,6 +4156,21 @@ impl EdrOrchestrator {
                 move |delta| {
                     let mut model = self_clone.threat_model.blocking_write();
                     model.merge_delta(&delta);
+                },
+                move |alert| {
+                    let self_inner = orch_tripwire.clone();
+                    tokio::spawn(async move {
+                        warn!("Mesh Tripwire: Peer {} triggered a phantom memory trap! Offender: {} ({})", alert.source_node_id, alert.offender.name, alert.offender.blake3_hash);
+                        self_inner.memory.mark_hash_known_malicious(&alert.offender.blake3_hash);
+                        self_inner.audit.log(
+                            "MESH_TRIPWIRE_RECEIVED",
+                            serde_json::json!({
+                                "source_node": alert.source_node_id,
+                                "offender": alert.offender.name,
+                                "hash": alert.offender.blake3_hash,
+                            }),
+                        );
+                    });
                 },
             )
             .await;

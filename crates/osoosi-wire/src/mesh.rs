@@ -46,6 +46,7 @@ pub struct MeshNode {
     pub tarpit_topic: gossipsub::IdentTopic,
     pub confidential_topic: gossipsub::IdentTopic,
     pub model_delta_topic: gossipsub::IdentTopic,
+    pub tripwire_topic: gossipsub::IdentTopic,
     pub zone: String,
     pub memory: Arc<osoosi_memory::MemoryStore>,
     pub dial_semaphore: Arc<tokio::sync::Semaphore>,
@@ -146,6 +147,7 @@ impl MeshNode {
         let confidential_topic =
             gossipsub::IdentTopic::new(format!("{}-{}", super::CONFIDENTIAL_TOPIC, zone));
         let model_delta_topic = gossipsub::IdentTopic::new(format!("osoosi-model-deltas-{}", zone));
+        let tripwire_topic = gossipsub::IdentTopic::new(format!("osoosi-deception-tripwire-{}", zone));
 
         swarm.behaviour_mut().gossipsub.subscribe(&threat_topic)?;
         swarm
@@ -178,6 +180,10 @@ impl MeshNode {
             .behaviour_mut()
             .gossipsub
             .subscribe(&model_delta_topic)?;
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&tripwire_topic)?;
 
         let mesh_config = osoosi_types::load_mesh_listen_config();
 
@@ -271,6 +277,7 @@ impl MeshNode {
             tarpit_topic,
             confidential_topic,
             model_delta_topic,
+            tripwire_topic,
             zone,
             memory,
             dial_semaphore: Arc::new(tokio::sync::Semaphore::new(16)),
@@ -352,7 +359,7 @@ impl MeshNode {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn run_loop<F, G, H, I, J, K, L, M>(
+    pub async fn run_loop<F, G, H, I, J, K, L, M, N>(
         mut self,
         join_gate: Arc<JoinGate>,
         mut command_rx: mpsc::Receiver<MeshCommand>,
@@ -366,6 +373,7 @@ impl MeshNode {
         mut on_tarpit: K,
         mut on_confidential: L,
         mut on_model_delta: M,
+        mut on_tripwire: N,
     ) where
         F: FnMut(ThreatSignature) + Send + 'static,
         G: FnMut(osoosi_types::PolicyConsensusMessage) + Send + 'static,
@@ -375,6 +383,7 @@ impl MeshNode {
         K: FnMut(super::TarpitSignal) + Send + 'static,
         L: FnMut(super::ConfidentialMessage) + Send + 'static,
         M: FnMut(osoosi_types::FederatedModelDelta) + Send + 'static,
+        N: FnMut(osoosi_types::MeshTripwireAlert) + Send + 'static,
     {
         let mut quarantined: HashSet<PeerId> = HashSet::new();
         let mut approved: HashSet<PeerId> = HashSet::new();
@@ -487,6 +496,10 @@ impl MeshNode {
                         let topic = self.model_delta_topic.clone();
                         self.publish_gossip_json(&topic, &delta);
                     }
+                    MeshCommand::BroadcastTripwire(alert) => {
+                        let topic = self.tripwire_topic.clone();
+                        self.publish_gossip_json(&topic, &alert);
+                    }
                 },
                 event = self.swarm.select_next_some() => match event {
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Mdns(mdns::Event::Discovered(list))) => {
@@ -541,6 +554,10 @@ impl MeshNode {
                         } else if message.topic == self.model_delta_topic.hash() {
                             if let Ok(delta) = serde_json::from_slice::<osoosi_types::FederatedModelDelta>(&message.data) {
                                 on_model_delta(delta);
+                            }
+                        } else if message.topic == self.tripwire_topic.hash() {
+                            if let Ok(alert) = serde_json::from_slice::<osoosi_types::MeshTripwireAlert>(&message.data) {
+                                on_tripwire(alert);
                             }
                         }
                     }

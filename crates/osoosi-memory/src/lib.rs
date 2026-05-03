@@ -923,6 +923,37 @@ impl MemoryStore {
         Ok(out)
     }
 
+    /// Check if a domain is a known malicious indicator.
+    pub fn is_known_malicious_domain(&self, domain: &str) -> anyhow::Result<bool> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare_cached(
+            "SELECT 1 FROM otx_indicators WHERE indicator_type = 'domain' AND value = ? LIMIT 1",
+        )?;
+        let exists = stmt.exists([domain])?;
+        Ok(exists)
+    }
+
+    /// Log a specific threat event with context.
+    pub fn log_threat_event(
+        &self,
+        event_type: &str,
+        source_pid: u32,
+        target_pid: u32,
+    ) -> anyhow::Result<()> {
+        let mut sig = ThreatSignature::new("local".to_string());
+        sig.id = format!("{}_{}_{}", event_type, source_pid, Utc::now().timestamp());
+        sig.process_name = Some(format!("PID_{}", source_pid));
+        sig.confidence = 1.0;
+        sig.reason = Some(format!(
+            "Shield Violation: {} from PID {} to target PID {}",
+            event_type, source_pid, target_pid
+        ));
+        sig.recommended_action = ResponseAction::Isolate;
+        sig.detector_count = 1;
+        
+        self.log_threat(&sig)
+    }
+
     pub fn log_threat(&self, sig: &ThreatSignature) -> anyhow::Result<()> {
         let conn = self.conn.lock();
         conn.execute(

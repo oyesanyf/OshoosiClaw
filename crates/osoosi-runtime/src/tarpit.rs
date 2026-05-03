@@ -144,4 +144,97 @@ impl TarpitManager {
                 .status();
         }
     }
+
+    /// Start the Phantom Memory Flux engine.
+    /// This allocates and frees random, deceptive memory regions to frustrate memory scanners.
+    #[cfg(target_os = "windows")]
+    pub fn start_phantom_memory_flux(
+        &self,
+        flux_regions: std::sync::Arc<tokio::sync::RwLock<std::collections::HashSet<usize>>>,
+    ) {
+        use rand::Rng;
+        use windows::Win32::System::Memory::{
+            VirtualAlloc, VirtualFree, MEM_COMMIT, MEM_RELEASE, MEM_RESERVE, PAGE_READWRITE,
+        };
+
+        tokio::spawn(async move {
+            info!("Phantom Memory Flux Engine started.");
+            loop {
+                // Sleep randomly between 5 and 45 seconds before the next flux
+                let sleep_secs = {
+                    let mut rng = rand::thread_rng();
+                    rng.gen_range(5..=45)
+                };
+                tokio::time::sleep(tokio::time::Duration::from_secs(sleep_secs)).await;
+
+                // Allocate standard page-aligned size (e.g., 64KB)
+                let region_size = 64 * 1024;
+
+                // Save as `usize` immediately so it is `Send` over the await.
+                let ptr_addr = unsafe {
+                    let ptr = VirtualAlloc(
+                        None,
+                        region_size,
+                        windows::Win32::System::Memory::VIRTUAL_ALLOCATION_TYPE(MEM_COMMIT.0 | MEM_RESERVE.0),
+                        windows::Win32::System::Memory::PAGE_PROTECTION_FLAGS(PAGE_READWRITE.0),
+                    );
+                    ptr as usize
+                };
+
+                if ptr_addr == 0 {
+                    warn!("Phantom Flux: VirtualAlloc failed.");
+                    continue;
+                }
+
+                // Register region so our own scanners ignore it
+                {
+                    let mut regions = flux_regions.write().await;
+                    regions.insert(ptr_addr);
+                }
+
+                // Bait the Tarpit: Fake MZ header + NOP sleds
+                unsafe {
+                    let slice = std::slice::from_raw_parts_mut(ptr_addr as *mut u8, region_size);
+                    // Fake MZ Header (4D 5A)
+                    slice[0] = 0x4D;
+                    slice[1] = 0x5A;
+                    // NOP Sled (0x90) for the rest
+                    for i in 2..region_size {
+                        slice[i] = 0x90;
+                    }
+                }
+
+                info!("Phantom Memory allocated bait at {:#x}", ptr_addr);
+
+                // Hold the Tarpit for 2 to 10 seconds
+                let hold_secs = {
+                    let mut rng = rand::thread_rng();
+                    rng.gen_range(2..=10)
+                };
+                tokio::time::sleep(tokio::time::Duration::from_secs(hold_secs)).await;
+
+                // Vanish: Free the memory completely
+                unsafe {
+                    let _ = VirtualFree(ptr_addr as *mut std::ffi::c_void, 0, windows::Win32::System::Memory::VIRTUAL_FREE_TYPE(MEM_RELEASE.0));
+                }
+
+                // Deregister the region
+                {
+                    let mut regions = flux_regions.write().await;
+                    regions.remove(&ptr_addr);
+                }
+
+                info!("Phantom Memory vanished from {:#x}", ptr_addr);
+            }
+        });
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn start_phantom_memory_flux(
+        &self,
+        _flux_regions: std::sync::Arc<tokio::sync::RwLock<std::collections::HashSet<usize>>>,
+    ) {
+        // Fallback for non-Windows (e.g. Linux mmap)
+        warn!("Phantom Memory Flux is currently only implemented for Windows.");
+    }
 }

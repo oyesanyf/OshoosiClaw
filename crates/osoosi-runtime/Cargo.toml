@@ -16,7 +16,7 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 thiserror = { workspace = true }
-rand = { workspace = true }
+rand.workspace = true
 sysinfo = { workspace = true }
 tfhe = { workspace = true }
 bincode = { workspace = true }
