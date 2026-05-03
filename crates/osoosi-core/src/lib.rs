@@ -21,6 +21,7 @@ pub mod quarantine;
 pub mod relativistic;
 pub mod shield;
 pub mod privacy;
+pub mod military;
 pub mod software_replacement;
 pub mod static_analyzer;
 pub mod system_check;
@@ -397,6 +398,8 @@ pub struct EdrOrchestrator {
     patch_engine: Arc<PatchEngine>,
     /// Privacy: Differential Privacy + Merkle Proofs + Homomorphic Encryption
     privacy: Arc<privacy::PrivacyLayer>,
+    /// Military: Tactical detection for asymmetric warfare
+    military: Arc<military::MilitaryGuard>,
     /// Local model trained on self + peer data (stored in models/)
     threat_model: Arc<tokio::sync::RwLock<ThreatModel>>,
     /// Malware scanner (PE features + ML + signatures)
@@ -1102,6 +1105,7 @@ impl EdrOrchestrator {
         ));
 
         let privacy = Arc::new(privacy::PrivacyLayer::new(trust.clone()));
+        let military = Arc::new(military::MilitaryGuard::new());
 
         Ok(Self {
             memory,
@@ -1118,6 +1122,7 @@ impl EdrOrchestrator {
             file_event_rx,
             patch_engine,
             privacy,
+            military,
             threat_model,
             malware_scanner,
             triage_store,
@@ -2424,6 +2429,23 @@ impl EdrOrchestrator {
         mut event: osoosi_types::SysmonEvent,
     ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
+
+        // --- MILITARY-GRADE TACTICAL ANALYSIS (Loitering, Mesh, Decoy) ---
+        if let Some(mut sig) = self.military.analyze_event(&event).await {
+            warn!("MILITARY-GUARD: Tactical threat detected! {}", sig.reason.as_deref().unwrap_or("Unknown"));
+            self.privacy.protect_signature(&mut sig);
+            
+            let tx_guard = self.mesh_command_tx.lock().await;
+            if let Some(ref tx_chan) = *tx_guard {
+                let _ = tx_chan.send(MeshCommand::Broadcast(sig.clone())).await;
+            }
+
+            if sig.recommended_action == ResponseAction::Isolate {
+                 if let Some(pid) = event.process_id() {
+                     let _ = self.blocking_manager.block_by_pid(pid);
+                 }
+            }
+        }
 
         // --- SHIELD LAYER INTERCEPTION (Reality-Distortion & Self-Defense) ---
         {

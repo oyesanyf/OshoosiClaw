@@ -95,6 +95,18 @@ Specialized engines for spotting Command & Control activity:
 - **Xori**: Shellcode emulation for pre-execution capability detection.
 - **yara-x**: Native Rust pattern matching for malware families.
 
+### 4. Privacy Layer (Cryptographic Hardening)
+The Privacy Layer enforces **Differential Privacy (DP)** and **Merkle-Chain Integrity** on all mesh-wide communications.
+- **Merkle Proofs**: All threat intelligence is cryptographically attested to a node's local audit trail.
+- **Differential Privacy**: Laplacian noise is injected into threat scores to prevent adversary fingerprinting of node behavior.
+- **Homomorphic Encryption**: Enables secure, decentralized aggregation of threat metrics without revealing raw telemetry.
+
+### 5. Military Guard (Tactical Defense)
+The Military Guard provides advanced detection for asymmetric warfare patterns typically used by nation-state actors.
+- **Phantom-Mesh Detection**: Identifies unauthorized P2P "whispering" for lateral movement.
+- **Sleeper-Strike (Loitering) Monitor**: Detects dormant processes that execute sudden "Alpha Strikes" after long periods of inactivity.
+- **Anti-Chaff Filter**: Neutralizes decoy traffic intended to blind the EDR's monitoring capabilities.
+
 ## Response Matrix
 
 | Confidence | Action | Description |
