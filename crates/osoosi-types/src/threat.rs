@@ -172,6 +172,8 @@ pub struct ThreatSignature {
     pub cve_id: Option<String>,
     pub hash_blake3: Option<String>,
     pub process_name: Option<String>,
+    pub parent_process: Option<String>,
+    pub version: Option<String>,
     pub confidence: f32, // 0.0 - 1.0
     pub detector_count: u32,
     pub detected_at: DateTime<Utc>,
@@ -207,6 +209,8 @@ impl ThreatSignature {
             cve_id: None,
             hash_blake3: None,
             process_name: None,
+            parent_process: None,
+            version: None,
             confidence: 0.0,
             detector_count: 0,
             detected_at: Utc::now(),

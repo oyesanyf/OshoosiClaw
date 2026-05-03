@@ -125,7 +125,11 @@ impl ThreatVoter for BehavioralThreatVoter {
 
         // Perform inference using the bulk-trained model
         let model_read = self.model.read().await;
-        let score = model_read.infer(process_name, None, version, parent_name);
+        let mut lineage = Vec::new();
+        if let Some(p) = parent_name {
+            lineage.push(p.to_string());
+        }
+        let score = model_read.infer(process_name, None, version, lineage);
 
         if score > 0.8 {
             return Some(VoteResult {

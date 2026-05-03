@@ -777,16 +777,93 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
         },
         Some(Commands::Audit { cve, product, version, parent }) => {
+            let mut resolved_version = version.clone();
+            let mut resolved_product = product.clone();
+
+            // 1. Autonomous Version Discovery: If version is missing, try to find it from the binary
+            if version.is_none() {
+                if let Some(ref p_name) = product {
+                    let path_to_audit = if Path::new(p_name).is_absolute() {
+                        Some(PathBuf::from(p_name))
+                    } else {
+                        // Search in PATH
+                        std::env::var_os("PATH").and_then(|paths| {
+                            std::env::split_paths(&paths).find_map(|dir| {
+                                let full_path = dir.join(p_name);
+                                if full_path.exists() {
+                                    Some(full_path)
+                                } else {
+                                    None
+                                }
+                            })
+                        })
+                    };
+
+                    if let Some(path) = path_to_audit {
+                        if let Some((p, v)) = osoosi_core::version_utils::get_pe_product_info(&path) {
+                             info!("Autonomously discovered version for {}: {} (from PE info)", p_name, v);
+                             resolved_version = Some(v);
+                             resolved_product = Some(p);
+                        } else if let Some(v) = osoosi_core::version_utils::get_file_version_info(&path) {
+                             info!("Autonomously discovered version for {}: {} (from file metadata)", p_name, v);
+                             resolved_version = Some(v);
+                        }
+                    }
+                }
+            }
+
+            // 2. Lineage Discovery: Examine the entire process tree
+            let mut lineage = Vec::new();
+            if let Some(ref pa) = parent {
+                lineage.push(pa.clone());
+            }
+
+            // If the product is currently running, we can walk the real system tree
+            let mut system = sysinfo::System::new_all();
+            system.refresh_all();
+
+            let target_pname = resolved_product.as_deref().unwrap_or("?");
+            let mut current_pid = None;
+
+            for (pid, process) in system.processes() {
+                if process.name().to_lowercase() == target_pname.to_lowercase() {
+                    current_pid = Some(*pid);
+                    break;
+                }
+            }
+
+            if let Some(pid) = current_pid {
+                info!("Auditing live process tree for PID {} ({})", pid, target_pname);
+                let mut walk_pid = pid;
+                let mut depth = 0;
+                while let Some(proc) = system.process(walk_pid) {
+                    if let Some(ppid) = proc.parent() {
+                        if let Some(parent_proc) = system.process(ppid) {
+                            let parent_name = parent_proc.name().to_string();
+                            if !lineage.contains(&parent_name) {
+                                lineage.push(parent_name);
+                            }
+                            walk_pid = ppid;
+                            depth += 1;
+                            if depth > 10 { break; } // Safety cap
+                        } else { break; }
+                    } else { break; }
+                }
+                if !lineage.is_empty() {
+                    info!("Discovered process lineage: {}", lineage.join(" -> "));
+                }
+            }
+
             let config = osoosi_model::ModelConfig::default();
             let model = osoosi_model::ThreatModel::new(config);
-            let score = model.infer(product.as_deref(), cve.as_deref(), version.as_deref(), parent.as_deref());
+            let score = model.infer(resolved_product.as_deref(), cve.as_deref(), resolved_version.as_deref(), lineage);
             
             println!("\n----------------------------------------");
             println!("      Oshoosi Threat Audit Results");
             println!("----------------------------------------");
             if let Some(c) = cve { println!("CVE ID:      {}", c); }
-            if let Some(p) = product { println!("Product:     {}", p); }
-            if let Some(v) = version { println!("Version:     {}", v); }
+            if let Some(p) = resolved_product { println!("Product:     {}", p); }
+            if let Some(v) = resolved_version { println!("Version:     {}", v); }
             if let Some(pa) = parent { println!("Parent:      {}", pa); }
             println!("Risk Score:  {:.4}", score);
             println!("----------------------------------------");

@@ -113,6 +113,14 @@ impl ThreatModel {
         if let Some(ref p) = sig.process_name {
             f.push(format!("proc:{}", p.to_lowercase()));
         }
+        if let Some(ref parent) = sig.parent_process {
+            f.push(format!("parent:{}", parent.to_lowercase()));
+        }
+        if let Some(ref v) = sig.version {
+            if let Some(ref p) = sig.process_name {
+                f.push(format!("ver:{}:{}", p.to_lowercase(), v.to_lowercase()));
+            }
+        }
         if let Some(ref c) = sig.cve_id {
             f.push(format!("cve:{}", c.to_lowercase()));
         }
@@ -159,18 +167,9 @@ impl ThreatModel {
         self.weights.sample_count += 1;
     }
 
-    /// Infer threat score for given features (process_name, cve_id, version, parent_process, etc).
-    pub fn infer(&self, process_name: Option<&str>, cve_id: Option<&str>, version: Option<&str>, parent_process: Option<&str>) -> f32 {
+    /// Infer threat score for given features (process_name, cve_id, version, lineage).
+    pub fn infer(&self, process_name: Option<&str>, cve_id: Option<&str>, version: Option<&str>, lineage: Vec<String>) -> f32 {
         let mut score = 0.0f32;
-
-        // 0. Baseline Awareness: If it's a known system binary, start with a tiny non-zero score 
-        // to show it was successfully audited as "Low Risk" rather than "Unknown".
-        if let Some(p) = process_name {
-            let p_low = p.to_lowercase();
-            if p_low == "cmd.exe" || p_low == "powershell.exe" || p_low == "svchost.exe" || p_low == "explorer.exe" || p_low == "lsass.exe" {
-                score = 0.01;
-            }
-        }
 
         if let Some(p) = process_name {
             let p_low = p.to_lowercase();
@@ -188,10 +187,13 @@ impl ThreatModel {
             score += self.weights.features.get(&proc_key).copied().unwrap_or(0.0);
         }
 
-        // 3. Parent Process Risk
-        if let Some(parent) = parent_process {
+        // 3. Lineage/Parent Process Risk (Examine the entire tree)
+        for parent in lineage {
             let parent_key = format!("parent:{}", parent.to_lowercase());
-            score += self.weights.features.get(&parent_key).copied().unwrap_or(0.0);
+            if let Some(&p_score) = self.weights.features.get(&parent_key) {
+                // Compound risk: multiple suspicious parents increase total score
+                score += p_score;
+            }
         }
 
         if let Some(c) = cve_id {

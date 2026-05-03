@@ -5253,6 +5253,7 @@ dependencies = [
  "rand 0.8.6",
  "regex",
  "reqwest",
+ "sysinfo",
  "tar",
  "tokio",
  "tracing",

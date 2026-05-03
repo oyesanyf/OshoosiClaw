@@ -2762,7 +2762,7 @@ impl EdrOrchestrator {
                 .and_then(|c| c.as_str())
                 .map(String::from);
             let model = self.threat_model.read().await;
-            let score = model.infer(proc.as_deref(), cve.as_deref(), None, None);
+            let score = model.infer(proc.as_deref(), cve.as_deref(), None, Vec::new());
             if score >= 0.75 {
                 let is_fp = self
                     .memory
@@ -3949,6 +3949,8 @@ impl EdrOrchestrator {
             cve_id: None,
             hash_blake3: file_hash.map(|s| s.to_string()),
             process_name: Some(name.to_string()),
+            parent_process: None,
+            version: None,
             confidence: 1.0,
             detected_at: chrono::Utc::now(),
             source_node: source.clone(),
@@ -3958,7 +3960,7 @@ impl EdrOrchestrator {
             recommended_action: osoosi_types::ResponseAction::Isolate,
             reason: Some("Manual analyst report".to_string()),
             predicted_next: None,
-            epsilon: Some(0.05),
+            epsilon: None,
             detector_count: 1,
             require_approval: false,
             action_state: osoosi_types::ActionState::Executed,

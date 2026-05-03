@@ -114,10 +114,16 @@ impl MemoryStore {
                 detected_at TEXT,
                 source_node TEXT,
                 file_path TEXT,
-                reason TEXT
+                reason TEXT,
+                parent_process TEXT,
+                version TEXT
             )",
             [],
         )?;
+
+        // Schema Migrations (Dynamic)
+        let _ = conn.execute("ALTER TABLE threats ADD COLUMN parent_process TEXT", []);
+        let _ = conn.execute("ALTER TABLE threats ADD COLUMN version TEXT", []);
 
         // Reputation scores for mesh peers (EigenTrust-lite)
         conn.execute(
@@ -920,8 +926,8 @@ impl MemoryStore {
     pub fn log_threat(&self, sig: &ThreatSignature) -> anyhow::Result<()> {
         let conn = self.conn.lock();
         conn.execute(
-            "INSERT INTO threats (id, cve_id, hash_blake3, process_name, confidence, detected_at, source_node, file_path, reason)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9)",
+            "INSERT INTO threats (id, cve_id, hash_blake3, process_name, confidence, detected_at, source_node, file_path, reason, parent_process, version)
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
             params![
                 sig.id,
                 sig.cve_id,
@@ -931,7 +937,9 @@ impl MemoryStore {
                 sig.detected_at.to_rfc3339(),
                 sig.source_node,
                 sig.process_name, // Use process_name as a placeholder for file_path if not separate
-                sig.reason
+                sig.reason,
+                sig.parent_process,
+                sig.version
             ],
         )?;
         if let Some(ref hash) = sig.hash_blake3 {
@@ -1000,7 +1008,7 @@ impl MemoryStore {
     pub fn get_threats_for_training(&self, limit: usize) -> anyhow::Result<Vec<ThreatSignature>> {
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(
-            "SELECT id, cve_id, hash_blake3, process_name, confidence, detected_at, source_node 
+            "SELECT id, cve_id, hash_blake3, process_name, confidence, detected_at, source_node, parent_process, version 
              FROM threats ORDER BY detected_at DESC LIMIT ?1",
         )?;
         let rows = stmt.query_map(params![limit as i64], |row| {
@@ -1014,6 +1022,8 @@ impl MemoryStore {
                     .map_err(|_| rusqlite::Error::InvalidQuery)?
                     .with_timezone(&Utc),
                 source_node: row.get(6)?,
+                parent_process: row.get(7)?,
+                version: row.get(8)?,
                 signature: None,
                 public_key: None,
                 merkle_proof: None,

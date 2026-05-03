@@ -568,6 +568,12 @@ impl PolicyEngine {
         signature.detector_count = vote_count;
         signature.process_name = process_name_from_event(event);
         signature.hash_blake3 = preferred_hash_from_event(event);
+        signature.parent_process = event.data.get("ParentImage")
+            .and_then(|v| v.as_str())
+            .and_then(|p| std::path::Path::new(p).file_name())
+            .and_then(|n| n.to_str())
+            .map(|s| s.to_string());
+        signature.version = event.product_version.clone();
 
         let decision = orchestrate_evidence(&evidence_votes, event);
         signature.confidence = decision.confidence;
