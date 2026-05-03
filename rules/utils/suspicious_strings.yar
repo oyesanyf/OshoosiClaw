@@ -1281,7 +1281,7 @@ rule Misc_Suspicious_Strings
         $a3 = "exploit" nocase ascii wide
         $a4 = "cmd.exe" nocase ascii wide
         $a5 = "CWSandbox" nocase wide ascii // Found in some Zeus/Citadel samples
-        $a6 = "System32\\\\drivers\\\\\\\\\\etc\\\\\\\\\\hosts" nocase wide ascii
+        $a6 = "System32\\\\drivers\\\\\\\\\etc\\\\\\\\\hosts" nocase wide ascii
     condition:
         any of them
 }

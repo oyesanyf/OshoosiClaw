@@ -12,7 +12,7 @@ rule asp_file : webshell {
 	strings:
 		$s1 = "' *** Written by Tim Medin <tim@counterhack.com>" fullword ascii
 		$s2 = "Response.BinaryWrite(stream.Read)" fullword ascii
-		$s3 = "Response.Write(Response.Status & Request.ServerVariables(\"REMOTE_ADDR\"))" fullword ascii /* PEStudio Blacklist: strings */		$s4 = "%><a href=\"<%=Request.ServerVariables(\"URL\")%>\">web root</a><br\/><%" fullword ascii /* PEStudio Blacklist: strings */		$s5 = "set folder = fso.GetFolder(path)" fullword ascii
+		$s3 = "Response.Write(Response.Status & Request.ServerVariables(\"REMOTE_ADDR\"))" fullword ascii /* PEStudio Blacklist: strings */		$s4 = "%><a href=\"<%=Request.ServerVariables(\"URL\")%>\">web root</a><br/><%" fullword ascii /* PEStudio Blacklist: strings */		$s5 = "set folder = fso.GetFolder(path)" fullword ascii
 		$s6 = "Set file = fso.GetFile(filepath)" fullword ascii
 	condition:
 		uint16(0) == 0x253c and filesize < 30KB and 5 of them
@@ -103,7 +103,7 @@ rule php_shell  : webshell{
 		date = "2015-06-22"
 		hash = "dc5c03a21267d024ef0f5ab96a34e3f6423dfcd6"
 	strings:
-		$s1 = "command_hist[current_line] = document.shell.command.value;" fullword ascii /* PEStudio Blacklist: strings */		$s2 = "if (e.keyCode == 38 && current_line < command_hist.length-1) \{" fullword ascii /* PEStudio Blacklist: strings */		$s3 = "array_unshift($_SESSION['history'], $command);" fullword ascii /* PEStudio Blacklist: strings */		$s4 = "if (preg_match('/^[[:blank:]]*cd[[:blank:]]*$\/', $command)) \{" fullword ascii /* PEStudio Blacklist: strings */	condition:
+		$s1 = "command_hist[current_line] = document.shell.command.value;" fullword ascii /* PEStudio Blacklist: strings */		$s2 = "if (e.keyCode == 38 && current_line < command_hist.length-1) {" fullword ascii /* PEStudio Blacklist: strings */		$s3 = "array_unshift($_SESSION['history'], $command);" fullword ascii /* PEStudio Blacklist: strings */		$s4 = "if (preg_match('/^[[:blank:]]*cd[[:blank:]]*$/', $command)) {" fullword ascii /* PEStudio Blacklist: strings */	condition:
 		filesize < 40KB and all of them
 }
 
@@ -180,7 +180,7 @@ rule php_file  : webshell{
 		date = "2015-06-22"
 		hash = "7421d33e8007c92c8642a36cba7351c7f95a4335"
 	strings:
-		$s1 = "$allowedIPs =" fullword ascii /* PEStudio Blacklist: strings */		$s2 = "<a href=\"<?php echo $_SERVER['PHP_SELF']  ?>\">Home</a><br\/>" fullword ascii /* PEStudio Blacklist: strings */		$s3 = "$dir  = isset($_GET[\"dir\"])  ? $_GET[\"dir\"]  : \".\";" fullword ascii
+		$s1 = "$allowedIPs =" fullword ascii /* PEStudio Blacklist: strings */		$s2 = "<a href=\"<?php echo $_SERVER['PHP_SELF']  ?>\">Home</a><br/>" fullword ascii /* PEStudio Blacklist: strings */		$s3 = "$dir  = isset($_GET[\"dir\"])  ? $_GET[\"dir\"]  : \".\";" fullword ascii
 		$s4 = "$curdir .= substr($curdir, -1) != \"/\" ? \"/\" : \"\";" fullword ascii
 	condition:
 		filesize < 10KB and all of them
@@ -220,7 +220,7 @@ rule php_reverse_shell_2  : webshell{
 		date = "2015-06-22"
 		hash = "025db3c3473413064f0606d93d155c7eb5049c42"
 	strings:
-		$s1 = "$process = proc_open($shell, $descriptorspec, $pipes);" fullword ascii /* PEStudio Blacklist: strings */		$s7 = "$shell = 'uname -a; w; id; /bin\/sh -i';" fullword ascii /* PEStudio Blacklist: strings */	condition:
+		$s1 = "$process = proc_open($shell, $descriptorspec, $pipes);" fullword ascii /* PEStudio Blacklist: strings */		$s7 = "$shell = 'uname -a; w; id; /bin/sh -i';" fullword ascii /* PEStudio Blacklist: strings */	condition:
 		filesize < 10KB and all of them
 }
 

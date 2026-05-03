@@ -982,7 +982,7 @@ rule vmdetect_misc : vmdetect
 		$vmdrv10 = "vmx86.sys" ascii wide
 		$vmdrv11 = "vmnet.sys" ascii wide
 
-		// SYSTEM\\ControlSet001\Services
+		// SYSTEM\ControlSet001\Services
 		$vmsrvc1 = "vmicheartbeat" ascii wide
 		$vmsrvc2 = "vmicvss" ascii wide
 		$vmsrvc3 = "vmicshutdown" ascii wide
