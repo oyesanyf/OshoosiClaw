@@ -2132,6 +2132,7 @@ impl EdrOrchestrator {
                                 }
                                 for ev in events {
                                     let orch = orchestrator.clone();
+                                    orch.adaptive.report_event();
                                     orchestrator.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
                                         if let Err(e) = orch.process_telemetry(ev).await {
                                             error!("Failed to process host event: {}", e);
@@ -2497,9 +2498,28 @@ impl EdrOrchestrator {
     ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
 
-        // --- IDENTITY ENRICHMENT: Obtain Product/Version/Signature directly from the file on disk ---
+        // 0. Intelligent Load-Aware Throttling (The "Brain")
+        let current_mode = self.adaptive.current_mode().await;
+        let is_high_pressure = current_mode == crate::adaptive::TelemetryMode::Silent;
+
+        // Deduplication: Avoid redundant heavy analysis for the same image in a burst
         if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
-             if let Some(meta) = osoosi_types::get_pe_metadata(std::path::Path::new(image_path)) {
+            let cache_key = format!("{}:{}", event.event_id, image_path);
+            if let Some(last_seen) = self.alert_suppression_cache.get(&cache_key) {
+                if last_seen.elapsed() < Duration::from_secs(5) {
+                    return Ok(()); // Burst suppression
+                }
+            }
+            self.alert_suppression_cache.insert(cache_key, Instant::now());
+        }
+
+        // --- IDENTITY ENRICHMENT ---
+        if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
+             // In high pressure mode, we skip PE metadata extraction unless it's a critical process spawn
+             let should_enrich = !is_high_pressure || event.event_id == 1;
+             
+             if should_enrich {
+                 if let Some(meta) = osoosi_types::get_pe_metadata(std::path::Path::new(image_path)) {
                  // Enrich event with actual on-disk version if missing or generic
                  let needs_version = event.data.get("ProductVersion")
                     .and_then(|v| v.as_str())
@@ -2519,8 +2539,10 @@ impl EdrOrchestrator {
              }
         }
 
-        // --- MILITARY-GRADE TACTICAL ANALYSIS (Loitering, Mesh, Decoy) ---
-        if let Some(mut sig) = self.military.analyze_event(&event).await {
+        // --- MILITARY-GRADE TACTICAL ANALYSIS ---
+        // Skip heavy tactical reasoning in Silent mode to preserve system responsiveness
+        if !is_high_pressure {
+            if let Some(mut sig) = self.military.analyze_event(&event).await {
             warn!("MILITARY-GUARD: Tactical threat detected! {}", sig.reason.as_deref().unwrap_or("Unknown"));
             self.privacy.protect_signature(&mut sig);
             
@@ -2642,10 +2664,15 @@ impl EdrOrchestrator {
         let signature = self.policy.scan_event(&event).await;
 
         // 2. Entropy analysis on Rayon (CPU-bound)
-        let static_analyzer = self.static_analyzer.clone();
-        let event_clone = event.clone();
-        let signature = crate::run_on_rayon(move || {
-            let mut signature = signature;
+        // Skip entropy calculation for all events in Silent mode (extreme I/O saver)
+        let signature = if is_high_pressure {
+            signature
+        } else {
+            let static_analyzer = self.static_analyzer.clone();
+            let event_clone = event.clone();
+            let current_sig = signature;
+            crate::run_on_rayon(move || {
+                let mut signature = current_sig;
             if let Some(image_path) = event_clone.data.get("Image").and_then(|v| v.as_str()) {
                 let path = std::path::PathBuf::from(image_path);
                 // Entropy check for packed/obfuscated files
@@ -2675,7 +2702,8 @@ impl EdrOrchestrator {
             }
             signature
         })
-        .await?;
+        .await?
+    };
 
         if let Some(signature) = signature {
             info!(
