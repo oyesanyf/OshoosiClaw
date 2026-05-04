@@ -117,7 +117,9 @@ fn is_trusted_operational_tool(event: &SysmonEvent) -> bool {
         || path.contains("/oshoosiclaw/target/")
         || path.contains("\\appdata\\local\\microsoft\\")
         || path.contains("\\appdata\\local\\google\\chrome\\")
-        || path.contains("\\appdata\\local\\programs\\python\\");
+        || path.contains("\\appdata\\local\\programs\\python\\")
+        || path.contains("\\.rustup\\")
+        || path.contains("\\.cargo\\bin\\");
     if !trusted_path {
         return false;
     }
@@ -131,6 +133,7 @@ fn is_trusted_operational_tool(event: &SysmonEvent) -> bool {
         "chrome", "firefox", "msedge", "brave",
         "ollama", "ollama_llama_server",
         "updater", "googleupdate", "microsoftedgeupdate",
+        "rustup", "clippy-driver", "cargo-clippy", "cargo-fmt",
     ];
     TRUSTED_STEMS.contains(&stem.as_str())
 }

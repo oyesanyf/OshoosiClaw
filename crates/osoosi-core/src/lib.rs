@@ -84,13 +84,24 @@ pub type RepairStatus = (
     Option<String>,
 );
 
-fn is_trusted_operational_image(image_path: &str) -> bool {
+fn is_trusted_operational_image(event: &osoosi_types::SysmonEvent) -> bool {
+    let image_path = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
     let path = image_path.to_ascii_lowercase();
     let stem = std::path::Path::new(image_path)
         .file_stem()
         .and_then(|s| s.to_str())
         .unwrap_or("")
         .to_ascii_lowercase();
+        
+    // 1. Signature Verification (The most important signal)
+    let sig_status = event.data.get("SignatureStatus")
+        .or_else(|| event.data.get("Signature Status"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("")
+        .to_lowercase();
+    let is_signed = sig_status == "valid" || sig_status.contains("trusted");
+
+    // 2. Path-based trust
     let trusted_path = path.contains("\\windows\\system32\\")
         || path.contains("\\windows\\syswow64\\")
         || path.contains("\\windows\\winsxs\\")
@@ -115,16 +126,14 @@ fn is_trusted_operational_image(image_path: &str) -> bool {
         || path.contains("\\program files\\mozilla firefox\\")
         || path.contains("\\program files\\microsoft office\\")
         || path.contains("\\tools\\git\\cmd\\")
-        || path.contains("\\progra~1\\git\\");
+        || path.contains("\\progra~1\\git\\")
+        || path.contains("\\.rustup\\")
+        || path.contains("\\.cargo\\bin\\"); // PROTECT DEVELOPER ENVIRONMENT
 
-    // Comprehensive whitelist of known-good system and application processes.
-    // These are processes that should NEVER be treated as standalone ML-only threats.
+    // 3. Trusted Stems (Known-Good Basenames)
     const TRUSTED_STEMS: &[&str] = &[
-        // ── OshoosiClaw / EDR Tools ──
-        "osoosi",
-        "sysmon", "sysmon64",
+        "osoosi", "sysmon", "sysmon64",
         "capa", "hayabusa", "hollows_hunter", "chainsaw",
-        // ── Windows Core ──
         "svchost", "csrss", "smss", "wininit", "winlogon", "lsass", "lsaiso",
         "services", "spoolsv", "dwm", "explorer", "taskhostw", "taskhost",
         "conhost", "cmd", "powershell", "pwsh", "wt", "sihost",
@@ -137,51 +146,30 @@ fn is_trusted_operational_image(image_path: &str) -> bool {
         "securityhealthservice", "securityhealthsystray",
         "sgrmbroker", "mpcmdrun", "msmpeng", "nissrv",
         "systemsettings", "systemsettingsbroker",
-        "locationnotificationwindows", "locationnotification",
         "applicationframehost", "shellexperiencehost",
-        "startmenuexperiencehost", "textinputhost",
-        "lockapp", "logonui", "credentialenrollmentmanager",
         "audiodg", "audioses",
         "net", "net1", "netstat", "ipconfig", "ping", "tracert", "nslookup",
         "whoami", "hostname", "systeminfo", "tasklist", "taskmgr",
         "reg", "regedit", "sc", "wmic", "bcdedit",
-        // ── Windows Servicing & Update ──
         "wusa", "dism", "cleanmgr", "defrag",
-        // ── Microsoft Office / Apps ──
         "winword", "excel", "powerpnt", "outlook", "onenote", "teams", "msedge",
-        "hxtsr", "hxoutlook", "hxcalendarappimm", "hxaccounts",
-        "filecoauth", "onedrive", "onedrivesetup",
-        // ── Common Browsers ──
-        "chrome", "firefox", "brave", "opera", "vivaldi", "msedge",
-        // ── Developer Tools ──
+        "chrome", "firefox", "brave", "opera", "vivaldi",
         "git", "git-remote-https", "git-remote-http",
         "cargo", "rustc", "rustup", "clippy-driver",
         "npm", "node", "npx", "yarn", "pnpm",
         "python", "python3", "pip", "pip3",
-        "java", "javaw", "javac",
-        "dotnet",
-        "code", "cursor",
-        "antigravity",
-        "language_server_windows_x64",
-        // ── AI / ML Tools ──
-        "ollama", "ollama_llama_server",
-        // ── Updaters ──
-        "updater", "googleupdate", "microsoftedgeupdate",
+        "java", "javaw", "javac", "dotnet",
+        "code", "cursor", "antigravity",
     ];
     let is_trusted_stem = TRUSTED_STEMS.contains(&stem.as_str());
-    
-    let is_venv = path.contains("\\.venv\\") || path.contains("/.venv/") || path.contains("\\site-packages\\") || path.contains("/site-packages/");
-    
-    // Also skip if it's explicitly a tool/system directory regardless of stem
-    let is_tool_dir = path.contains("\\tools\\git\\") || path.contains("/tools/git/") || path.contains("\\oshoosiclaw\\");
 
-    // For system paths (windows, program files), we trust ALL executables — not just stem-matched ones.
-    // This prevents ML false positives on any legitimate system binary.
-    let is_system_dir = path.contains("\\windows\\")
-        || path.contains("\\program files\\")
-        || path.contains("\\program files (x86)\\");
+    // 4. Conditional Trust: Require signature for dev tools and system binaries
+    if (is_trusted_stem || trusted_path) && is_signed {
+        return true;
+    }
 
-    is_system_dir || (is_trusted_stem && (trusted_path || is_venv)) || is_tool_dir
+    // Default to untrusted if not signed or not in a known path
+    false
 }
 
 fn should_skip_file_malware_scan(path: &std::path::Path) -> bool {
@@ -2629,9 +2617,10 @@ impl EdrOrchestrator {
             match effective_action {
                 ResponseAction::Isolate => {
                     if let Some(image) = event.data.get("Image").and_then(|v| v.as_str()) {
-                        // SAFETY GUARD: Never autonomously block system-critical processes.
-                        if is_trusted_operational_image(image) {
-                            warn!("AUTONOMOUS BLOCK SKIPPED: {} is a trusted system/operational binary. Downgrading to Alert.", image);
+                        // SAFETY GUARD: Downgrade to Alert for trusted images ONLY if confidence is not extremely high (< 0.95).
+                        if is_trusted_operational_image(event) && signature.confidence < 0.95 {
+                            let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+                            warn!("AUTONOMOUS BLOCK SKIPPED: {} is a trusted system/operational binary (confidence {:.2} < 0.95). Downgrading to Alert.", image, signature.confidence);
                         } else {
                         warn!("AUTONOMOUS BLOCK: Consensus threshold met for {}. Applying FileBlockExecutable.", image);
                         let rule = osoosi_types::BlockingRule {
