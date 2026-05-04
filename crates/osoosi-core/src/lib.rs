@@ -808,36 +808,44 @@ impl EdrOrchestrator {
         let mut nostr_relays = mesh_config.nostr_relays.clone();
         
         if nostr_relays.is_empty() {
-            info!("Nostr Mesh: No static relays configured. Attempting BitChat-style geo-bootstrap...");
-            let geo_dir = crate::geo_mesh::GeoRelayDirectory::new();
-            // BitChat remote relay directory (publicly maintained list with GPS coordinates)
-            let geo_csv_url = "https://raw.githubusercontent.com/permissionlesstech/georelays/refs/heads/main/nostr_relays.csv";
-            
-            if let Ok(resp) = reqwest::get(geo_csv_url).await {
-                if let Ok(csv) = resp.text().await {
-                    geo_dir.load_csv(&csv).await;
-                    nostr_relays = geo_dir.auto_bootstrap().await;
+            if mesh_config.allow_public_relays {
+                info!("Nostr Mesh: No static relays configured. Attempting BitChat-style geo-bootstrap...");
+                let geo_dir = crate::geo_mesh::GeoRelayDirectory::new();
+                let geo_csv_url = "https://raw.githubusercontent.com/permissionlesstech/georelays/refs/heads/main/nostr_relays.csv";
+                
+                if let Ok(resp) = reqwest::get(geo_csv_url).await {
+                    if let Ok(csv) = resp.text().await {
+                        geo_dir.load_csv(&csv).await;
+                        nostr_relays = geo_dir.auto_bootstrap().await;
+                    }
                 }
-            }
 
-            if nostr_relays.is_empty() {
-                warn!("Nostr Mesh: Geo-bootstrap failed. Falling back to global defaults.");
-                nostr_relays = vec![
-                    "wss://relay.damus.io".to_string(),
-                    "wss://nos.lol".to_string(),
-                    "wss://relay.snort.social".to_string(),
-                    "wss://nostr.bitcoiner.social".to_string(),
-                ];
+                if nostr_relays.is_empty() {
+                    warn!("Nostr Mesh: Geo-bootstrap failed. Falling back to global public defaults.");
+                    nostr_relays = vec![
+                        "wss://relay.damus.io".to_string(),
+                        "wss://nos.lol".to_string(),
+                        "wss://relay.snort.social".to_string(),
+                    ];
+                }
+            } else {
+                warn!("Nostr Mesh: No private relays configured and allow_public_relays=false. Global threat sharing is DISABLED to prevent metadata leakage.");
             }
         }
         
-        info!("Initializing Nostr Mesh with {} relays...", nostr_relays.len());
-        let nostr_orch = crate::nostr_mesh::NostrMeshOrchestrator::new(None, 1.0).await?;
-        for relay in nostr_relays {
-            let _ = nostr_orch.add_relay(&relay).await;
-        }
-        nostr_orch.connect().await;
-        let nostr_mesh = Arc::new(nostr_orch);
+        let nostr_mesh = if !nostr_relays.is_empty() {
+            info!("Initializing Nostr Mesh with {} relays...", nostr_relays.len());
+            let nostr_orch = crate::nostr_mesh::NostrMeshOrchestrator::new(None, 1.0).await?;
+            for relay in nostr_relays {
+                let _ = nostr_orch.add_relay(&relay).await;
+            }
+            nostr_orch.connect().await;
+            Arc::new(nostr_orch)
+        } else {
+            // Create an empty/disabled orchestrator placeholder or handle via Option
+            // For now, we create a disconnected one to satisfy the type system
+            Arc::new(crate::nostr_mesh::NostrMeshOrchestrator::new(None, 1.0).await?)
+        };
 
         let mesh_command_tx = Arc::new(tokio::sync::Mutex::new(None));
         let response = Arc::new(DeceptionManager::new());

@@ -1145,6 +1145,7 @@ pub struct WireListenConfig {
     pub membership_proof: Option<String>,
     pub zone: String,
     pub nostr_relays: Vec<String>,
+    pub allow_public_relays: bool,
 }
 
 pub fn load_mesh_listen_config_extended() -> WireListenConfig {
@@ -1154,6 +1155,7 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
     let mut membership_proof = None;
     let mut zone = "Global".to_string();
     let mut nostr_relays = Vec::new();
+    let mut allow_public_relays = false;
 
     if let Some(path) = resolve_config_path() {
         if let Ok(content) = std::fs::read_to_string(&path) {
@@ -1191,6 +1193,7 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
                     zone = z;
                 }
                 nostr_relays = fc.wire.nostr_relays.clone();
+                allow_public_relays = fc.wire.allow_public_relays;
             }
         }
     }
@@ -1213,6 +1216,9 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
     if let Ok(z) = std::env::var("OSOOSI_MESH_ZONE") {
         zone = z.trim().to_string();
     }
+    if let Ok(v) = std::env::var("OSOOSI_ALLOW_PUBLIC_RELAYS") {
+        allow_public_relays = v == "1" || v.eq_ignore_ascii_case("true");
+    }
 
     if listen_addrs.is_empty() {
         listen_addrs.push("/ip4/0.0.0.0/tcp/4001".to_string());
@@ -1225,6 +1231,7 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
         membership_proof,
         zone,
         nostr_relays,
+        allow_public_relays,
     }
 }
 
@@ -1465,6 +1472,9 @@ pub struct WireConfig {
     /// Nostr Relays for decentralized threat intelligence sharing.
     #[serde(default)]
     pub nostr_relays: Vec<String>,
+    /// Security: Allow fallback to public Nostr relays.
+    #[serde(default)]
+    pub allow_public_relays: bool,
 }
 
 fn default_min_reputation() -> f32 {
