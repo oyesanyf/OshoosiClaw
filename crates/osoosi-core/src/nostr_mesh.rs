@@ -86,7 +86,9 @@ impl NostrMeshOrchestrator {
             KIND_EDR_ALERT,
             content,
             Vec::<Tag>::new()
-        ).to_event(&self.keys)?;
+        )
+        .custom_created_at(Self::randomized_timestamp())
+        .to_event(&self.keys)?;
 
         client.send_event(event).await?;
         
@@ -134,5 +136,13 @@ impl NostrMeshOrchestrator {
         ).to_event(&self.keys)?;
         client.send_event(event).await?;
         Ok(())
+    }
+
+    /// Randomized timestamp (BitChat style) for privacy.
+    /// Returns a timestamp offset by +/- 15 minutes.
+    pub fn randomized_timestamp() -> Timestamp {
+        use rand::Rng;
+        let offset = rand::thread_rng().gen_range(-900..900);
+        Timestamp::now().checked_add(offset).unwrap_or_else(Timestamp::now)
     }
 }

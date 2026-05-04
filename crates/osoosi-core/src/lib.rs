@@ -23,6 +23,7 @@ pub mod shield;
 pub mod privacy;
 pub mod military;
 pub mod nostr_mesh;
+pub mod geo_mesh;
 pub mod software_replacement;
 pub mod static_analyzer;
 pub mod system_check;
@@ -804,15 +805,31 @@ impl EdrOrchestrator {
 
         // --- 2. NOSTR GLOBAL INTELLIGENCE (BitChat Style) ---
         // Uses decentralized relays for cross-organization threat sharing with Differential Privacy.
-        let nostr_relays = if mesh_config.nostr_relays.is_empty() {
-            vec![
-                "ws://localhost:8080".to_string(),
-                "wss://relay.damus.io".to_string(),
-                "wss://nos.lol".to_string(),
-            ]
-        } else {
-            mesh_config.nostr_relays.clone()
-        };
+        let mut nostr_relays = mesh_config.nostr_relays.clone();
+        
+        if nostr_relays.is_empty() {
+            info!("Nostr Mesh: No static relays configured. Attempting BitChat-style geo-bootstrap...");
+            let geo_dir = crate::geo_mesh::GeoRelayDirectory::new();
+            // BitChat remote relay directory (publicly maintained list with GPS coordinates)
+            let geo_csv_url = "https://raw.githubusercontent.com/permissionlesstech/georelays/refs/heads/main/nostr_relays.csv";
+            
+            if let Ok(resp) = reqwest::get(geo_csv_url).await {
+                if let Ok(csv) = resp.text().await {
+                    geo_dir.load_csv(&csv).await;
+                    nostr_relays = geo_dir.auto_bootstrap().await;
+                }
+            }
+
+            if nostr_relays.is_empty() {
+                warn!("Nostr Mesh: Geo-bootstrap failed. Falling back to global defaults.");
+                nostr_relays = vec![
+                    "wss://relay.damus.io".to_string(),
+                    "wss://nos.lol".to_string(),
+                    "wss://relay.snort.social".to_string(),
+                    "wss://nostr.bitcoiner.social".to_string(),
+                ];
+            }
+        }
         
         info!("Initializing Nostr Mesh with {} relays...", nostr_relays.len());
         let nostr_orch = crate::nostr_mesh::NostrMeshOrchestrator::new(None, 1.0).await?;
