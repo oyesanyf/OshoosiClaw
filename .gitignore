@@ -114,3 +114,16 @@ error.txt
 matches.txt
 dataset/
 crates/osoosi-model/models/
+
+# ---------- Legacy Forensic Tools (Replaced by Native Logic) ----------
+/bin/hayabusa.exe
+/bin/chainsaw
+/bin/hollows-hunter
+/rules/hayabusa/
+/rules/sigma/
+/tools/hayabusa.zip
+/tools/chainsaw.zip
+/patch_hayabusa*.py
+/patch_hayabusa.py
+/patch_hayabusa2.py
+/patch_hayabusa3.py
