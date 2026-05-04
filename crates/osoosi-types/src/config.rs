@@ -280,6 +280,8 @@ struct WireConfigPartial {
     pub zone: Option<String>,
     #[serde(default)]
     pub nostr_relays: Vec<String>,
+    #[serde(default)]
+    pub allow_public_relays: bool,
 }
 
 /// Partial config for loading from file (only sections we need; rest use defaults).
