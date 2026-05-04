@@ -103,6 +103,7 @@ pub fn is_system_path(path: &str) -> bool {
         }
         // Direct checks for common roots if env vars missing
         if p.starts_with("c:\\windows") || p.contains("\\system32\\") || p.contains("\\syswow64\\")
+            || p.contains("\\servicing\\") || p.contains("\\winsxs\\")
         {
             return true;
         }

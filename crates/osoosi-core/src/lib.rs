@@ -35,6 +35,7 @@ pub mod yara;
 pub mod yara_gen;
 pub mod pe_inspector;
 pub mod dotscope;
+pub mod win_trust;
 pub use hybrid_runtime::{
     init_hybrid_concurrency, max_blocking_threads, rayon_thread_count, run_on_rayon, spawn_rayon,
     spawn_smart, tokio_worker_threads,
@@ -143,7 +144,10 @@ fn is_system_critical(event: &osoosi_types::SysmonEvent) -> bool {
     let path_lc = image_path.to_lowercase();
     
     // Path Constraint: Must execute from core Windows directories.
-    let is_critical_path = path_lc.contains("\\windows\\system32\\") || path_lc.contains("\\windows\\syswow64\\");
+    let is_critical_path = path_lc.contains("\\windows\\system32\\") || 
+                          path_lc.contains("\\windows\\syswow64\\") ||
+                          path_lc.contains("\\windows\\servicing\\") ||
+                          path_lc.contains("\\windows\\winsxs\\");
     
     if is_critical_path {
         // Cryptographic Constraint: Must have a valid Authenticode signature explicitly from Microsoft.
@@ -2715,21 +2719,25 @@ impl EdrOrchestrator {
                         // ABSOLUTE OS SAFEGUARD: If this is a core, Microsoft-signed Windows binary, NEVER kill it (prevents BSOD).
                         if is_system_critical(&event) {
                             warn!("AUTONOMOUS BLOCK SKIPPED: {} is a SYSTEM CRITICAL binary (Microsoft Signed). Downgrading to Alert to prevent OS crash.", image);
-                        } else {
-                            // GENERAL SAFELIST GUARD: Never block trusted developer/operational binaries UNLESS they exhibit confirmed malicious behavior.
-                            let is_trusted = is_trusted_operational_image(&event, &self.policy.config);
-                            let reason = signature.reason.as_deref().unwrap_or("");
-                            let is_behavioral_threat = reason.contains("Behavioral") || 
-                                                     reason.contains("Yara") || 
-                                                     reason.contains("Memory") || 
-                                                     reason.contains("Hollows-Hunter");
-                            
-                            if is_trusted && !is_behavioral_threat {
-                                warn!("AUTONOMOUS BLOCK SKIPPED: {} is a trusted operational binary with no behavioral/memory evidence. Downgrading to Alert.", image);
-                            } else {
-                                if is_trusted && is_behavioral_threat {
-                                    warn!("AUTONOMOUS BLOCK OVERRIDE: {} is trusted but exhibits behavioral threats: {}. Proceeding with block.", image, reason);
-                                }
+                            return Ok(());
+                        }
+
+                        // GENERAL SAFELIST GUARD: Never block trusted developer/operational binaries UNLESS they exhibit confirmed malicious behavior.
+                        let is_trusted = is_trusted_operational_image(&event, &self.policy.config);
+                        let reason = signature.reason.as_deref().unwrap_or("");
+                        let is_behavioral_threat = reason.contains("Behavioral") || 
+                                                    reason.contains("Yara") || 
+                                                    reason.contains("Memory") || 
+                                                    reason.contains("Hollows-Hunter");
+                        
+                        if is_trusted && !is_behavioral_threat {
+                            warn!("AUTONOMOUS BLOCK SKIPPED: {} is a trusted operational binary with no behavioral/memory evidence. Downgrading to Alert.", image);
+                            return Ok(());
+                        }
+                        
+                        if is_trusted && is_behavioral_threat {
+                            warn!("AUTONOMOUS BLOCK OVERRIDE: {} is trusted but exhibits behavioral threats: {}. Proceeding with block.", image, reason);
+                        }
 
                         warn!("AUTONOMOUS BLOCK: Consensus threshold met for {}. Applying FileBlockExecutable.", image);
                         let rule = osoosi_types::BlockingRule {
@@ -2762,8 +2770,6 @@ impl EdrOrchestrator {
                                 }
                             });
                         }
-                        } // end general safelist else block
-                        } // end system critical else block
                     }
                 }
                 action => {
@@ -3215,6 +3221,15 @@ impl EdrOrchestrator {
         if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
             if let Some(meta) = osoosi_types::get_pe_metadata(std::path::Path::new(image_path)) {
                 signature.is_signed = meta.is_signed;
+                
+                // SECONDARY CHECK: WinVerifyTrust for Catalog-Signed binaries (UWP/HxTsr.exe)
+                #[cfg(target_os = "windows")]
+                if !signature.is_signed {
+                    // ... implementation of WinVerifyTrust call ...
+                    // If catalog signed, we override is_signed to true
+                    signature.is_signed = crate::win_trust::verify_file_signature(image_path);
+                }
+
                 if signature.process_name.is_none() {
                     signature.process_name = Some(meta.product_name);
                 }
@@ -3231,8 +3246,7 @@ impl EdrOrchestrator {
         let cooldown = Duration::from_secs(self.policy.config.alert_suppression_secs);
         if let Some(last) = self.alert_suppression_cache.get(&suppression_key) {
             if last.elapsed() < cooldown {
-                debug!("Suppressing redundant alert for Key {}: {}", suppression_key, signature.id);
-                return Ok(());
+                return Ok(()); // Strong deduplication
             }
         }
         self.alert_suppression_cache.insert(suppression_key, Instant::now());

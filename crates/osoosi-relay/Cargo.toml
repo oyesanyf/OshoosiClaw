@@ -2,10 +2,10 @@
 name = "osoosi-relay"
 version = "0.1.0"
 edition = "2021"
-description = "Tiny libp2p/WebSocket relay for OshoosiClaw mesh"
+description = "Tiny libp2p relay for OshoosiClaw mesh"
 
 [dependencies]
-libp2p = { version = "0.53", features = ["tcp", "websocket", "noise", "yamux", "relay", "identify", "tokio"] }
+libp2p = { version = "0.53", features = ["tcp", "noise", "yamux", "relay", "identify", "tokio"] }
 tokio = { version = "1.43", features = ["full"] }
 anyhow = "1.0"
 tracing = "0.1"

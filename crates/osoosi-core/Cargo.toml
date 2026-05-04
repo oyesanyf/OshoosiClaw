@@ -65,7 +65,11 @@ dirs = { workspace = true }
 winreg = { workspace = true }
 win32-version-info = "0.3"
 pelite = { workspace = true }
-windows = { workspace = true }
+windows = { workspace = true, features = [
+    "Win32_Security_WinTrust",
+    "Win32_Foundation",
+    "Win32_Security_Cryptography",
+] }
 wmi = "0.13"
 
 [target.'cfg(unix)'.dependencies]

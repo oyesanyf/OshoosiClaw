@@ -143,6 +143,7 @@ impl NostrMeshOrchestrator {
     pub fn randomized_timestamp() -> Timestamp {
         use rand::Rng;
         let offset = rand::thread_rng().gen_range(-900..900);
-        Timestamp::now().checked_add(offset).unwrap_or_else(Timestamp::now)
+        let now = Timestamp::now().as_u64() as i64;
+        Timestamp::from((now + offset) as u64)
     }
 }
