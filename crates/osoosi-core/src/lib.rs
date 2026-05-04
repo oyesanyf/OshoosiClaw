@@ -1056,6 +1056,7 @@ impl EdrOrchestrator {
         policy.add_voter(Box::new(osoosi_policy::voters::CveLookupVoter {
             fetcher: policy.fetcher.clone(),
             memory: memory.clone(),
+            cve_cache: policy.cve_cache.clone(),
             broadcaster: policy.intel_broadcaster.clone(),
             node_id: node_id.clone(),
         })).await;
@@ -1128,6 +1129,9 @@ impl EdrOrchestrator {
         policy.add_voter(Box::new(osoosi_policy::voters::SysmonDnsVoter {
             blocklist: dns_blocklist,
         })).await;
+
+        // Start background threat intel sync (NVD Local Cache, etc.)
+        policy.start_background_tasks();
 
         let deception_engine = Arc::new(tokio::sync::RwLock::new(
             osoosi_behavioral::deception::EntanglementEngine::new(),

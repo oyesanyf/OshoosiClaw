@@ -745,6 +745,7 @@ impl ThreatVoter for KevVoter {
 pub struct CveLookupVoter {
     pub fetcher: Arc<crate::feed::ThreatFeedFetcher>,
     pub memory: Arc<osoosi_memory::MemoryStore>,
+    pub cve_cache: Option<Arc<crate::cve_cache::CveCache>>,
     pub broadcaster: Arc<tokio::sync::RwLock<Option<Arc<dyn Fn(osoosi_types::GlobalIntelligence) + Send + Sync>>>>,
     pub node_id: String,
 }
@@ -782,13 +783,23 @@ impl ThreatVoter for CveLookupVoter {
 
         // 2. Check Local Cache first
         let mut cached_cves = Vec::new();
-        if let Ok(cached) = self.memory.get_cached_cves(&meta.product_name, &meta.version) {
-            cached_cves.extend(cached);
+        
+        // Try the new SQLite cache first
+        if let Some(ref cache) = self.cve_cache {
+            if let Ok(cves) = cache.get_cves(&meta.product_name, &meta.version) {
+                cached_cves.extend(cves);
+            }
         }
-        // Fallback to "any" version cache
+
+        // Fallback to old in-memory cache if SQLite cache is empty
         if cached_cves.is_empty() {
-            if let Ok(cached) = self.memory.get_cached_cves(&meta.product_name, "any") {
+            if let Ok(cached) = self.memory.get_cached_cves(&meta.product_name, &meta.version) {
                 cached_cves.extend(cached);
+            }
+            if cached_cves.is_empty() {
+                if let Ok(cached) = self.memory.get_cached_cves(&meta.product_name, "any") {
+                    cached_cves.extend(cached);
+                }
             }
         }
 
@@ -823,6 +834,20 @@ impl ThreatVoter for CveLookupVoter {
                 // Cache the results locally and broadcast to mesh
                 for cve in &cves {
                     let _ = self.memory.insert_cve_cache(&meta.product_name, &meta.version, &cve.id, &cve.summary);
+                    if let Some(ref cache) = self.cve_cache {
+                        let _ = cache.insert_cves(&meta.product_name, &meta.version, &[osoosi_types::Kev {
+                            cve_id: cve.id.clone(),
+                            vendor_project: "".to_string(),
+                            product: meta.product_name.clone(),
+                            vulnerability_name: cve.summary.clone(),
+                            date_added: chrono::Utc::now(),
+                            required_action: "".to_string(),
+                            due_date: chrono::Utc::now(),
+                            known_exploited: false,
+                            version_start_including: None,
+                            version_end_excluding: None,
+                        }]);
+                    }
                     
                     let broadcaster_guard = self.broadcaster.read().await;
                     if let Some(ref broadcast) = *broadcaster_guard {

@@ -99,7 +99,7 @@ trusted_paths = [
     "\\tools\\git\\"
 ]
 trusted_stems = [
-    "git.exe", "rustc.exe", "cargo.exe", "rustup.exe", "clippy-driver.exe", 
+    "Sysmon64.exe", "git.exe", "rustc.exe", "cargo.exe", "rustup.exe", "clippy-driver.exe", 
     "cargo-clippy.exe", "cargo-fmt.exe", "svchost.exe", "conhost.exe", 
     "wermgr.exe", "wmic.exe", "where.exe", "wmiprvse.exe"
 ]

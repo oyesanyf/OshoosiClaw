@@ -300,6 +300,8 @@ pub struct PolicyEngine {
     pub fetcher: Arc<crate::feed::ThreatFeedFetcher>,
     /// Optional callback to broadcast discoveries to the mesh
     pub intel_broadcaster: Arc<tokio::sync::RwLock<Option<Arc<dyn Fn(osoosi_types::GlobalIntelligence) + Send + Sync>>>>,
+    /// Local SQLite cache for NVD CVEs
+    pub cve_cache: Option<Arc<crate::cve_cache::CveCache>>,
 }
 
 impl PolicyEngine {
@@ -316,6 +318,19 @@ impl PolicyEngine {
             config,
             fetcher: Arc::new(crate::feed::ThreatFeedFetcher::new()),
             intel_broadcaster: Arc::new(tokio::sync::RwLock::new(None)),
+            cve_cache: {
+                let db_path = std::path::Path::new("C:\\ProgramData\\OshoosiClaw\\nvd_cache.db");
+                if let Some(parent) = db_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                match crate::cve_cache::CveCache::new(db_path) {
+                    Ok(cache) => Some(Arc::new(cache)),
+                    Err(e) => {
+                        warn!("Failed to initialize NVD SQLite cache: {}", e);
+                        None
+                    }
+                }
+            },
         }
     }
 
@@ -334,6 +349,36 @@ impl PolicyEngine {
             total = guard.len(),
             "[CONSENSUS] registered threat voter"
         );
+    }
+
+    /// Spawns long-running background tasks for threat intelligence synchronization.
+    pub fn start_background_tasks(&self) {
+        let fetcher = self.fetcher.clone();
+        let cache = self.cve_cache.clone();
+
+        tokio::spawn(async move {
+            info!("[PolicyEngine] NVD Background Sync Task started (Cycle: 24h).");
+            loop {
+                if let Some(ref cache_ref) = cache {
+                    let api_key = osoosi_types::resolve_nvd_api_key();
+                    info!("[PolicyEngine] Running scheduled NVD bulk synchronization...");
+                    match fetcher.fetch_nvd_cves(api_key.as_deref()).await {
+                        Ok(kevs) => {
+                            if let Err(e) = cache_ref.bulk_import(&kevs) {
+                                warn!("[PolicyEngine] Failed to import NVD CVEs into local cache: {}", e);
+                            } else {
+                                info!("[PolicyEngine] NVD Local Cache updated with {} new records.", kevs.len());
+                            }
+                        }
+                        Err(e) => {
+                            warn!("[PolicyEngine] NVD Background Sync failed: {}", e);
+                        }
+                    }
+                }
+                // Sleep for 24 hours
+                tokio::time::sleep(std::time::Duration::from_secs(86400)).await;
+            }
+        });
     }
 
 

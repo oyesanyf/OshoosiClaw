@@ -12,6 +12,7 @@ pub mod semantic;
 pub mod traffic_adapter;
 pub mod verified;
 pub mod voters;
+pub mod cve_cache;
 
 pub mod admin;
 
