@@ -1,6 +1,6 @@
 use chrono::Utc;
 use dashmap::DashMap;
-use osoosi_types::{HostSecurityEvent, SysmonEvent};
+use osoosi_types::HostSecurityEvent;
 use std::sync::Arc;
 use tracing::warn;
 
@@ -56,7 +56,7 @@ impl RelativisticGuard {
 
     /// Measure the \"Dilation of Truth\":
     /// Comparing Proper Time (OS Uptime) with Coordinate Time (Mesh Timestamp).
-    pub fn check_temporal_dilation(&self, event: &SysmonEvent) -> f32 {
+    pub fn check_temporal_dilation(&self, event: &HostSecurityEvent) -> f32 {
         let event_time = event.timestamp;
         let system_now = Utc::now();
 

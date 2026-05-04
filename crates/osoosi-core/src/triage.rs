@@ -1,9 +1,5 @@
-//! LLM Triage: high-confidence threats queued for agent decision.
-//! When OSOOSI_LLM_TRIAGE_ENABLED=1, threats with confidence >= 0.9 are added
-//! to pending_triage. The agent can call triage_decide to override or confirm the action.
-
 use dashmap::DashMap;
-use osoosi_types::{ResponseAction, SysmonEvent, ThreatSignature};
+use osoosi_types::{HostSecurityEvent, ResponseAction, ThreatSignature};
 use serde_json::Value;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
@@ -39,7 +35,7 @@ pub fn add_pending(
     store: &TriageStore,
     threat_id: &str,
     threat: ThreatSignature,
-    event: &SysmonEvent,
+    event: &HostSecurityEvent,
     applied_action: ResponseAction,
 ) {
     let event_val = serde_json::to_value(event).unwrap_or(Value::Null);

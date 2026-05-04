@@ -12,15 +12,15 @@ use std::fmt;
 /// Taint labels for EDR telemetry provenance.
 #[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TaintLabel {
-    /// Data from a suspicious or blocklisted IP (e.g. Sysmon Event 3).
+    /// Data from a suspicious or blocklisted IP (e.g. Network Connection).
     SuspiciousNetwork,
     /// File downloaded from external source.
     DownloadedFile,
-    /// Process that performed code injection (Sysmon Event 8).
+    /// Process that performed code injection (CreateRemoteThread/etc).
     ProcessInjectionSource,
     /// Target of process injection.
     ProcessInjectionTarget,
-    /// Raw disk access (Sysmon Event 9).
+    /// Raw disk access (e.g. \Device\HarddiskVolume).
     RawAccessRead,
     /// Registry modification in sensitive key.
     SensitiveRegistry,

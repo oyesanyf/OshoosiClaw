@@ -1,5 +1,5 @@
 use chrono::{DateTime, Utc};
-use osoosi_types::SysmonEvent;
+use osoosi_types::HostSecurityEvent;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::{Arc, RwLock};
@@ -31,24 +31,21 @@ impl CausalEngine {
         }
     }
 
-    pub fn ingest_event(&self, event: &SysmonEvent) {
+    pub fn ingest_event(&self, event: &HostSecurityEvent) {
         let mut processes = self.processes.write().unwrap();
 
-        use osoosi_types::SysmonEventId::*;
         match event.event_id {
-            ProcessCreate => {
+            1 => { // ProcessCreate
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 let ppid = event
                     .data
                     .get("ParentProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 let image = event
                     .data
                     .get("Image")
@@ -75,26 +72,24 @@ impl CausalEngine {
                     },
                 );
             }
-            FileCreateTimeChange => {
+            2 => { // FileCreateTimeChange
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.events
                         .push("Timestomping detected (FileCreateTimeChange)".to_string());
                     node.score += 0.4;
                 }
             }
-            NetworkConnect => {
+            3 => { // NetworkConnect
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.events.push(format!(
                         "Network: {}",
@@ -107,23 +102,21 @@ impl CausalEngine {
                     node.score += 0.15;
                 }
             }
-            SysmonServiceState => {} // Audit only
-            ProcessTerminate => {
+            4 => {} // SysmonServiceState: Audit only
+            5 => { // ProcessTerminate
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 processes.remove(&pid);
             }
-            DriverLoad => {
+            6 => { // DriverLoad
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.events.push(format!(
                         "Driver Loaded: {}",
@@ -136,61 +129,56 @@ impl CausalEngine {
                     node.score += 0.8;
                 }
             }
-            ImageLoad => {
+            7 => { // ImageLoad
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.score += 0.02; // Small increment for DLL loads
                 }
             }
-            CreateRemoteThread => {
+            8 => { // CreateRemoteThread
                 let pid = event
                     .data
                     .get("SourceProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.events
                         .push("CRITICAL: CreateRemoteThread (Injection)".to_string());
                     node.score += 1.5;
                 }
             }
-            RawAccessRead => {
+            9 => { // RawAccessRead
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.events
                         .push("CRITICAL: RawAccessRead (Disk Bypass)".to_string());
                     node.score += 1.2;
                 }
             }
-            ProcessAccess => {
+            10 => { // ProcessAccess
                 let pid = event
                     .data
                     .get("SourceProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.score += 0.3;
                 }
             }
-            FileCreate => {
+            11 => { // FileCreate
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.events.push(format!(
                         "File Create: {}",
@@ -203,13 +191,12 @@ impl CausalEngine {
                     node.score += 0.05;
                 }
             }
-            RegistryAddDelete | RegistryValueSet | RegistryRename => {
+            12 | 13 | 14 => { // Registry Events
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.events.push(format!(
                         "Registry Modify: {}",
@@ -222,62 +209,57 @@ impl CausalEngine {
                     node.score += 0.2;
                 }
             }
-            FileCreateStreamHash => {
+            15 => { // FileCreateStreamHash
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.events
                         .push("ADS Created (FileCreateStreamHash)".to_string());
                     node.score += 0.4;
                 }
             }
-            SysmonConfigChange => {
+            16 => { // SysmonConfigChange
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.events
                         .push("Sysmon Config Tamper Detected".to_string());
                     node.score += 1.0;
                 }
             }
-            PipeCreated | PipeConnected => {
+            17 | 18 => { // Pipe Events
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.score += 0.15;
                 }
             }
-            WmiEventFilter | WmiEventConsumer | WmiConsumerBinding => {
+            19 | 20 | 21 => { // WMI Events
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.events.push("WMI Persistence Activity".to_string());
                     node.score += 0.7;
                 }
             }
-            DnsQuery => {
+            22 => { // DnsQuery
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.events.push(format!(
                         "DNS Query: {}",
@@ -290,68 +272,62 @@ impl CausalEngine {
                     node.score += 0.1;
                 }
             }
-            FileDeleteArchived => {
+            23 => { // FileDeleteArchived
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.score += 0.2;
                 }
             }
-            ClipboardChange => {
+            24 => { // ClipboardChange
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.events.push("Clipboard Sniffing Detected".to_string());
                     node.score += 0.5;
                 }
             }
-            ProcessTampering => {
+            25 => { // ProcessTampering
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.events
                         .push("CRITICAL: Process Tampering (Hollowing/Herpaderping)".to_string());
                     node.score += 2.0;
                 }
             }
-            FileDeleteLogged => {}
-            FileBlockExecutable | FileBlockShredding => {
+            26 => {} // FileDeleteLogged
+            27 | 28 => { // FileBlock executable/shredding
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.score += 0.1;
                 }
             }
-            FileExecutableDetected => {
+            29 => { // FileExecutableDetected
                 let pid = event
                     .data
                     .get("ProcessId")
-                    .and_then(|v| v.as_str())
-                    .and_then(|s| s.parse().ok())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(0) as u32;
                 if let Some(node) = processes.get_mut(&pid) {
                     node.events.push("New Executable Detected".to_string());
                     node.score += 0.3;
                 }
             }
-            SysmonError => {}
-            Generic => {}
+            _ => {}
         }
     }
 

@@ -1,7 +1,7 @@
 use osoosi_model::{MalwareScanResult, MalwareScanner};
 use async_trait::async_trait;
 use osoosi_policy::engine::{ThreatVoter, VoteResult};
-use osoosi_types::SysmonEvent;
+use osoosi_types::HostSecurityEvent;
 use std::path::Path;
 use std::sync::Arc;
 
@@ -18,7 +18,7 @@ fn trusted_operational_path(path: &str) -> bool {
         || p.contains("\\oshoosiclaw\\target\\")
 }
 
-fn event_text_field<'a>(event: &'a SysmonEvent, key: &str) -> Option<&'a str> {
+fn event_text_field<'a>(event: &'a HostSecurityEvent, key: &str) -> Option<&'a str> {
     event
         .data
         .get(key)
@@ -27,7 +27,7 @@ fn event_text_field<'a>(event: &'a SysmonEvent, key: &str) -> Option<&'a str> {
         .filter(|v| !v.is_empty() && !v.eq_ignore_ascii_case("unknown"))
 }
 
-fn trusted_identity_signal(event: &SysmonEvent, path: &str) -> bool {
+fn trusted_identity_signal(event: &HostSecurityEvent, path: &str) -> bool {
     if !trusted_operational_path(path) {
         return false;
     }
@@ -62,8 +62,9 @@ fn trusted_identity_signal(event: &SysmonEvent, path: &str) -> bool {
     }
 
     event
-        .product_version
-        .as_deref()
+        .data
+        .get("ProductVersion")
+        .and_then(|v| v.as_str())
         .map(str::trim)
         .is_some_and(|v| !v.is_empty() && !v.eq_ignore_ascii_case("unknown"))
 }
@@ -107,7 +108,7 @@ impl ThreatVoter for YaraXVoter {
         "YaraX-Signatures".to_string()
     }
 
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
             if scanner_skip_path(image_path) || trusted_identity_signal(event, image_path) {
                 return None;
@@ -166,7 +167,7 @@ impl ThreatVoter for MalConvVoter {
         "MalConv-ML".to_string()
     }
 
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         if std::env::var("OSOOSI_NO_AI")
             .map(|v| v == "1")
             .unwrap_or(false)
@@ -267,10 +268,10 @@ impl ThreatVoter for CapaVoter {
         "Capa-Behavior".to_string()
     }
 
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let is_create = matches!(
             event.event_id,
-            osoosi_types::SysmonEventId::ProcessCreate | osoosi_types::SysmonEventId::FileCreate
+            1 | 11 // 1: ProcessCreate, 11: FileCreate
         );
         if !is_create {
             return None;
@@ -314,10 +315,10 @@ impl ThreatVoter for FlossVoter {
         "Floss-Artifact".to_string()
     }
 
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let is_create = matches!(
             event.event_id,
-            osoosi_types::SysmonEventId::ProcessCreate | osoosi_types::SysmonEventId::FileCreate
+            1 | 11 // 1: ProcessCreate, 11: FileCreate
         );
         if !is_create {
             return None;
@@ -350,7 +351,7 @@ impl ThreatVoter for BehavioralYaraVoter {
         "BehavioralYara".to_string()
     }
 
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let json_bytes = serde_json::to_vec(event).ok()?;
         let mut scanner = yara_x::Scanner::new(&self.rules);
         
@@ -378,7 +379,7 @@ impl ThreatVoter for DotscopeVoter {
         "Dotscope-Forensics".to_string()
     }
 
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
             if !image_path.to_lowercase().ends_with(".exe") && !image_path.to_lowercase().ends_with(".dll") {
                 return None;
@@ -411,10 +412,10 @@ impl ThreatVoter for MemoryInspectionVoter {
         "MemoryInspection-Native".to_string()
     }
 
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         #[cfg(target_os = "windows")]
         {
-            if let Some(pid) = event.process_id() {
+            if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()) {
                 // Use pelite to parse the process memory and find hollowing
                 if let Ok(findings) = crate::pe_inspector::inspect_process(pid as u32) {
                     if findings.hollowing_detected {

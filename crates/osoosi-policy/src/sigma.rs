@@ -1,7 +1,7 @@
 //! Lightweight Sigma-like rule evaluator for Sysmon events.
 //! Supports basic selection logic and conditions.
 
-use osoosi_types::SysmonEvent;
+use osoosi_types::HostSecurityEvent;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use tracing::info;
@@ -69,7 +69,7 @@ impl SigmaEngine {
         info!("Loaded {} Sigma rules from {}", count, dir.display());
     }
 
-    pub fn check(&self, event: &SysmonEvent) -> Vec<&SigmaRule> {
+    pub fn check(&self, event: &HostSecurityEvent) -> Vec<&SigmaRule> {
         let mut matches = Vec::new();
         for rule in &self.rules {
             if self.evaluate_rule(rule, event) {
@@ -79,7 +79,7 @@ impl SigmaEngine {
         matches
     }
 
-    fn evaluate_rule(&self, rule: &SigmaRule, event: &SysmonEvent) -> bool {
+    fn evaluate_rule(&self, rule: &SigmaRule, event: &HostSecurityEvent) -> bool {
         // Simplified: only handles 'selection' and basic conditions
         if rule.detection.condition != "selection" {
             return false;
@@ -93,7 +93,7 @@ impl SigmaEngine {
             };
 
             let actual_val = if field_name == "EventID" {
-                Some(event.event_id as u32 as u64).map(|v| v.to_string())
+                Some(event.event_id as u64).map(|v| v.to_string())
             } else {
                 event
                     .data

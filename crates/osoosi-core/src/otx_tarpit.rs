@@ -1,12 +1,12 @@
-//! OTX-driven **reactive** response: tie Sysmon-observed activity to network QoS “tarpit” (throttle)
-//! for the responsible process. Sysmon only logs; this layer executes the response via
+//! OTX-driven **reactive** response: tie observed activity to network QoS “tarpit” (throttle)
+//! for the responsible process. Telemetry only logs; this layer executes the response via
 //! [`crate::firewall::tarpit_process_network`] (Windows QoS) alongside CPU priority tarpit in
 //! [`osoosi_runtime::TarpitManager`].
 //!
 //! No separate `win_event_log` loop — ingestion stays on the host event pipeline
 //! (`process_telemetry` → `perform_action`).
 
-use osoosi_types::{ResponseAction, SysmonEvent, SysmonEventId, ThreatSignature};
+use osoosi_types::{HostSecurityEvent, ResponseAction, ThreatSignature};
 
 /// When false, skip per-process network QoS tarpit (CPU tarpit in `TarpitManager` may still run).
 pub fn network_qos_tarpit_enabled() -> bool {
@@ -28,10 +28,10 @@ fn reason_indicates_otx(sig: &ThreatSignature) -> bool {
         .unwrap_or(false)
 }
 
-fn event_warrants_process_network_shaping(ev: &SysmonEvent) -> bool {
+fn event_warrants_process_network_shaping(ev: &HostSecurityEvent) -> bool {
     matches!(
         ev.event_id,
-        SysmonEventId::NetworkConnect | SysmonEventId::DnsQuery
+        3 | 22 // NetworkConnect | DnsQuery
     )
 }
 
@@ -39,7 +39,7 @@ fn event_warrants_process_network_shaping(ev: &SysmonEvent) -> bool {
 /// and the threat is OTX- or network/DNS-originated. Returns a message for logs/audit.
 #[cfg(target_os = "windows")]
 pub fn try_apply_process_network_qostarpit(
-    event: &SysmonEvent,
+    event: &HostSecurityEvent,
     signature: &ThreatSignature,
     action: ResponseAction,
 ) -> Option<String> {
@@ -71,7 +71,7 @@ pub fn try_apply_process_network_qostarpit(
 
 #[cfg(not(target_os = "windows"))]
 pub fn try_apply_process_network_qostarpit(
-    _event: &SysmonEvent,
+    _event: &HostSecurityEvent,
     _signature: &ThreatSignature,
     _action: ResponseAction,
 ) -> Option<String> {
@@ -80,7 +80,7 @@ pub fn try_apply_process_network_qostarpit(
 
 /// JSON payload for audit when QoS tarpit is attempted.
 pub fn audit_payload(
-    event: &SysmonEvent,
+    event: &HostSecurityEvent,
     signature: &ThreatSignature,
     action: ResponseAction,
     qos_msg: &str,
@@ -88,7 +88,7 @@ pub fn audit_payload(
     serde_json::json!({
         "action": format!("{:?}", action),
         "confidence": signature.confidence,
-        "event_id": event.event_id as u32,
+        "event_id": event.event_id,
         "image": event.data.get("Image"),
         "process_id": event.data.get("ProcessId"),
         "destination_ip": event.data.get("DestinationIp"),

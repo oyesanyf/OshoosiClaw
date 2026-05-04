@@ -708,13 +708,13 @@ mod tests {
     use crate::feed::OtxIndicators;
     use crate::voters::{OtxVoter, SemanticVoter};
     use chrono::Utc;
-    use osoosi_types::{SysmonEvent, SysmonEventId};
+    use osoosi_types::HostSecurityEvent;
     use serde_json::json;
     use std::sync::Arc;
 
-    fn make_event(image: &str, cmd_line: &str) -> osoosi_types::SysmonEvent {
-        osoosi_types::SysmonEvent {
-            event_id: SysmonEventId::ProcessCreate,
+    fn make_event(image: &str, cmd_line: &str) -> osoosi_types::HostSecurityEvent {
+        osoosi_types::HostSecurityEvent {
+            event_id: 1, // ProcessCreate
             timestamp: Utc::now(),
             computer: "test-host".to_string(),
             data: serde_json::json!({
@@ -722,47 +722,57 @@ mod tests {
                 "CommandLine": cmd_line,
                 "ProcessId": 1234,
             }),
-            product_version: None,
+            causal_parent: None,
         }
     }
 
     #[test]
     fn test_scan_event_discovery_ttp() {
         let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
-        let mut engine = PolicyEngine::new(memory);
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
 
         // Add a basic semantic voter for testing
-        engine.add_voter(Box::new(SemanticVoter {
+        let semantic_voter = Box::new(SemanticVoter {
             engine: crate::semantic::SemanticEngine::new(),
-        }));
-
-        let event = make_event("C:\\Windows\\System32\\whoami.exe", "whoami");
-        let sig = engine.scan_event(&event);
-        // Note: semantic drift might not hit on 'whoami' without training,
-        // but this confirms the loop runs.
-        let _ = sig;
+        });
+        
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            engine.add_voter(semantic_voter).await;
+            let event = make_event("C:\\Windows\\System32\\whoami.exe", "whoami");
+            let sig = engine.scan_event(&event).await;
+            // Note: semantic drift might not hit on 'whoami' without training,
+            // but this confirms the loop runs.
+            let _ = sig;
+        });
     }
 
     #[test]
     fn test_scan_event_benign() {
         let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
-        let engine = PolicyEngine::new(memory);
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
         let event = make_event("C:\\Program Files\\notepad.exe", "notepad");
-        let sig = engine.scan_event(&event);
-        let _ = sig; // just ensure it doesn't panic
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let sig = engine.scan_event(&event).await;
+            let _ = sig; // just ensure it doesn't panic
+        });
     }
 
     /// OTX IoCs merge into voting via safety-net when `OtxVoter` is not registered.
     #[test]
     fn test_otx_ioc_safety_net_participates_in_consensus() {
         let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory"));
-        let engine = PolicyEngine::new(memory);
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
         let mut otx = OtxIndicators::default();
         otx.ips.insert("198.51.100.2".to_string());
         engine.update_otx_indicators(otx);
 
-        let event = SysmonEvent {
-            event_id: SysmonEventId::NetworkConnect,
+        let event = HostSecurityEvent {
+            event_id: 3, // NetworkConnect
             timestamp: Utc::now(),
             computer: "h".to_string(),
             data: json!({
@@ -771,57 +781,66 @@ mod tests {
                 "DestinationPort": 443,
                 "ProcessId": 1,
             }),
-            product_version: None,
+            causal_parent: None,
         };
 
-        let sig = engine
-            .scan_event(&event)
-            .expect("OTX should vote via safety-net");
-        let reason = sig.reason.as_deref().unwrap();
-        assert!(reason.contains("OTX-C2"), "reason was: {}", reason);
-        assert_eq!(sig.detector_count, 1);
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            let sig = engine
+                .scan_event(&event)
+                .await
+                .expect("OTX should vote via safety-net");
+            let reason = sig.reason.as_deref().unwrap();
+            assert!(reason.contains("OTX-C2"), "reason was: {}", reason);
+            assert_eq!(sig.detector_count, 1);
+        });
     }
 
     /// When `OtxVoter` is present, the same OTX reason must not be applied twice.
     #[test]
     fn test_otx_voter_no_double_votes() {
         let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory"));
-        let engine = PolicyEngine::new(memory.clone());
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory.clone(), config);
         let mut otx = OtxIndicators::default();
         otx.ips.insert("198.51.100.3".to_string());
         engine.update_otx_indicators(otx);
 
-        engine.add_voter(Box::new(OtxVoter {
-            indicators: engine.otx_indicators_ref().clone(),
-            memory: memory.clone(),
-        }));
+        let rt = tokio::runtime::Runtime::new().unwrap();
+        rt.block_on(async {
+            engine.add_voter(Box::new(OtxVoter {
+                indicators: engine.otx_indicators_ref().clone(),
+                memory: memory.clone(),
+            })).await;
 
-        let event = SysmonEvent {
-            event_id: SysmonEventId::NetworkConnect,
-            timestamp: Utc::now(),
-            computer: "h".to_string(),
-            data: json!({
-                "Image": "C:\\\\Windows\\\\System32\\\\curl.exe",
-                "DestinationIp": "198.51.100.3",
-                "ProcessId": 1,
-            }),
-            product_version: None,
-        };
+            let event = HostSecurityEvent {
+                event_id: 3, // NetworkConnect
+                timestamp: Utc::now(),
+                computer: "h".to_string(),
+                data: json!({
+                    "Image": "C:\\\\Windows\\\\System32\\\\curl.exe",
+                    "DestinationIp": "198.51.100.3",
+                    "ProcessId": 1,
+                }),
+                causal_parent: None,
+            };
 
-        let sig = engine.scan_event(&event).expect("OtxVoter + OTX");
-        let reason = sig.reason.as_deref().unwrap();
-        assert_eq!(
-            reason.matches("OTX-C2").count(),
-            1,
-            "expected single OTX block in reasons: {}",
-            reason
-        );
-        assert_eq!(sig.detector_count, 1);
+            let sig = engine.scan_event(&event).await.expect("OtxVoter + OTX");
+            let reason = sig.reason.as_deref().unwrap();
+            assert_eq!(
+                reason.matches("OTX-C2").count(),
+                1,
+                "expected single OTX block in reasons: {}",
+                reason
+            );
+            assert_eq!(sig.detector_count, 1);
+        });
     }
 
     #[test]
     fn evidence_orchestrator_caps_kev_plus_weak_static_noise() {
         let event = make_event("C:\\tools\\git\\cmd\\git.exe", "git status");
+        let config = osoosi_types::PolicyConfig::default();
         let votes = vec![
             EvidenceVote {
                 result: VoteResult {
@@ -846,7 +865,7 @@ mod tests {
             },
         ];
 
-        let decision = orchestrate_evidence(&votes, &event);
+        let decision = orchestrate_evidence(&votes, &event, &config);
         assert!(decision.confidence <= 0.68, "decision={decision:?}");
         assert_eq!(decision.action, osoosi_types::ResponseAction::Alert);
     }
@@ -854,7 +873,8 @@ mod tests {
     #[test]
     fn evidence_orchestrator_tarpits_correlated_live_network_findings() {
         let mut event = make_event("C:\\Temp\\payload.exe", "payload.exe");
-        event.event_id = SysmonEventId::NetworkConnect;
+        let config = osoosi_types::PolicyConfig::default();
+        event.event_id = 3; // NetworkConnect
         event.data = json!({
             "Image": "C:\\Temp\\payload.exe",
             "CommandLine": "payload.exe",
@@ -884,7 +904,7 @@ mod tests {
             },
         ];
 
-        let decision = orchestrate_evidence(&votes, &event);
+        let decision = orchestrate_evidence(&votes, &event, &config);
         assert!(decision.confidence >= 0.74, "decision={decision:?}");
         assert!(matches!(
             decision.action,

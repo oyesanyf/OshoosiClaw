@@ -1,6 +1,6 @@
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
-use osoosi_types::{ActionState, ResponseAction, SysmonEvent, ThreatSignature};
+use osoosi_types::{ActionState, HostSecurityEvent, ResponseAction, ThreatSignature};
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
 use tracing::{debug, info};
@@ -73,9 +73,9 @@ impl EventCorrelator {
         }
     }
 
-    /// Process a new Sysmon event and correlate it with existing findings.
-    pub async fn correlate_sysmon(&self, event: &SysmonEvent) -> Option<ThreatSignature> {
-        let pid = event.process_id()?;
+    /// Process a new host event and correlate it with existing findings.
+    pub async fn correlate_sysmon(&self, event: &HostSecurityEvent) -> Option<ThreatSignature> {
+        let pid = event.data.get("ProcessId").and_then(|v| v.as_u64())? as u32;
         let image = event
             .data
             .get("Image")
@@ -88,12 +88,11 @@ impl EventCorrelator {
             .or_insert_with(|| ProcessContext::new(pid, image.to_string()));
 
         let event_id = event.event_id;
-        let event_type = (event_id as u16).to_string();
         let mut alert_score: f32 = 0.0;
         let mut reason = String::new();
 
-        match event_type.as_str() {
-            "1" => {
+        match event_id {
+            1 => {
                 // Process Creation
                 let parent_image = event
                     .data
@@ -120,7 +119,7 @@ impl EventCorrelator {
                     alert_score,
                 );
             }
-            "3" => {
+            3 => {
                 // Network Connection
                 let dest_ip = event
                     .data
@@ -158,7 +157,7 @@ impl EventCorrelator {
                     alert_score,
                 );
             }
-            "11" => {
+            11 => {
                 // File Create
                 let target_path = event
                     .data
@@ -176,7 +175,7 @@ impl EventCorrelator {
                 }
                 ctx.add_event("FileCreate", target_path, alert_score);
             }
-            "13" => {
+            13 => {
                 // Registry Value Set
                 let target_key = event
                     .data
@@ -191,7 +190,7 @@ impl EventCorrelator {
                 }
                 ctx.add_event("Registry", target_key, alert_score);
             }
-            "22" => {
+            22 => {
                 // DNS Query
                 let query = event
                     .data
@@ -205,7 +204,7 @@ impl EventCorrelator {
                 }
                 ctx.add_event("DNS", query, alert_score);
             }
-            "7" => {
+            7 => {
                 // Image Load
                 let image_loaded = event
                     .data
@@ -221,7 +220,7 @@ impl EventCorrelator {
                 }
                 ctx.add_event("ImageLoad", image_loaded, alert_score);
             }
-            "8" => {
+            8 => {
                 // CreateRemoteThread
                 let target_image = event
                     .data
@@ -232,7 +231,7 @@ impl EventCorrelator {
                 reason = format!("Process created a remote thread in: {}", target_image);
                 ctx.add_event("Injection", &format!("To {}", target_image), alert_score);
             }
-            "10" => {
+            10 => {
                 // Process Access
                 let target_image = event
                     .data
@@ -250,7 +249,7 @@ impl EventCorrelator {
                     alert_score,
                 );
             }
-            "25" => {
+            25 => {
                 // Process Tampering
                 alert_score = 0.8;
                 reason = format!("Process tampering detected (hollowing/herpaderping)");

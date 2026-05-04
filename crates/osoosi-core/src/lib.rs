@@ -57,10 +57,9 @@ use osoosi_audit::AuditTrail;
 use osoosi_memory::MemoryStore;
 use osoosi_policy::{PolicyEngine, ThreatFeedFetcher};
 use osoosi_runtime::DeceptionManager;
-use osoosi_telemetry::SysmonParser;
 use osoosi_types::{
-    load_runtime_config, resolve_nvd_api_key, resolve_otx_api_key, SecuredExecutor, SysmonEvent,
-    SysmonEventId,
+    load_runtime_config, resolve_nvd_api_key, resolve_otx_api_key, HostSecurityEvent,
+    SecuredExecutor,
 };
 use osoosi_wire::{JoinGate, MeshCommand, MeshNode};
 use std::collections::{HashMap, HashSet};
@@ -86,7 +85,7 @@ pub type RepairStatus = (
     Option<String>,
 );
 
-fn is_trusted_operational_image(event: &osoosi_types::SysmonEvent, config: &osoosi_types::PolicyConfig) -> bool {
+fn is_trusted_operational_image(event: &osoosi_types::HostSecurityEvent, config: &osoosi_types::PolicyConfig) -> bool {
     let image_path = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
     if image_path.is_empty() {
         return false;
@@ -114,7 +113,7 @@ fn is_trusted_operational_image(event: &osoosi_types::SysmonEvent, config: &osoo
             }
         }
 
-        // 3. Fallback to Sysmon's own signature check
+        // 3. Fallback to Native telemetry signature check
         let sig_status = event.data.get("SignatureStatus")
             .or_else(|| event.data.get("Signature Status"))
             .and_then(|v| v.as_str())
@@ -136,7 +135,7 @@ fn is_trusted_operational_image(event: &osoosi_types::SysmonEvent, config: &osoo
 
 /// A strict check to prevent OshoosiClaw from committing accidental suicide on the host OS.
 /// This acts as a global veto against autonomous blocks, separate from the general developer tool safelist.
-fn is_system_critical(event: &osoosi_types::SysmonEvent) -> bool {
+fn is_system_critical(event: &osoosi_types::HostSecurityEvent) -> bool {
     let image_path = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
     if image_path.is_empty() {
         return false;
@@ -173,7 +172,7 @@ fn should_skip_file_malware_scan(path: &std::path::Path) -> bool {
         || path_lc.contains("\\.gemini\\")
         || path_lc.contains("\\antigravity\\brain\\")
         || path_lc.contains("\\.system_generated\\logs\\")
-        || path_lc.contains("\\oshoosiclaw\\tools\\hayabusa\\rules\\")
+        || path_lc.contains("\\oshoosiclaw\\tools\\rules\\")
         || path_lc.contains("\\oshoosiclaw\\dashboard\\")
         || path_lc.contains("\\oshoosiclaw\\target\\")
         || path_lc.contains("\\oshoosiclaw\\.git\\")
@@ -279,7 +278,7 @@ fn try_build_behavioral_yara_voter() -> Option<crate::voters::BehavioralYaraVote
         || -> anyhow::Result<BehavioralYaraVoter> {
             let mut compiler = yara_x::Compiler::new();
             
-            // Replicate core Sigma-style behavioral rules in YARA-X (matches on SysmonEvent JSON)
+            // Replicate core Sigma-style behavioral rules in YARA-X (matches on HostSecurityEvent JSON)
             compiler
                 .add_source(
                     r#"
@@ -353,9 +352,6 @@ pub struct EdrOrchestrator {
     mesh_peer_count: Arc<AtomicU32>,
     /// Start time for uptime calculation
     start_time: Instant,
-    /// Telemetry: Parse Sysmon logs (reserved for future use)
-    #[allow(dead_code)]
-    telemetry: Arc<SysmonParser>,
     /// Policy: Reasoning with NVD/KEV intelligence
     policy: Arc<PolicyEngine>,
     /// Wire: P2P Gossip intelligence sharing (used for broadcast when mesh is running)
@@ -704,7 +700,7 @@ impl EdrOrchestrator {
 
     async fn analyze_dns_query_risk(
         &self,
-        event: &SysmonEvent,
+        event: &HostSecurityEvent,
     ) -> Option<osoosi_types::ThreatSignature> {
         let query_name = event
             .data
@@ -796,7 +792,6 @@ impl EdrOrchestrator {
 
         let memory = Arc::new(MemoryStore::new(&runtime_config.db_path)?);
         register_internal_assets(&memory);
-        let telemetry = Arc::new(SysmonParser::new());
         let policy_config = osoosi_types::load_policy_config();
         let policy = Arc::new(PolicyEngine::new(memory.clone(), policy_config));
         
@@ -1144,7 +1139,6 @@ impl EdrOrchestrator {
             memory,
             mesh_peer_count,
             start_time: Instant::now(),
-            telemetry,
             policy,
             mesh,
             mesh_command_tx,
@@ -2137,8 +2131,7 @@ impl EdrOrchestrator {
                                 for ev in events {
                                     let orch = orchestrator.clone();
                                     orchestrator.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
-                                        let sysmon = ev.to_sysmon_event();
-                                        if let Err(e) = orch.process_telemetry(sysmon).await {
+                                        if let Err(e) = orch.process_telemetry(ev).await {
                                             error!("Failed to process host event: {}", e);
                                         }
                                     });
@@ -2498,7 +2491,7 @@ impl EdrOrchestrator {
 
     pub async fn process_telemetry(
         &self,
-        mut event: osoosi_types::SysmonEvent,
+        mut event: osoosi_types::HostSecurityEvent,
     ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
 
@@ -2506,11 +2499,14 @@ impl EdrOrchestrator {
         if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
              if let Some(meta) = osoosi_types::get_pe_metadata(std::path::Path::new(image_path)) {
                  // Enrich event with actual on-disk version if missing or generic
-                 let needs_version = event.product_version.as_ref()
+                 let needs_version = event.data.get("ProductVersion")
+                    .and_then(|v| v.as_str())
                     .map(|v| v.is_empty() || v == "0.0.0.0" || v == "0.0.0")
                     .unwrap_or(true);
                  if needs_version {
-                     event.product_version = Some(meta.version.clone());
+                     if let Some(obj) = event.data.as_object_mut() {
+                         obj.insert("ProductVersion".to_string(), serde_json::Value::String(meta.version.clone()));
+                     }
                  }
                  // Inject into event data for voters to prioritize
                  if let Some(obj) = event.data.as_object_mut() {
@@ -2532,8 +2528,8 @@ impl EdrOrchestrator {
             }
 
             if sig.recommended_action == ResponseAction::Isolate {
-                 if let Some(pid) = event.process_id() {
-                     let _ = self.blocking_manager.block_by_pid(pid);
+                 if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()) {
+                     let _ = self.blocking_manager.block_by_pid(pid as u32);
                  }
             }
         }
@@ -2542,7 +2538,7 @@ impl EdrOrchestrator {
         {
             match event.event_id {
                 // 1. Process Access Guard (Self-Defense & LSASS Protection)
-                osoosi_types::SysmonEventId::ProcessAccess => {
+                10 => {
                     if let (Some(source_pid), Some(target_pid), Some(access_mask_str)) = (
                         event.data.get("SourceProcessId").and_then(|v| v.as_u64()),
                         event.data.get("TargetProcessId").and_then(|v| v.as_u64()),
@@ -2576,7 +2572,7 @@ impl EdrOrchestrator {
                     }
                 },
                 // 2. DNS Sinkhole & Redirection
-                osoosi_types::SysmonEventId::DnsQuery => {
+                22 => {
                     if let Some(query) = event.data.get("QueryName").and_then(|v| v.as_str()) {
                         if let Some(sinkhole_ip) = self.shield.resolve_sinkhole(query) {
                             info!("Shield Redirection: DNS Query for '{}' sinkholed to {}.", query, sinkhole_ip);
@@ -2584,7 +2580,7 @@ impl EdrOrchestrator {
                             self.audit.log("DNS_SINKHOLE_REDIRECTION", serde_json::json!({
                                 "query": query,
                                 "redirected_to": sinkhole_ip,
-                                "source_pid": event.process_id()
+                                "source_pid": event.data.get("ProcessId").and_then(|v| v.as_u64())
                             }));
                         }
                     }
@@ -2595,17 +2591,18 @@ impl EdrOrchestrator {
 
         // --- MORPHIC ENTANGLEMENT INTERCEPTION ---
         {
-            if let Some(pid) = event.process_id() {
+            if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()) {
                 let mut engine = self.deception_engine.write().await;
                 if engine.get_spider(pid as u32).is_some() {
                     match event.event_id {
-                        osoosi_types::SysmonEventId::FileCreate | osoosi_types::SysmonEventId::FileDeleteArchived | osoosi_types::SysmonEventId::FileDeleteLogged => {
+                        // 11: FileCreate, 23: FileDeleteArchived, 26: FileDeleteLogged
+                        11 | 23 | 26 => {
                             let path = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("");
                             if let Some(res) = engine.handle_event(pid as u32, "io_access", path) {
                                 info!("🕸️ [ENTANGLED I/O] Intercepted access from PID {}: {}", pid, res);
                             }
                         },
-                        osoosi_types::SysmonEventId::NetworkConnect => {
+                        3 => { // NetworkConnect
                             if let Some(_) = engine.handle_event(pid as u32, "exfil", "network") {
                                 info!("🕸️ [ENTANGLED EXFIL] Redirected network activity for PID {}", pid);
                             }
@@ -2623,16 +2620,17 @@ impl EdrOrchestrator {
 
             // Try cache first
             if let Ok(Some((_, _, Some(version)))) = self.memory.get_file_integrity(image_path) {
-                event.product_version = Some(version);
+                if let Some(obj) = event.data.as_object_mut() {
+                    obj.insert("ProductVersion".to_string(), serde_json::Value::String(version));
+                }
             } else {
                 // Resolve and update cache if it's a process create or image load
-                if event.event_id == osoosi_types::SysmonEventId::ProcessCreate
-                    || event.event_id == osoosi_types::SysmonEventId::ImageLoad
+                if event.event_id == 1 || event.event_id == 7 // ProcessCreate | ImageLoad
                 {
                     if let Some(version) = version_utils::get_file_version_info(path) {
-                        event.product_version = Some(version);
-                        // Note: Full integrity upsert usually happens during static analysis or NSRL check,
-                        // but we store this version in the event for immediate use by voters.
+                        if let Some(obj) = event.data.as_object_mut() {
+                            obj.insert("ProductVersion".to_string(), serde_json::Value::String(version));
+                        }
                     }
                 }
             }
@@ -2757,7 +2755,7 @@ impl EdrOrchestrator {
                         });
 
                         // Immediate termination + self-healing rollback
-                        if let Some(pid) = event.process_id() {
+                        if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()) {
                             warn!("Terminating suspicious process PID: {}", pid);
                             let _ = self.remediation.kill_process_tree(pid as u32);
 
@@ -2796,10 +2794,10 @@ impl EdrOrchestrator {
         // The Causal AI graph below captures the full event timeline for forensic replay.
 
         // Log to console and log file with full forensic detail
-        let event_name = format!("{:?}", event.event_id);
+        let event_name = format!("EventID={}", event.event_id);
         info!(
-            "PRO-FORENSIC [Sysmon ID={}]: {} | Data: {}",
-            event.event_id as u32, event_name, event.data
+            "PRO-FORENSIC [ID={}]: {} | Data: {}",
+            event.event_id, event_name, event.data
         );
 
         // 10/10 Causal Engine: Ingest event into the Causal AI Attack Graph
@@ -2814,7 +2812,7 @@ impl EdrOrchestrator {
         let mut signature: Option<osoosi_types::ThreatSignature> = correlated_sig;
 
         // PII Scanning for File creations
-        if event.event_id == osoosi_types::SysmonEventId::FileCreate {
+        if event.event_id == 11 { // 11: FileCreate
             if let Some(target_filename) = event.data.get("TargetFilename").and_then(|v| v.as_str()) {
                 if self.pii_classifier.is_scannable(target_filename) {
                     let pii_classifier = self.pii_classifier.clone();
@@ -2893,7 +2891,7 @@ impl EdrOrchestrator {
             if self.memory.is_nsrl_known_good(sha1).unwrap_or(false) {
                 self.nsrl_cache.insert(sha1.to_string(), true);
                 if let Some(path) = event.data.get("Image").and_then(|v| v.as_str()) {
-                    let version = event.product_version.as_deref();
+                    let version = event.data.get("ProductVersion").and_then(|v| v.as_str());
                     let _ = self.memory.upsert_file_integrity(path, sha1, true, version);
                 }
                 info!(
@@ -2929,7 +2927,7 @@ impl EdrOrchestrator {
 
         // Behavioral baselining: record and detect first-connection anomalies
         let baseline_anomaly = match event.event_id {
-            osoosi_types::SysmonEventId::NetworkConnect => {
+            3 => { // NetworkConnect
                 let proc = event
                     .data
                     .get("Image")
@@ -2944,7 +2942,7 @@ impl EdrOrchestrator {
                     .unwrap_or("");
                 self.baseline.record_network(&event.computer, proc, dest)
             }
-            osoosi_types::SysmonEventId::DnsQuery => {
+            22 => { // DnsQuery
                 let proc = event
                     .data
                     .get("Image")
@@ -2962,7 +2960,7 @@ impl EdrOrchestrator {
             _ => false,
         };
 
-        if matches!(event.event_id, osoosi_types::SysmonEventId::DnsQuery) {
+        if matches!(event.event_id, 22) { // DnsQuery
             if let Some(dns_sig) = self.analyze_dns_query_risk(&event).await {
                 let take_dns_sig = signature
                     .as_ref()
@@ -3093,11 +3091,11 @@ impl EdrOrchestrator {
                         match analyzer.analyze_file(&path_buf).await {
                             Ok(Some(static_sig)) => {
                                 warn!("Static Intelligence: Identified critical capabilities in unknown file: {:?}", path_buf);
-                                if let Some(pid) = ev.process_id() {
+                                if let Some(pid) = ev.data.get("ProcessId").and_then(|v| v.as_u64()) {
                                     if let Some(reason) = &static_sig.reason {
                                         for r in reason.split(';') {
                                             orch.correlator.add_static_finding(
-                                                pid,
+                                                pid as u32,
                                                 &path_buf.to_string_lossy(),
                                                 r.trim(),
                                                 static_sig.confidence,
@@ -3128,7 +3126,7 @@ impl EdrOrchestrator {
         #[cfg(target_os = "windows")]
         {
             let should_memory_scan = match event.event_id {
-                SysmonEventId::ProcessAccess => {
+                10 => { // ProcessAccess
                     // Check if target is lsass.exe (credential dumping)
                     let target = event
                         .data
@@ -3137,7 +3135,7 @@ impl EdrOrchestrator {
                         .unwrap_or("");
                     target.to_lowercase().contains("lsass.exe")
                 }
-                SysmonEventId::CreateRemoteThread => {
+                8 => { // CreateRemoteThread
                     // Any remote thread creation is suspicious — scan both source and target
                     true
                 }
@@ -3215,7 +3213,7 @@ impl EdrOrchestrator {
     /// Internal helper to handle identified threats (broadcast, audit, remediation, triage).
     async fn handle_threat(
         &self,
-        event: &osoosi_types::SysmonEvent,
+        event: &osoosi_types::HostSecurityEvent,
         signature: osoosi_types::ThreatSignature,
     ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
@@ -3286,7 +3284,7 @@ impl EdrOrchestrator {
             .log("THREAT_DETECTED", serde_json::Value::Object(audit_data));
         let _ = self.memory.log_threat(&signature);
 
-        if matches!(event.event_id, osoosi_types::SysmonEventId::DnsQuery)
+        if matches!(event.event_id, 22) // DnsQuery
             && crate::firewall::dns_autoblock_enabled()
             && signature.confidence >= crate::firewall::dns_autoblock_min_confidence()
         {
@@ -3639,7 +3637,7 @@ impl EdrOrchestrator {
                 | (RA::GhostTarpit, RA::Isolate)
         );
         if needs_escalation {
-            if let Ok(event) = serde_json::from_value::<SysmonEvent>(entry.event.clone()) {
+            if let Ok(event) = serde_json::from_value::<osoosi_types::HostSecurityEvent>(entry.event.clone()) {
                 if crate::firewall::autoblock_enabled() {
                     let pid = event
                         .data
@@ -3684,7 +3682,6 @@ impl EdrOrchestrator {
 
     /// Count recent traffic events (NetworkConnect/DnsQuery) in audit. Lightweight.
     pub fn recent_traffic_events_count(&self, limit: usize) -> u32 {
-        use osoosi_types::SysmonEventId;
         let limit = limit.clamp(1, 500);
         let entries = self.audit.entries();
         let mut n = 0u32;
@@ -3692,13 +3689,10 @@ impl EdrOrchestrator {
             if entry.event_type != "TELEMETRY_INGESTED" {
                 continue;
             }
-            let Ok(event) = serde_json::from_value::<SysmonEvent>(entry.data.clone()) else {
+            let Ok(event) = serde_json::from_value::<osoosi_types::HostSecurityEvent>(entry.data.clone()) else {
                 continue;
             };
-            if matches!(
-                event.event_id,
-                SysmonEventId::NetworkConnect | SysmonEventId::DnsQuery
-            ) {
+            if matches!(event.event_id, 3 | 22) { // NetworkConnect | DnsQuery
                 n += 1;
                 if n >= limit as u32 {
                     break;
@@ -3711,8 +3705,6 @@ impl EdrOrchestrator {
     /// Analyze traffic captured by this codebase (Sysmon NetworkConnect/DnsQuery from audit).
     /// No pasting required — reads from TELEMETRY_INGESTED entries.
     pub fn analyze_captured_traffic(&self, limit: usize) -> serde_json::Value {
-        use osoosi_types::SysmonEventId;
-
         let limit = limit.clamp(1, 100);
         let entries = self.audit.entries();
         let mut events_analyzed = 0u32;
@@ -3722,13 +3714,10 @@ impl EdrOrchestrator {
             if entry.event_type != "TELEMETRY_INGESTED" {
                 continue;
             }
-            let Ok(event) = serde_json::from_value::<SysmonEvent>(entry.data.clone()) else {
+            let Ok(event) = serde_json::from_value::<osoosi_types::HostSecurityEvent>(entry.data.clone()) else {
                 continue;
             };
-            let is_traffic = matches!(
-                event.event_id,
-                SysmonEventId::NetworkConnect | SysmonEventId::DnsQuery
-            );
+            let is_traffic = matches!(event.event_id, 3 | 22); // NetworkConnect | DnsQuery
             if !is_traffic {
                 continue;
             }
@@ -3738,7 +3727,7 @@ impl EdrOrchestrator {
             }
             if let Some(threat) = osoosi_policy::traffic_adapter::analyze(&event) {
                 findings.push(serde_json::json!({
-                    "event_id": format!("{:?}", event.event_id),
+                    "event_id": event.event_id,
                     "timestamp": event.timestamp.to_rfc3339(),
                     "computer": event.computer,
                     "confidence": threat.confidence,
@@ -4762,7 +4751,7 @@ impl EdrOrchestrator {
     /// Execute the recommended action for a threat.
     pub async fn perform_action(
         &self,
-        event: &osoosi_types::SysmonEvent,
+        event: &osoosi_types::HostSecurityEvent,
         signature: &osoosi_types::ThreatSignature,
         action: osoosi_types::ResponseAction,
     ) -> anyhow::Result<()> {

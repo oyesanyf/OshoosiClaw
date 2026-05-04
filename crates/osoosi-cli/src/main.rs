@@ -87,15 +87,8 @@ enum Commands {
     },
     /// View the local threat intelligence status
     Status,
-    /// Provisions dependencies (Sysmon on Windows/Linux)
-    Provision {
-        /// Optional: Force specific binary path (Windows only)
-        #[arg(short, long)]
-        binary: Option<String>,
-        /// Optional: Path to config XML (Windows only)
-        #[arg(short, long)]
-        config: Option<String>,
-    },
+    /// Provisions native dependencies (ETW/eBPF)
+    Provision,
     /// View the forensic narrative of the last attack
     Story,
     /// Decentralized Trust Management (Identity & Certificates)
@@ -323,7 +316,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         let executor = Arc::new(DirectExecutor::new());
         let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
         tokio::spawn(async move {
-            info!("Startup provisioning is running in the background so Sysmon ingestion can begin immediately.");
+            info!("Startup provisioning is running in the background for native behavioral modeling.");
             if let Err(e) = provisioner.provision_telemetry().await {
                 warn!(
                     "Background provisioning encountered issues: {}. Agent monitoring continues.",
@@ -514,12 +507,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             println!("Oshoosi Status: Active");
             println!("Node ID: {}", uuid::Uuid::new_v4());
         }
-        Some(Commands::Provision {
-            binary: _,
-            config: _,
-        }) => {
+        Some(Commands::Provision) => {
             use osoosi_telemetry::AgentProvisioner;
-            info!("Provisioning Oshoosi dependencies...");
+            info!("Provisioning Oshoosi native telemetry (ETW/eBPF)...");
             let executor = osoosi_core::secured_executor::get_best_executor().await;
             let provisioner = AgentProvisioner::new(executor);
             match provisioner.provision_telemetry().await {
@@ -1129,7 +1119,7 @@ async fn handle_grant_access() -> anyhow::Result<()> {
         let executor = osoosi_core::secured_executor::get_best_executor().await;
         let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
 
-        info!("GrantAccess pre-step: ensuring Sysmon telemetry is provisioned...");
+        info!("GrantAccess pre-step: ensuring native telemetry is provisioned...");
         if let Err(e) = provisioner.provision_telemetry().await {
             warn!("Warning: Failed to provision telemetry: {}", e);
         }
@@ -1138,7 +1128,6 @@ async fn handle_grant_access() -> anyhow::Result<()> {
         if let Err(e) = ensure_ai_models().await {
             warn!("Warning: Failed to provision AI models: {}", e);
         }
-
 
         info!("GrantAccess pre-step: ensuring Cryptographic Engine is validated...");
         {
@@ -1156,30 +1145,6 @@ async fn handle_grant_access() -> anyhow::Result<()> {
                 error!("Oshoosi Pure-Rust Cryptographic Engine failed validation.");
                 std::process::exit(1);
             }
-        }
-
-        info!("GrantAccess pre-step: ensuring FLOSS is provisioned...");
-        if let Err(e) = provisioner.provision_floss().await {
-            warn!("Warning: Failed to provision FLOSS: {}", e);
-        }
-
-        info!("GrantAccess pre-step: ensuring HollowsHunter is provisioned...");
-        if let Err(e) = provisioner.provision_hollows_hunter().await {
-            warn!("Warning: Failed to provision HollowsHunter: {}", e);
-        }
-
-        info!("GrantAccess pre-step: ensuring Network Tooling (ngrep/sniffglue) is provisioned...");
-        let _ = provisioner.provision_npcap().await; // Driver first
-        if let Err(e) = provisioner.provision_ngrep().await {
-            warn!("Warning: Failed to provision ngrep: {}", e);
-        }
-        if let Err(e) = provisioner.provision_sniffglue().await {
-            warn!("Warning: Failed to provision sniffglue: {}", e);
-        }
-
-        info!("GrantAccess pre-step: ensuring CAPA is provisioned...");
-        if let Err(e) = provisioner.provision_capa().await {
-            warn!("Warning: Failed to provision CAPA: {}", e);
         }
 
         info!("GrantAccess pre-step: ensuring YARA rules are provisioned...");
@@ -1230,9 +1195,7 @@ async fn handle_grant_access() -> anyhow::Result<()> {
         #[cfg(target_os = "windows")]
         {
             println!("  1. Run PowerShell as Administrator.");
-            println!("  2. Run: $sid = (New-Object System.Security.Principal.NTAccount($env:USERNAME)).Translate([System.Security.Principal.SecurityIdentifier]).Value");
-            println!("  3. Run: wevtutil sl Microsoft-Windows-Sysmon/Operational /ca:\"O:BAG:SYD:(A;;0x1;;;BA)(A;;0x1;;;S-1-5-32-573)(A;;0x1;;;$sid)\"");
-            println!("  4. If Sysmon is missing, install it: 'winget install Microsoft.Sysmon'");
+            println!("  2. Run: osoosi grant-access");
         }
 
         #[cfg(target_os = "linux")]

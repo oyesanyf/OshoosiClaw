@@ -2,7 +2,7 @@ use std::collections::{HashMap, HashSet};
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use chrono::{DateTime, Utc, Duration};
-use osoosi_types::{SysmonEvent, SysmonEventId, ResponseAction, ThreatSignature};
+use osoosi_types::{HostSecurityEvent, ResponseAction, ThreatSignature};
 
 /// MilitaryGuard: Tactical detection for asymmetric warfare patterns.
 /// 
@@ -35,12 +35,12 @@ impl MilitaryGuard {
     }
 
     /// Main entry point for tactical analysis of a telemetry event.
-    pub async fn analyze_event(&self, event: &SysmonEvent) -> Option<ThreatSignature> {
+    pub async fn analyze_event(&self, event: &HostSecurityEvent) -> Option<ThreatSignature> {
         match event.event_id {
-            SysmonEventId::NetworkConnect => self.analyze_network_tactics(event).await,
-            SysmonEventId::FileCreate | SysmonEventId::FileDeleteLogged => self.analyze_loitering_strike(event).await,
-            SysmonEventId::ProcessCreate => {
-                let pid = event.process_id().unwrap_or(0);
+            3 => self.analyze_network_tactics(event).await, // NetworkConnect
+            11 | 26 => self.analyze_loitering_strike(event).await, // FileCreate | FileDeleteLogged
+            1 => { // ProcessCreate
+                let pid = event.data.get("ProcessId").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
                 if pid != 0 {
                     self.process_start_times.write().await.insert(pid, Utc::now());
                 }
@@ -51,8 +51,8 @@ impl MilitaryGuard {
     }
 
     /// 1. Mesh Networking: Detecting P2P "Whispering"
-    async fn analyze_network_tactics(&self, event: &SysmonEvent) -> Option<ThreatSignature> {
-        let pid = event.process_id()?;
+    async fn analyze_network_tactics(&self, event: &HostSecurityEvent) -> Option<ThreatSignature> {
+        let pid = event.data.get("ProcessId").and_then(|v| v.as_u64())? as u32;
         let dest_ip = event.data.get("DestinationIp")?.as_str()?;
         let dest_port = event.data.get("DestinationPort").and_then(|v| v.as_u64()).unwrap_or(0);
 
@@ -98,8 +98,8 @@ impl MilitaryGuard {
     }
 
     /// 2. Loitering: Behavioral Anomaly Detection (LotL)
-    async fn analyze_loitering_strike(&self, event: &SysmonEvent) -> Option<ThreatSignature> {
-        let pid = event.process_id()?;
+    async fn analyze_loitering_strike(&self, event: &HostSecurityEvent) -> Option<ThreatSignature> {
+        let pid = event.data.get("ProcessId").and_then(|v| v.as_u64())? as u32;
         let target = event.data.get("TargetFilename")?.as_str()?;
 
         let loiter_map = self.process_start_times.read().await;
@@ -122,8 +122,8 @@ impl MilitaryGuard {
     }
 
     /// 3. Decoys: Detecting "Phantom" Processes (Windows/Linux/macOS)
-    async fn analyze_process_legitimacy(&self, event: &SysmonEvent) -> Option<ThreatSignature> {
-        let pid = event.process_id()?;
+    async fn analyze_process_legitimacy(&self, event: &HostSecurityEvent) -> Option<ThreatSignature> {
+        let pid = event.data.get("ProcessId").and_then(|v| v.as_u64())? as u32;
         let image_path = event.data.get("Image")?.as_str()?.to_lowercase();
         let process_name = image_path.split('\\').last()?.split('/').last()?.to_lowercase();
 

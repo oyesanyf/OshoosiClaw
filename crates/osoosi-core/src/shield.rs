@@ -1,4 +1,4 @@
-use osoosi_types::{SysmonEvent, TaintLabel, TaintSink};
+use osoosi_types::{HostSecurityEvent, TaintLabel, TaintSink};
 use std::collections::HashSet;
 use std::sync::Arc;
 use tracing::warn;
@@ -27,7 +27,7 @@ impl ShieldLayer {
     }
 
     /// Check if an action is allowed based on the event's provenance (Taint).
-    pub fn verify_taint_flow(&self, event: &SysmonEvent, sink: &TaintSink) -> bool {
+    pub fn verify_taint_flow(&self, event: &HostSecurityEvent, sink: &TaintSink) -> bool {
         // Derive labels from event metadata
         let mut labels = HashSet::new();
 

@@ -13,14 +13,6 @@ use tracing::{debug, info};
 use sha2::{Sha256, Digest};
 
 pub struct StaticAnalyzer {
-    /// Path to the 'capa' executable
-    _capa_path: PathBuf,
-    /// Path to the rules directory
-    _rules_path: PathBuf,
-    /// Path to the 'floss' executable
-    _floss_path: PathBuf,
-    /// Path to the signatures directory
-    _signatures_path: PathBuf,
     /// Executor for running tools (Direct or OpenShell)
     _executor: Arc<dyn osoosi_types::SecuredExecutor>,
     /// Malware scanner for feedback loops
@@ -39,10 +31,6 @@ impl StaticAnalyzer {
         yara_rules: Arc<yara_x::Rules>,
     ) -> Self {
         Self {
-            _capa_path: osoosi_types::resolve_capa_path(),
-            _rules_path: osoosi_types::resolve_capa_rules_dir(),
-            _floss_path: osoosi_types::resolve_floss_path(),
-            _signatures_path: osoosi_types::resolve_capa_sigs_dir(),
             _executor: executor,
             malware_scanner,
             analysis_cache: dashmap::DashMap::new(),
