@@ -95,47 +95,46 @@ fn event_stem(event: &SysmonEvent) -> String {
         .to_ascii_lowercase()
 }
 
-fn is_trusted_operational_tool(event: &SysmonEvent) -> bool {
-    let path = event_image_path(event).unwrap_or("").to_ascii_lowercase();
-    let stem = event_stem(event);
-
-    // Trust ALL executables under system directories
-    let is_system_dir = path.contains("\\windows\\")
-        || path.contains("\\program files\\")
-        || path.contains("\\program files (x86)\\");
-    if is_system_dir {
-        return true;
-    }
-
-    let trusted_path = path.contains("\\programdata\\chocolatey\\")
-        || path.contains("\\programdata\\scoop\\")
-        || path.contains("\\programdata\\microsoft\\")
-        || path.contains("\\tools\\git\\")
-        || path.contains("\\oshoosiclaw\\tools\\")
-        || path.contains("\\oshoosiclaw\\target\\")
-        || path.contains("/oshoosiclaw/tools/")
-        || path.contains("/oshoosiclaw/target/")
-        || path.contains("\\appdata\\local\\microsoft\\")
-        || path.contains("\\appdata\\local\\google\\chrome\\")
-        || path.contains("\\appdata\\local\\programs\\python\\")
-        || path.contains("\\.rustup\\")
-        || path.contains("\\.cargo\\bin\\");
-    if !trusted_path {
+fn is_trusted_operational_tool(event: &SysmonEvent, config: &osoosi_types::PolicyConfig) -> bool {
+    let image_path = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+    if image_path.is_empty() {
         return false;
     }
-    const TRUSTED_STEMS: &[&str] = &[
-        "osoosi", "sysmon", "sysmon64", "smartscreen",
-        "net", "git", "git-remote-https",
-        "capa", "hayabusa", "chainsaw", "hollows_hunter", "xori",
-        "rustc", "cargo", "python", "node", "code", "cursor", "antigravity",
-        "language_server_windows_x64",
-        "filecoauth", "onedrive",
-        "chrome", "firefox", "msedge", "brave",
-        "ollama", "ollama_llama_server",
-        "updater", "googleupdate", "microsoftedgeupdate",
-        "rustup", "clippy-driver", "cargo-clippy", "cargo-fmt",
-    ];
-    TRUSTED_STEMS.contains(&stem.as_str())
+    let path_lc = image_path.to_lowercase();
+    
+    // 1. Check dynamic whitelists from config
+    let is_trusted_path = config.trusted_paths.iter().any(|p| path_lc.contains(&p.to_lowercase()));
+    let is_trusted_stem = config.trusted_stems.iter().any(|s| {
+        let s_lc = s.to_lowercase();
+        path_lc.ends_with(&s_lc) || path_lc.contains(&format!("\\{}\\", s_lc)) || path_lc.ends_with(&format!("\\{}", s_lc))
+    });
+
+    if is_trusted_path || is_trusted_stem {
+        // 2. Obtain signature from the file on disk (Authenticode)
+        if let Some(metadata) = osoosi_types::get_pe_metadata(std::path::Path::new(image_path)) {
+            if metadata.is_signed {
+                return true;
+            }
+        }
+
+        // 3. Fallback to Sysmon's own signature check
+        let sig_status = event.data.get("SignatureStatus")
+            .or_else(|| event.data.get("Signature Status"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
+        
+        if sig_status == "valid" || sig_status.contains("trusted") {
+            return true;
+        }
+        
+        // 4. Last resort: If it's in a critical System32 path, we trust it to avoid OS breakage
+        if path_lc.contains("\\windows\\system32") || path_lc.contains("\\windows\\syswow64") {
+            return true;
+        }
+    }
+
+    false
 }
 
 fn classify_vote(
@@ -181,7 +180,7 @@ fn classify_vote(
     }
 }
 
-fn orchestrate_evidence(votes: &[EvidenceVote], event: &SysmonEvent) -> EvidenceDecision {
+fn orchestrate_evidence(votes: &[EvidenceVote], event: &SysmonEvent, config: &osoosi_types::PolicyConfig) -> EvidenceDecision {
     use osoosi_types::{ResponseAction, SysmonEventId};
 
     let mut classes = std::collections::HashSet::new();
@@ -220,7 +219,7 @@ fn orchestrate_evidence(votes: &[EvidenceVote], event: &SysmonEvent) -> Evidence
         event.event_id,
         SysmonEventId::ProcessCreate | SysmonEventId::ProcessTerminate
     );
-    let trusted_operational_tool = is_trusted_operational_tool(event);
+    let trusted_operational_tool = is_trusted_operational_tool(event, config);
 
     if threat_intel_only {
         confidence = confidence.min(0.49);
@@ -578,7 +577,7 @@ impl PolicyEngine {
             .map(|s| s.to_string());
         signature.version = event.product_version.clone();
 
-        let decision = orchestrate_evidence(&evidence_votes, event);
+        let decision = orchestrate_evidence(&evidence_votes, event, &self.config);
         signature.confidence = decision.confidence;
         
         // Apply suppression for noisy/trusted paths by capping confidence
@@ -591,7 +590,7 @@ impl PolicyEngine {
         signature.require_approval = decision.require_approval;
         signature.add_reason(decision.summary);
 
-        if signature.confidence < 0.20 && is_trusted_operational_tool(event) {
+        if signature.confidence < 0.20 && is_trusted_operational_tool(event, &self.config) {
             info!(
                 target: CONSENSUS_LOG_TARGET,
                 event_id = ?event.event_id,

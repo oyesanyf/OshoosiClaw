@@ -1259,7 +1259,38 @@ pub struct PolicyConfig {
     /// Alert suppression period in seconds (cooldown). Default: 600 (10 minutes).
     #[serde(default = "default_suppression_secs")]
     pub alert_suppression_secs: u64,
+    /// Dynamic list of trusted file paths (case-insensitive substring match).
+    #[serde(default = "default_trusted_paths")]
+    pub trusted_paths: Vec<String>,
+    /// Dynamic list of trusted executable stems (e.g. "git.exe").
+    #[serde(default = "default_trusted_stems")]
+    pub trusted_stems: Vec<String>,
 }
+
+fn default_trusted_paths() -> Vec<String> {
+    vec![
+        "\\windows\\system32".to_string(),
+        "\\windows\\syswow64".to_string(),
+        "\\.rustup\\".to_string(),
+        "\\.cargo\\".to_string(),
+        "\\program files\\git\\".to_string(),
+        "\\tools\\git\\".to_string(),
+    ]
+}
+
+fn default_trusted_stems() -> Vec<String> {
+    vec![
+        "rustc.exe".to_string(),
+        "cargo.exe".to_string(),
+        "git.exe".to_string(),
+        "svchost.exe".to_string(),
+        "conhost.exe".to_string(),
+        "wermgr.exe".to_string(),
+        "wmic.exe".to_string(),
+        "where.exe".to_string(),
+    ]
+}
+
 
 fn default_suppression_secs() -> u64 {
     600
@@ -1275,6 +1306,8 @@ impl Default for PolicyConfig {
             consensus_trusted_paths: Vec::new(),
             consensus_noisy_stems: Vec::new(),
             alert_suppression_secs: 600,
+            trusted_paths: default_trusted_paths(),
+            trusted_stems: default_trusted_stems(),
         }
     }
 }

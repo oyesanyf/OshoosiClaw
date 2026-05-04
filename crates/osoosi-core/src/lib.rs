@@ -84,91 +84,45 @@ pub type RepairStatus = (
     Option<String>,
 );
 
-fn is_trusted_operational_image(event: &osoosi_types::SysmonEvent) -> bool {
+fn is_trusted_operational_image(event: &osoosi_types::SysmonEvent, config: &osoosi_types::PolicyConfig) -> bool {
     let image_path = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
-    let path = image_path.to_ascii_lowercase();
-    let stem = std::path::Path::new(image_path)
-        .file_stem()
-        .and_then(|s| s.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
+    if image_path.is_empty() {
+        return false;
+    }
+    let path_lc = image_path.to_lowercase();
+    
+    // 1. Check dynamic whitelists from config
+    let is_trusted_path = config.trusted_paths.iter().any(|p| path_lc.contains(&p.to_lowercase()));
+    let is_trusted_stem = config.trusted_stems.iter().any(|s| {
+        let s_lc = s.to_lowercase();
+        path_lc.ends_with(&s_lc) || path_lc.contains(&format!("\\{}\\", s_lc)) || path_lc.ends_with(&format!("\\{}", s_lc))
+    });
+
+    if is_trusted_path || is_trusted_stem {
+        // 2. Obtain signature from the file on disk (Authenticode)
+        if let Some(metadata) = osoosi_types::get_pe_metadata(std::path::Path::new(image_path)) {
+            if metadata.is_signed {
+                return true;
+            }
+        }
+
+        // 3. Fallback to Sysmon's own signature check
+        let sig_status = event.data.get("SignatureStatus")
+            .or_else(|| event.data.get("Signature Status"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_lowercase();
         
-    // 1. Signature Verification (The most important signal)
-    let sig_status = event.data.get("SignatureStatus")
-        .or_else(|| event.data.get("Signature Status"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("")
-        .to_lowercase();
-    let is_signed = sig_status == "valid" || sig_status.contains("trusted");
-
-    // 2. Path-based trust
-    let trusted_path = path.contains("\\windows\\system32\\")
-        || path.contains("\\windows\\syswow64\\")
-        || path.contains("\\windows\\winsxs\\")
-        || path.contains("\\windows\\servicing\\")
-        || path.contains("\\windows\\systemapps\\")
-        || path.contains("\\program files\\")
-        || path.contains("\\program files (x86)\\")
-        || path.contains("\\programdata\\chocolatey\\")
-        || path.contains("\\programdata\\scoop\\")
-        || path.contains("\\programdata\\microsoft\\")
-        || path.contains("\\tools\\git\\")
-        || path.contains("\\oshoosiclaw\\tools\\")
-        || path.contains("\\oshoosiclaw\\target\\")
-        || path.contains("/oshoosiclaw/tools/")
-        || path.contains("/oshoosiclaw/target/")
-        || path.contains("\\appdata\\local\\programs\\python\\")
-        || path.contains("\\appdata\\local\\microsoft\\")
-        || path.contains("\\appdata\\local\\google\\chrome\\")
-        || path.contains("\\program files\\git\\")
-        || path.contains("\\program files\\google\\chrome\\")
-        || path.contains("\\program files (x86)\\google\\chrome\\")
-        || path.contains("\\program files\\mozilla firefox\\")
-        || path.contains("\\program files\\microsoft office\\")
-        || path.contains("\\tools\\git\\cmd\\")
-        || path.contains("\\progra~1\\git\\")
-        || path.contains("\\.rustup\\")
-        || path.contains("\\.cargo\\bin\\"); // PROTECT DEVELOPER ENVIRONMENT
-
-    // 3. Trusted Stems (Known-Good Basenames)
-    const TRUSTED_STEMS: &[&str] = &[
-        "osoosi", "sysmon", "sysmon64",
-        "capa", "hayabusa", "hollows_hunter", "chainsaw",
-        "svchost", "csrss", "smss", "wininit", "winlogon", "lsass", "lsaiso",
-        "services", "spoolsv", "dwm", "explorer", "taskhostw", "taskhost",
-        "conhost", "cmd", "powershell", "pwsh", "wt", "sihost",
-        "runtimebroker", "backgroundtaskhost", "smartscreen",
-        "searchindexer", "searchprotocolhost", "searchfilterhost",
-        "wmiprvse", "wmiapsrv", "dllhost", "msiexec",
-        "tiworker", "trustedinstaller", "wuauclt", "usoclient", "musnotification",
-        "vssvc", "wbengine", "sppextcomobj", "sppsvc",
-        "ctfmon", "fontdrvhost", "dashost", "settingsynchost",
-        "securityhealthservice", "securityhealthsystray",
-        "sgrmbroker", "mpcmdrun", "msmpeng", "nissrv",
-        "systemsettings", "systemsettingsbroker",
-        "applicationframehost", "shellexperiencehost",
-        "audiodg", "audioses",
-        "net", "net1", "netstat", "ipconfig", "ping", "tracert", "nslookup",
-        "whoami", "hostname", "systeminfo", "tasklist", "taskmgr",
-        "reg", "regedit", "sc", "wmic", "bcdedit",
-        "wusa", "dism", "cleanmgr", "defrag",
-        "winword", "excel", "powerpnt", "outlook", "onenote", "teams", "msedge",
-        "chrome", "firefox", "brave", "opera", "vivaldi",
-        "git", "git-remote-https", "git-remote-http",
-        "cargo", "rustc", "rustup", "clippy-driver",
-        "npm", "node", "npx", "yarn", "pnpm",
-        "python", "python3", "pip", "pip3",
-        "java", "javaw", "javac", "dotnet",
-        "code", "cursor", "antigravity",
-    ];
-    let is_trusted_stem = TRUSTED_STEMS.contains(&stem.as_str());
-
-    // 4. Conditional Trust: Require signature for dev tools and system binaries
-    if (is_trusted_stem || trusted_path) && is_signed {
-        return true;
+        if sig_status == "valid" || sig_status.contains("trusted") {
+            return true;
+        }
+        
+        // 4. Last resort: If it's in a critical System32 path, we trust it to avoid OS breakage
+        if path_lc.contains("\\windows\\system32") || path_lc.contains("\\windows\\syswow64") {
+            return true;
+        }
     }
 
-    // Default to untrusted if not signed or not in a known path
     false
 }
 
@@ -2419,6 +2373,25 @@ impl EdrOrchestrator {
     ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
 
+        // --- IDENTITY ENRICHMENT: Obtain Product/Version/Signature directly from the file on disk ---
+        if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
+             if let Some(meta) = osoosi_types::get_pe_metadata(std::path::Path::new(image_path)) {
+                 // Enrich event with actual on-disk version if missing or generic
+                 let needs_version = event.product_version.as_ref()
+                    .map(|v| v.is_empty() || v == "0.0.0.0" || v == "0.0.0")
+                    .unwrap_or(true);
+                 if needs_version {
+                     event.product_version = Some(meta.version.clone());
+                 }
+                 // Inject into event data for voters to prioritize
+                 if let Some(obj) = event.data.as_object_mut() {
+                     obj.insert("VerifiedVersion".to_string(), serde_json::Value::String(meta.version));
+                     obj.insert("VerifiedProduct".to_string(), serde_json::Value::String(meta.product_name));
+                     obj.insert("VerifiedSigned".to_string(), serde_json::Value::Bool(meta.is_signed));
+                 }
+             }
+        }
+
         // --- MILITARY-GRADE TACTICAL ANALYSIS (Loitering, Mesh, Decoy) ---
         if let Some(mut sig) = self.military.analyze_event(&event).await {
             warn!("MILITARY-GUARD: Tactical threat detected! {}", sig.reason.as_deref().unwrap_or("Unknown"));
@@ -2617,10 +2590,10 @@ impl EdrOrchestrator {
             match effective_action {
                 ResponseAction::Isolate => {
                     if let Some(image) = event.data.get("Image").and_then(|v| v.as_str()) {
-                        // SAFETY GUARD: Downgrade to Alert for trusted images ONLY if confidence is not extremely high (< 0.95).
-                        if is_trusted_operational_image(&event) && signature.confidence < 0.95 {
+                        // SAFETY GUARD: Never block trusted system/operational binaries.
+                        if is_trusted_operational_image(&event, &self.policy.config) {
                             let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
-                            warn!("AUTONOMOUS BLOCK SKIPPED: {} is a trusted system/operational binary (confidence {:.2} < 0.95). Downgrading to Alert.", image, signature.confidence);
+                            warn!("AUTONOMOUS BLOCK SKIPPED: {} is a trusted system/operational binary. Downgrading to Alert.", image);
                         } else {
                         warn!("AUTONOMOUS BLOCK: Consensus threshold met for {}. Applying FileBlockExecutable.", image);
                         let rule = osoosi_types::BlockingRule {
@@ -2891,7 +2864,7 @@ impl EdrOrchestrator {
                     .memory
                     .is_false_positive_pattern(proc.as_deref(), None)
                     .unwrap_or(false);
-                let trusted_operational = is_trusted_operational_image(&event);
+                let trusted_operational = is_trusted_operational_image(&event, &self.policy.config);
 
                 
                 if is_fp {
