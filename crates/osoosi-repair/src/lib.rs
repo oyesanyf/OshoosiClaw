@@ -384,12 +384,16 @@ impl PatchEngine {
                 use windows::Win32::Foundation::BOOL;
 
                 // Bypass 24-hour frequency limit via registry
-                let reg_path = "HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore";
-                let _ = std::process::Command::new("reg")
-                    .args(["add", reg_path, "/v", "SystemRestorePointCreationFrequency", "/t", "REG_DWORD", "/d", "0", "/f"])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
+                #[cfg(target_os = "windows")]
+                {
+                    use winreg::enums::*;
+                    use winreg::RegKey;
+                    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+                    let reg_path = r"Software\Microsoft\Windows NT\CurrentVersion\SystemRestore";
+                    if let Ok(key) = hklm.open_subkey_with_flags(reg_path, KEY_WRITE) {
+                        let _ = key.set_value("SystemRestorePointCreationFrequency", &0u32);
+                    }
+                }
 
                 // Build RESTOREPOINTINFOW with description
                 let mut info: RESTOREPOINTINFOW = unsafe { std::mem::zeroed() };
@@ -413,11 +417,16 @@ impl PatchEngine {
                 let result: BOOL = unsafe { SRSetRestorePointW(&info, &mut status) };
 
                 // Clean up registry key
-                let _ = std::process::Command::new("reg")
-                    .args(["delete", reg_path, "/v", "SystemRestorePointCreationFrequency", "/f"])
-                    .stdout(std::process::Stdio::null())
-                    .stderr(std::process::Stdio::null())
-                    .status();
+                #[cfg(target_os = "windows")]
+                {
+                    use winreg::enums::*;
+                    use winreg::RegKey;
+                    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+                    let reg_path = r"Software\Microsoft\Windows NT\CurrentVersion\SystemRestore";
+                    if let Ok(key) = hklm.open_subkey_with_flags(reg_path, KEY_WRITE) {
+                        let _ = key.delete_value("SystemRestorePointCreationFrequency");
+                    }
+                }
 
                 if result.as_bool() {
                     let seq = status.llSequenceNumber;

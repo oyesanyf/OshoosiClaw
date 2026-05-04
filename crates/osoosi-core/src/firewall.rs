@@ -276,7 +276,7 @@ pub fn open_mesh_ports() -> Result<()> {
                     "firewall",
                     "add",
                     "rule",
-                    &format!("name={}", name),
+                    &format!("name=\"{}\"", name),
                     "dir=in",
                     "action=allow",
                     "protocol=TCP",

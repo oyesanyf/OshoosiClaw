@@ -1335,7 +1335,7 @@ async fn setup_firewall() -> anyhow::Result<()> {
     {
         // Rustify: Use netsh instead of powershell.exe for firewall rules
         let _ = std::process::Command::new("netsh")
-            .args(&["advfirewall", "firewall", "add", "rule", "name=OpenOshoosi-Allow", "dir=in", "action=allow", "protocol=TCP", "localport=9000,9876,3030,8080"])
+            .args(&["advfirewall", "firewall", "add", "rule", "name=\"OpenOshoosi-Allow\"", "dir=in", "action=allow", "protocol=TCP", "localport=9000,9876,3030,8080"])
             .output()?;
     }
     osoosi_core::firewall::open_mesh_ports()?;

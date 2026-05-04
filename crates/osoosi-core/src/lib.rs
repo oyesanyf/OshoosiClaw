@@ -1633,6 +1633,8 @@ impl EdrOrchestrator {
                     if process_name == "MsMpEng.exe"
                         || process_name == "TrustedInstaller.exe"
                         || process_name == "TiWorker.exe"
+                        || process_name == "GoogleUpdater.exe"
+                        || process_name == "updater.exe"
                     {
                         continue;
                     }

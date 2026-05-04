@@ -1178,11 +1178,15 @@ fn default_trusted_stems() -> Vec<String> {
         "rustc.exe".to_string(),
         "cargo.exe".to_string(),
         "git.exe".to_string(),
+        "git-remote-http.exe".to_string(),
+        "git-remote-https.exe".to_string(),
         "svchost.exe".to_string(),
         "conhost.exe".to_string(),
         "wermgr.exe".to_string(),
         "wmic.exe".to_string(),
         "where.exe".to_string(),
+        "updater.exe".to_string(),
+        "googleupdater.exe".to_string(),
     ]
 }
 

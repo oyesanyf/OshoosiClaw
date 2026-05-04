@@ -316,26 +316,56 @@ impl ThreatVoter for TrustedVendorVoter {
         "Trusted-Vendor".to_string()
     }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
-        let status = event.data.get("SignatureStatus").or_else(|| event.data.get("Signature Status"))
-            .and_then(|v| v.as_str())
-            .unwrap_or("");
+        // 1. Get the image path from telemetry
+        let full_path = event.data.get("Image").and_then(|v| v.as_str())?;
         
-        let publisher = event.data.get("Signature").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-        
-        if status.to_lowercase() == "valid" || status.to_lowercase().contains("trusted") {
+        // 2. Extract Metadata natively (Goblin + X509-Parser)
+        let meta = match osoosi_types::get_pe_metadata(std::path::Path::new(full_path)) {
+            Some(m) => m,
+            None => return None,
+        };
+
+        // 3. Verify identity against trusted publishers
+        if let Some(publisher) = meta.publisher {
+            let publisher_lc = publisher.to_lowercase();
             let trusted_publishers = [
                 "microsoft", "github, inc.", "google", "apple", "mozilla", 
                 "oracle", "amazon", "digicert", "sectigo", "comodo"
             ];
             
-            if trusted_publishers.iter().any(|&p| publisher.contains(p)) {
+            if trusted_publishers.iter().any(|&p| publisher_lc.contains(p)) {
+                // If WinVerifyTrust also says it's signed, we have high confidence
+                let weight = if meta.is_signed { -1.0 } else { -0.5 };
+                
                 return Some(VoteResult {
                     confidence: 0.0,
-                    reason: format!("Trusted Vendor: {} (Signature: {})", publisher, status),
-                    weight: -0.5, // Subtract significant amount from threat score
+                    reason: format!("Trusted Vendor (Native Verify): {} (Integrity: {})", publisher, if meta.is_signed { "Verified" } else { "Identity-only" }),
+                    weight,
                 });
             }
         }
+        
+        // Fallback to telemetry-based check if native extraction failed or publisher is missing
+        let status = event.data.get("SignatureStatus").or_else(|| event.data.get("Signature Status"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let telemetry_publisher = event.data.get("Signature").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+        
+        if (status.to_lowercase() == "valid" || status.to_lowercase().contains("trusted")) && !telemetry_publisher.is_empty() {
+            let trusted_publishers = [
+                "microsoft", "github, inc.", "google", "apple", "mozilla", 
+                "oracle", "amazon", "digicert", "sectigo", "comodo"
+            ];
+            
+            if trusted_publishers.iter().any(|&p| telemetry_publisher.contains(p)) {
+                return Some(VoteResult {
+                    confidence: 0.0,
+                    reason: format!("Trusted Vendor (Telemetry): {} (Status: {})", telemetry_publisher, status),
+                    weight: -0.4, 
+                });
+            }
+        }
+        
         None
     }
 }
@@ -768,6 +798,7 @@ impl ThreatVoter for CveLookupVoter {
         // We also check if the hash is in the NSRL known-good set.
         let is_microsoft = meta.product_name.to_lowercase().contains("microsoft") || 
                            meta.product_name.to_lowercase().contains("windows") ||
+                           meta.publisher.as_ref().map(|p| p.to_lowercase().contains("microsoft")).unwrap_or(false) ||
                            full_path.to_lowercase().contains("\\windows\\system32");
 
         if meta.is_signed && is_microsoft {
