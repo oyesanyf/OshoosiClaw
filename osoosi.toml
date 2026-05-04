@@ -50,6 +50,8 @@ db_path = "./database/osoosi.db"
 # listen_addr = "/ip4/0.0.0.0/tcp/9000"
 # Static bootstrap peers (PeerId@Multiaddr)
 peers = []
+# Nostr Relays for decentralized threat intelligence sharing (BitChat style)
+nostr_relays = ["ws://localhost:8080", "wss://relay.damus.io", "wss://nos.lol"]
 
 [backup]
 # Enable backup on agent start

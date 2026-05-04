@@ -278,6 +278,8 @@ struct WireConfigPartial {
     pub membership_proof: Option<String>,
     #[serde(default)]
     pub zone: Option<String>,
+    #[serde(default)]
+    pub nostr_relays: Vec<String>,
 }
 
 /// Partial config for loading from file (only sections we need; rest use defaults).
@@ -1142,6 +1144,7 @@ pub struct WireListenConfig {
     pub master_node_public_key: Option<String>,
     pub membership_proof: Option<String>,
     pub zone: String,
+    pub nostr_relays: Vec<String>,
 }
 
 pub fn load_mesh_listen_config_extended() -> WireListenConfig {
@@ -1150,6 +1153,7 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
     let mut master_node_public_key = None;
     let mut membership_proof = None;
     let mut zone = "Global".to_string();
+    let mut nostr_relays = Vec::new();
 
     if let Some(path) = resolve_config_path() {
         if let Ok(content) = std::fs::read_to_string(&path) {
@@ -1186,6 +1190,7 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
                 if let Some(z) = fc.wire.zone.clone() {
                     zone = z;
                 }
+                nostr_relays = fc.wire.nostr_relays.clone();
             }
         }
     }
@@ -1219,6 +1224,7 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
         master_node_public_key,
         membership_proof,
         zone,
+        nostr_relays,
     }
 }
 
@@ -1456,6 +1462,9 @@ pub struct WireConfig {
     /// Zonal Sharding: The logical zone for this node (e.g. Finance, HR).
     #[serde(default)]
     pub zone: Option<String>,
+    /// Nostr Relays for decentralized threat intelligence sharing.
+    #[serde(default)]
+    pub nostr_relays: Vec<String>,
 }
 
 fn default_min_reputation() -> f32 {

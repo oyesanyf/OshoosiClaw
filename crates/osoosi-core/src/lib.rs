@@ -451,6 +451,8 @@ pub struct EdrOrchestrator {
     runtime_config: osoosi_types::config::RuntimeConfig,
     /// Alert suppression cache (Hash -> Last Alert Time)
     alert_suppression_cache: Arc<dashmap::DashMap<String, Instant>>,
+    /// Nostr Mesh: Decentralized relay-based threat broadcasting (BitChat style)
+    nostr_mesh: Arc<crate::nostr_mesh::NostrMeshOrchestrator>,
 }
 
 impl EdrOrchestrator {
@@ -795,9 +797,31 @@ impl EdrOrchestrator {
         
 
 
+        let mesh_config = osoosi_types::load_mesh_listen_config();
         let mesh = Arc::new(tokio::sync::Mutex::new(Some(
             MeshNode::new(memory.clone()).await?,
         )));
+
+        // --- 2. NOSTR GLOBAL INTELLIGENCE (BitChat Style) ---
+        // Uses decentralized relays for cross-organization threat sharing with Differential Privacy.
+        let nostr_relays = if mesh_config.nostr_relays.is_empty() {
+            vec![
+                "ws://localhost:8080".to_string(),
+                "wss://relay.damus.io".to_string(),
+                "wss://nos.lol".to_string(),
+            ]
+        } else {
+            mesh_config.nostr_relays.clone()
+        };
+        
+        info!("Initializing Nostr Mesh with {} relays...", nostr_relays.len());
+        let nostr_orch = crate::nostr_mesh::NostrMeshOrchestrator::new(None, 1.0).await?;
+        for relay in nostr_relays {
+            let _ = nostr_orch.add_relay(&relay).await;
+        }
+        nostr_orch.connect().await;
+        let nostr_mesh = Arc::new(nostr_orch);
+
         let mesh_command_tx = Arc::new(tokio::sync::Mutex::new(None));
         let response = Arc::new(DeceptionManager::new());
         let audit = Arc::new(AuditTrail::new());
@@ -1132,6 +1156,7 @@ impl EdrOrchestrator {
             behavioral_debouncer,
             spider_eyes,
             alert_suppression_cache: Arc::new(dashmap::DashMap::new()),
+            nostr_mesh,
         })
     }
 
@@ -1411,6 +1436,30 @@ impl EdrOrchestrator {
             info!("P2P Mesh Network is active (Node: {}).", self.trust.did());
         }
 
+        // --- 2. NOSTR MESH LISTENING (BitChat style) ---
+        // Provides a robust, firewall-bypassing secondary intelligence layer.
+        let orch_nostr = self.clone();
+        self.nostr_mesh.start_listening(move |sig| {
+            let orch = orch_nostr.clone();
+            tokio::spawn(async move {
+                info!("BitChat: Decentralized threat received via Nostr relay: {:?} ({})", sig.reason, sig.source_node);
+                if let Err(e) = orch.memory.log_threat(&sig) {
+                    error!("Failed to persist Nostr threat: {}", e);
+                }
+                if let Some(ref hash) = sig.hash_blake3 {
+                    orch.memory.mark_hash_known_malicious(hash);
+                }
+                orch.audit.log(
+                    "NOSTR_THREAT_RECEIVED",
+                    serde_json::json!({
+                        "threat_id": sig.id,
+                        "source": sig.source_node,
+                        "confidence": sig.confidence,
+                    }),
+                );
+            });
+        }).await;
+
         Ok(join_gate)
     }
 
@@ -1475,6 +1524,20 @@ impl EdrOrchestrator {
         }
 
         info!("All security subsystems are ACTIVE.");
+
+        // 7. NOSTR HEARTBEAT (BitChat style)
+        let orch_heart = self.clone();
+        tokio::spawn(async move {
+            let node_id = orch_heart.trust.did().to_string();
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                if let Err(e) = orch_heart.nostr_mesh.send_heartbeat(&node_id).await {
+                    debug!("Nostr heartbeat failed: {} (relays may be offline)", e);
+                }
+            }
+        });
+
         Ok(())
     }
 
@@ -3239,6 +3302,17 @@ impl EdrOrchestrator {
                 
                 info!("[Messenger] High-confidence intel shared with mesh: {:?}", signature.process_name);
             }
+
+            // BROADCAST VIA NOSTR (BitChat style)
+            let nostr = self.nostr_mesh.clone();
+            let sig_clone = signature.clone();
+            tokio::spawn(async move {
+                if let Err(e) = nostr.broadcast_threat(sig_clone).await {
+                    error!("Failed to broadcast threat via Nostr relay: {}", e);
+                } else {
+                    info!("BitChat: Threat broadcasted to global Nostr relays.");
+                }
+            });
         } else {
             debug!("[Messenger] Intelligence suppressed: Confidence ({:.2}) below threshold and binary is signed.", signature.confidence);
         }

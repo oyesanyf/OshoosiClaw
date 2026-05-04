@@ -48,12 +48,6 @@ impl NostrMeshOrchestrator {
 
         let client = Client::new(&keys);
         
-        // Private/Local Relay as primary rendezvous
-        client.add_relay("ws://localhost:8080").await?;
-        client.add_relay("wss://relay.damus.io").await?;
-        
-        client.connect().await;
-
         info!("Nostr Mesh Node Initialized. PubKey: {}", keys.public_key());
 
         Ok(Self {
@@ -61,6 +55,19 @@ impl NostrMeshOrchestrator {
             keys,
             privacy: MalchelaPrivacy { epsilon },
         })
+    }
+
+    /// Add a new relay to the pool.
+    pub async fn add_relay(&self, url: &str) -> anyhow::Result<()> {
+        let client = self.client.read().await;
+        client.add_relay(url).await?;
+        Ok(())
+    }
+
+    /// Connect to all configured relays.
+    pub async fn connect(&self) {
+        let client = self.client.read().await;
+        client.connect().await;
     }
 
     /// Broadcast a privacy-hardened threat signature to the decentralized mesh.
