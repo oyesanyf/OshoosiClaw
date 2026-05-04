@@ -101,11 +101,11 @@ fn is_trusted_operational_image(event: &osoosi_types::SysmonEvent, config: &osoo
     if is_trusted_path || is_trusted_stem {
         // 2. Obtain signature and Signer Identity from the file on disk
         if let Some(metadata) = osoosi_types::get_pe_metadata(std::path::Path::new(image_path)) {
-            let company = metadata.company_name.to_lowercase();
-            let is_trusted_vendor = company.contains("microsoft") || 
-                                   company.contains("windows") || 
-                                   company.contains("rust project") ||
-                                   company.contains("google");
+            let product = metadata.product_name.to_lowercase();
+            let is_trusted_vendor = product.contains("microsoft") || 
+                                   product.contains("windows") || 
+                                   product.contains("rust project") ||
+                                   product.contains("google");
 
             if metadata.is_signed && is_trusted_vendor {
                 return true;
@@ -129,6 +129,33 @@ fn is_trusted_operational_image(event: &osoosi_types::SysmonEvent, config: &osoo
         }
     }
 
+    false
+}
+
+/// A strict check to prevent OshoosiClaw from committing accidental suicide on the host OS.
+/// This acts as a global veto against autonomous blocks, separate from the general developer tool safelist.
+fn is_system_critical(event: &osoosi_types::SysmonEvent) -> bool {
+    let image_path = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+    if image_path.is_empty() {
+        return false;
+    }
+    let path_lc = image_path.to_lowercase();
+    
+    // Path Constraint: Must execute from core Windows directories.
+    let is_critical_path = path_lc.contains("\\windows\\system32\\") || path_lc.contains("\\windows\\syswow64\\");
+    
+    if is_critical_path {
+        // Cryptographic Constraint: Must have a valid Authenticode signature explicitly from Microsoft.
+        if let Some(metadata) = osoosi_types::get_pe_metadata(std::path::Path::new(image_path)) {
+            let product = metadata.product_name.to_lowercase();
+            let is_microsoft = product.contains("microsoft") || product.contains("windows");
+            
+            if metadata.is_signed && is_microsoft {
+                return true;
+            }
+        }
+    }
+    
     false
 }
 
@@ -2596,21 +2623,25 @@ impl EdrOrchestrator {
             match effective_action {
                 ResponseAction::Isolate => {
                     if let Some(image) = event.data.get("Image").and_then(|v| v.as_str()) {
-                        // SAFETY GUARD: Never block trusted system/operational binaries UNLESS they exhibit confirmed malicious behavior.
-                        let is_trusted = is_trusted_operational_image(&event, &self.policy.config);
-                        let reason = signature.reason.as_deref().unwrap_or("");
-                        let is_behavioral_threat = reason.contains("Behavioral") || 
-                                                 reason.contains("Yara") || 
-                                                 reason.contains("Memory") || 
-                                                 reason.contains("Hollows-Hunter");
                         
-                        if is_trusted && !is_behavioral_threat {
-                            let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
-                            warn!("AUTONOMOUS BLOCK SKIPPED: {} is a trusted system/operational binary with no behavioral/memory evidence. Downgrading to Alert.", image);
+                        // ABSOLUTE OS SAFEGUARD: If this is a core, Microsoft-signed Windows binary, NEVER kill it (prevents BSOD).
+                        if is_system_critical(&event) {
+                            warn!("AUTONOMOUS BLOCK SKIPPED: {} is a SYSTEM CRITICAL binary (Microsoft Signed). Downgrading to Alert to prevent OS crash.", image);
                         } else {
-                            if is_trusted && is_behavioral_threat {
-                                warn!("AUTONOMOUS BLOCK OVERRIDE: {} is trusted but exhibits behavioral threats: {}. Proceeding with block.", image, reason);
-                            }
+                            // GENERAL SAFELIST GUARD: Never block trusted developer/operational binaries UNLESS they exhibit confirmed malicious behavior.
+                            let is_trusted = is_trusted_operational_image(&event, &self.policy.config);
+                            let reason = signature.reason.as_deref().unwrap_or("");
+                            let is_behavioral_threat = reason.contains("Behavioral") || 
+                                                     reason.contains("Yara") || 
+                                                     reason.contains("Memory") || 
+                                                     reason.contains("Hollows-Hunter");
+                            
+                            if is_trusted && !is_behavioral_threat {
+                                warn!("AUTONOMOUS BLOCK SKIPPED: {} is a trusted operational binary with no behavioral/memory evidence. Downgrading to Alert.", image);
+                            } else {
+                                if is_trusted && is_behavioral_threat {
+                                    warn!("AUTONOMOUS BLOCK OVERRIDE: {} is trusted but exhibits behavioral threats: {}. Proceeding with block.", image, reason);
+                                }
 
                         warn!("AUTONOMOUS BLOCK: Consensus threshold met for {}. Applying FileBlockExecutable.", image);
                         let rule = osoosi_types::BlockingRule {
@@ -2643,7 +2674,8 @@ impl EdrOrchestrator {
                                 }
                             });
                         }
-                        } // end safety guard else block
+                        } // end general safelist else block
+                        } // end system critical else block
                     }
                 }
                 action => {
@@ -2889,9 +2921,9 @@ impl EdrOrchestrator {
                         "ML threat model suppressed false positive pattern for process {:?}",
                         proc
                     );
-                } else if trusted_operational && cve.is_none() {
-                    // SUPPRESSION: If it's a trusted tool and has NO CVE hit, never emit a standalone ML alarm 
-                    // unless the score is exceptionally high (e.g. > 1.1), suggesting a serious hijack.
+                } else if trusted_operational {
+                    // SUPPRESSION: If it's a trusted tool, never emit a standalone ML alarm 
+                    // regardless of CVE status. A vulnerability is not a behavioral threat.
                     // Note: We use 1.1 because some features can cap at 1.0.
                     if score < 1.1 {
                         tracing::debug!(
