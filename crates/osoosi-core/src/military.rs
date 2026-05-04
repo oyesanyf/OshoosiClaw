@@ -1,5 +1,4 @@
 use std::collections::{HashMap, HashSet};
-use std::net::IpAddr;
 use std::sync::Arc;
 use tokio::sync::RwLock;
 use chrono::{DateTime, Utc, Duration};
@@ -7,88 +6,90 @@ use osoosi_types::{SysmonEvent, SysmonEventId, ResponseAction, ThreatSignature};
 use tracing::warn;
 
 /// MilitaryGuard: Tactical detection for asymmetric warfare patterns.
+/// 
+/// Translates drone concepts (Geran-2E) into EDR heuristics:
+/// - Mesh Networking: Detecting workstation-to-workstation P2P whispers.
+/// - Loitering: Detecting idle processes that perform "Alpha Strikes".
+/// - Decoy Detection: Detecting masqueraded system processes (Windows/Linux/macOS).
 pub struct MilitaryGuard {
     /// P2P Whispering: Maps Source PID -> Set of internal unique Peer IPs
-    peer_whispers: Arc<RwLock<HashMap<u32, HashSet<IpAddr>>>>,
+    peer_map: Arc<RwLock<HashMap<u32, HashSet<String>>>>,
     /// Loitering: Maps PID -> Process Start Time
-    process_launch_times: Arc<RwLock<HashMap<u32, DateTime<Utc>>>>,
-    /// Decoy Detection: Maps PID -> (Destination Count, Last Payload Hash, Similarity Score)
+    process_start_times: Arc<RwLock<HashMap<u32, DateTime<Utc>>>>,
+    /// Decoy Detection: Maps PID -> Tracker for high-entropy chaff traffic
     decoy_trackers: Arc<RwLock<HashMap<u32, DecoyTracker>>>,
 }
 
 #[derive(Default)]
 struct DecoyTracker {
-    destinations: HashSet<IpAddr>,
-    last_payload_hash: String,
+    destinations: HashSet<String>,
     similarity_hits: u64,
 }
 
 impl MilitaryGuard {
     pub fn new() -> Self {
         Self {
-            peer_whispers: Arc::new(RwLock::new(HashMap::new())),
-            process_launch_times: Arc::new(RwLock::new(HashMap::new())),
+            peer_map: Arc::new(RwLock::new(HashMap::new())),
+            process_start_times: Arc::new(RwLock::new(HashMap::new())),
             decoy_trackers: Arc::new(RwLock::new(HashMap::new())),
         }
     }
 
-    /// Analyze an event for tactical military-grade patterns.
+    /// Main entry point for tactical analysis of a telemetry event.
     pub async fn analyze_event(&self, event: &SysmonEvent) -> Option<ThreatSignature> {
         match event.event_id {
-            SysmonEventId::ProcessCreate => {
-                let pid = event.process_id()?;
-                self.process_launch_times.write().await.insert(pid, Utc::now());
-                None
-            }
             SysmonEventId::NetworkConnect => self.analyze_network_tactics(event).await,
             SysmonEventId::FileCreate | SysmonEventId::FileDeleteLogged => self.analyze_loitering_strike(event).await,
+            SysmonEventId::ProcessCreate => {
+                let pid = event.process_id().unwrap_or(0);
+                if pid != 0 {
+                    self.process_start_times.write().await.insert(pid, Utc::now());
+                }
+                self.analyze_process_legitimacy(event).await
+            },
             _ => None,
         }
     }
 
-    /// Tactical Network Analysis: Mesh Whispering and Decoy/Chaff detection.
+    /// 1. Mesh Networking: Detecting P2P "Whispering"
     async fn analyze_network_tactics(&self, event: &SysmonEvent) -> Option<ThreatSignature> {
         let pid = event.process_id()?;
-        let dest_ip_str = event.data.get("DestinationIp")?.as_str()?;
-        let dest_ip: IpAddr = dest_ip_str.parse().ok()?;
+        let dest_ip = event.data.get("DestinationIp")?.as_str()?;
+        let dest_port = event.data.get("DestinationPort").and_then(|v| v.as_u64()).unwrap_or(0);
 
-        // 1. MESH WHISPERING DETECTION (MIL-SPEC)
-        if dest_ip.is_loopback() || is_private_ip(dest_ip) {
-            let mut whispers = self.peer_whispers.write().await;
-            let peers = whispers.entry(pid).or_insert(HashSet::new());
-            peers.insert(dest_ip);
+        // --- MESH DETECTION (P2P Whispering) ---
+        if is_private_ip(dest_ip) {
+            let mut peer_map = self.peer_map.write().await;
+            let peers = peer_map.entry(pid).or_insert_with(HashSet::new);
+            peers.insert(dest_ip.to_string());
 
-            if peers.len() > 15 {
+            // Threshold: Workstation talking to > 10 internal neighbors (mesh behavior)
+            if peers.len() > 10 {
                 return Some(ThreatSignature {
                     id: format!("MIL-MESH-{}", pid),
-                    confidence: 0.9,
-                    reason: Some(format!("Phantom Mesh Detected: Process (PID {}) is whispering to {} unique internal peers. Possible unauthorized P2P lateral movement.", pid, peers.len())),
+                    confidence: 0.95,
+                    reason: Some(format!("Phantom Mesh Detected: Process (PID {}) is whispering to {} unique internal peers. Possible P2P lateral movement.", pid, peers.len())),
                     recommended_action: ResponseAction::Isolate,
                     ..ThreatSignature::new("military".to_string())
                 });
             }
         }
 
-        // 2. ANTI-CHAFF / DECOY DETECTION (MIL-SPEC)
-        let mut decoys = self.decoy_trackers.write().await;
-        let tracker = decoys.entry(pid).or_insert(DecoyTracker::default());
-        tracker.destinations.insert(dest_ip);
+        // --- DECOY DETECTION (Chaff/Noise Evasion) ---
+        let mut decoy_trackers = self.decoy_trackers.write().await;
+        let tracker = decoy_trackers.entry(pid).or_insert_with(DecoyTracker::default);
+        tracker.destinations.insert(dest_ip.to_string());
         
-        // In a real EDR we would hash the actual packet payload. 
-        // Here we use the DestinationPort as a proxy for 'pattern similarity'.
-        let port = event.data.get("DestinationPort").and_then(|v| v.as_str()).unwrap_or("");
-        if port == tracker.last_payload_hash {
-            tracker.similarity_hits += 1;
-        } else {
-            tracker.last_payload_hash = port.to_string();
-            tracker.similarity_hits = 0;
+        // High-similarity traffic on standard ports (C2 masking as HTTPS)
+        if dest_port == 443 || dest_port == 80 {
+             tracker.similarity_hits += 1;
         }
 
-        if tracker.destinations.len() > 100 && tracker.similarity_hits > 50 {
+        if tracker.destinations.len() > 100 && tracker.similarity_hits > 200 {
             return Some(ThreatSignature {
-                id: format!("MIL-DECOY-{}", pid),
-                confidence: 0.95,
-                reason: Some(format!("Anti-Chaff Alert: Process (PID {}) is generating high-similarity traffic across {} destinations. Evasion/Blinding attempt detected.", pid, tracker.destinations.len())),
+                id: format!("MIL-CHAFF-{}", pid),
+                confidence: 0.90,
+                reason: Some(format!("Anti-Chaff Alert: Process (PID {}) generating high-volume decoy traffic ({} destinations). Blinding attempt detected.", pid, tracker.destinations.len())),
                 recommended_action: ResponseAction::Isolate,
                 ..ThreatSignature::new("military".to_string())
             });
@@ -97,49 +98,83 @@ impl MilitaryGuard {
         None
     }
 
-    /// Tactical Temporal Analysis: Sleeper-Strike (Loitering) detection.
+    /// 2. Loitering: Behavioral Anomaly Detection (LotL)
     async fn analyze_loitering_strike(&self, event: &SysmonEvent) -> Option<ThreatSignature> {
         let pid = event.process_id()?;
-        let launch_times = self.process_launch_times.read().await;
-        
-        if let Some(launch_time) = launch_times.get(&pid) {
-            let duration = Utc::now() - *launch_time;
-            
-            // If the process has been 'loitering' for more than 4 hours and suddenly strikes
-            if duration > Duration::hours(4) {
-                let target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("unknown");
-                
-                // Sensitive target detection
-                if is_sensitive_target(target) {
+        let target = event.data.get("TargetFilename")?.as_str()?;
+
+        let loiter_map = self.process_start_times.read().await;
+        if let Some(start_time) = loiter_map.get(&pid) {
+            let duration = Utc::now() - *start_time;
+
+            // Threshold: Process idle for > 1 hour then strikes sensitive files (LotL persistence)
+            if duration > Duration::hours(1) && is_sensitive_target(target) {
+                return Some(ThreatSignature {
+                    id: format!("MIL-LOITER-{}", pid),
+                    confidence: 0.92,
+                    reason: Some(format!("Sleeper-Strike: Process (PID {}) loitered for {}h before attempting an Alpha Strike on sensitive target: {}.", pid, duration.num_hours(), target)),
+                    recommended_action: ResponseAction::Isolate,
+                    ..ThreatSignature::new("military".to_string())
+                });
+            }
+        }
+
+        None
+    }
+
+    /// 3. Decoys: Detecting "Phantom" Processes (Windows/Linux/macOS)
+    async fn analyze_process_legitimacy(&self, event: &SysmonEvent) -> Option<ThreatSignature> {
+        let pid = event.process_id()?;
+        let image_path = event.data.get("Image")?.as_str()?.to_lowercase();
+        let process_name = image_path.split('\\').last()?.split('/').last()?.to_lowercase();
+
+        // --- WINDOWS: Phantom System Process Detection ---
+        #[cfg(target_os = "windows")]
+        {
+            let critical_procs = ["svchost.exe", "lsass.exe", "wininit.exe", "services.exe", "csrss.exe"];
+            if critical_procs.contains(&process_name.as_str()) {
+                if !image_path.contains("system32") && !image_path.contains("syswow64") {
                     return Some(ThreatSignature {
-                        id: format!("MIL-LOITER-{}", pid),
-                        confidence: 0.92,
-                        reason: Some(format!("Sleeper-Strike Detected: Process (PID {}) loitered for {}h before attempting an Alpha Strike on sensitive target: {}.", pid, duration.num_hours(), target)),
+                        id: format!("MIL-DECOY-PROC-{}", pid),
+                        confidence: 1.0,
+                        reason: Some(format!("Decoy Detected: System process '{}' running from unauthorized location: {}. Tactical masquerading attempt.", process_name, image_path)),
                         recommended_action: ResponseAction::Isolate,
                         ..ThreatSignature::new("military".to_string())
                     });
                 }
             }
         }
+
+        // --- LINUX/macOS: Hidden/Stealthy Execution ---
+        #[cfg(not(target_os = "windows"))]
+        {
+            if process_name.starts_with('.') || image_path.contains("/tmp/") || image_path.contains("/dev/shm/") {
+                return Some(ThreatSignature {
+                    id: format!("MIL-STEALTH-PROC-{}", pid),
+                    confidence: 0.85,
+                    reason: Some(format!("Tactical Evasion: Process '{}' executing from stealthy memory-backed or hidden path: {}.", process_name, image_path)),
+                    recommended_action: ResponseAction::Isolate,
+                    ..ThreatSignature::new("military".to_string())
+                });
+            }
+        }
+
         None
     }
 }
 
-// --- Tactical Helpers ---
-
-fn is_private_ip(ip: IpAddr) -> bool {
-    match ip {
-        IpAddr::V4(ipv4) => ipv4.is_private(),
-        IpAddr::V6(_ipv6) => false, // Simplified for MIL-SPEC baseline
-    }
-}
-
+/// Helper: Identify sensitive targets for loitering detection
 fn is_sensitive_target(path: &str) -> bool {
     let p = path.to_lowercase();
-    p.contains("\\windows\\system32\\config\\") || // Registry hives
-    p.contains("\\lsass.exe") ||
-    p.contains("\\etc\\shadow") ||
-    p.contains(".ssh\\id_") ||
-    p.contains("wallet.dat") ||
-    p.contains("credentials")
+    p.contains("lsass") || 
+    p.contains("config\\sam") || 
+    p.contains(".ssh\\") || 
+    p.contains("/etc/shadow") || 
+    p.contains("ntds.dit") || 
+    p.contains("wallet")
+}
+
+/// Helper: Identify private IP ranges for mesh detection
+fn is_private_ip(ip: &str) -> bool {
+    ip.starts_with("10.") || ip.starts_with("192.168.") || ip.starts_with("172.16.") || ip == "127.0.0.1" || ip == "::1"
 }
