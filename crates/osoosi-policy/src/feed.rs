@@ -1332,8 +1332,9 @@ impl ThreatFeedFetcher {
             return Ok(Vec::new());
         }
 
-        // NVD 2.0 API uses keywordSearch for broader matching
-        let url = format!("{}?keywordSearch={} {}", NVD_CVE_API_URL, product, version);
+        // NVD 2.0 API: Prefer cpeName for precise matching if possible, otherwise fallback to keywordSearch
+        let cpe_search = format!("cpe:2.3:a:{}:{}:{}:*:*:*:*:*:*:*", product.to_lowercase(), product.to_lowercase(), version);
+        let url = format!("{}?cpeName={}", NVD_CVE_API_URL, urlencoding::encode(&cpe_search));
         let mut req = self.client.get(&url)
             .timeout(std::time::Duration::from_secs(10))
             .header("User-Agent", "Oshoosi-Hybrid-Agent/1.0");
@@ -1342,16 +1343,34 @@ impl ThreatFeedFetcher {
             req = req.header("apiKey", key);
         }
 
-        let response = req.send().await?;
+        let mut response = req.send().await?;
         if response.status() == 429 {
             anyhow::bail!("NVD Rate limit exceeded. Please configure an API key.");
         }
 
-        if !response.status().is_success() {
-            return Ok(Vec::new());
-        }
+        let mut json: Value = if response.status().is_success() {
+            response.json().await?
+        } else {
+            serde_json::json!({"vulnerabilities": []})
+        };
 
-        let json: Value = response.json().await?;
+        // Fallback to keywordSearch if CPE match failed
+        if json.get("vulnerabilities").and_then(|v| v.as_array()).map(|a| a.is_empty()).unwrap_or(true) {
+            let fallback_url = format!("{}?keywordSearch={} {}", NVD_CVE_API_URL, product, version);
+            let mut fallback_req = self.client.get(&fallback_url)
+                .timeout(std::time::Duration::from_secs(10))
+                .header("User-Agent", "Oshoosi-Hybrid-Agent/1.0");
+            if let Some(key) = api_key {
+                fallback_req = fallback_req.header("apiKey", key);
+            }
+            if let Ok(resp) = fallback_req.send().await {
+                if resp.status().is_success() {
+                    if let Ok(fallback_json) = resp.json::<Value>().await {
+                        json = fallback_json;
+                    }
+                }
+            }
+        }
         let mut details = Vec::new();
 
         if let Some(vulnerabilities) = json.get("vulnerabilities").and_then(|v| v.as_array()) {

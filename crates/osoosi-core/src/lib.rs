@@ -99,9 +99,15 @@ fn is_trusted_operational_image(event: &osoosi_types::SysmonEvent, config: &osoo
     });
 
     if is_trusted_path || is_trusted_stem {
-        // 2. Obtain signature from the file on disk (Authenticode)
+        // 2. Obtain signature and Signer Identity from the file on disk
         if let Some(metadata) = osoosi_types::get_pe_metadata(std::path::Path::new(image_path)) {
-            if metadata.is_signed {
+            let company = metadata.company_name.to_lowercase();
+            let is_trusted_vendor = company.contains("microsoft") || 
+                                   company.contains("windows") || 
+                                   company.contains("rust project") ||
+                                   company.contains("google");
+
+            if metadata.is_signed && is_trusted_vendor {
                 return true;
             }
         }
@@ -2590,11 +2596,22 @@ impl EdrOrchestrator {
             match effective_action {
                 ResponseAction::Isolate => {
                     if let Some(image) = event.data.get("Image").and_then(|v| v.as_str()) {
-                        // SAFETY GUARD: Never block trusted system/operational binaries.
-                        if is_trusted_operational_image(&event, &self.policy.config) {
+                        // SAFETY GUARD: Never block trusted system/operational binaries UNLESS they exhibit confirmed malicious behavior.
+                        let is_trusted = is_trusted_operational_image(&event, &self.policy.config);
+                        let reason = signature.reason.as_deref().unwrap_or("");
+                        let is_behavioral_threat = reason.contains("Behavioral") || 
+                                                 reason.contains("Yara") || 
+                                                 reason.contains("Memory") || 
+                                                 reason.contains("Hollows-Hunter");
+                        
+                        if is_trusted && !is_behavioral_threat {
                             let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
-                            warn!("AUTONOMOUS BLOCK SKIPPED: {} is a trusted system/operational binary. Downgrading to Alert.", image);
+                            warn!("AUTONOMOUS BLOCK SKIPPED: {} is a trusted system/operational binary with no behavioral/memory evidence. Downgrading to Alert.", image);
                         } else {
+                            if is_trusted && is_behavioral_threat {
+                                warn!("AUTONOMOUS BLOCK OVERRIDE: {} is trusted but exhibits behavioral threats: {}. Proceeding with block.", image, reason);
+                            }
+
                         warn!("AUTONOMOUS BLOCK: Consensus threshold met for {}. Applying FileBlockExecutable.", image);
                         let rule = osoosi_types::BlockingRule {
                             path: image.to_string(),
