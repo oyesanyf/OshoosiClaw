@@ -1052,9 +1052,9 @@ dependencies = [
 
 [[package]]
 name = "clap_lex"
-version = "1.1.0"
+version = "1.0.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "c8d4a3bb8b1e0c1050499d1815f5ab16d04f0959b233085fb31653fbfc9d98f9"
+checksum = "07c7676e737ca97042a9821868512760b73a2164103859665123479a95a8940b"
 
 [[package]]
 name = "cms"
