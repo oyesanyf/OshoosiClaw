@@ -6,11 +6,11 @@ use crate::feed::OtxIndicators;
 use crate::graph::{GraphCorrelationEngine, Relationship};
 use crate::semantic::SemanticEngine;
 use dashmap::DashMap;
-use osoosi_types::{SysmonEvent, ThreatSignature};
+use osoosi_types::{HostSecurityEvent, ThreatSignature};
 use osoosi_memory::MemoryStore;
 use std::sync::Arc;
 use std::sync::RwLock;
-use tracing::{debug, info};
+use tracing::{debug, info, warn};
 
 /// `tracing` target for grep-friendly consensus / voting lines (`RUST_LOG=consensus=debug`).
 pub const CONSENSUS_LOG_TARGET: &str = "consensus";
@@ -27,7 +27,7 @@ use async_trait::async_trait;
 #[async_trait]
 pub trait ThreatVoter: Send + Sync {
     fn name(&self) -> String;
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult>;
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult>;
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -56,7 +56,7 @@ struct EvidenceDecision {
     summary: String,
 }
 
-fn process_name_from_event(event: &SysmonEvent) -> Option<String> {
+fn process_name_from_event(event: &HostSecurityEvent) -> Option<String> {
     event
         .data
         .get("Image")
@@ -66,7 +66,7 @@ fn process_name_from_event(event: &SysmonEvent) -> Option<String> {
         .map(ToOwned::to_owned)
 }
 
-fn preferred_hash_from_event(event: &SysmonEvent) -> Option<String> {
+fn preferred_hash_from_event(event: &HostSecurityEvent) -> Option<String> {
     let hashes = event.data.get("Hashes")?.as_str()?;
     for prefix in ["SHA256=", "SHA256:", "SHA1=", "SHA1:", "MD5=", "MD5:"] {
         if let Some(value) = hashes
@@ -83,11 +83,11 @@ fn preferred_hash_from_event(event: &SysmonEvent) -> Option<String> {
     None
 }
 
-fn event_image_path(event: &SysmonEvent) -> Option<&str> {
+fn event_image_path(event: &HostSecurityEvent) -> Option<&str> {
     event.data.get("Image").and_then(|v| v.as_str())
 }
 
-fn event_stem(event: &SysmonEvent) -> String {
+fn event_stem(event: &HostSecurityEvent) -> String {
     event_image_path(event)
         .and_then(|p| std::path::Path::new(p).file_stem())
         .and_then(|s| s.to_str())
@@ -95,7 +95,7 @@ fn event_stem(event: &SysmonEvent) -> String {
         .to_ascii_lowercase()
 }
 
-fn is_trusted_operational_tool(event: &SysmonEvent, config: &osoosi_types::PolicyConfig) -> bool {
+fn is_trusted_operational_tool(event: &HostSecurityEvent, config: &osoosi_types::PolicyConfig) -> bool {
     let image_path = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
     if image_path.is_empty() {
         return false;
@@ -140,14 +140,14 @@ fn is_trusted_operational_tool(event: &SysmonEvent, config: &osoosi_types::Polic
 fn classify_vote(
     voter: &str,
     result: &VoteResult,
-    event: &SysmonEvent,
+    event: &HostSecurityEvent,
 ) -> (EvidenceClass, f32, bool) {
     let reason_lc = result.reason.to_ascii_lowercase();
     match voter {
         "OTX-C2" => {
             let live = matches!(
                 event.event_id,
-                osoosi_types::SysmonEventId::NetworkConnect | osoosi_types::SysmonEventId::DnsQuery
+                3 | 22 // 3: NetworkConnect, 22: DnsQuery
             );
             if live {
                 (EvidenceClass::LiveNetwork, 1.0, true)
@@ -180,8 +180,8 @@ fn classify_vote(
     }
 }
 
-fn orchestrate_evidence(votes: &[EvidenceVote], event: &SysmonEvent, config: &osoosi_types::PolicyConfig) -> EvidenceDecision {
-    use osoosi_types::{ResponseAction, SysmonEventId};
+fn orchestrate_evidence(votes: &[EvidenceVote], event: &HostSecurityEvent, config: &osoosi_types::PolicyConfig) -> EvidenceDecision {
+    use osoosi_types::ResponseAction;
 
     let mut classes = std::collections::HashSet::new();
     let mut support = 0.0f32;
@@ -217,7 +217,7 @@ fn orchestrate_evidence(votes: &[EvidenceVote], event: &SysmonEvent, config: &os
     let has_static = classes.contains(&EvidenceClass::StaticArtifact);
     let lifecycle_only = matches!(
         event.event_id,
-        SysmonEventId::ProcessCreate | SysmonEventId::ProcessTerminate
+        1 | 5 // 1: ProcessCreate, 5: ProcessTerminate
     );
     let trusted_operational_tool = is_trusted_operational_tool(event, config);
 
@@ -301,7 +301,7 @@ pub struct PolicyEngine {
     /// Optional callback to broadcast discoveries to the mesh
     pub intel_broadcaster: Arc<tokio::sync::RwLock<Option<Arc<dyn Fn(osoosi_types::GlobalIntelligence) + Send + Sync>>>>,
     /// Local SQLite cache for NVD CVEs
-    pub cve_cache: Option<Arc<crate::cve_cache::CveCache>>,
+    pub cve_cache: Option<Arc<tokio::sync::Mutex<crate::cve_cache::CveCache>>>,
 }
 
 impl PolicyEngine {
@@ -324,7 +324,7 @@ impl PolicyEngine {
                     let _ = std::fs::create_dir_all(parent);
                 }
                 match crate::cve_cache::CveCache::new(db_path) {
-                    Ok(cache) => Some(Arc::new(cache)),
+                    Ok(cache) => Some(Arc::new(tokio::sync::Mutex::new(cache))),
                     Err(e) => {
                         warn!("Failed to initialize NVD SQLite cache: {}", e);
                         None
@@ -364,7 +364,8 @@ impl PolicyEngine {
                     info!("[PolicyEngine] Running scheduled NVD bulk synchronization...");
                     match fetcher.fetch_nvd_cves(api_key.as_deref()).await {
                         Ok(kevs) => {
-                            if let Err(e) = cache_ref.bulk_import(&kevs) {
+                            let cache_guard = cache_ref.lock().await;
+                            if let Err(e) = cache_guard.bulk_import(&kevs) {
                                 warn!("[PolicyEngine] Failed to import NVD CVEs into local cache: {}", e);
                             } else {
                                 info!("[PolicyEngine] NVD Local Cache updated with {} new records.", kevs.len());
@@ -403,9 +404,9 @@ impl PolicyEngine {
     /// IOCs are populated by the background `ThreatFeedFetcher::fetch_otx_indicators` (which uses
     /// **TAXII 1.1** when `OTX_USE_TAXII` is left at default) and persisted in SQLite. This is a
     /// **local lookup** — not a live TAXII poll per connection.
-    pub fn otx_ioc_match_for_event(&self, event: &SysmonEvent) -> Option<String> {
+    pub fn otx_ioc_match_for_event(&self, event: &HostSecurityEvent) -> Option<String> {
         let otx = self.otx_indicators.read().ok()?;
-        crate::otx_connection::otx_match_sysmon_event(&otx, &self.memory, event)
+        crate::otx_connection::otx_match_sysmon_event_normalized(&otx, &self.memory, event)
     }
 
     /// Check a single outbound (or inbound) IP from a connection against OTX state (memory + SQLite).
@@ -432,7 +433,7 @@ impl PolicyEngine {
     /// [`ThreatVoter`]s, typically through [`crate::voters::OtxVoter`]. If that voter is not
     /// registered, a matching [`Self::otx_ioc_match_for_event`] is merged in so TAXII-backed IOCs
     /// still affect consensus.
-    pub async fn scan_event(&self, event: &SysmonEvent) -> Option<ThreatSignature> {
+    pub async fn scan_event(&self, event: &HostSecurityEvent) -> Option<ThreatSignature> {
         use osoosi_types::ResponseAction;
 
         let image_path = event_image_path(event).unwrap_or("unknown");
@@ -620,7 +621,11 @@ impl PolicyEngine {
             .and_then(|p| std::path::Path::new(p).file_name())
             .and_then(|n| n.to_str())
             .map(|s| s.to_string());
-        signature.version = event.product_version.clone();
+        signature.version = event
+            .data
+            .get("ProductVersion")
+            .and_then(|v| v.as_str())
+            .map(ToOwned::to_owned);
 
         let decision = orchestrate_evidence(&evidence_votes, event, &self.config);
         signature.confidence = decision.confidence;

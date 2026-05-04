@@ -1,6 +1,6 @@
 use async_trait::async_trait;
 use crate::engine::{ThreatVoter, VoteResult};
-use osoosi_types::{SysmonEvent, SysmonEventId};
+use osoosi_types::HostSecurityEvent;
 use osoosi_dp::{DifferentialPrivacy, PrivacyConfig};
 use osoosi_audit::MerkleAuditTree;
 use osoosi_model::ThreatModel;
@@ -17,7 +17,7 @@ impl ThreatVoter for SemanticVoter {
     fn name(&self) -> String {
         "SemanticIntent".to_string()
     }
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         if let Some(cmd_line) = event.data.get("CommandLine").and_then(|c| c.as_str()) {
             let drift = self.engine.verify_intent(cmd_line);
             if drift > 0.8 {
@@ -43,9 +43,9 @@ impl ThreatVoter for OtxVoter {
     fn name(&self) -> String {
         "OTX-C2".to_string()
     }
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let guard = self.indicators.read().ok()?;
-        let hit = crate::otx_connection::otx_match_sysmon_event(&guard, &self.memory, event);
+        let hit = crate::otx_connection::otx_match_sysmon_event_normalized(&guard, &self.memory, event);
 
         hit.map(|reason| VoteResult {
             confidence: crate::otx_connection::OTX_CONSENSUS_CONFIDENCE,
@@ -116,12 +116,12 @@ impl ThreatVoter for BehavioralThreatVoter {
     fn name(&self) -> String {
         "Behavioral-Threat-Model".to_string()
     }
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let image = event.data.get("Image").and_then(|v| v.as_str());
         let process_name = image.and_then(|p| std::path::Path::new(p).file_name()).and_then(|n| n.to_str());
         let parent_image = event.data.get("ParentImage").and_then(|v| v.as_str());
         let parent_name = parent_image.and_then(|p| std::path::Path::new(p).file_name()).and_then(|n| n.to_str());
-        let version = event.product_version.as_deref();
+        let version = event.data.get("ProductVersion").and_then(|v| v.as_str());
 
         // Perform inference using the bulk-trained model
         let model_read = self.model.read().await;
@@ -154,7 +154,7 @@ impl ThreatVoter for GemmaVoter {
     fn name(&self) -> String {
         "LLM-Reasoning".to_string()
     }
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let image = event
             .data
             .get("Image")
@@ -180,7 +180,7 @@ impl ThreatVoter for GemmaVoter {
             .get("CommandLine")
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let version = event.product_version.as_deref().unwrap_or("unknown");
+        let version = event.data.get("ProductVersion").and_then(|v| v.as_str()).unwrap_or("unknown");
 
         let summary = format!(
             "Process Create: image={} version={} cmdline={}",
@@ -241,7 +241,7 @@ impl ThreatVoter for NativeVoter {
     fn name(&self) -> String {
         "Native-Instrumentation".to_string()
     }
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         // 1. Self-Protection: Check if unauthorized process is touching Oshoosi files/registry
         if let Some(path) = event.data.get("TargetFilename").and_then(|v| v.as_str()) {
             if osoosi_types::reg_utils::is_self_protection_file_path(path) {
@@ -286,7 +286,7 @@ impl ThreatVoter for NativeVoter {
         }
 
         // 3. USB Exfiltration Detection (using OpenEDR pattern)
-        if event.event_id == SysmonEventId::FileCreate {
+        if event.event_id == 11 { // 11: FileCreate
             if let Some(path) = event.data.get("TargetFilename").and_then(|v| v.as_str()) {
                 // If it's a drive usually associated with USB (D:, E:, etc. that isn't the system drive)
                 let p = path.to_lowercase();
@@ -315,7 +315,7 @@ impl ThreatVoter for TrustedVendorVoter {
     fn name(&self) -> String {
         "Trusted-Vendor".to_string()
     }
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let status = event.data.get("SignatureStatus").or_else(|| event.data.get("Signature Status"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
@@ -349,7 +349,7 @@ impl ThreatVoter for GitNoiseVoter {
     fn name(&self) -> String {
         "Git-Noise-Filter".to_string()
     }
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
         if image.contains("git.exe") || image.contains("git-remote-http.exe") {
             // Check for known benign Git artifacts
@@ -379,7 +379,7 @@ pub struct NsrlVoter {
     pub memory: Arc<osoosi_memory::MemoryStore>,
 }
 
-fn sha1_from_sysmon_hashes(event: &SysmonEvent) -> Option<String> {
+fn sha1_from_sysmon_hashes(event: &HostSecurityEvent) -> Option<String> {
     let hashes = event.data.get("Hashes")?.as_str()?;
     for part in hashes.split(',') {
         let p = part.trim();
@@ -395,7 +395,7 @@ impl ThreatVoter for NsrlVoter {
     fn name(&self) -> String {
         "NSRL-Veto".to_string()
     }
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let sha1 = sha1_from_sysmon_hashes(event)?;
         if self.cache.get(&sha1).map(|e| *e.value()).unwrap_or(false) {
             return Some(vote_result_nsrl_veto());
@@ -427,13 +427,13 @@ impl ThreatVoter for DecompileVoter {
     fn name(&self) -> String {
         "Decompile".to_string()
     }
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
-        // We only decompile on ProcessCreate or ImageLoad to catch entry-point intent
-        if !matches!(event.event_id, SysmonEventId::ProcessCreate | SysmonEventId::ImageLoad) {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        // We only decompile on ProcessCreate (1) or ImageLoad (7) to catch entry-point intent
+        if !matches!(event.event_id, 1 | 7) {
             return None;
         }
 
-        let pid = event.process_id()?;
+        let pid = event.data.get("ProcessId").and_then(|v| v.as_u64()).map(|v| v as u32)?;
         
         // Deep analysis: SpiderEyes watches the process, disassembles, and reasons with Gemma 4
         match self.spider.watch_process(pid).await {
@@ -471,14 +471,14 @@ impl ThreatVoter for YaraXMemoryVoter {
     fn name(&self) -> String {
         "YaraX-Memory".to_string()
     }
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         #[cfg(target_os = "windows")]
         {
             use windows::Win32::System::Threading::{OpenProcess, PROCESS_VM_READ, PROCESS_QUERY_INFORMATION};
             use windows::Win32::System::Diagnostics::Debug::ReadProcessMemory;
             use windows::Win32::Foundation::CloseHandle;
 
-            if let Some(pid) = event.process_id() {
+            if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()).map(|v| v as u32) {
                 let rules = self.rules.clone();
                 return tokio::task::spawn_blocking(move || {
                     unsafe {
@@ -529,10 +529,10 @@ fn kev_product_matches_stem(stem: &str, product: &str) -> bool {
     false
 }
 
-fn kev_requires_exact_version(event: &SysmonEvent, full_path: &str) -> bool {
+fn kev_requires_exact_version(event: &HostSecurityEvent, full_path: &str) -> bool {
     let lifecycle = matches!(
         event.event_id,
-        SysmonEventId::ProcessCreate | SysmonEventId::ProcessTerminate | SysmonEventId::ImageLoad
+        1 | 5 | 7 // 1: ProcessCreate, 5: ProcessTerminate, 7: ImageLoad
     );
     if !lifecycle {
         return false;
@@ -628,7 +628,7 @@ impl ThreatVoter for KevVoter {
     fn name(&self) -> String {
         "CISA-KEV".to_string()
     }
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let full_path = event.data.get("Image").and_then(|v| v.as_str())?;
         let stem = std::path::Path::new(full_path)
             .file_stem()
@@ -643,7 +643,7 @@ impl ThreatVoter for KevVoter {
 
         if matches!(
             event.event_id,
-            SysmonEventId::ProcessCreate | SysmonEventId::ProcessTerminate
+            1 | 5 // 1: ProcessCreate, 5: ProcessTerminate
         ) && kev_quiet_benign_process_lifecycle(full_path, &stem, &self.config)
         {
             return None;
@@ -665,8 +665,8 @@ impl ThreatVoter for KevVoter {
                 // we down-rank the confidence significantly.
                 let mut confidence = if is_known_good { 0.45 } else { 0.85 };
                 let mut exact_version = event
-                    .product_version
-                    .as_deref()
+                    .data.get("ProductVersion")
+                    .and_then(|v| v.as_str())
                     .map(str::trim)
                     .filter(|version| {
                         !version.is_empty() && !version.eq_ignore_ascii_case("unknown")
@@ -716,8 +716,8 @@ impl ThreatVoter for KevVoter {
                     }
                 }
 
-                // Prefer KEV when tied to **network / file / image** telemetry; down-weight bare ProcessCreate.
-                let (weight, reason_note) = if event.event_id == SysmonEventId::ProcessCreate {
+                // Prefer KEV when tied to **network / file / image** telemetry; down-weight bare ProcessCreate (1).
+                let (weight, reason_note) = if event.event_id == 1 {
                     (
                         0.75,
                         " (ProcessCreate: correlate with network/DNS/patch; lower vote weight)",
@@ -745,7 +745,7 @@ impl ThreatVoter for KevVoter {
 pub struct CveLookupVoter {
     pub fetcher: Arc<crate::feed::ThreatFeedFetcher>,
     pub memory: Arc<osoosi_memory::MemoryStore>,
-    pub cve_cache: Option<Arc<crate::cve_cache::CveCache>>,
+    pub cve_cache: Option<Arc<tokio::sync::Mutex<crate::cve_cache::CveCache>>>,
     pub broadcaster: Arc<tokio::sync::RwLock<Option<Arc<dyn Fn(osoosi_types::GlobalIntelligence) + Send + Sync>>>>,
     pub node_id: String,
 }
@@ -755,7 +755,7 @@ impl ThreatVoter for CveLookupVoter {
     fn name(&self) -> String {
         "NVD-CVE-Lookup".to_string()
     }
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let full_path = event.data.get("Image").and_then(|v| v.as_str())?;
         
         // 1. Extract Metadata (Product, Version, Signature) from PE
@@ -774,9 +774,25 @@ impl ThreatVoter for CveLookupVoter {
             return None; // Abstain to prevent log spam/veto on core OS processes
         }
 
-        let sha1 = event.data.get("SHA1").and_then(|v| v.as_str());
+        let sha1 = event
+            .data
+            .get("SHA1")
+            .and_then(|v| v.as_str())
+            .map(ToOwned::to_owned)
+            .or_else(|| {
+                event
+                    .data
+                    .get("Hashes")
+                    .and_then(|v| v.as_str())
+                    .and_then(|h| {
+                        h.split(',')
+                            .map(str::trim)
+                            .find_map(|part| part.strip_prefix("SHA1=").or_else(|| part.strip_prefix("SHA1:")))
+                            .map(|s| s.trim().to_string())
+                    })
+            });
         if let Some(s) = sha1 {
-            if self.memory.is_nsrl_known_good(s).unwrap_or(false) {
+            if self.memory.is_nsrl_known_good(&s).unwrap_or(false) {
                 return None; // Abstain for known-good files
             }
         }
@@ -786,7 +802,8 @@ impl ThreatVoter for CveLookupVoter {
         
         // Try the new SQLite cache first
         if let Some(ref cache) = self.cve_cache {
-            if let Ok(cves) = cache.get_cves(&meta.product_name, &meta.version) {
+            let cache_guard = cache.lock().await;
+            if let Ok(cves) = cache_guard.get_cves(&meta.product_name, &meta.version) {
                 cached_cves.extend(cves);
             }
         }
@@ -835,7 +852,8 @@ impl ThreatVoter for CveLookupVoter {
                 for cve in &cves {
                     let _ = self.memory.insert_cve_cache(&meta.product_name, &meta.version, &cve.id, &cve.summary);
                     if let Some(ref cache) = self.cve_cache {
-                        let _ = cache.insert_cves(&meta.product_name, &meta.version, &[osoosi_types::Kev {
+                        let cache_guard = cache.lock().await;
+                        let _ = cache_guard.insert_cves(&meta.product_name, &meta.version, &[osoosi_types::Kev {
                             cve_id: cve.id.clone(),
                             vendor_project: "".to_string(),
                             product: meta.product_name.clone(),
@@ -924,7 +942,7 @@ impl ThreatVoter for PrivacyVoter {
         "Privacy-Enforced-Voter".to_string()
     }
 
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         // 1. Calculate a base "suspicion" score (placeholder logic)
         let mut base_score = 0.0;
         if let Some(cmd) = event.data.get("CommandLine").and_then(|v| v.as_str()) {
@@ -972,7 +990,7 @@ impl ThreatVoter for InjectionTelemetryVoter {
         "Injection-Telemetry".to_string()
     }
 
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         // The hook payload tags events with a "HookSource" data field when it reports
         // intercepted API calls back to the orchestrator via the telemetry channel.
         let hook_source = event.data.get("HookSource").and_then(|v| v.as_str())?;
@@ -1120,7 +1138,7 @@ impl ThreatVoter for DnsShieldVoter {
         "DNS-Shield".to_string()
     }
 
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         // The DNS Shield tags events with "DnsQuery" in the HookSource field
         let hook_source = event.data.get("HookSource").and_then(|v| v.as_str())?;
         if hook_source != "DnsShield" {
@@ -1189,15 +1207,19 @@ impl ThreatVoter for SysmonDnsVoter {
         "Sysmon-DNS-Voter".to_string()
     }
 
-    async fn vote(&self, event: &SysmonEvent) -> Option<VoteResult> {
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         // Only process Sysmon Event ID 22 (DnsQuery)
-        if event.event_id != SysmonEventId::DnsQuery {
+        if event.event_id != 22 {
             return None;
         }
 
         let query_name = event.data.get("QueryName").and_then(|v| v.as_str())?;
         let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
-        let pid = event.process_id().unwrap_or(0);
+        let pid = event
+            .data
+            .get("ProcessId")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
         let query_results = event.data.get("QueryResults").and_then(|v| v.as_str()).unwrap_or("");
         let query_status = event.data.get("QueryStatus").and_then(|v| v.as_str()).unwrap_or("");
 

@@ -3,7 +3,7 @@
 //! and provides on-demand deep forensic analysis for the Behavioral Analyzer.
 
 use anyhow::Result;
-use osoosi_types::{SysmonEvent, SysmonEventId};
+use osoosi_types::HostSecurityEvent;
 use crate::log_reader::LogEvent;
 use tokio::sync::mpsc;
 use std::sync::Arc;
@@ -26,8 +26,8 @@ pub struct AIIntentInsight {
 }
 
 pub struct ReasoningEngine {
-    native_rx: Option<mpsc::Receiver<SysmonEvent>>,
-    out_tx: Option<mpsc::Sender<SysmonEvent>>,
+    native_rx: Option<mpsc::Receiver<HostSecurityEvent>>,
+    out_tx: Option<mpsc::Sender<HostSecurityEvent>>,
     ai_cortex: Option<Arc<SmolLMAnalyzer>>,
 }
 
@@ -44,8 +44,8 @@ impl ReasoningEngine {
 
     /// Configures the engine for active telemetry monitoring (Reflex layer).
     pub fn configure(&mut self, 
-        native_rx: mpsc::Receiver<SysmonEvent>,
-        out_tx: mpsc::Sender<SysmonEvent>,
+        native_rx: mpsc::Receiver<HostSecurityEvent>,
+        out_tx: mpsc::Sender<HostSecurityEvent>,
         ai_cortex: Arc<SmolLMAnalyzer>
     ) {
         self.native_rx = Some(native_rx);
@@ -78,8 +78,8 @@ impl ReasoningEngine {
 
         while let Some(mut event) = native_rx.recv().await {
             let is_suspicious = event.data.get("RuleName").is_some() || 
-                               event.event_id == SysmonEventId::ProcessCreate || 
-                               event.event_id == SysmonEventId::CreateRemoteThread;
+                               event.event_id == 1 ||  // ProcessCreate
+                               event.event_id == 8;    // CreateRemoteThread
 
             if is_suspicious {
                 let event_json = serde_json::to_string(&event)?;

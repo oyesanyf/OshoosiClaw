@@ -31,10 +31,8 @@ pub fn create_host_event_reader(channel_or_path: &str) -> anyhow::Result<Box<dyn
     {
         // On Windows, we now prefer the Native Rust Engine (SysmonX Port)
         // over the standard Event Log reader.
-        if channel_or_path == "default" || channel_or_path.is_empty() {
-            return Ok(Box::new(NativeETWReader::new()?));
-        }
-        Ok(Box::new(WindowsEventReader::new(channel_or_path)?))
+        let _ = channel_or_path;
+        Ok(Box::new(NativeETWReader::new()?))
     }
     #[cfg(target_os = "linux")]
     {
@@ -54,7 +52,7 @@ pub fn create_host_event_reader(channel_or_path: &str) -> anyhow::Result<Box<dyn
 
 #[cfg(target_os = "windows")]
 pub struct NativeETWReader {
-    rx: tokio::sync::mpsc::Receiver<osoosi_types::SysmonEvent>,
+    rx: tokio::sync::mpsc::Receiver<HostSecurityEvent>,
 }
 
 #[cfg(target_os = "windows")]
@@ -79,15 +77,8 @@ impl HostEventReader for NativeETWReader {
     fn poll_events(&mut self) -> anyhow::Result<Vec<HostSecurityEvent>> {
         let mut out = Vec::new();
         // Drain the channel buffer
-        while let Ok(sysmon) = self.rx.try_recv() {
-            out.push(HostSecurityEvent {
-                source: HostEventSource::WindowsEventLog, // Keep tag for compatibility
-                event_id: sysmon.event_id as u32,
-                timestamp: sysmon.timestamp,
-                computer: sysmon.computer,
-                data: sysmon.data,
-                causal_parent: None,
-            });
+        while let Ok(event) = self.rx.try_recv() {
+            out.push(event);
         }
         Ok(out)
     }
@@ -97,278 +88,6 @@ impl HostEventReader for NativeETWReader {
     }
 }
 
-// --- Windows ---
-
-#[cfg(target_os = "windows")]
-struct WindowsEventReader {
-    channel: String,
-    last_record_id: u64,
-    sysmon_parser: super::SysmonParser,
-}
-
-#[cfg(target_os = "windows")]
-impl WindowsEventReader {
-    fn new(channel: &str) -> anyhow::Result<Self> {
-        let preferred = if channel.trim().is_empty() || channel == "default" {
-            "Microsoft-Windows-Sysmon/Operational".to_string()
-        } else {
-            channel.to_string()
-        };
-        let resolved = Self::resolve_windows_channel(&preferred);
-        if resolved != preferred {
-            warn!(
-                "Requested event channel '{}' not found. Falling back to '{}'.",
-                preferred, resolved
-            );
-        }
-        Ok(Self {
-            channel: resolved,
-            last_record_id: 0,
-            sysmon_parser: super::SysmonParser::new(),
-        })
-    }
-
-    fn resolve_windows_channel(preferred: &str) -> String {
-        // Candidate fallback order:
-        // 1) user requested channel
-        // 2) Sysmon operational
-        // 3) Security
-        // 4) System
-        // 5) Application
-        let mut candidates = vec![
-            preferred.to_string(),
-            "Microsoft-Windows-Sysmon/Operational".to_string(),
-            "Security".to_string(),
-            "System".to_string(),
-            "Application".to_string(),
-        ];
-        candidates.dedup();
-        for c in candidates {
-            if Self::channel_exists(&c) {
-                return c;
-            }
-        }
-        // Keep preferred if nothing matches; query error will explain.
-        preferred.to_string()
-    }
-
-    fn channel_exists(channel: &str) -> bool {
-        use windows::core::HSTRING;
-        use windows::Win32::System::EventLog::*;
-        unsafe {
-            match EvtQuery(
-                None,
-                &HSTRING::from(channel),
-                &HSTRING::from("*[System[(EventRecordID > 0)]]"),
-                EvtQueryChannelPath.0 | EvtQueryReverseDirection.0,
-            ) {
-                Ok(h) => {
-                    let _ = EvtClose(h);
-                    true
-                }
-                Err(_) => false,
-            }
-        }
-    }
-
-    fn wevt_batch_size() -> u32 {
-        std::env::var("OSOOSI_WEVT_BATCH")
-            .ok()
-            .and_then(|s| s.parse().ok())
-            .filter(|&n: &u32| n >= 10 && n <= 10_000)
-            .unwrap_or(1_000)
-    }
-
-    /// Native Windows Event Log query using EvtQuery API (no wevtutil subprocess).
-    fn query_native(&mut self) -> anyhow::Result<Vec<String>> {
-        use windows::core::HSTRING;
-        use windows::Win32::System::EventLog::*;
-
-        let n = Self::wevt_batch_size() as usize;
-        let xpath = if self.last_record_id > 0 {
-            format!("*[System[(EventRecordID > {})]]", self.last_record_id)
-        } else {
-            "*".to_string()
-        };
-
-        let flags = if self.last_record_id > 0 {
-            EvtQueryChannelPath.0 // forward direction for incremental
-        } else {
-            EvtQueryChannelPath.0 | EvtQueryReverseDirection.0 // newest-first for initial load
-        };
-
-        let query_handle = unsafe {
-            EvtQuery(
-                None,
-                &HSTRING::from(self.channel.as_str()),
-                &HSTRING::from(xpath.as_str()),
-                flags,
-            )
-        }.map_err(|e| anyhow::anyhow!(
-            "EvtQuery failed on '{}': {}. Ensure Event Log Readers group membership or admin rights.",
-            self.channel, e
-        ))?;
-
-        let batch = if self.last_record_id > 0 { n.min(1000) } else { 100 };
-        let mut event_handles = vec![0isize; batch];
-        let mut returned = 0u32;
-
-        let got_events = unsafe {
-            EvtNext(query_handle, &mut event_handles, 1000, 0, &mut returned)
-        }.is_ok();
-
-        let mut new_events = Vec::new();
-        let mut max_id = self.last_record_id;
-        let is_first_run = self.last_record_id == 0;
-
-        if got_events && returned > 0 {
-            for i in 0..returned as usize {
-                let handle = EVT_HANDLE(event_handles[i]);
-
-                // Render event as XML
-                let mut buffer_used = 0u32;
-                let mut property_count = 0u32;
-
-                // First call to get required buffer size
-                unsafe {
-                    let _ = EvtRender(
-                        None, handle, EvtRenderEventXml.0,
-                        0, None, &mut buffer_used, &mut property_count,
-                    );
-                }
-
-                if buffer_used == 0 {
-                    unsafe { let _ = EvtClose(handle); }
-                    continue;
-                }
-
-                let mut buffer = vec![0u16; (buffer_used / 2) as usize + 1];
-                let render_ok = unsafe {
-                    EvtRender(
-                        None, handle, EvtRenderEventXml.0,
-                        buffer_used,
-                        Some(buffer.as_mut_ptr() as *mut _),
-                        &mut buffer_used, &mut property_count,
-                    )
-                };
-
-                if render_ok.is_ok() {
-                    let xml = String::from_utf16_lossy(&buffer);
-                    let record_id = self.extract_record_id(&xml);
-                    if record_id > max_id {
-                        max_id = record_id;
-                    }
-                    if !is_first_run && record_id <= self.last_record_id {
-                        unsafe { let _ = EvtClose(handle); }
-                        continue;
-                    }
-                    new_events.push(xml);
-                }
-
-                unsafe { let _ = EvtClose(handle); }
-            }
-        }
-
-        unsafe { let _ = EvtClose(query_handle); }
-
-        if is_first_run {
-            tracing::info!(
-                target: "telemetry",
-                "[Sysmon] Startup: loaded {} recent events via native EvtQuery from '{}' (cursor → RecordID {}). Live polling active.",
-                new_events.len(), self.channel, max_id
-            );
-        } else if !new_events.is_empty() {
-            tracing::info!(
-                target: "telemetry",
-                "[Sysmon] Polled {} new event(s) via native EvtQuery from '{}' (RecordID {} → {}).",
-                new_events.len(), self.channel, self.last_record_id, max_id
-            );
-        }
-
-        self.last_record_id = max_id;
-        Ok(new_events)
-    }
-
-    #[allow(dead_code)] // used in unit tests (windows_tests::splits_namespaced_*)
-    fn split_event_xml(xml: &str) -> Vec<String> {
-        let mut events = Vec::new();
-        let mut rest = xml;
-
-        while let Some(start) = rest.find("<Event") {
-            rest = &rest[start..];
-            let Some(end) = rest.find("</Event>") else {
-                break;
-            };
-            let event_end = end + "</Event>".len();
-            events.push(rest[..event_end].to_string());
-            rest = &rest[event_end..];
-        }
-
-        events
-    }
-
-    fn extract_record_id(&self, xml: &str) -> u64 {
-        // Quick extraction without full XML parse
-        if let Some(pos) = xml.find("<EventRecordID>") {
-            let start = pos + "<EventRecordID>".len();
-            if let Some(end) = xml[start..].find("</EventRecordID>") {
-                return xml[start..start + end].parse().unwrap_or(0);
-            }
-        }
-        0
-    }
-}
-
-#[cfg(target_os = "windows")]
-impl HostEventReader for WindowsEventReader {
-    fn poll_events(&mut self) -> anyhow::Result<Vec<HostSecurityEvent>> {
-        let xml_events = self.query_native()?;
-        let mut out = Vec::new();
-        let count = xml_events.len();
-
-        if count > 0 {
-            tracing::info!(target: "telemetry", "[Sysmon] Read {} raw XML event(s) from '{}'", count, self.channel);
-        }
-
-        for xml in xml_events {
-            match self.sysmon_parser.parse_xml(&xml) {
-                Ok(sysmon) => {
-                    out.push(HostSecurityEvent {
-                        source: HostEventSource::WindowsEventLog,
-                        event_id: sysmon.event_id as u32,
-                        timestamp: sysmon.timestamp,
-                        computer: sysmon.computer,
-                        data: sysmon.data,
-                        causal_parent: None,
-                    });
-                }
-                Err(e) => {
-                    debug!("Skipping unparsable Windows event XML: {}", e);
-                }
-            }
-        }
-        if count > 0 {
-            tracing::info!(
-                target: "telemetry",
-                "[Sysmon] Parsed {}/{} event(s) from '{}'",
-                out.len(),
-                count,
-                self.channel
-            );
-            if out.is_empty() {
-                warn!(
-                    "[Sysmon] Read {} raw event(s) from '{}' but parsed 0. Check XML parser compatibility.",
-                    count, self.channel
-                );
-            }
-        }
-        Ok(out)
-    }
-
-    fn source_name(&self) -> String {
-        format!("windows-eventlog:{}", self.channel)
-    }
-}
 
 #[cfg(all(test, target_os = "windows"))]
 mod windows_tests {

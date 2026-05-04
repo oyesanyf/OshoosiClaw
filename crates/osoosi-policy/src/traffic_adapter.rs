@@ -1,4 +1,4 @@
-use osoosi_types::{ResponseAction, SysmonEvent, SysmonEventId};
+use osoosi_types::{HostEventSource, HostSecurityEvent, ResponseAction};
 use std::collections::HashSet;
 use std::net::IpAddr;
 
@@ -122,7 +122,7 @@ fn dga_like_domain_score(domain: &str) -> f32 {
     }
 }
 
-pub fn analyze(event: &SysmonEvent) -> Option<TrafficThreat> {
+pub fn analyze(event: &HostSecurityEvent) -> Option<TrafficThreat> {
     if !traffic_adapter_enabled() {
         return None;
     }
@@ -174,7 +174,7 @@ pub fn analyze(event: &SysmonEvent) -> Option<TrafficThreat> {
     );
 
     match event.event_id {
-        SysmonEventId::NetworkConnect => {
+        3 => {
             let image = event
                 .data
                 .get("Image")
@@ -256,7 +256,7 @@ pub fn analyze(event: &SysmonEvent) -> Option<TrafficThreat> {
                 reason: reasons.join("; "),
             });
         }
-        SysmonEventId::DnsQuery => {
+        22 => {
             let query = event
                 .data
                 .get("QueryName")
@@ -366,7 +366,7 @@ fn infer_task_from_instruction(human_instruction: &str, traffic_data: &str) -> S
     }
 }
 
-fn synthetic_event_from_packet_text(traffic_data: &str) -> SysmonEvent {
+fn synthetic_event_from_packet_text(traffic_data: &str) -> HostSecurityEvent {
     use chrono::Utc;
     use serde_json::json;
 
@@ -402,17 +402,14 @@ fn synthetic_event_from_packet_text(traffic_data: &str) -> SysmonEvent {
     }
     map.insert("QueryResults".to_string(), json!(traffic_data));
 
-    let event_id = if map.get("QueryName").is_some() {
-        SysmonEventId::DnsQuery
-    } else {
-        SysmonEventId::NetworkConnect
-    };
-    SysmonEvent {
+    let event_id = if map.get("QueryName").is_some() { 22 } else { 3 };
+    HostSecurityEvent {
+        source: HostEventSource::WindowsEventLog,
         event_id,
         timestamp: Utc::now(),
         computer: "trafficllm-adapter".to_string(),
         data: json!(map),
-        product_version: None,
+        causal_parent: None,
     }
 }
 

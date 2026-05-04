@@ -278,7 +278,6 @@ impl RouteScraper {
     #[cfg(target_os = "windows")]
     pub fn scrape_sysmon_connections(&self) -> Vec<DiscoveredHost> {
         let mut hosts = HashMap::new();
-        let parser = crate::sysmon::SysmonParser::new();
 
         unsafe {
             let channel = windows::core::w!("Microsoft-Windows-Sysmon/Operational");
@@ -303,16 +302,14 @@ impl RouteScraper {
                             let mut buffer = vec![0u16; (buffer_used / 2 + 1) as usize];
                             if EvtRender(None, event, EvtRenderEventXml.0 as u32, buffer_used, Some(buffer.as_mut_ptr() as *mut _), &mut buffer_used, &mut property_count).is_ok() {
                                 let xml = String::from_utf16_lossy(&buffer);
-                                if let Ok(parsed) = parser.parse_xml(&xml) {
-                                    if let Some(dst_ip) = parsed.data.get("DestinationIp").and_then(|v| v.as_str()) {
-                                        if dst_ip != "127.0.0.1" && dst_ip != "::1" {
-                                            hosts.entry(dst_ip.to_string()).or_insert_with(|| DiscoveredHost {
-                                                ip: dst_ip.to_string(),
-                                                mac: None,
-                                                interface: "sysmon-native".to_string(),
-                                                is_osoosi_peer: false,
-                                            });
-                                        }
+                                if let Some(dst_ip) = Self::extract_sysmon_event_data_value(&xml, "DestinationIp") {
+                                    if dst_ip != "127.0.0.1" && dst_ip != "::1" {
+                                        hosts.entry(dst_ip.to_string()).or_insert_with(|| DiscoveredHost {
+                                            ip: dst_ip.to_string(),
+                                            mac: None,
+                                            interface: "sysmon-native".to_string(),
+                                            is_osoosi_peer: false,
+                                        });
                                     }
                                 }
                             }
@@ -330,6 +327,20 @@ impl RouteScraper {
     #[cfg(not(target_os = "windows"))]
     pub fn scrape_sysmon_connections(&self) -> Vec<DiscoveredHost> {
         vec![] // Sysmon is Windows-only; Unix uses journald or auditd
+    }
+
+    #[cfg(target_os = "windows")]
+    fn extract_sysmon_event_data_value(xml: &str, key: &str) -> Option<String> {
+        let marker = format!("Name=\"{}\">", key);
+        let start = xml.find(&marker)? + marker.len();
+        let rest = &xml[start..];
+        let end = rest.find("</Data>")?;
+        let value = rest[..end].trim();
+        if value.is_empty() {
+            None
+        } else {
+            Some(value.to_string())
+        }
     }
 
     // ─────────────────────────────────────────────────────────────────────────

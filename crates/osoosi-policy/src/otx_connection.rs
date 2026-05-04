@@ -8,15 +8,15 @@
 
 use crate::feed::OtxIndicators;
 use osoosi_memory::MemoryStore;
-use osoosi_types::{SysmonEvent, SysmonEventId};
+use osoosi_types::HostSecurityEvent;
 
 /// Fixed confidence for an OTX IoC hit in [`PolicyEngine::scan_event`](crate::engine::PolicyEngine::scan_event) voting.
 pub const OTX_CONSENSUS_CONFIDENCE: f32 = 0.95;
 
 /// Weight multiplier for OTX in multi-voter **consensus** (network and DNS are primary C2 signals).
-pub fn otx_consensus_weight(event: &SysmonEvent) -> f32 {
+pub fn otx_consensus_weight(event: &HostSecurityEvent) -> f32 {
     match event.event_id {
-        SysmonEventId::NetworkConnect | SysmonEventId::DnsQuery => 1.15,
+        3 | 22 => 1.15, // 3: NetworkConnect, 22: DnsQuery
         _ => 1.0,
     }
 }
@@ -35,7 +35,7 @@ pub fn normalize_ip_for_otx(s: &str) -> String {
 pub fn otx_match_sysmon_event(
     guard: &OtxIndicators,
     memory: &MemoryStore,
-    event: &SysmonEvent,
+    event: &HostSecurityEvent,
 ) -> Option<String> {
     let destination_ip = event
         .data
@@ -170,8 +170,16 @@ pub fn otx_match_destination_ip(
 pub fn otx_match_with_policy_state(
     indicators: &std::sync::Arc<std::sync::RwLock<OtxIndicators>>,
     memory: &std::sync::Arc<MemoryStore>,
-    event: &SysmonEvent,
+    event: &HostSecurityEvent,
 ) -> Option<String> {
     let guard = indicators.read().ok()?;
     otx_match_sysmon_event(&guard, memory.as_ref(), event)
+}
+
+pub fn otx_match_sysmon_event_normalized(
+    guard: &OtxIndicators,
+    memory: &MemoryStore,
+    event: &HostSecurityEvent,
+) -> Option<String> {
+    otx_match_sysmon_event(guard, memory, event)
 }

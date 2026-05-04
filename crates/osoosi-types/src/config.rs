@@ -27,7 +27,7 @@ pub struct TelemetryConfig {
 fn default_event_channel() -> String {
     #[cfg(target_os = "windows")]
     {
-        "Microsoft-Windows-Sysmon/Operational".to_string()
+        "Security".to_string()
     }
     #[cfg(not(target_os = "windows"))]
     {
@@ -510,127 +510,6 @@ pub fn resolve_kev_cache_path() -> PathBuf {
 /// Resolve a specific tool path dynamically.
 pub fn resolve_tool_path(tool_name: &str, executable_name: &str) -> PathBuf {
     resolve_tools_dir().join(tool_name).join(executable_name)
-}
-
-pub fn resolve_capa_dir() -> PathBuf {
-    resolve_tools_dir().join("capa")
-}
-
-pub fn resolve_capa_rules_dir() -> PathBuf {
-    resolve_capa_dir().join("rules")
-}
-
-pub fn resolve_capa_path() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        resolve_capa_dir().join("capa.exe")
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        resolve_capa_dir().join("capa")
-    }
-}
-
-pub fn resolve_capa_sigs_dir() -> PathBuf {
-    resolve_capa_dir().join("signatures")
-}
-
-pub fn resolve_floss_path() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        resolve_tools_dir().join("floss").join("floss.exe")
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        resolve_tools_dir().join("floss").join("floss")
-    }
-}
-
-pub fn resolve_hollows_hunter_path() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        resolve_tools_dir()
-            .join("hollows_hunter")
-            .join("hollows_hunter.exe")
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        resolve_tools_dir()
-            .join("hollows_hunter")
-            .join("hollows_hunter")
-    }
-}
-
-pub fn resolve_ngrep_path() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        resolve_tools_dir().join("ngrep").join("ngrep.exe")
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        resolve_tools_dir().join("ngrep").join("ngrep")
-    }
-}
-
-pub fn resolve_sysmon_path() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        let is_64 = std::env::var("PROCESSOR_ARCHITECTURE")
-            .map(|a| a.eq_ignore_ascii_case("AMD64") || a.eq_ignore_ascii_case("ARM64"))
-            .unwrap_or(cfg!(target_pointer_width = "64"));
-        let name = if is_64 { "Sysmon64.exe" } else { "Sysmon.exe" };
-
-        // 1. Check next to agent binary
-        let base = resolve_base_dir();
-        let candidate = base.join(name);
-        if candidate.exists() {
-            return candidate;
-        }
-
-        // 2. Check C:\Windows (standard install location)
-        let windows_path = PathBuf::from(r"C:\Windows").join(name);
-        if windows_path.exists() {
-            return windows_path;
-        }
-
-        // 3. Check c:\tools (chocolatey / manual install)
-        let tools_path = PathBuf::from(r"c:\tools").join(name);
-        if tools_path.exists() {
-            return tools_path;
-        }
-
-        // 4. Check project root
-        if let Some(root) = resolve_project_root() {
-            let project_path = root.join(name);
-            if project_path.exists() {
-                return project_path;
-            }
-        }
-
-        // 5. Default to base dir (provisioner will download if missing)
-        candidate
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        PathBuf::from("/usr/local/bin/sysmon")
-    }
-}
-
-pub fn resolve_clamscan_path() -> PathBuf {
-    #[cfg(target_os = "windows")]
-    {
-        if let Ok(pf) = std::env::var("ProgramFiles") {
-            let p = PathBuf::from(pf).join("ClamAV").join("clamscan.exe");
-            if p.exists() {
-                return p;
-            }
-        }
-        PathBuf::from("clamscan.exe")
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        PathBuf::from("/usr/bin/clamscan")
-    }
 }
 
 /// Resolve the models directory for ML/LLM models (Malware, SmolLM, etc.).
