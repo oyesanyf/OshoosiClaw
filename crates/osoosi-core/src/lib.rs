@@ -2618,7 +2618,7 @@ impl EdrOrchestrator {
                 ResponseAction::Isolate => {
                     if let Some(image) = event.data.get("Image").and_then(|v| v.as_str()) {
                         // SAFETY GUARD: Downgrade to Alert for trusted images ONLY if confidence is not extremely high (< 0.95).
-                        if is_trusted_operational_image(event) && signature.confidence < 0.95 {
+                        if is_trusted_operational_image(&event) && signature.confidence < 0.95 {
                             let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
                             warn!("AUTONOMOUS BLOCK SKIPPED: {} is a trusted system/operational binary (confidence {:.2} < 0.95). Downgrading to Alert.", image, signature.confidence);
                         } else {
@@ -2891,9 +2891,7 @@ impl EdrOrchestrator {
                     .memory
                     .is_false_positive_pattern(proc.as_deref(), None)
                     .unwrap_or(false);
-                let trusted_operational = image_path
-                    .map(is_trusted_operational_image)
-                    .unwrap_or(false);
+                let trusted_operational = is_trusted_operational_image(&event);
 
                 
                 if is_fp {
