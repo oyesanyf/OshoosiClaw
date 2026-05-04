@@ -2499,7 +2499,7 @@ impl EdrOrchestrator {
         use osoosi_types::ResponseAction;
 
         // 0. Intelligent Load-Aware Throttling (The "Brain")
-        let current_mode = self.adaptive.current_mode().await;
+        let current_mode = *self.adaptive.current_mode.read().await;
         let is_high_pressure = current_mode == crate::adaptive::TelemetryMode::Silent;
 
         // Deduplication: Avoid redundant heavy analysis for the same image in a burst
@@ -2538,23 +2538,25 @@ impl EdrOrchestrator {
                  }
              }
         }
+    }
 
         // --- MILITARY-GRADE TACTICAL ANALYSIS ---
         // Skip heavy tactical reasoning in Silent mode to preserve system responsiveness
         if !is_high_pressure {
             if let Some(mut sig) = self.military.analyze_event(&event).await {
-            warn!("MILITARY-GUARD: Tactical threat detected! {}", sig.reason.as_deref().unwrap_or("Unknown"));
-            self.privacy.protect_signature(&mut sig);
-            
-            let tx_guard = self.mesh_command_tx.lock().await;
-            if let Some(ref tx_chan) = *tx_guard {
-                let _ = tx_chan.send(MeshCommand::Broadcast(sig.clone())).await;
-            }
+                warn!("MILITARY-GUARD: Tactical threat detected! {}", sig.reason.as_deref().unwrap_or("Unknown"));
+                self.privacy.protect_signature(&mut sig);
+                
+                let tx_guard = self.mesh_command_tx.lock().await;
+                if let Some(ref tx_chan) = *tx_guard {
+                    let _ = tx_chan.send(MeshCommand::Broadcast(sig.clone())).await;
+                }
 
-            if sig.recommended_action == ResponseAction::Isolate {
-                 if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()) {
-                     let _ = self.blocking_manager.block_by_pid(pid as u32);
-                 }
+                if sig.recommended_action == ResponseAction::Isolate {
+                    if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()) {
+                        let _ = self.blocking_manager.block_by_pid(pid as u32);
+                    }
+                }
             }
         }
 

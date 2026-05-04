@@ -52,6 +52,7 @@ pub enum TelemetryMode {
     Burst,  // Full fidelity (Network, Registry, FileSystem, DLLs)
 }
 
+#[derive(Clone)]
 pub struct TelemetryController {
     pub(crate) current_mode: Arc<RwLock<TelemetryMode>>,
     pub(crate) event_rate: Arc<std::sync::atomic::AtomicUsize>,
@@ -253,12 +254,3 @@ impl TelemetryController {
     }
 }
 
-impl Clone for TelemetryController {
-    fn clone(&self) -> Self {
-        Self {
-            current_mode: self.current_mode.clone(),
-            sys: self.sys.clone(),
-            guard: self.guard.clone(),
-        }
-    }
-}
