@@ -22,6 +22,7 @@ pub mod relativistic;
 pub mod shield;
 pub mod privacy;
 pub mod military;
+pub mod nostr_mesh;
 pub mod software_replacement;
 pub mod static_analyzer;
 pub mod system_check;

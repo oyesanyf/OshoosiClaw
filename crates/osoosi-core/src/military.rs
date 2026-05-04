@@ -3,7 +3,6 @@ use std::sync::Arc;
 use tokio::sync::RwLock;
 use chrono::{DateTime, Utc, Duration};
 use osoosi_types::{SysmonEvent, SysmonEventId, ResponseAction, ThreatSignature};
-use tracing::warn;
 
 /// MilitaryGuard: Tactical detection for asymmetric warfare patterns.
 /// 

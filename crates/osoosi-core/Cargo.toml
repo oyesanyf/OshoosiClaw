@@ -37,6 +37,8 @@ tokenizers = "0.19.1"
 hf-hub = "0.3.2"
 tokio = { workspace = true, features = ["full"] }
 rand = { workspace = true }
+rand_distr = { workspace = true }
+nostr-sdk = { workspace = true }
 async-trait = "0.1"
 futures = "0.3"
 serde = { workspace = true }

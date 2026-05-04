@@ -82,6 +82,7 @@ ort = { version = "=2.0.0-rc.10", default-features = false, features = ["load-dy
 axum = { version = "0.7", features = ["macros"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 libc = "0.2"
+nostr-sdk = "0.33"
 opentelemetry = { version = "0.31", features = ["trace"] }
 opentelemetry_sdk = { version = "0.31", features = ["trace"] }
 tracing-opentelemetry = "0.32"
