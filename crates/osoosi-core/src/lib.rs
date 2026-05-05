@@ -1914,6 +1914,11 @@ impl EdrOrchestrator {
                         }
                         let orchestrator = orchestrator.clone();
                         set.spawn(async move {
+                            info!(
+                                "File change detected: {} (Hash: {})",
+                                event.path, event.hash
+                            );
+
                             let path = std::path::Path::new(&event.path);
                             if should_skip_file_malware_scan(path)
                                 || orchestrator
@@ -1923,11 +1928,6 @@ impl EdrOrchestrator {
                             {
                                 return;
                             }
-
-                            info!(
-                                "File change detected: {} (Hash: {})",
-                                event.path, event.hash
-                            );
 
                             let _ = orchestrator
                                 .memory

@@ -487,10 +487,10 @@ impl PolicyEngine {
         }
 
         let voters_len = self.voters.read().await.len();
-        debug!(
+        info!(
             target: CONSENSUS_LOG_TARGET,
             event_id = ?event.event_id,
-            registered_voters = voters_len,
+            voters = voters_len,
             path = %image_path,
             "[CONSENSUS] round start"
         );
@@ -540,7 +540,7 @@ impl PolicyEngine {
                     weight = res.weight,
                     contribution,
                     reason = %res.reason,
-                    "[CONSENSUS] voter YIELD (counts toward score)"
+                    "[CONSENSUS] voter YIELD"
                 );
                 total_score += contribution;
                 vote_count += 1;
@@ -583,7 +583,7 @@ impl PolicyEngine {
                     weight = w,
                     contribution = c * w,
                     reason = %otx_reason,
-                    "[CONSENSUS] OTX safety-net YIELD (IoC in cache/SQLite)"
+                    "[CONSENSUS] OTX safety-net YIELD"
                 );
                 total_score += c * w;
                 vote_count += 1;
@@ -605,10 +605,10 @@ impl PolicyEngine {
         }
 
         if !is_threat {
-            debug!(
+            info!(
                 target: CONSENSUS_LOG_TARGET,
-                event_id = ?event.event_id,
-                "[CONSENSUS] no threat (zero yielding votes)"
+                path = %image_path,
+                "[CONSENSUS] clean (all voters abstained)"
             );
             return None;
         }
