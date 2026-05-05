@@ -40,8 +40,16 @@ impl NativeTelemetryEngine {
                         let command_line: String = parser.try_parse("CommandLine").unwrap_or_default();
 
                         // --- ADVANCED LOGIC: Parent Process Spoofing Detection ---
+                        // In Event ID 1 (ProcessStart), record.process_id() is the process that called CreateProcess.
+                        // parser.try_parse("ParentProcessID") is the parent declared in the attribute list (spoofable).
+                        let real_creator_pid = record.process_id();
                         let mut is_spoofed = false;
-                        if parent_pid != 0 {
+                        
+                        if parent_pid != 0 && real_creator_pid != 0 && parent_pid as u32 != real_creator_pid {
+                            is_spoofed = true;
+                            warn!("🚨 [DETECTION] PPID Spoofing Detected! PID {} claims parent {}, but was actually created by PID {}", pid, parent_pid, real_creator_pid);
+                        } else if parent_pid != 0 {
+                            // Fallback: Check if declared parent is actually accessible/exists
                             unsafe {
                                 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION};
                                 use windows::Win32::Foundation::CloseHandle;
@@ -52,6 +60,7 @@ impl NativeTelemetryEngine {
                                     }
                                     Err(_) => {
                                         is_spoofed = true;
+                                        warn!("🚨 [DETECTION] Suspicious Parent! PID {} claims parent {}, but process is dead or inaccessible.", pid, parent_pid);
                                     }
                                 }
                             }

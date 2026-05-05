@@ -92,6 +92,7 @@ impl BehavioralClassifier {
         tokio::spawn(async move {
             info!("BehavioralClassifier: Starting background AI initialization...");
             
+            let mut ai_loaded = false;
             if !no_ai {
                 // 1. SecureBERT (ONNX)
                 let bert_dir = Path::new(&models_dir_clone).join("securebert");
@@ -99,6 +100,9 @@ impl BehavioralClassifier {
                     let mut guard = securebert_clone.write().await;
                     *guard = Some(Arc::new(s));
                     info!("BehavioralClassifier: SecureBERT tier active.");
+                    ai_loaded = true;
+                } else {
+                    warn!("BehavioralClassifier: SecureBERT failed to load. AI detection may be degraded.");
                 }
 
                 // 2. SmolLM
@@ -108,6 +112,7 @@ impl BehavioralClassifier {
                         let mut guard = smollm_clone.write().await;
                         *guard = Some(Arc::new(s));
                         info!("BehavioralClassifier: SmolLM tier active.");
+                        ai_loaded = true;
                     }
                 }
 
@@ -130,10 +135,14 @@ impl BehavioralClassifier {
                         let mut guard = judge_clone.write().await;
                         *guard = Some(Arc::new(j));
                         info!("BehavioralClassifier: Security Judge (Gemma) tier active.");
+                        ai_loaded = true;
                     }
-                } else {
-                    info!("BehavioralClassifier: Skipping Security Judge (Gemma) in Lite Mode.");
                 }
+            }
+            
+            if !no_ai && !ai_loaded {
+                error!("🛑 [PRODUCTION-CRITICAL] All ML models failed to load. Agent is in degraded visibility mode.");
+                // In a true production environment, we might panic! here or signal a high-severity alert to the SIEM
             }
             info!("BehavioralClassifier: Background AI initialization complete.");
         });

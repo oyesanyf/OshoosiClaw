@@ -693,6 +693,38 @@ pub fn resolve_smollm_onnx_path() -> PathBuf {
     resolve_smollm_dir().join("smollm2-135m-it.onnx")
 }
 
+/// Verify the integrity of a configuration file against a .lock signature.
+pub fn verify_config_integrity(path: &std::path::Path) -> anyhow::Result<()> {
+    use sha2::{Sha256, Digest};
+    use std::io::Read;
+
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0; 1024];
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 { break; }
+        hasher.update(&buffer[..n]);
+    }
+    let current_hash = format!("{:x}", hasher.finalize());
+
+    let lock_path = path.with_extension("xml.lock");
+    if !lock_path.exists() {
+        // In a real prod environment, we would require this file to exist.
+        // For the prototype, we create it on first run if missing.
+        std::fs::write(&lock_path, &current_hash)?;
+        info!("Created cryptographic lock for config at {:?}", lock_path);
+        return Ok(());
+    }
+
+    let locked_hash = std::fs::read_to_string(&lock_path)?;
+    if current_hash.trim() != locked_hash.trim() {
+        return Err(anyhow::anyhow!("Configuration hash mismatch! Expected {}, got {}. Possible tampering detected.", locked_hash, current_hash));
+    }
+
+    Ok(())
+}
+
 pub fn resolve_openssl_path() -> PathBuf {
     #[cfg(target_os = "windows")]
     {
@@ -781,6 +813,12 @@ pub fn load_watch_paths_from_config() -> Option<Vec<String>> {
     let path = resolve_config_path()?;
     let content = std::fs::read_to_string(&path).ok()?;
     let cfg: FileConfig = toml::from_str(&content).ok()?;
+    
+    // PRODUCTION READINESS: Verify config integrity
+    if let Err(e) = verify_config_integrity(&path) {
+        warn!("⚠️ [PRODUCTION-SECURITY] Config integrity check failed: {}. Continuing in untrusted mode.", e);
+    }
+
     let mut paths: Vec<String> = cfg
         .telemetry
         .watch_paths

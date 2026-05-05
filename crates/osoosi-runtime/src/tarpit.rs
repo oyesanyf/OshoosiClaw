@@ -170,15 +170,30 @@ impl TarpitManager {
                 // Allocate standard page-aligned size (e.g., 64KB)
                 let region_size = 64 * 1024;
 
-                // Save as `usize` immediately so it is `Send` over the await.
+                // PRODUCTION READINESS: Fully randomized ASLR memory allocation base addresses
+                // Instead of letting Windows choose (None), we pick a random high-address base to frustrate scanners.
+                let mut rng = rand::thread_rng();
+                let random_base: usize = rng.gen_range(0x00000100_00000000..0x00007FFF_00000000) & !0xFFFF; // Page aligned
+                
                 let ptr_addr = unsafe {
                     let ptr = VirtualAlloc(
-                        None,
+                        Some(random_base as *const std::ffi::c_void),
                         region_size,
                         windows::Win32::System::Memory::VIRTUAL_ALLOCATION_TYPE(MEM_COMMIT.0 | MEM_RESERVE.0),
                         windows::Win32::System::Memory::PAGE_PROTECTION_FLAGS(PAGE_READWRITE.0),
                     );
-                    ptr as usize
+                    
+                    if ptr.is_null() {
+                        // Fallback to auto-allocation if the random address is occupied
+                        VirtualAlloc(
+                            None,
+                            region_size,
+                            windows::Win32::System::Memory::VIRTUAL_ALLOCATION_TYPE(MEM_COMMIT.0 | MEM_RESERVE.0),
+                            windows::Win32::System::Memory::PAGE_PROTECTION_FLAGS(PAGE_READWRITE.0),
+                        ) as usize
+                    } else {
+                        ptr as usize
+                    }
                 };
 
                 if ptr_addr == 0 {
