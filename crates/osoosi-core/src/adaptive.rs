@@ -140,7 +140,7 @@ impl TelemetryController {
             tracing::debug!("ADAPTIVE PERFORMANCE: Check complete. CPU={:.1}%, MEM={:.1}%, EPS={:.1}, Mode={:?}", cpu_usage, mem_usage, events_per_sec, *current_mode);
         }
 
-        if (self.iteration.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 12) == 0 {
+        if (self.guard.iteration.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 12) == 0 {
              info!("ADAPTIVE HEALTH: CPU={:.1}%, MEM={:.1}%, EPS={:.1}, Mode={:?}. AI_Limit={}, IO_Limit={}, NET_Limit={}", 
                 cpu_usage, mem_usage, events_per_sec, *current_mode,
                 self.guard.ai_base as isize - *self.guard.ai_throttled.lock().await,
