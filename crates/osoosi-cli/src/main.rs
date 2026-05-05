@@ -1812,6 +1812,8 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
     // The runtime logic in `osoosi-core` will dynamically locate the snapshot dir.
     info!("Ensuring Gemma 4 ONNX shards are cached from {}...", gemma_repo_name);
     for filename in [
+        "config.json",
+        "onnx/config.json",
         "tokenizer.json",
         "onnx/tokenizer.json",
         "model.onnx",

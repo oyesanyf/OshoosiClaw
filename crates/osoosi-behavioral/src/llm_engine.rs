@@ -426,15 +426,31 @@ impl Gemma4Analyzer {
                 "<|im_start|>system\nClassify this event as malicious, suspicious, or benign. One sentence max.\n<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
                 summary
             );
-            let raw = match &*analyzer {
-                Self::Onnx { .. } => analyzer.generate_text_sync(&prompt, 48),
-                Self::Candle(judge) => judge.judge_artifact(&prompt),
-                Self::NativeGGUF { .. } => analyzer.generate_text_sync(&prompt, 48),
-            }?;
+            let raw = analyzer.judge_artifact_sync(&prompt)?;
 
             // Strip thinking traces from all backends
             Ok(strip_deepseek_thinking(&raw))
         }).await?
+    }
+
+    /// Higher-level forensic triage (judge artifact)
+    pub async fn judge_artifact(&self, query: &str) -> Result<String> {
+        let analyzer = Arc::new(self.clone());
+        let q = query.to_string();
+        tokio::task::spawn_blocking(move || {
+            analyzer.judge_artifact_sync(&q)
+        }).await?
+    }
+
+    pub fn judge_artifact_sync(&self, query: &str) -> Result<String> {
+        match self {
+            Self::Onnx { .. } | Self::NativeGGUF { .. } => {
+                // For ONNX/GGUF, we use a standard prompt template
+                let prompt = format!("<|user|>\nYou are a security expert. Analyze this artifact and return a verdict: {} <|end|>\n<|assistant|>\n", query);
+                self.generate_text_sync(&prompt, 128)
+            }
+            Self::Candle(judge) => judge.judge_artifact(query),
+        }
     }
 
     pub async fn generate_text(&self, prompt: &str, max_tokens: usize) -> Result<String> {

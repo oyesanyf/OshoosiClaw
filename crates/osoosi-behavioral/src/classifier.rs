@@ -3,7 +3,7 @@
 //! Uses suspicious patterns to flag events. When SecureBERT ONNX model is available,
 //! inference can be added. Supports continual training via labeled feedback.
 
-use crate::llm_engine::{SecureBertAnalyzer, SecurityJudge, SmolLMAnalyzer};
+use crate::llm_engine::{SecureBertAnalyzer, Gemma4Analyzer, SmolLMAnalyzer};
 use crate::{event_to_behavioral_sentence, feedback::FeedbackStore, LogEvent};
 use ort::session::{builder::SessionBuilder, Session};
 use ort::value::Value;
@@ -35,7 +35,7 @@ pub struct BehavioralClassifier {
     feedback: Option<FeedbackStore>,
     smollm: Option<Arc<SmolLMAnalyzer>>,
     securebert: Option<Arc<SecureBertAnalyzer>>,
-    judge: Option<Arc<SecurityJudge>>,
+    judge: Option<Arc<Gemma4Analyzer>>,
     memo: Arc<dashmap::DashMap<String, (bool, f32, String)>>,
     openai_key: String,
     client: reqwest::Client,
@@ -205,9 +205,9 @@ impl BehavioralClassifier {
                     Path::new(&models_dir).join("gemma4-e4b")
                 });
                 
-            match SecurityJudge::new(&gemma_dir) {
+            match Gemma4Analyzer::new(&gemma_dir) {
                 Ok(j) => {
-                    info!("LLM Security Judge initialized.");
+                    info!("LLM Security Judge initialized (Cortex Tier).");
                     Some(Arc::new(j))
                 }
                 Err(e) => {
@@ -465,7 +465,7 @@ impl BehavioralClassifier {
         if is_suspicious {
             if let Some(ref judge) = self.judge {
                 let suspect_query = format!("Analyze this forensic artifact: '{}'. Is it malicious or benign context?", sentence);
-                match judge.judge_artifact(&suspect_query) {
+                match judge.judge_artifact(&suspect_query).await {
                     Ok(verdict) => {
                         if verdict.to_lowercase().contains("benign") {
                             // High-reasoning model thinks it's benign, downgrade it
