@@ -27,6 +27,7 @@ mkdir %DEPLOY_DIR%\logs
 :: 3. Copy binaries and core assets
 echo [3/5] Collecting files...
 copy target\release\osoosi.exe %DEPLOY_DIR%\
+copy run_osoosi.bat %DEPLOY_DIR%\
 copy target\release\test-peer.exe %DEPLOY_DIR%\
 if exist osoosi.toml (
     copy osoosi.toml %DEPLOY_DIR%\
@@ -38,8 +39,8 @@ if exist osoosi.toml (
 if exist Sysmon64.exe copy Sysmon64.exe %DEPLOY_DIR%\
 if exist sysmonconfig-export.xml copy sysmonconfig-export.xml %DEPLOY_DIR%\
 
-:: Copy Configs, scripts, and UI
 if exist config xcopy /s /e /y config\* %DEPLOY_DIR%\config\
+if exist yara xcopy /s /e /y yara\* %DEPLOY_DIR%\yara\
 if exist scripts\firewall_setup.ps1 copy scripts\firewall_setup.ps1 %DEPLOY_DIR%\
 if exist scripts\firewall_setup.sh copy scripts\firewall_setup.sh %DEPLOY_DIR%\
 
