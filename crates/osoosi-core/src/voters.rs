@@ -413,7 +413,7 @@ impl ThreatVoter for MemoryInspectionVoter {
     }
 
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
-        #[cfg(target_os = "windows")]
+#[cfg(target_os = "windows")]
         {
             if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()) {
                 // Use pelite to parse the process memory and find hollowing
@@ -427,6 +427,39 @@ impl ThreatVoter for MemoryInspectionVoter {
                     }
                 }
             }
+        }
+        None
+    }
+}
+
+/// AI Behavioral Classifier Voter
+///
+/// Uses the BehavioralClassifier (SecureBERT / SmolLM / LLM) to analyze
+/// normalized behavioral sentences from logs.
+pub struct BehavioralClassifierVoter {
+    pub classifier: Arc<osoosi_behavioral::BehavioralClassifier>,
+}
+
+#[async_trait]
+impl ThreatVoter for BehavioralClassifierVoter {
+    fn name(&self) -> String {
+        "BehavioralAI-Cortex".to_string()
+    }
+
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        let log_event: osoosi_behavioral::LogEvent = event.into();
+        let sentence = osoosi_behavioral::event_to_behavioral_sentence(&log_event);
+        if sentence.is_empty() {
+            return None;
+        }
+
+        let (is_suspicious, score, reason) = self.classifier.classify_sentence(&sentence).await;
+        if is_suspicious {
+            return Some(VoteResult {
+                confidence: score,
+                reason: format!("BehavioralAI: {} - {}", reason, sentence),
+                weight: 0.95,
+            });
         }
         None
     }

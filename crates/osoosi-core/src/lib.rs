@@ -1127,6 +1127,12 @@ impl EdrOrchestrator {
         policy.add_voter(Box::new(osoosi_policy::voters::SysmonDnsVoter {
             blocklist: dns_blocklist,
         })).await;
+        
+        // --- 4. BEHAVIORAL AI CONSENSUS ---
+        // Connect the SecureBERT/SmolLM/Gemma classifier to the voting engine.
+        policy.add_voter(Box::new(crate::voters::BehavioralClassifierVoter {
+            classifier: behavioral_classifier.clone(),
+        })).await;
 
         // Start background threat intel sync (NVD Local Cache, etc.)
         policy.start_background_tasks();

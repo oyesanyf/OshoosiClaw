@@ -17,6 +17,24 @@ pub struct LogEvent {
     pub data: HashMap<String, serde_json::Value>,
 }
 
+impl From<&osoosi_types::HostSecurityEvent> for LogEvent {
+    fn from(event: &osoosi_types::HostSecurityEvent) -> Self {
+        let mut data = HashMap::new();
+        if let Some(obj) = event.data.as_object() {
+            for (k, v) in obj {
+                data.insert(k.clone(), v.clone());
+            }
+        }
+        Self {
+            source: format!("{:?}", event.source),
+            event_id: event.event_id,
+            timestamp: event.timestamp,
+            computer: event.computer.clone(),
+            data,
+        }
+    }
+}
+
 /// Cross-platform behavioral log reader.
 /// Reads System, Application, and Security logs (Windows) or equivalents (Linux, macOS).
 #[derive(Clone)]

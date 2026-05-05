@@ -12,6 +12,7 @@ hostname = { workspace = true }
 chrono = { workspace = true }
 uuid = { workspace = true }
 anyhow = { workspace = true }
+tracing = { workspace = true }
 thiserror = { workspace = true }
 toml = { workspace = true }
 async-trait = { workspace = true }

@@ -5,7 +5,7 @@
 
 use crate::llm_engine::{SecureBertAnalyzer, Gemma4Analyzer, SmolLMAnalyzer};
 use crate::{event_to_behavioral_sentence, feedback::FeedbackStore, LogEvent};
-use ort::session::{builder::SessionBuilder, Session};
+use ort::session::Session;
 use ort::value::Value;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
@@ -13,7 +13,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokenizers::Tokenizer;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Result of behavioral classification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -65,13 +65,13 @@ impl BehavioralClassifier {
         let smollm_dir = Path::new(&models_dir).join("smollm");
         
         // 1. Try SecureBERT (Primary behavioral classifier)
-        let mut model_path = behavioral_dir.join("model.onnx");
-        let mut tokenizer_path = behavioral_dir.join("tokenizer.json");
+        let mut _model_path = behavioral_dir.join("model.onnx");
+        let mut _tokenizer_path = behavioral_dir.join("tokenizer.json");
         
-        if !model_path.exists() {
+        if !_model_path.exists() {
             // 2. Fallback to SmolLM2
-            model_path = smollm_dir.join("smollm2-135m-it.onnx");
-            tokenizer_path = smollm_dir.join("tokenizer.json");
+            _model_path = smollm_dir.join("smollm2-135m-it.onnx");
+            _tokenizer_path = smollm_dir.join("tokenizer.json");
         }
 
         let no_ai = std::env::var("OSOOSI_NO_AI")
@@ -225,7 +225,7 @@ impl BehavioralClassifier {
         }
     }
 
-    async fn classify_sentence(&self, sentence: &str) -> (bool, f32, String) {
+    pub async fn classify_sentence(&self, sentence: &str) -> (bool, f32, String) {
         if let Some(cached) = self.memo.get(sentence) {
             return cached.clone();
         }

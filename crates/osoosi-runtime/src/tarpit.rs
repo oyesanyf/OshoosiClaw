@@ -172,8 +172,10 @@ impl TarpitManager {
 
                 // PRODUCTION READINESS: Fully randomized ASLR memory allocation base addresses
                 // Instead of letting Windows choose (None), we pick a random high-address base to frustrate scanners.
-                let mut rng = rand::thread_rng();
-                let random_base: usize = rng.gen_range(0x00000100_00000000..0x00007FFF_00000000) & !0xFFFF; // Page aligned
+                let random_base: usize = {
+                    let mut rng = rand::thread_rng();
+                    rng.gen_range(0x00000100_00000000..0x00007FFF_00000000) & !0xFFFF // Page aligned
+                };
                 
                 let ptr_addr = unsafe {
                     let ptr = VirtualAlloc(
