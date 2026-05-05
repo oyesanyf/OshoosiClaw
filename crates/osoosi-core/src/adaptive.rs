@@ -12,10 +12,14 @@ pub struct ResourceGuard {
     pub ai: Arc<Semaphore>,
     pub io: Arc<Semaphore>,
     pub net: Arc<Semaphore>,
-    /// Tracks permits we've "stolen" to throttle concurrency
-    pub(crate) ai_throttled: Arc<tokio::sync::Mutex<usize>>,
-    pub(crate) io_throttled: Arc<tokio::sync::Mutex<usize>>,
-    pub(crate) net_throttled: Arc<tokio::sync::Mutex<usize>>,
+    pub(crate) ai_base: usize,
+    pub(crate) io_base: usize,
+    pub(crate) net_base: usize,
+    /// Tracks permits we've "stolen" (positive) or "added" (negative) to throttle concurrency
+    pub(crate) ai_throttled: Arc<tokio::sync::Mutex<isize>>,
+    pub(crate) io_throttled: Arc<tokio::sync::Mutex<isize>>,
+    pub(crate) net_throttled: Arc<tokio::sync::Mutex<isize>>,
+    iteration: Arc<std::sync::atomic::AtomicUsize>,
 }
 
 #[derive(Debug, Clone, Copy)]
@@ -38,9 +42,13 @@ impl ResourceGuard {
             ai: Arc::new(Semaphore::new(ai_limit)),
             io: Arc::new(Semaphore::new(io_limit)),
             net: Arc::new(Semaphore::new(net_limit)),
+            ai_base: ai_limit,
+            io_base: io_limit,
+            net_base: net_limit,
             ai_throttled: Arc::new(tokio::sync::Mutex::new(0)),
             io_throttled: Arc::new(tokio::sync::Mutex::new(0)),
             net_throttled: Arc::new(tokio::sync::Mutex::new(0)),
+            iteration: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
         }
     }
 }
@@ -57,6 +65,8 @@ pub struct TelemetryController {
     pub(crate) current_mode: Arc<RwLock<TelemetryMode>>,
     pub(crate) event_rate: Arc<std::sync::atomic::AtomicUsize>,
     pub(crate) last_poll_time: Arc<RwLock<Instant>>,
+    pub(crate) last_cpu_usage: Arc<std::sync::atomic::AtomicU32>,
+    pub(crate) last_mem_usage: Arc<std::sync::atomic::AtomicU32>,
     sys: Arc<RwLock<System>>,
     pub guard: Arc<ResourceGuard>,
 }
@@ -67,6 +77,8 @@ impl TelemetryController {
             current_mode: Arc::new(RwLock::new(TelemetryMode::Normal)),
             event_rate: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
             last_poll_time: Arc::new(RwLock::new(Instant::now())),
+            last_cpu_usage: Arc::new(std::sync::atomic::AtomicU32::new(0)),
+            last_mem_usage: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             sys: Arc::new(RwLock::new(System::new_all())),
             guard: Arc::new(ResourceGuard::new()),
         }
@@ -86,12 +98,19 @@ impl TelemetryController {
     }
 
     async fn run_adaptation_check(&self) -> anyhow::Result<()> {
-        let mut sys = self.sys.write().await;
-        sys.refresh_cpu();
-        sys.refresh_memory();
+        let (cpu_usage, mem_usage) = {
+            let sys_arc = self.sys.clone();
+            tokio::task::spawn_blocking(move || {
+                let mut sys = sys_arc.blocking_write();
+                sys.refresh_cpu();
+                sys.refresh_memory();
+                (sys.global_cpu_info().cpu_usage(), sys.used_memory() as f64 / sys.total_memory() as f64 * 100.0)
+            }).await?
+        };
 
-        let cpu_usage = sys.global_cpu_info().cpu_usage();
-        let mem_usage = sys.used_memory() as f64 / sys.total_memory() as f64 * 100.0;
+        self.last_cpu_usage.store(cpu_usage.to_bits(), std::sync::atomic::Ordering::Relaxed);
+        self.last_mem_usage.store((mem_usage as f32).to_bits(), std::sync::atomic::Ordering::Relaxed);
+
         let mut current_mode = self.current_mode.write().await;
 
         // Calculate event rate (events per second since last check)
@@ -107,16 +126,27 @@ impl TelemetryController {
 
         if (cpu_usage > 85.0 || mem_usage > 90.0 || is_burst) && *current_mode != TelemetryMode::Silent {
             if is_burst {
-                warn!("ADAPTIVE PERFORMANCE: Event burst detected ({:.0} eps). Entering SILENT mode to protect ingestion.", events_per_sec);
+                warn!("ADAPTIVE PERFORMANCE: Event burst detected ({:.0} eps). Mode: {:?} -> SILENT. System load: CPU={:.1}%, MEM={:.1}%", events_per_sec, *current_mode, cpu_usage, mem_usage);
             } else {
-                warn!("ADAPTIVE PERFORMANCE: System under pressure (CPU: {:.1}%, MEM: {:.1}%). Entering SILENT mode.", cpu_usage, mem_usage);
+                warn!("ADAPTIVE PERFORMANCE: Resource pressure high. Mode: {:?} -> SILENT. System load: CPU={:.1}%, MEM={:.1}%, EPS={:.1}", *current_mode, cpu_usage, mem_usage, events_per_sec);
             }
             *current_mode = TelemetryMode::Silent;
             self.apply_telemetry_profile(TelemetryMode::Silent).await?;
         } else if cpu_usage < 40.0 && mem_usage < 70.0 && !is_burst && *current_mode == TelemetryMode::Silent {
-            info!("ADAPTIVE PERFORMANCE: System load stabilized. Restoring NORMAL mode.");
+            info!("ADAPTIVE PERFORMANCE: System load stabilized. Mode: SILENT -> NORMAL. CPU={:.1}%, MEM={:.1}%, EPS={:.1}", cpu_usage, mem_usage, events_per_sec);
             *current_mode = TelemetryMode::Normal;
             self.apply_telemetry_profile(TelemetryMode::Normal).await?;
+        } else {
+            tracing::debug!("ADAPTIVE PERFORMANCE: Check complete. CPU={:.1}%, MEM={:.1}%, EPS={:.1}, Mode={:?}", cpu_usage, mem_usage, events_per_sec, *current_mode);
+        }
+
+        if (self.iteration.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 12) == 0 {
+             info!("ADAPTIVE HEALTH: CPU={:.1}%, MEM={:.1}%, EPS={:.1}, Mode={:?}. AI_Limit={}, IO_Limit={}, NET_Limit={}", 
+                cpu_usage, mem_usage, events_per_sec, *current_mode,
+                self.guard.ai_base as isize - *self.guard.ai_throttled.lock().await,
+                self.guard.io_base as isize - *self.guard.io_throttled.lock().await,
+                self.guard.net_base as isize - *self.guard.net_throttled.lock().await
+            );
         }
 
         // 2. Intelligent Concurrency Throttling (The "Brain")
@@ -139,30 +169,31 @@ impl TelemetryController {
             (8.max(cpus), 32.max(cpus * 4), 64.max(cpus * 8)) // Idle / High Perf
         };
 
-        self.adjust_semaphore(&self.guard.ai, &self.guard.ai_throttled, ai_target).await;
-        self.adjust_semaphore(&self.guard.io, &self.guard.io_throttled, io_target).await;
-        self.adjust_semaphore(&self.guard.net, &self.guard.net_throttled, net_target).await;
+        tracing::debug!("ADAPTIVE CONCURRENCY: Rebalancing targets [AI={}, IO={}, NET={}] based on CPU={:.1}%, MEM={:.1}%", ai_target, io_target, net_target, cpu, mem);
+
+        self.adjust_semaphore("AI", &self.guard.ai, &self.guard.ai_throttled, self.guard.ai_base, ai_target).await;
+        self.adjust_semaphore("IO", &self.guard.io, &self.guard.io_throttled, self.guard.io_base, io_target).await;
+        self.adjust_semaphore("NET", &self.guard.net, &self.guard.net_throttled, self.guard.net_base, net_target).await;
     }
 
-    async fn adjust_semaphore(&self, sem: &Arc<Semaphore>, throttled: &Arc<tokio::sync::Mutex<usize>>, target: usize) {
+    async fn adjust_semaphore(&self, name: &str, sem: &Arc<Semaphore>, throttled: &Arc<tokio::sync::Mutex<isize>>, base_limit: usize, target: usize) {
         let mut currently_throttled = throttled.lock().await;
-        let total_capacity = sem.available_permits() + *currently_throttled;
+        let current_effective_limit = base_limit as isize - *currently_throttled;
         
-        if target < total_capacity {
-            let to_steal = total_capacity - target;
-            // We want to reduce available permits by 'to_steal'
-            // We do this by acquiring them and keeping them in 'throttled'
+        if (target as isize) < current_effective_limit {
+            let to_steal = (current_effective_limit - target as isize) as usize;
             if let Ok(permits) = sem.try_acquire_many(to_steal as u32) {
                 permits.forget();
-                *currently_throttled += to_steal;
+                *currently_throttled += to_steal as isize;
+                info!("ADAPTIVE CONCURRENCY: Throttled {} pool. Capacity: {} -> {}. (Stole {})", name, current_effective_limit, target, to_steal);
+            } else {
+                tracing::debug!("ADAPTIVE CONCURRENCY: Delaying throttle for {} pool. Permits currently in use.", name);
             }
-        } else if target > total_capacity {
-            let to_release = target - total_capacity;
-            let can_release = to_release.min(*currently_throttled);
-            if can_release > 0 {
-                sem.add_permits(can_release);
-                *currently_throttled -= can_release;
-            }
+        } else if (target as isize) > current_effective_limit {
+            let to_release = (target as isize - current_effective_limit) as usize;
+            sem.add_permits(to_release);
+            *currently_throttled -= to_release as isize;
+            info!("ADAPTIVE CONCURRENCY: Boosted {} pool. Capacity: {} -> {}. (Added {})", name, current_effective_limit, target, to_release);
         }
     }
 
@@ -204,25 +235,18 @@ impl TelemetryController {
 
     /// Calculate a recommended concurrency limit for background tasks (e.g. file scanning, hashing).
     pub async fn get_concurrency_limit(&self) -> usize {
-        let mut sys = self.sys.write().await;
-        sys.refresh_cpu();
-        let cpu_usage = sys.global_cpu_info().cpu_usage();
+        let cpu_usage = f32::from_bits(self.last_cpu_usage.load(std::sync::atomic::Ordering::Relaxed));
         let mode = *self.current_mode.read().await;
 
-        let base = match mode {
+        let limit = match mode {
             TelemetryMode::Silent => 2,
-            TelemetryMode::Normal => 8,
-            TelemetryMode::Burst => 32,
+            TelemetryMode::Normal if cpu_usage > 70.0 => 8,
+            TelemetryMode::Normal => 32,
+            TelemetryMode::Burst => 4,
         };
 
-        // Scale down if CPU is high
-        if cpu_usage > 75.0 {
-            (base / 4).max(1)
-        } else if cpu_usage > 50.0 {
-            (base / 2).max(2)
-        } else {
-            base
-        }
+        tracing::debug!("ADAPTIVE CONCURRENCY: Limit request: CPU={:.1}%, Mode={:?} -> Limit={}", cpu_usage, mode, limit);
+        limit
     }
 
     /// Spawn a task with adaptive concurrency based on the resource category.

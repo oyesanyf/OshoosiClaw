@@ -1516,16 +1516,18 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
         .map_err(|e| anyhow::anyhow!("Cannot create log directory {}: {}", log_dir.display(), e))?;
     let file_appender = tracing_appender::rolling::daily(&log_dir, "osoosi.log");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-    // Default: WARN when not in --debug. Always allow `target=consensus` at info so
-    // `[CONSENSUS] voter YIELD` / round COMPLETE are visible without full crate INFO spam.
-    // Use `--debug` or `RUST_LOG=consensus=debug` to see per-voter abstain / round start.
+    // Default: INFO to ensure we capture performance/adaptive logs in the file.
+    // Console still respects this but we can use EnvFilter to refine it.
     let level = if debug {
         tracing::Level::DEBUG
     } else {
-        tracing::Level::WARN
+        tracing::Level::INFO
     };
     let mut filter = EnvFilter::from_default_env()
-        .add_directive(level.into());
+        .add_directive(level.into())
+        .add_directive("h2=warn".parse().expect("static directive")) // Quiet noisy libraries
+        .add_directive("hyper=warn".parse().expect("static directive"))
+        .add_directive("rustls=warn".parse().expect("static directive"));
     
     if debug {
         filter = filter.add_directive("consensus=info".parse().expect("static directive"));
