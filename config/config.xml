@@ -8,18 +8,23 @@
 
   <EventFiltering>
     <!-- CATEGORY: Visibility (PRIORITY: Critical) -->
-    <!-- EVENT ID 1: PROCESS CREATION -->
-    <ProcessCreate onmatch="exclude"/>
+    <ProcessCreate onmatch="exclude">
+      <Image condition="begin with">C:\test\</Image>
+    </ProcessCreate>
     <!-- EVENT ID 3: NETWORK CONNECTION -->
     <NetworkConnect onmatch="exclude"/>
     <!-- EVENT ID 7: IMAGE LOAD -->
-    <ImageLoad onmatch="exclude"/>
+    <ImageLoad onmatch="exclude">
+      <Image condition="begin with">C:\test\</Image>
+    </ImageLoad>
 
     <!-- CATEGORY: Anti-Injection (PRIORITY: High) -->
     <!-- EVENT ID 8: CREATEREMOTETHREAD -->
     <CreateRemoteThread onmatch="exclude"/>
     <!-- EVENT ID 10: PROCESSACCESS -->
-    <ProcessAccess onmatch="exclude"/>
+    <ProcessAccess onmatch="exclude">
+      <SourceImage condition="begin with">C:\test\</SourceImage>
+    </ProcessAccess>
     <!-- EVENT ID 25: PROCESS TAMPERING -->
     <ProcessTampering onmatch="exclude"/>
 
@@ -27,6 +32,7 @@
     <!-- EVENT ID 11: FILECREATE -->
     <FileCreate onmatch="exclude">
        <TargetFilename condition="contains">\OshoosiClaw\logs\</TargetFilename>
+       <TargetFilename condition="begin with">C:\test\</TargetFilename>
     </FileCreate>
     <!-- EVENT ID 12, 13, 14: REGISTRY MODIFICATION -->
     <RegistryEvent onmatch="exclude"/>
@@ -53,6 +59,7 @@
     <!-- EVENT ID 23: FILE DELETE -->
     <FileDelete onmatch="exclude">
        <TargetFilename condition="contains">\OshoosiClaw\logs\</TargetFilename>
+       <TargetFilename condition="begin with">C:\test\</TargetFilename>
     </FileDelete>
     <!-- EVENT ID 24: CLIPBOARD MONITORING -->
     <ClipboardChange onmatch="exclude"/>

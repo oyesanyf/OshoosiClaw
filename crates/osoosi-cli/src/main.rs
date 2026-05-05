@@ -72,6 +72,9 @@ enum Commands {
         /// Do not open the web dashboard (applies to this process and, with `--sandbox`, the agent in the sandbox)
         #[arg(long, default_value_t = false)]
         no_dashboard: bool,
+        /// Run in LITE mode: skip massive reasoning models (Gemma-4) to save disk space (~14GB)
+        #[arg(long, env = "OSOOSI_LITE_MODE", default_value_t = false)]
+        lite: bool,
         /// Run the agent inside an NVIDIA OpenShell sandbox (`openshell sandbox create` runs `osoosi start` inside). On success this process exits; no host daemon.
         #[arg(long)]
         sandbox: bool,
@@ -145,6 +148,15 @@ enum Commands {
     Train {
         #[command(subcommand)]
         target: TrainTarget,
+    },
+    /// Clean up logs, temporary files, and large model caches to free up disk space
+    Clean {
+        /// Also delete downloaded AI model weights (will be re-downloaded on next start)
+        #[arg(long)]
+        models: bool,
+        /// Force clean without confirmation
+        #[arg(short, long)]
+        force: bool,
     },
     /// Audit a CVE or product against the local threat model
     Audit {
@@ -343,11 +355,16 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Some(Commands::Start {
             dashboard,
             no_dashboard,
+            lite,
             sandbox: start_in_sandbox,
             sandbox_name,
             sandbox_deploy_gateway,
             wsl,
         }) => {
+            if lite {
+                std::env::set_var("OSOOSI_LITE_MODE", "1");
+                info!("LITE mode enabled: Skipping heavy models.");
+            }
             osoosi_core::tool_paths::discover_and_persist();
             run_yara_sanitizer();
             let with_dashboard = dashboard && !no_dashboard;
@@ -868,6 +885,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 println!("❓ UNKNOWN: No data for this vector in model.");
             }
             println!("----------------------------------------\n");
+        }
+        Some(Commands::Clean { models, force }) => {
+            handle_clean(models, force).await?;
         }
         None => {
             if !cli.grant_access {
@@ -1482,32 +1502,53 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
 
 /// Stable log directory: `OSOOSI_LOG_DIR`, else repo root `logs/` (walk up from exe for `Cargo.toml`/`.git`),
 /// else `logs/` next to the binary, else cwd `logs/`, else `%TEMP%/osoosi/logs`.
-fn resolve_log_directory() -> PathBuf {
-    if let Ok(p) = std::env::var("OSOOSI_LOG_DIR") {
-        let pb = PathBuf::from(p.trim());
-        if !pb.as_os_str().is_empty() {
-            return pb;
+async fn handle_clean(models: bool, force: bool) -> anyhow::Result<()> {
+    if !force {
+        println!("⚠️ This will delete log files and temporary artifacts.");
+        if models {
+            println!("🔥 WARNING: This will also delete ALL downloaded AI model weights (several GBs).");
+        }
+        println!("Proceed? [y/N]");
+        let mut input = String::new();
+        std::io::stdin().read_line(&mut input)?;
+        if !input.trim().eq_ignore_ascii_case("y") {
+            println!("Clean aborted.");
+            return Ok(());
         }
     }
-    if let Ok(exe) = std::env::current_exe() {
-        if let Some(mut dir) = exe.parent().map(|p| p.to_path_buf()) {
-            for _ in 0..24 {
-                if dir.join(".git").is_dir() || dir.join("Cargo.toml").is_file() {
-                    return dir.join("logs");
-                }
-                match dir.parent() {
-                    Some(p) => dir = p.to_path_buf(),
-                    None => break,
+
+    // 1. Clean Logs
+    let log_dir = resolve_log_directory();
+    if log_dir.exists() {
+        info!("Cleaning log directory: {:?}", log_dir);
+        let _ = fs::remove_dir_all(&log_dir);
+        let _ = fs::create_dir_all(&log_dir);
+    }
+
+    // 2. Clean Models if requested
+    if models {
+        let models_dir = osoosi_types::resolve_models_dir();
+        if models_dir.exists() {
+            info!("Cleaning models directory (blobs and snapshots): {:?}", models_dir);
+            // We keep the directory but wipe contents to avoid permission issues with parent
+            for entry in fs::read_dir(&models_dir)? {
+                let entry = entry?;
+                let path = entry.path();
+                if path.is_dir() {
+                    let _ = fs::remove_dir_all(&path);
+                } else {
+                    let _ = fs::remove_file(&path);
                 }
             }
         }
-        if let Some(exe_dir) = exe.parent() {
-            return exe_dir.join("logs");
-        }
     }
-    std::env::current_dir()
-        .map(|c| c.join("logs"))
-        .unwrap_or_else(|_| std::env::temp_dir().join("osoosi").join("logs"))
+
+    println!("✨ Cleanup complete.");
+    Ok(())
+}
+
+fn resolve_log_directory() -> PathBuf {
+    osoosi_types::resolve_log_directory()
 }
 
 fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::WorkerGuard> {
@@ -1804,13 +1845,16 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
 
     // 1. Gemma 4 E4B ONNX (primary local reasoning model). Ollama is preferred
     // when installed; these files support pure ONNX Runtime deployments.
-    let gemma_repo_name = std::env::var("OSOOSI_GEMMA_ONNX_REPO")
-        .unwrap_or_else(|_| "onnx-community/gemma-4-E4B-it-ONNX".to_string());
-    let gemma_repo = api.model(gemma_repo_name.clone());
+    if std::env::var("OSOOSI_LITE_MODE").map(|v| v == "1").unwrap_or(false) {
+        info!("LITE MODE active: Skipping Gemma 4 ONNX download to save disk space.");
+    } else {
+        let gemma_repo_name = std::env::var("OSOOSI_GEMMA_ONNX_REPO")
+            .unwrap_or_else(|_| "onnx-community/gemma-4-E4B-it-ONNX".to_string());
+        let gemma_repo = api.model(gemma_repo_name.clone());
 
-    // Just pull the necessary files into the HuggingFace cache.
-    // The runtime logic in `osoosi-core` will dynamically locate the snapshot dir.
-    info!("Ensuring Gemma 4 ONNX shards are cached from {}...", gemma_repo_name);
+        // Just pull the necessary files into the HuggingFace cache.
+        // The runtime logic in `osoosi-core` will dynamically locate the snapshot dir.
+        info!("Ensuring Gemma 4 ONNX shards are cached from {}...", gemma_repo_name);
     for filename in [
         "config.json",
         "onnx/config.json",
@@ -1838,6 +1882,7 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
         if let Ok(_) = gemma_repo.get(filename).await {
             tracing::debug!("Cached Gemma component: {}", filename);
         }
+    }
     }
 
     if std::env::var("OSOOSI_ENABLE_SMOLLM")

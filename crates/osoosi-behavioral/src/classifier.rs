@@ -111,23 +111,28 @@ impl BehavioralClassifier {
                     }
                 }
 
-                // 3. Gemma 4 Security Judge
-                let gemma_dir = std::env::var("OSOOSI_GEMMA_DIR")
-                    .map(std::path::PathBuf::from)
-                    .unwrap_or_else(|_| {
-                        let hf_dir = Path::new(&models_dir_clone).join("models--onnx-community--gemma-4-E4B-it-ONNX").join("snapshots");
-                        if let Ok(mut entries) = std::fs::read_dir(&hf_dir) {
-                            if let Some(Ok(entry)) = entries.next() {
-                                return entry.path().join("onnx");
+                let lite_mode = std::env::var("OSOOSI_LITE_MODE").map(|v| v == "1").unwrap_or(false);
+                if !lite_mode {
+                    // 3. Gemma 4 Security Judge
+                    let gemma_dir = std::env::var("OSOOSI_GEMMA_DIR")
+                        .map(std::path::PathBuf::from)
+                        .unwrap_or_else(|_| {
+                            let hf_dir = Path::new(&models_dir_clone).join("models--onnx-community--gemma-4-E4B-it-ONNX").join("snapshots");
+                            if let Ok(mut entries) = std::fs::read_dir(&hf_dir) {
+                                if let Some(Ok(entry)) = entries.next() {
+                                    return entry.path().join("onnx");
+                                }
                             }
-                        }
-                        Path::new(&models_dir_clone).join("gemma4-e4b")
-                    });
-                
-                if let Ok(j) = Gemma4Analyzer::new(&gemma_dir) {
-                    let mut guard = judge_clone.write().await;
-                    *guard = Some(Arc::new(j));
-                    info!("BehavioralClassifier: Security Judge (Gemma) tier active.");
+                            Path::new(&models_dir_clone).join("gemma4-e4b")
+                        });
+                    
+                    if let Ok(j) = Gemma4Analyzer::new(&gemma_dir) {
+                        let mut guard = judge_clone.write().await;
+                        *guard = Some(Arc::new(j));
+                        info!("BehavioralClassifier: Security Judge (Gemma) tier active.");
+                    }
+                } else {
+                    info!("BehavioralClassifier: Skipping Security Judge (Gemma) in Lite Mode.");
                 }
             }
             info!("BehavioralClassifier: Background AI initialization complete.");

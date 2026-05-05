@@ -517,13 +517,9 @@ pub fn resolve_tool_path(tool_name: &str, executable_name: &str) -> PathBuf {
 /// Defaults to current_dir/models or project_root/models if found.
 pub fn resolve_models_dir() -> PathBuf {
     if let Ok(p) = std::env::var("OSOOSI_MODELS_DIR") {
-        return PathBuf::from(p.trim());
-    }
-
-    if let Some(root) = resolve_project_root() {
-        let m = root.join("models");
-        if m.is_dir() {
-            return m;
+        let pb = PathBuf::from(p.trim());
+        if !pb.as_os_str().is_empty() {
+            return pb;
         }
     }
 
@@ -564,6 +560,24 @@ pub fn resolve_database_dir() -> PathBuf {
     std::env::current_dir()
         .unwrap_or_else(|_| PathBuf::from("."))
         .join("database")
+}
+
+pub fn resolve_log_directory() -> PathBuf {
+    if let Ok(p) = std::env::var("OSOOSI_LOG_DIR") {
+        let pb = PathBuf::from(p.trim());
+        if !pb.as_os_str().is_empty() {
+            return pb;
+        }
+    }
+
+    if let Some(root) = resolve_project_root() {
+        let l = root.join("logs");
+        return l;
+    }
+
+    std::env::current_dir()
+        .unwrap_or_else(|_| PathBuf::from("."))
+        .join("logs")
 }
 
 /// Resolve the rules directory (YARA, Sigma).

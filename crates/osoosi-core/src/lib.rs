@@ -1596,6 +1596,34 @@ impl EdrOrchestrator {
                         let _ = std::process::Command::new("freshclam").status();
                     }).await;
                 });
+
+                // 4. Log Pruning (Keep last 7 days)
+                let log_dir = osoosi_types::resolve_log_directory();
+                if log_dir.exists() {
+                    if let Ok(entries) = std::fs::read_dir(&log_dir) {
+                        for entry in entries.flatten() {
+                            if let Ok(meta) = entry.metadata() {
+                                if let Ok(modified) = meta.modified() {
+                                    if let Ok(elapsed) = modified.elapsed() {
+                                        if elapsed.as_secs() > 7 * 24 * 3600 {
+                                            let _ = std::fs::remove_file(entry.path());
+                                        }
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+
+                // 5. Disk Space Warning
+                let disks = sysinfo::Disks::new_with_refreshed_list();
+                let models_dir = osoosi_types::resolve_models_dir();
+                if let Some(disk) = disks.iter().find(|d| models_dir.starts_with(d.mount_point())) {
+                    let free_gb = disk.available_space() / (1024 * 1024 * 1024);
+                    if free_gb < 5 {
+                        warn!("⚠️ LOW DISK SPACE: Only {}GB remaining. Run 'osoosi clean --models' or use --lite mode to free up space.", free_gb);
+                    }
+                }
             }
         });
     }
