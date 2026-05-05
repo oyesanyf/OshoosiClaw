@@ -33,9 +33,9 @@ pub struct BehavioralClassifier {
     model: Option<Mutex<Session>>,
     tokenizer: Option<Tokenizer>,
     feedback: Option<FeedbackStore>,
-    smollm: Option<Arc<SmolLMAnalyzer>>,
-    securebert: Option<Arc<SecureBertAnalyzer>>,
-    judge: Option<Arc<Gemma4Analyzer>>,
+    smollm: Arc<tokio::sync::RwLock<Option<Arc<SmolLMAnalyzer>>>>,
+    securebert: Arc<tokio::sync::RwLock<Option<Arc<SecureBertAnalyzer>>>>,
+    judge: Arc<tokio::sync::RwLock<Option<Arc<Gemma4Analyzer>>>>,
     memo: Arc<dashmap::DashMap<String, (bool, f32, String)>>,
     openai_key: String,
     client: reqwest::Client,
@@ -77,48 +77,61 @@ impl BehavioralClassifier {
         let no_ai = std::env::var("OSOOSI_NO_AI")
             .map(|v| v == "1")
             .unwrap_or(false);
-        let no_ort = std::env::var("OSOOSI_NO_ORT")
-            .map(|v| v == "1")
-            .unwrap_or(false);
-        let (model, tokenizer) = if !no_ai
-            && !no_ort
-            && model_path.exists()
-            && tokenizer_path.exists()
-        {
-            info!("Loading SmolLM2-135M-Instruct model from {:?}", model_path);
+            
+        let smollm = Arc::new(tokio::sync::RwLock::new(None));
+        let securebert = Arc::new(tokio::sync::RwLock::new(None));
+        let judge = Arc::new(tokio::sync::RwLock::new(None));
+        let memo = Arc::new(dashmap::DashMap::new());
 
-            // Second layer of protection: catch panics during session creation
-            let model_path_thread = model_path.clone();
-            let session_res = std::panic::catch_unwind(move || {
-                (|| -> anyhow::Result<Session> {
-                    let builder = SessionBuilder::new()?;
-                    let session = builder.commit_from_file(&model_path_thread)?;
-                    Ok(session)
-                })()
-            });
+        // Offload heavy AI initialization to a background task to prevent startup freezes
+        let smollm_clone = smollm.clone();
+        let securebert_clone = securebert.clone();
+        let judge_clone = judge.clone();
+        let models_dir_clone = models_dir.clone();
 
-            let tok = Tokenizer::from_file(&tokenizer_path);
-
-            match (session_res, tok) {
-                (Ok(Ok(s)), Ok(t)) => (Some(Mutex::new(s)), Some(t)),
-                (Ok(Err(e)), _) => {
-                    warn!("Failed to load ONNX session: {}", e);
-                    (None, None)
+        tokio::spawn(async move {
+            info!("BehavioralClassifier: Starting background AI initialization...");
+            
+            if !no_ai {
+                // 1. SecureBERT (ONNX)
+                let bert_dir = Path::new(&models_dir_clone).join("securebert");
+                if let Ok(s) = SecureBertAnalyzer::new(&bert_dir) {
+                    let mut guard = securebert_clone.write().await;
+                    *guard = Some(Arc::new(s));
+                    info!("BehavioralClassifier: SecureBERT tier active.");
                 }
-                (Err(_), _) => {
-                    warn!("ONNX Runtime session creation panicked internally.");
-                    (None, None)
+
+                // 2. SmolLM
+                if std::env::var("OSOOSI_ENABLE_SMOLLM").map(|v| v == "1").unwrap_or(false) {
+                    let smollm_dir = Path::new(&models_dir_clone).join("smollm");
+                    if let Ok(s) = SmolLMAnalyzer::new(&smollm_dir) {
+                        let mut guard = smollm_clone.write().await;
+                        *guard = Some(Arc::new(s));
+                        info!("BehavioralClassifier: SmolLM tier active.");
+                    }
                 }
-                (_, Err(e)) => {
-                    info!("Behavioral ONNX tokenizer format not supported by current tokenizers crate ({}). Classifier proceeds without local ONNX; AI reasoning uses Ollama/LLM Cortex.", e);
-                    (None, None)
+
+                // 3. Gemma 4 Security Judge
+                let gemma_dir = std::env::var("OSOOSI_GEMMA_DIR")
+                    .map(std::path::PathBuf::from)
+                    .unwrap_or_else(|_| {
+                        let hf_dir = Path::new(&models_dir_clone).join("models--onnx-community--gemma-4-E4B-it-ONNX").join("snapshots");
+                        if let Ok(mut entries) = std::fs::read_dir(&hf_dir) {
+                            if let Some(Ok(entry)) = entries.next() {
+                                return entry.path().join("onnx");
+                            }
+                        }
+                        Path::new(&models_dir_clone).join("gemma4-e4b")
+                    });
+                
+                if let Ok(j) = Gemma4Analyzer::new(&gemma_dir) {
+                    let mut guard = judge_clone.write().await;
+                    *guard = Some(Arc::new(j));
+                    info!("BehavioralClassifier: Security Judge (Gemma) tier active.");
                 }
             }
-        } else {
-            info!("Behavioral classifier: local ONNX text model disabled; LLM reasoning is handled by the reasoning backend when configured.");
-            (None, None)
-        };
-
+            info!("BehavioralClassifier: Background AI initialization complete.");
+        });
         let openai_key = std::env::var("OPENAI_API_KEY")
             .or_else(|_| std::env::var("OSOOSI_OPENAI_API_KEY"))
             .unwrap_or_default();
@@ -128,106 +141,15 @@ impl BehavioralClassifier {
             .build()
             .unwrap_or_default();
 
-        let securebert = if !no_ai {
-            let securebert_dir = std::env::var("OSOOSI_SECUREBERT_DIR")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|_| {
-                    let hf_dir = Path::new(&models_dir).join("models--MarsSecurity--securebert-onnx").join("snapshots");
-                    if let Ok(mut entries) = std::fs::read_dir(&hf_dir) {
-                        if let Some(Ok(entry)) = entries.next() {
-                            return entry.path();
-                        }
-                    }
-                    Path::new(&models_dir).join("behavioral")
-                });
-                
-            match SecureBertAnalyzer::new(&securebert_dir) {
-                Ok(s) => {
-                    info!("Native SecureBert Cross-Encoder loaded successfully.");
-                    Some(Arc::new(s))
-                }
-                Err(e) => {
-                    info!("SecureBert Cross-Encoder unavailable: {}. Using fallback methods.", e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        let smollm = if !no_ai
-            && model.is_none()
-            && securebert.is_none()
-            && std::env::var("OSOOSI_ENABLE_SMOLLM")
-                .map(|v| v == "1")
-                .unwrap_or(false)
-        {
-            // Attempt to load native SmolLM2 if available (fallback)
-            let smollm_dir = std::env::var("OSOOSI_SMOLLM_DIR")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|_| {
-                    let hf_dir = Path::new(&models_dir).join("models--HuggingFaceTB--SmolLM2-135M-Instruct").join("snapshots");
-                    if let Ok(mut entries) = std::fs::read_dir(&hf_dir) {
-                        if let Some(Ok(entry)) = entries.next() {
-                            return entry.path();
-                        }
-                    }
-                    Path::new(&models_dir).join("smollm")
-                });
-                
-            match SmolLMAnalyzer::new(&smollm_dir) {
-                Ok(s) => {
-                    info!("Native SmolLM2 fallback initialization successful.");
-                    Some(Arc::new(s))
-                }
-                Err(e) => {
-                    warn!(
-                        "Native SmolLM fallback unavailable: {}. Using Rule-based + OpenAI.",
-                        e
-                    );
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
-        let judge = if !no_ai {
-            let gemma_dir = std::env::var("OSOOSI_GEMMA_DIR")
-                .map(std::path::PathBuf::from)
-                .unwrap_or_else(|_| {
-                    let hf_dir = Path::new(&models_dir).join("models--onnx-community--gemma-4-E4B-it-ONNX").join("snapshots");
-                    if let Ok(mut entries) = std::fs::read_dir(&hf_dir) {
-                        if let Some(Ok(entry)) = entries.next() {
-                            return entry.path().join("onnx");
-                        }
-                    }
-                    Path::new(&models_dir).join("gemma4-e4b")
-                });
-                
-            match Gemma4Analyzer::new(&gemma_dir) {
-                Ok(j) => {
-                    info!("LLM Security Judge initialized (Cortex Tier).");
-                    Some(Arc::new(j))
-                }
-                Err(e) => {
-                    info!("LLM Security Judge unavailable: {}. Forensic reasoning will use fallbacks.", e);
-                    None
-                }
-            }
-        } else {
-            None
-        };
-
         Self {
             suspicious_patterns,
-            model,
-            tokenizer,
+            model: None,
+            tokenizer: None,
             feedback,
             smollm,
             securebert,
             judge,
-            memo: Arc::new(dashmap::DashMap::new()),
+            memo,
             openai_key,
             client,
         }
@@ -421,24 +343,28 @@ impl BehavioralClassifier {
         }
 
         // 3b. SecureBERT Cross-Encoder (Transformer-based fallback/secondary)
-        if let Some(ref sb) = self.securebert {
-            let query = "Is this log activity malicious or indicative of a cyber attack?";
-            match sb.score_pair(query, sentence) {
-                Ok(sb_score) => {
-                    max_score = max_score.max(sb_score);
-                    if sb_score >= 0.7 {
-                        reasons.push(format!("SecureBERT Cross-Encoder analysis: {:.2}", sb_score));
+        {
+            let bert_guard = self.securebert.read().await;
+            if let Some(ref sb) = *bert_guard {
+                let query = "Is this log activity malicious or indicative of a cyber attack?";
+                match sb.score_pair(query, sentence) {
+                    Ok(sb_score) => {
+                        max_score = max_score.max(sb_score);
+                        if sb_score >= 0.7 {
+                            reasons.push(format!("SecureBERT Cross-Encoder analysis: {:.2}", sb_score));
+                        }
                     }
-                }
-                Err(e) => {
-                    debug!("SecureBert score_pair failed: {}", e);
+                    Err(e) => {
+                        debug!("SecureBert score_pair failed: {}", e);
+                    }
                 }
             }
         }
 
-        if self.model.is_none() && self.securebert.is_none() {
+        if self.model.is_none() {
             // 4. SmolLM Fallback (Deep Security Reasoning)
-            if let Some(ref smollm) = self.smollm {
+            let smollm_guard = self.smollm.read().await;
+            if let Some(ref smollm) = *smollm_guard {
                 match smollm.analyze_log(sentence) {
                     Ok(score) => {
                         max_score = max_score.max(score);
@@ -452,8 +378,8 @@ impl BehavioralClassifier {
                             .await;
                     }
                 }
-            } else {
-                // 5. OpenAI Final Fallback
+            } else if (*self.securebert.read().await).is_none() {
+                // 5. OpenAI Final Fallback (only if local AI is unavailable)
                 self.openai_fallback(sentence, &mut max_score, &mut reasons)
                     .await;
             }
@@ -463,7 +389,8 @@ impl BehavioralClassifier {
 
         // 3c. LLM Cortex Reasoning (High-fidelity final tier)
         if is_suspicious {
-            if let Some(ref judge) = self.judge {
+            let judge_guard = self.judge.read().await;
+            if let Some(ref judge) = *judge_guard {
                 let suspect_query = format!("Analyze this forensic artifact: '{}'. Is it malicious or benign context?", sentence);
                 match judge.judge_artifact(&suspect_query).await {
                     Ok(verdict) => {

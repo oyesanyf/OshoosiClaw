@@ -338,7 +338,9 @@ impl Gemma4Analyzer {
         let onnx_file = if decoder_path.exists() { &decoder_path } else { &model_path };
         let onnx_viable = onnx_file.exists() && {
             let sz = std::fs::metadata(onnx_file).map(|m| m.len()).unwrap_or(0);
-            sz > 10_000_000 // > 10 MB means it's likely a real model, not a manifest
+            // Allow smaller ONNX files (manifests) if the graph is valid, but avoid HTML stubs.
+            // 600KB+ is reasonable for a large LLM graph without weights.
+            sz > 100_000 
         };
 
         // Try ONNX only if the model file is large enough to be real

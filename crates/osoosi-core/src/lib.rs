@@ -177,9 +177,12 @@ fn should_skip_file_malware_scan(path: &std::path::Path) -> bool {
         || path_lc.contains("\\oshoosiclaw\\target\\")
         || path_lc.contains("\\oshoosiclaw\\.git\\")
         || path_lc.contains("\\oshoosiclaw\\cache\\")
-        || path_lc.contains("\\oshoosiclaw\\models\\")
-        || path_lc.contains("\\oshoosiclaw\\logs\\")
-        || path_lc.contains("\\oshoosiclaw\\traps\\")
+        || path_lc.contains("\\models\\")
+        || path_lc.contains("\\logs\\")
+        || path_lc.contains("\\traps\\")
+        || path_lc.contains("\\wavlink\\")
+        || path_lc.contains("\\windows\\temp\\")
+        || path_lc.contains("threat_model.json")
     {
         return true;
     }
@@ -1877,38 +1880,39 @@ impl EdrOrchestrator {
                         }
                         let orchestrator = orchestrator.clone();
                         set.spawn(async move {
-                        info!(
-                            "File change detected: {} (Hash: {})",
-                            event.path, event.hash
-                        );
-                        let _ = orchestrator
-                            .memory
-                            .update_file_hash(&event.path, &event.hash);
-                        if let Ok(Some(verdict)) = orchestrator.memory.get_ai_override(&event.hash)
-                        {
-                            if verdict {
-                                warn!("File Monitor: local ledger marks {} as malicious; escalating without model scan.", event.path);
-                            } else {
-                                info!(
-                                    "File Monitor: local ledger allows {}; skipping AI scan.",
-                                    event.path
-                                );
+                            let path = std::path::Path::new(&event.path);
+                            if should_skip_file_malware_scan(path)
+                                || orchestrator
+                                    .memory
+                                    .is_internal_asset_path(&event.path)
+                                    .unwrap_or(false)
+                            {
                                 return;
                             }
-                        }
 
-                        // Magika pre-filter: only executable/scannable files go to the full scanner
-                        let path = std::path::Path::new(&event.path);
-                        if should_skip_file_malware_scan(path)
-                            || orchestrator
+                            info!(
+                                "File change detected: {} (Hash: {})",
+                                event.path, event.hash
+                            );
+
+                            let _ = orchestrator
                                 .memory
-                                .is_internal_asset_path(&event.path)
-                                .unwrap_or(false)
-                        {
-                            debug!("File Monitor: skipping non-malware asset {}", event.path);
-                            return;
-                        }
-                        if let Some(result) = orchestrator.malware_scanner.scan_file(path).await {
+                                .update_file_hash(&event.path, &event.hash);
+
+                            if let Ok(Some(verdict)) = orchestrator.memory.get_ai_override(&event.hash)
+                            {
+                                if verdict {
+                                    warn!("File Monitor: local ledger marks {} as malicious; escalating without model scan.", event.path);
+                                } else {
+                                    info!(
+                                        "File Monitor: local ledger allows {}; skipping AI scan.",
+                                        event.path
+                                    );
+                                    return;
+                                }
+                            }
+
+                            if let Some(result) = orchestrator.malware_scanner.scan_file(path).await {
                             // ClamAV is decommissioned. Rely on native YaraX and ML scores.
 
                             // 2. Trigger Deep Static Analysis (CAPA, FLOSS, Falcon) for suspicious files or executables
