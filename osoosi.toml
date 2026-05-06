@@ -54,7 +54,7 @@ peers = []
 nostr_relays = ["ws://localhost:8080"]
 # Security: If true, allows fallback to public Nostr relays if private ones are offline.
 # WARNING: This may leak encrypted telemetry metadata to public servers.
-allow_public_relays = false
+allow_public_relays = true
 
 [backup]
 # Enable backup on agent start
@@ -76,9 +76,8 @@ max_host_calls_per_session = 256
 # NVD API key (env: NVD_API_KEY)
 # nvd_api_key = ""
 
-[policy]
 # Paths to exclude from ALL scanning (suppresses all voters)
-# consensus_exclude_paths = ["C:\\Windows\\Temp", "D:\\backup"]
+consensus_exclude_paths = ["D:\\harfile\\OshoosiClaw\\traps", "C:\\Windows\\Temp", "D:\\backup"]
 
 # Path substrings to consider 'trusted' (caps confidence at 0.15)
 consensus_trusted_paths = ["\\OshoosiClaw\\target\\", "\\OshoosiClaw\\tools\\"]

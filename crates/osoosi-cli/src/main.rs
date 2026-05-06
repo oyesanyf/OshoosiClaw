@@ -250,29 +250,40 @@ pub enum SandboxAction {
 
 fn main() -> anyhow::Result<()> {
     osoosi_types::persist_environment_paths();
-
-    // Rayon global pool for CPU-tier analysis (policy+entropy bridge, parallel scans). Must run before any `rayon::spawn`.
     osoosi_core::init_hybrid_concurrency();
+
     let worker_threads = osoosi_core::tokio_worker_threads();
-    let rt = tokio::runtime::Builder::new_multi_thread()
-        .worker_threads(worker_threads)
-        .max_blocking_threads(osoosi_core::max_blocking_threads())
-        .enable_all()
-        .thread_name_fn(|| {
-            static C: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
-            let n = C.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
-            format!("osoosi-tokio-{}", n)
-        })
-        .build()?;
-    match rt.block_on(async {
-        set_panic_hook();
-        let cli = Cli::parse();
-        let _guard = init_logging(cli.debug)?;
-        async_main(cli).await
-    }) {
-        Ok(()) => Ok(()),
-        Err(e) => {
-            eprintln!("Fatal execution error: {}", e);
+    
+    // Create the runtime, but don't run it on the main thread (which has a small stack).
+    // Instead, spawn a dedicated thread with a large stack size (16MB).
+    let handle = std::thread::Builder::new()
+        .name("osoosi-boot".into())
+        .stack_size(16 * 1024 * 1024)
+        .spawn(move || -> anyhow::Result<()> {
+            let rt = tokio::runtime::Builder::new_multi_thread()
+                .worker_threads(worker_threads)
+                .max_blocking_threads(osoosi_core::max_blocking_threads())
+                .thread_stack_size(16 * 1024 * 1024) 
+                .enable_all()
+                .thread_name_fn(|| {
+                    static C: std::sync::atomic::AtomicUsize = std::sync::atomic::AtomicUsize::new(0);
+                    let n = C.fetch_add(1, std::sync::atomic::Ordering::SeqCst);
+                    format!("osoosi-tokio-{}", n)
+                })
+                .build()?;
+                
+            rt.block_on(async {
+                set_panic_hook();
+                let cli = Cli::parse();
+                let _guard = init_logging(cli.debug)?;
+                async_main(cli).await
+            })
+        })?;
+
+    match handle.join() {
+        Ok(res) => res,
+        Err(_) => {
+            eprintln!("Fatal error: Boot thread panicked.");
             std::process::exit(1);
         }
     }

@@ -775,8 +775,10 @@ impl EdrOrchestrator {
     pub async fn new() -> anyhow::Result<Self> {
         // Ensures hybrid Tokio+Rayon is wired even when the agent is not started via `osoosi` CLI (tests, embedders).
         crate::init_hybrid_concurrency();
+        info!("EdrOrchestrator: Loading runtime configuration...");
         let runtime_config = load_runtime_config();
 
+        info!("EdrOrchestrator: Initializing executors...");
         let host_executor: Arc<dyn SecuredExecutor> =
             Arc::new(crate::secured_executor::DirectExecutor::new());
         let task_executor: Arc<dyn SecuredExecutor> =
@@ -793,17 +795,20 @@ impl EdrOrchestrator {
                 Arc::new(crate::secured_executor::DirectExecutor::new())
             };
 
+        info!("EdrOrchestrator: Initializing memory store at {}...", runtime_config.db_path);
         let memory = Arc::new(MemoryStore::new(&runtime_config.db_path)?);
+        info!("EdrOrchestrator: Registering internal assets...");
         register_internal_assets(&memory);
         let policy_config = osoosi_types::load_policy_config();
+        info!("EdrOrchestrator: Initializing policy engine...");
         let policy = Arc::new(PolicyEngine::new(memory.clone(), policy_config));
         
-
-
+        info!("EdrOrchestrator: Initializing mesh network...");
         let mesh_config = osoosi_types::load_mesh_listen_config();
         let mesh = Arc::new(tokio::sync::Mutex::new(Some(
             MeshNode::new(memory.clone()).await?,
         )));
+        info!("EdrOrchestrator: Mesh network initialized.");
 
         // --- 2. NOSTR GLOBAL INTELLIGENCE (BitChat Style) ---
         // Uses decentralized relays for cross-organization threat sharing with Differential Privacy.
@@ -815,7 +820,12 @@ impl EdrOrchestrator {
                 let geo_dir = crate::geo_mesh::GeoRelayDirectory::new();
                 let geo_csv_url = "https://raw.githubusercontent.com/permissionlesstech/georelays/refs/heads/main/nostr_relays.csv";
                 
-                if let Ok(resp) = reqwest::get(geo_csv_url).await {
+                info!("Nostr Mesh: Fetching geo-relay directory from {}...", geo_csv_url);
+                let client = reqwest::Client::builder()
+                    .timeout(Duration::from_secs(5))
+                    .build()?;
+                
+                if let Ok(resp) = client.get(geo_csv_url).send().await {
                     if let Ok(csv) = resp.text().await {
                         geo_dir.load_csv(&csv).await;
                         nostr_relays = geo_dir.auto_bootstrap().await;
@@ -841,8 +851,15 @@ impl EdrOrchestrator {
             for relay in nostr_relays {
                 let _ = nostr_orch.add_relay(&relay).await;
             }
-            nostr_orch.connect().await;
-            Arc::new(nostr_orch)
+            
+            // Spawn connection in background to prevent hang if relays are unreachable
+            let orch_clone = Arc::new(nostr_orch);
+            let connect_orch = orch_clone.clone();
+            tokio::spawn(async move {
+                connect_orch.connect().await;
+                info!("Nostr Mesh: Connection task completed.");
+            });
+            orch_clone
         } else {
             // Create an empty/disabled orchestrator placeholder or handle via Option
             // For now, we create a disconnected one to satisfy the type system

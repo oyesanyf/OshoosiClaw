@@ -338,77 +338,72 @@ impl Gemma4Analyzer {
 
         let model_path = resolved_dir.join("model.onnx");
         let decoder_path = resolved_dir.join("decoder_model_merged.onnx");
-        let onnx_file = if decoder_path.exists() { decoder_path } else { model_path };
+        let onnx_src = if decoder_path.exists() { decoder_path } else { model_path };
         
-        let tokenizer_filename = if model_dir.join("tokenizer.json").exists() {
+        let tokenizer_src = if model_dir.join("tokenizer.json").exists() {
             model_dir.join("tokenizer.json")
-        } else if resolved_dir.join("tokenizer.json").exists() {
-            resolved_dir.join("tokenizer.json")
         } else {
             resolved_dir.join("tokenizer.json")
         };
 
-        // Automatic Shard Consolidation: If .onnx_data is missing but _1, _2... exist, combine them.
-        // We MUST do this in the model_dir to avoid modifying the HF cache (which might be read-only).
+        // Automatic Shard Consolidation
         let onnx_data_main = model_dir.join("decoder_model_merged.onnx_data");
         if !onnx_data_main.exists() {
             let mut shards = Vec::new();
-            // Check both the model_dir and the resolved_dir (cache) for shards
-            for base in &[model_dir, resolved_dir.as_path()] {
+            let bases = [model_dir, &resolved_dir];
+            for base in &bases {
                 for i in 1..20 {
                     let shard = base.join(format!("decoder_model_merged.onnx_data_{}", i));
-                    if shard.exists() {
-                        shards.push(shard);
-                    }
+                    if shard.exists() { shards.push(shard); }
                 }
                 if !shards.is_empty() { break; }
             }
 
             if !shards.is_empty() {
-                info!("Detected {} fragmented ONNX shards. Consolidating into {:?}...", shards.len(), onnx_data_main);
+                info!("Consolidating {} ONNX shards into {:?}...", shards.len(), onnx_data_main);
                 let mut combined = Vec::new();
                 for shard in shards {
-                    if let Ok(data) = std::fs::read(&shard) {
-                        combined.extend_from_slice(&data);
-                    }
+                    if let Ok(data) = std::fs::read(&shard) { combined.extend_from_slice(&data); }
                 }
                 if !combined.is_empty() {
                     let _ = std::fs::create_dir_all(&model_dir);
-                    if let Err(e) = std::fs::write(&onnx_data_main, combined) {
-                        warn!("Failed to write consolidated ONNX data: {}", e);
-                    } else {
-                        info!("Successfully consolidated ONNX shards.");
-                    }
+                    let _ = std::fs::write(&onnx_data_main, combined);
+                }
+            } else {
+                // If no shards but a single data file exists in snapshot, link it
+                let snapshot_data = resolved_dir.join("decoder_model_merged.onnx_data");
+                if snapshot_data.exists() {
+                    let _ = std::fs::create_dir_all(&model_dir);
+                    let _ = std::fs::copy(&snapshot_data, &onnx_data_main);
                 }
             }
         }
 
-        let onnx_viable = onnx_file.exists() && {
-            let sz = std::fs::metadata(&onnx_file).map(|m| m.len()).unwrap_or(0);
-            sz > 100_000 
-        };
+        // Co-locate ONNX manifest with data
+        let target_onnx = model_dir.join(onnx_src.file_name().unwrap_or_default());
+        if !target_onnx.exists() && onnx_src.exists() {
+            let _ = std::fs::copy(&onnx_src, &target_onnx);
+        }
 
-        // Try ONNX only if the model file is large enough to be real
+        let onnx_viable = target_onnx.exists() && std::fs::metadata(&target_onnx).map(|m| m.len()).unwrap_or(0) > 100_000;
+
         if onnx_viable {
             match (|| -> Result<Self> {
-                let tokenizer = Tokenizer::from_file(&tokenizer_filename).map_err(anyhow::Error::msg)?;
+                let tokenizer = Tokenizer::from_file(&tokenizer_src).map_err(anyhow::Error::msg)?;
                 let session = Session::builder()?
                     .with_optimization_level(GraphOptimizationLevel::Level3)?
-                    .with_intra_threads(4)?
-                    .commit_from_file(onnx_file)?;
+                    .with_intra_threads(2)?
+                    .commit_from_file(&target_onnx)?;
                 
                 Ok(Self::Onnx {
                     session: Arc::new(std::sync::Mutex::new(session)),
                     tokenizer,
-                    device: Device::Cpu, // ONNX default
+                    device: Device::Cpu,
                 })
             })() {
                 Ok(s) => return Ok(s),
-                Err(e) => warn!("LLM ONNX initialization failed: {}. Falling back.", e),
+                Err(e) => warn!("Gemma ONNX init failed: {}. Falling back.", e),
             }
-        } else if onnx_file.exists() {
-            info!("LLM ONNX manifest is a stub ({} bytes). Skipping ONNX, using Ollama/Candle fallback.",
-                std::fs::metadata(onnx_file).map(|m| m.len()).unwrap_or(0));
         }
 
         let ai_cfg = osoosi_types::config::load_ai_config();
@@ -705,21 +700,37 @@ impl SecureBertAnalyzer {
             }
         };
 
-        let tokenizer_path = resolved_dir.join("tokenizer.json");
-        if !tokenizer_path.exists() {
-            anyhow::bail!("SecureBERT tokenizer.json not found in {:?} (resolved to {:?})", model_dir, resolved_dir);
+        let onnx_src = resolved_dir.join("model.onnx");
+        let tokenizer_src = resolved_dir.join("tokenizer.json");
+        
+        // Co-locate if necessary
+        let target_onnx = model_dir.join("model.onnx");
+        let target_tokenizer = model_dir.join("tokenizer.json");
+        
+        if !target_onnx.exists() && onnx_src.exists() {
+            let _ = std::fs::create_dir_all(&model_dir);
+            let _ = std::fs::copy(&onnx_src, &target_onnx);
         }
-        let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(anyhow::Error::msg)?;
+        if !target_tokenizer.exists() && tokenizer_src.exists() {
+            let _ = std::fs::create_dir_all(&model_dir);
+            let _ = std::fs::copy(&tokenizer_src, &target_tokenizer);
+        }
 
-        // Try ONNX first (model.onnx — already downloaded, architecture-agnostic)
-        let onnx_path = resolved_dir.join("model.onnx");
-        if onnx_path.exists() {
-            let sz = std::fs::metadata(&onnx_path).map(|m| m.len()).unwrap_or(0);
+        let final_tokenizer_path = if target_tokenizer.exists() { target_tokenizer } else { tokenizer_src };
+        if !final_tokenizer_path.exists() {
+            anyhow::bail!("SecureBERT tokenizer.json not found.");
+        }
+        let tokenizer = Tokenizer::from_file(&final_tokenizer_path).map_err(anyhow::Error::msg)?;
+
+        // Try ONNX first
+        let final_onnx_path = if target_onnx.exists() { target_onnx } else { onnx_src };
+        if final_onnx_path.exists() {
+            let sz = std::fs::metadata(&final_onnx_path).map(|m| m.len()).unwrap_or(0);
             if sz > 10_000_000 {
                 match Session::builder()
                     .and_then(|b| b.with_optimization_level(GraphOptimizationLevel::Level3))
-                    .and_then(|b| b.with_intra_threads(4))
-                    .and_then(|b| b.commit_from_file(&onnx_path))
+                    .and_then(|b| b.with_intra_threads(2)) // Lower threads to avoid CPU spikes
+                    .and_then(|b| b.commit_from_file(&final_onnx_path))
                 {
                     Ok(session) => {
                         info!("SecureBERT ONNX loaded successfully ({} MB)", sz / 1_000_000);
