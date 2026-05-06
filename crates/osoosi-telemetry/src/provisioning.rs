@@ -229,11 +229,29 @@ impl AgentProvisioner {
 
     #[cfg(target_os = "windows")]
     pub async fn apply_blocking_rules(&self, rules: &[osoosi_types::BlockingRule]) -> anyhow::Result<()> {
-        info!("Provisioner: Applying {} blocking rules to Windows...", rules.len());
-        // In a real implementation, this would update AppLocker/WDAC or IFEO.
-        // For now, we log the attempt.
+        info!("Provisioner: Applying {} persistent blocking rules to Windows Registry...", rules.len());
+        
         for rule in rules {
-            info!("Blocking Rule: {:?} on {}", rule.kind, rule.path);
+            if rule.kind == osoosi_types::BlockingKind::Executable {
+                let path = std::path::Path::new(&rule.path);
+                if let Some(exe_name) = path.file_name().and_then(|n| n.to_str()) {
+                    info!("Enforcing Hard-Block for {}: IFEO Debugger -> blocked.exe", exe_name);
+                    
+                    let mut cmd = Command::new("reg");
+                    cmd.args([
+                        "add",
+                        &format!(r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\{}", exe_name),
+                        "/v", "Debugger",
+                        "/t", "REG_SZ",
+                        "/d", "systray.exe", // Using systray.exe as a safe "noop" debugger
+                        "/f"
+                    ]);
+                    
+                    if let Err(e) = self.executor.execute(cmd).await {
+                        warn!("Failed to apply IFEO block for {}: {}", exe_name, e);
+                    }
+                }
+            }
         }
         Ok(())
     }

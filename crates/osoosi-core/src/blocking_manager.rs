@@ -11,10 +11,32 @@ pub struct BlockingManager {
 
 impl BlockingManager {
     pub fn new(provisioner: Arc<AgentProvisioner>) -> Self {
-        Self {
+        let mut manager = Self {
             rules: RwLock::new(Vec::new()),
             provisioner,
+        };
+        let _ = manager.load_rules();
+        manager
+    }
+
+    fn load_rules(&mut self) -> anyhow::Result<()> {
+        let path = osoosi_types::resolve_base_dir().join("blocking_rules.json");
+        if path.exists() {
+            let data = std::fs::read_to_string(&path)?;
+            let rules: Vec<BlockingRule> = serde_json::from_str(&data)?;
+            let mut guard = self.rules.blocking_write();
+            *guard = rules;
+            info!("BlockingManager: Loaded {} persistent rules from {:?}.", guard.len(), path);
         }
+        Ok(())
+    }
+
+    async fn save_rules(&self) -> anyhow::Result<()> {
+        let rules = self.rules.read().await;
+        let data = serde_json::to_string_pretty(&*rules)?;
+        let path = osoosi_types::resolve_base_dir().join("blocking_rules.json");
+        std::fs::write(path, data)?;
+        Ok(())
     }
 
     pub async fn add_rule(&self, rule: BlockingRule) -> anyhow::Result<()> {
@@ -25,6 +47,7 @@ impl BlockingManager {
             .any(|r| r.path == rule.path && r.kind == rule.kind)
         {
             rules.push(rule);
+            let _ = self.save_rules().await;
             #[cfg(target_os = "windows")]
             self.provisioner.apply_blocking_rules(&rules).await?;
         }

@@ -5,35 +5,31 @@ use std::path::{Path, PathBuf};
 
 /// Move a detected malware file to the quarantine directory.
 /// Creates quarantine dir if needed. Preserves filename with hash prefix to avoid collisions.
-pub fn quarantine_file(file_path: &str, quarantine_dir: &str) -> anyhow::Result<PathBuf> {
+pub fn quarantine_file(file_path: &str) -> anyhow::Result<PathBuf> {
     let src = Path::new(file_path);
     if !src.exists() {
         return Err(anyhow::anyhow!("File does not exist: {}", file_path));
     }
-    if !src.is_file() {
-        return Err(anyhow::anyhow!("Not a file: {}", file_path));
-    }
-
+    
+    let quarantine_dir = "quarantine";
     std::fs::create_dir_all(quarantine_dir)?;
-
-    let filename = src
-        .file_name()
-        .and_then(|n| n.to_str())
-        .unwrap_or("unknown");
-    let hash_suffix = format!(
-        "{:x}",
-        std::time::SystemTime::now()
-            .duration_since(std::time::UNIX_EPOCH)
-            .unwrap_or_default()
-            .as_secs()
-    );
-    let safe_name = format!("{}_{}", hash_suffix, filename);
-    let dest = Path::new(quarantine_dir).join(&safe_name);
+    
+    let filename = src.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+    let timestamp = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .unwrap_or_default()
+        .as_secs();
+    let dest = Path::new(quarantine_dir).join(format!("{}_{}", timestamp, filename));
 
     if std::fs::rename(src, &dest).is_err() {
-        // Fallback: copy then remove (e.g. cross-device)
         std::fs::copy(src, &dest)?;
         let _ = std::fs::remove_file(src);
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&dest, std::fs::Permissions::from_mode(0o400));
     }
 
     Ok(dest)

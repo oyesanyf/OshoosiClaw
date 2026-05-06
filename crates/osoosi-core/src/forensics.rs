@@ -6,11 +6,12 @@ use tracing::{error, warn};
 
 pub struct ForensicStoryteller {
     analyzer: Option<SmolLMAnalyzer>,
+    judge: Option<std::sync::Arc<osoosi_behavioral::Gemma4Analyzer>>,
 }
 
 impl Default for ForensicStoryteller {
     fn default() -> Self {
-        Self::new()
+        Self::new(None)
     }
 }
 
@@ -23,12 +24,13 @@ struct StoryGroup {
 }
 
 impl ForensicStoryteller {
-    pub fn new() -> Self {
+    pub fn new(judge: Option<std::sync::Arc<osoosi_behavioral::Gemma4Analyzer>>) -> Self {
         if !std::env::var("OSOOSI_ENABLE_SMOLLM")
             .map(|v| v == "1")
             .unwrap_or(false)
+            && judge.is_none()
         {
-            return Self { analyzer: None };
+            return Self { analyzer: None, judge: None };
         }
         let models_dir =
             std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
@@ -45,7 +47,7 @@ impl ForensicStoryteller {
             }
         };
 
-        Self { analyzer }
+        Self { analyzer, judge }
     }
 
     fn extract_process_name(entry: &AuditEntry) -> String {
@@ -135,6 +137,20 @@ impl ForensicStoryteller {
                     g.event_type,
                     g.process_name
                 ));
+            }
+        }
+
+        if let Some(ref judge) = self.judge {
+            let prompt = format!(
+                "<|user|>\nYou are a professional forensic security analyst. Summarize this aggregated security timeline into a high-fidelity narrative report for a CISO. Focus on the 'story' of the attack, its progression, and the autonomous defensive actions taken. Timeline:\n{}\n<|end|>\n<|assistant|>\n",
+                timeline_data
+            );
+
+            match judge.generate_text(&prompt, 400).await {
+                Ok(story) => return story,
+                Err(e) => {
+                    warn!("Gemma4 Storyteller inference failed: {}. Trying SmolLM fallback.", e);
+                }
             }
         }
 

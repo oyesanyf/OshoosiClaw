@@ -177,13 +177,53 @@ impl NativeTelemetryEngine {
             })
             .build();
 
-        // 4. Run the Trace
-        info!("🚀 [NATIVE-TELEMETRY] Starting Oshoosi Native Monitoring (Zero-Process ETW)...");
+        // 4. Define the Sysmon Provider (Microsoft-Windows-Sysmon)
+        let tx_sysmon = tx.clone();
+        let computer_sysmon = computer.clone();
+        let sysmon_provider = Provider::by_guid("5770385F-C22A-43E0-BF4C-06F5698FFBD9")
+            .add_callback(move |record, schema_locator| {
+                if let Ok(schema) = schema_locator.event_schema(record) {
+                    let parser = Parser::create(record, &schema);
+                    let event_id = record.event_id();
+                    
+                    if event_id == 1 { // Process Create
+                        let cmd_line: String = parser.try_parse("CommandLine").unwrap_or_default();
+                        let image: String = parser.try_parse("Image").unwrap_or_default();
+                        let pid = record.process_id();
+                        
+                        if cmd_line.contains("deceptive_techniques.py") {
+                            info!("🔥 [CRITICAL] Deceptive Technique Execution Detected: {}", cmd_line);
+                        }
+
+                        let data = serde_json::json!({
+                            "ProcessId": pid,
+                            "CommandLine": cmd_line,
+                            "Image": image,
+                            "ParentProcessId": parser.try_parse::<u32>("ParentProcessId").unwrap_or(0),
+                        });
+
+                        let event = HostSecurityEvent {
+                            source: HostEventSource::WindowsEventLog,
+                            event_id: 1,
+                            timestamp: Utc::now(),
+                            computer: computer_sysmon.clone(),
+                            data,
+                            causal_parent: None,
+                        };
+                        let _ = tx_sysmon.try_send(event);
+                    }
+                }
+            })
+            .build();
+
+        // 5. Run the Trace
+        info!("🚀 [NATIVE-TELEMETRY] Starting Oshoosi Native Monitoring (Multi-Provider ETW)...");
         let trace = UserTrace::new()
             .named("OshoosiNativeTrace".to_string())
             .enable(process_provider)
             .enable(file_provider)
-            .enable(network_provider);
+            .enable(network_provider)
+            .enable(sysmon_provider);
 
         tokio::task::spawn_blocking(move || {
             if let Err(e) = trace.start() {

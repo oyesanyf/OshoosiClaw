@@ -926,7 +926,6 @@ impl EdrOrchestrator {
         let nsrl_cache = Arc::new(dashmap::DashMap::new());
         let remediation = Arc::new(crate::remediation::RemediationController::new());
         let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
-        let storyteller = Arc::new(crate::forensics::ForensicStoryteller::new());
         let causal_ai = Arc::new(crate::causal_ai::CausalEngine::new());
         let self_healing = Arc::new(crate::self_healing::SelfHealingEngine::new(
             audit.clone(),
@@ -1015,6 +1014,7 @@ impl EdrOrchestrator {
         } else {
             None
         };
+        let storyteller = Arc::new(crate::forensics::ForensicStoryteller::new(gemma_cortex.clone()));
 
         let provisioner = Arc::new(osoosi_telemetry::AgentProvisioner::new(
             host_executor.clone(),
@@ -1976,10 +1976,27 @@ impl EdrOrchestrator {
 
                             if result.is_malware {
                                 warn!(
-                                "MALWARE DETECTED: {} (magika={}, type={}, ml={:.2}, sig={:.2}, combined={:.2})",
-                                result.file_path, result.magika_label, result.malware_type,
-                                result.ml_score, result.signature_score, result.combined_score
-                            );
+                                    "MALWARE DETECTED: {} (magika={}, ml={:.2}, combined={:.2})",
+                                    result.file_path, result.magika_label,
+                                    result.ml_score, result.combined_score
+                                );
+
+                                let autonomy = osoosi_types::load_autonomy_config();
+                                if result.combined_score >= autonomy.action_confidence_threshold as f64 {
+                                    info!("AUTONOMOUS RESPONSE: Applying hard-block and quarantine for {}", result.file_path);
+                                    
+                                    // 1. Block the path persistently
+                                    let rule = osoosi_types::BlockingRule {
+                                        path: result.file_path.clone(),
+                                        kind: osoosi_types::BlockingKind::Executable,
+                                    };
+                                    let _ = orchestrator.blocking_manager.add_rule(rule).await;
+
+                                    // 2. Physical Quarantine
+                                    if let Err(e) = crate::quarantine::quarantine_file(&result.file_path) {
+                                        error!("Quarantine failed for {}: {}", result.file_path, e);
+                                    }
+                                }
                                 // Broadcast to mesh for distributed EMBER training (PE samples with features)
                                 if let Some(ref features) = result.features {
                                     let autonomy = osoosi_types::load_autonomy_config();
@@ -2062,7 +2079,6 @@ impl EdrOrchestrator {
                                                 warn!("Search-and-replace failed for {}: {}. Falling back to quarantine.", result.file_path, e);
                                                 if let Err(qe) = crate::quarantine::quarantine_file(
                                                     &result.file_path,
-                                                    &autonomy.quarantine_path,
                                                 ) {
                                                     error!(
                                                         "Failed to quarantine malware file {}: {}",
@@ -2075,7 +2091,6 @@ impl EdrOrchestrator {
                                         }
                                     } else if let Err(e) = crate::quarantine::quarantine_file(
                                         &result.file_path,
-                                        &autonomy.quarantine_path,
                                     ) {
                                         error!(
                                             "Failed to quarantine malware file {}: {}",

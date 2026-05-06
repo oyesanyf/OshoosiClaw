@@ -81,3 +81,20 @@ OshoosiClaw includes several "Production Hardening" features to ensure stability
 ### 4. Log Debouncing
 - **Spam Protection**: Behavioral alerts are debounced at the orchestrator level. Unique alerts (by reason) are throttled to once every 5 minutes to prevent dashboard/log inundation during high-frequency activity.
 
+### 5. AI Voter #24 Troubleshooting (Behavioral AI Cortex)
+If you see "PRODUCTION-CRITICAL: All ML models failed to load":
+- **Gemma Shards**: If `decoder_model_merged.onnx_data` is missing but `_1`, `_2` shards exist, the agent will attempt automatic concatenation on next start. Ensure you have at least 8GB of free disk space.
+- **SecureBERT**: Ensure `models/securebert/model.onnx` exists. If missing, run `osoosi provision`.
+- **Defender Error 225**: If the agent logs "Operation did not complete successfully because the file contains a virus", Windows Defender is blocking the AI from reading the forensic scripts.
+  - **Fix**: Run `Add-MpPreference -ExclusionPath "C:\TEST"` (or your test directory) in an Admin PowerShell.
+
+### 6. Mesh Handshaking & Firewalls
+- **Port Requirements**: Oshoosi Mesh requires **TCP/UDP 9000-9010** to be open for sibling discovery.
+- **Connection Timeout (10061)**: Indicates the peer is unreachable. Verify that `mesh.listen_addrs` in `osoosi.toml` is set to `0.0.0.0` and that your hardware firewall allows P2P traffic.
+
+---
+
+## 📈 Performance & Resource Tuning
+- **Adaptive Mode**: The agent dynamically scales its analysis depth based on CPU load. If CPU > 80%, the AI Cortex will skip non-critical event sentences.
+- **Concurrency Limits**: Adjust `adaptive.max_concurrency` in `osoosi.toml` to limit the number of parallel model inferences.
+

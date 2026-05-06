@@ -13,7 +13,7 @@ use serde::Deserialize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokenizers::Tokenizer;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 /// Strip DeepSeek R1 thinking traces from LLM output.
 /// Handles both formats:
@@ -336,6 +336,29 @@ impl Gemma4Analyzer {
         // ONNX Runtime will fail with "file_size: The system cannot find the file".
         // Skip straight to Ollama/Candle in that case.
         let onnx_file = if decoder_path.exists() { &decoder_path } else { &model_path };
+        
+        // Automatic Shard Consolidation: If .onnx_data is missing but _1, _2... exist, combine them.
+        let onnx_data_main = onnx_dir.join("decoder_model_merged.onnx_data");
+        if !onnx_data_main.exists() && onnx_dir.join("decoder_model_merged.onnx_data_1").exists() {
+            info!("Detected fragmented ONNX shards. Attempting automatic consolidation...");
+            let mut combined = Vec::new();
+            for i in 1..20 { // Check up to 20 shards
+                let shard = onnx_dir.join(format!("decoder_model_merged.onnx_data_{}", i));
+                if shard.exists() {
+                    if let Ok(data) = std::fs::read(&shard) {
+                        combined.extend_from_slice(&data);
+                        debug!("Merged shard {}", i);
+                    }
+                } else {
+                    break;
+                }
+            }
+            if !combined.is_empty() {
+                let _ = std::fs::write(&onnx_data_main, combined);
+                info!("Successfully consolidated ONNX shards into {:?}", onnx_data_main);
+            }
+        }
+
         let onnx_viable = onnx_file.exists() && {
             let sz = std::fs::metadata(onnx_file).map(|m| m.len()).unwrap_or(0);
             // Allow smaller ONNX files (manifests) if the graph is valid, but avoid HTML stubs.
@@ -641,14 +664,33 @@ impl SecureBertAnalyzer {
     pub fn new(model_dir: &Path) -> Result<Self> {
         info!("Initializing SecureBERT from {:?}...", model_dir);
 
-        let tokenizer_path = model_dir.join("tokenizer.json");
+        let resolved_dir = if model_dir.exists() && model_dir.join("tokenizer.json").exists() {
+            model_dir.to_path_buf()
+        } else {
+            // HF Snapshot Discovery for SecureBERT
+            let parent = model_dir.parent().unwrap_or(model_dir);
+            let hf_dir = parent.join("models--MarsSecurity--securebert-onnx").join("snapshots");
+            if let Ok(entries) = std::fs::read_dir(&hf_dir) {
+                let mut snapshots: Vec<_> = entries.flatten().collect();
+                snapshots.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
+                if let Some(latest) = snapshots.last() {
+                    latest.path()
+                } else {
+                    model_dir.to_path_buf()
+                }
+            } else {
+                model_dir.to_path_buf()
+            }
+        };
+
+        let tokenizer_path = resolved_dir.join("tokenizer.json");
         if !tokenizer_path.exists() {
-            anyhow::bail!("SecureBERT tokenizer.json not found in {:?}", model_dir);
+            anyhow::bail!("SecureBERT tokenizer.json not found in {:?} (resolved to {:?})", model_dir, resolved_dir);
         }
         let tokenizer = Tokenizer::from_file(&tokenizer_path).map_err(anyhow::Error::msg)?;
 
         // Try ONNX first (model.onnx — already downloaded, architecture-agnostic)
-        let onnx_path = model_dir.join("model.onnx");
+        let onnx_path = resolved_dir.join("model.onnx");
         if onnx_path.exists() {
             let sz = std::fs::metadata(&onnx_path).map(|m| m.len()).unwrap_or(0);
             if sz > 10_000_000 {
@@ -670,8 +712,8 @@ impl SecureBertAnalyzer {
         }
 
         // Fallback: Candle safetensors
-        let config_path = model_dir.join("config.json");
-        let weights_path = model_dir.join("model.safetensors");
+        let config_path = resolved_dir.join("config.json");
+        let weights_path = resolved_dir.join("model.safetensors");
         if config_path.exists() && weights_path.exists() {
             let device = Device::cuda_if_available(0).unwrap_or(Device::Cpu);
             let config: BertConfig = serde_json::from_reader(std::fs::File::open(&config_path)?)?;

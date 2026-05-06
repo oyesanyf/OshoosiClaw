@@ -15,7 +15,7 @@ use std::io::{BufRead, BufReader};
 #[cfg(not(target_os = "windows"))]
 use std::path::Path;
 #[cfg(target_os = "windows")]
-use tracing::{debug, warn};
+use tracing::info;
 
 /// Trait for platform-specific host event sources.
 pub trait HostEventReader: Send + Sync {
