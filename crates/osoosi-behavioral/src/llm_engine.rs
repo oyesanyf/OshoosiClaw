@@ -13,7 +13,7 @@ use serde::Deserialize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokenizers::Tokenizer;
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 
 /// Strip DeepSeek R1 thinking traces from LLM output.
 /// Handles both formats:
@@ -317,52 +317,74 @@ impl Gemma4Analyzer {
             model_dir
         );
 
-        let onnx_dir = if model_dir.join("onnx").is_dir() {
-            model_dir.join("onnx")
-        } else {
+        let resolved_dir = if model_dir.exists() && (model_dir.join("model.onnx").exists() || model_dir.join("decoder_model_merged.onnx").exists()) {
             model_dir.to_path_buf()
+        } else {
+            // HF Snapshot Discovery for Gemma-4
+            let parent = model_dir.parent().unwrap_or(model_dir);
+            let hf_dir = parent.join("models--onnx-community--gemma-4-E4B-it-ONNX").join("snapshots");
+            if let Ok(entries) = std::fs::read_dir(&hf_dir) {
+                let mut snapshots: Vec<_> = entries.flatten().collect();
+                snapshots.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
+                if let Some(latest) = snapshots.last() {
+                    latest.path()
+                } else {
+                    model_dir.to_path_buf()
+                }
+            } else {
+                model_dir.to_path_buf()
+            }
         };
 
-        let model_path = onnx_dir.join("model.onnx");
-        let decoder_path = onnx_dir.join("decoder_model_merged.onnx");
+        let model_path = resolved_dir.join("model.onnx");
+        let decoder_path = resolved_dir.join("decoder_model_merged.onnx");
+        let onnx_file = if decoder_path.exists() { decoder_path } else { model_path };
+        
         let tokenizer_filename = if model_dir.join("tokenizer.json").exists() {
             model_dir.join("tokenizer.json")
+        } else if resolved_dir.join("tokenizer.json").exists() {
+            resolved_dir.join("tokenizer.json")
         } else {
-            onnx_dir.join("tokenizer.json")
+            resolved_dir.join("tokenizer.json")
         };
 
-        // The ONNX model requires multi-GB data shards alongside the manifest.
-        // If the .onnx file is smaller than 10 MB it's just a manifest stub and
-        // ONNX Runtime will fail with "file_size: The system cannot find the file".
-        // Skip straight to Ollama/Candle in that case.
-        let onnx_file = if decoder_path.exists() { &decoder_path } else { &model_path };
-        
         // Automatic Shard Consolidation: If .onnx_data is missing but _1, _2... exist, combine them.
-        let onnx_data_main = onnx_dir.join("decoder_model_merged.onnx_data");
-        if !onnx_data_main.exists() && onnx_dir.join("decoder_model_merged.onnx_data_1").exists() {
-            info!("Detected fragmented ONNX shards. Attempting automatic consolidation...");
-            let mut combined = Vec::new();
-            for i in 1..20 { // Check up to 20 shards
-                let shard = onnx_dir.join(format!("decoder_model_merged.onnx_data_{}", i));
-                if shard.exists() {
+        // We MUST do this in the model_dir to avoid modifying the HF cache (which might be read-only).
+        let onnx_data_main = model_dir.join("decoder_model_merged.onnx_data");
+        if !onnx_data_main.exists() {
+            let mut shards = Vec::new();
+            // Check both the model_dir and the resolved_dir (cache) for shards
+            for base in &[model_dir, resolved_dir.as_path()] {
+                for i in 1..20 {
+                    let shard = base.join(format!("decoder_model_merged.onnx_data_{}", i));
+                    if shard.exists() {
+                        shards.push(shard);
+                    }
+                }
+                if !shards.is_empty() { break; }
+            }
+
+            if !shards.is_empty() {
+                info!("Detected {} fragmented ONNX shards. Consolidating into {:?}...", shards.len(), onnx_data_main);
+                let mut combined = Vec::new();
+                for shard in shards {
                     if let Ok(data) = std::fs::read(&shard) {
                         combined.extend_from_slice(&data);
-                        debug!("Merged shard {}", i);
                     }
-                } else {
-                    break;
                 }
-            }
-            if !combined.is_empty() {
-                let _ = std::fs::write(&onnx_data_main, combined);
-                info!("Successfully consolidated ONNX shards into {:?}", onnx_data_main);
+                if !combined.is_empty() {
+                    let _ = std::fs::create_dir_all(&model_dir);
+                    if let Err(e) = std::fs::write(&onnx_data_main, combined) {
+                        warn!("Failed to write consolidated ONNX data: {}", e);
+                    } else {
+                        info!("Successfully consolidated ONNX shards.");
+                    }
+                }
             }
         }
 
         let onnx_viable = onnx_file.exists() && {
-            let sz = std::fs::metadata(onnx_file).map(|m| m.len()).unwrap_or(0);
-            // Allow smaller ONNX files (manifests) if the graph is valid, but avoid HTML stubs.
-            // 600KB+ is reasonable for a large LLM graph without weights.
+            let sz = std::fs::metadata(&onnx_file).map(|m| m.len()).unwrap_or(0);
             sz > 100_000 
         };
 
