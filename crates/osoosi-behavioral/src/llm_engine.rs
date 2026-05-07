@@ -38,7 +38,7 @@ fn strip_deepseek_thinking(raw: &str) -> String {
         }
     }
 
-    // Format 3: Starts with "Thinking..." — find first double newline after thinking
+    // Format 3: Starts with "Thinking..." Ã¢â‚¬â€ find first double newline after thinking
     if trimmed.starts_with("Thinking...") || trimmed.starts_with("thinking...") {
         // Look for the boundary between thinking and answer
         // Usually after a blank line or "done thinking"
@@ -327,7 +327,7 @@ impl Gemma4Analyzer {
                 let mut snapshots: Vec<_> = entries.flatten().collect();
                 snapshots.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
                 if let Some(latest) = snapshots.last() {
-                    latest.path()
+                    let path = latest.path(); let onnx_sub = path.join("onnx"); if onnx_sub.exists() { onnx_sub } else { path }
                 } else {
                     model_dir.to_path_buf()
                 }
@@ -411,7 +411,7 @@ impl Gemma4Analyzer {
         let has_gpu = device.is_cuda();
         info!("AI device detection: {:?} (GPU: {})", device, has_gpu);
 
-        // Priority 1: Native GGUF via Candle — ONLY if GPU available (CPU is too slow)
+        // Priority 1: Native GGUF via Candle Ã¢â‚¬â€ ONLY if GPU available (CPU is too slow)
         if has_gpu {
             if let Some(gguf_path) = resolve_gguf_path(&ai_cfg.reasoning_model) {
                 info!("CUDA GPU detected! Loading GGUF model natively via Candle...");
@@ -551,7 +551,7 @@ impl Gemma4Analyzer {
                 let input = Tensor::new(&prompt_tokens[..], device)?.unsqueeze(0)?;
                 let logits = model_guard.forward(&input, 0).map_err(|e| anyhow::anyhow!("GGUF forward: {}", e))?;
                 if prefill_start.elapsed() > std::time::Duration::from_secs(15) {
-                    warn!("GGUF prefill took {:?} — model may be too large for this CPU", prefill_start.elapsed());
+                    warn!("GGUF prefill took {:?} Ã¢â‚¬â€ model may be too large for this CPU", prefill_start.elapsed());
                 }
                 let logits = logits.squeeze(0).map_err(|e| anyhow::anyhow!("{}", e))?;
                 let next_token = logits
@@ -564,7 +564,7 @@ impl Gemma4Analyzer {
                     .unwrap_or(0);
                 all_tokens.push(next_token);
 
-                // Decode loop — capped at 64 tokens to prevent CPU saturation
+                // Decode loop Ã¢â‚¬â€ capped at 64 tokens to prevent CPU saturation
                 let eos_token = 151643u32; // Qwen2 EOS token
                 let max_gen = max_tokens.min(64);
                 for _ in 0..max_gen {
@@ -663,7 +663,7 @@ fn load_deepseek_tokenizer() -> Result<Tokenizer> {
     ))
 }
 
-/// SecureBERT Analyzer — security-domain encoder for log classification.
+/// SecureBERT Analyzer Ã¢â‚¬â€ security-domain encoder for log classification.
 /// Primary: ONNX Runtime (model.onnx). Fallback: Candle safetensors.
 pub enum SecureBertAnalyzer {
     Onnx {
@@ -691,7 +691,7 @@ impl SecureBertAnalyzer {
                 let mut snapshots: Vec<_> = entries.flatten().collect();
                 snapshots.sort_by_key(|e| e.metadata().and_then(|m| m.modified()).ok());
                 if let Some(latest) = snapshots.last() {
-                    latest.path()
+                    let path = latest.path(); let onnx_sub = path.join("onnx"); if onnx_sub.exists() { onnx_sub } else { path }
                 } else {
                     model_dir.to_path_buf()
                 }
@@ -702,10 +702,12 @@ impl SecureBertAnalyzer {
 
         let onnx_src = resolved_dir.join("model.onnx");
         let tokenizer_src = resolved_dir.join("tokenizer.json");
+        let config_src = resolved_dir.join("config.json");
         
         // Co-locate if necessary
         let target_onnx = model_dir.join("model.onnx");
         let target_tokenizer = model_dir.join("tokenizer.json");
+        let target_config = model_dir.join("config.json");
         
         if !target_onnx.exists() && onnx_src.exists() {
             let _ = std::fs::create_dir_all(&model_dir);
@@ -714,6 +716,10 @@ impl SecureBertAnalyzer {
         if !target_tokenizer.exists() && tokenizer_src.exists() {
             let _ = std::fs::create_dir_all(&model_dir);
             let _ = std::fs::copy(&tokenizer_src, &target_tokenizer);
+        }
+        if !target_config.exists() && config_src.exists() {
+            let _ = std::fs::create_dir_all(&model_dir);
+            let _ = std::fs::copy(&config_src, &target_config);
         }
 
         let final_tokenizer_path = if target_tokenizer.exists() { target_tokenizer } else { tokenizer_src };
@@ -727,11 +733,12 @@ impl SecureBertAnalyzer {
         if final_onnx_path.exists() {
             let sz = std::fs::metadata(&final_onnx_path).map(|m| m.len()).unwrap_or(0);
             if sz > 10_000_000 {
-                match Session::builder()
-                    .and_then(|b| b.with_optimization_level(GraphOptimizationLevel::Level3))
-                    .and_then(|b| b.with_intra_threads(2)) // Lower threads to avoid CPU spikes
-                    .and_then(|b| b.commit_from_file(&final_onnx_path))
-                {
+                let session = Session::builder()?
+                    .with_optimization_level(GraphOptimizationLevel::Level3)?
+                    .with_intra_threads(2)?
+                    .commit_from_file(&final_onnx_path);
+                
+                match session {
                     Ok(session) => {
                         info!("SecureBERT ONNX loaded successfully ({} MB)", sz / 1_000_000);
                         return Ok(Self::Onnx {
