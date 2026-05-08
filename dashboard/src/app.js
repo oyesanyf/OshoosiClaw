@@ -14,7 +14,9 @@ const state = {
     network: null,
     otelNetwork: null,
     telemetryChart: null,
-    expandedDetails: new Set()
+    expandedDetails: new Set(),
+    lastThreatsHash: '',
+    lastActivityHash: ''
 };
 
 /**
@@ -137,9 +139,13 @@ async function updateDashboard() {
 
         if (threats) {
             const visibleThreats = threats.filter(t => !state.suppressedThreatKeys.has(threatKey(t)));
-            state.threats = visibleThreats;
-            updateStats('threat-count', visibleThreats.length);
-            renderThreats(visibleThreats);
+            const currentHash = JSON.stringify(visibleThreats);
+            if (currentHash !== state.lastThreatsHash) {
+                state.threats = visibleThreats;
+                state.lastThreatsHash = currentHash;
+                updateStats('threat-count', visibleThreats.length);
+                renderThreats(visibleThreats);
+            }
         }
 
         if (mesh) {
@@ -150,8 +156,8 @@ async function updateDashboard() {
         }
 
         if (activity) {
-            state.activity = activity;
-            renderActivity(activity);
+            const currentHash = JSON.stringify(activity); if (currentHash !== state.lastActivityHash) { state.activity = activity;
+            state.lastActivityHash = currentHash; renderActivity(activity); }
         }
 
         if (telemetryData) {
@@ -261,7 +267,7 @@ function renderThreats(threats) {
         return;
     }
 
-    const filtered = threats.filter(t => {
+    const displayThreats = threats.slice(0, 30); const filtered = threats.filter(t => {
         if (!state.searchQuery) return true;
         const q = state.searchQuery;
         return (t.type && t.type.toLowerCase().includes(q)) || 
@@ -276,7 +282,7 @@ function renderThreats(threats) {
     }
 
     const groups = {};
-    filtered.forEach(t => {
+    const sourceToRender = state.searchQuery ? filtered : displayThreats; sourceToRender.forEach(t => {
         // Variation is defined by Type + Source only; reasons are listed inside
         const key = `${t.type}-${t.source_node || 'Unknown'}`;
         if (!groups[key]) groups[key] = [];
@@ -333,7 +339,10 @@ function renderActivity(activity) {
         return;
     }
 
-    list.innerHTML = activity.map(item => `
+    // Performance: Only show latest 20 items
+    const limitedActivity = activity.slice(0, 20);
+
+    list.innerHTML = limitedActivity.map(item => `
         <div class="feed-item">
             <div class="item-info">
                 <div class="item-title" style="font-size:13px">${item.summary}</div>
