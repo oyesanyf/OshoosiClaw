@@ -107,6 +107,7 @@ fn osoosi_install_dir() -> std::path::PathBuf {
 pub struct FileWatcher {
     watcher: notify::RecommendedWatcher,
     pub trap_paths: Arc<dashmap::DashSet<String>>,
+    pub currently_hashing: Arc<dashmap::DashSet<String>>,
 }
 
 #[derive(Debug, Clone)]
@@ -123,14 +124,17 @@ impl FileWatcher {
     pub fn new(
         memory: Option<Arc<osoosi_memory::MemoryStore>>,
         exclude_paths: Vec<String>,
+        adaptive: Arc<dyn TelemetryControllerInterface + Send + Sync>,
     ) -> anyhow::Result<(Self, mpsc::Receiver<anyhow::Result<FileChangeEvent>>)> {
         let (tx, rx) = mpsc::channel(100);
         let rt = tokio::runtime::Handle::current();
         let install_dir = osoosi_install_dir();
         let excludes = exclude_paths.clone();
         let trap_paths = Arc::new(dashmap::DashSet::new());
+        let currently_hashing = Arc::new(dashmap::DashSet::new());
         let traps = trap_paths.clone();
-        let semaphore = Arc::new(tokio::sync::Semaphore::new(MAX_CONCURRENT_HASHING));
+        let hashing_set = currently_hashing.clone();
+        let adaptive_clone = adaptive.clone();
 
         // Notify watcher callback
         let watcher = notify::recommended_watcher(move |res: notify::Result<Event>| {
@@ -162,12 +166,22 @@ impl FileWatcher {
                             let path_for_hash = path.clone();
                             let memory_for_error = memory.clone();
 
-                            let sem = semaphore.clone();
+                            let adaptive_hashing = adaptive_clone.clone();
+                            let hashing_set_inner = hashing_set.clone();
 
-                            rt.spawn(async move {
-                                let _permit = sem.acquire().await;
+                            if hashing_set_inner.contains(&path_str) {
+                                debug!("Deduplicated hashing for: {}", path_str);
+                                continue;
+                            }
+                            hashing_set_inner.insert(path_str.clone());
+
+                            adaptive_hashing.spawn_adaptive(
+                                osoosi_types::ResourceCategory::IO,
+                                osoosi_types::Priority::Low,
+                                async move {
                                 match calculate_blake3_hash(&path_for_hash).await {
                                     Ok(hash) => {
+                                        hashing_set_inner.remove(&path_str);
                                         let _ = tx
                                             .send(Ok(FileChangeEvent {
                                                 path: path_str,
@@ -219,6 +233,7 @@ impl FileWatcher {
                                         }
                                     }
                                 }
+                                hashing_set_inner.remove(&path_str);
                             });
                         }
                     }
@@ -233,6 +248,7 @@ impl FileWatcher {
             Self {
                 watcher,
                 trap_paths,
+                currently_hashing,
             },
             rx,
         ))
@@ -253,6 +269,7 @@ pub async fn build_os_file_hash_baseline(
     paths: Vec<String>,
     memory: Arc<osoosi_memory::MemoryStore>,
     exclude_paths: Vec<String>,
+    adaptive: Arc<dyn TelemetryControllerInterface + Send + Sync>,
 ) {
     info!(
         "Starting background hash of all files in watch paths: {}",
@@ -304,8 +321,14 @@ pub async fn build_os_file_hash_baseline(
     let _target_cpu_usage = 30.0; // Lower target
 
     while let Some(path) = rx.recv().await {
+        // 0. Automatically yield to telemetry engine during an alert (Burst mode)
+        while adaptive.is_burst_mode() {
+            debug!("Baseline hashing yielding to telemetry engine (Burst mode active)...");
+            tokio::time::sleep(Duration::from_secs(2)).await;
+        }
+
         // 1. Periodically check system load and adjust throttle
-        if last_report.elapsed().as_secs() >= 10 {
+        if last_report.elapsed().as_secs() >= 2 {
             // Only refresh CPU and specific process info to avoid heavy new_all()
             sys.refresh_cpu_usage();
             sys.refresh_process(self_pid);

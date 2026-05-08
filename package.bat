@@ -26,9 +26,11 @@ mkdir %DEPLOY_DIR%\logs
 
 :: 3. Copy binaries and core assets
 echo [3/5] Collecting files...
-copy target\release\osoosi.exe %DEPLOY_DIR%\
+copy target\x86_64-pc-windows-msvc\release\osoosi.exe %DEPLOY_DIR%\
+copy target\x86_64-pc-windows-msvc\release\osoosi_inject.dll %DEPLOY_DIR%\
 copy run_osoosi.bat %DEPLOY_DIR%\
 copy target\release\test-peer.exe %DEPLOY_DIR%\
+if exist deceptive_techniques.py copy deceptive_techniques.py %DEPLOY_DIR%\
 if exist osoosi.toml (
     copy osoosi.toml %DEPLOY_DIR%\
 ) else if exist osoosi.toml.example (

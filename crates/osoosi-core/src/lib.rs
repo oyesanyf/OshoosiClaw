@@ -1902,6 +1902,7 @@ impl EdrOrchestrator {
         let baseline_memory = self.memory.clone();
         let baseline_paths: Vec<String> = paths.iter().map(|&s| s.to_string()).collect();
         let baseline_excludes = osoosi_types::load_exclude_paths_from_config();
+        let baseline_adaptive = self.adaptive.clone();
         tokio::spawn(async move {
             // Delay baseline hashing to allow the agent to finish startup and settle
             tokio::time::sleep(std::time::Duration::from_secs(30)).await;
@@ -1909,6 +1910,7 @@ impl EdrOrchestrator {
                 baseline_paths,
                 baseline_memory,
                 baseline_excludes,
+                baseline_adaptive,
             )
             .await;
         });
@@ -3320,6 +3322,11 @@ impl EdrOrchestrator {
     ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
         let mut signature = signature;
+
+        // If high confidence, trigger Burst mode to prioritize telemetry
+        if signature.confidence > 0.6 {
+            let _ = self.adaptive.trigger_burst_mode(60).await;
+        }
 
         // Enrich signature with binary metadata if available
         if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {

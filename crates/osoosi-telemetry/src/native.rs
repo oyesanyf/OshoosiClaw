@@ -229,9 +229,72 @@ impl NativeTelemetryEngine {
             if let Err(e) = trace.start() {
                 error!("Native Telemetry Trace failed: {:?}", e);
             }
-        }).await?;
+        });
+
+        // 6. Start Injection Hook Telemetry Listener (Named Pipe)
+        let tx_hook = self.tx.clone();
+        tokio::spawn(async move {
+            if let Err(e) = run_hook_telemetry_listener(tx_hook).await {
+                error!("Hook Telemetry Listener failed: {:?}", e);
+            }
+        });
 
         Ok(())
+    }
+}
+
+async fn run_hook_telemetry_listener(tx: tokio::sync::mpsc::Sender<HostSecurityEvent>) -> anyhow::Result<()> {
+    use windows::Win32::System::Pipes::*;
+    use windows::Win32::Storage::FileSystem::*;
+    use windows::core::w;
+    use windows::Win32::Foundation::*;
+
+    let computer = hostname::get()
+        .ok()
+        .and_then(|h| h.into_string().ok())
+        .unwrap_or_else(|| "localhost".to_string());
+
+    info!("🚀 [HOOK-LISTENER] Starting Oshoosi Injection Telemetry Listener (Named Pipe)...");
+
+    loop {
+        unsafe {
+            // Create a security descriptor that allows all access to the pipe (for testing)
+            // In production, we should restrict this to the local system/users.
+            let h_pipe = CreateNamedPipeW(
+                w!(r"\\.\pipe\osoosi_injection"),
+                PIPE_ACCESS_INBOUND,
+                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                PIPE_UNLIMITED_INSTANCES,
+                4096,
+                4096,
+                0,
+                None,
+            );
+
+            if let Ok(handle) = h_pipe {
+                // This will block until a client connects
+                if ConnectNamedPipe(handle, None).is_ok() {
+                    let mut buffer = [0u8; 4096];
+                    let mut bytes_read = 0;
+                    if ReadFile(handle, Some(&mut buffer), Some(&mut bytes_read), None).is_ok() {
+                        if let Ok(data) = serde_json::from_slice::<serde_json::Value>(&buffer[..bytes_read as usize]) {
+                            let event = HostSecurityEvent {
+                                source: HostEventSource::WindowsEventLog, 
+                                event_id: 999, // Custom Hook ID
+                                timestamp: Utc::now(),
+                                computer: computer.clone(),
+                                data,
+                                causal_parent: None,
+                            };
+                            let _ = tx.send(event).await;
+                        }
+                    }
+                }
+                let _ = CloseHandle(handle);
+            }
+        }
+        // Yield to allow other tasks to run
+        tokio::task::yield_now().await;
     }
 }
 

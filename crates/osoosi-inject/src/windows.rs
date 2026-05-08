@@ -9,12 +9,15 @@
 use std::ffi::c_void;
 use windows::core::{s, PCWSTR};
 use windows::Win32::Foundation::{BOOL, HINSTANCE};
-use windows::Win32::System::LibraryLoader::GetProcAddress;
-use windows::Win32::System::LibraryLoader::LoadLibraryA;
+use std::sync::Mutex;
+use serde_json::json;
+use windows::Win32::System::Threading::GetCurrentProcessId;
+use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetProcAddress, LoadLibraryA};
 use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
+use windows::Win32::Storage::FileSystem::{CreateFileW, WriteFile, FILE_SHARE_NONE, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES, GENERIC_WRITE};
+use windows::core::w;
 use retour::GenericDetour;
 use lazy_static::lazy_static;
-use std::sync::Mutex;
 
 // --- 1. Define the hook signatures (Detours) ---
 
@@ -86,6 +89,40 @@ lazy_static! {
 }
 
 // --- 2. Implement the intercepted logic ---
+
+fn report_telemetry(hook_source: &str, mut data: serde_json::Value) {
+    unsafe {
+        // 1. Enrich with process info
+        let mut buffer = [0u16; 512];
+        let len = GetModuleFileNameW(None, &mut buffer);
+        if len > 0 {
+            let image = String::from_utf16_lossy(&buffer[..len as usize]);
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("Image".to_string(), json!(image));
+                obj.insert("ProcessId".to_string(), json!(GetCurrentProcessId()));
+                obj.insert("HookSource".to_string(), json!(hook_source));
+            }
+        }
+
+        // 2. Write to Named Pipe
+        // Pipe name: \\.\pipe\osoosi_injection
+        let h_pipe = CreateFileW(
+            w!(r"\\.\pipe\osoosi_injection"),
+            GENERIC_WRITE.0,
+            FILE_SHARE_NONE,
+            None,
+            OPEN_EXISTING,
+            FILE_FLAGS_AND_ATTRIBUTES::default(),
+            None,
+        );
+
+        if let Ok(handle) = h_pipe {
+            let json_str = serde_json::to_string(&data).unwrap_or_default();
+            let _ = WriteFile(handle, Some(json_str.as_bytes()), None, None);
+            let _ = windows::Win32::Foundation::CloseHandle(handle);
+        }
+    }
+}
 
 /// Intercepted BitBlt: Detects and blocks screen capture spyware
 extern "system" fn hooked_bitblt(
@@ -159,10 +196,13 @@ extern "system" fn hooked_nt_allocate_virtual_memory(
     protect: windows::Win32::System::Memory::PAGE_PROTECTION_FLAGS,
 ) -> windows::Win32::Foundation::NTSTATUS {
     
-    // Check if the allocation is PAGE_EXECUTE_READWRITE, a common indicator of shellcode injection
-    // if protect.contains(windows::Win32::System::Memory::PAGE_EXECUTE_READWRITE) {
-    //     // Notify telemetry
-    // }
+    // Check if the allocation is PAGE_EXECUTE_READWRITE (0x40), a common indicator of shellcode injection
+    if protect.0 == 0x40 {
+        report_telemetry("NtAllocateVirtualMemory", json!({
+            "Protection": "RWX",
+            "AllocationType": format!("{:?}", allocation_type)
+        }));
+    }
 
     let hook_guard = HOOK_NTALLOCATEVIRTUALMEMORY.lock().unwrap();
     if let Some(hook) = hook_guard.as_ref() {
@@ -191,9 +231,12 @@ extern "system" fn hooked_nt_protect_virtual_memory(
 ) -> windows::Win32::Foundation::NTSTATUS {
     
     // PAGE_EXECUTE_READWRITE (0x40)
-    // if new_protection == 0x40 {
-    //     // Notify telemetry: process changed memory protection to RWX
-    // }
+    if new_protection == 0x40 {
+        report_telemetry("NtProtectVirtualMemory", json!({
+            "Protection": "RWX",
+            "NewProtection": format!("{:#x}", new_protection)
+        }));
+    }
 
     let hook_guard = HOOK_NTPROTECTVIRTUALMEMORY.lock().unwrap();
     if let Some(hook) = hook_guard.as_ref() {

@@ -30,3 +30,23 @@ pub use tarpit::*;
 pub use threat::*;
 pub use trust::*;
 pub use utils::*;
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, serde::Serialize, serde::Deserialize)]
+pub enum Priority {
+    Low = 0,
+    Normal = 1,
+    High = 2,
+}
+
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum ResourceCategory {
+    AI,
+    IO,
+    Net,
+}
+
+pub trait TelemetryControllerInterface: Send + Sync {
+    fn spawn_adaptive(&self, category: ResourceCategory, priority: Priority, task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>);
+    fn report_event(&self);
+    fn is_burst_mode(&self) -> bool;
+}

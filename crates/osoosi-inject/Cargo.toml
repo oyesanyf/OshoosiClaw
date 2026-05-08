@@ -11,6 +11,8 @@ crate-type = ["cdylib", "rlib"]
 retour = "0.3.1"
 lazy_static = "1.4"
 tracing = "0.1"
+serde = { version = "1.0", features = ["derive"] }
+serde_json = "1.0"
 
 # Windows API definitions
 [dependencies.windows]
@@ -23,7 +25,9 @@ features = [
     "Win32_System_Diagnostics_Debug",
     "Win32_System_SystemServices",
     "Win32_Security",
-
+    "Win32_Storage_FileSystem",
+    "Win32_System_Pipes",
+    "Win32_System_ProcessStatus",
     "Win32_Graphics_Gdi", # For Screen capture hooking (BitBlt)
 ]
 

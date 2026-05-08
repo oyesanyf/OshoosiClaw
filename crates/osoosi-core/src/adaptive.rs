@@ -7,6 +7,7 @@ use std::time::Instant;
 use sysinfo::System;
 use tokio::sync::{RwLock, Semaphore};
 use tracing::{info, warn};
+use osoosi_types::{Priority, ResourceCategory, TelemetryControllerInterface};
 
 pub struct ResourceGuard {
     pub ai: Arc<Semaphore>,
@@ -22,12 +23,7 @@ pub struct ResourceGuard {
     iteration: Arc<std::sync::atomic::AtomicUsize>,
 }
 
-#[derive(Debug, Clone, Copy)]
-pub enum ResourceCategory {
-    AI,
-    IO,
-    Net,
-}
+
 
 impl ResourceGuard {
     pub fn new() -> Self {
@@ -69,10 +65,19 @@ pub struct TelemetryController {
     pub(crate) last_mem_usage: Arc<std::sync::atomic::AtomicU32>,
     sys: Arc<RwLock<System>>,
     pub guard: Arc<ResourceGuard>,
+    pub(crate) task_sender: tokio::sync::mpsc::UnboundedSender<DeferredTask>,
+    pub(crate) task_rx: Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<DeferredTask>>>>,
+}
+
+pub struct DeferredTask {
+    pub category: ResourceCategory,
+    pub priority: Priority,
+    pub task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>,
 }
 
 impl TelemetryController {
     pub fn new() -> Self {
+        let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<DeferredTask>();
         Self {
             current_mode: Arc::new(RwLock::new(TelemetryMode::Normal)),
             event_rate: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
@@ -81,20 +86,78 @@ impl TelemetryController {
             last_mem_usage: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             sys: Arc::new(RwLock::new(System::new_all())),
             guard: Arc::new(ResourceGuard::new()),
+            task_sender: tx,
+            task_rx: Arc::new(tokio::sync::Mutex::new(Some(rx))),
         }
     }
 
     /// Start a background task to monitor resources and adapt telemetry.
+    /// Start a background task to monitor resources and adapt telemetry.
     pub fn start_adaptive_loop(self: Arc<Self>) {
+        let self_clone = self.clone();
+        let mut task_rx = self.task_rx.blocking_lock().take().expect("start_adaptive_loop called twice");
+        
+        // Task 1: Resource Monitor
+        let monitor_self = self.clone();
         tokio::spawn(async move {
-            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5)); // Check every 5s for bursts
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(5));
             loop {
                 interval.tick().await;
-                if let Err(e) = self.run_adaptation_check().await {
+                if let Err(e) = monitor_self.run_adaptation_check().await {
                     warn!("Adaptive telemetry check failed: {}", e);
                 }
             }
         });
+
+        // Task 2: Deferred Task Worker
+        let worker_self = self.clone();
+        tokio::spawn(async move {
+            let mut local_queue = std::collections::VecDeque::new();
+            loop {
+                // 1. Collect new tasks
+                while let Ok(d) = task_rx.try_recv() {
+                    local_queue.push_back(d);
+                }
+
+                if local_queue.is_empty() {
+                    if let Some(d) = task_rx.recv().await {
+                        local_queue.push_back(d);
+                    } else {
+                        break; // Channel closed
+                    }
+                }
+
+                // 2. Process tasks based on mode
+                let mode = *worker_self.current_mode.read().await;
+                if mode == TelemetryMode::Burst {
+                    // During burst, we only process High priority tasks if any (though usually only Low are deferred)
+                    // and we wait.
+                    tokio::time::sleep(std::time::Duration::from_secs(1)).await;
+                    continue;
+                }
+
+                // Process a batch
+                let mut processed = 0;
+                while processed < 16 && !local_queue.is_empty() {
+                    if let Some(d) = local_queue.pop_front() {
+                        worker_self.execute_deferred(d);
+                        processed += 1;
+                    }
+                }
+                
+                // Yield to allow other tasks to run
+                tokio::task::yield_now().await;
+            }
+        });
+    }
+
+    fn execute_deferred(&self, deferred: DeferredTask) {
+        let semaphore = match deferred.category {
+            ResourceCategory::AI => self.guard.ai.clone(),
+            ResourceCategory::IO => self.guard.io.clone(),
+            ResourceCategory::Net => self.guard.net.clone(),
+        };
+        crate::hybrid_runtime::spawn_smart(semaphore, deferred.task);
     }
 
     async fn run_adaptation_check(&self) -> anyhow::Result<()> {
@@ -233,28 +296,28 @@ impl TelemetryController {
         Ok(())
     }
 
-    /// Calculate a recommended concurrency limit for background tasks (e.g. file scanning, hashing).
-    pub async fn get_concurrency_limit(&self) -> usize {
-        let cpu_usage = f32::from_bits(self.last_cpu_usage.load(std::sync::atomic::Ordering::Relaxed));
-        let mode = *self.current_mode.read().await;
-
-        let limit = match mode {
-            TelemetryMode::Silent => 2,
-            TelemetryMode::Normal if cpu_usage > 70.0 => 8,
-            TelemetryMode::Normal => 32,
-            TelemetryMode::Burst => 4,
-        };
-
-        tracing::debug!("ADAPTIVE CONCURRENCY: Limit request: CPU={:.1}%, Mode={:?} -> Limit={}", cpu_usage, mode, limit);
-        limit
-    }
-
-    /// Spawn a task with adaptive concurrency based on the resource category.
-    pub fn spawn_adaptive<F, T>(&self, category: ResourceCategory, task: F)
+    /// Spawn a task with adaptive concurrency based on the resource category and priority.
+    pub fn spawn_adaptive<F, T>(&self, category: ResourceCategory, priority: Priority, task: F)
     where
         F: std::future::Future<Output = T> + Send + 'static,
         T: Send + 'static,
     {
+        let mode = self.current_mode.blocking_read().clone();
+        
+        // Yielding logic: During an alert (Burst mode), Low priority tasks (like background hashing) 
+        // are deferred to a priority queue to prevent interference with telemetry ingestion.
+        if mode == TelemetryMode::Burst && priority == Priority::Low {
+            tracing::debug!("ADAPTIVE CONCURRENCY: Queuing Low priority task during Burst mode.");
+            let _ = self.task_sender.send(DeferredTask {
+                category,
+                priority,
+                task: Box::pin(async move {
+                    let _ = task.await;
+                }),
+            });
+            return;
+        }
+
         let semaphore = match category {
             ResourceCategory::AI => self.guard.ai.clone(),
             ResourceCategory::IO => self.guard.io.clone(),
@@ -263,18 +326,74 @@ impl TelemetryController {
         crate::hybrid_runtime::spawn_smart(semaphore, task);
     }
 
+    async fn process_deferred_tasks(&self) {
+        let mut queue = self.deferred_tasks.lock().await;
+        if queue.is_empty() {
+            return;
+        }
+
+        let mode = *self.current_mode.read().await;
+        if mode == TelemetryMode::Burst {
+            return;
+        }
+
+        // Process a batch of deferred tasks
+        let batch_size = 8;
+        let mut processed = 0;
+        
+        while processed < batch_size {
+            if let Some(deferred) = queue.pop_front() {
+                tracing::debug!("ADAPTIVE CONCURRENCY: Processing deferred {:?} task.", deferred.priority);
+                let semaphore = match deferred.category {
+                    ResourceCategory::AI => self.guard.ai.clone(),
+                    ResourceCategory::IO => self.guard.io.clone(),
+                    ResourceCategory::Net => self.guard.net.clone(),
+                };
+                crate::hybrid_runtime::spawn_smart(semaphore, deferred.task);
+                processed += 1;
+            } else {
+                break;
+            }
+        }
+        
+        if processed > 0 {
+            info!("ADAPTIVE CONCURRENCY: Processed {} deferred tasks. Remaining in queue: {}", processed, queue.len());
+        }
+    }
+
     /// Execute a task with adaptive concurrency and return the result.
-    pub async fn run_adaptive<F, T>(&self, category: ResourceCategory, task: F) -> anyhow::Result<T>
+    pub async fn run_adaptive<F, T>(&self, category: ResourceCategory, priority: Priority, task: F) -> anyhow::Result<T>
     where
         F: std::future::Future<Output = T> + Send + 'static,
         T: Send + 'static,
     {
+        let mode = self.current_mode.read().await.clone();
+        
+        if mode == TelemetryMode::Burst && priority == Priority::Low {
+             // Yield: wait for mode to stabilize
+             tokio::time::sleep(std::time::Duration::from_millis(500)).await;
+        }
+
         let semaphore = match category {
             ResourceCategory::AI => self.guard.ai.clone(),
             ResourceCategory::IO => self.guard.io.clone(),
             ResourceCategory::Net => self.guard.net.clone(),
         };
         crate::hybrid_runtime::run_smart(semaphore, task).await
+    }
+}
+
+impl TelemetryControllerInterface for TelemetryController {
+    fn spawn_adaptive(&self, category: ResourceCategory, priority: Priority, task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>) {
+        self.spawn_adaptive(category, priority, task);
+    }
+
+    fn report_event(&self) {
+        self.report_event();
+    }
+
+    fn is_burst_mode(&self) -> bool {
+        self.current_mode.blocking_read().clone() == TelemetryMode::Burst
     }
 }
 
