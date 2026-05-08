@@ -3,7 +3,7 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
@@ -51,11 +51,44 @@ fn default_watch_paths() -> Vec<String> {
 pub fn all_physical_drive_paths() -> Vec<String> {
     #[cfg(target_os = "windows")]
     {
+        use windows::Win32::Storage::FileSystem::{GetDriveTypeW, GetVolumeInformationW};
+        use windows::core::PCWSTR;
+
         let mut drives = Vec::new();
         for letter in b'A'..=b'Z' {
-            let path = format!("{}:\\", letter as char);
-            if std::path::Path::new(&path).exists() {
-                drives.push(path);
+            let root = format!("{}:\\", letter as char);
+            let root_wide: Vec<u16> = root.encode_utf16().chain(Some(0)).collect();
+            let root_pcwstr = PCWSTR(root_wide.as_ptr());
+
+            unsafe {
+                if GetDriveTypeW(root_pcwstr) == 3 { // 3 = DRIVE_FIXED
+                    let mut volume_name = [0u16; 256];
+                    let mut filesystem_name = [0u16; 256];
+                    
+                    let res = GetVolumeInformationW(
+                        root_pcwstr,
+                        Some(&mut volume_name),
+                        None,
+                        None,
+                        None,
+                        Some(&mut filesystem_name),
+                    );
+
+                    if res.is_ok() {
+                        let vol_str = String::from_utf16_lossy(&volume_name).trim_matches('\0').to_lowercase();
+                        let fs_str = String::from_utf16_lossy(&filesystem_name).trim_matches('\0').to_lowercase();
+
+                        // Exclude Google Drive and other known virtual/cloud mappings
+                        if vol_str.contains("google drive") || fs_str.contains("googledrive") 
+                           || vol_str.contains("onedrive") || vol_str.contains("dropbox")
+                        {
+                            debug!("Excluding cloud/virtual mapping: {} (Volume: {}, FS: {})", root, vol_str, fs_str);
+                            continue;
+                        }
+                    }
+                    
+                    drives.push(root);
+                }
             }
         }
         if drives.is_empty() {

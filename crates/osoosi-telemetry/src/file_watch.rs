@@ -71,7 +71,10 @@ fn should_skip_path(path: &Path, osoosi_dir: &Path, exclude_paths: &[String]) ->
             | ".trash"
             | "appdata"
             | "windows"
-            | "programdata" => return true,
+            | "programdata"
+            | "google drive"
+            | "onedrive"
+            | "dropbox" => return true,
             _ => {}
         }
     }
