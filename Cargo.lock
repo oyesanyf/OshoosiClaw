@@ -5765,6 +5765,8 @@ dependencies = [
  "lazy_static",
  "libc",
  "retour",
+ "serde",
+ "serde_json",
  "tracing",
  "windows 0.52.0",
 ]
@@ -5961,6 +5963,7 @@ dependencies = [
  "tokio",
  "tracing",
  "walkdir",
+ "winapi",
  "windows 0.58.0",
  "windows-sys 0.61.2",
  "wmi",

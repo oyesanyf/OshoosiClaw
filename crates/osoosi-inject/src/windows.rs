@@ -8,13 +8,13 @@
 
 use std::ffi::c_void;
 use windows::core::{s, PCWSTR};
-use windows::Win32::Foundation::{BOOL, HINSTANCE};
+use windows::Win32::Foundation::{BOOL, HINSTANCE, GENERIC_WRITE};
 use std::sync::Mutex;
 use serde_json::json;
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetProcAddress, LoadLibraryA};
 use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
-use windows::Win32::Storage::FileSystem::{CreateFileW, WriteFile, FILE_SHARE_NONE, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES, GENERIC_WRITE};
+use windows::Win32::Storage::FileSystem::{CreateFileW, WriteFile, FILE_SHARE_NONE, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES};
 use windows::core::w;
 use retour::GenericDetour;
 use lazy_static::lazy_static;

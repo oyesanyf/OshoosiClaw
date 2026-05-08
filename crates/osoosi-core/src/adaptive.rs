@@ -3,11 +3,12 @@
 //! Dynamically scales telemetry fidelity based on system resources and detection activity.
 
 use std::sync::Arc;
+use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
 use std::time::Instant;
 use sysinfo::System;
 use tokio::sync::{RwLock, Semaphore};
-use tracing::{info, warn};
-use osoosi_types::{Priority, ResourceCategory, TelemetryControllerInterface};
+use tracing::{debug, info, warn};
+use osoosi_types::{Priority, ResourceCategory, TelemetryControllerInterface, TelemetryMode};
 
 pub struct ResourceGuard {
     pub ai: Arc<Semaphore>,
@@ -49,12 +50,7 @@ impl ResourceGuard {
     }
 }
 
-#[derive(Debug, Clone, Copy, PartialEq)]
-pub enum TelemetryMode {
-    Silent, // Minimal events (Process creation only)
-    Normal, // Standard EDR profile
-    Burst,  // Full fidelity (Network, Registry, FileSystem, DLLs)
-}
+
 
 #[derive(Clone)]
 pub struct TelemetryController {
@@ -67,6 +63,7 @@ pub struct TelemetryController {
     pub guard: Arc<ResourceGuard>,
     pub(crate) task_sender: tokio::sync::mpsc::UnboundedSender<DeferredTask>,
     pub(crate) task_rx: Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<DeferredTask>>>>,
+    pub(crate) socket_exhaustion: Arc<std::sync::atomic::AtomicBool>,
 }
 
 pub struct DeferredTask {
@@ -88,6 +85,7 @@ impl TelemetryController {
             guard: Arc::new(ResourceGuard::new()),
             task_sender: tx,
             task_rx: Arc::new(tokio::sync::Mutex::new(Some(rx))),
+            socket_exhaustion: Arc::new(AtomicBool::new(false)),
         }
     }
 
@@ -326,41 +324,6 @@ impl TelemetryController {
         crate::hybrid_runtime::spawn_smart(semaphore, task);
     }
 
-    async fn process_deferred_tasks(&self) {
-        let mut queue = self.deferred_tasks.lock().await;
-        if queue.is_empty() {
-            return;
-        }
-
-        let mode = *self.current_mode.read().await;
-        if mode == TelemetryMode::Burst {
-            return;
-        }
-
-        // Process a batch of deferred tasks
-        let batch_size = 8;
-        let mut processed = 0;
-        
-        while processed < batch_size {
-            if let Some(deferred) = queue.pop_front() {
-                tracing::debug!("ADAPTIVE CONCURRENCY: Processing deferred {:?} task.", deferred.priority);
-                let semaphore = match deferred.category {
-                    ResourceCategory::AI => self.guard.ai.clone(),
-                    ResourceCategory::IO => self.guard.io.clone(),
-                    ResourceCategory::Net => self.guard.net.clone(),
-                };
-                crate::hybrid_runtime::spawn_smart(semaphore, deferred.task);
-                processed += 1;
-            } else {
-                break;
-            }
-        }
-        
-        if processed > 0 {
-            info!("ADAPTIVE CONCURRENCY: Processed {} deferred tasks. Remaining in queue: {}", processed, queue.len());
-        }
-    }
-
     /// Execute a task with adaptive concurrency and return the result.
     pub async fn run_adaptive<F, T>(&self, category: ResourceCategory, priority: Priority, task: F) -> anyhow::Result<T>
     where
@@ -381,6 +344,19 @@ impl TelemetryController {
         };
         crate::hybrid_runtime::run_smart(semaphore, task).await
     }
+
+    pub fn is_socket_exhaustion(&self) -> bool {
+        self.socket_exhaustion.load(Ordering::Relaxed)
+    }
+
+    pub fn set_socket_exhaustion(&self, value: bool) {
+        self.socket_exhaustion.store(value, Ordering::Relaxed);
+    }
+
+    pub async fn get_concurrency_limit(&self) -> usize {
+        let throttled = self.guard.io_throttled.lock().await;
+        (self.guard.io_base as isize - *throttled).max(0) as usize
+    }
 }
 
 impl TelemetryControllerInterface for TelemetryController {
@@ -395,5 +371,16 @@ impl TelemetryControllerInterface for TelemetryController {
     fn is_burst_mode(&self) -> bool {
         self.current_mode.blocking_read().clone() == TelemetryMode::Burst
     }
-}
 
+    fn is_socket_exhaustion(&self) -> bool {
+        self.is_socket_exhaustion()
+    }
+
+    fn set_socket_exhaustion(&self, value: bool) {
+        self.set_socket_exhaustion(value);
+    }
+
+    fn get_concurrency_limit(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = usize> + Send + '_>> {
+        Box::pin(self.get_concurrency_limit())
+    }
+}

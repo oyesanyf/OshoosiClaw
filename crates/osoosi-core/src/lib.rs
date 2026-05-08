@@ -59,7 +59,7 @@ use osoosi_policy::{PolicyEngine, ThreatFeedFetcher};
 use osoosi_runtime::DeceptionManager;
 use osoosi_types::{
     load_runtime_config, resolve_nvd_api_key, resolve_otx_api_key, HostSecurityEvent,
-    SecuredExecutor,
+    SecuredExecutor, Priority, ResourceCategory, TelemetryMode,
 };
 use osoosi_wire::{JoinGate, MeshCommand, MeshNode};
 use std::collections::{HashMap, HashSet};
@@ -591,7 +591,7 @@ impl EdrOrchestrator {
         let engine = self.patch_engine.clone();
         let orch = self.clone();
         tokio::spawn(async move {
-            orch.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
+            orch.adaptive.spawn_adaptive(ResourceCategory::IO, Priority::Low, async move {
                 let _ = engine.run_discovery().await;
             });
         });
@@ -872,10 +872,11 @@ impl EdrOrchestrator {
 
         // 2. Initialize Trust Manager
         let trust = Arc::new(TrustManager::new(host_executor.clone())?);
-
         let exclude_paths = osoosi_types::load_exclude_paths_from_config();
+
+        let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
         let (watcher_obj, file_rx) =
-            osoosi_telemetry::FileWatcher::new(Some(memory.clone()), exclude_paths)?;
+            osoosi_telemetry::FileWatcher::new(Some(memory.clone()), exclude_paths, adaptive.clone())?;
         let watcher = Arc::new(tokio::sync::Mutex::new(watcher_obj));
         let file_event_rx = Arc::new(tokio::sync::Mutex::new(Some(file_rx)));
         let mesh_peer_count = Arc::new(AtomicU32::new(0));
@@ -942,7 +943,6 @@ impl EdrOrchestrator {
         ));
         let nsrl_cache = Arc::new(dashmap::DashMap::new());
         let remediation = Arc::new(crate::remediation::RemediationController::new());
-        let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
         let causal_ai = Arc::new(crate::causal_ai::CausalEngine::new());
         let self_healing = Arc::new(crate::self_healing::SelfHealingEngine::new(
             audit.clone(),
@@ -1291,6 +1291,7 @@ impl EdrOrchestrator {
                         rx,
                         Some(peer_count),
                         peer_rules,
+                        orch.adaptive(),
                         move |sig| {
                             info!(
                                 "Mesh Intelligence: External threat reported from {}: {:?}",
@@ -1601,7 +1602,7 @@ impl EdrOrchestrator {
             info!("Starting Rule Maintenance Loop (YARA, ClamAV)...");
 
             // 1. YARA Update (Core Forge + Agentic Discovery) - offload to blocking pool
-            orch.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
+            orch.adaptive.spawn_adaptive(ResourceCategory::IO, Priority::Normal, async move {
                 let _ = tokio::task::spawn_blocking(|| {
                     osoosi_model::malware::MalwareScanner::update_yara_rules_on_startup();
                 }).await;
@@ -1614,7 +1615,7 @@ impl EdrOrchestrator {
 
                 // 3. ClamAV Health Check / Update
                 let orch_inner = orch.clone();
-                orch_inner.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
+                orch_inner.adaptive.spawn_adaptive(ResourceCategory::IO, Priority::Normal, async move {
                     let _ = tokio::task::spawn_blocking(|| {
                         let _ = std::process::Command::new("freshclam").status();
                     }).await;
@@ -1702,7 +1703,7 @@ impl EdrOrchestrator {
                         let orch = orchestrator.clone();
                         let pid_val = pid.as_u32();
 
-                        orchestrator.adaptive().spawn_adaptive(crate::adaptive::ResourceCategory::AI, async move {
+                        orchestrator.adaptive().spawn_adaptive(ResourceCategory::AI, Priority::High, async move {
                             warn!(
                                 "CyberShield Insight: Process {} (PID {}) exceeds resource thresholds (CPU: {:.1}%, Mem: {}KB).",
                                 process_name, pid_val, cpu_usage, memory_usage / 1024
@@ -1815,7 +1816,7 @@ impl EdrOrchestrator {
                             let analyzer_clone = analyzer.clone();
                             let event_clone = event.clone();
                             
-                            orchestrator.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::AI, async move {
+                            orchestrator.adaptive.spawn_adaptive(ResourceCategory::AI, Priority::High, async move {
                                 // Tier 1: CoLog Autonomous Sequence Check
                                 let colog_score = analyzer_clone.autonomous_check(event_clone).await;
                                 if colog_score > 0.85 {
@@ -2205,7 +2206,7 @@ impl EdrOrchestrator {
                                 for ev in events {
                                     let orch = orchestrator.clone();
                                     orch.adaptive.report_event();
-                                    orchestrator.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
+                                    orchestrator.adaptive.spawn_adaptive(ResourceCategory::IO, Priority::Normal, async move {
                                         if let Err(e) = orch.process_telemetry(ev).await {
                                             error!("Failed to process host event: {}", e);
                                         }
@@ -2266,7 +2267,7 @@ impl EdrOrchestrator {
                 let orch_inner = orch.clone();
                 
                 // Using spawn_adaptive to handle heavy discovery/patching logic
-                orch_inner.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
+                orch_inner.adaptive.spawn_adaptive(ResourceCategory::IO, Priority::Low, async move {
                     match engine_inner.run_discovery().await {
                         Ok(patches) => {
                             let count = patches.len();
@@ -2371,7 +2372,7 @@ impl EdrOrchestrator {
             loop {
                 let fetcher_inner = fetcher.clone();
                 let orch_inner = orch.clone();
-                orch_inner.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::Net, async move {
+                orch_inner.adaptive.spawn_adaptive(ResourceCategory::Net, Priority::Normal, async move {
                     info!("Fetching latest threat intelligence feeds...");
                     match fetcher_inner.fetch_kev().await {
                         Ok(kevs) => {
@@ -2572,7 +2573,7 @@ impl EdrOrchestrator {
 
         // 0. Intelligent Load-Aware Throttling (The "Brain")
         let current_mode = *self.adaptive.current_mode.read().await;
-        let is_high_pressure = current_mode == crate::adaptive::TelemetryMode::Silent;
+        let is_high_pressure = current_mode == TelemetryMode::Silent;
 
         // Deduplication: Avoid redundant heavy analysis for the same image in a burst
         if let Some(image_path) = event.data.get("Image").and_then(|v| v.as_str()) {
@@ -2852,7 +2853,7 @@ impl EdrOrchestrator {
                         };
                         // Apply dynamic Sysmon block
                         let bm = self.blocking_manager.clone();
-                        self.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
+                        self.adaptive.spawn_adaptive(ResourceCategory::IO, Priority::Normal, async move {
                             if let Err(e) = bm.add_rule(rule).await {
                                 error!("Failed to apply autonomous block: {}", e);
                             }
@@ -2866,7 +2867,7 @@ impl EdrOrchestrator {
                             // Self-Healing: Rollback any file changes made by the malicious process
                             let self_healer = self.self_healing.clone();
                             let heal_pid = pid as u32;
-                            self.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
+                            self.adaptive.spawn_adaptive(ResourceCategory::IO, Priority::Normal, async move {
                                 match self_healer.rollback_process_actions(heal_pid).await {
                                     Ok(count) if count > 0 => {
                                         warn!("Self-Healing: Rolled back {} file(s) for terminated PID {}.", count, heal_pid);
@@ -2883,7 +2884,7 @@ impl EdrOrchestrator {
                     let orch = self.clone();
                     let ev = event.clone();
                     let sig = signature.clone();
-                    self.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::AI, async move {
+                    self.adaptive.spawn_adaptive(ResourceCategory::AI, Priority::Normal, async move {
                         if let Err(e) = orch.perform_action(&ev, &sig, action).await {
                             error!("Failed to perform response action {:?}: {}", action, e);
                         }
@@ -2923,7 +2924,7 @@ impl EdrOrchestrator {
                     let file_path = target_filename.to_string();
                     let computer = event.computer.clone();
                     let mesh_tx_inner = self.mesh_command_tx.clone();
-                    self.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
+                    self.adaptive.spawn_adaptive(ResourceCategory::IO, Priority::Normal, async move {
                         if let Ok(results) = pii_classifier.analyze_file(&file_path).await {
                             if !results.is_empty() {
                                 tracing::warn!("PII Alert: Found {} sensitive entities in {}", results.len(), file_path);
@@ -4382,12 +4383,14 @@ impl EdrOrchestrator {
         let autonomy_conf = autonomy.clone();
         let self_clone = self.clone();
         let orch_tripwire = self.clone();
+        let adaptive_clone = self.adaptive.clone();
         let mesh_future = Box::pin(async move {
             mesh.run_loop(
                 join_gate_clone,
                 command_rx,
                 Some(peer_count),
                 peer_rules,
+                adaptive_clone,
                 move |sig| {
                     let _ = peer_tx.try_send(sig);
                 },
@@ -4626,7 +4629,7 @@ impl EdrOrchestrator {
                 let threat_model_inner = threat_model.clone();
                 let orch_inner = orch.clone();
                 
-                orch_inner.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::AI, async move {
+                orch_inner.adaptive.spawn_adaptive(ResourceCategory::AI, Priority::Normal, async move {
                     let _ = memory_inner
                         .set_model_training_status("last_attempt", &chrono::Utc::now().to_rfc3339());
                     match memory_inner.get_threats_for_training(500) {
@@ -4832,7 +4835,7 @@ impl EdrOrchestrator {
                 let mesh_tx_inner = mesh_tx.clone();
                 let orch_inner = orch.clone();
                 
-                orch_inner.adaptive.spawn_adaptive(crate::adaptive::ResourceCategory::IO, async move {
+                orch_inner.adaptive.spawn_adaptive(ResourceCategory::IO, Priority::Low, async move {
                     info!("BrowserGuard: Periodic sweep running...");
                     let threats = guard_inner.run_sweep().await;
                     for threat in threats {
@@ -5127,12 +5130,14 @@ impl EdrOrchestrator {
             .unwrap_or_else(osoosi_types::all_physical_drive_paths);
         let baseline_paths: Vec<String> = watch_paths.iter().map(|s| s.to_string()).collect();
         let baseline_excludes = osoosi_types::load_exclude_paths_from_config();
+        let baseline_adaptive = self.adaptive.clone();
         tokio::spawn(async move {
             info!("Manual baseline triggered from dashboard/orchestrator.");
             osoosi_telemetry::build_os_file_hash_baseline(
                 baseline_paths,
                 baseline_memory,
                 baseline_excludes,
+                baseline_adaptive,
             )
             .await;
             info!("Manual baseline scan completed.");

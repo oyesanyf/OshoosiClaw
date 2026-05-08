@@ -45,8 +45,19 @@ pub enum ResourceCategory {
     Net,
 }
 
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub enum TelemetryMode {
+    Silent, // Minimal events (Process creation only)
+    Normal, // Standard EDR profile
+    Burst,  // Full fidelity (Network, Registry, FileSystem, DLLs)
+}
+
 pub trait TelemetryControllerInterface: Send + Sync {
     fn spawn_adaptive(&self, category: ResourceCategory, priority: Priority, task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>);
     fn report_event(&self);
     fn is_burst_mode(&self) -> bool;
+    fn is_socket_exhaustion(&self) -> bool;
+    fn set_socket_exhaustion(&self, value: bool);
+    /// Get the current effective concurrency limit for the controller's main resource pool (usually IO).
+    fn get_concurrency_limit(&self) -> std::pin::Pin<Box<dyn std::future::Future<Output = usize> + Send + '_>>;
 }

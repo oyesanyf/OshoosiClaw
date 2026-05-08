@@ -1,7 +1,7 @@
 use osoosi_model::{MalwareScanResult, MalwareScanner};
 use async_trait::async_trait;
 use osoosi_policy::engine::{ThreatVoter, VoteResult};
-use osoosi_types::HostSecurityEvent;
+use osoosi_types::{HostSecurityEvent, Priority, ResourceCategory};
 use std::path::Path;
 use std::sync::Arc;
 
@@ -122,7 +122,7 @@ impl ThreatVoter for YaraXVoter {
             let rules = self.rules.clone();
             let adaptive = self.adaptive.clone();
             
-            let scan_result = adaptive.run_adaptive(crate::adaptive::ResourceCategory::AI, async move {
+            let scan_result = adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
                 if let Ok(bytes) = std::fs::read(&path_buf) {
                     let mut scanner = yara_x::Scanner::new(&rules);
                     if let Ok(results) = scanner.scan(&bytes) {
@@ -196,7 +196,7 @@ impl ThreatVoter for MalConvVoter {
             return None;
         }
 
-        let best_result = adaptive.run_adaptive(crate::adaptive::ResourceCategory::AI, async move {
+        let best_result = adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
             let mut best: Option<MalwareScanResult> = None;
             let mut best_path: Option<String> = None;
 

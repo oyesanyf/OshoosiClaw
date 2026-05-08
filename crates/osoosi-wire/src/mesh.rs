@@ -74,10 +74,13 @@ impl MeshNode {
                 };
 
                 let gossipsub_config = gossipsub::ConfigBuilder::default()
-                    .heartbeat_interval(Duration::from_secs(10))
+                    .heartbeat_interval(Duration::from_secs(2)) // Faster heartbeat for quicker mesh stabilization
                     .validation_mode(gossipsub::ValidationMode::Strict)
                     .message_id_fn(message_id_fn)
-                    .duplicate_cache_time(Duration::from_secs(1))
+                    .duplicate_cache_time(Duration::from_secs(60)) // Cache IDs longer to prevent re-gossip overhead
+                    .history_length(10)
+                    .history_gossip(6)
+                    .mesh_n_low(4) // Lower neighbor requirements for resource-constrained nodes
                     .build()
                     .map_err(std::io::Error::other)?;
 
@@ -129,8 +132,9 @@ impl MeshNode {
                 })
             })?
             .with_swarm_config(|c| {
-                c.with_idle_connection_timeout(Duration::from_secs(60))
-                 .with_dial_concurrency_factor(std::num::NonZeroU8::new(2).unwrap())
+                c.with_idle_connection_timeout(Duration::from_secs(30))
+                 .with_dial_concurrency_factor(std::num::NonZeroU8::new(1).unwrap()) // Slow down dials
+                 .with_max_negotiating_inbound_streams(16)
             })
             .build();
 
@@ -365,6 +369,7 @@ impl MeshNode {
         mut command_rx: mpsc::Receiver<MeshCommand>,
         peer_count: Option<Arc<AtomicU32>>,
         peer_rules: PeerRulesConfig,
+        adaptive: Arc<dyn osoosi_types::TelemetryControllerInterface>,
         mut on_threat: F,
         mut on_consensus: G,
         mut on_ghost_shard: H,
@@ -394,12 +399,21 @@ impl MeshNode {
         // Dynamic Crawler: Periodic random walk to discover new segments of the global mesh
         let mut crawl_interval = tokio::time::interval(Duration::from_secs(60));
         let mut dial_backoff_secs = 0u64;
+        let mut socket_cooldown = tokio::time::interval(Duration::from_secs(30));
+        socket_cooldown.tick().await; // skip first tick
 
-        // Initial bootstrapping
+        // Initial bootstrapping with a small delay to let the system settle
+        tokio::time::sleep(Duration::from_secs(2)).await;
         self.bootstrap_local_neighbors().await;
 
         loop {
             tokio::select! {
+                _ = socket_cooldown.tick() => {
+                    if adaptive.is_socket_exhaustion() {
+                        debug!("Mesh: Clearing socket exhaustion flag after cooldown.");
+                        adaptive.set_socket_exhaustion(false);
+                    }
+                }
                 _ = arp_discovery_interval.tick() => {
                     self.bootstrap_local_neighbors().await;
                 }
@@ -580,7 +594,12 @@ impl MeshNode {
                         info!("Connection established with {} via {:?}", peer_id, endpoint.get_remote_address());
                     }
                     SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
-                        warn!("Connection closed with {}: {:?}", peer_id, cause);
+                        debug!("Connection closed with {}: {:?}", peer_id, cause);
+                        if let Some(libp2p::swarm::ConnectionError::IO(e)) = cause {
+                            if e.kind() == std::io::ErrorKind::TimedOut {
+                                debug!("Connection to {} timed out - likely system contention.", peer_id);
+                            }
+                        }
                     }
                     SwarmEvent::NewListenAddr { address, .. } => {
                         info!("Local node is listening on {}", address);
@@ -588,11 +607,14 @@ impl MeshNode {
                     SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                         let es = error.to_string();
                         if es.contains("10048") || es.contains("WSAEADDRINUSE") {
-                            warn!("Socket exhaustion detected (WSAEADDRINUSE). Applying discovery backoff.");
-                            dial_backoff_secs = (dial_backoff_secs + 30).min(600);
+                            warn!("Socket exhaustion detected (WSAEADDRINUSE). Applying aggressive discovery backoff.");
+                            adaptive.set_socket_exhaustion(true);
+                            dial_backoff_secs = (dial_backoff_secs + 60).min(3600);
                             bootstrap_interval = tokio::time::interval(Duration::from_secs(300 + dial_backoff_secs));
-                            // Reset the interval to start from now with the new duration
-                            bootstrap_interval.tick().await; 
+                            arp_discovery_interval = tokio::time::interval(Duration::from_secs(600 + dial_backoff_secs));
+                            // Reset the intervals
+                            let _ = bootstrap_interval.tick().await; 
+                            let _ = arp_discovery_interval.tick().await;
                         } else {
                             warn!("Outgoing connection error to {:?}: {}", peer_id, error);
                         }
