@@ -2572,7 +2572,7 @@ impl EdrOrchestrator {
         use osoosi_types::ResponseAction;
 
         // 0. Intelligent Load-Aware Throttling (The "Brain")
-        let current_mode = *self.adaptive.current_mode.read().await;
+        let current_mode = *self.adaptive.current_mode.read().unwrap();
         let is_high_pressure = current_mode == TelemetryMode::Silent;
 
         // Deduplication: Avoid redundant heavy analysis for the same image in a burst

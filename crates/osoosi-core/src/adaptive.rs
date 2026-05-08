@@ -54,15 +54,15 @@ impl ResourceGuard {
 
 #[derive(Clone)]
 pub struct TelemetryController {
-    pub(crate) current_mode: Arc<RwLock<TelemetryMode>>,
+    pub(crate) current_mode: Arc<std::sync::RwLock<TelemetryMode>>,
     pub(crate) event_rate: Arc<std::sync::atomic::AtomicUsize>,
-    pub(crate) last_poll_time: Arc<RwLock<Instant>>,
+    pub(crate) last_poll_time: Arc<std::sync::RwLock<Instant>>,
     pub(crate) last_cpu_usage: Arc<std::sync::atomic::AtomicU32>,
     pub(crate) last_mem_usage: Arc<std::sync::atomic::AtomicU32>,
     sys: Arc<RwLock<System>>,
     pub guard: Arc<ResourceGuard>,
     pub(crate) task_sender: tokio::sync::mpsc::UnboundedSender<DeferredTask>,
-    pub(crate) task_rx: Arc<tokio::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<DeferredTask>>>>,
+    pub(crate) task_rx: Arc<std::sync::Mutex<Option<tokio::sync::mpsc::UnboundedReceiver<DeferredTask>>>>,
     pub(crate) socket_exhaustion: Arc<std::sync::atomic::AtomicBool>,
 }
 
@@ -76,15 +76,15 @@ impl TelemetryController {
     pub fn new() -> Self {
         let (tx, rx) = tokio::sync::mpsc::unbounded_channel::<DeferredTask>();
         Self {
-            current_mode: Arc::new(RwLock::new(TelemetryMode::Normal)),
+            current_mode: Arc::new(std::sync::RwLock::new(TelemetryMode::Normal)),
             event_rate: Arc::new(std::sync::atomic::AtomicUsize::new(0)),
-            last_poll_time: Arc::new(RwLock::new(Instant::now())),
+            last_poll_time: Arc::new(std::sync::RwLock::new(Instant::now())),
             last_cpu_usage: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             last_mem_usage: Arc::new(std::sync::atomic::AtomicU32::new(0)),
             sys: Arc::new(RwLock::new(System::new_all())),
             guard: Arc::new(ResourceGuard::new()),
             task_sender: tx,
-            task_rx: Arc::new(tokio::sync::Mutex::new(Some(rx))),
+            task_rx: Arc::new(std::sync::Mutex::new(Some(rx))),
             socket_exhaustion: Arc::new(AtomicBool::new(false)),
         }
     }
@@ -92,8 +92,7 @@ impl TelemetryController {
     /// Start a background task to monitor resources and adapt telemetry.
     /// Start a background task to monitor resources and adapt telemetry.
     pub fn start_adaptive_loop(self: Arc<Self>) {
-        let self_clone = self.clone();
-        let mut task_rx = self.task_rx.blocking_lock().take().expect("start_adaptive_loop called twice");
+        let mut task_rx = self.task_rx.lock().unwrap().take().expect("start_adaptive_loop called twice");
         
         // Task 1: Resource Monitor
         let monitor_self = self.clone();
@@ -126,7 +125,7 @@ impl TelemetryController {
                 }
 
                 // 2. Process tasks based on mode
-                let mode = *worker_self.current_mode.read().await;
+                let mode = *worker_self.current_mode.read().unwrap();
                 if mode == TelemetryMode::Burst {
                     // During burst, we only process High priority tasks if any (though usually only Low are deferred)
                     // and we wait.
@@ -172,42 +171,52 @@ impl TelemetryController {
         self.last_cpu_usage.store(cpu_usage.to_bits(), std::sync::atomic::Ordering::Relaxed);
         self.last_mem_usage.store((mem_usage as f32).to_bits(), std::sync::atomic::Ordering::Relaxed);
 
-        let mut current_mode = self.current_mode.write().await;
+        let events_per_sec = {
+            let now = Instant::now();
+            let mut last_poll = self.last_poll_time.write().unwrap();
+            let elapsed = now.duration_since(*last_poll).as_secs_f64();
+            let current_events = self.event_rate.swap(0, std::sync::atomic::Ordering::SeqCst);
+            let eps = if elapsed > 0.1 { current_events as f64 / elapsed } else { 0.0 };
+            *last_poll = now;
+            eps
+        };
 
-        // Calculate event rate (events per second since last check)
-        let now = Instant::now();
-        let mut last_poll = self.last_poll_time.write().await;
-        let elapsed = now.duration_since(*last_poll).as_secs_f64();
-        let current_events = self.event_rate.swap(0, std::sync::atomic::Ordering::SeqCst);
-        let events_per_sec = if elapsed > 0.1 { current_events as f64 / elapsed } else { 0.0 };
-        *last_poll = now;
+        let mut next_mode = None;
+        {
+            let mut current_mode = self.current_mode.write().unwrap();
 
-        // 1. Mode adjustment (Silent/Normal/Burst)
-        let is_burst = events_per_sec > 500.0; // More than 500 events/sec is a burst
+            // 1. Mode adjustment (Silent/Normal/Burst)
+            let is_burst = events_per_sec > 500.0; // More than 500 events/sec is a burst
 
-        if (cpu_usage > 85.0 || mem_usage > 90.0 || is_burst) && *current_mode != TelemetryMode::Silent {
-            if is_burst {
-                warn!("ADAPTIVE PERFORMANCE: Event burst detected ({:.0} eps). Mode: {:?} -> SILENT. System load: CPU={:.1}%, MEM={:.1}%", events_per_sec, *current_mode, cpu_usage, mem_usage);
+            if (cpu_usage > 85.0 || mem_usage > 90.0 || is_burst) && *current_mode != TelemetryMode::Silent {
+                if is_burst {
+                    warn!("ADAPTIVE PERFORMANCE: Event burst detected ({:.0} eps). Mode: {:?} -> SILENT. System load: CPU={:.1}%, MEM={:.1}%", events_per_sec, *current_mode, cpu_usage, mem_usage);
+                } else {
+                    warn!("ADAPTIVE PERFORMANCE: Resource pressure high. Mode: {:?} -> SILENT. System load: CPU={:.1}%, MEM={:.1}%, EPS={:.1}", *current_mode, cpu_usage, mem_usage, events_per_sec);
+                }
+                *current_mode = TelemetryMode::Silent;
+                next_mode = Some(TelemetryMode::Silent);
+            } else if cpu_usage < 40.0 && mem_usage < 70.0 && !is_burst && *current_mode == TelemetryMode::Silent {
+                info!("ADAPTIVE PERFORMANCE: System load stabilized. Mode: SILENT -> NORMAL. CPU={:.1}%, MEM={:.1}%, EPS={:.1}", cpu_usage, mem_usage, events_per_sec);
+                *current_mode = TelemetryMode::Normal;
+                next_mode = Some(TelemetryMode::Normal);
             } else {
-                warn!("ADAPTIVE PERFORMANCE: Resource pressure high. Mode: {:?} -> SILENT. System load: CPU={:.1}%, MEM={:.1}%, EPS={:.1}", *current_mode, cpu_usage, mem_usage, events_per_sec);
+                tracing::debug!("ADAPTIVE PERFORMANCE: Check complete. CPU={:.1}%, MEM={:.1}%, EPS={:.1}, Mode={:?}", cpu_usage, mem_usage, events_per_sec, *current_mode);
             }
-            *current_mode = TelemetryMode::Silent;
-            self.apply_telemetry_profile(TelemetryMode::Silent).await?;
-        } else if cpu_usage < 40.0 && mem_usage < 70.0 && !is_burst && *current_mode == TelemetryMode::Silent {
-            info!("ADAPTIVE PERFORMANCE: System load stabilized. Mode: SILENT -> NORMAL. CPU={:.1}%, MEM={:.1}%, EPS={:.1}", cpu_usage, mem_usage, events_per_sec);
-            *current_mode = TelemetryMode::Normal;
-            self.apply_telemetry_profile(TelemetryMode::Normal).await?;
-        } else {
-            tracing::debug!("ADAPTIVE PERFORMANCE: Check complete. CPU={:.1}%, MEM={:.1}%, EPS={:.1}, Mode={:?}", cpu_usage, mem_usage, events_per_sec, *current_mode);
         }
 
         if (self.guard.iteration.fetch_add(1, std::sync::atomic::Ordering::Relaxed) % 12) == 0 {
-             info!("ADAPTIVE HEALTH: CPU={:.1}%, MEM={:.1}%, EPS={:.1}, Mode={:?}. AI_Limit={}, IO_Limit={}, NET_Limit={}", 
-                cpu_usage, mem_usage, events_per_sec, *current_mode,
-                self.guard.ai_base as isize - *self.guard.ai_throttled.lock().await,
-                self.guard.io_base as isize - *self.guard.io_throttled.lock().await,
-                self.guard.net_base as isize - *self.guard.net_throttled.lock().await
+            let ai_cap = self.guard.ai_base as isize - *self.guard.ai_throttled.lock().await;
+            let io_cap = self.guard.io_base as isize - *self.guard.io_throttled.lock().await;
+            let net_cap = self.guard.net_base as isize - *self.guard.net_throttled.lock().await;
+            let mode = *self.current_mode.read().unwrap();
+            info!("ADAPTIVE HEALTH: CPU={:.1}%, MEM={:.1}%, EPS={:.1}, Mode={:?}. AI_Limit={}, IO_Limit={}, NET_Limit={}", 
+                cpu_usage, mem_usage, events_per_sec, mode, ai_cap, io_cap, net_cap
             );
+        }
+
+        if let Some(mode) = next_mode {
+            self.apply_telemetry_profile(mode).await?;
         }
 
         // 2. Intelligent Concurrency Throttling (The "Brain")
@@ -264,22 +273,28 @@ impl TelemetryController {
 
     /// Explicitly trigger BURST mode (high fidelity) during a suspicious event.
     pub async fn trigger_burst_mode(&self, duration_secs: u64) -> anyhow::Result<()> {
-        let mut current_mode = self.current_mode.write().await;
-        if *current_mode == TelemetryMode::Burst {
-            return Ok(());
-        }
+        let old_mode = {
+            let mut current_mode = self.current_mode.write().unwrap();
+            if *current_mode == TelemetryMode::Burst {
+                return Ok(());
+            }
 
-        warn!("ADAPTIVE TELEMETRY: Suspicious activity detected! Initiating BURST mode (full fidelity) for {}s.", duration_secs);
-        let old_mode = *current_mode;
-        *current_mode = TelemetryMode::Burst;
+            warn!("ADAPTIVE TELEMETRY: Suspicious activity detected! Initiating BURST mode (full fidelity) for {}s.", duration_secs);
+            let old = *current_mode;
+            *current_mode = TelemetryMode::Burst;
+            old
+        };
+        
         self.apply_telemetry_profile(TelemetryMode::Burst).await?;
 
         let controller = Arc::new(self.clone());
         tokio::spawn(async move {
             tokio::time::sleep(std::time::Duration::from_secs(duration_secs)).await;
             info!("ADAPTIVE TELEMETRY: Burst period ended. Restoring original mode.");
-            let mut mode = controller.current_mode.write().await;
-            *mode = old_mode;
+            {
+                let mut mode = controller.current_mode.write().unwrap();
+                *mode = old_mode;
+            }
             let _ = controller.apply_telemetry_profile(old_mode).await;
         });
 
@@ -300,7 +315,7 @@ impl TelemetryController {
         F: std::future::Future<Output = T> + Send + 'static,
         T: Send + 'static,
     {
-        let mode = self.current_mode.blocking_read().clone();
+        let mode = self.current_mode.read().unwrap().clone();
         
         // Yielding logic: During an alert (Burst mode), Low priority tasks (like background hashing) 
         // are deferred to a priority queue to prevent interference with telemetry ingestion.
@@ -330,7 +345,7 @@ impl TelemetryController {
         F: std::future::Future<Output = T> + Send + 'static,
         T: Send + 'static,
     {
-        let mode = self.current_mode.read().await.clone();
+        let mode = self.current_mode.read().unwrap().clone();
         
         if mode == TelemetryMode::Burst && priority == Priority::Low {
              // Yield: wait for mode to stabilize
@@ -369,7 +384,7 @@ impl TelemetryControllerInterface for TelemetryController {
     }
 
     fn is_burst_mode(&self) -> bool {
-        self.current_mode.blocking_read().clone() == TelemetryMode::Burst
+        *self.current_mode.read().unwrap() == TelemetryMode::Burst
     }
 
     fn is_socket_exhaustion(&self) -> bool {
