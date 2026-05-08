@@ -46,6 +46,14 @@ type FnNtAllocateVirtualMemory = unsafe extern "system" fn(
     windows::Win32::System::Memory::PAGE_PROTECTION_FLAGS,
 ) -> windows::Win32::Foundation::NTSTATUS;
 
+type FnNtProtectVirtualMemory = unsafe extern "system" fn(
+    windows::Win32::Foundation::HANDLE,
+    *mut *mut c_void,
+    *mut usize,
+    u32, // NewProtection
+    *mut u32, // OldProtection
+) -> windows::Win32::Foundation::NTSTATUS;
+
 type FnOpenProcess = unsafe extern "system" fn(
     u32,
     BOOL,
@@ -71,6 +79,7 @@ lazy_static! {
     static ref HOOK_BITBLT: Mutex<Option<GenericDetour<FnBitBlt>>> = Mutex::new(None);
     static ref HOOK_CREATEPROCESSW: Mutex<Option<GenericDetour<FnCreateProcessW>>> = Mutex::new(None);
     static ref HOOK_NTALLOCATEVIRTUALMEMORY: Mutex<Option<GenericDetour<FnNtAllocateVirtualMemory>>> = Mutex::new(None);
+    static ref HOOK_NTPROTECTVIRTUALMEMORY: Mutex<Option<GenericDetour<FnNtProtectVirtualMemory>>> = Mutex::new(None);
     static ref HOOK_OPENPROCESS: Mutex<Option<GenericDetour<FnOpenProcess>>> = Mutex::new(None);
     static ref HOOK_READPROCESSMEMORY: Mutex<Option<GenericDetour<FnReadProcessMemory>>> = Mutex::new(None);
     static ref HOOK_SEND: Mutex<Option<GenericDetour<FnSend>>> = Mutex::new(None);
@@ -172,6 +181,36 @@ extern "system" fn hooked_nt_allocate_virtual_memory(
     }
 }
 
+/// Intercepted NtProtectVirtualMemory: Detects Module Overloading and RWX transitions
+extern "system" fn hooked_nt_protect_virtual_memory(
+    process_handle: windows::Win32::Foundation::HANDLE,
+    base_address: *mut *mut c_void,
+    region_size: *mut usize,
+    new_protection: u32,
+    old_protection: *mut u32,
+) -> windows::Win32::Foundation::NTSTATUS {
+    
+    // PAGE_EXECUTE_READWRITE (0x40)
+    // if new_protection == 0x40 {
+    //     // Notify telemetry: process changed memory protection to RWX
+    // }
+
+    let hook_guard = HOOK_NTPROTECTVIRTUALMEMORY.lock().unwrap();
+    if let Some(hook) = hook_guard.as_ref() {
+        unsafe {
+            hook.call(
+                process_handle,
+                base_address,
+                region_size,
+                new_protection,
+                old_protection,
+            )
+        }
+    } else {
+        windows::Win32::Foundation::NTSTATUS(-1)
+    }
+}
+
 /// Intercepted OpenProcess: Prevents malware from getting handles to EDR or LSASS
 extern "system" fn hooked_open_process(
     desired_access: u32,
@@ -258,6 +297,12 @@ unsafe fn init_hooks() -> Result<(), Box<dyn std::error::Error>> {
     let nt_alloc_hook = GenericDetour::new(nt_alloc_target, hooked_nt_allocate_virtual_memory)?;
     nt_alloc_hook.enable()?;
     *HOOK_NTALLOCATEVIRTUALMEMORY.lock().unwrap() = Some(nt_alloc_hook);
+
+    let nt_protect_addr = GetProcAddress(ntdll, s!("NtProtectVirtualMemory")).ok_or("Failed to find NtProtectVirtualMemory")?;
+    let nt_protect_target: FnNtProtectVirtualMemory = std::mem::transmute(nt_protect_addr);
+    let nt_protect_hook = GenericDetour::new(nt_protect_target, hooked_nt_protect_virtual_memory)?;
+    nt_protect_hook.enable()?;
+    *HOOK_NTPROTECTVIRTUALMEMORY.lock().unwrap() = Some(nt_protect_hook);
 
     let open_process_addr = GetProcAddress(kernel32, s!("OpenProcess")).ok_or("Failed to find OpenProcess")?;
     let open_process_target: FnOpenProcess = std::mem::transmute(open_process_addr);

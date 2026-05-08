@@ -1066,6 +1066,28 @@ impl ThreatVoter for InjectionTelemetryVoter {
                 None
             }
 
+            // --- Module Overloading Detection (NtProtectVirtualMemory hook) ---
+            "NtProtectVirtualMemory" => {
+                let protect = event.data.get("Protection").and_then(|v| v.as_str()).unwrap_or("");
+                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("unknown");
+                // Changing existing memory (often module memory) to RWX is a major indicator of module overloading or hooking.
+                if protect.contains("RWX") || protect.contains("0x40") {
+                    // Exclude known legitimate JIT engines
+                    let img_lower = image.to_lowercase();
+                    if img_lower.contains("java") || img_lower.contains("dotnet")
+                        || img_lower.contains("node") || img_lower.contains("chrome")
+                        || img_lower.contains("firefox") {
+                        return None;
+                    }
+                    return Some(VoteResult {
+                        confidence: 0.95,
+                        reason: format!("Module Overloading Detected: {} changed memory protection to RWX (Image -> Private transition)", image),
+                        weight: 0.9,
+                    });
+                }
+                None
+            }
+
             // --- Credential Dumping Detection (ReadProcessMemory / ptrace) ---
             "ReadProcessMemory" | "ptrace" => {
                 let target = event.data.get("TargetProcess").and_then(|v| v.as_str()).unwrap_or("");
