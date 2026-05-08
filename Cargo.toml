@@ -99,6 +99,9 @@ git2 = "0.19"
 bloomfilter = "1.0.9"
 libloading = "0.8"
 yara-x = "1.15.0"
+smoltcp = { version = "0.11", features = ["std", "log", "medium-ethernet", "proto-ipv4", "socket-tcp", "socket-udp", "socket-icmp"] }
+wintun = "0.4"
+managed = "0.8"
 # Legacy tools replaced by Zero-Process Stack
 # Windows-only crates — kept in workspace for version pinning;
 # individual crates reference them under [target.'cfg(windows)'.dependencies]

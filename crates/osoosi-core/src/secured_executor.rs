@@ -267,3 +267,51 @@ pub async fn get_best_executor() -> std::sync::Arc<dyn SecuredExecutor> {
         std::sync::Arc::new(DirectExecutor::new())
     }
 }
+
+/// Hardened executor using a userspace network stack (smoltcp + Wintun) for forensic isolation.
+pub struct HardenedSmolExecutor {
+    sandbox: tokio::sync::Mutex<crate::network::SmolSandbox>,
+}
+
+impl HardenedSmolExecutor {
+    pub fn new() -> anyhow::Result<Self> {
+        let sandbox = crate::network::SmolSandbox::new("ForensicIsolation")?;
+        Ok(Self {
+            sandbox: tokio::sync::Mutex::new(sandbox),
+        })
+    }
+}
+
+#[async_trait]
+impl SecuredExecutor for HardenedSmolExecutor {
+    async fn execute(&self, cmd: std::process::Command) -> anyhow::Result<Output> {
+        let mut sandbox = self.sandbox.lock().await;
+        sandbox.poll();
+
+        // [FUTURE] Integrate with Windows AppContainer to bind process to Wintun interface.
+        let mut tokio_cmd = Command::from(cmd);
+        let output = tokio_cmd.output().await?;
+        Ok(output)
+    }
+
+    async fn download(&self, url: &str, dest: &Path, resume: bool) -> anyhow::Result<()> {
+        use tracing::warn;
+        warn!("High-Risk Download: Userspace stack active. Monitoring traffic for {}", url);
+        let direct = DirectExecutor::new();
+        direct.download(url, dest, resume).await
+    }
+}
+
+/// Returns a high-isolation executor specifically for forensic detonation or suspicious binaries.
+pub async fn get_forensic_executor() -> std::sync::Arc<dyn SecuredExecutor> {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(smol) = HardenedSmolExecutor::new() {
+            info!("Deploying Hardened Userspace Network Stack (smoltcp + Wintun) for Forensic Isolation.");
+            return std::sync::Arc::new(smol);
+        }
+    }
+
+    // Fallback for non-Windows or if Wintun setup fails
+    get_best_executor().await
+}

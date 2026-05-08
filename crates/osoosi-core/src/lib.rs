@@ -15,6 +15,7 @@ pub mod hardened;
 pub mod hybrid_runtime;
 pub mod landlock;
 pub mod openshell;
+pub mod network;
 pub mod pii;
 pub mod privilege;
 pub mod quarantine;
