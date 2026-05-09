@@ -74,7 +74,7 @@ impl MeshNode {
                 };
 
                 let gossipsub_config = gossipsub::ConfigBuilder::default()
-                    .heartbeat_interval(Duration::from_secs(2)) // Faster heartbeat for quicker mesh stabilization
+                    .heartbeat_interval(Duration::from_secs(15)) // Increased interval to reduce gossip noise/chatter
                     .validation_mode(gossipsub::ValidationMode::Strict)
                     .message_id_fn(message_id_fn)
                     .duplicate_cache_time(Duration::from_secs(60)) // Cache IDs longer to prevent re-gossip overhead

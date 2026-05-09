@@ -262,14 +262,16 @@ pub fn clear_firewall_persistence() -> Result<()> {
 /// Open ports required for Oshoosi mesh/control traffic and dashboard access.
 pub fn open_mesh_ports() -> Result<()> {
     let ports = [
-        ("Osoosi-Mesh-Main", 4001_u16),
-        ("Osoosi-Mesh-Control", 9000_u16),
-        ("Osoosi-Mesh-Alt", 9876_u16),
-        ("Osoosi-Dashboard", 3030_u16),
+        ("Osoosi-Mesh-Main", 4001_u16, "TCP"),
+        ("Osoosi-Mesh-UDP", 4001_u16, "UDP"),
+        ("Osoosi-Mesh-Control", 9000_u16, "TCP"),
+        ("Osoosi-Mesh-Alt", 9876_u16, "TCP"),
+        ("Osoosi-mDNS", 5353_u16, "UDP"),
+        ("Osoosi-Dashboard", 3030_u16, "TCP"),
     ];
     #[cfg(target_os = "windows")]
     {
-        for (name, port) in ports {
+        for (name, port, proto) in ports {
             let _ = Command::new("netsh")
                 .args([
                     "advfirewall",
@@ -279,7 +281,7 @@ pub fn open_mesh_ports() -> Result<()> {
                     &format!("name=\"{}\"", name),
                     "dir=in",
                     "action=allow",
-                    "protocol=TCP",
+                    &format!("protocol={}", proto),
                     &format!("localport={}", port),
                     "enable=yes",
                     "profile=any",
@@ -289,15 +291,24 @@ pub fn open_mesh_ports() -> Result<()> {
     }
     #[cfg(target_os = "linux")]
     {
-        for (_, port) in ports {
-            let port_spec = format!("{}/tcp", port);
+        for (_, port, proto) in ports {
+            let port_spec = format!("{}/{}", port, proto.to_lowercase());
             let port_str = port.to_string();
+            let proto_lower = proto.to_lowercase();
             let _ = Command::new("sudo")
                 .args(["ufw", "allow", &port_spec])
                 .status();
             let _ = Command::new("sudo")
                 .args([
-                    "iptables", "-I", "INPUT", "-p", "tcp", "--dport", &port_str, "-j", "ACCEPT",
+                    "iptables",
+                    "-I",
+                    "INPUT",
+                    "-p",
+                    &proto_lower,
+                    "--dport",
+                    &port_str,
+                    "-j",
+                    "ACCEPT",
                 ])
                 .status();
         }
