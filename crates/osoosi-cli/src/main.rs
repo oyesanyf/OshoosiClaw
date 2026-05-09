@@ -317,7 +317,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
 
     if is_granting {
         handle_grant_access().await?;
-        let _ = osoosi_core::firewall::open_mesh_ports();
+        let _ = osoosi_core::firewall::open_mesh_ports().await;
         // Provision models during initial setup
         info!("🕸️ [SETUP] Provisioning AI models for first-run access...");
         let _ = ensure_ai_models().await;
@@ -334,7 +334,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             );
         }
         let _ = ensure_ai_models().await;
-        let _ = osoosi_core::firewall::open_mesh_ports();
+        let _ = osoosi_core::firewall::open_mesh_ports().await;
     } else if is_starting {
         let executor = Arc::new(DirectExecutor::new());
         let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
@@ -348,7 +348,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
             let _ = ensure_ai_models().await;
         });
-        let _ = osoosi_core::firewall::open_mesh_ports();
+        let _ = osoosi_core::firewall::open_mesh_ports().await;
     }
 
     let suppress_ml_warning = is_granting || is_bootstrapping;
@@ -1215,7 +1215,7 @@ async fn handle_grant_access() -> anyhow::Result<()> {
         Err(e) => println!("[!] Firewall failed: {}", e),
     }
 
-    let status = osoosi_core::privilege::grant_access();
+    let status = tokio::task::spawn_blocking(|| osoosi_core::privilege::grant_access()).await?;
     if status.can_read_events {
         println!("Result: SUCCESS");
     } else {
@@ -1364,12 +1364,20 @@ fn kill_port_holder(port: u16) {
 async fn setup_firewall() -> anyhow::Result<()> {
     #[cfg(target_os = "windows")]
     {
-        // Rustify: Use netsh instead of powershell.exe for firewall rules
-        let _ = std::process::Command::new("netsh")
-            .args(&["advfirewall", "firewall", "add", "rule", "name=\"OpenOshoosi-Allow\"", "dir=in", "action=allow", "protocol=TCP", "localport=9000,9876,3030,8080"])
-            .output()?;
+        use tokio::process::Command;
+        use tokio::time::{timeout, Duration};
+
+        // TCP rules
+        let mut tcp_cmd = Command::new("netsh");
+        tcp_cmd.args(&["advfirewall", "firewall", "add", "rule", "name=\"OpenOshoosi-TCP\"", "dir=in", "action=allow", "protocol=TCP", "localport=4001,9000,9876,3030,8080"]);
+        let _ = timeout(Duration::from_secs(30), tcp_cmd.output()).await;
+
+        // UDP rules (mDNS + P2P discovery)
+        let mut udp_cmd = Command::new("netsh");
+        udp_cmd.args(&["advfirewall", "firewall", "add", "rule", "name=\"OpenOshoosi-UDP\"", "dir=in", "action=allow", "protocol=UDP", "localport=4001,5353"]);
+        let _ = timeout(Duration::from_secs(30), udp_cmd.output()).await;
     }
-    osoosi_core::firewall::open_mesh_ports()?;
+    osoosi_core::firewall::open_mesh_ports().await?;
     Ok(())
 }
 
@@ -2070,14 +2078,15 @@ async fn ensure_ollama_model() {
     };
 
     info!("Ollama detected. Ensuring a local reasoning model is available...");
-    let list = tokio::process::Command::new("ollama")
+    
+    let list_fut = tokio::process::Command::new("ollama")
         .arg("list")
-        .output()
-        .await;
-    let list_stdout = list
-        .ok()
-        .map(|out| String::from_utf8_lossy(&out.stdout).to_string())
-        .unwrap_or_default();
+        .output();
+    
+    let list_stdout = match tokio::time::timeout(std::time::Duration::from_secs(30), list_fut).await {
+        Ok(Ok(out)) => String::from_utf8_lossy(&out.stdout).to_string(),
+        _ => String::new(),
+    };
 
     let mut candidates = vec![preferred.clone()];
     for fallback in &ai.fallback_models {
@@ -2093,27 +2102,30 @@ async fn ensure_ollama_model() {
 
     if selected.is_none() {
         for model in &candidates {
-            match tokio::process::Command::new("ollama")
+            let pull_fut = tokio::process::Command::new("ollama")
                 .args(["pull", model])
-                .status()
-                .await
-            {
-                Ok(status) if status.success() => {
+                .status();
+                
+            match tokio::time::timeout(std::time::Duration::from_secs(600), pull_fut).await {
+                Ok(Ok(status)) if status.success() => {
                     info!("Ollama model '{}' provisioned.", model);
                     selected = Some(model.clone());
                     break;
                 }
-                Ok(status) => {
+                Ok(Ok(status)) => {
                     warn!(
                         "ollama pull {} exited with status {}; trying next Gemma fallback.",
                         model, status
                     );
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     warn!(
                         "Failed to run ollama pull {}: {}; trying next Gemma fallback.",
                         model, e
                     );
+                }
+                Err(_) => {
+                    warn!("ollama pull {} timed out; trying next fallback.", model);
                 }
             }
         }
@@ -2149,14 +2161,16 @@ async fn ensure_ollama_model() {
 }
 
 async fn ollama_available() -> bool {
-    tokio::process::Command::new("ollama")
+    let check_fut = tokio::process::Command::new("ollama")
         .arg("--version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
-        .status()
-        .await
-        .map(|status| status.success())
-        .unwrap_or(false)
+        .status();
+        
+    match tokio::time::timeout(std::time::Duration::from_secs(10), check_fut).await {
+        Ok(Ok(status)) => status.success(),
+        _ => false,
+    }
 }
 
 async fn install_ollama_best_effort() {
@@ -2171,7 +2185,7 @@ async fn install_ollama_best_effort() {
 
     #[cfg(target_os = "windows")]
     {
-        let winget = tokio::process::Command::new("winget")
+        let winget_fut = tokio::process::Command::new("winget")
             .args([
                 "install",
                 "--id",
@@ -2180,46 +2194,49 @@ async fn install_ollama_best_effort() {
                 "--accept-package-agreements",
                 "--accept-source-agreements",
             ])
-            .status()
-            .await;
-        match winget {
-            Ok(status) if status.success() => info!("Ollama installed with winget."),
-            Ok(status) => warn!("winget Ollama install exited with status {}.", status),
-            Err(e) => warn!(
+            .status();
+            
+        match tokio::time::timeout(std::time::Duration::from_secs(600), winget_fut).await {
+            Ok(Ok(status)) if status.success() => info!("Ollama installed with winget."),
+            Ok(Ok(status)) => warn!("winget Ollama install exited with status {}.", status),
+            Ok(Err(e)) => warn!(
                 "winget not available or failed to start for Ollama install: {}",
                 e
             ),
+            Err(_) => warn!("winget Ollama install timed out."),
         }
     }
 
     #[cfg(target_os = "macos")]
     {
-        let brew = tokio::process::Command::new("brew")
+        let brew_fut = tokio::process::Command::new("brew")
             .args(["install", "ollama"])
-            .status()
-            .await;
-        match brew {
-            Ok(status) if status.success() => info!("Ollama installed with Homebrew."),
-            Ok(status) => warn!("brew Ollama install exited with status {}.", status),
-            Err(e) => warn!(
+            .status();
+            
+        match tokio::time::timeout(std::time::Duration::from_secs(600), brew_fut).await {
+            Ok(Ok(status)) if status.success() => info!("Ollama installed with Homebrew."),
+            Ok(Ok(status)) => warn!("brew Ollama install exited with status {}.", status),
+            Ok(Err(e)) => warn!(
                 "Homebrew not available or failed to start for Ollama install: {}",
                 e
             ),
+            Err(_) => warn!("brew Ollama install timed out."),
         }
     }
 
     #[cfg(target_os = "linux")]
     {
-        let shell = tokio::process::Command::new("sh")
+        let shell_fut = tokio::process::Command::new("sh")
             .args(["-c", "curl -fsSL https://ollama.com/install.sh | sh"])
-            .status()
-            .await;
-        match shell {
-            Ok(status) if status.success() => {
+            .status();
+            
+        match tokio::time::timeout(std::time::Duration::from_secs(600), shell_fut).await {
+            Ok(Ok(status)) if status.success() => {
                 info!("Ollama installed with official Linux installer.")
             }
-            Ok(status) => warn!("Ollama Linux installer exited with status {}.", status),
-            Err(e) => warn!("Failed to start Ollama Linux installer: {}", e),
+            Ok(Ok(status)) => warn!("Ollama Linux installer exited with status {}.", status),
+            Ok(Err(e)) => warn!("Failed to start Ollama Linux installer: {}", e),
+            Err(_) => warn!("Ollama Linux installer timed out."),
         }
     }
 }

@@ -42,51 +42,40 @@ impl AgentProvisioner {
 
         #[cfg(target_os = "windows")]
         {
-            let ports = [
+            let tcp_ports = [
                 ("OshoosiMesh-Main", "4001"),
                 ("OshoosiMesh-Control", "9000"),
                 ("OshoosiMesh-Alt", "9876"),
                 ("OshoosiDashboard", "3030"),
             ];
-            for (name, port) in ports {
-                let mut check = Command::new("netsh");
-                check.args([
-                    "advfirewall",
-                    "firewall",
-                    "show",
-                    "rule",
-                    &format!("name={}", name),
-                ]);
+            let udp_ports = [
+                ("OshoosiMesh-Discovery", "4001"),
+                ("OshoosiMesh-mDNS", "5353"),
+            ];
 
-                if !self.executor.execute(check).await?.status.success() {
-                    info!("Adding firewall rule: {} (Port {})...", name, port);
-                    let mut add = Command::new("netsh");
-                    add.args([
-                        "advfirewall",
-                        "firewall",
-                        "add",
-                        "rule",
-                        &format!("name={}", name),
-                        "dir=in",
-                        "action=allow",
-                        "protocol=TCP",
-                        &format!("localport={}", port),
-                        "enable=yes",
-                        "profile=any",
-                    ]);
-                    self.executor.execute(add).await?;
-                }
+            for (name, port) in tcp_ports {
+                self.ensure_windows_rule(name, port, "TCP").await?;
+            }
+            for (name, port) in udp_ports {
+                self.ensure_windows_rule(name, port, "UDP").await?;
             }
         }
 
         #[cfg(target_os = "linux")]
         {
             let tcp_ports = ["4001", "9000", "9876", "3030"];
+            let udp_ports = ["4001", "5353"];
+
             // Try ufw first
             if self.command_exists("ufw").await {
                 for port in tcp_ports {
                     let mut cmd = Command::new("sudo");
                     cmd.args(["ufw", "allow", &format!("{}/tcp", port)]);
+                    let _ = self.executor.execute(cmd).await;
+                }
+                for port in udp_ports {
+                    let mut cmd = Command::new("sudo");
+                    cmd.args(["ufw", "allow", &format!("{}/udp", port)]);
                     let _ = self.executor.execute(cmd).await;
                 }
             } else if self.command_exists("firewall-cmd").await {
@@ -95,35 +84,62 @@ impl AgentProvisioner {
                     cmd.args(["firewall-cmd", "--permanent", "--add-port", &format!("{}/tcp", port)]);
                     let _ = self.executor.execute(cmd).await;
                 }
+                for port in udp_ports {
+                    let mut cmd = Command::new("sudo");
+                    cmd.args(["firewall-cmd", "--permanent", "--add-port", &format!("{}/udp", port)]);
+                    let _ = self.executor.execute(cmd).await;
+                }
                 let mut cmd = Command::new("sudo");
                 cmd.args(["firewall-cmd", "--reload"]);
                 let _ = self.executor.execute(cmd).await;
             } else if self.command_exists("iptables").await {
                 for port in tcp_ports {
                     let mut cmd = Command::new("sudo");
-                    cmd.args([
-                        "iptables",
-                        "-I",
-                        "INPUT",
-                        "-p",
-                        "tcp",
-                        "--dport",
-                        port,
-                        "-j",
-                        "ACCEPT",
-                    ]);
+                    cmd.args(["iptables", "-I", "INPUT", "-p", "tcp", "--dport", port, "-j", "ACCEPT"]);
+                    let _ = self.executor.execute(cmd).await;
+                }
+                for port in udp_ports {
+                    let mut cmd = Command::new("sudo");
+                    cmd.args(["iptables", "-I", "INPUT", "-p", "udp", "--dport", port, "-j", "ACCEPT"]);
                     let _ = self.executor.execute(cmd).await;
                 }
             }
         }
 
-        #[cfg(target_os = "macos")]
-        {
-            // macOS users typically use the Application Firewall, but for CLI/Mesh
-            // we log the required ports for manual/MDM approval.
-            info!("Firewall provisioning note: Oshoosi requires incoming TCP ports 4001, 9000, 9876, and 3030.");
-        }
+        info!("Firewall provisioning note: Oshoosi requires incoming TCP ports 4001, 9000, 9876, and 3030.");
 
+        Ok(())
+    }
+
+    #[cfg(target_os = "windows")]
+    async fn ensure_windows_rule(&self, name: &str, port: &str, protocol: &str) -> anyhow::Result<()> {
+        let mut check = Command::new("netsh");
+        check.args([
+            "advfirewall",
+            "firewall",
+            "show",
+            "rule",
+            &format!("name={}", name),
+        ]);
+
+        if !self.executor.execute(check).await?.status.success() {
+            info!("Adding firewall rule: {} (Port {}/{})...", name, port, protocol);
+            let mut add = Command::new("netsh");
+            add.args([
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                &format!("name={}", name),
+                "dir=in",
+                "action=allow",
+                &format!("protocol={}", protocol),
+                &format!("localport={}", port),
+                "enable=yes",
+                "profile=any",
+            ]);
+            self.executor.execute(add).await?;
+        }
         Ok(())
     }
 

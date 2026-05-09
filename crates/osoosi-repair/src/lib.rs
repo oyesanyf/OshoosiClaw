@@ -850,82 +850,65 @@ impl PatchEngine {
         }
         #[cfg(target_os = "linux")]
         {
-            if Command::new("which")
-                .arg("dpkg-query")
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-            {
-                return Command::new("dpkg-query")
-                    .args(["-W", &patch.component])
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false);
+            use tokio::process::Command;
+            use tokio::time::{timeout, Duration};
+
+            async fn check_pkg(cmd: &str, args: &[&str]) -> bool {
+                let check_fut = Command::new("which").arg(cmd).status();
+                if let Ok(Ok(s)) = timeout(Duration::from_secs(5), check_fut).await {
+                    if s.success() {
+                        let verify_fut = Command::new(cmd).args(args).status();
+                        if let Ok(Ok(s)) = timeout(Duration::from_secs(10), verify_fut).await {
+                            return s.success();
+                        }
+                    }
+                }
+                false
             }
-            if Command::new("which")
-                .arg("rpm")
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-            {
-                return Command::new("rpm")
-                    .args(["-q", &patch.component])
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false);
+
+            if check_pkg("dpkg-query", &["-W", &patch.component]).await {
+                return true;
             }
-            if Command::new("which")
-                .arg("pacman")
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-            {
-                return Command::new("pacman")
-                    .args(["-Q", &patch.component])
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false);
+            if check_pkg("rpm", &["-q", &patch.component]).await {
+                return true;
             }
-            if Command::new("which")
-                .arg("zypper")
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-            {
-                return Command::new("zypper")
-                    .args(["se", "-i", &patch.component])
-                    .output()
-                    .map(|o| {
-                        o.status.success()
-                            && !String::from_utf8_lossy(&o.stdout).contains("No packages found")
-                    })
-                    .unwrap_or(false);
+            if check_pkg("pacman", &["-Q", &patch.component]).await {
+                return true;
             }
-            if Command::new("which")
-                .arg("apk")
-                .status()
-                .map(|s| s.success())
-                .unwrap_or(false)
-            {
-                return Command::new("apk")
-                    .args(["info", "-e", &patch.component])
-                    .status()
-                    .map(|s| s.success())
-                    .unwrap_or(false);
+            
+            // Zypper needs special handling for output
+            let zypper_fut = async {
+                let s = Command::new("which").arg("zypper").status().await;
+                if s.map(|s| s.success()).unwrap_or(false) {
+                    let out = Command::new("zypper").args(["se", "-i", &patch.component]).output().await;
+                    if let Ok(o) = out {
+                        return o.status.success() && !String::from_utf8_lossy(&o.stdout).contains("No packages found");
+                    }
+                }
+                false
+            };
+            if let Ok(res) = timeout(Duration::from_secs(15), zypper_fut).await {
+                if res { return true; }
             }
+
+            if check_pkg("apk", &["info", "-e", &patch.component]).await {
+                return true;
+            }
+            
             false
         }
         #[cfg(target_os = "macos")]
         {
-            Command::new("softwareupdate")
-                .args(["--history"])
-                .output()
-                .map(|o| {
-                    String::from_utf8_lossy(&o.stdout)
-                        .to_ascii_lowercase()
-                        .contains(&patch.component.to_ascii_lowercase())
-                })
-                .unwrap_or(false)
+            use tokio::process::Command;
+            use tokio::time::{timeout, Duration};
+
+            let sw_fut = Command::new("softwareupdate").args(["--history"]).output();
+            if let Ok(Ok(o)) = timeout(Duration::from_secs(30), sw_fut).await {
+                return String::from_utf8_lossy(&o.stdout)
+                    .to_ascii_lowercase()
+                    .contains(&patch.component.to_ascii_lowercase());
+            }
+            false
         }
     }
 
@@ -938,35 +921,67 @@ impl PatchEngine {
 
             #[cfg(target_os = "windows")]
             {
+                use tokio::process::Command;
+                use tokio::time::{timeout, Duration};
+
                 // Best-effort rollback by uninstalling KB.
                 let kb = tx.patch.version.trim().to_uppercase();
                 if kb.starts_with("KB") {
                     let kb_num = kb.trim_start_matches("KB");
                     info!("Attempting wusa rollback for {}...", kb);
-                    let status = Command::new("wusa.exe")
+                    
+                    let wusa_fut = Command::new("wusa.exe")
                         .args([
                             "/uninstall",
                             &format!("/kb:{}", kb_num),
                             "/quiet",
                             "/norestart",
                         ])
-                        .status()?;
+                        .status();
+                    
+                    let wusa_res = timeout(Duration::from_secs(300), wusa_fut).await;
+                    
+                    let mut success = false;
+                    let mut code = -1;
+                    if let Ok(Ok(status)) = wusa_res {
+                        if status.success() {
+                            success = true;
+                        }
+                        code = status.code().unwrap_or(-1);
+                    } else if wusa_res.is_err() {
+                        warn!("wusa.exe rollback timed out for {}. Proceeding to DISM fallback.", kb);
+                        code = 258; // WAIT_TIMEOUT
+                    }
 
-                    if !status.success() {
-                        let code = status.code().unwrap_or(-1);
-                        if code == 87 || code == -2147024809 {
-                            // Invalid parameter
-                            warn!("wusa.exe rollback failed with code 87. Attempting DISM fallback for {}...", kb);
-                            // Rustify: Use dism.exe directly instead of powershell.exe
-                            let dism_status = Command::new("dism.exe")
-                                .args(["/Online", "/Remove-Package", &format!("/PackageName:Package_for_RollupFix~31bf3856ad364e35~amd64~~{}.1.1.1", kb_num), "/NoRestart", "/Quiet"])
-                                .status()?;
+                    if !success {
+                        if code == 87 || code == -2147024809 || code == 258 {
+                            // Invalid parameter or timeout
+                            warn!("wusa.exe rollback failed or timed out (code {}). Attempting DISM fallback for {}...", code, kb);
+                            
+                            let dism_args = [
+                                "/Online", 
+                                "/Remove-Package", 
+                                &format!("/PackageName:Package_for_RollupFix~31bf3856ad364e35~amd64~~{}.1.1.1", kb_num), 
+                                "/NoRestart", 
+                                "/Quiet"
+                            ];
+                            
+                            let dism_fut = Command::new("dism.exe").args(dism_args).status();
+                            let dism_status = match timeout(Duration::from_secs(600), dism_fut).await {
+                                Ok(res) => res?,
+                                Err(_) => {
+                                    return Err(anyhow!("DISM rollback timed out for {} after 10 minutes", kb));
+                                }
+                            };
+
                             if !dism_status.success() {
                                 // Try generic package name if specific one fails
-                                let _ = Command::new("dism.exe")
+                                let dism_fallback_fut = Command::new("dism.exe")
                                     .args(["/Online", "/Remove-Package", &format!("/PackageName:{}", kb), "/NoRestart", "/Quiet"])
                                     .status();
+                                let _ = timeout(Duration::from_secs(300), dism_fallback_fut).await;
                             }
+                            
                             if !dism_status.success() {
                                 return Err(anyhow!(
                                     "Windows rollback failed for {} (both wusa and DISM failed)",
@@ -991,17 +1006,21 @@ impl PatchEngine {
             }
             #[cfg(target_os = "linux")]
             {
+                use tokio::process::Command;
+                use tokio::time::{timeout, Duration};
+
                 if snap_id.starts_with("apt:") {
                     let data = snap_id.trim_start_matches("apt:");
                     let (pkg, ver) = data
                         .split_once('=')
                         .unwrap_or((tx.patch.component.as_str(), "<unknown>"));
                     if ver != "<unknown>" {
-                        let status = Command::new("apt-get")
+                        let apt_fut = Command::new("apt-get")
                             .args(["install", "-y", &format!("{}={}", pkg, ver)])
-                            .status()?;
-                        if !status.success() {
-                            return Err(anyhow!("APT rollback failed for {}", pkg));
+                            .status();
+                        match timeout(Duration::from_secs(300), apt_fut).await {
+                            Ok(Ok(s)) if s.success() => {},
+                            _ => return Err(anyhow!("APT rollback failed or timed out for {}", pkg)),
                         }
                     } else {
                         warn!("APT rollback version unknown for {}", pkg);
@@ -1012,12 +1031,17 @@ impl PatchEngine {
                     let (pkg, _ver) = data
                         .split_once('=')
                         .unwrap_or((tx.patch.component.as_str(), ""));
-                    let status = Command::new("dnf")
-                        .args(["downgrade", "-y", pkg])
-                        .status()
-                        .or_else(|_| Command::new("yum").args(["downgrade", "-y", pkg]).status())?;
-                    if !status.success() {
-                        return Err(anyhow!("RPM rollback failed for {}", pkg));
+                    
+                    let dnf_fut = async {
+                        if Command::new("dnf").args(["downgrade", "-y", pkg]).status().await.map(|s| s.success()).unwrap_or(false) {
+                            return true;
+                        }
+                        Command::new("yum").args(["downgrade", "-y", pkg]).status().await.map(|s| s.success()).unwrap_or(false)
+                    };
+                    
+                    match timeout(Duration::from_secs(300), dnf_fut).await {
+                        Ok(true) => {},
+                        _ => return Err(anyhow!("RPM rollback failed or timed out for {}", pkg)),
                     }
                 } else if snap_id.starts_with("pacman:") {
                     let data = snap_id.trim_start_matches("pacman:");
@@ -1025,19 +1049,16 @@ impl PatchEngine {
                         .split_once('=')
                         .unwrap_or((tx.patch.component.as_str(), "<unknown>"));
                     if ver != "<unknown>" {
-                        let status = Command::new("pacman")
+                        let pac_fut = Command::new("pacman")
                             .args([
                                 "-U",
                                 "--noconfirm",
                                 &format!("/var/cache/pacman/pkg/{}-{}.pkg.tar.zst", pkg, ver),
                             ])
                             .status();
-                        if status.as_ref().map(|s| !s.success()).unwrap_or(true) {
-                            warn!("Pacman rollback: cached pkg may be missing. Manual downgrade: pacman -U /var/cache/pacman/pkg/<pkg>-<ver>.pkg.tar.zst");
-                            return Err(anyhow!(
-                                "Pacman rollback failed for {} (cached pkg may have been removed)",
-                                pkg
-                            ));
+                        match timeout(Duration::from_secs(300), pac_fut).await {
+                            Ok(Ok(s)) if s.success() => {},
+                            _ => return Err(anyhow!("Pacman rollback failed or timed out for {}", pkg)),
                         }
                     } else {
                         return Err(anyhow!(
@@ -1051,11 +1072,12 @@ impl PatchEngine {
                         .split_once('=')
                         .unwrap_or((tx.patch.component.as_str(), "<unknown>"));
                     if ver != "<unknown>" {
-                        let status = Command::new("zypper")
+                        let zyp_fut = Command::new("zypper")
                             .args(["install", "-y", "--oldpackage", &format!("{}={}", pkg, ver)])
-                            .status()?;
-                        if !status.success() {
-                            return Err(anyhow!("Zypper rollback failed for {}", pkg));
+                            .status();
+                        match timeout(Duration::from_secs(300), zyp_fut).await {
+                            Ok(Ok(s)) if s.success() => {},
+                            _ => return Err(anyhow!("Zypper rollback failed or timed out for {}", pkg)),
                         }
                     } else {
                         return Err(anyhow!(
@@ -1069,11 +1091,12 @@ impl PatchEngine {
                         .split_once('=')
                         .unwrap_or((tx.patch.component.as_str(), "<unknown>"));
                     if ver != "<unknown>" {
-                        let status = Command::new("apk")
+                        let apk_fut = Command::new("apk")
                             .args(["add", "--no-cache", &format!("{}={}", pkg, ver)])
-                            .status()?;
-                        if !status.success() {
-                            return Err(anyhow!("Apk rollback failed for {}", pkg));
+                            .status();
+                        match timeout(Duration::from_secs(120), apk_fut).await {
+                            Ok(Ok(s)) if s.success() => {},
+                            _ => return Err(anyhow!("Apk rollback failed or timed out for {}", pkg)),
                         }
                     } else {
                         return Err(anyhow!(

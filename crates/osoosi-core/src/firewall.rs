@@ -260,7 +260,10 @@ pub fn clear_firewall_persistence() -> Result<()> {
 }
 
 /// Open ports required for Oshoosi mesh/control traffic and dashboard access.
-pub fn open_mesh_ports() -> Result<()> {
+pub async fn open_mesh_ports() -> Result<()> {
+    use tokio::process::Command;
+    use tokio::time::{timeout, Duration};
+
     let ports = [
         ("Osoosi-Mesh-Main", 4001_u16, "TCP"),
         ("Osoosi-Mesh-UDP", 4001_u16, "UDP"),
@@ -269,56 +272,60 @@ pub fn open_mesh_ports() -> Result<()> {
         ("Osoosi-mDNS", 5353_u16, "UDP"),
         ("Osoosi-Dashboard", 3030_u16, "TCP"),
     ];
+
     #[cfg(target_os = "windows")]
     {
         for (name, port, proto) in ports {
-            let _ = Command::new("netsh")
-                .args([
-                    "advfirewall",
-                    "firewall",
-                    "add",
-                    "rule",
-                    &format!("name=\"{}\"", name),
-                    "dir=in",
-                    "action=allow",
-                    &format!("protocol={}", proto),
-                    &format!("localport={}", port),
-                    "enable=yes",
-                    "profile=any",
-                ])
-                .status();
+            let mut cmd = Command::new("netsh");
+            cmd.args([
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                &format!("name=\"{}\"", name),
+                "dir=in",
+                "action=allow",
+                &format!("protocol={}", proto),
+                &format!("localport={}", port),
+                "enable=yes",
+                "profile=any",
+            ]);
+            let _ = timeout(Duration::from_secs(10), cmd.status()).await;
         }
     }
+
     #[cfg(target_os = "linux")]
     {
         for (_, port, proto) in ports {
             let port_spec = format!("{}/{}", port, proto.to_lowercase());
             let port_str = port.to_string();
             let proto_lower = proto.to_lowercase();
-            let _ = Command::new("sudo")
-                .args(["ufw", "allow", &port_spec])
-                .status();
-            let _ = Command::new("sudo")
-                .args([
-                    "iptables",
-                    "-I",
-                    "INPUT",
-                    "-p",
-                    &proto_lower,
-                    "--dport",
-                    &port_str,
-                    "-j",
-                    "ACCEPT",
-                ])
-                .status();
+
+            let mut ufw = Command::new("sudo");
+            ufw.args(["ufw", "allow", &port_spec]);
+            let _ = timeout(Duration::from_secs(10), ufw.status()).await;
+
+            let mut ipt = Command::new("sudo");
+            ipt.args([
+                "iptables",
+                "-I",
+                "INPUT",
+                "-p",
+                &proto_lower,
+                "--dport",
+                &port_str,
+                "-j",
+                "ACCEPT",
+            ]);
+            let _ = timeout(Duration::from_secs(10), ipt.status()).await;
         }
     }
+
     #[cfg(target_os = "macos")]
     {
-        // macOS' Application Firewall is app-signing oriented. We still make the
-        // provisioning intent visible and leave packet-filter policy to managed deployments.
-        for (name, port) in ports {
-            tracing::info!("Firewall provisioning note: allow TCP {} for {} on macOS via pf/Application Firewall policy.", port, name);
+        // macOS' Application Firewall is app-signing oriented.
+        for (name, port, _) in ports {
+            tracing::info!("Firewall provisioning note: allow TCP/UDP {} for {} on macOS via pf/Application Firewall policy.", port, name);
         }
     }
     Ok(())

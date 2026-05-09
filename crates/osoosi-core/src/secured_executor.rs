@@ -25,8 +25,12 @@ impl DirectExecutor {
 impl SecuredExecutor for DirectExecutor {
     async fn execute(&self, cmd: std::process::Command) -> anyhow::Result<Output> {
         let mut tokio_cmd = Command::from(cmd);
-        let output = tokio_cmd.output().await?;
-        Ok(output)
+        // system-wide safety timeout for all orchestrated commands to prevent agent hangs
+        let res = tokio::time::timeout(std::time::Duration::from_secs(600), tokio_cmd.output()).await;
+        match res {
+            Ok(output) => Ok(output?),
+            Err(_) => Err(anyhow::anyhow!("Command timed out after 10 minutes")),
+        }
     }
 
     async fn download(&self, url: &str, dest: &Path, resume: bool) -> anyhow::Result<()> {
@@ -210,8 +214,11 @@ impl SecuredExecutor for OpenShellExecutor {
             wrapped.arg(arg);
         }
 
-        let output = wrapped.output().await?;
-        Ok(output)
+        let res = tokio::time::timeout(std::time::Duration::from_secs(600), wrapped.output()).await;
+        match res {
+            Ok(output) => Ok(output?),
+            Err(_) => Err(anyhow::anyhow!("Sandboxed command timed out after 10 minutes")),
+        }
     }
 
     async fn download(&self, url: &str, dest: &Path, resume: bool) -> anyhow::Result<()> {

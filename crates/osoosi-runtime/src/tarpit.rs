@@ -50,7 +50,7 @@ impl TarpitManager {
 
         #[cfg(target_os = "linux")]
         {
-            Self::linux_throttle(pid, true);
+            let _ = Self::linux_throttle(pid, true).await;
         }
 
         sleep(Duration::from_secs(duration_secs)).await;
@@ -63,7 +63,7 @@ impl TarpitManager {
 
         #[cfg(target_os = "linux")]
         {
-            Self::linux_throttle(pid, false);
+            let _ = Self::linux_throttle(pid, false).await;
         }
 
         warn!("Tarpit duration window closed for PID {}. Priority restored.", pid);
@@ -121,28 +121,35 @@ impl TarpitManager {
 
     /// Linux: Use `renice` to set the process to lowest priority.
     #[cfg(target_os = "linux")]
-    fn linux_throttle(pid: u32, throttle: bool) {
+    async fn linux_throttle(pid: u32, throttle: bool) -> anyhow::Result<()> {
+        use tokio::process::Command;
+        use tokio::time::{timeout, Duration};
+
         let nice_val = if throttle { "19" } else { "0" };
-        match std::process::Command::new("renice")
+        let renice_fut = Command::new("renice")
             .args(["-n", nice_val, "-p", &pid.to_string()])
-            .status()
-        {
-            Ok(s) if s.success() => {
+            .status();
+
+        match timeout(Duration::from_secs(10), renice_fut).await {
+            Ok(Ok(s)) if s.success() => {
                 info!("Tarpit: PID {} renice set to {}", pid, nice_val);
             }
-            Ok(s) => {
+            Ok(Ok(s)) => {
                 warn!("Tarpit: renice for PID {} exited with {:?}", pid, s.code());
             }
-            Err(e) => {
-                warn!("Tarpit: Failed to renice PID {}: {}", pid, e);
+            _ => {
+                warn!("Tarpit: Failed to renice PID {} (timed out or failed)", pid);
             }
         }
+        
         // Also apply ionice if available (best-effort)
         if throttle {
-            let _ = std::process::Command::new("ionice")
+            let io_fut = Command::new("ionice")
                 .args(["-c", "3", "-p", &pid.to_string()])
                 .status();
+            let _ = timeout(Duration::from_secs(10), io_fut).await;
         }
+        Ok(())
     }
 
     /// Start the Phantom Memory Flux engine.
