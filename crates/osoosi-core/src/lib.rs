@@ -2203,6 +2203,7 @@ impl EdrOrchestrator {
                                         events.len(),
                                         resolved_source
                                     );
+                                    info!("[HostEvents] Polled {} new events from OS channels.", events.len());
                                 }
                                 for ev in events {
                                     let orch = orchestrator.clone();
@@ -2571,6 +2572,15 @@ impl EdrOrchestrator {
         mut event: osoosi_types::HostSecurityEvent,
     ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
+
+        // 1. Audit Logging: Record that we are processing this event (for dashboard visibility)
+        self.audit.log("TELEMETRY_INGESTED", serde_json::json!({
+            "event_id": event.event_id,
+            "source": format!("{:?}", event.source),
+            "computer": event.computer,
+            "timestamp": event.timestamp.to_rfc3339(),
+            "data": event.data
+        }));
 
         // 0. Intelligent Load-Aware Throttling (The "Brain")
         let current_mode = *self.adaptive.current_mode.read().unwrap();

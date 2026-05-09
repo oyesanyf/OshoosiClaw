@@ -1,0 +1,87 @@
+[rule]
+description = """
+This rule detects the execution of a shell process with suspicious arguments which may be indicative of reverse shell
+activity. Attackers may use the "/dev/tcp" or "/dev/udp" file descriptors to establish a reverse shell connection.
+"""
+id = "73c3fc93-ff0b-4ef1-a1b3-2b016b92b7ae"
+license = "Elastic License v2"
+name = "Potential Reverse Shell Activity via TCP/UDP Socket"
+os_list = ["linux"]
+reference = [
+    "https://github.com/swisskyrepo/PayloadsAllTheThings/blob/master/Methodology%20and%20Resources/Reverse%20Shell%20Cheatsheet.md",
+    "https://github.com/WangYihang/Reverse-Shell-Manager",
+    "https://www.netsparker.com/blog/web-security/understanding-reverse-shells/",
+]
+version = "1.0.4"
+
+query = '''
+process where event.type == "start" and event.action == "exec" and process.parent.executable != null and (
+  process.name in (
+    "bash", "dash", "sh", "tcsh", "csh", "zsh", "ksh", "fish", "zmodload", "setsid", "nohup", "busybox",
+    "timeout", "chroot", "logger", "printf"
+  ) or
+  process.name like ".*" or
+  process.executable like (
+    "/tmp/*", "/var/tmp/*", "/dev/shm/*", "/run/*", "/var/run/*", "/boot/*", "/home/*", "/root/*",
+    "/opt/*", "/var/www/*", "/app/*", "/srv/*"
+  )
+) and
+process.command_line like ("*/dev/tcp/*", "*/dev/udp/*", "*zsh/net/tcp*", "*zsh/net/udp*") and
+process.command_line like ("*&>*", "*<>*", "*>&*", "*<&*") and
+not (
+  process.command_line like ("*/dev/tcp/127.0.0.1/*", "*/dev/tcp/localhost/*") or
+  process.parent.command_line == "/usr/bin/runc init" or
+  process.parent.args in ("/usr/bin/testssl.sh", "/usr/local/bin/testssl.sh", "/usr/bin/crun") or
+  process.parent.executable like (
+    "/usr/share/windsurf/resources/app/extensions/windsurf/bin/language_server_linux_x64", "/home/*/.cursor-server/bin/*/node", "/root/.cursor-server/cli/servers/*/server/node",
+    "/usr/local/lib/node_modules/@openai/codex/node_modules/@openai/codex-linux-x64/vendor/x86_64-unknown-linux-musl/codex/codex", "/opt/teleport/system/bin/teleport",
+    "/home/*/.local/bin/claude", "/usr/bin/claude-bin", "/home/*/.config/Claude/claude-code-vm/*/claude", "/usr/share/cursor/cursor", "/usr/local/bin/teleport",
+    "/home/*/.local/share/claude/versions/*"
+  )
+)
+'''
+
+min_endpoint_version = "7.15.0"
+optional_actions = []
+[[actions]]
+action = "kill_process"
+field = "process.entity_id"
+state = 0
+
+[[actions]]
+action = "kill_process"
+field = "process.parent.entity_id"
+state = 0
+
+[[threat]]
+framework = "MITRE ATT&CK"
+[[threat.technique]]
+id = "T1059"
+name = "Command and Scripting Interpreter"
+reference = "https://attack.mitre.org/techniques/T1059/"
+[[threat.technique.subtechnique]]
+id = "T1059.004"
+name = "Unix Shell"
+reference = "https://attack.mitre.org/techniques/T1059/004/"
+
+
+
+[threat.tactic]
+id = "TA0002"
+name = "Execution"
+reference = "https://attack.mitre.org/tactics/TA0002/"
+[[threat]]
+framework = "MITRE ATT&CK"
+[[threat.technique]]
+id = "T1071"
+name = "Application Layer Protocol"
+reference = "https://attack.mitre.org/techniques/T1071/"
+
+
+[threat.tactic]
+id = "TA0011"
+name = "Command and Control"
+reference = "https://attack.mitre.org/tactics/TA0011/"
+
+[internal]
+min_endpoint_version = "7.15.0"

@@ -1,0 +1,68 @@
+[rule]
+description = """
+Detects the deletion of shell history files through suspicious or commonly available tooling via a file deletion event.
+Shell history files are used to store the command history of a user. Adversaries may attempt to delete these files to
+remove evidence of their activity.
+"""
+id = "e2e24fba-2852-4e3c-be8d-fda553653522"
+license = "Elastic License v2"
+name = "Deletion of Shell History File"
+os_list = ["linux"]
+version = "1.0.2"
+
+query = '''
+file where event.type == "deletion" and file.name in (
+  ".bash_history", ".zsh_history", ".sh_history", ".ksh_history",
+  ".history", ".csh_history", ".tcsh_history", "fish_history", ".ash_history"
+) and
+/* Enforce non-backup home & root directories to prevent false positives */
+(
+  file.path like ("/home/*/*", "/root/*", "/etc/*") and
+  not file.path like ("/home/*/*/*", "/root/*/*")
+) and
+(
+  process.name in (
+    "rm", "sudo", "truncate", "unlink", "find", "xargs", "install", "shred", "vi", "vim",
+    "vim.basic", "coreutils", "tar", "gzip", "bzip2", "rmdir", "mv", "cp", "ln", "busybox",
+    "bash", "zsh", "sh", "tcsh", "csh", "ksh", "fish"
+  ) or
+  process.name like ".*" or
+  process.executable like (
+    "./*", "/dev/shm/*", "/tmp/*", "/var/tmp/*", "/run/*", "/var/run/*", "/boot/*", "/sys/*",
+    "/lost+found/*", "/proc/*", "/var/mail/*", "/var/www/*", "/root/*", "/home/*"
+  )
+)
+'''
+
+min_endpoint_version = "7.15.0"
+optional_actions = []
+[[actions]]
+action = "kill_process"
+field = "process.entity_id"
+state = 0
+
+[[actions]]
+action = "kill_process"
+field = "process.parent.entity_id"
+state = 0
+
+[[threat]]
+framework = "MITRE ATT&CK"
+[[threat.technique]]
+id = "T1070"
+name = "Indicator Removal"
+reference = "https://attack.mitre.org/techniques/T1070/"
+[[threat.technique.subtechnique]]
+id = "T1070.003"
+name = "Clear Command History"
+reference = "https://attack.mitre.org/techniques/T1070/003/"
+
+
+
+[threat.tactic]
+id = "TA0005"
+name = "Defense Evasion"
+reference = "https://attack.mitre.org/tactics/TA0005/"
+
+[internal]
+min_endpoint_version = "7.15.0"

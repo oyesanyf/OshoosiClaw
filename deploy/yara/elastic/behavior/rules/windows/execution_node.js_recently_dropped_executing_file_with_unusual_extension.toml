@@ -1,0 +1,52 @@
+[rule]
+description = """
+Identifies Node.js (OpenJS Foundation signed) recently modified on disk executing with few arguments and a command line
+referencing AppData, where the target file does not use a standard Node.js script extension (.js, .mjs, .cjs). May
+indicate execution of staged payloads with non-standard extensions or abuse of Node for script-based execution.
+"""
+id = "f2b7c9e6-4e8d-9f3b-a0c1-7d6e5f4b3a2e"
+license = "Elastic License v2"
+name = "Node.js Recently Dropped Executing File with Unusual Extension"
+os_list = ["windows"]
+reference = ["https://nodejs.org", "https://attack.mitre.org/techniques/T1059/007/"]
+version = "1.0.1"
+
+query = '''
+process where event.type == "start" and
+ (process.name : "node.exe" or process.pe.original_file_name == "node.exe") and
+ process.code_signature.subject_name == "OpenJS Foundation" and
+ process.args_count == 2 and not process.args in ("--version", "-v") and 
+ process.Ext.relative_file_name_modify_time <= 10 and
+ not process.args : ("*.js", "*.mjs", "*.cjs") and
+ process.args : "?:\\Users\\*\\AppData\\*" and 
+ not process.parent.executable : "?:\\Program Files (x86)\\SofttechLLC\\FlightVector\\bin\\FlightVector-*.exe"
+'''
+
+min_endpoint_version = "8.10.0"
+optional_actions = []
+[[actions]]
+action = "kill_process"
+field = "process.entity_id"
+state = 0
+tree = true
+
+[[threat]]
+framework = "MITRE ATT&CK"
+[[threat.technique]]
+id = "T1059"
+name = "Command and Scripting Interpreter"
+reference = "https://attack.mitre.org/techniques/T1059/"
+[[threat.technique.subtechnique]]
+id = "T1059.007"
+name = "JavaScript"
+reference = "https://attack.mitre.org/techniques/T1059/007/"
+
+
+
+[threat.tactic]
+id = "TA0002"
+name = "Execution"
+reference = "https://attack.mitre.org/tactics/TA0002/"
+
+[internal]
+min_endpoint_version = "8.10.0"

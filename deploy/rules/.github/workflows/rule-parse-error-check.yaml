@@ -1,0 +1,55 @@
+name: Rule parse error check
+
+on:
+  workflow_dispatch:
+  pull_request:
+
+jobs:
+  rule-parse-error-check:
+    runs-on: ubuntu-latest
+    steps:
+      - name: clone hayabusa rule repo
+        uses: actions/checkout@v3
+        with:
+          ref: ${{ github.event.pull_request.head.sha }}
+          path: hayabusa-rules
+
+      - name: clone hayabusa
+        uses: actions/checkout@v3
+        with:
+          repository: Yamato-Security/hayabusa
+          submodules: recursive
+          path: hayabusa
+
+      - name: clone hayabusa-sample-evtx
+        uses: actions/checkout@v3
+        with:
+          repository: Yamato-Security/hayabusa-sample-evtx
+          path: hayabusa-sample-evtx
+
+      - name: run csv-timeline
+        run: |
+            cd hayabusa
+            git fetch --prune --unshallow
+            LATEST_VER=`git describe --tags --abbrev=0`
+            URL="https://github.com/Yamato-Security/hayabusa/releases/download/v2.16.0/hayabusa-2.16.0-linux-intel.zip"
+            mkdir tmp
+            cd tmp
+            curl -OL $URL
+            unzip *.zip
+            chmod +x hayabusa-2.16.0-lin-x64-gnu
+            ./hayabusa-2.16.0-lin-x64-gnu csv-timeline -d ../../hayabusa-sample-evtx -r ../../hayabusa-rules -w -o out.csv -D -n -u
+
+      - name: check csv-timeline result
+        shell: /usr/bin/bash {0}
+        run: |
+          cd hayabusa
+          LATEST_VER=`git describe --tags --abbrev=0`
+          cd tmp
+          ./hayabusa-2.16.0-lin-x64-gnu csv-timeline -d ../../hayabusa-sample-evtx -r ../../hayabusa-rules -w -o out.csv -D -n -u  -C | grep "Rule parsing error" | wc -l | grep 0
+          if [ $? -eq 0 ]; then
+              echo "No rule parse error."
+          else
+              cat ./logs/*
+              false
+          fi

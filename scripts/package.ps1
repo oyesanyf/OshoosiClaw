@@ -17,12 +17,33 @@ New-Item -ItemType Directory -Path $DeployDir -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $DeployDir "config") -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $DeployDir "yara") -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $DeployDir "models") -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $DeployDir "rules") -Force | Out-Null
+New-Item -ItemType Directory -Path (Join-Path $DeployDir "traps") -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $DeployDir "logs") -Force | Out-Null
 
 # 3. Copy binaries
 Write-Host "--- Step 3: Copying Binaries ---" -ForegroundColor Cyan
-Copy-Item "target\release\osoosi.exe" -Destination $DeployDir -Force
-Copy-Item "target\release\test-peer.exe" -Destination $DeployDir -Force
+$BinaryPath = "target\release\osoosi.exe"
+if (-not (Test-Path $BinaryPath)) {
+    $BinaryPath = "target\x86_64-pc-windows-msvc\release\osoosi.exe"
+}
+Copy-Item $BinaryPath -Destination $DeployDir -Force
+
+$TestPeerPath = "target\release\test-peer.exe"
+if (-not (Test-Path $TestPeerPath)) {
+    $TestPeerPath = "target\x86_64-pc-windows-msvc\release\test-peer.exe"
+}
+if (Test-Path $TestPeerPath) {
+    Copy-Item $TestPeerPath -Destination $DeployDir -Force
+}
+
+# Copy Injection DLL and DirectML
+if (Test-Path "osoosi_inject.dll") {
+    Copy-Item "osoosi_inject.dll" -Destination $DeployDir -Force
+}
+if (Test-Path "DirectML.dll") {
+    Copy-Item "DirectML.dll" -Destination $DeployDir -Force
+}
 
 # 4. Copy ONNX Runtime DLLs (required for ML/Magika)
 Write-Host "--- Step 4: Collecting Native Dependencies ---" -ForegroundColor Cyan
@@ -33,8 +54,8 @@ if (Test-Path $OrtCache) {
         Copy-Item $dll.FullName -Destination $DeployDir -Force
         Write-Host "   -> Added $($dll.Name)" -ForegroundColor Gray
     }
-} else {
-    Write-Host "   ! ONNX Runtime cache not found. If ONNX fails on the target machine, install VC++ Redistributable or copy DLLs manually." -ForegroundColor Yellow
+} elseif (Test-Path "onnxruntime.dll") {
+    Copy-Item "onnxruntime.dll" -Destination $DeployDir -Force
 }
 
 # 5. Copy configuration and assets
@@ -48,6 +69,18 @@ if (Test-Path "osoosi.toml") {
 if (Test-Path "config") {
     Copy-Item "config\*" -Destination (Join-Path $DeployDir "config") -Recurse -Force
 }
+if (Test-Path "yara") {
+    Copy-Item "yara\*" -Destination (Join-Path $DeployDir "yara") -Recurse -Force
+}
+if (Test-Path "models") {
+    Copy-Item "models\*" -Destination (Join-Path $DeployDir "models") -Recurse -Force
+}
+if (Test-Path "rules") {
+    Copy-Item "rules\*" -Destination (Join-Path $DeployDir "rules") -Recurse -Force
+}
+if (Test-Path "traps") {
+    Copy-Item "traps\*" -Destination (Join-Path $DeployDir "traps") -Recurse -Force
+}
 
 # 6. Copy EDR Dependencies (Sysmon)
 Write-Host "--- Step 6: Including Sysmon for EDR ---" -ForegroundColor Cyan
@@ -59,7 +92,9 @@ if (Test-Path "sysmonconfig-export.xml") {
 }
 
 # 7. Copy UI assets (dist folder)
-if (Test-Path "dist") {
+if (Test-Path "dashboard\dist") {
+    Copy-Item "dashboard\dist\*" -Destination (Join-Path $DeployDir "dist") -Recurse -Force -ErrorAction SilentlyContinue
+} elseif (Test-Path "dist") {
     Copy-Item "dist\*" -Destination (Join-Path $DeployDir "dist") -Recurse -Force -ErrorAction SilentlyContinue
 }
 
@@ -71,9 +106,12 @@ if (Test-Path "Sysmon64.exe") {
     echo "Installing Sysmon with security configuration..."
     .\Sysmon64.exe -i sysmonconfig-export.xml -accepteula
 }
-# 2. Grant permissions
-echo "Ensuring administrative permissions..."
+# 2. Grant permissions & Configure Firewall
+echo "Ensuring administrative permissions and configuring firewall..."
 .\osoosi.exe grant-access
+netsh advfirewall firewall add rule name="Oshoosi Mesh TCP" dir=in action=allow protocol=TCP localport=4001
+netsh advfirewall firewall add rule name="Oshoosi Mesh UDP" dir=in action=allow protocol=UDP localport=4001
+netsh advfirewall firewall add rule name="Oshoosi mDNS UDP" dir=in action=allow protocol=UDP localport=5353
 echo "Deployment complete. Start the agent with: .\osoosi.exe start"
 "@
 $InstallScript | Out-File (Join-Path $DeployDir "install.ps1") -Encoding utf8

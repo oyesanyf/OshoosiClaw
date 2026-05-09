@@ -3,7 +3,7 @@ use ferrisetw::trace::UserTrace;
 use ferrisetw::parser::*;
 use osoosi_types::{HostSecurityEvent, HostEventSource};
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+use tracing::{error, info};
 use chrono::Utc;
 
 pub struct NativeTelemetryEngine {

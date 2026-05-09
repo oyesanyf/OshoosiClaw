@@ -29,10 +29,9 @@ pub trait HostEventReader: Send + Sync {
 pub fn create_host_event_reader(channel_or_path: &str) -> anyhow::Result<Box<dyn HostEventReader + Send + Sync>> {
     #[cfg(target_os = "windows")]
     {
-        // On Windows, we now prefer the Native Rust Engine (SysmonX Port)
-        // over the standard Event Log reader.
-        let _ = channel_or_path;
-        Ok(Box::new(NativeETWReader::new()?))
+        // On Windows, we use the WindowsEventReader which polls the Event Log (Sysmon).
+        // It also starts the NativeETWReader as a background task for injection hooks.
+        Ok(Box::new(WindowsEventReader::new(channel_or_path)?))
     }
     #[cfg(target_os = "linux")]
     {
@@ -88,6 +87,171 @@ impl HostEventReader for NativeETWReader {
     }
 }
 
+#[cfg(target_os = "windows")]
+pub struct WindowsEventReader {
+    channel: String,
+    last_poll_time: Option<chrono::DateTime<chrono::Utc>>,
+    native: NativeETWReader,
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsEventReader {
+    pub fn new(channel: &str) -> anyhow::Result<Self> {
+        let channel = if channel.is_empty() || channel == "default" {
+            "Microsoft-Windows-Sysmon/Operational".to_string()
+        } else {
+            channel.to_string()
+        };
+        Ok(Self {
+            channel,
+            last_poll_time: None,
+            native: NativeETWReader::new()?,
+        })
+    }
+
+    pub fn split_event_xml(xml: &str) -> Vec<String> {
+        let mut out = Vec::new();
+        for block in xml.split("<Event xmlns=").filter(|s| !s.trim().is_empty()) {
+            if block.contains("</Event>") {
+                out.push(format!("<Event xmlns={}", block));
+            }
+        }
+        out
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl HostEventReader for WindowsEventReader {
+    fn poll_events(&mut self) -> anyhow::Result<Vec<HostSecurityEvent>> {
+        use windows::core::HSTRING;
+        use windows::Win32::System::EventLog::{
+            EvtQuery, EvtNext, EvtRender, EvtClose, EvtRenderEventXml,
+            EvtQueryChannelPath, EvtQueryForwardDirection, EVT_HANDLE
+        };
+
+        let mut out = Vec::new();
+        
+        // 1. Get hook events from native engine
+        if let Ok(mut native_events) = self.native.poll_events() {
+            out.append(&mut native_events);
+        }
+
+        // 2. Poll Event Log
+        let mut query = format!("*[System[TimeCreated[timediff(@SystemTime) <= 3600000]]]");
+        if let Some(t) = self.last_poll_time {
+            let ts_str = t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
+            query = format!("*[System[TimeCreated[@SystemTime > '{}']]]", ts_str);
+        }
+
+        let channel_h = HSTRING::from(&self.channel);
+        let query_h = HSTRING::from(query);
+
+        let handle = unsafe {
+            match EvtQuery(
+                None,
+                &channel_h,
+                &query_h,
+                EvtQueryChannelPath.0 | EvtQueryForwardDirection.0,
+            ) {
+                Ok(h) => h,
+                Err(_) => return Ok(out),
+            }
+        };
+
+        unsafe {
+            let mut events = [0isize; 100];
+            let mut returned = 0;
+
+            while EvtNext(handle, &mut events, 0, 0, &mut returned).is_ok() && returned > 0 {
+                for i in 0..returned as usize {
+                    let evt = EVT_HANDLE(events[i]);
+                    let mut buffer_used = 0;
+                    let mut property_count = 0;
+
+                    let _ = EvtRender(None, evt, EvtRenderEventXml.0 as u32, 0, None, &mut buffer_used, &mut property_count);
+
+                    let mut buffer: Vec<u16> = vec![0; (buffer_used / 2) as usize];
+                    if EvtRender(
+                        None, 
+                        evt, 
+                        EvtRenderEventXml.0 as u32, 
+                        buffer.len() as u32 * 2, 
+                        Some(buffer.as_mut_ptr() as *mut std::ffi::c_void), 
+                        &mut buffer_used, 
+                        &mut property_count
+                    ).is_ok() {
+                        let xml = String::from_utf16_lossy(&buffer);
+                        let clean_xml = xml.trim_end_matches('\0');
+                        
+                        // We need a parser. Since SysmonParser is used in tests but missing, 
+                        // we'll implement a basic inline parser here for now to ensure data flows.
+                        if let Some(ev) = self.parse_xml(clean_xml) {
+                            out.push(ev);
+                        }
+                    }
+                    let _ = EvtClose(evt);
+                }
+            }
+            let _ = EvtClose(handle);
+        }
+
+        if let Some(latest) = out.iter().map(|e| e.timestamp).max() {
+            self.last_poll_time = Some(latest);
+        }
+
+        Ok(out)
+    }
+
+    fn source_name(&self) -> String {
+        format!("windows-event-log:{}", self.channel)
+    }
+}
+
+#[cfg(target_os = "windows")]
+impl WindowsEventReader {
+    fn parse_xml(&self, xml: &str) -> Option<HostSecurityEvent> {
+        let event_id = self.extract_tag(xml, "EventID")
+            .and_then(|s| s.parse::<i32>().ok())
+            .unwrap_or(0);
+        
+        let computer = self.extract_tag(xml, "Computer").unwrap_or_else(|| "localhost".to_string());
+        
+        let mut data = serde_json::Map::new();
+        // Extract EventData
+        if let Some(event_data) = xml.split("<EventData>").nth(1).and_then(|s| s.split("</EventData>").next()) {
+            for part in event_data.split("<Data Name=\"").skip(1) {
+                if let Some(name_end) = part.find('"') {
+                    let name = &part[..name_end];
+                    if let Some(val_start) = part.find('>') {
+                        if let Some(val_end) = part[val_start+1..].find("</Data>") {
+                            let val = &part[val_start+1..val_start+1+val_end];
+                            data.insert(name.to_string(), serde_json::json!(val.trim()));
+                        }
+                    }
+                }
+            }
+        }
+
+        Some(HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: event_id as u32,
+            timestamp: chrono::Utc::now(), // Best effort if parsing timestamp fails
+            computer,
+            data: serde_json::Value::Object(data),
+            causal_parent: None,
+        })
+    }
+
+    fn extract_tag(&self, xml: &str, tag: &str) -> Option<String> {
+        let open = format!("<{}>", tag);
+        let close = format!("</{}>", tag);
+        xml.find(&open)
+            .map(|start| start + open.len())
+            .and_then(|start| xml[start..].find(&close).map(|end| (start, start + end)))
+            .map(|(start, end)| xml[start..end].trim().to_string())
+    }
+}
+
 
 #[cfg(all(test, target_os = "windows"))]
 mod windows_tests {
@@ -127,8 +291,8 @@ mod windows_tests {
 
     #[test]
     fn parses_namespaced_sysmon_xml() {
-        let parser = super::super::SysmonParser::new();
-        let event = parser
+        let reader = WindowsEventReader::new("default").unwrap();
+        let event = reader
             .parse_xml(&sample_sysmon_xml(12, r"C:\Windows\System32\cmd.exe"))
             .expect("namespaced Sysmon XML should parse");
 

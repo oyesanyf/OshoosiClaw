@@ -1,0 +1,60 @@
+[rule]
+description = """
+Detects the use of "su" with the "-P" or "--pty" option combined with "-c" or "--command" execution. This pattern may
+indicate an attempt to abuse a privileged pseudo-terminal proxy to relay controlled output from a privileged process.
+This technique has been demonstrated in exploitation chains targeting AppArmor policy management pseudo-files (".load",
+".replace", ".remove") where attackers redirect the output of a privileged utility into these files to load, replace, or
+remove AppArmor profiles. While "su" usage itself is common, invocation with "--pty" together with command execution is
+uncommon, and may indicate attempts to proxy controlled data through a privileged process during local privilege
+escalation activity.
+"""
+id = "4ef797e7-6f67-4cfd-a1de-236e7f4f8355"
+license = "Elastic License v2"
+name = "Suspicious Pseudo-Terminal Proxy Execution via su"
+os_list = ["linux"]
+reference = [
+    "https://cdn2.qualys.com/advisory/2026/03/10/crack-armor.txt",
+    "https://blog.qualys.com/vulnerabilities-threat-research/2026/03/12/crackarmor-critical-apparmor-flaws-enable-local-privilege-escalation-to-root",
+]
+version = "1.0.1"
+
+query = '''
+process where event.type == "start" and event.action == "exec" and process.name == "su" and
+process.args in ("-P", "--pty") and process.args in ("-c", "--command")
+/* May add this in the future, but keeping it broad now to detect general pseudo-terminal proxy execution
+and process.command_line like "*stty*raw*"
+*/
+'''
+
+min_endpoint_version = "7.15.0"
+optional_actions = []
+[[actions]]
+action = "kill_process"
+field = "process.entity_id"
+state = 0
+
+[[actions]]
+action = "kill_process"
+field = "process.parent.entity_id"
+state = 0
+
+[[threat]]
+framework = "MITRE ATT&CK"
+[[threat.technique]]
+id = "T1562"
+name = "Impair Defenses"
+reference = "https://attack.mitre.org/techniques/T1562/"
+[[threat.technique.subtechnique]]
+id = "T1562.001"
+name = "Disable or Modify Tools"
+reference = "https://attack.mitre.org/techniques/T1562/001/"
+
+
+
+[threat.tactic]
+id = "TA0005"
+name = "Defense Evasion"
+reference = "https://attack.mitre.org/tactics/TA0005/"
+
+[internal]
+min_endpoint_version = "7.15.0"

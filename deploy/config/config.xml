@@ -8,18 +8,20 @@
 
   <EventFiltering>
     <!-- CATEGORY: Visibility (PRIORITY: Critical) -->
-    <!-- EVENT ID 1: PROCESS CREATION -->
-    <ProcessCreate onmatch="exclude"/>
+    <ProcessCreate onmatch="exclude">
+    </ProcessCreate>
     <!-- EVENT ID 3: NETWORK CONNECTION -->
     <NetworkConnect onmatch="exclude"/>
     <!-- EVENT ID 7: IMAGE LOAD -->
-    <ImageLoad onmatch="exclude"/>
+    <ImageLoad onmatch="exclude">
+    </ImageLoad>
 
     <!-- CATEGORY: Anti-Injection (PRIORITY: High) -->
     <!-- EVENT ID 8: CREATEREMOTETHREAD -->
     <CreateRemoteThread onmatch="exclude"/>
     <!-- EVENT ID 10: PROCESSACCESS -->
-    <ProcessAccess onmatch="exclude"/>
+    <ProcessAccess onmatch="exclude">
+    </ProcessAccess>
     <!-- EVENT ID 25: PROCESS TAMPERING -->
     <ProcessTampering onmatch="exclude"/>
 
