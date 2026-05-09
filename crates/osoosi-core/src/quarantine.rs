@@ -54,7 +54,6 @@ mod tests {
 
         let result = quarantine_file(
             test_file.to_str().unwrap(),
-            quarantine_dir.to_str().unwrap(),
         );
         assert!(result.is_ok());
         let dest = result.unwrap();
@@ -74,7 +73,7 @@ mod tests {
 
     #[test]
     fn test_quarantine_nonexistent_fails() {
-        let result = quarantine_file("/nonexistent/path/file.txt", "/tmp/quarantine");
+        let result = quarantine_file("/nonexistent/path/file.txt");
         assert!(result.is_err());
     }
 }

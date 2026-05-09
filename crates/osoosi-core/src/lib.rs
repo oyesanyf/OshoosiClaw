@@ -235,10 +235,10 @@ fn register_internal_assets(memory: &MemoryStore) {
 }
 
 /// Best-effort YARA-X C2 rules: compilation must not take down the agent (yara-x can panic internally on some versions).
-fn try_build_c2_yara_voter() -> Option<osoosi_policy::voters::YaraXMemoryVoter> {
-    use osoosi_policy::voters::YaraXMemoryVoter;
+fn try_build_c2_yara_voter(adaptive: Arc<crate::adaptive::TelemetryController>) -> Option<crate::voters::YaraXVoter> {
+    use crate::voters::YaraXVoter;
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-        || -> anyhow::Result<YaraXMemoryVoter> {
+        || -> anyhow::Result<YaraXVoter> {
             let mut compiler = yara_x::Compiler::new();
             compiler
                 .add_source(
@@ -254,8 +254,9 @@ fn try_build_c2_yara_voter() -> Option<osoosi_policy::voters::YaraXMemoryVoter> 
         "#,
                 )
                 .map_err(|e| anyhow::anyhow!("{}", e))?;
-            Ok(YaraXMemoryVoter {
+            Ok(YaraXVoter {
                 rules: Arc::new(compiler.build()),
+                adaptive,
             })
         },
     ));
@@ -263,20 +264,20 @@ fn try_build_c2_yara_voter() -> Option<osoosi_policy::voters::YaraXMemoryVoter> 
         Ok(Ok(v)) => Some(v),
         Ok(Err(e)) => {
             warn!(
-                "YARA-X: C2 rule compile error: {}; skipping YaraXMemoryVoter",
+                "YARA-X: C2 rule compile error: {}; skipping YaraXVoter",
                 e
             );
             None
         }
         Err(_) => {
-            warn!("YARA-X: C2 rule build panicked; skipping YaraXMemoryVoter");
+            warn!("YARA-X: C2 rule build panicked; skipping YaraXVoter");
             None
         }
     }
 }
 
 /// Behavioral YARA-X rules: Matches on event JSON bytes to replace Sigma/Hayabusa logic.
-fn try_build_behavioral_yara_voter() -> Option<crate::voters::BehavioralYaraVoter> {
+fn try_build_behavioral_yara_voter(adaptive: Arc<crate::adaptive::TelemetryController>) -> Option<crate::voters::BehavioralYaraVoter> {
     use crate::voters::BehavioralYaraVoter;
     let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
         || -> anyhow::Result<BehavioralYaraVoter> {
@@ -332,6 +333,7 @@ fn try_build_behavioral_yara_voter() -> Option<crate::voters::BehavioralYaraVote
 
             Ok(BehavioralYaraVoter {
                 rules: Arc::new(compiler.build()),
+                adaptive,
             })
         },
     ));
@@ -904,7 +906,7 @@ impl EdrOrchestrator {
         let model_path = malware_dir.join("sorel.onnx");
         let malware_scanner = Arc::new(MalwareScanner::new(&model_path));
         
-        let sigma_engine_voter = if let Some(voter) = try_build_behavioral_yara_voter() {
+        let sigma_engine_voter = if let Some(voter) = try_build_behavioral_yara_voter(adaptive.clone()) {
             Some(Arc::new(voter))
         } else {
             None
@@ -936,6 +938,7 @@ impl EdrOrchestrator {
             task_executor.clone(),
             malware_scanner.clone(),
             yara_rules.clone(),
+            adaptive.clone(),
         ));
         let correlator = Arc::new(crate::correlator::EventCorrelator::new());
         let ghost_nodes = Arc::new(osoosi_wire::GhostNodeManager::new(
@@ -1088,7 +1091,7 @@ impl EdrOrchestrator {
         })).await;
 
         // Yara-X Memory Voter: wrap build in catch_unwind — yara-x can panic on some toolchains/rule edge cases.
-        if let Some(voter) = try_build_c2_yara_voter() {
+        if let Some(voter) = try_build_c2_yara_voter(adaptive.clone()) {
             policy.add_voter(Box::new(voter)).await;
         }
 
@@ -1102,9 +1105,11 @@ impl EdrOrchestrator {
         }
         policy.add_voter(Box::new(crate::voters::DotscopeVoter {
             analyzer: dotscope_analyzer.clone(),
+            adaptive: adaptive.clone(),
         })).await;
         policy.add_voter(Box::new(crate::voters::MemoryInspectionVoter {
             memory: memory.clone(),
+            adaptive: adaptive.clone(),
         })).await;
 
         // MalConv / ONNX malware model + YARA — same [`MalwareScanner`] as Clam; separate vote for ML path
@@ -1116,10 +1121,12 @@ impl EdrOrchestrator {
         // Mandiant Trio Voters (Capa + Floss)
         policy.add_voter(Box::new(crate::voters::CapaVoter {
             analyzer: static_analyzer.clone(),
+            adaptive: adaptive.clone(),
         })).await;
 
-        policy.add_voter(Box::new(crate::voters::FlossVoter {
+        policy.add_voter(Box::new(crate::voters::CompositionVoter {
             analyzer: static_analyzer.clone(),
+            adaptive: adaptive.clone(),
         })).await;
 
         // Privacy-Enforced Voter: DP + Merkle Audit
@@ -1150,6 +1157,7 @@ impl EdrOrchestrator {
         // Connect the SecureBERT/SmolLM/Gemma classifier to the voting engine.
         policy.add_voter(Box::new(crate::voters::BehavioralClassifierVoter {
             classifier: behavioral_classifier.clone(),
+            adaptive: adaptive.clone(),
         })).await;
 
         // Start background threat intel sync (NVD Local Cache, etc.)
@@ -2574,6 +2582,7 @@ impl EdrOrchestrator {
         use osoosi_types::ResponseAction;
 
         // 1. Audit Logging: Record that we are processing this event (for dashboard visibility)
+        self.adaptive.report_event();
         self.audit.log("TELEMETRY_INGESTED", serde_json::json!({
             "event_id": event.event_id,
             "source": format!("{:?}", event.source),

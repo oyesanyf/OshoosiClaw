@@ -46,7 +46,7 @@ impl Default for RouteScraper {
 impl RouteScraper {
     pub fn new() -> Self {
         Self {
-            osoosi_port: 9876, // Default OshoosiClaw listen port
+            osoosi_port: 4001, // Default OshoosiClaw listen port
         }
     }
 

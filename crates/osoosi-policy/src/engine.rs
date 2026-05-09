@@ -504,17 +504,41 @@ impl PolicyEngine {
         let mut evidence_votes: Vec<EvidenceVote> = Vec::new();
         const OTX_VOTER: &str = "OTX-C2";
 
-        // ADAPTIVE THREADING: Run all voters in parallel
+        // ADAPTIVE THREADING: Run all voters concurrently with per-voter timeouts.
+        // Each voter gets a strict 5-second SLA. If a voter hangs (LLM inference,
+        // memory inspection, decompile), it's treated as an abstention — never
+        // blocking the consensus pipeline for other, faster voters.
+        // We use join_all (all run concurrently) with individual timeout wrappers
+        // so a stalled voter only wastes its own 5s budget, not the group's.
+        const VOTER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
         let results = {
             let voters_guard = self.voters.read().await;
-            let mut futures = Vec::new();
-            let mut names = Vec::new();
+            let mut timeout_futs = Vec::with_capacity(voters_guard.len());
+            let mut names = Vec::with_capacity(voters_guard.len());
             for voter in voters_guard.iter() {
-                names.push(voter.name());
-                futures.push(voter.vote(event));
+                let name = voter.name();
+                let vote_fut = voter.vote(event);
+                // Wrap each voter future in an individual timeout
+                timeout_futs.push(tokio::time::timeout(VOTER_TIMEOUT, vote_fut));
+                names.push(name);
             }
-            let res = futures::future::join_all(futures).await;
-            names.into_iter().zip(res.into_iter()).collect::<Vec<_>>()
+            let raw_results = futures::future::join_all(timeout_futs).await;
+            drop(voters_guard); // Release read lock immediately
+
+            names.into_iter().zip(raw_results.into_iter()).map(|(name, res)| {
+                match res {
+                    Ok(vote_opt) => (name, vote_opt),
+                    Err(_elapsed) => {
+                        warn!(
+                            target: CONSENSUS_LOG_TARGET,
+                            voter = %name,
+                            timeout_ms = VOTER_TIMEOUT.as_millis() as u64,
+                            "[CONSENSUS] voter TIMEOUT — treating as abstain"
+                        );
+                        (name, None)
+                    }
+                }
+            }).collect::<Vec<_>>()
         };
 
         for (vname, res_opt) in results {
@@ -714,6 +738,7 @@ mod tests {
 
     fn make_event(image: &str, cmd_line: &str) -> osoosi_types::HostSecurityEvent {
         osoosi_types::HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
             event_id: 1, // ProcessCreate
             timestamp: Utc::now(),
             computer: "test-host".to_string(),
@@ -772,6 +797,7 @@ mod tests {
         engine.update_otx_indicators(otx);
 
         let event = HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
             event_id: 3, // NetworkConnect
             timestamp: Utc::now(),
             computer: "h".to_string(),
@@ -814,6 +840,7 @@ mod tests {
             })).await;
 
             let event = HostSecurityEvent {
+                source: osoosi_types::HostEventSource::WindowsEventLog,
                 event_id: 3, // NetworkConnect
                 timestamp: Utc::now(),
                 computer: "h".to_string(),

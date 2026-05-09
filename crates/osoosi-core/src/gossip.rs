@@ -31,8 +31,19 @@ impl GossipSleuth {
         let mut interval = tokio::time::interval(std::time::Duration::from_secs(300)); // Every 5 mins
         loop {
             interval.tick().await;
-            if let Err(e) = self.run_sleuth_iteration().await {
-                error!("Gossip Sleuth iteration failed: {}", e);
+            // 30-second timeout: prevent slow network fetches from stalling
+            // the gossip loop and starving P2P consensus operations.
+            match tokio::time::timeout(
+                std::time::Duration::from_secs(30),
+                self.run_sleuth_iteration(),
+            ).await {
+                Ok(Err(e)) => {
+                    error!("Gossip Sleuth iteration failed: {}", e);
+                }
+                Err(_elapsed) => {
+                    error!("Gossip Sleuth iteration timed out (30s SLA); skipping cycle");
+                }
+                Ok(Ok(())) => {}
             }
         }
     }

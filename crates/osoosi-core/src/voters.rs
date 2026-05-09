@@ -260,6 +260,7 @@ impl ThreatVoter for MalConvVoter {
 /// behavioral intent (persistence, C2, anti-analysis).
 pub struct CapaVoter {
     pub analyzer: Arc<crate::static_analyzer::StaticAnalyzer>,
+    pub adaptive: Arc<crate::adaptive::TelemetryController>,
 }
 
 #[async_trait]
@@ -281,38 +282,43 @@ impl ThreatVoter for CapaVoter {
             if scanner_skip_path(image_path) || trusted_identity_signal(event, image_path) {
                 return None;
             }
-            let path = Path::new(image_path);
-            if !path.exists() {
-                return None;
-            }
+            let path = std::path::PathBuf::from(image_path);
+            let analyzer = self.analyzer.clone();
+            let adaptive = self.adaptive.clone();
 
-            if let Ok(Some(sig)) = self.analyzer.analyze_file(path).await {
-                // If CAPA found specific persistence/c2 capabilities, we yield a vote
-                if sig.confidence > 0.4 {
-                    return Some(VoteResult {
-                        confidence: sig.confidence,
-                        reason: sig.reason.unwrap_or_else(|| "CAPA: Detected suspicious capabilities".to_string()),
-                        weight: 0.85,
-                    });
+            let res = adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
+                if !path.exists() {
+                    return None;
                 }
+                analyzer.analyze_file(&path).await.ok().flatten()
+            }).await.ok().flatten()?;
+
+            // If CAPA found specific persistence/c2 capabilities, we yield a vote
+            if res.confidence > 0.4 {
+                return Some(VoteResult {
+                    confidence: res.confidence,
+                    reason: res.reason.unwrap_or_else(|| "CAPA: Detected suspicious capabilities".to_string()),
+                    weight: 0.85,
+                });
             }
         }
         None
     }
 }
 
-/// Mandiant FLOSS Voter
+/// Composition (Nabla) Voter
 ///
-/// Executes FLOSS (FLARE Obfuscated String Solver) to extract hidden
-/// configuration artifacts like IPs and domains.
-pub struct FlossVoter {
+/// Executes high-speed static heuristic analysis to identify malicious 
+/// binary structures, suspicious imports, and "shadow" dependencies.
+pub struct CompositionVoter {
     pub analyzer: Arc<crate::static_analyzer::StaticAnalyzer>,
+    pub adaptive: Arc<crate::adaptive::TelemetryController>,
 }
 
 #[async_trait]
-impl ThreatVoter for FlossVoter {
+impl ThreatVoter for CompositionVoter {
     fn name(&self) -> String {
-        "Floss-Artifact".to_string()
+        "Composition-Nabla".to_string()
     }
 
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
@@ -328,9 +334,24 @@ impl ThreatVoter for FlossVoter {
             if scanner_skip_path(image_path) || trusted_identity_signal(event, image_path) {
                 return None;
             }
-            let path = Path::new(image_path);
-            if !path.exists() {
-                return None;
+            let path = std::path::PathBuf::from(image_path);
+            let analyzer = self.analyzer.clone();
+            let adaptive = self.adaptive.clone();
+
+            let res = adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
+                if !path.exists() {
+                    return None;
+                }
+                analyzer.analyze_file(&path).await.ok().flatten()
+            }).await.ok().flatten()?;
+
+            // If it looks like a composition threat (ID starts with COMP-)
+            if res.id.starts_with("COMP-") && res.confidence >= 0.5 {
+                return Some(VoteResult {
+                    confidence: res.confidence as f32,
+                    reason: res.reason.unwrap_or_else(|| "Nabla: Suspicious composition detected".to_string()),
+                    weight: 0.9,
+                });
             }
         }
         None
@@ -343,6 +364,7 @@ impl ThreatVoter for FlossVoter {
 #[derive(Clone)]
 pub struct BehavioralYaraVoter {
     pub rules: Arc<yara_x::Rules>,
+    pub adaptive: Arc<crate::adaptive::TelemetryController>,
 }
 
 #[async_trait]
@@ -353,24 +375,29 @@ impl ThreatVoter for BehavioralYaraVoter {
 
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let json_bytes = serde_json::to_vec(event).ok()?;
-        let mut scanner = yara_x::Scanner::new(&self.rules);
-        
-        if let Ok(results) = scanner.scan(&json_bytes) {
-            if let Some(primary) = results.matching_rules().next() {
-                return Some(VoteResult {
-                    confidence: 0.9,
-                    reason: format!("BehavioralYara: DETECTED - {}", primary.identifier()),
-                    weight: 0.8,
-                });
+        let rules = self.rules.clone();
+        let adaptive = self.adaptive.clone();
+
+        adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
+            let mut scanner = yara_x::Scanner::new(&rules);
+            if let Ok(results) = scanner.scan(&json_bytes) {
+                if let Some(primary) = results.matching_rules().next() {
+                    return Some(VoteResult {
+                        confidence: 0.9,
+                        reason: format!("BehavioralYara: DETECTED - {}", primary.identifier()),
+                        weight: 0.8,
+                    });
+                }
             }
-        }
-        None
+            None
+        }).await.ok().flatten()
     }
 }
 
 /// Native .NET Forensic Voter (using dotscope)
 pub struct DotscopeVoter {
     pub analyzer: Arc<crate::dotscope::DotscopeAnalyzer>,
+    pub adaptive: Arc<crate::adaptive::TelemetryController>,
 }
 
 #[async_trait]
@@ -384,18 +411,25 @@ impl ThreatVoter for DotscopeVoter {
             if !image_path.to_lowercase().ends_with(".exe") && !image_path.to_lowercase().ends_with(".dll") {
                 return None;
             }
-            let path = Path::new(image_path);
-            if let Ok(results) = self.analyzer.analyze_file(path).await {
-                if results.is_suspicious {
-                    return Some(VoteResult {
-                        confidence: 0.88,
-                        reason: format!("Dotscope: Suspicious .NET CIL detected - {}", results.reason),
-                        weight: 0.9,
-                    });
+            let path = std::path::PathBuf::from(image_path);
+            let analyzer = self.analyzer.clone();
+            let adaptive = self.adaptive.clone();
+
+            adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
+                if let Ok(results) = analyzer.analyze_file(&path).await {
+                    if results.is_suspicious {
+                        return Some(VoteResult {
+                            confidence: 0.88,
+                            reason: format!("Dotscope: Suspicious .NET CIL detected - {}", results.reason),
+                            weight: 0.9,
+                        });
+                    }
                 }
-            }
+                None
+            }).await.ok().flatten()
+        } else {
+            None
         }
-        None
     }
 }
 
@@ -404,6 +438,7 @@ impl ThreatVoter for DotscopeVoter {
 /// Replaces Hollows-Hunter with in-memory PE parsing.
 pub struct MemoryInspectionVoter {
     pub memory: Arc<osoosi_memory::MemoryStore>,
+    pub adaptive: Arc<crate::adaptive::TelemetryController>,
 }
 
 #[async_trait]
@@ -416,19 +451,28 @@ impl ThreatVoter for MemoryInspectionVoter {
 #[cfg(target_os = "windows")]
         {
             if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()) {
-                // Use pelite to parse the process memory and find hollowing
-                if let Ok(findings) = crate::pe_inspector::inspect_process(pid as u32) {
-                    if findings.hollowing_detected {
-                        return Some(VoteResult {
-                            confidence: 1.0,
-                            reason: format!("MemoryInspection: Process hollowing detected in PID {}", pid),
-                            weight: 1.0,
-                        });
+                let adaptive = self.adaptive.clone();
+                adaptive.run_adaptive(ResourceCategory::IO, Priority::High, async move {
+                    // Use pelite to parse the process memory and find hollowing
+                    if let Ok(findings) = crate::pe_inspector::inspect_process(pid as u32) {
+                        if findings.hollowing_detected {
+                            return Some(VoteResult {
+                                confidence: 1.0,
+                                reason: format!("MemoryInspection: Process hollowing detected in PID {}", pid),
+                                weight: 1.0,
+                            });
+                        }
                     }
-                }
+                    None
+                }).await.ok().flatten()
+            } else {
+                None
             }
         }
-        None
+#[cfg(not(target_os = "windows"))]
+        {
+            None
+        }
     }
 }
 
@@ -438,6 +482,7 @@ impl ThreatVoter for MemoryInspectionVoter {
 /// normalized behavioral sentences from logs.
 pub struct BehavioralClassifierVoter {
     pub classifier: Arc<osoosi_behavioral::BehavioralClassifier>,
+    pub adaptive: Arc<crate::adaptive::TelemetryController>,
 }
 
 #[async_trait]
@@ -453,14 +498,19 @@ impl ThreatVoter for BehavioralClassifierVoter {
             return None;
         }
 
-        let (is_suspicious, score, reason) = self.classifier.classify_sentence(&sentence).await;
-        if is_suspicious {
-            return Some(VoteResult {
-                confidence: score,
-                reason: format!("BehavioralAI: {} - {}", reason, sentence),
-                weight: 0.95,
-            });
-        }
-        None
+        let classifier = self.classifier.clone();
+        let adaptive = self.adaptive.clone();
+
+        adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
+            let (is_suspicious, score, reason) = classifier.classify_sentence(&sentence).await;
+            if is_suspicious {
+                return Some(VoteResult {
+                    confidence: score,
+                    reason: format!("BehavioralAI: {} - {}", reason, sentence),
+                    weight: 0.95,
+                });
+            }
+            None
+        }).await.ok().flatten()
     }
 }

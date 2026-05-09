@@ -16,7 +16,8 @@ const state = {
     telemetryChart: null,
     expandedDetails: new Set(),
     lastThreatsHash: '',
-    lastActivityHash: ''
+    lastActivityHash: '',
+    _pollInFlight: false
 };
 
 /**
@@ -115,6 +116,10 @@ function setupSearch() {
  * Main update loop
  */
 async function updateDashboard() {
+    // Non-reentrant guard: if previous poll is still in-flight, skip this tick.
+    // This prevents cascading fetch queues when the backend is under heavy consensus load.
+    if (state._pollInFlight) return;
+    state._pollInFlight = true;
     try {
         const [status, threats, mesh, activity, malwareDetections, repairStatus, telemetryData] = await Promise.all([
             fetchAPI('/status'),
@@ -195,6 +200,8 @@ async function updateDashboard() {
         console.error("Failed to update dashboard:", error);
         document.getElementById('agent-status-text').innerText = "Agent Offline";
         document.querySelector('.status-dot').className = "status-dot";
+    } finally {
+        state._pollInFlight = false;
     }
 }
 
@@ -237,12 +244,20 @@ function suppressThreatLocally(threatId) {
  * Helper to fetch from API
  */
 async function fetchAPI(endpoint) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
     try {
-        const response = await fetch(`${API_BASE}${endpoint}`);
+        const response = await fetch(`${API_BASE}${endpoint}`, { signal: controller.signal });
+        clearTimeout(timeoutId);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return await response.json();
     } catch (err) {
-        console.warn(`Error fetching ${endpoint}:`, err);
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+            console.warn(`Fetch timeout for ${endpoint} (4s SLA exceeded)`);
+        } else {
+            console.warn(`Error fetching ${endpoint}:`, err);
+        }
         return null;
     }
 }

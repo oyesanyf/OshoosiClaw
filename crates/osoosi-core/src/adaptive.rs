@@ -31,10 +31,10 @@ impl ResourceGuard {
         let cpus = std::thread::available_parallelism().map(|n| n.get()).unwrap_or(4);
         
         // Intelligent initial baselines scaled by core count
-        let ai_limit = (cpus / 2).clamp(2, 8);
-        // PERFORMANCE HARDENING: Conservative I/O baseline for background hashing
-        let io_limit = (cpus / 2).clamp(2, 16); 
-        let net_limit = (cpus * 4).clamp(16, 128);
+        // Scaled initial baselines based on core count
+        let ai_limit = (cpus * 2).clamp(4, 32);
+        let io_limit = (cpus * 4).clamp(16, 64); 
+        let net_limit = (cpus * 8).clamp(32, 256);
 
         Self {
             ai: Arc::new(Semaphore::new(ai_limit)),
