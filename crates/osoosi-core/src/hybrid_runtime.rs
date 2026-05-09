@@ -17,6 +17,16 @@ pub fn init_hybrid_concurrency() {
     if rayon::ThreadPoolBuilder::new()
         .num_threads(configured_rayon_threads())
         .thread_name(|i| format!("osoosi-rayon-{}", i))
+        .start_handler(|_i| {
+            #[cfg(target_os = "windows")]
+            {
+                use windows::Win32::System::Threading::{GetCurrentThread, SetThreadPriority, THREAD_PRIORITY_BELOW_NORMAL};
+                unsafe {
+                    // PERFORMANCE HARDENING: Background forensic/AI threads must yield to user applications
+                    let _ = SetThreadPriority(GetCurrentThread(), THREAD_PRIORITY_BELOW_NORMAL);
+                }
+            }
+        })
         .build_global()
         .is_err()
     {

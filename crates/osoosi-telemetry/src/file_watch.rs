@@ -147,6 +147,14 @@ impl FileWatcher {
                             continue;
                         }
 
+                        // PERFORMANCE HARDENING: Skip hashing massive files (>200MB) in real-time
+                        if let Ok(meta) = path.metadata() {
+                            if meta.len() > 200 * 1024 * 1024 {
+                                debug!("Skipping hash for massive file: {} ({} bytes)", path.display(), meta.len());
+                                continue;
+                            }
+                        }
+
                         let path_str = path.to_string_lossy().to_string();
 
                         if processor_traps.contains(&path_str) {
@@ -240,6 +248,12 @@ pub async fn build_os_file_hash_baseline(
                 .filter_map(|e| e.ok())
             {
                 if entry.file_type().is_file() {
+                    // PERFORMANCE HARDENING: Skip massive files in baseline
+                    if let Ok(meta) = entry.metadata() {
+                        if meta.len() > 200 * 1024 * 1024 {
+                            continue;
+                        }
+                    }
                     if tx.blocking_send(entry.into_path()).is_err() {
                         return;
                     }

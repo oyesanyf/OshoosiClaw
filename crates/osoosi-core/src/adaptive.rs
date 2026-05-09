@@ -32,7 +32,8 @@ impl ResourceGuard {
         
         // Intelligent initial baselines scaled by core count
         let ai_limit = (cpus / 2).clamp(2, 8);
-        let io_limit = (cpus * 2).clamp(8, 64);
+        // PERFORMANCE HARDENING: Conservative I/O baseline for background hashing
+        let io_limit = (cpus / 2).clamp(2, 16); 
         let net_limit = (cpus * 4).clamp(16, 128);
 
         Self {
