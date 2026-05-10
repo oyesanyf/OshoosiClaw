@@ -59,6 +59,10 @@ function setupNav() {
             } else if (view === 'mesh') {
                 document.getElementById('mesh-view').classList.add('active');
                 viewTitle.innerText = "Mesh Network";
+            } else if (view === 'gossip') {
+                document.getElementById('gossip-view').classList.add('active');
+                viewTitle.innerText = "Inter-Node Gossip Feed";
+                renderGossipView();
             } else if (view === 'malware') {
                 document.getElementById('malware-view').classList.add('active');
                 viewTitle.innerText = "Malware Scanner";
@@ -85,10 +89,6 @@ function setupNav() {
                 document.getElementById('story-view').classList.add('active');
                 viewTitle.innerText = "Forensic Storyboard";
                 renderStoryView();
-            } else if (view === 'gossip') {
-                document.getElementById('gossip-view').classList.add('active');
-                viewTitle.innerText = "Inter-Node Gossip Feed";
-                renderGossipView();
             } else {
                 document.getElementById('other-view').classList.add('active');
                 viewTitle.innerText = item.querySelector('span').innerText;
