@@ -435,6 +435,12 @@ impl ThreatVoter for TrustedVendorVoter {
         "Trusted-Vendor".to_string()
     }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        // Only verify PE metadata on process-create and image-load events where a PE is actually
+        // on disk. All other event IDs (file, network, registry) have no PE binary to inspect
+        // and calling get_pe_metadata() would hit disk unnecessarily on every event.
+        if !matches!(event.event_id, 1 | 7) {
+            return None;
+        }
         // 1. Get the image path from telemetry
         let full_path = event.data.get("Image").and_then(|v| v.as_str())?;
         
@@ -905,6 +911,12 @@ impl ThreatVoter for CveLookupVoter {
         "NVD-CVE-Lookup".to_string()
     }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        // Only query NVD on process-create and image-load events. get_pe_metadata() performs a
+        // synchronous disk read; calling it on every event type (network, file, registry, dns)
+        // causes unnecessary blocking I/O with no benefit since non-PE events carry no version.
+        if !matches!(event.event_id, 1 | 7) {
+            return None;
+        }
         let full_path = event.data.get("Image").and_then(|v| v.as_str())?;
         
         // 1. Extract Metadata (Product, Version, Signature) from PE
@@ -1105,16 +1117,12 @@ impl ThreatVoter for PrivacyVoter {
             // 2. APPLY DIFFERENTIAL PRIVACY: Add Laplacian noise to the score
             let noisy_score = (base_score + self.dp.laplace_noise()).clamp(0.0, 1.0);
 
-            // 3. LOG TO MERKLE AUDIT TREE: Ensure the decision is tamper-proof
-            let root = self.audit.log("PRIVACY_VOTE_EMITTED", serde_json::json!({
-                "event_id": event.event_id,
-                "noisy_score": noisy_score,
-                "computer": event.computer,
-            }));
-
+            // Logging every privacy vote to the Merkle audit chain caused a SHA-256 + mutex
+            // lock on every powershell commandline event. Threats are already audited at the
+            // orchestrator level via THREAT_DETECTED; this per-vote entry is redundant.
             Some(VoteResult {
                 confidence: noisy_score,
-                reason: format!("Privacy-preserving detection (DP enabled). Merkle Root: {}", root),
+                reason: format!("Privacy-preserving detection (DP noise applied, score={:.3}).", noisy_score),
                 weight: 0.8,
             })
         } else {
