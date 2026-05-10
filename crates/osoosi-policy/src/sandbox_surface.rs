@@ -22,7 +22,7 @@ pub fn analyze_process_sandbox(pid: u32) -> anyhow::Result<SandboxSurfaceInfo> {
         }
 
         let mut token_handle = HANDLE::default();
-        if !OpenProcessToken(process_handle, TOKEN_QUERY, &mut token_handle).as_bool() {
+        if OpenProcessToken(process_handle, TOKEN_QUERY, &mut token_handle).is_err() {
             let _ = CloseHandle(process_handle);
             return Err(anyhow::anyhow!("Failed to open token for process {}", pid));
         }
@@ -57,9 +57,9 @@ pub fn analyze_process_sandbox(pid: u32) -> anyhow::Result<SandboxSurfaceInfo> {
             Some(integrity_info_buf.as_mut_ptr() as *mut _),
             128,
             &mut return_len,
-        ).as_bool() {
+        ).is_ok() {
             let label = &*(integrity_info_buf.as_ptr() as *const TOKEN_MANDATORY_LABEL);
-            let sid = label.Sid;
+            let sid = label.Label.Sid;
             // Get the RID (last subauthority)
             let count = *windows::Win32::Security::GetSidSubAuthorityCount(sid);
             if count > 0 {
@@ -82,11 +82,11 @@ pub fn analyze_process_sandbox(pid: u32) -> anyhow::Result<SandboxSurfaceInfo> {
             Some(priv_buf.as_mut_ptr() as *mut _),
             2048,
             &mut return_len,
-        ).as_bool() {
+        ).is_ok() {
             let token_privs = &*(priv_buf.as_ptr() as *const TOKEN_PRIVILEGES);
             for i in 0..token_privs.PrivilegeCount {
                 let luid_and_attrs = token_privs.Privileges[i as usize];
-                if luid_and_attrs.Attributes & SE_PRIVILEGE_ENABLED != 0 {
+                if (luid_and_attrs.Attributes.0 & SE_PRIVILEGE_ENABLED.0) != 0 {
                     // In a real port, we'd use LookupPrivilegeNameW
                     // For detection, we'll flag high-risk LUIDs
                     let risk = match luid_and_attrs.Luid.LowPart {

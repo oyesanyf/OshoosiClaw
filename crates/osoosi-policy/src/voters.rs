@@ -90,7 +90,7 @@ impl ThreatVoter for SandboxSurfaceVoter {
         }
 
         if let Ok(info) = crate::sandbox_surface::analyze_process_sandbox(pid) {
-            let mut risk_score = 0.0;
+            let mut risk_score: f32 = 0.0;
             let mut reasons = Vec::new();
 
             // Flag high-risk privileges

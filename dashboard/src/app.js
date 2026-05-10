@@ -17,6 +17,7 @@ const state = {
     expandedDetails: new Set(),
     lastThreatsHash: '',
     lastActivityHash: '',
+    gossip_count: 0,
     _pollInFlight: false
 };
 
@@ -155,7 +156,9 @@ async function updateDashboard() {
 
         if (mesh) {
             state.peer_count = mesh.peer_count;
+            state.gossip_count = mesh.gossip_count || 0;
             updateStats('peer-count', mesh.peer_count);
+            updateStats('gossip-count', mesh.gossip_count || 0);
             updateStats('pending-joins', mesh.pending_joins || 0);
             updateStats('quarantined', mesh.quarantined_peers || 0);
         }

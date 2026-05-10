@@ -1080,6 +1080,7 @@ async fn get_mesh_stats(State(state): State<DashboardState>) -> Json<Value> {
             let chain_verified = orch.audit().verify();
             Json(json!({
                 "peer_count": orch.mesh_peer_count(),
+                "gossip_count": orch.mesh_gossip_count(),
                 "trust_verified": chain_verified,
                 "live": true
             }))

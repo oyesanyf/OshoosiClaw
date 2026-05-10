@@ -460,6 +460,8 @@ pub struct EdrOrchestrator {
     alert_suppression_cache: Arc<dashmap::DashMap<String, Instant>>,
     /// Nostr Mesh: Decentralized relay-based threat broadcasting (BitChat style)
     nostr_mesh: Arc<crate::nostr_mesh::NostrMeshOrchestrator>,
+    /// Total Gossip messages received from peers
+    mesh_gossip_count: Arc<AtomicU32>,
 }
 
 impl EdrOrchestrator {
@@ -948,6 +950,7 @@ impl EdrOrchestrator {
         let nsrl_cache = Arc::new(dashmap::DashMap::new());
         let remediation = Arc::new(crate::remediation::RemediationController::new());
         let causal_ai = Arc::new(crate::causal_ai::CausalEngine::new());
+        let mesh_gossip_count = Arc::new(AtomicU32::new(0));
         let self_healing = Arc::new(crate::self_healing::SelfHealingEngine::new(
             audit.clone(),
             memory.clone(),
@@ -1221,6 +1224,7 @@ impl EdrOrchestrator {
             spider_eyes,
             alert_suppression_cache: Arc::new(dashmap::DashMap::new()),
             nostr_mesh,
+            mesh_gossip_count,
         })
     }
 
@@ -1294,6 +1298,13 @@ impl EdrOrchestrator {
             let orch_tarpit = orch.clone();
             let orch_delta = orch.clone();
             let orch_tripwire = orch.clone();
+            let gossip_counter = self.mesh_gossip_count.clone();
+            let g1 = gossip_counter.clone();
+            let g2 = gossip_counter.clone();
+            let g3 = gossip_counter.clone();
+            let g4 = gossip_counter.clone();
+            let g5 = gossip_counter.clone();
+            let g6 = gossip_counter.clone();
 
             tokio::spawn(async move {
                 mesh_node
@@ -1304,6 +1315,7 @@ impl EdrOrchestrator {
                         peer_rules,
                         orch.adaptive(),
                         move |sig| {
+                            g1.fetch_add(1, Ordering::Relaxed);
                             info!(
                                 "Mesh Intelligence: External threat reported from {}: {:?}",
                                 sig.source_node, sig.reason
@@ -1326,6 +1338,7 @@ impl EdrOrchestrator {
                             );
                         },
                         move |msg| {
+                            g2.fetch_add(1, Ordering::Relaxed);
                             // Handle policy consensus messages
                             if let osoosi_types::PolicyConsensusMessage::Vote(ref vote) = msg {
                                 let orch_clone = orch_msg.clone();
@@ -1338,8 +1351,11 @@ impl EdrOrchestrator {
                                     .push(msg_clone);
                             }
                         },
-                        |_shard| {}, // Ghost shards — placeholder for future distributed deception storage
+                        move |_shard| {
+                            g3.fetch_add(1, Ordering::Relaxed);
+                        }, // Ghost shards — placeholder for future distributed deception storage
                         move |intel| {
+                            g4.fetch_add(1, Ordering::Relaxed);
                             // Global Intel: Persist peer threat intelligence and mark hashes
                             info!(
                                 "Mesh Intel: Received global intelligence from {} — {}",
@@ -1368,6 +1384,7 @@ impl EdrOrchestrator {
                             }
                         },
                         move |sample| {
+                            g5.fetch_add(1, Ordering::Relaxed);
                             // Malware Sample: Feed into federated threat model for distributed learning
                             info!(
                                 "Mesh Sample: Received malware sample from {} (hash: {}, label: {})",
@@ -1388,6 +1405,7 @@ impl EdrOrchestrator {
                             );
                         },
                         move |tarpit_signal| {
+                            g6.fetch_add(1, Ordering::Relaxed);
                             // Tarpit Signal: Apply collaborative attacker IP block when peers warn
                             if tarpit_signal.confidence >= 0.5 {
                                 warn!(
@@ -3887,6 +3905,10 @@ impl EdrOrchestrator {
     /// Current mesh peer count (approved peers).
     pub fn mesh_peer_count(&self) -> u32 {
         self.mesh_peer_count.load(Ordering::Relaxed)
+    }
+
+    pub fn mesh_gossip_count(&self) -> u32 {
+        self.mesh_gossip_count.load(Ordering::Relaxed)
     }
 
     /// Get mesh topology (nodes and links) for dashboard visualization.
