@@ -1,0 +1,174 @@
+{
+  "last_updated": "2026-05-09",
+  "source": "https://docs.google.com/spreadsheets/d/1lkNJ0uQwbeC1ZTRrxdtuPLCIl7mlUreoKfSIgajnSyY/edit?gid=1190662839",
+  "vulnerabilities": [
+    {
+      "cve": "CVE-2026-34621",
+      "vendor": "Adobe",
+      "product": "Acrobat Reader",
+      "description": "Object prototype attributes pollution"
+    },
+    {
+      "cve": "CVE-2026-32201",
+      "vendor": "Microsoft",
+      "product": "SharePoint",
+      "description": "Improper input validation"
+    },
+    {
+      "cve": "CVE-2026-5281",
+      "vendor": "Google",
+      "product": "Chrome",
+      "description": "Use-after-free in Dawn"
+    },
+    {
+      "cve": "CVE-2026-3909",
+      "vendor": "Google",
+      "product": "Chrome",
+      "description": "Out-of-bounds write in Skia"
+    },
+    {
+      "cve": "CVE-2026-3910",
+      "vendor": "Google",
+      "product": "Chrome",
+      "description": "Inappropriate implementation in V8"
+    },
+    {
+      "cve": "CVE-2026-21385",
+      "vendor": "Qualcomm",
+      "product": "GPU",
+      "description": "Memory corruption in memory allocation"
+    },
+    {
+      "cve": "CVE-2026-2441",
+      "vendor": "Google",
+      "product": "Chrome",
+      "description": "Use-after-free in CSS"
+    },
+    {
+      "cve": "CVE-2026-20700",
+      "vendor": "Apple",
+      "product": "iOS",
+      "description": "Memory corruption in dyld"
+    },
+    {
+      "cve": "CVE-2026-21519",
+      "vendor": "Microsoft",
+      "product": "Windows",
+      "description": "Desktop Window Manager Elevation of Privilege"
+    },
+    {
+      "cve": "CVE-2026-21533",
+      "vendor": "Microsoft",
+      "product": "Windows",
+      "description": "Remote Desktop Services Elevation of Privilege"
+    },
+    {
+      "cve": "CVE-2025-43529",
+      "vendor": "Apple",
+      "product": "WebKit",
+      "description": "Use-after-free (UAF)"
+    },
+    {
+      "cve": "CVE-2025-14174",
+      "vendor": "Apple",
+      "product": "WebKit",
+      "description": "Out-of-bounds write in libangle"
+    },
+    {
+      "cve": "CVE-2025-62221",
+      "vendor": "Microsoft",
+      "product": "Windows",
+      "description": "Use-after-free in Windows Cloud Filter"
+    },
+    {
+      "cve": "CVE-2025-13223",
+      "vendor": "Google",
+      "product": "Chrome",
+      "description": "Type confusion in V8"
+    },
+    {
+      "cve": "CVE-2025-62215",
+      "vendor": "Microsoft",
+      "product": "Windows",
+      "description": "Race condition leading to double free in kernel"
+    },
+    {
+      "cve": "CVE-2025-59230",
+      "vendor": "Microsoft",
+      "product": "Windows",
+      "description": "Improper access control"
+    },
+    {
+      "cve": "CVE-2025-21043",
+      "vendor": "Samsung",
+      "product": "Samsung Mobile",
+      "description": "Out-of-bounds write in libimagecodec"
+    },
+    {
+      "cve": "CVE-2025-38352",
+      "vendor": "Google",
+      "product": "Android",
+      "description": "Race condition in kernel"
+    },
+    {
+      "cve": "CVE-2025-48543",
+      "vendor": "Google",
+      "product": "Android",
+      "description": "Deserialization of untrusted data in ART"
+    },
+    {
+      "cve": "CVE-2025-43300",
+      "vendor": "Apple",
+      "product": "iOS",
+      "description": "Memory corruption in ImageIO"
+    },
+    {
+      "cve": "CVE-2025-55177",
+      "vendor": "Meta",
+      "product": "WhatsApp",
+      "description": "Incomplete authorization of linked device sync"
+    },
+    {
+      "cve": "CVE-2025-53770",
+      "vendor": "Microsoft",
+      "product": "SharePoint",
+      "description": "Deserialization of untrusted data"
+    },
+    {
+      "cve": "CVE-2025-33053",
+      "vendor": "Microsoft",
+      "product": "Windows",
+      "description": "Internet Shortcut Files Remote Code Execution"
+    },
+    {
+      "cve": "CVE-2025-5419",
+      "vendor": "Google",
+      "product": "Chrome",
+      "description": "Out-of-bounds write in V8"
+    },
+    {
+      "cve": "CVE-2025-21479",
+      "vendor": "Qualcomm",
+      "product": "GPU",
+      "description": "Arbitrary physical write vulnerability"
+    },
+    {
+      "cve": "CVE-2025-30397",
+      "vendor": "Microsoft",
+      "product": "Windows",
+      "description": "Scripting Engine Memory Corruption"
+    },
+    {
+      "cve": "CVE-2025-32706",
+      "vendor": "Microsoft",
+      "product": "Windows",
+      "description": "Common Log File System (CLFS) Elevation of Privilege"
+    },
+    {
+      "cve": "CVE-2025-31200",
+      "vendor": "Apple",
+      "product": "iOS",
+      "description": "Memory Corruption in CoreAudio"
+    }
+  ]
+}

@@ -15,6 +15,7 @@ pub mod voters;
 pub mod cve_cache;
 
 pub mod admin;
+pub mod sandbox_surface;
 
 pub use crate::admin::*;
 pub use engine::*;

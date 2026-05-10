@@ -89,8 +89,11 @@ impl MeshNode {
                     gossipsub_config,
                 )?;
 
+                let mut mdns_config = mdns::Config::default();
+                mdns_config.query_interval = Duration::from_secs(10); // More aggressive discovery on same subnet
+
                 let mdns = mdns::tokio::Behaviour::new(
-                    mdns::Config::default(),
+                    mdns_config,
                     key.public().to_peer_id(),
                 )?;
 
@@ -290,20 +293,21 @@ impl MeshNode {
 
     /// [NEW] Native Neighbor Discovery: Scrapes the OS ARP/Neighbor cache and
     /// attempts to dial any potential Oshoosi siblings on the local segment.
-    /// Uses MAC-aware filtering to prioritize "trusted" hardware (Dell, Apple, Intel)
-    /// and avoid IoT noise.
+    /// This is the "Subnet-Aware" discovery layer that complements mDNS.
     pub async fn bootstrap_local_neighbors(&mut self) {
-        info!("[Mesh] Performing Intelligent Local Bootstrapping via ARP cache...");
+        let mesh_config = osoosi_types::load_mesh_listen_config();
+        // Extract the listen port from the first listen address (e.g. /ip4/0.0.0.0/tcp/4001)
+        let listen_port = mesh_config.listen_addrs.first()
+            .and_then(|addr| addr.parse::<Multiaddr>().ok())
+            .and_then(|maddr| maddr.iter().find_map(|p| if let Protocol::Tcp(port) = p { Some(port) } else { None }))
+            .unwrap_or(4001);
+
+        info!("[Mesh] Performing Aggressive Local Subnet Discovery via ARP cache (Port {})...", listen_port);
         let scraper = osoosi_telemetry::discovery::RouteScraper::new();
         let neighbors = scraper.scrape_arp();
         
         let local_peer_id = *self.swarm.local_peer_id();
         let mut dialed = 0;
-
-        // Example "Trusted" MAC Prefixes (OUI) for Laptops/Servers/VMs
-        // - b0:e4:d5, bc:df:58 (Common NICs)
-        // - 00:15:5d (Hyper-V / WSL)
-        let trusted_ouis = vec!["b0:e4:d5", "bc:df:58", "00:15:5d"];
 
         for host in neighbors {
             // Basic noise filtering: skip common multicast/broadcast patterns
@@ -316,24 +320,14 @@ impl MeshNode {
                 continue;
             }
 
-            // MAC Filtering: Only dial if the MAC prefix is in our trusted list
-            // If MAC is unknown (None), we still dial to ensure we don't miss peers 
-            // on interfaces that don't report MACs in the ARP table.
-            if let Some(ref mac) = host.mac {
-                if !trusted_ouis.iter().any(|oui| mac.starts_with(oui)) {
-                    debug!("[Mesh] Skipping non-trusted neighbor (MAC: {})", mac);
-                    continue;
-                }
-            }
-
-            // Construct Multiaddr for the standard Oshoosi port (4001)
-            let maddr_str = format!("/ip4/{}/tcp/4001", host.ip);
+            // Construct Multiaddr for the sibling's potential listen port
+            let maddr_str = format!("/ip4/{}/tcp/{}", host.ip, listen_port);
             if let Ok(maddr) = maddr_str.parse::<Multiaddr>() {
                 if let Some(Protocol::P2p(peer_id)) = maddr.iter().last() {
                     if peer_id == local_peer_id { continue; }
                 }
 
-                debug!("[Mesh] Knocking on potential sibling door: {}", maddr);
+                debug!("[Mesh] Subnet Discovery: Dialing potential sibling at {}", maddr);
                 let _ = self.swarm.dial(maddr);
                 dialed += 1;
                 
@@ -344,7 +338,7 @@ impl MeshNode {
         }
         
         if dialed > 0 {
-            info!("[Mesh] ARP Discovery: Dialed {} trusted potential local siblings.", dialed);
+            info!("[Mesh] Subnet Discovery: Attempted connection to {} potential local siblings.", dialed);
         }
     }
 

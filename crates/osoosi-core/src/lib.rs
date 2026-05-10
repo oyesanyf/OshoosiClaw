@@ -1095,7 +1095,9 @@ impl EdrOrchestrator {
             policy.add_voter(Box::new(voter)).await;
         }
 
-        // Native Voters (Zero-Process Stack)
+        policy.add_voter(Box::new(osoosi_policy::voters::ZeroDayVoter::new())).await;
+        policy.add_voter(Box::new(osoosi_policy::voters::SandboxSurfaceVoter)).await;
+        
         policy.add_voter(Box::new(crate::voters::YaraXVoter {
             rules: yara_rules.clone(),
             adaptive: adaptive.clone(),

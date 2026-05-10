@@ -167,6 +167,8 @@ fn classify_vote(
         "Floss-Artifact" => (EvidenceClass::StaticArtifact, 0.82, false),
         "Dotscope-Forensics" => (EvidenceClass::StaticArtifact, 0.85, true),
         name if name.contains("NexusShield") => (EvidenceClass::StaticArtifact, 0.95, true),
+        "ZeroDayTracker" => (EvidenceClass::ThreatIntel, 1.0, true),
+        "SandboxSurfaceAnalysis" => (EvidenceClass::Behavior, 0.85, true),
         name if name.contains("MalConv") || name.contains("ML") => {
             let weak_pe_signature =
                 reason_lc.contains("ml=0.000") && reason_lc.contains("sig=1.000");

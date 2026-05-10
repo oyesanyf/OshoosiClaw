@@ -7,6 +7,125 @@ use osoosi_model::ThreatModel;
 use std::sync::Arc;
 use tracing::{debug, warn};
 
+/// Zero-Day Vulnerability Voter
+/// Checks for known "In the Wild" exploits from Google's Zero-Day Tracker.
+pub struct ZeroDayVoter {
+    pub vulnerabilities: Vec<ZeroDayInfo>,
+}
+
+#[derive(serde::Deserialize, Clone, Debug)]
+pub struct ZeroDayInfo {
+    pub cve: String,
+    pub vendor: String,
+    pub product: String,
+    pub description: String,
+}
+
+impl ZeroDayVoter {
+    pub fn new() -> Self {
+        let path = std::path::Path::new("config/google_zero_days.json");
+        let vulnerabilities = if path.exists() {
+            match std::fs::read_to_string(path) {
+                Ok(content) => {
+                    let data: serde_json::Value = serde_json::from_str(&content).unwrap_or_default();
+                    serde_json::from_value(data["vulnerabilities"].clone()).unwrap_or_default()
+                }
+                Err(_) => Vec::new(),
+            }
+        } else {
+            Vec::new()
+        };
+        Self { vulnerabilities }
+    }
+}
+
+#[async_trait]
+impl ThreatVoter for ZeroDayVoter {
+    fn name(&self) -> String {
+        "ZeroDayTracker".to_string()
+    }
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+        let version = event.data.get("ProductVersion").and_then(|v| v.as_str()).unwrap_or("");
+
+        for vuln in &self.vulnerabilities {
+            // Match vendor or product in the image path or product name metadata
+            let vendor_match = image.contains(&vuln.vendor.to_lowercase());
+            let product_match = image.contains(&vuln.product.to_lowercase());
+
+            if vendor_match && product_match {
+                return Some(VoteResult {
+                    confidence: 0.95,
+                    reason: format!(
+                        "Zero-Day Match: Known 'In the Wild' exploit ({}) detected for {} {}. Description: {}",
+                        vuln.cve, vuln.vendor, vuln.product, vuln.description
+                    ),
+                    weight: 1.0,
+                });
+            }
+        }
+        None
+    }
+}
+
+/// Sandbox Attack Surface Voter
+/// Ports logic from Google Project Zero's Sandbox Analysis Tools.
+/// Analyzes token integrity, privileges, and AppContainer status.
+pub struct SandboxSurfaceVoter;
+
+#[async_trait]
+impl ThreatVoter for SandboxSurfaceVoter {
+    fn name(&self) -> String {
+        "SandboxSurfaceAnalysis".to_string()
+    }
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        // Only vote on process creation (Event ID 1)
+        if event.event_id != 1 {
+            return None;
+        }
+
+        let pid = event.data.get("ProcessId").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+        if pid == 0 {
+            return None;
+        }
+
+        if let Ok(info) = crate::sandbox_surface::analyze_process_sandbox(pid) {
+            let mut risk_score = 0.0;
+            let mut reasons = Vec::new();
+
+            // Flag high-risk privileges
+            for priv_name in &info.privileges {
+                risk_score += 0.3;
+                reasons.push(format!("Has high-risk privilege: {}", priv_name));
+            }
+
+            // Flag suspicious integrity levels for non-system processes
+            if info.integrity_level == "High" || info.integrity_level == "System" {
+                let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+                if !image.to_lowercase().contains("windows\\system32") {
+                    risk_score += 0.4;
+                    reasons.push("Running with High/System integrity from non-standard path".to_string());
+                }
+            }
+
+            if risk_score > 0.0 {
+                return Some(VoteResult {
+                    confidence: risk_score.min(0.9),
+                    reason: format!(
+                        "Sandbox Surface Warning: {} (Integrity: {}, AppContainer: {}). Reasons: {}",
+                        info.is_elevated.then(|| "Elevated").unwrap_or("Non-elevated"),
+                        info.integrity_level,
+                        info.is_app_container,
+                        reasons.join(", ")
+                    ),
+                    weight: 1.0,
+                });
+            }
+        }
+        None
+    }
+}
+
 /// Semantic Intent Voter (Algorithm 2)
 pub struct SemanticVoter {
     pub engine: crate::semantic::SemanticEngine,
