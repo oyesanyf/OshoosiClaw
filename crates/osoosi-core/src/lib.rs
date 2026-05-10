@@ -1573,12 +1573,14 @@ impl EdrOrchestrator {
         } else {
             "default".to_string()
         };
-        self.start_host_event_loop(&event_source, 1).await;
+        self.start_host_event_loop(&event_source, 2).await;
         
         // 5. Intelligent Sourcing & Self-Healing
         self.start_repair_loop(3600, true).await;
         self.start_fetcher_loop().await;
-        self.start_model_training_loop(60).await;
+        // Model training every 30 minutes: training involves SQLite reads, Rayon ML work,
+        // and mesh delta broadcasts — doing it every 60s was a significant background CPU load.
+        self.start_model_training_loop(1800).await;
         
         // 6. Ghost Node Deception Services + Canary Deployment
         let ghost_enabled = std::env::var("OSOOSI_GHOST_ENABLED")

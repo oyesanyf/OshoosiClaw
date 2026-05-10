@@ -489,7 +489,7 @@ impl PolicyEngine {
         }
 
         let voters_len = self.voters.read().await.len();
-        info!(
+        debug!(
             target: CONSENSUS_LOG_TARGET,
             event_id = ?event.event_id,
             voters = voters_len,
@@ -559,7 +559,7 @@ impl PolicyEngine {
                 }
 
                 let contribution = res.confidence * res.weight;
-                info!(
+                debug!(
                     target: CONSENSUS_LOG_TARGET,
                     voter = %vname,
                     conf = res.confidence,
@@ -631,7 +631,7 @@ impl PolicyEngine {
         }
 
         if !is_threat {
-            info!(
+            debug!(
                 target: CONSENSUS_LOG_TARGET,
                 path = %image_path,
                 "[CONSENSUS] clean (all voters abstained)"
