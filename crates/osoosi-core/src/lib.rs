@@ -1955,10 +1955,17 @@ impl EdrOrchestrator {
             tokio::spawn(async move {
                 info!("File Monitor: Real-time event loop started.");
                 let mut set = tokio::task::JoinSet::new();
+                // Cache concurrency limit; refresh lazily every 64 events to avoid async overhead
+                // in the tight file-event loop. The adaptive controller updates this in background.
+                let mut limit_refresh_counter: u32 = 0;
+                let mut cached_limit: usize = 16;
                 while let Some(res) = rx.recv().await {
                     if let Ok(event) = res {
-                        let limit = orchestrator.adaptive().get_concurrency_limit().await;
-                        while set.len() >= limit {
+                        limit_refresh_counter += 1;
+                        if limit_refresh_counter % 64 == 1 {
+                            cached_limit = orchestrator.adaptive().get_concurrency_limit().await;
+                        }
+                        while set.len() >= cached_limit {
                             let _ = set.join_next().await;
                         }
                         let orchestrator = orchestrator.clone();
@@ -2226,12 +2233,11 @@ impl EdrOrchestrator {
                         match reader.poll_events() {
                             Ok(events) => {
                                 if !events.is_empty() {
-                                    info!(
-                                        "Host event loop ingesting {} event(s) from {}",
+                                    debug!(
+                                        "Host event loop: {} event(s) from {}",
                                         events.len(),
                                         resolved_source
                                     );
-                                    info!("[HostEvents] Polled {} new events from OS channels.", events.len());
                                 }
                                 for ev in events {
                                     let orch = orchestrator.clone();
@@ -2477,9 +2483,9 @@ impl EdrOrchestrator {
                         Err(e) => error!("Failed to fetch NVD records: {}", e),
                     }
 
-                    // Update cycle: Every 4 hours.
-                    tokio::time::sleep(tokio::time::Duration::from_secs(14400)).await;
+                    // Update cycle handled by the outer sleep below.
                 });
+                // Sleep 4 hours between feed refresh cycles.
                 tokio::time::sleep(tokio::time::Duration::from_secs(14400)).await;
             }
         });
@@ -2601,15 +2607,11 @@ impl EdrOrchestrator {
     ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
 
-        // 1. Audit Logging: Record that we are processing this event (for dashboard visibility)
+        // 1. Report event rate to adaptive controller.
+        // Audit logging for every raw event is intentionally omitted here — it caused O(n) SQLite
+        // writes that ground the disk at high event rates. Threats are still audited individually
+        // via THREAT_DETECTED below, and the causal AI graph records the full event timeline.
         self.adaptive.report_event();
-        self.audit.log("TELEMETRY_INGESTED", serde_json::json!({
-            "event_id": event.event_id,
-            "source": format!("{:?}", event.source),
-            "computer": event.computer,
-            "timestamp": event.timestamp.to_rfc3339(),
-            "data": event.data
-        }));
 
         // 0. Intelligent Load-Aware Throttling (The "Brain")
         let current_mode = *self.adaptive.current_mode.read().unwrap();
@@ -2938,11 +2940,11 @@ impl EdrOrchestrator {
         // doing so causes O(n) recomputation per event and double-serialization overhead.
         // The Causal AI graph below captures the full event timeline for forensic replay.
 
-        // Log to console and log file with full forensic detail
-        let event_name = format!("EventID={}", event.event_id);
-        info!(
-            "PRO-FORENSIC [ID={}]: {} | Data: {}",
-            event.event_id, event_name, event.data
+        // Log at DEBUG only — logging full event.data JSON at INFO level on every event
+        // causes severe disk I/O pressure at high event rates and was the primary freeze cause.
+        debug!(
+            "PRO-FORENSIC [ID={}]: EventID={} | computer={}",
+            event.event_id, event.event_id, event.computer
         );
 
         // 10/10 Causal Engine: Ingest event into the Causal AI Attack Graph
