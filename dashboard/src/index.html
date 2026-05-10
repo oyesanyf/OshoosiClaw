@@ -20,6 +20,7 @@
                 <h1 class="logo-text">Oshoosi<span>Claw</span></h1>
             </div>
             <nav class="nav-menu">
+                <div class="nav-section-title">Overview</div>
                 <a href="#" class="nav-item active" data-view="dashboard">
                     <i data-lucide="layout-dashboard"></i>
                     <span>Dashboard</span>
@@ -32,6 +33,8 @@
                     <i data-lucide="check-square"></i>
                     <span>Approval Queue</span>
                 </a>
+
+                <div class="nav-section-title">Mesh Intelligence</div>
                 <a href="#" class="nav-item" data-view="otel-map">
                     <i data-lucide="map"></i>
                     <span>Telemetry Map</span>
@@ -44,10 +47,16 @@
                     <i data-lucide="share-2"></i>
                     <span>Mesh Network</span>
                 </a>
+                <a href="#" class="nav-item" data-view="gossip">
+                    <i data-lucide="messages-square"></i>
+                    <span>Gossip Feed</span>
+                </a>
                 <a href="#" class="nav-item" data-view="malware">
                     <i data-lucide="scan"></i>
                     <span>Malware Scanner</span>
                 </a>
+
+                <div class="nav-section-title">System Analysis</div>
                 <a href="#" class="nav-item" data-view="repair">
                     <i data-lucide="wrench"></i>
                     <span>Repair Engine</span>
@@ -256,6 +265,40 @@
                     <div class="card-body">
                         <div id="mesh-data-list" class="timeline-list">
                             <p class="placeholder-text">Waiting for mesh data...</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Gossip Feed View -->
+            <div id="gossip-view" class="view-content">
+                <div class="stats-grid">
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper orange">
+                            <i data-lucide="messages-square"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Total Gossip Packets</span>
+                            <span class="stat-value" id="gossip-total-received">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper blue">
+                            <i data-lucide="zap"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Last Gossip Action</span>
+                            <span class="stat-value" id="gossip-last-action" style="font-size:12px;">None</span>
+                        </div>
+                    </div>
+                </div>
+                <div class="card glass shadow-glow mt-4">
+                    <div class="card-header">
+                        <h3>Inbound Gossip Mesh Feed</h3>
+                    </div>
+                    <div class="card-body">
+                        <div id="gossip-feed-list" class="timeline-list">
+                            <p class="placeholder-text">Listening for P2P gossip...</p>
                         </div>
                     </div>
                 </div>

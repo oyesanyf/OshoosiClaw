@@ -4428,6 +4428,17 @@ impl EdrOrchestrator {
         let self_clone = self.clone();
         let orch_tripwire = self.clone();
         let adaptive_clone = self.adaptive.clone();
+        let gossip_count = self.mesh_gossip_count.clone();
+        let gossip_sig = gossip_count.clone();
+        let gossip_cons = gossip_count.clone();
+        let gossip_ghost = gossip_count.clone();
+        let gossip_intel = gossip_count.clone();
+        let gossip_sample = gossip_count.clone();
+        let gossip_tarpit = gossip_count.clone();
+        let gossip_conf = gossip_count.clone();
+        let gossip_delta = gossip_count.clone();
+        let gossip_trip = gossip_count.clone();
+
         let mesh_future = Box::pin(async move {
             mesh.run_loop(
                 join_gate_clone,
@@ -4436,21 +4447,27 @@ impl EdrOrchestrator {
                 peer_rules,
                 adaptive_clone,
                 move |sig| {
+                    gossip_sig.fetch_add(1, Ordering::Relaxed);
                     let _ = peer_tx.try_send(sig);
                 },
                 move |m| {
+                    gossip_cons.fetch_add(1, Ordering::Relaxed);
                     let _ = cons_tx.try_send(m);
                 },
                 move |s| {
+                    gossip_ghost.fetch_add(1, Ordering::Relaxed);
                     let _ = ghost_tx.try_send(s);
                 },
                 move |i| {
+                    gossip_intel.fetch_add(1, Ordering::Relaxed);
                     let _ = intel_tx.try_send(i);
                 },
                 move |s| {
+                    gossip_sample.fetch_add(1, Ordering::Relaxed);
                     let _ = sample_tx.try_send(s);
                 },
                 move |t| {
+                    gossip_tarpit.fetch_add(1, Ordering::Relaxed);
                     if t.confidence >= autonomy_conf.action_confidence_threshold {
                         if let Ok(addr) = t.target_ip.parse() {
                             let _ = osoosi_wire::apply_socket_tarpit(addr);
@@ -4458,13 +4475,16 @@ impl EdrOrchestrator {
                     }
                 },
                 move |c| {
+                    gossip_conf.fetch_add(1, Ordering::Relaxed);
                     info!("MESH: Received confidential message from peer: {:?}", c);
                 },
                 move |delta| {
+                    gossip_delta.fetch_add(1, Ordering::Relaxed);
                     let mut model = self_clone.threat_model.blocking_write();
                     model.merge_delta(&delta);
                 },
                 move |alert| {
+                    gossip_trip.fetch_add(1, Ordering::Relaxed);
                     let self_inner = orch_tripwire.clone();
                     tokio::spawn(async move {
                         warn!("Mesh Tripwire: Peer {} triggered a phantom memory trap! Offender: {} ({})", alert.source_node_id, alert.offender.name, alert.offender.blake3_hash);

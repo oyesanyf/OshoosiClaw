@@ -1576,40 +1576,56 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
         .map_err(|e| anyhow::anyhow!("Cannot create log directory {}: {}", log_dir.display(), e))?;
     let file_appender = tracing_appender::rolling::daily(&log_dir, "osoosi.log");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
-    // Default: INFO to ensure we capture performance/adaptive logs in the file.
-    // Console still respects this but we can use EnvFilter to refine it.
-    let level = if debug {
+    
+    // File Filter: Always INFO (or DEBUG if requested) to capture full forensics
+    let file_level = if debug {
         tracing::Level::DEBUG
     } else {
         tracing::Level::INFO
     };
-    let mut filter = EnvFilter::from_default_env()
-        .add_directive(level.into())
-        .add_directive("h2=warn".parse().expect("static directive")) // Quiet noisy libraries
+    let file_filter = EnvFilter::from_default_env()
+        .add_directive(file_level.into())
+        .add_directive("h2=warn".parse().expect("static directive"))
         .add_directive("hyper=warn".parse().expect("static directive"))
         .add_directive("rustls=warn".parse().expect("static directive"));
-    
-    if debug {
-        filter = filter.add_directive("consensus=info".parse().expect("static directive"));
-    }
+
+    // Console Filter: WARN by default to prevent system freezes/I/O bottleneck
+    let console_level = if debug {
+        tracing::Level::DEBUG
+    } else {
+        tracing::Level::WARN
+    };
+    let console_filter = EnvFilter::from_default_env()
+        .add_directive(console_level.into())
+        .add_directive("h2=error".parse().expect("static directive"))
+        .add_directive("hyper=error".parse().expect("static directive"))
+        .add_directive("rustls=error".parse().expect("static directive"));
 
     let console_layer = fmt::Layer::default()
         .with_writer(std::io::stdout)
-        .with_filter(filter.clone());
+        .with_filter(console_filter);
+    
     let file_layer = fmt::Layer::default()
         .with_writer(non_blocking)
-        .with_ansi(false);
+        .with_ansi(false)
+        .with_filter(file_filter);
 
     tracing_subscriber::registry()
-        .with(filter)
         .with(console_layer)
         .with(file_layer)
         .with(osoosi_exporter::init_opentelemetry_layer())
         .init();
-    info!(
-        path = %log_dir.display(),
-        "File logs (override with OSOOSI_LOG_DIR)"
-    );
+
+    if !debug {
+        println!("[*] Logging initialized. Console level: WARN, File level: INFO");
+        println!("[*] Logs available at: {}", log_dir.display());
+    } else {
+        info!(
+            path = %log_dir.display(),
+            "Debug logging enabled. Console level: DEBUG, File level: DEBUG"
+        );
+    }
+    
     Ok(guard)
 }
 

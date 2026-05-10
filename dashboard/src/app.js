@@ -59,6 +59,10 @@ function setupNav() {
             } else if (view === 'mesh') {
                 document.getElementById('mesh-view').classList.add('active');
                 viewTitle.innerText = "Mesh Network";
+            } else if (view === 'gossip') {
+                document.getElementById('gossip-view').classList.add('active');
+                viewTitle.innerText = "Inter-Node Gossip Feed";
+                renderGossipView();
             } else if (view === 'malware') {
                 document.getElementById('malware-view').classList.add('active');
                 viewTitle.innerText = "Malware Scanner";
@@ -178,6 +182,9 @@ async function updateDashboard() {
         }
         if (state.current_view === 'mesh') {
             renderMeshView(mesh);
+        }
+        if (state.current_view === 'gossip') {
+            renderGossipView();
         }
         if (state.current_view === 'malware' && malwareDetections) {
             renderMalwareView(malwareDetections);
@@ -1274,4 +1281,67 @@ function navigateToStory() {
     if (storyNav) {
         storyNav.click();
     }
+}
+/**
+ * Render the Gossip Feed view (P2P mesh intelligence sharing)
+ */
+async function renderGossipView() {
+    const list = document.getElementById('gossip-feed-list');
+    if (!list) return;
+
+    // 1. Update stats from state (polled in updateDashboard)
+    const totalEl = document.getElementById('gossip-total-received');
+    if (totalEl) totalEl.innerText = state.gossip_count;
+
+    // 2. Fetch recent activity and filter for mesh/gossip events
+    const activity = await fetchAPI('/activity');
+    if (!activity || activity.length === 0) {
+        list.innerHTML = '<p class="placeholder-text">Listening for P2P gossip packets...</p>';
+        return;
+    }
+
+    // Gossip events typically include MESH_*, CONSENSUS_*, INTEL_*, or are marked as mesh sources
+    const gossipEvents = activity.filter(a => 
+        a.type.includes('MESH') || 
+        a.type.includes('CONSENSUS') || 
+        a.type.includes('INTEL') ||
+        (a.summary && a.summary.toLowerCase().includes('mesh'))
+    );
+
+    if (gossipEvents.length === 0) {
+        list.innerHTML = '<p class="placeholder-text">No gossip packets decoded in the last cycle.</p>';
+        return;
+    }
+
+    // Update last action stat
+    const lastActionEl = document.getElementById('gossip-last-action');
+    if (lastActionEl && gossipEvents.length > 0) {
+        lastActionEl.innerText = gossipEvents[0].summary;
+    }
+
+    list.innerHTML = gossipEvents.map(event => {
+        let icon = 'messages-square';
+        let color = 'orange';
+        
+        if (event.type.includes('THREAT')) { icon = 'shield-alert'; color = 'red'; }
+        else if (event.type.includes('CONSENSUS')) { icon = 'check-circle'; color = 'purple'; }
+        else if (event.type.includes('INTEL')) { icon = 'zap'; color = 'blue'; }
+
+        return `
+            <div class="timeline-item" style="border-left: 2px solid var(--accent-${color});">
+                <div class="item-icon" style="background-color: rgba(var(--accent-${color}-rgb), 0.1); color: var(--accent-${color});">
+                    <i data-lucide="${icon}"></i>
+                </div>
+                <div class="item-info">
+                    <div class="item-title">${event.summary}</div>
+                    <div class="item-meta">
+                        <span><i data-lucide="tag"></i> ${event.type}</span>
+                        <span><i data-lucide="clock"></i> ${formatTimestamp(event.timestamp)}</span>
+                    </div>
+                </div>
+            </div>
+        `;
+    }).join('');
+
+    lucide.createIcons();
 }
