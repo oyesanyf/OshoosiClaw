@@ -7,8 +7,8 @@ echo ====================================================
 
 :: 1. Verify binaries exist
 echo [1/5] Checking for existing release binaries...
-if not exist target\release\osoosi.exe (
-    echo [!] 'target\release\osoosi.exe' not found.
+if not exist target\x86_64-pc-windows-msvc\release\osoosi.exe (
+    echo [!] 'target\x86_64-pc-windows-msvc\release\osoosi.exe' not found.
     echo Please run 'cargo build --release' first or use a build script.
     exit /b 1
 )
@@ -29,7 +29,7 @@ echo [3/5] Collecting files...
 copy target\x86_64-pc-windows-msvc\release\osoosi.exe %DEPLOY_DIR%\
 copy target\x86_64-pc-windows-msvc\release\osoosi_inject.dll %DEPLOY_DIR%\
 copy run_osoosi.bat %DEPLOY_DIR%\
-copy target\release\test-peer.exe %DEPLOY_DIR%\
+copy target\x86_64-pc-windows-msvc\release\test-peer.exe %DEPLOY_DIR%\
 if exist deceptive_techniques.py copy deceptive_techniques.py %DEPLOY_DIR%\
 if exist osoosi.toml (
     copy osoosi.toml %DEPLOY_DIR%\

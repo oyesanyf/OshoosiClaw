@@ -13,7 +13,12 @@ const state = {
     searchQuery: '',
     network: null,
     otelNetwork: null,
-    telemetryChart: null
+    telemetryChart: null,
+    expandedDetails: new Set(),
+    lastThreatsHash: '',
+    lastActivityHash: '',
+    gossip_count: 0,
+    _pollInFlight: false
 };
 
 /**
@@ -112,6 +117,10 @@ function setupSearch() {
  * Main update loop
  */
 async function updateDashboard() {
+    // Non-reentrant guard: if previous poll is still in-flight, skip this tick.
+    // This prevents cascading fetch queues when the backend is under heavy consensus load.
+    if (state._pollInFlight) return;
+    state._pollInFlight = true;
     try {
         const [status, threats, mesh, activity, malwareDetections, repairStatus, telemetryData] = await Promise.all([
             fetchAPI('/status'),
@@ -136,21 +145,27 @@ async function updateDashboard() {
 
         if (threats) {
             const visibleThreats = threats.filter(t => !state.suppressedThreatKeys.has(threatKey(t)));
-            state.threats = visibleThreats;
-            updateStats('threat-count', visibleThreats.length);
-            renderThreats(visibleThreats);
+            const currentHash = JSON.stringify(visibleThreats);
+            if (currentHash !== state.lastThreatsHash) {
+                state.threats = visibleThreats;
+                state.lastThreatsHash = currentHash;
+                updateStats('threat-count', visibleThreats.length);
+                renderThreats(visibleThreats);
+            }
         }
 
         if (mesh) {
             state.peer_count = mesh.peer_count;
+            state.gossip_count = mesh.gossip_count || 0;
             updateStats('peer-count', mesh.peer_count);
+            updateStats('gossip-count', mesh.gossip_count || 0);
             updateStats('pending-joins', mesh.pending_joins || 0);
             updateStats('quarantined', mesh.quarantined_peers || 0);
         }
 
         if (activity) {
-            state.activity = activity;
-            renderActivity(activity);
+            const currentHash = JSON.stringify(activity); if (currentHash !== state.lastActivityHash) { state.activity = activity;
+            state.lastActivityHash = currentHash; renderActivity(activity); }
         }
 
         if (telemetryData) {
@@ -188,6 +203,8 @@ async function updateDashboard() {
         console.error("Failed to update dashboard:", error);
         document.getElementById('agent-status-text').innerText = "Agent Offline";
         document.querySelector('.status-dot').className = "status-dot";
+    } finally {
+        state._pollInFlight = false;
     }
 }
 
@@ -230,12 +247,20 @@ function suppressThreatLocally(threatId) {
  * Helper to fetch from API
  */
 async function fetchAPI(endpoint) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 4000);
     try {
-        const response = await fetch(`${API_BASE}${endpoint}`);
+        const response = await fetch(`${API_BASE}${endpoint}`, { signal: controller.signal });
+        clearTimeout(timeoutId);
         if (!response.ok) throw new Error(`HTTP ${response.status}`);
         return await response.json();
     } catch (err) {
-        console.warn(`Error fetching ${endpoint}:`, err);
+        clearTimeout(timeoutId);
+        if (err.name === 'AbortError') {
+            console.warn(`Fetch timeout for ${endpoint} (4s SLA exceeded)`);
+        } else {
+            console.warn(`Error fetching ${endpoint}:`, err);
+        }
         return null;
     }
 }
@@ -260,7 +285,7 @@ function renderThreats(threats) {
         return;
     }
 
-    const filtered = threats.filter(t => {
+    const displayThreats = threats.slice(0, 30); const filtered = threats.filter(t => {
         if (!state.searchQuery) return true;
         const q = state.searchQuery;
         return (t.type && t.type.toLowerCase().includes(q)) || 
@@ -275,7 +300,7 @@ function renderThreats(threats) {
     }
 
     const groups = {};
-    filtered.forEach(t => {
+    const sourceToRender = state.searchQuery ? filtered : displayThreats; sourceToRender.forEach(t => {
         // Variation is defined by Type + Source only; reasons are listed inside
         const key = `${t.type}-${t.source_node || 'Unknown'}`;
         if (!groups[key]) groups[key] = [];
@@ -332,7 +357,10 @@ function renderActivity(activity) {
         return;
     }
 
-    list.innerHTML = activity.map(item => `
+    // Performance: Only show latest 20 items
+    const limitedActivity = activity.slice(0, 20);
+
+    list.innerHTML = limitedActivity.map(item => `
         <div class="feed-item">
             <div class="item-info">
                 <div class="item-title" style="font-size:13px">${item.summary}</div>
@@ -387,7 +415,7 @@ function renderThreatsView(threats) {
                 </div>
             </div>
             
-            <div id="group-details-full-${t.id}" style="display: none; flex-direction: column; gap: 10px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 10px;">
+            <div id="group-details-full-${t.id}" style="display: ${state.expandedDetails.has('full-' + t.id) ? 'flex' : 'none'}; flex-direction: column; gap: 10px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 10px;">
                 ${t.entropy ? `
                     <div class="entropy-gauge">
                         <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); margin-bottom:4px;">
@@ -497,7 +525,7 @@ function renderMalwareView(detections) {
                 </div>
             </div>
 
-            <div id="malware-details-${detId}" style="display: none; flex-direction: column; gap: 10px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 10px;">
+            <div id="malware-details-${detId}" style="display: ${state.expandedDetails.has(detId) ? 'flex' : 'none'}; flex-direction: column; gap: 10px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 10px;">
                 ${det.entropy ? `
                     <div class="entropy-gauge">
                         <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); margin-bottom:4px;">
@@ -1085,9 +1113,27 @@ window.markTruePositive = async function(threatId) {
  * Global Interactivity Helpers
  */
 window.toggleGroupDetails = function(id) {
+    if (state.expandedDetails.has(id)) {
+        state.expandedDetails.delete(id);
+    } else {
+        state.expandedDetails.add(id);
+    }
     const el = document.getElementById(`group-details-${id}`);
     if (el) {
-        el.style.display = el.style.display === 'none' ? 'flex' : 'none';
+        el.style.display = state.expandedDetails.has(id) ? 'flex' : 'none';
+        lucide.createIcons();
+    }
+};
+
+window.toggleMalwareDetails = function(id) {
+    if (state.expandedDetails.has(id)) {
+        state.expandedDetails.delete(id);
+    } else {
+        state.expandedDetails.add(id);
+    }
+    const el = document.getElementById(`malware-details-${id}`);
+    if (el) {
+        el.style.display = state.expandedDetails.has(id) ? 'flex' : 'none';
         lucide.createIcons();
     }
 };
