@@ -212,6 +212,31 @@ pub fn build_attack_graph(
                     }
                 }
             }
+            "TELEMETRY_SUMMARY" => {
+                let computer = entry.data.get("computer").and_then(|v| v.as_str()).unwrap_or("host");
+                let count_val = entry.data.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+                
+                let summary_id = format!("summary:{}", entry.timestamp.timestamp_millis());
+                nodes.insert(summary_id.clone());
+                nodes.insert(computer.to_string());
+                node_labels.insert(summary_id.clone(), (format!("{} events", count_val), "host".to_string()));
+                node_labels.insert(computer.to_string(), (computer.to_string(), "host".to_string()));
+                
+                edges.push(json!({
+                    "from": computer,
+                    "to": summary_id,
+                    "label": "activity",
+                    "title": format!("Telemetry Summary: {} events scanned", count_val),
+                }));
+                count += 1;
+            }
+            "ACTIVITY_BOOT" => {
+                let msg = entry.data.get("message").and_then(|v| v.as_str()).unwrap_or("Boot");
+                let boot_id = format!("boot:{}", entry.timestamp.timestamp_millis());
+                nodes.insert(boot_id.clone());
+                node_labels.insert(boot_id.clone(), (msg.to_string(), "response".to_string()));
+                count += 1;
+            }
             _ => {}
         }
     }

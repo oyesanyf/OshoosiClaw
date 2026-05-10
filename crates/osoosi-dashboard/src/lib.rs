@@ -1008,6 +1008,13 @@ async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
                             let ev = e.data.get("event_id").and_then(|v| v.as_i64()).unwrap_or(0);
                             format!("Event {} scanned", ev)
                         }
+                        "TELEMETRY_SUMMARY" => {
+                            let count = e.data.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+                            format!("{} events scanned and analyzed", count)
+                        }
+                        "ACTIVITY_BOOT" => {
+                            e.data.get("message").and_then(|v| v.as_str()).unwrap_or("Agent started").to_string()
+                        }
                         "RESPONSE_ACTION" => {
                             let t = e.data.get("type").and_then(|v| v.as_str()).unwrap_or("Response");
                             format!("Response: {}", t)
@@ -1406,15 +1413,16 @@ async fn get_telemetry_timeseries(State(state): State<DashboardState>) -> Json<V
                     break;
                 }
 
-                // Only count actual Sysmon telemetry ingestion
-                if entry.event_type != "TELEMETRY_INGESTED" {
-                    continue;
+                if entry.event_type == "TELEMETRY_SUMMARY" {
+                    let count = entry.data.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let minute = entry.timestamp.format("%Y-%m-%d %H:%M").to_string();
+                    let entry_count = buckets.entry(minute).or_insert(0u32);
+                    *entry_count += count as u32;
+                } else if entry.event_type == "TELEMETRY_INGESTED" {
+                    let minute = entry.timestamp.format("%Y-%m-%d %H:%M").to_string();
+                    let entry_count = buckets.entry(minute).or_insert(0u32);
+                    *entry_count += 1;
                 }
-
-                // Format: YYYY-MM-DD HH:MM
-                let minute = entry.timestamp.format("%Y-%m-%d %H:%M").to_string();
-                let entry_count = buckets.entry(minute).or_insert(0u32);
-                *entry_count += 1;
             }
 
             let mut labels = Vec::new();

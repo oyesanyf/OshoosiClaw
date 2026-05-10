@@ -460,8 +460,14 @@ pub struct EdrOrchestrator {
     alert_suppression_cache: Arc<dashmap::DashMap<String, Instant>>,
     /// Nostr Mesh: Decentralized relay-based threat broadcasting (BitChat style)
     nostr_mesh: Arc<crate::nostr_mesh::NostrMeshOrchestrator>,
+    /// Total telemetry events ingested (for dashboard metrics)
+    telemetry_total_count: Arc<std::sync::atomic::AtomicU64>,
+    /// Last time a TELEMETRY_SUMMARY was logged
+    last_telemetry_summary: Arc<tokio::sync::Mutex<Instant>>,
+    /// Last total count when summary was logged
+    last_telemetry_summary_count: Arc<std::sync::atomic::AtomicU64>,
     /// Total Gossip messages received from peers
-    mesh_gossip_count: Arc<AtomicU32>,
+    mesh_gossip_count_atomic: Arc<AtomicU32>,
 }
 
 impl EdrOrchestrator {
@@ -1175,6 +1181,8 @@ impl EdrOrchestrator {
         let privacy = Arc::new(privacy::PrivacyLayer::new(trust.clone()));
         let military = Arc::new(military::MilitaryGuard::new());
 
+        let mesh_gossip_count_atomic = Arc::new(AtomicU32::new(0));
+        
         Ok(Self {
             memory,
             mesh_peer_count,
@@ -1224,7 +1232,10 @@ impl EdrOrchestrator {
             spider_eyes,
             alert_suppression_cache: Arc::new(dashmap::DashMap::new()),
             nostr_mesh,
-            mesh_gossip_count,
+            mesh_gossip_count_atomic,
+            telemetry_total_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            last_telemetry_summary: Arc::new(tokio::sync::Mutex::new(Instant::now())),
+            last_telemetry_summary_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })
     }
 
@@ -1298,7 +1309,7 @@ impl EdrOrchestrator {
             let orch_tarpit = orch.clone();
             let orch_delta = orch.clone();
             let orch_tripwire = orch.clone();
-            let gossip_counter = self.mesh_gossip_count.clone();
+            let gossip_counter = self.mesh_gossip_count_atomic.clone();
             let g1 = gossip_counter.clone();
             let g2 = gossip_counter.clone();
             let g3 = gossip_counter.clone();
@@ -1551,6 +1562,40 @@ impl EdrOrchestrator {
         
         // 1. Adaptive Runtime & Maintenance
         self.start_maintenance_loop();
+
+        // 1a. Dashboard Metrics & Hydration
+        let hyd_orch = self.clone();
+        tokio::spawn(async move {
+            // Initial Welcome Event (Hydration)
+            hyd_orch.audit.log("ACTIVITY_BOOT", serde_json::json!({
+                "message": "OpenỌ̀ṣọ́ọ̀sì Agent Intelligence active. Monitoring host security events.",
+                "status": "Healthy"
+            }));
+
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(60));
+            loop {
+                interval.tick().await;
+                if let Ok(mut last) = hyd_orch.last_telemetry_summary.try_lock() {
+                    if last.elapsed() > Duration::from_secs(55) {
+                        let total = hyd_orch.telemetry_total_count.load(Ordering::Relaxed);
+                        let prev_count = hyd_orch.last_telemetry_summary_count.swap(total, Ordering::Relaxed);
+                        let diff = total.saturating_sub(prev_count);
+                        if diff > 0 {
+                            hyd_orch.audit.log(
+                                "TELEMETRY_SUMMARY",
+                                serde_json::json!({
+                                    "count": diff,
+                                    "total_ingested": total,
+                                    "computer": hyd_orch.trust.did().to_string(),
+                                }),
+                            );
+                        }
+                        *last = Instant::now();
+                    }
+                }
+            }
+        });
+
         self.clone().adaptive().start_adaptive_loop();
         
         // 2. Behavioral & Resource Monitors
@@ -2610,10 +2655,27 @@ impl EdrOrchestrator {
         use osoosi_types::ResponseAction;
 
         // 1. Report event rate to adaptive controller.
-        // Audit logging for every raw event is intentionally omitted here — it caused O(n) SQLite
-        // writes that ground the disk at high event rates. Threats are still audited individually
-        // via THREAT_DETECTED below, and the causal AI graph records the full event timeline.
         self.adaptive.report_event();
+
+        // 1b. Periodic Telemetry Summary (for Dashboard performance)
+        let total = self.telemetry_total_count.fetch_add(1, Ordering::Relaxed) + 1;
+        if total % 100 == 0 {
+            if let Ok(mut last) = self.last_telemetry_summary.try_lock() {
+                if last.elapsed() > Duration::from_secs(60) {
+                    let prev_count = self.last_telemetry_summary_count.swap(total, Ordering::Relaxed);
+                    let diff = total.saturating_sub(prev_count);
+                    self.audit.log(
+                        "TELEMETRY_SUMMARY",
+                        serde_json::json!({
+                            "count": diff,
+                            "total_ingested": total,
+                            "computer": self.trust.did().to_string(),
+                        }),
+                    );
+                    *last = Instant::now();
+                }
+            }
+        }
 
         // 0. Intelligent Load-Aware Throttling (The "Brain")
         let current_mode = *self.adaptive.current_mode.read().unwrap();
@@ -3865,6 +3927,10 @@ impl EdrOrchestrator {
         let mut findings: Vec<serde_json::Value> = Vec::new();
 
         for entry in entries.iter().rev() {
+            if entry.event_type == "TELEMETRY_SUMMARY" {
+                events_analyzed += entry.data.get("count").and_then(|v| v.as_u64()).unwrap_or(0) as u32;
+                continue;
+            }
             if entry.event_type != "TELEMETRY_INGESTED" {
                 continue;
             }
@@ -3912,7 +3978,7 @@ impl EdrOrchestrator {
     }
 
     pub fn mesh_gossip_count(&self) -> u32 {
-        self.mesh_gossip_count.load(Ordering::Relaxed)
+        self.mesh_gossip_count_atomic.load(Ordering::Relaxed)
     }
 
     /// Get mesh topology (nodes and links) for dashboard visualization.
@@ -4432,7 +4498,7 @@ impl EdrOrchestrator {
         let self_clone = self.clone();
         let orch_tripwire = self.clone();
         let adaptive_clone = self.adaptive.clone();
-        let gossip_count = self.mesh_gossip_count.clone();
+        let gossip_count = self.mesh_gossip_count_atomic.clone();
         let gossip_sig = gossip_count.clone();
         let gossip_cons = gossip_count.clone();
         let gossip_ghost = gossip_count.clone();
