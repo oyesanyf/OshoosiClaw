@@ -457,12 +457,22 @@ function renderThreatsView(threats) {
 /**
  * Render mesh network view
  */
-function renderMeshView(mesh) {
+async function renderMeshView(mesh) {
     const list = document.getElementById('mesh-data-list');
     if (!list) return;
 
-    // Placeholder data rendering
-    list.innerHTML = `
+    let pendingJoins = [];
+    let quarantinedPeers = [];
+    try {
+        const [pj, qp] = await Promise.all([
+            fetchAPI('/pending-joins'),
+            fetchAPI('/quarantined-peers')
+        ]);
+        if (pj) pendingJoins = pj;
+        if (qp) quarantinedPeers = qp;
+    } catch (e) {}
+
+    let html = `
         <div class="timeline-item">
             <div class="item-icon" style="background-color: rgba(0, 210, 255, 0.1); color: var(--accent-blue);">
                 <i data-lucide="network"></i>
@@ -475,8 +485,65 @@ function renderMeshView(mesh) {
             </div>
         </div>
     `;
+
+    if (pendingJoins.length > 0) {
+        html += `<h4 style="margin-top:20px; margin-bottom:10px; color:var(--text-header); font-size:14px;">Pending Joins</h4>`;
+        html += pendingJoins.map(pj => `
+            <div class="timeline-item" style="border-left: 2px solid orange;">
+                <div class="item-icon" style="background-color: rgba(255, 165, 0, 0.1); color: orange;">
+                    <i data-lucide="help-circle"></i>
+                </div>
+                <div class="item-info">
+                    <div class="item-title">${pj.peer_id}</div>
+                    <div class="item-meta">
+                        <span><i data-lucide="map-pin"></i> ${pj.address || 'Unknown'}</span>
+                        <span><i data-lucide="clock"></i> Discovered ${formatTimestamp(pj.discovered_at)}</span>
+                    </div>
+                    <div class="item-actions" style="margin-top:8px;">
+                        <button class="action-btn primary" onclick="meshAllowPeer('${pj.peer_id}')">Allow</button>
+                        <button class="action-btn" onclick="meshDenyPeer('${pj.peer_id}')">Deny</button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    if (quarantinedPeers.length > 0) {
+        html += `<h4 style="margin-top:20px; margin-bottom:10px; color:var(--text-header); font-size:14px;">Quarantined Peers</h4>`;
+        html += quarantinedPeers.map(qp => `
+            <div class="timeline-item" style="border-left: 2px solid var(--accent-red);">
+                <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
+                    <i data-lucide="shield-alert"></i>
+                </div>
+                <div class="item-info">
+                    <div class="item-title">${qp.peer_id}</div>
+                    <div class="item-meta">
+                        <span><i data-lucide="clock"></i> Quarantined ${formatTimestamp(qp.quarantined_at)}</span>
+                    </div>
+                    <div class="item-actions" style="margin-top:8px;">
+                        <button class="action-btn" onclick="meshReleasePeer('${qp.peer_id}')">Release</button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    list.innerHTML = html;
     lucide.createIcons();
 }
+
+window.meshAllowPeer = async function(id) {
+    await fetch(\`${API_BASE}/pending-joins/\${id}/allow\`, { method: 'POST' });
+    updateDashboard();
+};
+window.meshDenyPeer = async function(id) {
+    await fetch(\`${API_BASE}/pending-joins/\${id}/deny\`, { method: 'POST' });
+    updateDashboard();
+};
+window.meshReleasePeer = async function(id) {
+    await fetch(\`${API_BASE}/quarantined-peers/\${id}/release\`, { method: 'POST', headers: {'x-osoosi-quarantine-key': 'admin'} });
+    updateDashboard();
+};
 
 /**
  * Render malware scanner view with drill-down details

@@ -1082,18 +1082,26 @@ async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
 }
 
 async fn get_mesh_stats(State(state): State<DashboardState>) -> Json<Value> {
+    let pending_joins = state.join_gate.as_ref().and_then(|g| g.pending_joins().ok()).map(|v| v.len()).unwrap_or(0);
+    let quarantined_peers = state.join_gate.as_ref().and_then(|g| g.quarantined_peers().ok()).map(|v| v.len()).unwrap_or(0);
+
     match &state.backend {
         Some(orch) => {
             let chain_verified = orch.audit().verify();
             Json(json!({
                 "peer_count": orch.mesh_peer_count(),
                 "gossip_count": orch.mesh_gossip_count(),
+                "pending_joins": pending_joins,
+                "quarantined_peers": quarantined_peers,
                 "trust_verified": chain_verified,
                 "live": true
             }))
         }
         None => Json(json!({
             "peer_count": 0,
+            "gossip_count": 0,
+            "pending_joins": pending_joins,
+            "quarantined_peers": quarantined_peers,
             "trust_verified": false,
             "live": false
         })),

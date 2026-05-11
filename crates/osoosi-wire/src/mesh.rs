@@ -609,6 +609,8 @@ impl MeshNode {
                             // Reset the intervals
                             let _ = bootstrap_interval.tick().await; 
                             let _ = arp_discovery_interval.tick().await;
+                        } else if es.contains("Timeout") {
+                            debug!("Outgoing connection timeout to {:?}: {}", peer_id, error);
                         } else {
                             warn!("Outgoing connection error to {:?}: {}", peer_id, error);
                         }
