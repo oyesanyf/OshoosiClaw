@@ -257,7 +257,7 @@ pub fn build_attack_graph(
             };
             json!({
                 "id": id,
-                "label": if label.len() > 24 { format!("{}...", &label[..21]) } else { label.clone() },
+                "label": if label.chars().count() > 24 { format!("{}...", label.chars().take(21).collect::<String>()) } else { label.clone() },
                 "title": label,
                 "color": color,
                 "group": node_type,
