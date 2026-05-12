@@ -3,7 +3,7 @@ use ferrisetw::trace::UserTrace;
 use ferrisetw::parser::*;
 use osoosi_types::{HostSecurityEvent, HostEventSource};
 use tokio::sync::mpsc;
-use tracing::{error, info};
+use tracing::{error, info, warn};
 use chrono::Utc;
 
 pub struct NativeTelemetryEngine {
@@ -214,6 +214,7 @@ impl NativeTelemetryEngine {
                 .build();
 
             info!("🚀 [NATIVE-TELEMETRY] Starting Multi-Engine ETW Session...");
+            
             let trace_res = UserTrace::new()
                 .named("OshoosiNativeTelemetry".to_string())
                 .enable(sysmon_provider)
@@ -225,7 +226,14 @@ impl NativeTelemetryEngine {
             
             match trace_res {
                 Ok(_) => info!("✅ [NATIVE-TELEMETRY] ETW Session started successfully."),
-                Err(e) => error!("❌ [NATIVE-TELEMETRY] ETW Session failed: {:?}", e),
+                Err(e) => {
+                    let err_str = format!("{:?}", e);
+                    if err_str.contains("AlreadyExist") {
+                        warn!("⚠️ [NATIVE-TELEMETRY] ETW Session 'OshoosiNativeTelemetry' already exists. This usually means a previous instance is still running.");
+                    } else {
+                        error!("❌ [NATIVE-TELEMETRY] ETW Session failed: {:?}", e);
+                    }
+                }
             }
             
             // Loop while trace is active (blocks the spawn_blocking thread)

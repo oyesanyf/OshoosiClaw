@@ -346,37 +346,29 @@ impl Gemma4Analyzer {
             resolved_dir.join("tokenizer.json")
         };
 
-        // Automatic Shard Consolidation
-        let onnx_data_main = model_dir.join("decoder_model_merged.onnx_data");
-        if !onnx_data_main.exists() {
-            let mut shards = Vec::new();
-            let bases = [model_dir, &resolved_dir];
-            for base in &bases {
-                for i in 1..20 {
-                    let shard = base.join(format!("decoder_model_merged.onnx_data_{}", i));
-                    if shard.exists() { shards.push(shard); }
-                }
-                if !shards.is_empty() { break; }
+        // Deploy Shards and Data Files (Ensures ONNX External Data references are maintained)
+        let _ = std::fs::create_dir_all(&model_dir);
+        let mut shards_deployed = 0;
+        
+        for i in 1..20 {
+            let shard_name = format!("decoder_model_merged.onnx_data_{}", i);
+            let src = resolved_dir.join(&shard_name);
+            let dst = model_dir.join(&shard_name);
+            if src.exists() && !dst.exists() {
+                if let Ok(_) = std::fs::copy(&src, &dst) { shards_deployed += 1; }
+            } else if dst.exists() {
+                shards_deployed += 1;
             }
+        }
+        
+        if shards_deployed > 0 {
+            info!("Deployed {} ONNX shards to {:?}", shards_deployed, model_dir);
+        }
 
-            if !shards.is_empty() {
-                info!("Consolidating {} ONNX shards into {:?}...", shards.len(), onnx_data_main);
-                let mut combined = Vec::new();
-                for shard in shards {
-                    if let Ok(data) = std::fs::read(&shard) { combined.extend_from_slice(&data); }
-                }
-                if !combined.is_empty() {
-                    let _ = std::fs::create_dir_all(&model_dir);
-                    let _ = std::fs::write(&onnx_data_main, combined);
-                }
-            } else {
-                // If no shards but a single data file exists in snapshot, link it
-                let snapshot_data = resolved_dir.join("decoder_model_merged.onnx_data");
-                if snapshot_data.exists() {
-                    let _ = std::fs::create_dir_all(&model_dir);
-                    let _ = std::fs::copy(&snapshot_data, &onnx_data_main);
-                }
-            }
+        let main_data_src = resolved_dir.join("decoder_model_merged.onnx_data");
+        let main_data_dst = model_dir.join("decoder_model_merged.onnx_data");
+        if main_data_src.exists() && !main_data_dst.exists() {
+            let _ = std::fs::copy(&main_data_src, &main_data_dst);
         }
 
         // Co-locate ONNX manifest with data
@@ -709,17 +701,13 @@ impl SecureBertAnalyzer {
         let target_tokenizer = model_dir.join("tokenizer.json");
         let target_config = model_dir.join("config.json");
         
-        if !target_onnx.exists() && onnx_src.exists() {
-            let _ = std::fs::create_dir_all(&model_dir);
-            let _ = std::fs::copy(&onnx_src, &target_onnx);
-        }
-        if !target_tokenizer.exists() && tokenizer_src.exists() {
-            let _ = std::fs::create_dir_all(&model_dir);
-            let _ = std::fs::copy(&tokenizer_src, &target_tokenizer);
-        }
-        if !target_config.exists() && config_src.exists() {
-            let _ = std::fs::create_dir_all(&model_dir);
-            let _ = std::fs::copy(&config_src, &target_config);
+        for f in ["model.onnx", "tokenizer.json", "config.json", "model.safetensors"] {
+            let src = resolved_dir.join(f);
+            let dst = model_dir.join(f);
+            if src.exists() && !dst.exists() {
+                let _ = std::fs::create_dir_all(&model_dir);
+                let _ = std::fs::copy(&src, &dst);
+            }
         }
 
         let final_tokenizer_path = if target_tokenizer.exists() { target_tokenizer } else { tokenizer_src };

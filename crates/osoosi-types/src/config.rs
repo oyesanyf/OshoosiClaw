@@ -808,10 +808,16 @@ pub fn resolve_config_path() -> Option<PathBuf> {
         }
     }
     let cwd = std::env::current_dir().ok()?;
-    let local = cwd.join("osoosi.toml");
-    if local.exists() {
-        return Some(local);
+    
+    // 1. Try project root discovery (walks up to find osoosi.toml)
+    if let Some(root) = resolve_project_root() {
+        let path = root.join("osoosi.toml");
+        if path.exists() {
+            return Some(path);
+        }
     }
+
+    let local = cwd.join("osoosi.toml");
 
     // Check parent directory (useful when running from target/release)
     if let Some(parent) = cwd.parent() {
@@ -1123,7 +1129,7 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
     let mut membership_proof = None;
     let mut zone = "Global".to_string();
     let mut nostr_relays = Vec::new();
-    let mut allow_public_relays = false;
+    let mut allow_public_relays = true; // Default to true for better out-of-the-box connectivity
 
     if let Some(path) = resolve_config_path() {
         if let Ok(content) = std::fs::read_to_string(&path) {

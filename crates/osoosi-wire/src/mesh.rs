@@ -331,8 +331,13 @@ impl MeshNode {
                 let _ = self.swarm.dial(maddr);
                 dialed += 1;
                 
-                if dialed % 5 == 0 {
-                    tokio::time::sleep(Duration::from_millis(100)).await;
+                if dialed >= 32 {
+                    debug!("[Mesh] Subnet Discovery: Capping at 32 dials to prevent socket exhaustion.");
+                    break;
+                }
+
+                if dialed % 4 == 0 {
+                    tokio::time::sleep(Duration::from_millis(250)).await;
                 }
             }
         }
@@ -609,8 +614,8 @@ impl MeshNode {
                             // Reset the intervals
                             let _ = bootstrap_interval.tick().await; 
                             let _ = arp_discovery_interval.tick().await;
-                        } else if es.contains("Timeout") {
-                            debug!("Outgoing connection timeout to {:?}: {}", peer_id, error);
+                        } else if es.contains("Timeout") || es.contains("10061") || es.contains("refused") {
+                            debug!("Outgoing connection failed (likely non-Oshoosi node) {:?}: {}", peer_id, error);
                         } else {
                             warn!("Outgoing connection error to {:?}: {}", peer_id, error);
                         }
