@@ -13,7 +13,7 @@ use serde::Deserialize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokenizers::Tokenizer;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 /// Strip DeepSeek R1 thinking traces from LLM output.
 /// Handles both formats:
@@ -316,8 +316,12 @@ impl Gemma4Analyzer {
             "Initializing LLM Cortex from {:?}...",
             model_dir
         );
-
-        let resolved_dir = if model_dir.exists() && (model_dir.join("model.onnx").exists() || model_dir.join("decoder_model_merged.onnx").exists()) {
+        // We only consider the local directory 'resolved' if the main model AND shards are present.
+        // Gemma-4 typically uses 'model.onnx' or 'decoder_model_merged.onnx' as a manifest.
+        let has_model = model_dir.join("model.onnx").exists() || model_dir.join("decoder_model_merged.onnx").exists();
+        let has_shards = model_dir.join("decoder_model_merged.onnx_data_1").exists();
+        
+        let resolved_dir = if model_dir.exists() && has_model && (has_shards || !model_dir.join("decoder_model_merged.onnx_data").exists()) {
             model_dir.to_path_buf()
         } else {
             // HF Snapshot Discovery for Gemma-4
@@ -384,7 +388,7 @@ impl Gemma4Analyzer {
                 let tokenizer = Tokenizer::from_file(&tokenizer_src).map_err(anyhow::Error::msg)?;
                 let session = Session::builder()?
                     .with_optimization_level(GraphOptimizationLevel::Level3)?
-                    .with_intra_threads(2)?
+                    .with_intra_threads(1)?
                     .commit_from_file(&target_onnx)?;
                 
                 Ok(Self::Onnx {
@@ -723,7 +727,7 @@ impl SecureBertAnalyzer {
             if sz > 10_000_000 {
                 let session = Session::builder()?
                     .with_optimization_level(GraphOptimizationLevel::Level3)?
-                    .with_intra_threads(2)?
+                    .with_intra_threads(1)?
                     .commit_from_file(&final_onnx_path);
                 
                 match session {
@@ -734,7 +738,10 @@ impl SecureBertAnalyzer {
                             tokenizer,
                         });
                     }
-                    Err(e) => warn!("SecureBERT ONNX init failed: {}. Trying Candle.", e),
+                    Err(e) => {
+                        error!("SecureBERT ONNX init failed: {}. Path: {:?}", e, final_onnx_path);
+                        warn!("SecureBERT ONNX init failed: {}. Trying Candle.", e);
+                    }
                 }
             }
         }

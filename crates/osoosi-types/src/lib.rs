@@ -56,6 +56,7 @@ pub trait TelemetryControllerInterface: Send + Sync {
     fn spawn_adaptive(&self, category: ResourceCategory, priority: Priority, task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>>);
     fn report_event(&self);
     fn is_burst_mode(&self) -> bool;
+    fn is_silent_mode(&self) -> bool;
     fn is_socket_exhaustion(&self) -> bool;
     fn set_socket_exhaustion(&self, value: bool);
     /// Get the current effective concurrency limit for the controller's main resource pool (usually IO).

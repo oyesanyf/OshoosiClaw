@@ -46,6 +46,23 @@ if exist yara xcopy /s /e /y yara\* %DEPLOY_DIR%\yara\
 if exist scripts\firewall_setup.ps1 copy scripts\firewall_setup.ps1 %DEPLOY_DIR%\
 if exist scripts\firewall_setup.sh copy scripts\firewall_setup.sh %DEPLOY_DIR%\
 
+:: 4. Copy AI Models
+echo [4/5] Collecting AI models (this may take a few minutes)...
+if exist models\behavioral (
+    mkdir %DEPLOY_DIR%\models\behavioral
+    xcopy /s /e /y models\behavioral\* %DEPLOY_DIR%\models\behavioral\
+)
+if exist models\gemma4-e4b (
+    mkdir %DEPLOY_DIR%\models\gemma4-e4b
+    xcopy /s /e /y models\gemma4-e4b\* %DEPLOY_DIR%\models\gemma4-e4b\
+)
+if exist models\malware (
+    mkdir %DEPLOY_DIR%\models\malware
+    xcopy /s /e /y models\malware\* %DEPLOY_DIR%\models\malware\
+)
+if exist models\bulk_threat_model.json copy models\bulk_threat_model.json %DEPLOY_DIR%\models\
+if exist models\threat_model.json copy models\threat_model.json %DEPLOY_DIR%\models\
+
 :: Copy UI Assets (must be in dashboard/dist for the agent to find them)
 echo [3.5/5] Collecting dashboard UI assets...
 if exist dashboard\dist (

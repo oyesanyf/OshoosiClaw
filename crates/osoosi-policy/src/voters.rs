@@ -273,6 +273,7 @@ impl ThreatVoter for GemmaVoter {
     fn name(&self) -> String {
         "LLM-Reasoning".to_string()
     }
+    fn is_heavy(&self) -> bool { true }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let image = event
             .data
@@ -582,6 +583,7 @@ impl ThreatVoter for DecompileVoter {
     fn name(&self) -> String {
         "Decompile".to_string()
     }
+    fn is_heavy(&self) -> bool { true }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         // We only decompile on ProcessCreate (1) or ImageLoad (7) to catch entry-point intent
         if !matches!(event.event_id, 1 | 7) {

@@ -89,6 +89,7 @@ error_core.log
 # ---------- Deployment Packages ----------
 *.zip
 /osoosi_deploy/
+/deploy/
 
 # ---------- Temp / Misc ----------
 /tmp/

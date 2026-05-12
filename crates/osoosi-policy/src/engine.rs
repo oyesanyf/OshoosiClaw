@@ -28,6 +28,8 @@ use async_trait::async_trait;
 pub trait ThreatVoter: Send + Sync {
     fn name(&self) -> String;
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult>;
+    /// Returns true if this voter is resource-intensive (AI/Decompile).
+    fn is_heavy(&self) -> bool { false }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -304,6 +306,8 @@ pub struct PolicyEngine {
     pub intel_broadcaster: Arc<tokio::sync::RwLock<Option<Arc<dyn Fn(osoosi_types::GlobalIntelligence) + Send + Sync>>>>,
     /// Local SQLite cache for NVD CVEs
     pub cve_cache: Option<Arc<tokio::sync::Mutex<crate::cve_cache::CveCache>>>,
+    /// Optional resource controller to skip heavy tasks during load
+    pub telemetry_controller: Option<Arc<dyn osoosi_types::TelemetryControllerInterface>>,
 }
 
 impl PolicyEngine {
@@ -333,6 +337,7 @@ impl PolicyEngine {
                     }
                 }
             },
+            telemetry_controller: None,
         }
     }
 
@@ -507,18 +512,27 @@ impl PolicyEngine {
         const OTX_VOTER: &str = "OTX-C2";
 
         // ADAPTIVE THREADING: Run all voters concurrently with per-voter timeouts.
-        // Each voter gets a strict 5-second SLA. If a voter hangs (LLM inference,
-        // memory inspection, decompile), it's treated as an abstention — never
-        // blocking the consensus pipeline for other, faster voters.
-        // We use join_all (all run concurrently) with individual timeout wrappers
-        // so a stalled voter only wastes its own 5s budget, not the group's.
-        const VOTER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(5);
+        // Each voter gets a strict 30-second SLA (increased for LLM inference on CPU).
+        const VOTER_TIMEOUT: std::time::Duration = std::time::Duration::from_secs(30);
         let results = {
             let voters_guard = self.voters.read().await;
             let mut timeout_futs = Vec::with_capacity(voters_guard.len());
             let mut names = Vec::with_capacity(voters_guard.len());
             for voter in voters_guard.iter() {
                 let name = voter.name();
+
+                // DRASTIC OPTIMIZATION: Skip heavy voters (LLM, Decompile) during resource pressure (Silent Mode)
+                if let Some(ref controller) = self.telemetry_controller {
+                    if voter.is_heavy() && controller.is_silent_mode() {
+                        debug!(
+                            target: CONSENSUS_LOG_TARGET,
+                            voter = %name,
+                            "[CONSENSUS] skipping heavy voter due to SILENT mode (resource pressure)"
+                        );
+                        continue;
+                    }
+                }
+
                 let vote_fut = voter.vote(event);
                 // Wrap each voter future in an individual timeout
                 timeout_futs.push(tokio::time::timeout(VOTER_TIMEOUT, vote_fut));

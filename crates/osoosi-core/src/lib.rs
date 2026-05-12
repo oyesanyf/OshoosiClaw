@@ -784,6 +784,16 @@ impl EdrOrchestrator {
     }
 
     pub async fn new() -> anyhow::Result<Self> {
+        // Drastic Performance Optimization: Lower process priority so we don't freeze the UI
+        #[cfg(windows)]
+        {
+            use windows::Win32::System::Threading::{GetCurrentProcess, SetPriorityClass, BELOW_NORMAL_PRIORITY_CLASS};
+            unsafe {
+                let _ = SetPriorityClass(GetCurrentProcess(), BELOW_NORMAL_PRIORITY_CLASS);
+            }
+            info!("Performance: Agent process priority set to BELOW_NORMAL.");
+        }
+
         // Ensures hybrid Tokio+Rayon is wired even when the agent is not started via `osoosi` CLI (tests, embedders).
         crate::init_hybrid_concurrency();
         info!("EdrOrchestrator: Loading runtime configuration...");
@@ -825,9 +835,9 @@ impl EdrOrchestrator {
         // Uses decentralized relays for cross-organization threat sharing with Differential Privacy.
         let mut nostr_relays = mesh_config.nostr_relays.clone();
         
-        if nostr_relays.is_empty() {
+        if nostr_relays.is_empty() || (nostr_relays.len() == 1 && (nostr_relays[0].contains("localhost") || nostr_relays[0].contains("127.0.0.1"))) {
             if mesh_config.allow_public_relays {
-                info!("Nostr Mesh: No static relays configured. Attempting BitChat-style geo-bootstrap...");
+                info!("Nostr Mesh: No public relays configured or only localhost found. Bootstrapping global public relays...");
                 let geo_dir = crate::geo_mesh::GeoRelayDirectory::new();
                 let geo_csv_url = "https://raw.githubusercontent.com/permissionlesstech/georelays/refs/heads/main/nostr_relays.csv";
                 
@@ -842,9 +852,8 @@ impl EdrOrchestrator {
                         nostr_relays = geo_dir.auto_bootstrap().await;
                     }
                 }
-
                 if nostr_relays.is_empty() {
-                    warn!("Nostr Mesh: Geo-bootstrap failed. Falling back to global public defaults.");
+                    info!("Nostr Mesh: Geo-bootstrap failed. Falling back to global public defaults.");
                     nostr_relays = vec![
                         "wss://relay.damus.io".to_string(),
                         "wss://nos.lol".to_string(),
@@ -852,8 +861,17 @@ impl EdrOrchestrator {
                     ];
                 }
             } else {
-                warn!("Nostr Mesh: No private relays configured and allow_public_relays=false. Global threat sharing is DISABLED to prevent metadata leakage.");
+                warn!("Nostr Mesh: No private relays configured and allow_public_relays=false. Falling back to global safe relays for critical intelligence.");
+                nostr_relays = vec![
+                    "wss://relay.damus.io".to_string(),
+                    "wss://nos.lol".to_string(),
+                ];
             }
+        }
+        
+        // Sanitize: Filter out localhost if not explicitly requested or if it's the ONLY relay
+        if nostr_relays.len() > 1 {
+            nostr_relays.retain(|r| !r.contains("localhost") && !r.contains("127.0.0.1"));
         }
         
         let nostr_mesh = if !nostr_relays.is_empty() {
@@ -886,6 +904,12 @@ impl EdrOrchestrator {
         let exclude_paths = osoosi_types::load_exclude_paths_from_config();
 
         let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
+        
+        // Inject adaptive controller into policy engine for heavy voter skipping
+        {
+            let mut p = unsafe { &mut *(Arc::as_ptr(&policy) as *mut PolicyEngine) };
+            p.telemetry_controller = Some(adaptive.clone());
+        }
         let (watcher_obj, file_rx) =
             osoosi_telemetry::FileWatcher::new(Some(memory.clone()), exclude_paths, adaptive.clone())?;
         let watcher = Arc::new(tokio::sync::Mutex::new(watcher_obj));

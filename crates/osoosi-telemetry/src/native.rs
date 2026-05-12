@@ -215,6 +215,11 @@ impl NativeTelemetryEngine {
 
             info!("🚀 [NATIVE-TELEMETRY] Starting Multi-Engine ETW Session...");
             
+            // Clean up any stale session using logman (ferrisetw doesn't expose stop-by-name easily)
+            let _ = std::process::Command::new("logman")
+                .args(&["stop", "OshoosiNativeTelemetry", "-ets"])
+                .output();
+            
             let trace_res = UserTrace::new()
                 .named("OshoosiNativeTelemetry".to_string())
                 .enable(sysmon_provider)

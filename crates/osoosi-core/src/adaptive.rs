@@ -32,9 +32,11 @@ impl ResourceGuard {
         
         // Intelligent initial baselines scaled by core count
         // Scaled initial baselines based on core count
-        let ai_limit = (cpus * 2).clamp(4, 32);
-        let io_limit = (cpus * 4).clamp(16, 64); 
-        let net_limit = (cpus * 8).clamp(32, 256);
+        // DRASTIC OPTIMIZATION: Limit AI concurrency to a tiny fraction of cores.
+        // Even 1 Gemma-4 inference can peg a core and 12GB of RAM.
+        let ai_limit = (cpus / 4).clamp(1, 4); 
+        let io_limit = (cpus * 2).clamp(8, 32); 
+        let net_limit = (cpus * 4).clamp(16, 128);
 
         Self {
             ai: Arc::new(Semaphore::new(ai_limit)),
@@ -387,6 +389,10 @@ impl TelemetryControllerInterface for TelemetryController {
 
     fn is_burst_mode(&self) -> bool {
         *self.current_mode.read().unwrap() == TelemetryMode::Burst
+    }
+    
+    fn is_silent_mode(&self) -> bool {
+        *self.current_mode.read().unwrap() == TelemetryMode::Silent
     }
 
     fn is_socket_exhaustion(&self) -> bool {
