@@ -774,3 +774,70 @@ body::before {
     border-radius: 50%;
     flex-shrink: 0;
 }
+/* Detection Engine Grid */
+.detection-grid {
+    display: grid;
+    grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+    gap: 16px;
+}
+
+.engine-card {
+    background: rgba(255, 255, 255, 0.03);
+    border: 1px solid var(--glass-border);
+    border-radius: 14px;
+    padding: 16px;
+    display: flex;
+    flex-direction: column;
+    gap: 12px;
+    transition: all 0.2s ease;
+}
+
+.engine-card:hover {
+    background: rgba(255, 255, 255, 0.05);
+    border-color: var(--glass-border-bright);
+}
+
+.engine-header {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+}
+
+.engine-name {
+    font-size: 14px;
+    font-weight: 700;
+    color: var(--text-header);
+    font-family: 'Outfit', sans-serif;
+}
+
+.engine-stats {
+    display: grid;
+    grid-template-columns: 1fr 1fr;
+    gap: 12px;
+}
+
+.engine-stat-item {
+    display: flex;
+    flex-direction: column;
+}
+
+.engine-stat-label {
+    font-size: 10px;
+    color: var(--text-muted);
+    text-transform: uppercase;
+    letter-spacing: 0.5px;
+}
+
+.engine-stat-value {
+    font-size: 16px;
+    font-weight: 600;
+    color: var(--text-primary);
+}
+
+.engine-stat-value.high {
+    color: var(--accent-red);
+}
+
+.engine-stat-value.active {
+    color: var(--accent-green);
+}

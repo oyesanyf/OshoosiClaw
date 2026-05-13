@@ -257,6 +257,7 @@ fn try_build_c2_yara_voter(adaptive: Arc<crate::adaptive::TelemetryController>) 
             Ok(YaraXVoter {
                 rules: Arc::new(compiler.build()),
                 adaptive,
+                total_detections: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             })
         },
     ));
@@ -334,6 +335,7 @@ fn try_build_behavioral_yara_voter(adaptive: Arc<crate::adaptive::TelemetryContr
             Ok(BehavioralYaraVoter {
                 rules: Arc::new(compiler.build()),
                 adaptive,
+                total_detections: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             })
         },
     ));
@@ -1130,10 +1132,22 @@ impl EdrOrchestrator {
 
         policy.add_voter(Box::new(osoosi_policy::voters::ZeroDayVoter::new())).await;
         policy.add_voter(Box::new(osoosi_policy::voters::SandboxSurfaceVoter)).await;
+
+        // Enhanced Detection Engines (Adapted from Rustinel)
+        let mut sigma_engine = osoosi_policy::sigma::SigmaEngine::new();
+        sigma_engine.load_rules_from_dir(std::path::Path::new("config/sigma"));
+        let sigma_engine = Arc::new(sigma_engine);
+        policy.add_voter(Box::new(osoosi_policy::voters::SigmaVoter { engine: sigma_engine })).await;
+
+        let mut ioc_engine = osoosi_policy::ioc::IocEngine::new();
+        ioc_engine.load_from_files(std::path::Path::new("config/ioc"));
+        let ioc_engine = Arc::new(ioc_engine);
+        policy.add_voter(Box::new(osoosi_policy::voters::IocVoter { engine: ioc_engine })).await;
         
         policy.add_voter(Box::new(crate::voters::YaraXVoter {
             rules: yara_rules.clone(),
             adaptive: adaptive.clone(),
+            total_detections: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })).await;
         if let Some(ref voter) = sigma_engine_voter {
             policy.add_voter(Box::new((**voter).clone())).await;
@@ -4848,6 +4862,11 @@ impl EdrOrchestrator {
                 tokio::time::sleep(tokio::time::Duration::from_secs(interval_secs)).await;
             }
         });
+    }
+
+    /// Detection statistics from all active policy voters (Sigma, YARA, IOC, etc).
+    pub async fn detection_stats(&self) -> serde_json::Value {
+        self.policy.voter_stats().await
     }
 
     /// Policy Consensus status for all policies tracked in the mesh.

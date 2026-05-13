@@ -126,14 +126,15 @@ async function updateDashboard() {
     if (state._pollInFlight) return;
     state._pollInFlight = true;
     try {
-        const [status, threats, mesh, activity, malwareDetections, repairStatus, telemetryData] = await Promise.all([
+        const [status, threats, mesh, activity, malwareDetections, repairStatus, telemetryData, detectionStats] = await Promise.all([
             fetchAPI('/status'),
             fetchAPI('/threats'),
             fetchAPI('/mesh-stats'),
             fetchAPI('/activity'),
             fetchAPI('/malware-detections'),
             fetchAPI('/repair-status'),
-            fetchAPI('/telemetry/timeseries')
+            fetchAPI('/telemetry/timeseries'),
+            fetchAPI('/detection-stats')
         ]);
 
         if (status) {
@@ -174,6 +175,10 @@ async function updateDashboard() {
 
         if (telemetryData) {
             updateTelemetryChart(telemetryData);
+        }
+
+        if (detectionStats) {
+            renderDetectionStats(detectionStats);
         }
 
         // Render views
@@ -1411,4 +1416,83 @@ async function renderGossipView() {
     }).join('');
 
     lucide.createIcons();
+}
+
+/**
+ * Render detection engine statistics
+ */
+function renderDetectionStats(stats) {
+    const grid = document.getElementById('detection-engines-grid');
+    if (!grid) return;
+
+    if (!stats || Object.keys(stats).length === 0) {
+        grid.innerHTML = '<p class="placeholder-text">No active detection engines reported.</p>';
+        return;
+    }
+
+    let html = '';
+    for (const [engine, data] of Object.entries(stats)) {
+        let statsHtml = '';
+        
+        if (engine === 'Sigma-Engine') {
+            statsHtml = `
+                <div class="engine-stat-item">
+                    <span class="engine-stat-label">Rules Loaded</span>
+                    <span class="engine-stat-value active">${data.rule_count || 0}</span>
+                </div>
+                <div class="engine-stat-item">
+                    <span class="engine-stat-label">Detections</span>
+                    <span class="engine-stat-value ${data.total_detections > 0 ? 'high' : ''}">${data.total_detections || 0}</span>
+                </div>
+            `;
+        } else if (engine === 'IOC-Scanner') {
+            statsHtml = `
+                <div class="engine-stat-item">
+                    <span class="engine-stat-label">Indicators</span>
+                    <span class="engine-stat-value active">${data.indicator_count || 0}</span>
+                </div>
+                <div class="engine-stat-item">
+                    <span class="engine-stat-label">Matches</span>
+                    <span class="engine-stat-value ${data.total_detections > 0 ? 'high' : ''}">${data.total_detections || 0}</span>
+                </div>
+            `;
+        } else if (engine.includes('Yara')) {
+             statsHtml = `
+                <div class="engine-stat-item">
+                    <span class="engine-stat-label">Type</span>
+                    <span class="engine-stat-value active">Native YARA-X</span>
+                </div>
+                <div class="engine-stat-item">
+                    <span class="engine-stat-label">Status</span>
+                    <span class="engine-stat-value active">Scanning</span>
+                </div>
+            `;
+        } else {
+             statsHtml = `
+                <div class="engine-stat-item">
+                    <span class="engine-stat-label">Status</span>
+                    <span class="engine-stat-value active">Active</span>
+                </div>
+                <div class="engine-stat-item">
+                    <span class="engine-stat-label">Voter</span>
+                    <span class="engine-stat-value">Policy</span>
+                </div>
+            `;
+        }
+
+        html += `
+            <div class="engine-card">
+                <div class="engine-header">
+                    <span class="engine-name">${engine}</span>
+                    <i data-lucide="cpu" style="width:14px; height:14px; color:var(--text-muted);"></i>
+                </div>
+                <div class="engine-stats">
+                    ${statsHtml}
+                </div>
+            </div>
+        `;
+    }
+
+    grid.innerHTML = html;
+    if (window.lucide) window.lucide.createIcons();
 }

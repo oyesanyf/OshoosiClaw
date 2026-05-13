@@ -1515,3 +1515,70 @@ impl ThreatVoter for SysmonDnsVoter {
         None
     }
 }
+
+/// Sigma Detection Voter
+pub struct SigmaVoter {
+    pub engine: Arc<crate::sigma::SigmaEngine>,
+}
+
+#[async_trait]
+impl ThreatVoter for SigmaVoter {
+    fn name(&self) -> String { "Sigma-Engine".to_string() }
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        let matches = self.engine.check(event);
+        if matches.is_empty() { return None; }
+
+        let mut reason = String::new();
+        let mut max_confidence = 0.0f32;
+        
+        for rule in matches {
+            reason.push_str(&format!("[{}] ", rule.title));
+            let conf = match rule.level.as_deref() {
+                Some("critical") => 0.98,
+                Some("high") => 0.85,
+                Some("medium") => 0.50,
+                _ => 0.30,
+            };
+            max_confidence = max_confidence.max(conf);
+        }
+
+        Some(VoteResult {
+            confidence: max_confidence,
+            reason: format!("Sigma Match: {}", reason),
+            weight: 1.0,
+        })
+    }
+    fn stats(&self) -> serde_json::Value {
+        serde_json::json!({
+            "total_detections": self.engine.total_detections.load(std::sync::atomic::Ordering::Relaxed),
+            "rule_count": self.engine.check_rule_count()
+        })
+    }
+}
+
+/// Atomic IOC Voter
+pub struct IocVoter {
+    pub engine: Arc<crate::ioc::IocEngine>,
+}
+
+#[async_trait]
+impl ThreatVoter for IocVoter {
+    fn name(&self) -> String { "IOC-Scanner".to_string() }
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        let matches = self.engine.check_event(event);
+        if matches.is_empty() { return None; }
+
+        let m = &matches[0];
+        Some(VoteResult {
+            confidence: 1.0, // IOCs are high fidelity
+            reason: format!("IOC Match ({:?}): {} (Source: {})", m.kind, m.indicator, m.source),
+            weight: 1.0,
+        })
+    }
+    fn stats(&self) -> serde_json::Value {
+        serde_json::json!({
+            "total_detections": self.engine.total_detections.load(std::sync::atomic::Ordering::Relaxed),
+            "indicator_count": self.engine.indicator_count()
+        })
+    }
+}

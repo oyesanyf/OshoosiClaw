@@ -52,3 +52,7 @@ windows = { workspace = true, features = [
 wmi = "0.13"
 ferrisetw = "1.2.0"
 winapi = { workspace = true, features = ["namedpipeapi", "fileapi", "winbase"] }
+
+[target.'cfg(target_os = "linux")'.dependencies]
+aya = { workspace = true, features = ["async_tokio"] }
+libc = "0.2"

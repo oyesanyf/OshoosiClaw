@@ -16,6 +16,8 @@ pub mod cve_cache;
 
 pub mod admin;
 pub mod sandbox_surface;
+pub mod sigma;
+pub mod ioc;
 
 pub use crate::admin::*;
 pub use engine::*;

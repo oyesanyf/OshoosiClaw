@@ -179,6 +179,7 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/blocking/rules", get(get_blocking_rules))
         .route("/api/blocking/rules", post(post_blocking_rule))
         .route("/api/blocking/rules/unlock", post(post_blocking_unlock))
+        .route("/api/detection-stats", get(get_detection_stats))
         .with_state(state);
 
     if index_html.is_file() {
@@ -240,6 +241,13 @@ pub async fn spawn_dashboard_with_backend(
     }
 
     Ok(bound_port)
+}
+
+async fn get_detection_stats(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => Json(orch.detection_stats().await),
+        None => Json(json!({})),
+    }
 }
 
 pub async fn start_dashboard_with_backend(

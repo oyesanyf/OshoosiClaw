@@ -12,6 +12,7 @@ pub enum HostEventSource {
     WindowsEventLog,
     LinuxAudit,
     LinuxAuthLog,
+    Ebpf,
     MacAudit,
     MacUnifiedLog,
 }

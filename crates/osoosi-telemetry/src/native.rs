@@ -27,6 +27,18 @@ impl NativeTelemetryEngine {
             }
         });
 
+        // 2. Start Linux eBPF Engine (Adapted from Rustinel)
+        #[cfg(target_os = "linux")]
+        {
+            let tx_ebpf = self.tx.clone();
+            tokio::spawn(async move {
+                let engine = super::linux_ebpf::EbpfTelemetryEngine::new(tx_ebpf);
+                if let Err(e) = engine.run().await {
+                    error!("Linux eBPF Engine failed: {:?}", e);
+                }
+            });
+        }
+
         let tx = self.tx.clone();
         let computer = hostname::get()
             .ok()

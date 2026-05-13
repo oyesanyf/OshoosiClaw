@@ -9,6 +9,7 @@ pub mod hash;
 pub mod host_events;
 pub mod injector;
 pub mod native;
+pub mod linux_ebpf;
 pub mod provisioning;
 
 pub use discovery::*;

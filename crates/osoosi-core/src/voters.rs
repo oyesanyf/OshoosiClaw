@@ -100,6 +100,7 @@ fn scanner_skip_path(path: &str) -> bool {
 pub struct YaraXVoter {
     pub rules: Arc<yara_x::Rules>,
     pub adaptive: Arc<crate::adaptive::TelemetryController>,
+    pub total_detections: Arc<std::sync::atomic::AtomicU64>,
 }
 
 #[async_trait]
@@ -138,9 +139,19 @@ impl ThreatVoter for YaraXVoter {
                 None
             }).await.ok().flatten();
 
+            if scan_result.is_some() {
+                self.total_detections.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+            }
             return scan_result;
         }
         None
+    }
+
+    fn stats(&self) -> serde_json::Value {
+        serde_json::json!({
+            "total_detections": self.total_detections.load(std::sync::atomic::Ordering::Relaxed),
+            "status": "Active"
+        })
     }
 }
 
@@ -365,6 +376,7 @@ impl ThreatVoter for CompositionVoter {
 pub struct BehavioralYaraVoter {
     pub rules: Arc<yara_x::Rules>,
     pub adaptive: Arc<crate::adaptive::TelemetryController>,
+    pub total_detections: Arc<std::sync::atomic::AtomicU64>,
 }
 
 #[async_trait]
@@ -378,7 +390,7 @@ impl ThreatVoter for BehavioralYaraVoter {
         let rules = self.rules.clone();
         let adaptive = self.adaptive.clone();
 
-        adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
+        let res = adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
             let mut scanner = yara_x::Scanner::new(&rules);
             if let Ok(results) = scanner.scan(&json_bytes) {
                 if let Some(primary) = results.matching_rules().next() {
@@ -390,7 +402,19 @@ impl ThreatVoter for BehavioralYaraVoter {
                 }
             }
             None
-        }).await.ok().flatten()
+        }).await.ok().flatten();
+
+        if res.is_some() {
+            self.total_detections.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
+        }
+        res
+    }
+
+    fn stats(&self) -> serde_json::Value {
+        serde_json::json!({
+            "total_detections": self.total_detections.load(std::sync::atomic::Ordering::Relaxed),
+            "status": "Active"
+        })
     }
 }
 

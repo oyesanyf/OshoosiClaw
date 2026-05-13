@@ -290,6 +290,11 @@ pub enum Gemma4Analyzer {
         tokenizer: Tokenizer,
         device: Device,
     },
+    Ollama {
+        client: reqwest::Client,
+        model: String,
+        endpoint: String,
+    },
 }
 
 impl Clone for Gemma4Analyzer {
@@ -305,6 +310,11 @@ impl Clone for Gemma4Analyzer {
                 model: model.clone(),
                 tokenizer: tokenizer.clone(),
                 device: device.clone(),
+            },
+            Self::Ollama { client, model, endpoint } => Self::Ollama {
+                client: client.clone(),
+                model: model.clone(),
+                endpoint: endpoint.clone(),
             },
         }
     }
@@ -407,7 +417,7 @@ impl Gemma4Analyzer {
         let has_gpu = device.is_cuda();
         info!("AI device detection: {:?} (GPU: {})", device, has_gpu);
 
-        // Priority 1: Native GGUF via Candle Ã¢â‚¬â€ ONLY if GPU available (CPU is too slow)
+        // Priority 1: Native GGUF via Candle — ONLY if GPU available (CPU is too slow)
         if has_gpu {
             if let Some(gguf_path) = resolve_gguf_path(&ai_cfg.reasoning_model) {
                 info!("CUDA GPU detected! Loading GGUF model natively via Candle...");
@@ -447,11 +457,17 @@ impl Gemma4Analyzer {
         // Priority 4: Candle/Transformer safetensors fallback
         info!("Attempting native transformer fallback (Candle)...");
         match SecurityJudge::new(model_dir) {
-            Ok(judge) => Ok(Self::Candle(judge)),
-            Err(e) => {
-                Err(anyhow::anyhow!("All AI engines (GGUF, Ollama, Candle) failed: {}", e))
-            }
+            Ok(judge) => return Ok(Self::Candle(judge)),
+            Err(e) => warn!("Candle fallback failed: {}", e),
         }
+
+        // Priority 4: Ollama API (The "add back Ollama" request)
+        info!("Trying Ollama fallback at {} with model {}...", ai_cfg.reasoning_url, ai_cfg.reasoning_model);
+        Ok(Self::Ollama {
+            client: reqwest::Client::new(),
+            model: ai_cfg.reasoning_model,
+            endpoint: ai_cfg.reasoning_url,
+        })
     }
 
     pub async fn reason_about_attack(&self, graph_summary: &str) -> Result<String> {
@@ -488,6 +504,28 @@ impl Gemma4Analyzer {
                 self.generate_text_sync(&prompt, 128)
             }
             Self::Candle(judge) => judge.judge_artifact(query),
+            Self::Ollama { .. } => {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(self.judge_artifact_ollama(query))
+            }
+        }
+    }
+
+    async fn judge_artifact_ollama(&self, query: &str) -> Result<String> {
+        if let Self::Ollama { client, model, endpoint } = self {
+            let payload = serde_json::json!({
+                "model": model,
+                "prompt": query,
+                "stream": false
+            });
+            let res = client.post(endpoint)
+                .json(&payload)
+                .send()
+                .await?;
+            let json: serde_json::Value = res.json().await?;
+            Ok(json["response"].as_str().unwrap_or("").to_string())
+        } else {
+            Err(anyhow::anyhow!("Not an Ollama analyzer"))
         }
     }
 
@@ -594,6 +632,10 @@ impl Gemma4Analyzer {
 
                 Ok(result_text)
             }
+            Self::Ollama { .. } => {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(self.judge_artifact_ollama(prompt))
+            }
         }
     }
 }
@@ -698,12 +740,12 @@ impl SecureBertAnalyzer {
 
         let onnx_src = resolved_dir.join("model.onnx");
         let tokenizer_src = resolved_dir.join("tokenizer.json");
-        let config_src = resolved_dir.join("config.json");
+        let _config_src = resolved_dir.join("config.json");
         
         // Co-locate if necessary
         let target_onnx = model_dir.join("model.onnx");
         let target_tokenizer = model_dir.join("tokenizer.json");
-        let target_config = model_dir.join("config.json");
+        let _target_config = model_dir.join("config.json");
         
         for f in ["model.onnx", "tokenizer.json", "config.json", "model.safetensors"] {
             let src = resolved_dir.join(f);

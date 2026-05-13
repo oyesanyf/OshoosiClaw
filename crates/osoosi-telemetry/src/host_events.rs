@@ -35,7 +35,7 @@ pub fn create_host_event_reader(channel_or_path: &str) -> anyhow::Result<Box<dyn
     }
     #[cfg(target_os = "linux")]
     {
-        Ok(Box::new(LinuxAuditReader::new(channel_or_path)?))
+        Ok(Box::new(LinuxEbpfReader::new(channel_or_path)?))
     }
     #[cfg(target_os = "macos")]
     {
@@ -44,6 +44,75 @@ pub fn create_host_event_reader(channel_or_path: &str) -> anyhow::Result<Box<dyn
     #[cfg(not(any(target_os = "windows", target_os = "linux", target_os = "macos")))]
     {
         Err(anyhow::anyhow!("Unsupported OS for host event reading"))
+    }
+}
+
+// --- Native eBPF (Linux) ---
+
+#[cfg(target_os = "linux")]
+pub struct NativeEbpfReader {
+    rx: tokio::sync::mpsc::Receiver<HostSecurityEvent>,
+}
+
+#[cfg(target_os = "linux")]
+impl NativeEbpfReader {
+    pub fn new() -> anyhow::Result<Self> {
+        let (tx, rx) = tokio::sync::mpsc::channel(10_000);
+        let engine = super::native::NativeTelemetryEngine::new(tx);
+        
+        tokio::spawn(async move {
+            if let Err(e) = engine.run().await {
+                tracing::error!("Native Telemetry Engine (Linux eBPF) failed: {}", e);
+            }
+        });
+        
+        Ok(Self { rx })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl HostEventReader for NativeEbpfReader {
+    fn poll_events(&mut self) -> anyhow::Result<Vec<HostSecurityEvent>> {
+        let mut out = Vec::new();
+        while let Ok(event) = self.rx.try_recv() {
+            out.push(event);
+        }
+        Ok(out)
+    }
+
+    fn source_name(&self) -> String {
+        "native-kernel-ebpf".to_string()
+    }
+}
+
+#[cfg(target_os = "linux")]
+pub struct LinuxEbpfReader {
+    audit: LinuxAuditReader,
+    ebpf: NativeEbpfReader,
+}
+
+#[cfg(target_os = "linux")]
+impl LinuxEbpfReader {
+    pub fn new(path: &str) -> anyhow::Result<Self> {
+        Ok(Self {
+            audit: LinuxAuditReader::new(path)?,
+            ebpf: NativeEbpfReader::new()?,
+        })
+    }
+}
+
+#[cfg(target_os = "linux")]
+impl HostEventReader for LinuxEbpfReader {
+    fn poll_events(&mut self) -> anyhow::Result<Vec<HostSecurityEvent>> {
+        let mut out = self.audit.poll_events()?;
+        if let Ok(mut ebpf_events) = self.ebpf.poll_events() {
+            out.append(&mut ebpf_events);
+        }
+        Ok(out)
+    }
+
+    fn source_name(&self) -> String {
+        format!("linux-ebpf-hybrid:{}", self.audit.path)
     }
 }
 

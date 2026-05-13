@@ -30,6 +30,7 @@ pub trait ThreatVoter: Send + Sync {
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult>;
     /// Returns true if this voter is resource-intensive (AI/Decompile).
     fn is_heavy(&self) -> bool { false }
+    fn stats(&self) -> serde_json::Value { serde_json::json!({}) }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash)]
@@ -171,6 +172,8 @@ fn classify_vote(
         name if name.contains("NexusShield") => (EvidenceClass::StaticArtifact, 0.95, true),
         "ZeroDayTracker" => (EvidenceClass::ThreatIntel, 1.0, true),
         "SandboxSurfaceAnalysis" => (EvidenceClass::Behavior, 0.85, true),
+        "Sigma-Engine" => (EvidenceClass::Behavior, 0.90, true),
+        "IOC-Scanner" => (EvidenceClass::ThreatIntel, 1.0, true),
         name if name.contains("MalConv") || name.contains("ML") => {
             let weak_pe_signature =
                 reason_lc.contains("ml=0.000") && reason_lc.contains("sig=1.000");
@@ -440,6 +443,15 @@ impl PolicyEngine {
     /// [`ThreatVoter`]s, typically through [`crate::voters::OtxVoter`]. If that voter is not
     /// registered, a matching [`Self::otx_ioc_match_for_event`] is merged in so TAXII-backed IOCs
     /// still affect consensus.
+    pub async fn voter_stats(&self) -> serde_json::Value {
+        let mut out = serde_json::Map::new();
+        let voters = self.voters.read().await;
+        for voter in &*voters {
+            out.insert(voter.name(), voter.stats());
+        }
+        serde_json::Value::Object(out)
+    }
+
     pub async fn scan_event(&self, event: &HostSecurityEvent) -> Option<ThreatSignature> {
         use osoosi_types::ResponseAction;
 
