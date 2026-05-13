@@ -234,48 +234,6 @@ fn register_internal_assets(memory: &MemoryStore) {
     }
 }
 
-/// Best-effort YARA-X C2 rules: compilation must not take down the agent (yara-x can panic internally on some versions).
-fn try_build_c2_yara_voter(adaptive: Arc<crate::adaptive::TelemetryController>) -> Option<crate::voters::YaraXVoter> {
-    use crate::voters::YaraXVoter;
-    let r = std::panic::catch_unwind(std::panic::AssertUnwindSafe(
-        || -> anyhow::Result<YaraXVoter> {
-            let mut compiler = yara_x::Compiler::new();
-            compiler
-                .add_source(
-                    r#"
-            rule C2_Beacon_Generic {
-                strings:
-                    $mz = { 4D 5A }
-                    $cobalt_strike = "beacon.dll"
-                    $sliver = "sliver"
-                condition:
-                    $mz and ($cobalt_strike or $sliver)
-            }
-        "#,
-                )
-                .map_err(|e| anyhow::anyhow!("{}", e))?;
-            Ok(YaraXVoter {
-                rules: Arc::new(compiler.build()),
-                adaptive,
-                total_detections: Arc::new(std::sync::atomic::AtomicU64::new(0)),
-            })
-        },
-    ));
-    match r {
-        Ok(Ok(v)) => Some(v),
-        Ok(Err(e)) => {
-            warn!(
-                "YARA-X: C2 rule compile error: {}; skipping YaraXVoter",
-                e
-            );
-            None
-        }
-        Err(_) => {
-            warn!("YARA-X: C2 rule build panicked; skipping YaraXVoter");
-            None
-        }
-    }
-}
 
 /// Behavioral YARA-X rules: Matches on event JSON bytes to replace Sigma/Hayabusa logic.
 fn try_build_behavioral_yara_voter(adaptive: Arc<crate::adaptive::TelemetryController>) -> Option<crate::voters::BehavioralYaraVoter> {
@@ -940,7 +898,7 @@ impl EdrOrchestrator {
         let model_path = malware_dir.join("sorel.onnx");
         let malware_scanner = Arc::new(MalwareScanner::new(&model_path));
         
-        let sigma_engine_voter = if let Some(voter) = try_build_behavioral_yara_voter(adaptive.clone()) {
+        let behavioral_yara_voter = if let Some(voter) = try_build_behavioral_yara_voter(adaptive.clone()) {
             Some(Arc::new(voter))
         } else {
             None
@@ -1125,10 +1083,6 @@ impl EdrOrchestrator {
             spider: spider_eyes.clone(),
         })).await;
 
-        // Yara-X Memory Voter: wrap build in catch_unwind — yara-x can panic on some toolchains/rule edge cases.
-        if let Some(voter) = try_build_c2_yara_voter(adaptive.clone()) {
-            policy.add_voter(Box::new(voter)).await;
-        }
 
         policy.add_voter(Box::new(osoosi_policy::voters::ZeroDayVoter::new())).await;
         policy.add_voter(Box::new(osoosi_policy::voters::SandboxSurfaceVoter)).await;
@@ -1149,7 +1103,7 @@ impl EdrOrchestrator {
             adaptive: adaptive.clone(),
             total_detections: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })).await;
-        if let Some(ref voter) = sigma_engine_voter {
+        if let Some(ref voter) = behavioral_yara_voter {
             policy.add_voter(Box::new((**voter).clone())).await;
         }
         policy.add_voter(Box::new(crate::voters::DotscopeVoter {

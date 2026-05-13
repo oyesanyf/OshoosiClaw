@@ -518,8 +518,12 @@ impl Gemma4Analyzer {
                 "prompt": query,
                 "stream": false
             });
+            let ai = osoosi_types::config::load_ai_config();
+            let timeout = std::time::Duration::from_secs(ai.llm_timeout_secs);
+            
             let res = client.post(endpoint)
                 .json(&payload)
+                .timeout(timeout)
                 .send()
                 .await?;
             let json: serde_json::Value = res.json().await?;

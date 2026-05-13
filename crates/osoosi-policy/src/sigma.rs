@@ -86,7 +86,10 @@ pub struct FieldCriterion {
 }
 
 pub struct SigmaEngine {
-    rules: Vec<CompiledRule>,
+    /// Rules indexed by their logsource (service or product).
+    indexed_rules: HashMap<String, Vec<CompiledRule>>,
+    /// Rules that apply globally or couldn't be indexed.
+    global_rules: Vec<CompiledRule>,
     pub total_detections: std::sync::atomic::AtomicU64,
 }
 
@@ -97,13 +100,14 @@ impl Default for SigmaEngine {
 impl SigmaEngine {
     pub fn new() -> Self {
         Self {
-            rules: Vec::new(),
+            indexed_rules: HashMap::new(),
+            global_rules: Vec::new(),
             total_detections: std::sync::atomic::AtomicU64::new(0),
         }
     }
 
     pub fn check_rule_count(&self) -> usize {
-        self.rules.len()
+        self.global_rules.len() + self.indexed_rules.values().map(|v| v.len()).sum::<usize>()
     }
 
     pub fn load_rules_from_dir(&mut self, dir: &Path) {
@@ -116,7 +120,16 @@ impl SigmaEngine {
                     if let Ok(content) = std::fs::read_to_string(p) {
                         if let Ok(rule) = serde_yaml::from_str::<SigmaRule>(&content) {
                             if let Ok(compiled) = self.compile_rule(rule) {
-                                self.rules.push(compiled);
+                                let service = compiled.rule.logsource.service.as_deref();
+                                let product = compiled.rule.logsource.product.as_deref();
+                                
+                                if let Some(s) = service {
+                                    self.indexed_rules.entry(s.to_lowercase()).or_default().push(compiled);
+                                } else if let Some(p) = product {
+                                    self.indexed_rules.entry(p.to_lowercase()).or_default().push(compiled);
+                                } else {
+                                    self.global_rules.push(compiled);
+                                }
                                 count += 1;
                             }
                         }
@@ -267,11 +280,58 @@ impl SigmaEngine {
 
     pub fn check(&self, event: &HostSecurityEvent) -> Vec<&SigmaRule> {
         let mut matches = Vec::new();
-        for rule in &self.rules {
+        
+        // 1. Identify the logsource of this event
+        let mut event_sources = Vec::new();
+        
+        // Map HostEventSource to Sigma logsource strings
+        match event.source {
+            osoosi_types::HostEventSource::WindowsEventLog => {
+                event_sources.push("windows".to_string());
+                if let Some(provider) = event.data.get("ProviderName").and_then(|v| v.as_str()) {
+                    let prov_lower = provider.to_lowercase();
+                    if prov_lower.contains("sysmon") {
+                        event_sources.push("sysmon".to_string());
+                    } else if prov_lower.contains("security") {
+                        event_sources.push("security".to_string());
+                    } else if prov_lower.contains("system") {
+                        event_sources.push("system".to_string());
+                    }
+                }
+            }
+            osoosi_types::HostEventSource::LinuxAudit => {
+                event_sources.push("linux".to_string());
+                event_sources.push("auditd".to_string());
+            }
+            osoosi_types::HostEventSource::LinuxAuthLog => {
+                event_sources.push("linux".to_string());
+                event_sources.push("auth".to_string());
+            }
+            osoosi_types::HostEventSource::Ebpf => {
+                event_sources.push("linux".to_string());
+                event_sources.push("ebpf".to_string());
+            }
+            _ => {}
+        }
+
+        // 2. Evaluate Global Rules
+        for rule in &self.global_rules {
             if self.evaluate_rule(rule, event) {
                 matches.push(&rule.rule);
             }
         }
+
+        // 3. Evaluate Indexed Rules (The "Jet" optimization)
+        for src in event_sources {
+            if let Some(rules) = self.indexed_rules.get(&src) {
+                for rule in rules {
+                    if self.evaluate_rule(rule, event) {
+                        matches.push(&rule.rule);
+                    }
+                }
+            }
+        }
+
         if !matches.is_empty() {
             self.total_detections.fetch_add(matches.len() as u64, std::sync::atomic::Ordering::Relaxed);
         }

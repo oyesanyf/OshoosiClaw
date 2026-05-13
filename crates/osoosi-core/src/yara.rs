@@ -146,6 +146,23 @@ pub fn load_rules() -> yara_x::Rules {
         }
     }
 
+    // Add High-Priority Built-in C2 Rules
+    let c2_rules = r#"
+        rule C2_Beacon_Generic {
+            strings:
+                $mz = { 4D 5A }
+                $cobalt_strike = "beacon.dll"
+                $sliver = "sliver"
+            condition:
+                $mz and ($cobalt_strike or $sliver)
+        }
+    "#;
+    if let Err(e) = compiler.add_source(c2_rules) {
+        warn!("Failed to compile built-in C2 YARA rules: {}", e);
+    } else {
+        count += 1;
+    }
+
     info!("Loaded {} YARA rule(s) into native Yara-X engine.", count);
     compiler.build()
 }
