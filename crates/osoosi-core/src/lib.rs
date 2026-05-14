@@ -815,16 +815,13 @@ impl EdrOrchestrator {
                 if nostr_relays.is_empty() {
                     info!("Nostr Mesh: Geo-bootstrap failed. Falling back to global public defaults.");
                     nostr_relays = vec![
-                        "wss://relay.damus.io".to_string(),
-                        "wss://nos.lol".to_string(),
-                        "wss://relay.snort.social".to_string(),
+                        "ws://71.194.142.20:8080".to_string(),
                     ];
                 }
             } else {
                 warn!("Nostr Mesh: No private relays configured and allow_public_relays=false. Falling back to global safe relays for critical intelligence.");
                 nostr_relays = vec![
-                    "wss://relay.damus.io".to_string(),
-                    "wss://nos.lol".to_string(),
+                    "ws://71.194.142.20:8080".to_string(),
                 ];
             }
         }

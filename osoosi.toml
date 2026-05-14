@@ -51,10 +51,10 @@ db_path = "./database/osoosi.db"
 # Static bootstrap peers (PeerId@Multiaddr)
 peers = []
 # Nostr Relays for decentralized threat intelligence sharing (BitChat style)
-nostr_relays = ["ws://localhost:8080"]
+nostr_relays = ["ws://71.194.142.20:8080"]
 # Security: If true, allows fallback to public Nostr relays if private ones are offline.
 # WARNING: This may leak encrypted telemetry metadata to public servers.
-allow_public_relays = true
+allow_public_relays = false
 
 [backup]
 # Enable backup on agent start
