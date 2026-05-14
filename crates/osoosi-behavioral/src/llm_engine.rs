@@ -475,10 +475,35 @@ impl Gemma4Analyzer {
         let summary = graph_summary.to_string();
 
         tokio::task::spawn_blocking(move || {
+            // 1. COMPRESSION: Use compression-prompt to reduce token count of the summary
+            let compressed_summary = if let Some(tokenizer) = analyzer.get_tokenizer() {
+                let config = compression_prompt::CompressorConfig {
+                    filter_config: compression_prompt::StatisticalFilterConfig {
+                        compression_ratio: 0.6, // Target 60% of original size
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                let compressor = compression_prompt::Compressor::new(config);
+                match compressor.compress(&summary, tokenizer) {
+                    Ok(res) => {
+                        info!("Prompt compressed: {} -> {} tokens ({:.1}% savings)", 
+                            res.original_tokens, res.compressed_tokens, (1.0 - res.compression_ratio) * 100.0);
+                        res.compressed_text
+                    }
+                    Err(e) => {
+                        warn!("Compression failed, using raw summary: {}", e);
+                        summary
+                    }
+                }
+            } else {
+                summary
+            };
+
             // Short, focused prompt to minimize prefill time on CPU
             let prompt = format!(
                 "<|im_start|>system\nClassify this event as malicious, suspicious, or benign. One sentence max.\n<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
-                summary
+                compressed_summary
             );
             let raw = analyzer.judge_artifact_sync(&prompt)?;
 
@@ -492,7 +517,21 @@ impl Gemma4Analyzer {
         let analyzer = Arc::new(self.clone());
         let q = query.to_string();
         tokio::task::spawn_blocking(move || {
-            analyzer.judge_artifact_sync(&q)
+            // 1. COMPRESSION: Attempt compression if a tokenizer is available
+            let compressed_query = if let Some(tokenizer) = analyzer.get_tokenizer() {
+                let config = compression_prompt::CompressorConfig {
+                    filter_config: compression_prompt::StatisticalFilterConfig {
+                        compression_ratio: 0.6,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                let compressor = compression_prompt::Compressor::new(config);
+                compressor.compress(&q, tokenizer).map(|res| res.compressed_text).unwrap_or(q)
+            } else {
+                q
+            };
+            analyzer.judge_artifact_sync(&compressed_query)
         }).await?
     }
 
@@ -508,6 +547,15 @@ impl Gemma4Analyzer {
                 let rt = tokio::runtime::Handle::current();
                 rt.block_on(self.judge_artifact_ollama(query))
             }
+        }
+    }
+
+    pub fn get_tokenizer(&self) -> Option<&Tokenizer> {
+        match self {
+            Self::Onnx { tokenizer, .. } => Some(tokenizer),
+            Self::NativeGGUF { tokenizer, .. } => Some(tokenizer),
+            Self::Candle(judge) => Some(&judge.tokenizer),
+            Self::Ollama { .. } => None,
         }
     }
 
@@ -527,9 +575,9 @@ impl Gemma4Analyzer {
                 .send()
                 .await?;
             let json: serde_json::Value = res.json().await?;
-            Ok(json["response"].as_str().unwrap_or("").to_string())
+            Ok(json["response"].as_str().unwrap_or_default().to_string())
         } else {
-            Err(anyhow::anyhow!("Not an Ollama analyzer"))
+            anyhow::bail!("Not an Ollama analyzer")
         }
     }
 

@@ -11,22 +11,26 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
 
     // Windows Event ID 4688 = Process Creation
     if event.event_id == 4688 || event.data.contains_key("NewProcessName") {
-        let proc_name = event
+        let proc_path = event
             .data
             .get("NewProcessName")
             .or(event.data.get("Image"))
             .and_then(|v| v.as_str())
-            .and_then(|s| std::path::Path::new(s).file_name())
-            .and_then(|n| n.to_str())
             .unwrap_or("unknown");
-        let parent = event
+        let proc_name = std::path::Path::new(proc_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(proc_path);
+        let parent_path = event
             .data
             .get("ParentProcessName")
             .or(event.data.get("ParentImage"))
             .and_then(|v| v.as_str())
-            .and_then(|s| std::path::Path::new(s).file_name())
-            .and_then(|n| n.to_str())
             .unwrap_or("unknown");
+        let parent_name = std::path::Path::new(parent_path)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(parent_path);
         let user = event
             .data
             .get("SubjectUserName")
@@ -39,12 +43,18 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             .or(event.data.get("Command"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
+        let hashes = event.data.get("Hashes").and_then(|v| v.as_str()).unwrap_or("");
+        let integrity = event.data.get("IntegrityLevel").and_then(|v| v.as_str()).unwrap_or("unknown");
+
         parts.push(format!(
-            "Process {} (parent: {}) executed by {}.",
-            proc_name, parent, user
+            "Process {} (path: {}, integrity: {}) was executed by user {} from parent {} (path: {}).",
+            proc_name, proc_path, integrity, user, parent_name, parent_path
         ));
-        if !cmd.is_empty() && cmd.len() < 300 {
-            parts.push(format!("CommandLine: {}", cmd));
+        if !hashes.is_empty() {
+            parts.push(format!("Hashes: {}", hashes));
+        }
+        if !cmd.is_empty() {
+            parts.push(format!("CommandLine: {}", cmd.chars().take(1024).collect::<String>()));
         }
     }
 
@@ -120,10 +130,10 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
         if let Some(script) = event.data.get("ScriptBlockText").and_then(|v| v.as_str()) {
             parts.push(format!(
                 "PowerShell script block executed: {}",
-                script.chars().take(200).collect::<String>()
+                script.chars().take(2000).collect::<String>()
             ));
         } else if let Some(cmd) = event.data.get("CommandLine").and_then(|v| v.as_str()) {
-            parts.push(format!("PowerShell command: {}", cmd));
+            parts.push(format!("PowerShell command: {}", cmd.chars().take(1024).collect::<String>()));
         }
     }
 

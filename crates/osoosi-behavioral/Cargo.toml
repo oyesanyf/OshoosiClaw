@@ -10,6 +10,7 @@ build = "build.rs"
 osoosi-types = { path = "../osoosi-types" }
 osoosi-telemetry = { path = "../osoosi-telemetry" }
 osoosi-dp = { path = "../osoosi-dp" }
+compression-prompt = { path = "../compression-prompt" }
 serde = { workspace = true }
 serde_json = { workspace = true }
 tracing = { workspace = true }

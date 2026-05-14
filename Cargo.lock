@@ -1191,6 +1191,18 @@ dependencies = [
 ]
 
 [[package]]
+name = "compression-prompt"
+version = "0.1.0"
+dependencies = [
+ "anyhow",
+ "rand 0.8.6",
+ "serde",
+ "serde_json",
+ "tokenizers",
+ "tracing",
+]
+
+[[package]]
 name = "concrete-csprng"
 version = "0.4.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -5723,6 +5735,7 @@ dependencies = [
  "candle-nn",
  "candle-transformers",
  "chrono",
+ "compression-prompt",
  "dashmap 5.5.3",
  "hostname",
  "iced-x86",

@@ -20,6 +20,7 @@ members = [
     "crates/test-peer",
     "crates/otx-taxii-rs", "crates/osoosi-inject", "crates/osoosi-dns",
     "crates/osoosi-auditor",
+    "crates/compression-prompt",
 ]
 
 [workspace.package]
