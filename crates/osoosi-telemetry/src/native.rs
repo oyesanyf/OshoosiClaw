@@ -56,7 +56,7 @@ impl NativeTelemetryEngine {
             let sysmon_provider = Provider::by_guid("5770385F-C22A-43E0-BF4C-06F5698FFBD9")
                 .add_callback(move |event, schema_locator| {
                     if let Ok(schema) = schema_locator.event_schema(event) {
-                        let mut parser = Parser::create(event, &schema);
+                        let parser = Parser::create(event, &schema);
                         let event_id = event.event_id();
                         
                         let mut data = serde_json::Map::new();
@@ -102,7 +102,7 @@ impl NativeTelemetryEngine {
                     // 1: ProcessStart, 2: ProcessStop
                     if event_id == 1 || event_id == 2 {
                         if let Ok(schema) = schema_locator.event_schema(event) {
-                            let mut parser = Parser::create(event, &schema);
+                            let parser = Parser::create(event, &schema);
                             let pid: u32 = parser.try_parse("ProcessID").unwrap_or(0);
                             let parent_pid: u32 = parser.try_parse("ParentProcessID").unwrap_or(0);
                             let image: String = parser.try_parse("ImageName").unwrap_or_else(|_| parser.try_parse("CommandLine").unwrap_or_default());
@@ -137,7 +137,7 @@ impl NativeTelemetryEngine {
             let kernel_net_provider = Provider::by_guid("7DD42A49-5329-4832-8DFD-43D979153A88")
                 .add_callback(move |event, schema_locator| {
                     if let Ok(schema) = schema_locator.event_schema(event) {
-                        let mut parser = Parser::create(event, &schema);
+                        let parser = Parser::create(event, &schema);
                         let mut data = serde_json::Map::new();
                         
                         let dest_ip: String = parser.try_parse("daddr").unwrap_or_default();
@@ -169,7 +169,7 @@ impl NativeTelemetryEngine {
             let kernel_file_provider = Provider::by_guid("EDD08927-9CC9-4E69-B970-C2560FB5C289")
                 .add_callback(move |event, schema_locator| {
                     if let Ok(schema) = schema_locator.event_schema(event) {
-                        let mut parser = Parser::create(event, &schema);
+                        let parser = Parser::create(event, &schema);
                         let mut data = serde_json::Map::new();
                         
                         let event_id = event.event_id();
@@ -205,7 +205,7 @@ impl NativeTelemetryEngine {
                 .add_callback(move |event, schema_locator| {
                     if event.event_id() == 3008 { // DNS Query
                         if let Ok(schema) = schema_locator.event_schema(event) {
-                            let mut parser = Parser::create(event, &schema);
+                            let parser = Parser::create(event, &schema);
                             let mut data = serde_json::Map::new();
                             
                             if let Ok(query) = parser.try_parse::<String>("QueryName") {

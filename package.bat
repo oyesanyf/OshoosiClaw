@@ -2,93 +2,68 @@
 setlocal enabledelayedexpansion
 
 echo ====================================================
-echo  OpenOdidere (Osoosi) Build ^& Package Script
+echo  OshoosiClaw Production Packaging Script
 echo ====================================================
 
 :: 1. Verify binaries exist
 echo [1/5] Checking for existing release binaries...
 if not exist target\x86_64-pc-windows-msvc\release\osoosi.exe (
     echo [!] 'target\x86_64-pc-windows-msvc\release\osoosi.exe' not found.
-    echo Please run 'cargo build --release' first or use a build script.
+    echo Please run 'cargo build --release' first.
     exit /b 1
 )
 
 :: 2. Prepare deployment folder
 echo [2/5] Preparing deployment directory...
 set DEPLOY_DIR=osoosi_deploy
-if exist %DEPLOY_DIR% rm-rf %DEPLOY_DIR% 2>nul
 if exist %DEPLOY_DIR% rd /s /q %DEPLOY_DIR%
 mkdir %DEPLOY_DIR%
-mkdir %DEPLOY_DIR%\config
 mkdir %DEPLOY_DIR%\yara
 mkdir %DEPLOY_DIR%\models
 mkdir %DEPLOY_DIR%\logs
+mkdir %DEPLOY_DIR%\dashboard\dist
 
 :: 3. Copy binaries and core assets
-echo [3/5] Collecting files...
+echo [3/5] Collecting binaries and core assets...
 copy target\x86_64-pc-windows-msvc\release\osoosi.exe %DEPLOY_DIR%\
 copy target\x86_64-pc-windows-msvc\release\osoosi_inject.dll %DEPLOY_DIR%\
-copy run_osoosi.bat %DEPLOY_DIR%\
 copy target\x86_64-pc-windows-msvc\release\test-peer.exe %DEPLOY_DIR%\
+copy run_osoosi.bat %DEPLOY_DIR%\
+copy osoosi.toml %DEPLOY_DIR%\
 if exist deceptive_techniques.py copy deceptive_techniques.py %DEPLOY_DIR%\
-if exist osoosi.toml (
-    copy osoosi.toml %DEPLOY_DIR%\
-) else if exist osoosi.toml.example (
-    copy osoosi.toml.example %DEPLOY_DIR%\osoosi.toml
-)
 
-:: Copy Sysmon for EDR
-if exist Sysmon64.exe copy Sysmon64.exe %DEPLOY_DIR%\
-if exist sysmonconfig-export.xml copy sysmonconfig-export.xml %DEPLOY_DIR%\
-
-if exist config xcopy /s /e /y config\* %DEPLOY_DIR%\config\
+:: Copy YARA rules
 if exist yara xcopy /s /e /y yara\* %DEPLOY_DIR%\yara\
-if exist scripts\firewall_setup.ps1 copy scripts\firewall_setup.ps1 %DEPLOY_DIR%\
-if exist scripts\firewall_setup.sh copy scripts\firewall_setup.sh %DEPLOY_DIR%\
 
-:: 4. Copy AI Models
-echo [4/5] Collecting AI models (this may take a few minutes)...
-if exist models\behavioral (
-    mkdir %DEPLOY_DIR%\models\behavioral
-    xcopy /s /e /y models\behavioral\* %DEPLOY_DIR%\models\behavioral\
+:: 4. Copy AI Models (Selective - Skip heavy weights to keep package portable)
+echo [4/5] Collecting AI model configurations (skipping heavy weights)...
+:: Copy only JSON and small config files. Large .onnx_data / .safetensors will be auto-downloaded by the agent.
+for /r models %%f in (*.json) do (
+    set "rel_path=%%~pf"
+    set "rel_path=!rel_path:*models\=!"
+    if not exist "%DEPLOY_DIR%\models\!rel_path!" mkdir "%DEPLOY_DIR%\models\!rel_path!"
+    copy "%%f" "%DEPLOY_DIR%\models\!rel_path!" >nul
 )
-if exist models\gemma4-e4b (
-    mkdir %DEPLOY_DIR%\models\gemma4-e4b
-    xcopy /s /e /y models\gemma4-e4b\* %DEPLOY_DIR%\models\gemma4-e4b\
-)
-if exist models\malware (
-    mkdir %DEPLOY_DIR%\models\malware
-    xcopy /s /e /y models\malware\* %DEPLOY_DIR%\models\malware\
-)
-if exist models\bulk_threat_model.json copy models\bulk_threat_model.json %DEPLOY_DIR%\models\
-if exist models\threat_model.json copy models\threat_model.json %DEPLOY_DIR%\models\
 
-:: Copy UI Assets (must be in dashboard/dist for the agent to find them)
-echo [3.5/5] Collecting dashboard UI assets...
+echo "NOTE: Heavy AI model weights (.onnx_data, .safetensors) were excluded to keep this package portable." > %DEPLOY_DIR%\models\README_AI.txt
+echo "The Oshoosi agent will autonomously download required weights on first start." >> %DEPLOY_DIR%\models\README_AI.txt
+
+:: 5. Copy Dashboard UI
+echo [5/5] Collecting dashboard UI assets...
 if exist dashboard\dist (
-    mkdir %DEPLOY_DIR%\dashboard\dist
     xcopy /s /e /y dashboard\dist\* %DEPLOY_DIR%\dashboard\dist\
-) else (
-    echo [!] Warning: 'dashboard\dist' not found. Dashboard UI will be missing.
+) else if exist crates\osoosi-dashboard\dist (
+    xcopy /s /e /y crates\osoosi-dashboard\dist\* %DEPLOY_DIR%\dashboard\dist\
 )
 
-:: 4. Find ONNX Runtime DLLs (LocalAppData cache)
-echo [4/5] Checking for native dependencies (ONNX)...
-set ORT_CACHE=%LOCALAPPDATA%\ort.pyke.io\dfbin\x86_64-pc-windows-msvc
-if exist "%ORT_CACHE%" (
-    for /r "%ORT_CACHE%" %%f in (onnxruntime*.dll) do (
-        copy "%%f" %DEPLOY_DIR%\ >nul
-        echo    -^> Added %%~nxf
-    )
-)
-
-:: 5. Create ZIP Archive
-echo [5/5] Creating zip archive...
+:: 6. Create ZIP Archive (Using PowerShell for better compression/compatibility)
+echo [6/5] Creating portable zip archive...
 set ZIP_NAME=osoosi_portable.zip
 if exist %ZIP_NAME% del %ZIP_NAME%
-tar -a -c -f %ZIP_NAME% %DEPLOY_DIR%
+powershell -Command "Compress-Archive -Path '%DEPLOY_DIR%\*' -DestinationPath '%ZIP_NAME%' -Force"
 
 echo ====================================================
 echo  Package Complete: %ZIP_NAME%
-echo  Copy this zip to another computer to deploy.
+echo  The package is now significantly smaller and ready for deployment.
 echo ====================================================
+pause

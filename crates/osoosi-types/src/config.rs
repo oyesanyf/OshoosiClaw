@@ -818,6 +818,9 @@ pub fn resolve_config_path() -> Option<PathBuf> {
     }
 
     let local = cwd.join("osoosi.toml");
+    if local.exists() {
+        return Some(local);
+    }
 
     // Check parent directory (useful when running from target/release)
     if let Some(parent) = cwd.parent() {

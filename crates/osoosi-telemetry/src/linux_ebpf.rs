@@ -4,11 +4,17 @@ use aya::maps::{MapData, RingBuf};
 use aya::programs::{TracePoint, KProbe};
 #[cfg(target_os = "linux")]
 use aya::Ebpf;
-use osoosi_types::{HostSecurityEvent, HostEventSource};
+use osoosi_types::HostSecurityEvent;
 use tokio::sync::mpsc;
+#[cfg(target_os = "linux")]
+use osoosi_types::HostEventSource;
+#[cfg(target_os = "linux")]
 use tracing::{error, info, warn};
+#[cfg(target_os = "linux")]
 use std::sync::Arc;
+#[cfg(target_os = "linux")]
 use std::sync::atomic::{AtomicBool, Ordering};
+#[cfg(target_os = "linux")]
 use chrono::Utc;
 
 #[cfg(target_os = "linux")]

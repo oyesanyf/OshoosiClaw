@@ -1,11 +1,11 @@
 use windows::Win32::Foundation::{HANDLE, CloseHandle};
 use windows::Win32::Security::{
     GetTokenInformation, TokenIntegrityLevel, TokenPrivileges, TokenIsAppContainer,
-    TOKEN_QUERY, TOKEN_ELEVATION, TokenElevation, TOKEN_ELEVATION_TYPE, TokenElevationType,
+    TOKEN_QUERY, TOKEN_ELEVATION, TokenElevation,
     TOKEN_MANDATORY_LABEL, TOKEN_PRIVILEGES, SE_PRIVILEGE_ENABLED,
 };
 use windows::Win32::System::Threading::{OpenProcess, PROCESS_QUERY_LIMITED_INFORMATION, OpenProcessToken};
-use std::ptr;
+
 
 pub struct SandboxSurfaceInfo {
     pub integrity_level: String,

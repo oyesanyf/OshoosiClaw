@@ -1,5 +1,5 @@
 use std::sync::Arc;
-use tracing::{info, warn, error};
+use tracing::{info, warn};
 use smoltcp::iface::{Interface, Config, SocketSet};
 use smoltcp::time::Instant;
 use smoltcp::wire::{HardwareAddress, IpAddress, IpCidr};

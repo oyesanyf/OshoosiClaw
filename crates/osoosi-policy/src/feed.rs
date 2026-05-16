@@ -1343,7 +1343,7 @@ impl ThreatFeedFetcher {
             req = req.header("apiKey", key);
         }
 
-        let mut response = req.send().await?;
+        let response = req.send().await?;
         if response.status() == 429 {
             anyhow::bail!("NVD Rate limit exceeded. Please configure an API key.");
         }

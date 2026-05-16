@@ -1,8 +1,6 @@
 //! High-speed file hashing using BLAKE3.
 
 use std::path::Path;
-use tokio::fs::File;
-use tokio::io::AsyncReadExt;
 
 /// Calculate BLAKE3 hash of a file at the given path.
 pub async fn calculate_blake3_hash<P: AsRef<Path>>(path: P) -> anyhow::Result<String> {

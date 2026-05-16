@@ -5,7 +5,7 @@
 
 #[cfg(not(target_os = "windows"))]
 use chrono::Utc;
-use osoosi_types::{HostEventSource, HostSecurityEvent};
+use osoosi_types::HostSecurityEvent;
 #[cfg(not(target_os = "windows"))]
 use serde_json::json;
 #[cfg(target_os = "linux")]
@@ -14,8 +14,7 @@ use std::fs::File;
 use std::io::{BufRead, BufReader};
 #[cfg(not(target_os = "windows"))]
 use std::path::Path;
-#[cfg(target_os = "windows")]
-use tracing::info;
+
 
 /// Trait for platform-specific host event sources.
 pub trait HostEventReader: Send + Sync {

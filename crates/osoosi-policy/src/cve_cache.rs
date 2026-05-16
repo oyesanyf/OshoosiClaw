@@ -1,7 +1,7 @@
 use rusqlite::{params, Connection};
 use std::path::Path;
 use osoosi_types::Kev;
-use tracing::{info, warn};
+use tracing::info;
 
 pub struct CveCache {
     conn: Connection,

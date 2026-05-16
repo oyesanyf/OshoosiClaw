@@ -158,7 +158,6 @@ pub fn get_pe_metadata(path: &Path) -> Option<BinaryMetadata> {
 pub fn verify_and_extract_publisher_native(file_path: &str) -> anyhow::Result<String> {
     use std::collections::HashMap;
     use x509_parser::prelude::*;
-    use rustls_native_certs::load_native_certs;
 
     // 1. Extract all DER-encoded certificates from the PE binary
     let cert_ders = extract_all_certificates(file_path).ok_or_else(|| anyhow::anyhow!("No certificates found in binary"))?;

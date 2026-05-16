@@ -4,15 +4,15 @@
 //! and platform-specific logsource filtering.
 
 use anyhow::Result;
-use base64::{engine::general_purpose, Engine as _};
+
 use evalexpr::*;
 use ipnetwork::IpNetwork;
 use osoosi_types::HostSecurityEvent;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
-use std::collections::{HashMap, HashSet};
+use std::collections::HashMap;
 use std::path::Path;
-use tracing::{debug, info, warn};
+use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct SigmaRule {

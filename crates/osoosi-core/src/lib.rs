@@ -782,7 +782,7 @@ impl EdrOrchestrator {
         register_internal_assets(&memory);
         let policy_config = osoosi_types::load_policy_config();
         info!("EdrOrchestrator: Initializing policy engine...");
-        let policy = Arc::new(PolicyEngine::new(memory.clone(), policy_config));
+        let mut policy = Arc::new(PolicyEngine::new(memory.clone(), policy_config));
         
         info!("EdrOrchestrator: Initializing mesh network...");
         let mesh_config = osoosi_types::load_mesh_listen_config();
@@ -864,7 +864,9 @@ impl EdrOrchestrator {
         
         // Inject adaptive controller into policy engine for heavy voter skipping
         {
-            let mut p = unsafe { &mut *(Arc::as_ptr(&policy) as *mut PolicyEngine) };
+            // SAFETY: `policy` has exactly one strong reference at this point (just created above).
+            let p = Arc::get_mut(&mut policy)
+                .expect("policy Arc has multiple owners before construction completes");
             p.telemetry_controller = Some(adaptive.clone());
         }
         let (watcher_obj, file_rx) =
@@ -937,7 +939,6 @@ impl EdrOrchestrator {
         let nsrl_cache = Arc::new(dashmap::DashMap::new());
         let remediation = Arc::new(crate::remediation::RemediationController::new());
         let causal_ai = Arc::new(crate::causal_ai::CausalEngine::new());
-        let mesh_gossip_count = Arc::new(AtomicU32::new(0));
         let self_healing = Arc::new(crate::self_healing::SelfHealingEngine::new(
             audit.clone(),
             memory.clone(),

@@ -3,7 +3,7 @@
 //! Supports matching against Domain, IP/CIDR, Hash, and Path Regex indicators.
 
 use osoosi_types::HostSecurityEvent;
-use std::collections::{HashSet, HashMap};
+use std::collections::HashSet;
 use std::net::IpAddr;
 use ipnetwork::IpNetwork;
 use regex::RegexSet;

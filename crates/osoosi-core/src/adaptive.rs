@@ -3,11 +3,11 @@
 //! Dynamically scales telemetry fidelity based on system resources and detection activity.
 
 use std::sync::Arc;
-use std::sync::atomic::{AtomicBool, AtomicU32, AtomicUsize, Ordering};
+use std::sync::atomic::{AtomicBool, Ordering};
 use std::time::Instant;
 use sysinfo::System;
 use tokio::sync::{RwLock, Semaphore};
-use tracing::{debug, info, warn};
+use tracing::{info, warn};
 use osoosi_types::{Priority, ResourceCategory, TelemetryControllerInterface, TelemetryMode};
 
 pub struct ResourceGuard {

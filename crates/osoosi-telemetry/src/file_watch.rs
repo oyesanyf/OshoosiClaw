@@ -10,7 +10,7 @@ use std::sync::Arc;
 use std::time::Duration;
 use sysinfo::{Pid, System};
 use tokio::sync::mpsc;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Files and paths to skip: SQLite ephemeral, OpenỌ̀ṣọ́ọ̀sì's own data, common noisy dirs, and user exclusions.
 fn should_skip_path(path: &Path, osoosi_dir: &Path, exclude_paths: &[String]) -> bool {

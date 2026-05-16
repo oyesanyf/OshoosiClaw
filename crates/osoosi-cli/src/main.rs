@@ -53,7 +53,7 @@ struct Cli {
     #[arg(long, global = true)]
     grant_access: bool,
     /// Disable all AI features (ONNX Runtime, SmolLM fallback, behavioral analysis)
-    #[arg(long, env = "OSOOSI_NO_AI", global = true)]
+    #[arg(long, global = true)]
     no_ai: bool,
     /// Enable debug logging (sets log level to DEBUG). Allowed before or after subcommands, e.g. `osoosi sandbox status --debug`
     #[arg(short, long, global = true)]
@@ -73,7 +73,7 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         no_dashboard: bool,
         /// Run in LITE mode: skip massive reasoning models (Gemma-4) to save disk space (~14GB)
-        #[arg(long, env = "OSOOSI_LITE_MODE", default_value_t = false)]
+        #[arg(long, default_value_t = false)]
         lite: bool,
         /// Run the agent inside an NVIDIA OpenShell sandbox (`openshell sandbox create` runs `osoosi start` inside). On success this process exits; no host daemon.
         #[arg(long)]
@@ -298,7 +298,11 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     );
     // 1. Handle autonomous provisioning for critical modes
     // Force disable AI if requested via CLI or env
-    if cli.no_ai {
+    let no_ai = cli.no_ai || std::env::var("OSOOSI_NO_AI")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    if no_ai {
         std::env::set_var("OSOOSI_NO_AI", "1");
         std::env::set_var("OSOOSI_NO_ORT", "1");
         info!("AI features explicitly disabled.");
@@ -372,7 +376,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             sandbox_deploy_gateway,
             wsl,
         }) => {
-            if lite {
+            let lite_mode = lite || std::env::var("OSOOSI_LITE_MODE")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+            if lite_mode {
                 std::env::set_var("OSOOSI_LITE_MODE", "1");
                 info!("LITE mode enabled: Skipping heavy models.");
             }

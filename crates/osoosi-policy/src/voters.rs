@@ -46,7 +46,7 @@ impl ThreatVoter for ZeroDayVoter {
     }
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
-        let version = event.data.get("ProductVersion").and_then(|v| v.as_str()).unwrap_or("");
+        let _version = event.data.get("ProductVersion").and_then(|v| v.as_str()).unwrap_or("");
 
         for vuln in &self.vulnerabilities {
             // Match vendor or product in the image path or product name metadata

@@ -7,7 +7,7 @@ use osoosi_types::{ThreatSignature, ResponseAction, ActionState, Priority, Resou
 use regex::Regex;
 use std::fs::File;
 use std::io::Read;
-use std::path::{Path, PathBuf};
+use std::path::Path;
 use std::sync::Arc;
 use tracing::{debug, info};
 use sha2::{Sha256, Digest};
