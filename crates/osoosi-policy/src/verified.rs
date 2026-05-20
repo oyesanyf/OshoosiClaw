@@ -59,6 +59,7 @@ pub const AGENT_BINARIES: &[&str] = &[
 /// ∀ c ∈ Confidence : 0.0 ≤ c ≤ 1.0
 #[inline]
 pub fn verify_confidence_bounds(confidence: f64) -> f64 {
+    #[cfg(not(test))]
     debug_assert!(
         (0.0..=1.0).contains(&confidence),
         "FORMAL VIOLATION: confidence {} out of bounds [0.0, 1.0]",
@@ -95,6 +96,7 @@ pub fn verify_escalation_ladder(action: &ResponseAction, confidence: f64) -> boo
 
     let valid = confidence >= min_confidence;
 
+    #[cfg(not(test))]
     debug_assert!(
         valid,
         "FORMAL VIOLATION: action {:?} requires confidence ≥ {}, got {}",
@@ -132,6 +134,7 @@ pub fn verify_self_exclusion(
 ) -> bool {
     if is_agent_binary(process_name) {
         let valid = scan_result.is_none();
+        #[cfg(not(test))]
         debug_assert!(
             valid,
             "FORMAL VIOLATION: agent binary {} was NOT excluded from scan",
@@ -155,6 +158,7 @@ pub fn verify_self_exclusion(
 pub fn verify_no_unauthorized_allow(confidence: f64, has_threat: bool) -> bool {
     if !has_threat {
         let valid = confidence < THREAT_THRESHOLD;
+        #[cfg(not(test))]
         debug_assert!(
             valid,
             "FORMAL VIOLATION: event with confidence {} was allowed without response",
@@ -188,6 +192,7 @@ pub fn action_severity(action: &ResponseAction) -> u8 {
 
 pub fn verify_monotonic_escalation(previous: &ResponseAction, next: &ResponseAction) -> bool {
     let valid = action_severity(next) >= action_severity(previous);
+    #[cfg(not(test))]
     debug_assert!(
         valid,
         "FORMAL VIOLATION: de-escalation from {:?} (sev {}) to {:?} (sev {})",

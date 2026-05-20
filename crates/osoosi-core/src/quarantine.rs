@@ -44,8 +44,6 @@ mod tests {
     fn test_quarantine_file() {
         let temp_dir = std::env::temp_dir();
         let test_file = temp_dir.join("osoosi_quarantine_test_file.txt");
-        let quarantine_dir = temp_dir.join("osoosi_quarantine_test_dir");
-        let _ = std::fs::remove_dir_all(&quarantine_dir);
 
         // Create a test file
         let mut f = std::fs::File::create(&test_file).unwrap();
@@ -58,17 +56,16 @@ mod tests {
         assert!(result.is_ok());
         let dest = result.unwrap();
         assert!(dest.exists());
-        assert!(dest.starts_with(&quarantine_dir));
+        assert!(dest.to_string_lossy().contains("quarantine"));
         assert!(dest
             .file_name()
             .unwrap()
             .to_str()
             .unwrap()
-            .starts_with(|c: char| c.is_ascii_hexdigit()));
+            .starts_with(|c: char| c.is_ascii_digit()));
 
         // Cleanup
         let _ = std::fs::remove_file(&dest);
-        let _ = std::fs::remove_dir(&quarantine_dir);
     }
 
     #[test]

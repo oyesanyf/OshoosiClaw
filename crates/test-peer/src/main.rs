@@ -48,6 +48,42 @@ struct TestPeerBehavior {
     kademlia: kad::Behaviour<kad::store::MemoryStore>,
 }
 
+#[derive(Deserialize)]
+struct WireConfig {
+    zone: Option<String>,
+}
+
+#[derive(Deserialize)]
+struct FileConfig {
+    wire: Option<WireConfig>,
+}
+
+fn resolve_zone(zone_override: Option<String>) -> String {
+    if let Some(z) = zone_override {
+        return z;
+    }
+
+    // Attempt to find and parse `osoosi.toml`
+    let mut current_dir = std::env::current_dir().ok();
+    while let Some(dir) = current_dir {
+        let toml_path = dir.join("osoosi.toml");
+        if toml_path.exists() {
+            if let Ok(content) = std::fs::read_to_string(&toml_path) {
+                if let Ok(fc) = toml::from_str::<FileConfig>(&content) {
+                    if let Some(wire) = fc.wire {
+                        if let Some(z) = wire.zone {
+                            return z;
+                        }
+                    }
+                }
+            }
+        }
+        current_dir = dir.parent().map(|p| p.to_path_buf());
+    }
+
+    "Global".to_string()
+}
+
 #[tokio::main]
 async fn main() -> anyhow::Result<()> {
     // Initialize tracing
@@ -63,6 +99,20 @@ async fn main() -> anyhow::Result<()> {
         .and_then(|i| args.get(i + 1))
         .cloned();
 
+    let zone_override = args
+        .iter()
+        .position(|a| a == "--zone")
+        .and_then(|i| args.get(i + 1))
+        .cloned();
+
+    let port_override = args
+        .iter()
+        .position(|a| a == "--port")
+        .and_then(|i| args.get(i + 1))
+        .and_then(|p| p.parse::<u16>().ok());
+
+    let zone = resolve_zone(zone_override);
+
     println!("╔══════════════════════════════════════════════════╗");
     println!("║  OpenỌ̀ṣọ́ọ̀sì Test Peer — Mesh Join Simulator  ║");
     println!("╠══════════════════════════════════════════════════╣");
@@ -70,6 +120,8 @@ async fn main() -> anyhow::Result<()> {
     println!("║  1. Discover the agent via mDNS                 ║");
     println!("║  2. Send a PeerAnnounce                         ║");
     println!("║  3. Listen for threat broadcasts                ║");
+    println!("║                                                 ║");
+    println!("║  Zone: {:<40} ║", zone);
     println!("╚══════════════════════════════════════════════════╝");
     println!();
 
@@ -125,12 +177,12 @@ async fn main() -> anyhow::Result<()> {
         .build();
 
     // Subscribe to all osoosi topics
-    let threat_topic = gossipsub::IdentTopic::new("osoosi-threats");
-    let consensus_topic = gossipsub::IdentTopic::new("osoosi-consensus");
-    let peer_announce_topic = gossipsub::IdentTopic::new("osoosi-peer-announce");
-    let ghost_shard_topic = gossipsub::IdentTopic::new("osoosi-ghost-shards");
-    let intel_topic = gossipsub::IdentTopic::new("osoosi-intel");
-    let malware_topic = gossipsub::IdentTopic::new("osoosi-malware-samples");
+    let threat_topic = gossipsub::IdentTopic::new(format!("osoosi-threats-{}", zone));
+    let consensus_topic = gossipsub::IdentTopic::new(format!("osoosi-consensus-{}", zone));
+    let peer_announce_topic = gossipsub::IdentTopic::new(format!("osoosi-peer-announce-{}", zone));
+    let ghost_shard_topic = gossipsub::IdentTopic::new(format!("osoosi-ghost-shards-{}", zone));
+    let intel_topic = gossipsub::IdentTopic::new(format!("osoosi-intel-{}", zone));
+    let malware_topic = gossipsub::IdentTopic::new(format!("osoosi-malware-samples-{}", zone));
 
     swarm.behaviour_mut().gossipsub.subscribe(&threat_topic)?;
     swarm
@@ -148,8 +200,9 @@ async fn main() -> anyhow::Result<()> {
     swarm.behaviour_mut().gossipsub.subscribe(&intel_topic)?;
     swarm.behaviour_mut().gossipsub.subscribe(&malware_topic)?;
 
-    // Listen on TCP (random port to avoid conflicts with the main agent)
-    swarm.listen_on("/ip4/0.0.0.0/tcp/0".parse()?)?;
+    // Listen on TCP
+    let listen_port = port_override.unwrap_or(0);
+    swarm.listen_on(format!("/ip4/0.0.0.0/tcp/{}", listen_port).parse()?)?;
 
     let our_peer_id = *swarm.local_peer_id();
     println!("🆔 Our Peer ID: {}", our_peer_id);

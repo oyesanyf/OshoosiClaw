@@ -296,11 +296,41 @@ impl MeshNode {
     /// This is the "Subnet-Aware" discovery layer that complements mDNS.
     pub async fn bootstrap_local_neighbors(&mut self) {
         let mesh_config = osoosi_types::load_mesh_listen_config();
-        // Extract the listen port from the first listen address (e.g. /ip4/0.0.0.0/tcp/4001)
-        let listen_port = mesh_config.listen_addrs.first()
-            .and_then(|addr| addr.parse::<Multiaddr>().ok())
-            .and_then(|maddr| maddr.iter().find_map(|p| if let Protocol::Tcp(port) = p { Some(port) } else { None }))
-            .unwrap_or(4001);
+        
+        // Port Synchronization: Dynamically query self.swarm.listeners() to determine active port
+        let listen_port = self.swarm.listeners()
+            .find_map(|maddr| maddr.iter().find_map(|p| if let Protocol::Tcp(port) = p { Some(port) } else { None }))
+            .unwrap_or_else(|| {
+                mesh_config.listen_addrs.first()
+                    .and_then(|addr| addr.parse::<Multiaddr>().ok())
+                    .and_then(|maddr| maddr.iter().find_map(|p| if let Protocol::Tcp(port) = p { Some(port) } else { None }))
+                    .unwrap_or(4001)
+            });
+
+        // Prevent Self-Dialing: Extract and maintain a set of our own listen/observed IP addresses
+        let mut our_ips = HashSet::new();
+        for l_addr in self.swarm.listeners() {
+            for proto in l_addr.iter() {
+                if let Protocol::Ip4(ip) = proto {
+                    our_ips.insert(ip.to_string());
+                } else if let Protocol::Ip6(ip) = proto {
+                    our_ips.insert(ip.to_string());
+                }
+            }
+        }
+        for ext_addr in self.swarm.external_addresses() {
+            for proto in ext_addr.iter() {
+                if let Protocol::Ip4(ip) = proto {
+                    our_ips.insert(ip.to_string());
+                } else if let Protocol::Ip6(ip) = proto {
+                    our_ips.insert(ip.to_string());
+                }
+            }
+        }
+        our_ips.insert("127.0.0.1".to_string());
+        our_ips.insert("0.0.0.0".to_string());
+        our_ips.insert("::1".to_string());
+        our_ips.insert("::".to_string());
 
         info!("[Mesh] Performing Aggressive Local Subnet Discovery via ARP cache (Port {})...", listen_port);
         let scraper = osoosi_telemetry::discovery::RouteScraper::new();
@@ -317,6 +347,11 @@ impl MeshNode {
 
             // Skip gateway if it ends in .1 (heuristic)
             if host.ip.ends_with(".1") {
+                continue;
+            }
+
+            // Prevent self-dialing
+            if our_ips.contains(&host.ip) {
                 continue;
             }
 

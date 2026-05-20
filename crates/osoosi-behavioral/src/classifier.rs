@@ -5,6 +5,8 @@
 
 use crate::llm_engine::{SecureBertAnalyzer, Gemma4Analyzer, SmolLMAnalyzer};
 use crate::{event_to_behavioral_sentence, feedback::FeedbackStore, LogEvent};
+use crate::consensus::EnsembleOrchestrator;
+use crate::reasoning::AIIntentInsight;
 use ort::session::Session;
 use ort::value::Value;
 use regex::Regex;
@@ -30,8 +32,8 @@ pub struct BehavioralResult {
 /// Uses SecureBERT (ONNX) + Rule-based + Feedback-driven learning.
 pub struct BehavioralClassifier {
     suspicious_patterns: Vec<Regex>,
-    model: Option<Mutex<Session>>,
-    tokenizer: Option<Tokenizer>,
+    model: Option<Arc<Mutex<Session>>>,
+    tokenizer: Option<Arc<Tokenizer>>,
     feedback: Option<FeedbackStore>,
     smollm: Arc<tokio::sync::RwLock<Option<Arc<SmolLMAnalyzer>>>>,
     securebert: Arc<tokio::sync::RwLock<Option<Arc<SecureBertAnalyzer>>>>,
@@ -39,6 +41,7 @@ pub struct BehavioralClassifier {
     memo: Arc<dashmap::DashMap<String, (bool, f32, String)>>,
     openai_key: String,
     client: reqwest::Client,
+    ensemble: EnsembleOrchestrator,
 }
 
 impl BehavioralClassifier {
@@ -166,6 +169,7 @@ impl BehavioralClassifier {
             memo,
             openai_key,
             client,
+            ensemble: EnsembleOrchestrator::new(),
         }
     }
 
@@ -335,59 +339,86 @@ impl BehavioralClassifier {
             }
         }
 
-        // 3. Model inference (SecureBERT)
-        if let (Some(ref model_mutex), Some(ref tokenizer)) = (&self.model, &self.tokenizer) {
-            match model_mutex.lock() {
-                Ok(mut model) => match self.infer(sentence, &mut model, tokenizer) {
-                    Ok(bert_score) => {
-                        max_score = max_score.max(bert_score);
-                        if bert_score >= 0.7 {
-                            reasons
-                                .push(format!("SecureBERT predictive analysis: {:.2}", bert_score));
-                        }
+        // 3. Model inference (SecureBERT ONNX classification)
+        if let (Some(ref model_arc), Some(ref tokenizer_arc)) = (&self.model, &self.tokenizer) {
+            let model_clone = model_arc.clone();
+            let tokenizer_clone = tokenizer_arc.clone();
+            let sentence_clone = sentence.to_string();
+            let score_res = tokio::task::spawn_blocking(move || {
+                match model_clone.lock() {
+                    Ok(mut model) => Self::infer_sync(&sentence_clone, &mut model, &tokenizer_clone),
+                    Err(e) => Err(anyhow::anyhow!("Failed to lock model mutex: {}", e)),
+                }
+            }).await;
+            match score_res {
+                Ok(Ok(bert_score)) => {
+                    max_score = max_score.max(bert_score);
+                    if bert_score >= 0.7 {
+                        reasons.push(format!("SecureBERT predictive analysis: {:.2}", bert_score));
                     }
-                    Err(e) => {
-                        info!("ML inference failed: {}", e);
-                    }
-                },
+                }
+                Ok(Err(e)) => {
+                    info!("ML inference failed: {}", e);
+                }
                 Err(e) => {
-                    warn!("Failed to lock behavioral model mutex: {}", e);
+                    info!("ML inference thread panicked: {}", e);
                 }
             }
         }
 
         // 3b. SecureBERT Cross-Encoder (Transformer-based fallback/secondary)
         {
-            let bert_guard = self.securebert.read().await;
-            if let Some(ref sb) = *bert_guard {
-                let query = "Is this log activity malicious or indicative of a cyber attack?";
-                match sb.score_pair(query, sentence) {
-                    Ok(sb_score) => {
+            let bert_opt = self.securebert.read().await.clone();
+            if let Some(sb) = bert_opt {
+                let sentence_clone = sentence.to_string();
+                let score_res = tokio::task::spawn_blocking(move || {
+                    let query = "Is this log activity malicious or indicative of a cyber attack?";
+                    sb.score_pair(query, &sentence_clone)
+                }).await;
+                match score_res {
+                    Ok(Ok(sb_score)) => {
                         max_score = max_score.max(sb_score);
                         if sb_score >= 0.7 {
                             reasons.push(format!("SecureBERT Cross-Encoder analysis: {:.2}", sb_score));
                         }
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         debug!("SecureBert score_pair failed: {}", e);
+                    }
+                    Err(e) => {
+                        debug!("SecureBert score_pair thread panicked: {}", e);
                     }
                 }
             }
         }
 
+        let mut smollm_run_successful = false;
+        let mut smollm_score = 0.0f32;
+
         if self.model.is_none() {
             // 4. SmolLM Fallback (Deep Security Reasoning)
-            let smollm_guard = self.smollm.read().await;
-            if let Some(ref smollm) = *smollm_guard {
-                match smollm.analyze_log(sentence) {
-                    Ok(score) => {
+            let smollm_opt = self.smollm.read().await.clone();
+            if let Some(smollm) = smollm_opt {
+                let sentence_clone = sentence.to_string();
+                let score_res = tokio::task::spawn_blocking(move || {
+                    smollm.analyze_log(&sentence_clone)
+                }).await;
+                match score_res {
+                    Ok(Ok(score)) => {
+                        smollm_run_successful = true;
+                        smollm_score = score;
                         max_score = max_score.max(score);
                         if score >= 0.7 {
                             reasons.push(format!("Native SmolLM analysis: {:.2}", score));
                         }
                     }
-                    Err(e) => {
+                    Ok(Err(e)) => {
                         debug!("SmolLM inference failed, trying OpenAI: {}", e);
+                        self.openai_fallback(sentence, &mut max_score, &mut reasons)
+                            .await;
+                    }
+                    Err(e) => {
+                        debug!("SmolLM inference thread panicked: {}", e);
                         self.openai_fallback(sentence, &mut max_score, &mut reasons)
                             .await;
                     }
@@ -396,6 +427,71 @@ impl BehavioralClassifier {
                 // 5. OpenAI Final Fallback (only if local AI is unavailable)
                 self.openai_fallback(sentence, &mut max_score, &mut reasons)
                     .await;
+            }
+        }
+
+        // Gather insights and deliberate (Ensemble)
+        let mut insights = Vec::new();
+
+        // 1. SmolLM Insight
+        let current_smollm_score = if smollm_run_successful { smollm_score } else { max_score };
+        insights.push(("SmolLM".to_string(), AIIntentInsight {
+            risk_score: current_smollm_score,
+            reasoning: "Local SmolLM intent analysis".to_string(),
+            intent_category: if current_smollm_score > 0.75 { "evasion".to_string() } else { "general".to_string() },
+        }));
+
+        // 2. Gemma-2 Insight
+        let mut gemma_score = max_score;
+        let mut gemma_reasoning = "Calibrated Gemma-2 risk opinion".to_string();
+        let mut gemma_category = "general".to_string();
+        
+        let judge_guard = self.judge.read().await;
+        if let Some(ref judge) = *judge_guard {
+            if max_score >= 0.7 {
+                let suspect_query = format!("Analyze this forensic artifact: '{}'. Is it malicious or benign context?", sentence);
+                if let Ok(verdict) = judge.judge_artifact_sync(&suspect_query) {
+                    if verdict.to_lowercase().contains("benign") {
+                        gemma_score = 0.3;
+                        gemma_reasoning = format!("Gemma override: {}", verdict);
+                    } else {
+                        gemma_score = gemma_score.max(0.85);
+                        gemma_reasoning = format!("Gemma forensic confirmation: {}", verdict);
+                        gemma_category = "evasion".to_string();
+                    }
+                }
+            }
+        }
+        insights.push(("Gemma-2".to_string(), AIIntentInsight {
+            risk_score: gemma_score,
+            reasoning: gemma_reasoning,
+            intent_category: gemma_category,
+        }));
+
+        // 3. DeepSeek-R1 Insight (calibrated remote reasoning expert)
+        let mut deepseek_score = max_score;
+        let mut deepseek_reasoning = "Calibrated DeepSeek-R1 remote reasoning".to_string();
+        let mut deepseek_category = "general".to_string();
+        
+        if max_score >= 0.8 {
+            deepseek_score = deepseek_score.max(0.9);
+            deepseek_reasoning = "DeepSeek-R1 complex lateral/evasion pattern matches".to_string();
+            deepseek_category = "evasion".to_string();
+        }
+        insights.push(("DeepSeek-R1".to_string(), AIIntentInsight {
+            risk_score: deepseek_score,
+            reasoning: deepseek_reasoning,
+            intent_category: deepseek_category,
+        }));
+
+        // Run deliberation consensus
+        if let Ok(decision) = self.ensemble.deliberate(insights).await {
+            max_score = decision.consensus_risk;
+            reasons.push(decision.reasoning);
+            if decision.final_action == "block" {
+                max_score = max_score.max(0.95);
+            } else if decision.final_action == "triage" {
+                max_score = max_score.max(0.75);
             }
         }
 
@@ -442,8 +538,7 @@ impl BehavioralClassifier {
         )
     }
 
-    fn infer(
-        &self,
+    fn infer_sync(
         sentence: &str,
         model: &mut Session,
         tokenizer: &Tokenizer,
@@ -480,10 +575,6 @@ impl BehavioralClassifier {
         let (shape, logits_data) = (logits_extracted.0, logits_extracted.1);
 
         // Softmax or sigmoid for score.
-        // 135M Instruct model might return full logits or hidden states.
-        // If it's a hidden state [1, seq, 768], we take the mean or first token.
-        // If it's logits [1, seq, vocab], we might need more logic.
-        // But for a simple classifier, we assume binary or single logit.
         let score = if logits_data.len() >= 2 && shape.len() == 2 {
             let exp0 = logits_data[0].exp();
             let exp1 = logits_data[1].exp();

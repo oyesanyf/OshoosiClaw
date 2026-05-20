@@ -300,6 +300,10 @@ impl WindowsEventReader {
             }
         }
 
+        if let Some(record_id) = self.extract_tag(xml, "EventRecordID") {
+            data.insert("EventRecordID".to_string(), serde_json::json!(record_id));
+        }
+
         Some(HostSecurityEvent {
             source: osoosi_types::HostEventSource::WindowsEventLog,
             event_id: event_id as u32,
@@ -357,8 +361,8 @@ mod windows_tests {
         assert!(events[1].contains("<EventRecordID>11</EventRecordID>"));
     }
 
-    #[test]
-    fn parses_namespaced_sysmon_xml() {
+    #[tokio::test]
+    async fn parses_namespaced_sysmon_xml() {
         let reader = WindowsEventReader::new("default").unwrap();
         let event = reader
             .parse_xml(&sample_sysmon_xml(12, r"C:\Windows\System32\cmd.exe"))

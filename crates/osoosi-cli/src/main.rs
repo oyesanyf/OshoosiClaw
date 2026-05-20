@@ -1594,7 +1594,15 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
         .add_directive(file_level.into())
         .add_directive("h2=warn".parse().expect("static directive"))
         .add_directive("hyper=warn".parse().expect("static directive"))
-        .add_directive("rustls=warn".parse().expect("static directive"));
+        .add_directive("rustls=warn".parse().expect("static directive"))
+        .add_directive("cranelift_codegen=warn".parse().expect("static directive"))
+        .add_directive("cranelift_wasm=warn".parse().expect("static directive"))
+        .add_directive("wasmtime_cranelift=warn".parse().expect("static directive"))
+        .add_directive("wasmtime_internal_cranelift=warn".parse().expect("static directive"))
+        .add_directive("wasmtime_jit=warn".parse().expect("static directive"))
+        .add_directive("wasmtime=warn".parse().expect("static directive"))
+        .add_directive("wasmtime_wasi=warn".parse().expect("static directive"))
+        .add_directive("regalloc2=warn".parse().expect("static directive"));
 
     // Console Filter: WARN by default to prevent system freezes/I/O bottleneck
     let console_level = if debug {
@@ -1606,7 +1614,15 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
         .add_directive(console_level.into())
         .add_directive("h2=error".parse().expect("static directive"))
         .add_directive("hyper=error".parse().expect("static directive"))
-        .add_directive("rustls=error".parse().expect("static directive"));
+        .add_directive("rustls=error".parse().expect("static directive"))
+        .add_directive("cranelift_codegen=warn".parse().expect("static directive"))
+        .add_directive("cranelift_wasm=warn".parse().expect("static directive"))
+        .add_directive("wasmtime_cranelift=warn".parse().expect("static directive"))
+        .add_directive("wasmtime_internal_cranelift=warn".parse().expect("static directive"))
+        .add_directive("wasmtime_jit=warn".parse().expect("static directive"))
+        .add_directive("wasmtime=warn".parse().expect("static directive"))
+        .add_directive("wasmtime_wasi=warn".parse().expect("static directive"))
+        .add_directive("regalloc2=warn".parse().expect("static directive"));
 
     let console_layer = fmt::Layer::default()
         .with_writer(std::io::stdout)

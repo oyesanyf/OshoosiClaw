@@ -19,6 +19,7 @@ pub use memory_scanner::*;
 pub struct MemoryStore {
     conn: Mutex<Connection>,
     bloom_filter: Mutex<bloomfilter::Bloom<String>>,
+    status_cache: parking_lot::RwLock<std::collections::HashMap<String, String>>,
 }
 
 fn normalize_asset_path(path: &str) -> String {
@@ -65,6 +66,7 @@ impl MemoryStore {
         let s = Self {
             conn: lock,
             bloom_filter: Mutex::new(bloom),
+            status_cache: parking_lot::RwLock::new(std::collections::HashMap::new()),
         };
         s.init_db()?;
         s.repopulate_bloom_filter()?;
@@ -664,6 +666,11 @@ impl MemoryStore {
     }
 
     pub fn set_repair_status(&self, key: &str, value: &str) -> anyhow::Result<()> {
+        let cache_key = format!("repair_status:{}", key);
+        {
+            let mut cache = self.status_cache.write();
+            cache.insert(cache_key, value.to_string());
+        }
         let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO repair_status (key, value, updated_at) VALUES (?1, ?2, ?3)",
@@ -673,13 +680,29 @@ impl MemoryStore {
     }
 
     pub fn get_repair_status(&self, key: &str) -> anyhow::Result<Option<String>> {
+        let cache_key = format!("repair_status:{}", key);
+        {
+            let cache = self.status_cache.read();
+            if let Some(val) = cache.get(&cache_key) {
+                return Ok(Some(val.clone()));
+            }
+        }
         let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT value FROM repair_status WHERE key = ?1")?;
-        let res = stmt.query_row(params![key], |row| row.get(0)).ok();
+        let res = stmt.query_row(params![key], |row| row.get::<_, String>(0)).ok();
+        if let Some(ref val) = res {
+            let mut cache = self.status_cache.write();
+            cache.insert(cache_key, val.clone());
+        }
         Ok(res)
     }
 
     pub fn set_backup_status(&self, key: &str, value: &str) -> anyhow::Result<()> {
+        let cache_key = format!("backup_status:{}", key);
+        {
+            let mut cache = self.status_cache.write();
+            cache.insert(cache_key, value.to_string());
+        }
         let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO backup_status (key, value, updated_at) VALUES (?1, ?2, ?3)",
@@ -689,13 +712,29 @@ impl MemoryStore {
     }
 
     pub fn get_backup_status(&self, key: &str) -> anyhow::Result<Option<String>> {
+        let cache_key = format!("backup_status:{}", key);
+        {
+            let cache = self.status_cache.read();
+            if let Some(val) = cache.get(&cache_key) {
+                return Ok(Some(val.clone()));
+            }
+        }
         let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT value FROM backup_status WHERE key = ?1")?;
-        let res = stmt.query_row(params![key], |row| row.get(0)).ok();
+        let res = stmt.query_row(params![key], |row| row.get::<_, String>(0)).ok();
+        if let Some(ref val) = res {
+            let mut cache = self.status_cache.write();
+            cache.insert(cache_key, val.clone());
+        }
         Ok(res)
     }
 
     pub fn set_model_training_status(&self, key: &str, value: &str) -> anyhow::Result<()> {
+        let cache_key = format!("model_training_status:{}", key);
+        {
+            let mut cache = self.status_cache.write();
+            cache.insert(cache_key, value.to_string());
+        }
         let conn = self.conn.lock();
         conn.execute(
             "INSERT OR REPLACE INTO model_training_status (key, value, updated_at) VALUES (?1, ?2, ?3)",
@@ -705,9 +744,20 @@ impl MemoryStore {
     }
 
     pub fn get_model_training_status(&self, key: &str) -> anyhow::Result<Option<String>> {
+        let cache_key = format!("model_training_status:{}", key);
+        {
+            let cache = self.status_cache.read();
+            if let Some(val) = cache.get(&cache_key) {
+                return Ok(Some(val.clone()));
+            }
+        }
         let conn = self.conn.lock();
         let mut stmt = conn.prepare("SELECT value FROM model_training_status WHERE key = ?1")?;
-        let res = stmt.query_row(params![key], |row| row.get(0)).ok();
+        let res = stmt.query_row(params![key], |row| row.get::<_, String>(0)).ok();
+        if let Some(ref val) = res {
+            let mut cache = self.status_cache.write();
+            cache.insert(cache_key, val.clone());
+        }
         Ok(res)
     }
 

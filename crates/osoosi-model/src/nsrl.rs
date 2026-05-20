@@ -166,6 +166,7 @@ mod tests {
     fn test_nsrl_create_and_lookup() {
         // Use a temp file for testing
         let tmp = std::env::temp_dir().join("test_nsrl.db");
+        let _ = std::fs::remove_file(&tmp);
         let ingester = NsrlIngester::new(&tmp).expect("create nsrl db");
 
         // Insert a test hash

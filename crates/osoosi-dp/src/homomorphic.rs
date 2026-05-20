@@ -79,9 +79,17 @@ impl BigNum {
         result
     }
 
-    fn mod_mul(a: u128, b: u128, modulus: u128) -> u128 {
-        // Use u128 to avoid overflow for values up to ~64 bits
-        ((a as u128) * (b as u128)) % (modulus as u128)
+    fn mod_mul(mut a: u128, mut b: u128, modulus: u128) -> u128 {
+        let mut res = 0;
+        a %= modulus;
+        while b > 0 {
+            if b & 1 == 1 {
+                res = (res + a) % modulus;
+            }
+            a = (a + a) % modulus;
+            b >>= 1;
+        }
+        res
     }
 
     fn gcd(mut a: u128, mut b: u128) -> u128 {

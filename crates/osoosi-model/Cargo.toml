@@ -41,3 +41,7 @@ sevenz-rust = { workspace = true }
 dashmap = { workspace = true }
 rayon = { workspace = true }
 # nexus-shield = { workspace = true }
+
+[dev-dependencies]
+tracing-subscriber = { workspace = true }
+

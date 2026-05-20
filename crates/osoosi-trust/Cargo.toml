@@ -20,3 +20,5 @@ hex = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 rand = { workspace = true }
 uuid = { workspace = true }
+async-trait = { workspace = true }
+
