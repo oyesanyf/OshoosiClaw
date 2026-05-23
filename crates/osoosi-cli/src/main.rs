@@ -1936,6 +1936,8 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
         "onnx/decoder_model_merged.onnx_data_6",
         "decoder_model_merged.onnx_data_7",
         "onnx/decoder_model_merged.onnx_data_7",
+        "decoder_model_merged.onnx_data_8",
+        "onnx/decoder_model_merged.onnx_data_8",
     ] {
         if let Ok(_) = gemma_repo.get(filename).await {
             tracing::debug!("Cached Gemma component: {}", filename);

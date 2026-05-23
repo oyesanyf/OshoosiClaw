@@ -753,7 +753,57 @@ fn load_deepseek_tokenizer() -> Result<Tokenizer> {
     ))
 }
 
-/// SecureBERT Analyzer Ã¢â‚¬â€ security-domain encoder for log classification.
+fn sanitize_tokenizer_json(path: &Path) -> Result<()> {
+    if !path.exists() {
+        return Ok(());
+    }
+    
+    let content = std::fs::read_to_string(path)?;
+    if !content.contains("\"merges\"") {
+        return Ok(());
+    }
+
+    let mut json: serde_json::Value = serde_json::from_str(&content)?;
+    
+    if let Some(model) = json.get_mut("model") {
+        if let Some(merges) = model.get_mut("merges") {
+            if let Some(merges_arr) = merges.as_array_mut() {
+                let mut needs_conversion = false;
+                for item in merges_arr.iter() {
+                    if item.is_array() {
+                        needs_conversion = true;
+                        break;
+                    }
+                }
+                
+                if needs_conversion {
+                    info!("Sanitizing tokenizer.json merges format...");
+                    let mut new_merges = Vec::new();
+                    for item in merges_arr.iter() {
+                        if let Some(pair) = item.as_array() {
+                            if pair.len() == 2 {
+                                if let (Some(a), Some(b)) = (pair[0].as_str(), pair[1].as_str()) {
+                                    new_merges.push(serde_json::Value::String(format!("{} {}", a, b)));
+                                }
+                            }
+                        } else if let Some(s) = item.as_str() {
+                            new_merges.push(serde_json::Value::String(s.to_string()));
+                        }
+                    }
+                    *merges = serde_json::Value::Array(new_merges);
+                    
+                    let sanitized = serde_json::to_string_pretty(&json)?;
+                    std::fs::write(path, sanitized)?;
+                    info!("Sanitized tokenizer.json successfully.");
+                }
+            }
+        }
+    }
+    
+    Ok(())
+}
+
+/// SecureBERT Analyzer — security-domain encoder for log classification.
 /// Primary: ONNX Runtime (model.onnx). Fallback: Candle safetensors.
 pub enum SecureBertAnalyzer {
     Onnx {
@@ -812,6 +862,7 @@ impl SecureBertAnalyzer {
         if !final_tokenizer_path.exists() {
             anyhow::bail!("SecureBERT tokenizer.json not found.");
         }
+        let _ = sanitize_tokenizer_json(&final_tokenizer_path);
         let tokenizer = Tokenizer::from_file(&final_tokenizer_path).map_err(anyhow::Error::msg)?;
 
         // Try ONNX first

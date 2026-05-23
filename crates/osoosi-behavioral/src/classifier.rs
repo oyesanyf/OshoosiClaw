@@ -99,13 +99,16 @@ impl BehavioralClassifier {
             if !no_ai {
                 // 1. SecureBERT (ONNX)
                 let bert_dir = Path::new(&models_dir_clone).join("securebert");
-                if let Ok(s) = SecureBertAnalyzer::new(&bert_dir) {
-                    let mut guard = securebert_clone.write().await;
-                    *guard = Some(Arc::new(s));
-                    info!("BehavioralClassifier: SecureBERT tier active.");
-                    ai_loaded = true;
-                } else {
-                    warn!("BehavioralClassifier: SecureBERT failed to load. AI detection may be degraded.");
+                match SecureBertAnalyzer::new(&bert_dir) {
+                    Ok(s) => {
+                        let mut guard = securebert_clone.write().await;
+                        *guard = Some(Arc::new(s));
+                        info!("BehavioralClassifier: SecureBERT tier active.");
+                        ai_loaded = true;
+                    }
+                    Err(e) => {
+                        warn!("BehavioralClassifier: SecureBERT failed to load: {}. AI detection may be degraded.", e);
+                    }
                 }
 
                 // 2. SmolLM
