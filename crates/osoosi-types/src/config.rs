@@ -1493,7 +1493,7 @@ pub struct AiConfig {
     /// Enable Foundation-Sec model.
     #[serde(default = "default_true")]
     pub foundation_sec_enabled: bool,
-    /// Model name/path for Foundation-Sec (e.g. "fdtn-ai/Foundation-Sec-8B").
+    /// Model name/path for Foundation-Sec (e.g. "fenkohq/foundation-sec-8b").
     #[serde(default = "default_foundation_sec_model")]
     pub foundation_sec_model: String,
 }
@@ -1518,7 +1518,7 @@ fn default_colog_threshold() -> f64 {
     0.85
 }
 fn default_foundation_sec_model() -> String {
-    "fdtn-ai/Foundation-Sec-8B".to_string()
+    "fenkohq/foundation-sec-8b".to_string()
 }
 
 fn apply_ai_env_overrides(mut c: AiConfig) -> AiConfig {
