@@ -2129,6 +2129,17 @@ async fn ensure_ollama_model() {
         _ => String::new(),
     };
 
+    if ai.foundation_sec_enabled {
+        let f_model = ai.foundation_sec_model.clone();
+        if !list_stdout.contains(&f_model) {
+            info!("Pulling Cisco Foundation-Sec-8B model: '{}'...", f_model);
+            let pull_fut = tokio::process::Command::new("ollama")
+                .args(["pull", &f_model])
+                .status();
+            let _ = tokio::time::timeout(std::time::Duration::from_secs(600), pull_fut).await;
+        }
+    }
+
     let mut candidates = vec![preferred.clone()];
     for fallback in &ai.fallback_models {
         if !candidates.iter().any(|m| m == fallback) {

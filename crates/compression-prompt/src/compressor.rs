@@ -32,6 +32,7 @@ pub struct CompressionResult {
 }
 
 pub struct Compressor {
+    #[allow(dead_code)]
     config: CompressorConfig,
     filter: StatisticalFilter,
 }

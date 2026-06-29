@@ -21,14 +21,78 @@ const state = {
     _pollInFlight: false
 };
 
+let updateInterval = null;
+
 /**
  * Initialize Lucide icons and start polling
  */
 function init() {
+    setupLogin();
     setupNav();
     setupSearch();
+    
+    if (localStorage.getItem('oshoosi_logged_in') === 'true') {
+        startApp();
+    }
+}
+
+function startApp() {
     updateDashboard();
-    setInterval(updateDashboard, POLL_INTERVAL);
+    if (!updateInterval) {
+        updateInterval = setInterval(updateDashboard, POLL_INTERVAL);
+    }
+}
+
+function setupLogin() {
+    const overlay = document.getElementById('login-overlay');
+    const form = document.getElementById('login-form');
+    const errorDiv = document.getElementById('login-error');
+    const logoutBtn = document.getElementById('logout-btn');
+    
+    const isLoggedIn = localStorage.getItem('oshoosi_logged_in') === 'true';
+    if (isLoggedIn) {
+        overlay.style.display = 'none';
+    } else {
+        overlay.style.display = 'flex';
+    }
+    
+    if (form) {
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const usernameInput = document.getElementById('login-username');
+            const passwordInput = document.getElementById('login-password');
+            const username = usernameInput ? usernameInput.value.trim() : '';
+            const password = passwordInput ? passwordInput.value.trim() : '';
+            
+            if (username === 'admin' && password === 'admin') {
+                localStorage.setItem('oshoosi_logged_in', 'true');
+                overlay.style.opacity = '0';
+                setTimeout(() => {
+                    overlay.style.display = 'none';
+                    overlay.style.opacity = '1';
+                }, 300);
+                errorDiv.style.display = 'none';
+                
+                startApp();
+            } else {
+                errorDiv.style.display = 'block';
+                const card = document.querySelector('.login-card');
+                if (card) {
+                    card.style.animation = 'none';
+                    void card.offsetWidth; // Trigger reflow
+                    card.style.animation = 'login-shake 0.4s ease';
+                }
+            }
+        });
+    }
+    
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            localStorage.setItem('oshoosi_logged_in', 'false');
+            window.location.reload();
+        });
+    }
 }
 
 /**

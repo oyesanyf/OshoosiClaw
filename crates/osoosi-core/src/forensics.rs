@@ -7,11 +7,12 @@ use tracing::{error, warn};
 pub struct ForensicStoryteller {
     analyzer: Option<SmolLMAnalyzer>,
     judge: Option<std::sync::Arc<osoosi_behavioral::Gemma4Analyzer>>,
+    foundation_sec_judge: Option<std::sync::Arc<osoosi_behavioral::FoundationSecAnalyzer>>,
 }
 
 impl Default for ForensicStoryteller {
     fn default() -> Self {
-        Self::new(None)
+        Self::new(None, None)
     }
 }
 
@@ -24,17 +25,24 @@ struct StoryGroup {
 }
 
 impl ForensicStoryteller {
-    pub fn new(judge: Option<std::sync::Arc<osoosi_behavioral::Gemma4Analyzer>>) -> Self {
-        if !std::env::var("OSOOSI_ENABLE_SMOLLM")
-            .map(|v| v == "1")
-            .unwrap_or(false)
-            && judge.is_none()
-        {
-            return Self { analyzer: None, judge: None };
-        }
+    pub fn new(
+        judge: Option<std::sync::Arc<osoosi_behavioral::Gemma4Analyzer>>,
+        foundation_sec_judge: Option<std::sync::Arc<osoosi_behavioral::FoundationSecAnalyzer>>,
+    ) -> Self {
         let models_dir =
             std::env::var("OSOOSI_MODELS_DIR").unwrap_or_else(|_| "models".to_string());
         let model_dir = Path::new(&models_dir).join("smollm");
+        let has_smollm = model_dir.join("config.json").exists()
+            && model_dir.join("model.safetensors").exists()
+            && model_dir.join("tokenizer.json").exists();
+
+        if !has_smollm
+            && !std::env::var("OSOOSI_ENABLE_SMOLLM").map(|v| v == "1").unwrap_or(false)
+            && judge.is_none()
+            && foundation_sec_judge.is_none()
+        {
+            return Self { analyzer: None, judge: None, foundation_sec_judge: None };
+        }
 
         let analyzer = match SmolLMAnalyzer::new(&model_dir) {
             Ok(a) => Some(a),
@@ -47,7 +55,7 @@ impl ForensicStoryteller {
             }
         };
 
-        Self { analyzer, judge }
+        Self { analyzer, judge, foundation_sec_judge }
     }
 
     fn extract_process_name(entry: &AuditEntry) -> String {
@@ -137,6 +145,20 @@ impl ForensicStoryteller {
                     g.event_type,
                     g.process_name
                 ));
+            }
+        }
+
+        if let Some(ref judge) = self.foundation_sec_judge {
+            let prompt = format!(
+                "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nYou are a professional forensic security analyst. Summarize this aggregated security timeline into a high-fidelity narrative report for a CISO. Focus on the 'story' of the attack, its progression, and the autonomous defensive actions taken.<|eot_id|><|start_header_id|>user<|end_header_id|>\n\nTimeline:\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+                timeline_data
+            );
+
+            match judge.judge_artifact(&prompt).await {
+                Ok(story) => return story,
+                Err(e) => {
+                    warn!("FoundationSec Storyteller inference failed: {}. Trying fallback.", e);
+                }
             }
         }
 

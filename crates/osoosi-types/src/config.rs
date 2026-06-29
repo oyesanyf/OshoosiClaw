@@ -342,6 +342,8 @@ struct FileConfig {
     hex_patch: HexPatchConfig,
     #[serde(default)]
     pub ai: AiConfig,
+    #[serde(default)]
+    pub heavener: HeavenerConfig,
     /// Policy engine settings: rules paths, global exclusions, and noise suppression.
     #[serde(default)]
     pub policy: PolicyConfig,
@@ -1488,6 +1490,12 @@ pub struct AiConfig {
     /// COLOG anomaly threshold (0.0–1.0).  Events above trigger anomaly.
     #[serde(default = "default_colog_threshold")]
     pub colog_threshold: f64,
+    /// Enable Foundation-Sec model.
+    #[serde(default = "default_true")]
+    pub foundation_sec_enabled: bool,
+    /// Model name/path for Foundation-Sec (e.g. "fdtn-ai/Foundation-Sec-8B").
+    #[serde(default = "default_foundation_sec_model")]
+    pub foundation_sec_model: String,
 }
 
 fn default_ai_enabled() -> bool {
@@ -1508,6 +1516,9 @@ fn default_fallback_models() -> Vec<String> {
 }
 fn default_colog_threshold() -> f64 {
     0.85
+}
+fn default_foundation_sec_model() -> String {
+    "fdtn-ai/Foundation-Sec-8B".to_string()
 }
 
 fn apply_ai_env_overrides(mut c: AiConfig) -> AiConfig {
@@ -1535,6 +1546,12 @@ fn apply_ai_env_overrides(mut c: AiConfig) -> AiConfig {
     if let Ok(v) = std::env::var("OSOOSI_REASONING_URL") {
         c.reasoning_url = v;
     }
+    if let Ok(v) = std::env::var("OSOOSI_FOUNDATION_SEC_ENABLED") {
+        c.foundation_sec_enabled = v == "1" || v.eq_ignore_ascii_case("true");
+    }
+    if let Ok(v) = std::env::var("OSOOSI_FOUNDATION_SEC_MODEL") {
+        c.foundation_sec_model = v;
+    }
     c
 }
 
@@ -1549,6 +1566,8 @@ impl Default for AiConfig {
             reasoning_url: default_reasoning_url(),
             fallback_models: default_fallback_models(),
             colog_threshold: default_colog_threshold(),
+            foundation_sec_enabled: true,
+            foundation_sec_model: default_foundation_sec_model(),
         }
     }
 }
@@ -1562,6 +1581,38 @@ pub fn load_ai_config() -> AiConfig {
         }
     }
     apply_ai_env_overrides(AiConfig::default())
+}
+
+/// Heavener EDR configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HeavenerConfig {
+    #[serde(default = "default_true")]
+    pub enable_unhooking_scanner: bool,
+    #[serde(default = "default_true")]
+    pub enable_stack_spoof_check: bool,
+    #[serde(default = "default_true")]
+    pub enable_creator_pid_validation: bool,
+}
+
+impl Default for HeavenerConfig {
+    fn default() -> Self {
+        Self {
+            enable_unhooking_scanner: true,
+            enable_stack_spoof_check: true,
+            enable_creator_pid_validation: true,
+        }
+    }
+}
+
+pub fn load_heavener_config() -> HeavenerConfig {
+    if let Some(path) = resolve_config_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(cfg) = toml::from_str::<FileConfig>(&content) {
+                return cfg.heavener;
+            }
+        }
+    }
+    HeavenerConfig::default()
 }
 
 /// Keys under `[external_api]` in `osoosi.toml` (e.g. OTX, NVD). Environment always wins; see

@@ -350,6 +350,85 @@ fn strip_think_tags(raw: &str) -> String {
     }
 }
 
+/// Cisco Foundation-Sec-8B Voter
+pub struct FoundationSecVoter {
+    pub analyzer: Arc<osoosi_behavioral::FoundationSecAnalyzer>,
+    last_call: std::sync::Mutex<std::time::Instant>,
+}
+
+impl FoundationSecVoter {
+    pub fn new(analyzer: Arc<osoosi_behavioral::FoundationSecAnalyzer>) -> Self {
+        Self {
+            analyzer,
+            last_call: std::sync::Mutex::new(std::time::Instant::now() - std::time::Duration::from_secs(60)),
+        }
+    }
+}
+
+#[async_trait]
+impl ThreatVoter for FoundationSecVoter {
+    fn name(&self) -> String {
+        "Foundation-Sec-Reasoning".to_string()
+    }
+    fn is_heavy(&self) -> bool { true }
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        let image = event
+            .data
+            .get("Image")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+
+        if GemmaVoter::is_known_safe(image) {
+            return None;
+        }
+
+        {
+            let mut last = self.last_call.lock().unwrap();
+            if last.elapsed() < std::time::Duration::from_secs(30) {
+                return None;
+            }
+            *last = std::time::Instant::now();
+        }
+
+        let cmd_line = event
+            .data
+            .get("CommandLine")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let version = event.data.get("ProductVersion").and_then(|v| v.as_str()).unwrap_or("unknown");
+
+        let summary = format!(
+            "Process Create: image={} version={} cmdline={}",
+            image, version, cmd_line
+        );
+
+        match self.analyzer.reason_about_attack(&summary).await {
+            Ok(raw_reasoning) => {
+                let reasoning = strip_think_tags(&raw_reasoning);
+
+                if reasoning.len() < 10 {
+                    return None;
+                }
+
+                let r_lower = reasoning.to_lowercase();
+                if r_lower.contains("malicious")
+                    || r_lower.contains("attack")
+                    || r_lower.contains("suspicious")
+                {
+                    let display: String = reasoning.chars().take(200).collect();
+                    return Some(VoteResult {
+                        confidence: 0.92,
+                        reason: format!("Foundation-Sec: {}", display),
+                        weight: 0.95,
+                    });
+                }
+            }
+            Err(_) => {}
+        }
+        None
+    }
+}
+
 /// Native Instrumentation Voter (Ported from OpenEDR architectural patterns)
 /// Votes on self-protection violations, USB exfiltration, and registry anomalies.
 pub struct NativeVoter {
@@ -1088,6 +1167,7 @@ impl ThreatVoter for CveLookupVoter {
 /// A privacy-preserving voter that uses Differential Privacy and Merkle Auditing.
 pub struct PrivacyVoter {
     dp: DifferentialPrivacy,
+    #[allow(dead_code)]
     audit: Arc<MerkleAuditTree>,
 }
 

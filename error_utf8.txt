@@ -1,0 +1,125 @@
+﻿cargo : warning: unused import: `error`
+At line:1 char:1
++ cargo check -p osoosi-core 2> error.txt
++ ~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~~
+    + CategoryInfo          : NotSpecified: (warning: unused import: `error`:String) [], RemoteException
+    + FullyQualifiedErrorId : NativeCommandError
+ 
+ --> crates\osoosi-behavioral\src\yara_analyzer.rs:3:27
+  |
+3 | use tracing::{info, warn, error, debug};
+  |                           ^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused imports: `error` and `info`
+ --> crates\osoosi-behavioral\src\ebpf_monitor.rs:3:15
+  |
+3 | use tracing::{info, warn, error};
+  |               ^^^^        ^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> crates\osoosi-behavioral\src\ebpf_monitor.rs:4:5
+  |
+4 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `tokio::sync::mpsc`
+ --> crates\osoosi-behavioral\src\ebpf_monitor.rs:5:5
+  |
+5 | use tokio::sync::mpsc;
+  |     ^^^^^^^^^^^^^^^^^
+
+warning: `osoosi-behavioral` (lib) generated 4 warnings (run `cargo fix --lib -p osoosi-behavioral` to apply 4 
+suggestions)
+warning: unused import: `crate::traffic_adapter`
+  --> crates\osoosi-policy\src\engine.rs:11:5
+   |
+11 | use crate::traffic_adapter;
+   |     ^^^^^^^^^^^^^^^^^^^^^^
+   |
+   = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `debug`
+  --> crates\osoosi-policy\src\engine.rs:12:15
+   |
+12 | use tracing::{debug, info, warn};
+   |               ^^^^^
+
+warning: unused import: `SysmonEventId`
+ --> crates\osoosi-policy\src\voters.rs:2:33
+  |
+2 | use osoosi_types::{SysmonEvent, SysmonEventId};
+  |                                 ^^^^^^^^^^^^^
+
+warning: unused import: `tracing::warn`
+ --> crates\osoosi-policy\src\voters.rs:4:5
+  |
+4 | use tracing::warn;
+  |     ^^^^^^^^^^^^^
+
+warning: fields `semantic` and `alert_cache` are never read
+  --> crates\osoosi-policy\src\engine.rs:31:5
+   |
+27 | pub struct PolicyEngine {
+   |            ------------ fields in this struct
+...
+31 |     semantic: SemanticEngine,
+   |     ^^^^^^^^
+...
+44 |     alert_cache: Arc<DashMap<String, std::time::Instant>>,
+   |     ^^^^^^^^^^^
+   |
+   = note: `#[warn(dead_code)]` (part of `#[warn(unused)]`) on by default
+
+warning: `osoosi-policy` (lib) generated 5 warnings (run `cargo fix --lib -p osoosi-policy` to apply 4 suggestions)
+    Checking osoosi-core v0.1.0 (D:\harfile\OshoosiClaw\crates\osoosi-core)
+error[E0433]: cannot find module or crate `walkdir` in this scope
+    --> crates\osoosi-core\src\lib.rs:1267:22
+     |
+1267 |         for entry in walkdir::WalkDir::new(&config.workspace_dir)
+     |                      ^^^^^^^ use of unresolved module or unlinked crate `walkdir`
+     |
+     = help: if you wanted to use a crate named `walkdir`, use `cargo add walkdir` to add it to your `Cargo.toml`
+
+warning: unused imports: `debug`, `error`, and `warn`
+ --> crates\osoosi-core\src\static_analyzer.rs:8:21
+  |
+8 | use tracing::{info, warn, error, debug};
+  |                     ^^^^  ^^^^^  ^^^^^
+  |
+  = note: `#[warn(unused_imports)]` (part of `#[warn(unused)]`) on by default
+
+warning: unused import: `ResponseAction`
+ --> crates\osoosi-core\src\static_analyzer.rs:9:37
+  |
+9 | use osoosi_types::{ThreatSignature, ResponseAction};
+  |                                     ^^^^^^^^^^^^^^
+
+warning: unused import: `HashMap`
+ --> crates\osoosi-core\src\correlator.rs:1:24
+  |
+1 | use std::collections::{HashMap, VecDeque};
+  |                        ^^^^^^^
+
+warning: unused import: `std::sync::Arc`
+ --> crates\osoosi-core\src\correlator.rs:2:5
+  |
+2 | use std::sync::Arc;
+  |     ^^^^^^^^^^^^^^
+
+warning: unused import: `warn`
+ --> crates\osoosi-core\src\correlator.rs:6:21
+  |
+6 | use tracing::{info, warn, debug};
+  |                     ^^^^
+
+warning: unused import: `TarpitManager`
+  --> crates\osoosi-core\src\lib.rs:45:40
+   |
+45 | use osoosi_runtime::{DeceptionManager, TarpitManager};
+   |                                        ^^^^^^^^^^^^^
+
+For more information about this error, try `rustc --explain E0433`.
+warning: `osoosi-core` (lib) generated 6 warnings
+error: could not compile `osoosi-core` (lib) due to 1 previous error; 6 warnings emitted

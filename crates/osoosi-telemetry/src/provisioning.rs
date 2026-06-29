@@ -145,6 +145,7 @@ impl AgentProvisioner {
 
 
     /// Helper to execute a command with a specified number of retries.
+    #[allow(dead_code)]
     async fn exec_with_retry(
         &self,
         program: &str,
@@ -179,6 +180,7 @@ impl AgentProvisioner {
     }
 
     #[cfg(target_os = "windows")]
+    #[allow(dead_code)]
     async fn command_exists_win(&self, cmd: &str) -> bool {
         let mut check_cmd = Command::new("where");
         check_cmd.arg(cmd);
@@ -190,6 +192,7 @@ impl AgentProvisioner {
     }
 
     /// Check if a command exists in the system PATH.
+    #[allow(dead_code)]
     async fn command_exists(&self, cmd: &str) -> bool {
         #[cfg(target_os = "windows")]
         {

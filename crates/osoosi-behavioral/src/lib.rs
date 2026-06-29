@@ -26,7 +26,7 @@ pub use classifier::{BehavioralClassifier, BehavioralResult};
 pub use ebpf_monitor::EbpfMonitor;
 pub use feedback::{FeedbackStore, LabeledSample};
 pub use forensics::{PacketForensics, TriageResult};
-pub use llm_engine::{Gemma4Analyzer, SmolLMAnalyzer};
+pub use llm_engine::{Gemma4Analyzer, SmolLMAnalyzer, FoundationSecAnalyzer};
 pub use log_reader::{BehavioralLogReader, LogEvent};
 pub use process_tree::{ProcessRelationship, ProcessTreeEmbedder};
 pub use sentence::event_to_behavioral_sentence;

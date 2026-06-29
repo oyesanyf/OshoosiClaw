@@ -1060,3 +1060,314 @@ impl SecurityJudge {
         Ok(result_text)
     }
 }
+
+/// Llama 3.1 Security-Tuned model wrapper for Cisco's Foundation-Sec-8B.
+pub enum FoundationSecAnalyzer {
+    Onnx {
+        session: Arc<Mutex<Session>>,
+        tokenizer: Tokenizer,
+        device: Device,
+    },
+    Candle(SecurityJudge),
+    NativeGGUF {
+        model: Arc<Mutex<Qwen2Weights>>,
+        tokenizer: Tokenizer,
+        device: Device,
+    },
+    Ollama {
+        client: reqwest::Client,
+        model: String,
+        endpoint: String,
+    },
+}
+
+impl Clone for FoundationSecAnalyzer {
+    fn clone(&self) -> Self {
+        match self {
+            Self::Onnx { session, tokenizer, device } => Self::Onnx {
+                session: session.clone(),
+                tokenizer: tokenizer.clone(),
+                device: device.clone(),
+            },
+            Self::Candle(judge) => Self::Candle(judge.clone()),
+            Self::NativeGGUF { model, tokenizer, device } => Self::NativeGGUF {
+                model: model.clone(),
+                tokenizer: tokenizer.clone(),
+                device: device.clone(),
+            },
+            Self::Ollama { client, model, endpoint } => Self::Ollama {
+                client: client.clone(),
+                model: model.clone(),
+                endpoint: endpoint.clone(),
+            },
+        }
+    }
+}
+
+impl FoundationSecAnalyzer {
+    pub fn new(model_dir: &Path) -> Result<Self> {
+        let ai_cfg = osoosi_types::config::load_ai_config();
+        if !ai_cfg.enabled {
+            anyhow::bail!("AI features are disabled in config.");
+        }
+        
+        info!("Initializing Cisco Foundation-Sec-8B from {:?}...", model_dir);
+        
+        // Priority 1: Ollama API if enabled and URL is configured
+        if ai_cfg.foundation_sec_enabled {
+            info!("Trying Foundation-Sec Ollama API at {} with model {}...", ai_cfg.reasoning_url, ai_cfg.foundation_sec_model);
+            return Ok(Self::Ollama {
+                client: reqwest::Client::new(),
+                model: ai_cfg.foundation_sec_model.clone(),
+                endpoint: ai_cfg.reasoning_url.clone(),
+            });
+        }
+        
+        // Priority 2: GGUF / ONNX / Candle local fallback
+        let resolved_dir = model_dir.to_path_buf();
+        let model_path = resolved_dir.join("model.onnx");
+        let decoder_path = resolved_dir.join("decoder_model_merged.onnx");
+        let onnx_src = if decoder_path.exists() { decoder_path } else { model_path };
+        let tokenizer_src = resolved_dir.join("tokenizer.json");
+        
+        if onnx_src.exists() && tokenizer_src.exists() {
+            let tokenizer = Tokenizer::from_file(&tokenizer_src).map_err(anyhow::Error::msg)?;
+            let session = Session::builder()?
+                .with_optimization_level(GraphOptimizationLevel::Level3)?
+                .commit_from_file(&onnx_src)?;
+            
+            return Ok(Self::Onnx {
+                session: Arc::new(Mutex::new(session)),
+                tokenizer,
+                device: Device::Cpu,
+            });
+        }
+        
+        // GGUF check
+        let gguf_name = "foundation-sec-8b.gguf";
+        if let Some(gguf_path) = resolve_gguf_path(gguf_name) {
+            match load_native_gguf(&gguf_path) {
+                Ok((model, tokenizer)) => {
+                    return Ok(Self::NativeGGUF {
+                        model: Arc::new(Mutex::new(model)),
+                        tokenizer,
+                        device: Device::Cpu,
+                    });
+                }
+                Err(e) => {
+                    warn!("Native GGUF loading for Foundation-Sec failed: {}.", e);
+                }
+            }
+        }
+        
+        // Candle fallback
+        match SecurityJudge::new(model_dir) {
+            Ok(judge) => Ok(Self::Candle(judge)),
+            Err(e) => {
+                warn!("Candle fallback for Foundation-Sec failed: {}", e);
+                // Final fallback to Ollama
+                Ok(Self::Ollama {
+                    client: reqwest::Client::new(),
+                    model: ai_cfg.foundation_sec_model,
+                    endpoint: ai_cfg.reasoning_url,
+                })
+            }
+        }
+    }
+    
+    pub async fn reason_about_attack(&self, graph_summary: &str) -> Result<String> {
+        let analyzer = Arc::new(self.clone());
+        let summary = graph_summary.to_string();
+
+        tokio::task::spawn_blocking(move || {
+            let compressed_summary = if let Some(tokenizer) = analyzer.get_tokenizer() {
+                let config = compression_prompt::CompressorConfig {
+                    filter_config: compression_prompt::StatisticalFilterConfig {
+                        compression_ratio: 0.6,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                let compressor = compression_prompt::Compressor::new(config);
+                match compressor.compress(&summary, tokenizer) {
+                    Ok(res) => res.compressed_text,
+                    Err(_) => summary,
+                }
+            } else {
+                summary
+            };
+
+            // Llama 3.1 system/user formatting
+            let prompt = format!(
+                "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nYou are a security expert. Classify this event as malicious, suspicious, or benign. One sentence max.<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+                compressed_summary
+            );
+            let raw = analyzer.judge_artifact_sync(&prompt)?;
+            Ok(strip_deepseek_thinking(&raw))
+        }).await?
+    }
+
+    pub async fn judge_artifact(&self, query: &str) -> Result<String> {
+        let analyzer = Arc::new(self.clone());
+        let q = query.to_string();
+        tokio::task::spawn_blocking(move || {
+            let compressed_query = if let Some(tokenizer) = analyzer.get_tokenizer() {
+                let config = compression_prompt::CompressorConfig {
+                    filter_config: compression_prompt::StatisticalFilterConfig {
+                        compression_ratio: 0.6,
+                        ..Default::default()
+                    },
+                    ..Default::default()
+                };
+                let compressor = compression_prompt::Compressor::new(config);
+                compressor.compress(&q, tokenizer).map(|res| res.compressed_text).unwrap_or(q)
+            } else {
+                q
+            };
+            analyzer.judge_artifact_sync(&compressed_query)
+        }).await?
+    }
+
+    pub fn judge_artifact_sync(&self, query: &str) -> Result<String> {
+        match self {
+            Self::Onnx { .. } | Self::NativeGGUF { .. } => {
+                let prompt = format!(
+                    "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nYou are a security expert. Analyze this event and return a verdict.<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+                    query
+                );
+                self.generate_text_sync(&prompt, 128)
+            }
+            Self::Candle(judge) => judge.judge_artifact(query),
+            Self::Ollama { .. } => {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(self.judge_artifact_ollama(query))
+            }
+        }
+    }
+
+    pub fn get_tokenizer(&self) -> Option<&Tokenizer> {
+        match self {
+            Self::Onnx { tokenizer, .. } => Some(tokenizer),
+            Self::NativeGGUF { tokenizer, .. } => Some(tokenizer),
+            Self::Candle(judge) => Some(&judge.tokenizer),
+            Self::Ollama { .. } => None,
+        }
+    }
+
+    async fn judge_artifact_ollama(&self, query: &str) -> Result<String> {
+        if let Self::Ollama { client, model, endpoint } = self {
+            let payload = serde_json::json!({
+                "model": model,
+                "prompt": query,
+                "stream": false
+            });
+            let ai = osoosi_types::config::load_ai_config();
+            let timeout = std::time::Duration::from_secs(ai.llm_timeout_secs);
+            
+            let res = client.post(endpoint)
+                .json(&payload)
+                .timeout(timeout)
+                .send()
+                .await?;
+            let json: serde_json::Value = res.json().await?;
+            Ok(json["response"].as_str().unwrap_or_default().to_string())
+        } else {
+            anyhow::bail!("Not an Ollama analyzer")
+        }
+    }
+
+    pub fn generate_text_sync(&self, prompt: &str, max_tokens: usize) -> Result<String> {
+        match self {
+            Self::Onnx { session, tokenizer, .. } => {
+                let mut tokens_vec = tokenizer.encode(prompt, true).map_err(anyhow::Error::msg)?.get_ids().to_vec();
+                let mut result_text = String::new();
+
+                for _ in 0..max_tokens {
+                    let mut session_guard = session.lock().unwrap();
+                    let input_val = ort::value::Value::from_array(([1, tokens_vec.len()], tokens_vec.iter().map(|&x| x as i64).collect::<Vec<_>>()))?;
+                    let outputs = session_guard.run(ort::inputs![input_val])?;
+                    let (shape, data) = outputs[0].try_extract_tensor::<f32>()?;
+                    let dims: Vec<usize> = shape.iter().map(|&d| d as usize).collect();
+                    let view = ndarray::ArrayView::from_shape(dims, data)?;
+                    
+                    let last_token_logits = view.slice(ndarray::s![0, -1, ..]);
+                    let next_token = last_token_logits
+                        .iter()
+                        .enumerate()
+                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                        .map(|(i, _)| i as u32)
+                        .unwrap_or(0);
+
+                    tokens_vec.push(next_token);
+                    let decoded = tokenizer.decode(&[next_token], true).map_err(anyhow::Error::msg)?;
+                    if decoded.is_empty() || next_token == 0 {
+                        break;
+                    }
+                    result_text.push_str(&decoded);
+                }
+                Ok(result_text)
+            }
+            Self::Candle(judge) => judge.judge_artifact(prompt),
+            Self::NativeGGUF { model, tokenizer, device } => {
+                let ai = osoosi_types::config::load_ai_config();
+                let timeout = std::time::Duration::from_secs(ai.llm_timeout_secs);
+                let start = std::time::Instant::now();
+
+                let encoding = tokenizer.encode(prompt, true).map_err(anyhow::Error::msg)?;
+                let prompt_tokens = encoding.get_ids().to_vec();
+                let mut all_tokens = prompt_tokens.clone();
+                let mut model_guard = model.lock().unwrap();
+                let mut result_text = String::new();
+
+                let input = Tensor::new(&prompt_tokens[..], device)?.unsqueeze(0)?;
+                let logits = model_guard.forward(&input, 0).map_err(|e| anyhow::anyhow!("GGUF forward: {}", e))?;
+                let logits = logits.squeeze(0).map_err(|e| anyhow::anyhow!("{}", e))?;
+                let next_token = logits
+                    .to_vec1::<f32>()
+                    .map_err(|e| anyhow::anyhow!("{}", e))?
+                    .iter()
+                    .enumerate()
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                    .map(|(i, _)| i as u32)
+                    .unwrap_or(0);
+                all_tokens.push(next_token);
+
+                let eos_token = 128009u32; // Llama 3 EOS token
+                let max_gen = max_tokens.min(64);
+                for _ in 0..max_gen {
+                    if start.elapsed() > timeout {
+                        return Err(anyhow::anyhow!("GGUF timed out"));
+                    }
+                    let last = *all_tokens.last().unwrap();
+                    if last == eos_token || last == 0 {
+                        break;
+                    }
+                    let decoded = tokenizer.decode(&[last], true).map_err(anyhow::Error::msg)?;
+                    if decoded.is_empty() {
+                        break;
+                    }
+                    result_text.push_str(&decoded);
+
+                    let input = Tensor::new(&[last], device)?.unsqueeze(0)?;
+                    let logits = model_guard.forward(&input, all_tokens.len() - 1).map_err(|e| anyhow::anyhow!("{}", e))?;
+                    let logits = logits.squeeze(0).map_err(|e| anyhow::anyhow!("{}", e))?;
+                    let next = logits
+                        .to_vec1::<f32>()
+                        .map_err(|e| anyhow::anyhow!("{}", e))?
+                        .iter()
+                        .enumerate()
+                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                        .map(|(i, _)| i as u32)
+                        .unwrap_or(0);
+                    all_tokens.push(next);
+                }
+
+                Ok(result_text)
+            }
+            Self::Ollama { .. } => {
+                let rt = tokio::runtime::Handle::current();
+                rt.block_on(self.judge_artifact_ollama(prompt))
+            }
+        }
+    }
+}

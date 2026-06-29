@@ -88,7 +88,12 @@ impl BehavioralAnalyzer {
             embedder,
         };
 
-        if std::env::var("OSOOSI_ENABLE_SMOLLM")
+        let models_dir = osoosi_types::resolve_models_dir();
+        let smollm_dir = std::path::Path::new(&models_dir).join("smollm");
+        let has_smollm = smollm_dir.join("config.json").exists()
+            && smollm_dir.join("model.safetensors").exists()
+            && smollm_dir.join("tokenizer.json").exists();
+        if has_smollm || std::env::var("OSOOSI_ENABLE_SMOLLM")
             .map(|v| v == "1")
             .unwrap_or(false)
         {

@@ -486,6 +486,24 @@ impl ThreatVoter for MemoryInspectionVoter {
                                 weight: 1.0,
                             });
                         }
+                        if !findings.byte_patches.is_empty() {
+                            return Some(VoteResult {
+                                confidence: 0.98,
+                                reason: format!(
+                                    "MemoryInspection: User-mode unhooking/byte patches detected in PID {}: {}",
+                                    pid,
+                                    findings.byte_patches.join("; ")
+                                ),
+                                weight: 1.0,
+                            });
+                        }
+                        if findings.has_spoofed_stack {
+                            return Some(VoteResult {
+                                confidence: 0.95,
+                                reason: format!("MemoryInspection: Call stack spoofing detected in PID {}", pid),
+                                weight: 0.95,
+                            });
+                        }
                     }
                     None
                 }).await.ok().flatten()

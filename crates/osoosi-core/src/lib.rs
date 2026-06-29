@@ -958,7 +958,10 @@ impl EdrOrchestrator {
 
         let behavioral_debouncer = Arc::new(dashmap::DashMap::new());
 
-        let behavioral_engine = if std::env::var("OSOOSI_ENABLE_SMOLLM")
+        let has_smollm = smollm_dir.join("config.json").exists()
+            && smollm_dir.join("model.safetensors").exists()
+            && smollm_dir.join("tokenizer.json").exists();
+        let behavioral_engine = if has_smollm || std::env::var("OSOOSI_ENABLE_SMOLLM")
             .map(|v| v == "1")
             .unwrap_or(false)
         {
@@ -1026,7 +1029,35 @@ impl EdrOrchestrator {
         } else {
             None
         };
-        let storyteller = Arc::new(crate::forensics::ForensicStoryteller::new(gemma_cortex.clone()));
+
+        let foundation_sec_dir = std::env::var("OSOOSI_FOUNDATION_SEC_DIR")
+            .map(std::path::PathBuf::from)
+            .unwrap_or_else(|_| {
+                models_dir.join("foundation-sec")
+            });
+
+        let foundation_sec_cortex = if foundation_sec_dir.exists() || std::env::var("OSOOSI_FOUNDATION_SEC_ENABLED").unwrap_or_default() == "1" || osoosi_types::config::load_ai_config().foundation_sec_enabled {
+            match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
+                osoosi_behavioral::FoundationSecAnalyzer::new(&foundation_sec_dir)
+            })) {
+                Ok(Ok(analyzer)) => Some(Arc::new(analyzer)),
+                Ok(Err(e)) => {
+                    warn!("FoundationSec cortex failed to load: {}.", e);
+                    None
+                }
+                Err(_) => {
+                    warn!("FoundationSec init panicked.");
+                    None
+                }
+            }
+        } else {
+            None
+        };
+
+        let storyteller = Arc::new(crate::forensics::ForensicStoryteller::new(
+            gemma_cortex.clone(),
+            foundation_sec_cortex.clone(),
+        ));
 
         let provisioner = Arc::new(osoosi_telemetry::AgentProvisioner::new(
             host_executor.clone(),
@@ -1055,6 +1086,12 @@ impl EdrOrchestrator {
         if let Some(ref gemma) = gemma_cortex {
             policy.add_voter(Box::new(osoosi_policy::voters::GemmaVoter::new(
                 gemma.clone(),
+            ))).await;
+        }
+
+        if let Some(ref foundation_sec) = foundation_sec_cortex {
+            policy.add_voter(Box::new(osoosi_policy::voters::FoundationSecVoter::new(
+                foundation_sec.clone(),
             ))).await;
         }
 
