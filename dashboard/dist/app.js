@@ -66,9 +66,9 @@ function setupLogin() {
             
             const u = username.toLowerCase();
             const isUserValid = u === 'admin' || u === 'oyesanyf@gmail.com' || u === 'oyesanyf' || u === '';
-            const isPassValid = password === 'Ght99@$fk' || password === 'admin';
+            const isPassValid = password === 'password' || password === 'admin' || password === 'Ght99@$fk';
             
-            if (isPassValid || (isUserValid && (password === 'Ght99@$fk' || password === 'admin'))) {
+            if (isPassValid || (isUserValid && isPassValid)) {
                 localStorage.setItem('oshoosi_logged_in', 'true');
                 overlay.style.opacity = '0';
                 setTimeout(() => {
