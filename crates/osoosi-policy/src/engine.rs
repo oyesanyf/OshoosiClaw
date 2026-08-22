@@ -328,14 +328,19 @@ impl PolicyEngine {
             fetcher: Arc::new(crate::feed::ThreatFeedFetcher::new()),
             intel_broadcaster: Arc::new(tokio::sync::RwLock::new(None)),
             cve_cache: {
-                let db_path = std::path::Path::new("C:\\ProgramData\\OshoosiClaw\\nvd_cache.db");
+                let local_path = std::path::Path::new("database").join("nvd_cache.db");
+                let db_path = if local_path.parent().map(|p| p.exists()).unwrap_or(false) || std::fs::create_dir_all("database").is_ok() {
+                    local_path
+                } else {
+                    std::path::PathBuf::from("C:\\ProgramData\\OshoosiClaw\\nvd_cache.db")
+                };
                 if let Some(parent) = db_path.parent() {
                     let _ = std::fs::create_dir_all(parent);
                 }
-                match crate::cve_cache::CveCache::new(db_path) {
+                match crate::cve_cache::CveCache::new(&db_path) {
                     Ok(cache) => Some(Arc::new(tokio::sync::Mutex::new(cache))),
                     Err(e) => {
-                        warn!("Failed to initialize NVD SQLite cache: {}", e);
+                        warn!("Failed to initialize NVD SQLite cache at {:?}: {}", db_path, e);
                         None
                     }
                 }

@@ -471,68 +471,77 @@ impl Gemma4Analyzer {
     }
 
     pub async fn reason_about_attack(&self, graph_summary: &str) -> Result<String> {
-        let analyzer = Arc::new(self.clone());
-        let summary = graph_summary.to_string();
-
-        tokio::task::spawn_blocking(move || {
-            // 1. COMPRESSION: Use compression-prompt to reduce token count of the summary
-            let compressed_summary = if let Some(tokenizer) = analyzer.get_tokenizer() {
-                let config = compression_prompt::CompressorConfig {
-                    filter_config: compression_prompt::StatisticalFilterConfig {
-                        compression_ratio: 0.6, // Target 60% of original size
-                        ..Default::default()
-                    },
+        let compressed_summary = if let Some(tokenizer) = self.get_tokenizer() {
+            let config = compression_prompt::CompressorConfig {
+                filter_config: compression_prompt::StatisticalFilterConfig {
+                    compression_ratio: 0.6, // Target 60% of original size
                     ..Default::default()
-                };
-                let compressor = compression_prompt::Compressor::new(config);
-                match compressor.compress(&summary, tokenizer) {
-                    Ok(res) => {
-                        info!("Prompt compressed: {} -> {} tokens ({:.1}% savings)", 
-                            res.original_tokens, res.compressed_tokens, (1.0 - res.compression_ratio) * 100.0);
-                        res.compressed_text
-                    }
-                    Err(e) => {
-                        warn!("Compression failed, using raw summary: {}", e);
-                        summary
-                    }
-                }
-            } else {
-                summary
+                },
+                ..Default::default()
             };
+            let compressor = compression_prompt::Compressor::new(config);
+            match compressor.compress(graph_summary, tokenizer) {
+                Ok(res) => {
+                    info!("Prompt compressed: {} -> {} tokens ({:.1}% savings)", 
+                        res.original_tokens, res.compressed_tokens, (1.0 - res.compression_ratio) * 100.0);
+                    res.compressed_text
+                }
+                Err(e) => {
+                    warn!("Compression failed, using raw summary: {}", e);
+                    graph_summary.to_string()
+                }
+            }
+        } else {
+            graph_summary.to_string()
+        };
 
-            // Short, focused prompt to minimize prefill time on CPU
-            let prompt = format!(
-                "<|im_start|>system\nClassify this event as malicious, suspicious, or benign. One sentence max.\n<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
-                compressed_summary
-            );
-            let raw = analyzer.judge_artifact_sync(&prompt)?;
+        // Short, focused prompt to minimize prefill time on CPU
+        let prompt = format!(
+            "<|im_start|>system\nClassify this event as malicious, suspicious, or benign. One sentence max.\n<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
+            compressed_summary
+        );
 
-            // Strip thinking traces from all backends
-            Ok(strip_deepseek_thinking(&raw))
-        }).await?
+        let raw = match self {
+            Self::Ollama { .. } => self.judge_artifact_ollama(&prompt).await?,
+            _ => {
+                let analyzer = Arc::new(self.clone());
+                let p = prompt.clone();
+                tokio::task::spawn_blocking(move || {
+                    analyzer.judge_artifact_sync(&p)
+                }).await??
+            }
+        };
+
+        // Strip thinking traces from all backends
+        Ok(strip_deepseek_thinking(&raw))
     }
 
     /// Higher-level forensic triage (judge artifact)
     pub async fn judge_artifact(&self, query: &str) -> Result<String> {
-        let analyzer = Arc::new(self.clone());
-        let q = query.to_string();
-        tokio::task::spawn_blocking(move || {
-            // 1. COMPRESSION: Attempt compression if a tokenizer is available
-            let compressed_query = if let Some(tokenizer) = analyzer.get_tokenizer() {
-                let config = compression_prompt::CompressorConfig {
-                    filter_config: compression_prompt::StatisticalFilterConfig {
-                        compression_ratio: 0.6,
-                        ..Default::default()
-                    },
+        let compressed_query = if let Some(tokenizer) = self.get_tokenizer() {
+            let config = compression_prompt::CompressorConfig {
+                filter_config: compression_prompt::StatisticalFilterConfig {
+                    compression_ratio: 0.6,
                     ..Default::default()
-                };
-                let compressor = compression_prompt::Compressor::new(config);
-                compressor.compress(&q, tokenizer).map(|res| res.compressed_text).unwrap_or(q)
-            } else {
-                q
+                },
+                ..Default::default()
             };
-            analyzer.judge_artifact_sync(&compressed_query)
-        }).await?
+            let compressor = compression_prompt::Compressor::new(config);
+            compressor.compress(query, tokenizer).map(|res| res.compressed_text).unwrap_or_else(|_| query.to_string())
+        } else {
+            query.to_string()
+        };
+
+        match self {
+            Self::Ollama { .. } => self.judge_artifact_ollama(&compressed_query).await,
+            _ => {
+                let analyzer = Arc::new(self.clone());
+                let q = compressed_query;
+                tokio::task::spawn_blocking(move || {
+                    analyzer.judge_artifact_sync(&q)
+                }).await?
+            }
+        }
     }
 
     pub fn judge_artifact_sync(&self, query: &str) -> Result<String> {
@@ -543,9 +552,19 @@ impl Gemma4Analyzer {
                 self.generate_text_sync(&prompt, 128)
             }
             Self::Candle(judge) => judge.judge_artifact(query),
-            Self::Ollama { .. } => {
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(self.judge_artifact_ollama(query))
+            Self::Ollama { model, endpoint, .. } => {
+                let ai = osoosi_types::config::load_ai_config();
+                let payload = serde_json::json!({
+                    "model": model,
+                    "prompt": query,
+                    "stream": false
+                });
+                let client = reqwest::blocking::Client::builder()
+                    .timeout(std::time::Duration::from_secs(ai.llm_timeout_secs))
+                    .build()?;
+                let res = client.post(endpoint).json(&payload).send()?;
+                let json: serde_json::Value = res.json()?;
+                Ok(json["response"].as_str().unwrap_or_default().to_string())
             }
         }
     }
@@ -1176,56 +1195,68 @@ impl FoundationSecAnalyzer {
     }
     
     pub async fn reason_about_attack(&self, graph_summary: &str) -> Result<String> {
-        let analyzer = Arc::new(self.clone());
-        let summary = graph_summary.to_string();
-
-        tokio::task::spawn_blocking(move || {
-            let compressed_summary = if let Some(tokenizer) = analyzer.get_tokenizer() {
-                let config = compression_prompt::CompressorConfig {
-                    filter_config: compression_prompt::StatisticalFilterConfig {
-                        compression_ratio: 0.6,
-                        ..Default::default()
-                    },
+        let compressed_summary = if let Some(tokenizer) = self.get_tokenizer() {
+            let config = compression_prompt::CompressorConfig {
+                filter_config: compression_prompt::StatisticalFilterConfig {
+                    compression_ratio: 0.6,
                     ..Default::default()
-                };
-                let compressor = compression_prompt::Compressor::new(config);
-                match compressor.compress(&summary, tokenizer) {
-                    Ok(res) => res.compressed_text,
-                    Err(_) => summary,
-                }
-            } else {
-                summary
+                },
+                ..Default::default()
             };
+            let compressor = compression_prompt::Compressor::new(config);
+            match compressor.compress(graph_summary, tokenizer) {
+                Ok(res) => res.compressed_text,
+                Err(_) => graph_summary.to_string(),
+            }
+        } else {
+            graph_summary.to_string()
+        };
 
-            // Llama 3.1 system/user formatting
-            let prompt = format!(
-                "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nYou are a security expert. Classify this event as malicious, suspicious, or benign. One sentence max.<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
-                compressed_summary
-            );
-            let raw = analyzer.judge_artifact_sync(&prompt)?;
-            Ok(strip_deepseek_thinking(&raw))
-        }).await?
+        // Llama 3.1 system/user formatting
+        let prompt = format!(
+            "<|begin_of_text|><|start_header_id|>system<|end_header_id|>\n\nYou are a security expert. Classify this event as malicious, suspicious, or benign. One sentence max.<|eot_id|><|start_header_id|>user<|end_header_id|>\n\n{}<|eot_id|><|start_header_id|>assistant<|end_header_id|>\n\n",
+            compressed_summary
+        );
+
+        let raw = match self {
+            Self::Ollama { .. } => self.judge_artifact_ollama(&prompt).await?,
+            _ => {
+                let analyzer = Arc::new(self.clone());
+                let p = prompt.clone();
+                tokio::task::spawn_blocking(move || {
+                    analyzer.judge_artifact_sync(&p)
+                }).await??
+            }
+        };
+
+        Ok(strip_deepseek_thinking(&raw))
     }
 
     pub async fn judge_artifact(&self, query: &str) -> Result<String> {
-        let analyzer = Arc::new(self.clone());
-        let q = query.to_string();
-        tokio::task::spawn_blocking(move || {
-            let compressed_query = if let Some(tokenizer) = analyzer.get_tokenizer() {
-                let config = compression_prompt::CompressorConfig {
-                    filter_config: compression_prompt::StatisticalFilterConfig {
-                        compression_ratio: 0.6,
-                        ..Default::default()
-                    },
+        let compressed_query = if let Some(tokenizer) = self.get_tokenizer() {
+            let config = compression_prompt::CompressorConfig {
+                filter_config: compression_prompt::StatisticalFilterConfig {
+                    compression_ratio: 0.6,
                     ..Default::default()
-                };
-                let compressor = compression_prompt::Compressor::new(config);
-                compressor.compress(&q, tokenizer).map(|res| res.compressed_text).unwrap_or(q)
-            } else {
-                q
+                },
+                ..Default::default()
             };
-            analyzer.judge_artifact_sync(&compressed_query)
-        }).await?
+            let compressor = compression_prompt::Compressor::new(config);
+            compressor.compress(query, tokenizer).map(|res| res.compressed_text).unwrap_or_else(|_| query.to_string())
+        } else {
+            query.to_string()
+        };
+
+        match self {
+            Self::Ollama { .. } => self.judge_artifact_ollama(&compressed_query).await,
+            _ => {
+                let analyzer = Arc::new(self.clone());
+                let q = compressed_query;
+                tokio::task::spawn_blocking(move || {
+                    analyzer.judge_artifact_sync(&q)
+                }).await?
+            }
+        }
     }
 
     pub fn judge_artifact_sync(&self, query: &str) -> Result<String> {
@@ -1238,9 +1269,19 @@ impl FoundationSecAnalyzer {
                 self.generate_text_sync(&prompt, 128)
             }
             Self::Candle(judge) => judge.judge_artifact(query),
-            Self::Ollama { .. } => {
-                let rt = tokio::runtime::Handle::current();
-                rt.block_on(self.judge_artifact_ollama(query))
+            Self::Ollama { model, endpoint, .. } => {
+                let ai = osoosi_types::config::load_ai_config();
+                let payload = serde_json::json!({
+                    "model": model,
+                    "prompt": query,
+                    "stream": false
+                });
+                let client = reqwest::blocking::Client::builder()
+                    .timeout(std::time::Duration::from_secs(ai.llm_timeout_secs))
+                    .build()?;
+                let res = client.post(endpoint).json(&payload).send()?;
+                let json: serde_json::Value = res.json()?;
+                Ok(json["response"].as_str().unwrap_or_default().to_string())
             }
         }
     }
