@@ -76,7 +76,11 @@
                     <span id="agent-status-text">Agent Online</span>
                 </div>
                 <div class="node-id-label">Node ID: <span id="node-id-short">...</span></div>
-                <a href="#" id="logout-btn" class="nav-item" style="margin-top: 16px; border: 1px solid rgba(255, 77, 77, 0.2); color: rgba(255, 77, 77, 0.7); display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 12px; text-decoration: none; font-size: 14px; font-weight: 500;">
+                <a href="#" id="reset-password-nav-btn" class="nav-item" style="margin-top: 12px; border: 1px solid var(--glass-border); color: var(--text-primary); display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 12px; text-decoration: none; font-size: 14px; font-weight: 500;">
+                    <i data-lucide="key-round" style="width: 18px; height: 18px; color: var(--accent-blue);"></i>
+                    <span>Admin Settings</span>
+                </a>
+                <a href="#" id="logout-btn" class="nav-item" style="margin-top: 8px; border: 1px solid rgba(255, 77, 77, 0.2); color: rgba(255, 77, 77, 0.7); display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 12px; text-decoration: none; font-size: 14px; font-weight: 500;">
                     <i data-lucide="log-out" style="width: 18px; height: 18px;"></i>
                     <span>Log Out</span>
                 </a>
@@ -94,6 +98,10 @@
                         <i data-lucide="search"></i>
                         <input type="text" id="search-input" placeholder="Search threats, files, or nodes...">
                     </div>
+                    <button id="admin-settings-top-btn" class="icon-btn glass" title="Admin Security Settings" style="background: rgba(13, 17, 23, 0.7); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 8px 12px; border-radius: 10px; display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                        <i data-lucide="shield" style="width: 16px; height: 16px; color: var(--accent-blue);"></i>
+                        <span>Admin</span>
+                    </button>
                     <div class="notification-bell">
                         <i data-lucide="bell"></i>
                         <span class="notification-badge">0</span>
@@ -509,6 +517,37 @@
                     <i data-lucide="shield-check" style="width: 18px; height: 18px;"></i>
                 </button>
                 <div id="login-error" class="login-error">Invalid username or password.</div>
+            </form>
+        </div>
+    </div>
+
+    <!-- Password Reset Modal -->
+    <div id="password-reset-modal" class="login-overlay" style="display: none; background: rgba(7, 9, 13, 0.85); backdrop-filter: blur(16px); z-index: 10000;">
+        <div class="login-card" style="max-width: 420px;">
+            <div class="login-logo" style="margin-bottom: 20px;">
+                <div class="login-logo-icon">🔑</div>
+                <h1 class="login-logo-text">Admin <span>Security</span></h1>
+            </div>
+            <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 20px; text-align: center;">Update or reset the dashboard administrator access credentials.</p>
+            <form id="password-reset-form" class="login-form">
+                <div class="form-group">
+                    <label for="new-password">New Password</label>
+                    <input type="password" id="new-password" placeholder="Enter new password (or blank to reset)..." autocomplete="new-password">
+                </div>
+                <div class="form-group">
+                    <label for="confirm-password">Confirm Password</label>
+                    <input type="password" id="confirm-password" placeholder="Confirm new password..." autocomplete="new-password">
+                </div>
+                <div style="display: flex; gap: 12px; margin-top: 8px;">
+                    <button type="submit" class="login-btn" style="flex: 1;">
+                        <span>Save Password</span>
+                        <i data-lucide="check" style="width: 16px; height: 16px;"></i>
+                    </button>
+                    <button type="button" id="cancel-password-reset-btn" class="login-btn" style="flex: 1; background: rgba(255, 255, 255, 0.08); border-color: var(--glass-border); color: var(--text-primary);">
+                        <span>Cancel</span>
+                    </button>
+                </div>
+                <div id="password-reset-msg" class="login-error" style="display: none;"></div>
             </form>
         </div>
     </div>

@@ -28,6 +28,7 @@ let updateInterval = null;
  */
 function init() {
     setupLogin();
+    setupPasswordResetModal();
     setupNav();
     setupSearch();
     
@@ -64,9 +65,10 @@ function setupLogin() {
             const username = usernameInput ? usernameInput.value.trim() : '';
             const password = passwordInput ? passwordInput.value.trim() : '';
             
+            const customPass = localStorage.getItem('oshoosi_custom_password');
             const u = username.toLowerCase();
             const isUserValid = u === 'admin' || u === 'oyesanyf@gmail.com' || u === 'oyesanyf' || u === '';
-            const isPassValid = password === 'password' || password === 'admin' || password === 'Ght99@$fk';
+            const isPassValid = (customPass && password === customPass) || password === 'password' || password === 'admin' || password === 'Ght99@$fk';
             
             if (isPassValid || (isUserValid && isPassValid)) {
                 localStorage.setItem('oshoosi_logged_in', 'true');
@@ -95,6 +97,81 @@ function setupLogin() {
             e.preventDefault();
             localStorage.setItem('oshoosi_logged_in', 'false');
             window.location.reload();
+        });
+    }
+}
+
+function setupPasswordResetModal() {
+    const modal = document.getElementById('password-reset-modal');
+    const topBtn = document.getElementById('admin-settings-top-btn');
+    const navBtn = document.getElementById('reset-password-nav-btn');
+    const cancelBtn = document.getElementById('cancel-password-reset-btn');
+    const form = document.getElementById('password-reset-form');
+    const newPassInput = document.getElementById('new-password');
+    const confirmPassInput = document.getElementById('confirm-password');
+    const msgDiv = document.getElementById('password-reset-msg');
+    
+    function openModal(e) {
+        if (e) e.preventDefault();
+        if (modal) {
+            modal.style.display = 'flex';
+            modal.style.opacity = '1';
+        }
+        if (newPassInput) newPassInput.value = '';
+        if (confirmPassInput) confirmPassInput.value = '';
+        if (msgDiv) {
+            msgDiv.style.display = 'none';
+            msgDiv.innerText = '';
+        }
+        if (newPassInput) newPassInput.focus();
+    }
+    
+    function closeModal() {
+        if (modal) {
+            modal.style.display = 'none';
+        }
+        if (newPassInput) newPassInput.value = '';
+        if (confirmPassInput) confirmPassInput.value = '';
+        if (msgDiv) {
+            msgDiv.style.display = 'none';
+        }
+    }
+    
+    if (topBtn) topBtn.addEventListener('click', openModal);
+    if (navBtn) navBtn.addEventListener('click', openModal);
+    if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
+    
+    if (form) {
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const newPass = newPassInput ? newPassInput.value.trim() : '';
+            const confirmPass = confirmPassInput ? confirmPassInput.value.trim() : '';
+            
+            if (!msgDiv) return;
+            
+            if (!newPass && !confirmPass) {
+                // Blanked out -> Reset to default
+                localStorage.removeItem('oshoosi_custom_password');
+                msgDiv.style.display = 'block';
+                msgDiv.style.color = '#00ff7f';
+                msgDiv.innerText = 'Password reset to default (password).';
+                setTimeout(closeModal, 1200);
+                return;
+            }
+            
+            if (newPass !== confirmPass) {
+                msgDiv.style.display = 'block';
+                msgDiv.style.color = '#ff4d4d';
+                msgDiv.innerText = 'Passwords do not match.';
+                return;
+            }
+            
+            // Save new password
+            localStorage.setItem('oshoosi_custom_password', newPass);
+            msgDiv.style.display = 'block';
+            msgDiv.style.color = '#00ff7f';
+            msgDiv.innerText = 'Password updated successfully!';
+            setTimeout(closeModal, 1200);
         });
     }
 }
