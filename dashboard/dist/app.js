@@ -21,14 +21,81 @@ const state = {
     _pollInFlight: false
 };
 
+let updateInterval = null;
+
 /**
  * Initialize Lucide icons and start polling
  */
 function init() {
+    setupLogin();
     setupNav();
     setupSearch();
+    
+    if (localStorage.getItem('oshoosi_logged_in') === 'true') {
+        startApp();
+    }
+}
+
+function startApp() {
     updateDashboard();
-    setInterval(updateDashboard, POLL_INTERVAL);
+    if (!updateInterval) {
+        updateInterval = setInterval(updateDashboard, POLL_INTERVAL);
+    }
+}
+
+function setupLogin() {
+    const overlay = document.getElementById('login-overlay');
+    const form = document.getElementById('login-form');
+    const errorDiv = document.getElementById('login-error');
+    const logoutBtn = document.getElementById('logout-btn');
+    
+    const isLoggedIn = localStorage.getItem('oshoosi_logged_in') === 'true';
+    if (isLoggedIn) {
+        overlay.style.display = 'none';
+    } else {
+        overlay.style.display = 'flex';
+    }
+    
+    if (form) {
+        form.addEventListener('submit', (e) => {
+            e.preventDefault();
+            const usernameInput = document.getElementById('login-username');
+            const passwordInput = document.getElementById('login-password');
+            const username = usernameInput ? usernameInput.value.trim() : '';
+            const password = passwordInput ? passwordInput.value.trim() : '';
+            
+            const validUsers = ['admin', 'oyesanyf@gmail.com'];
+            const validPasswords = ['Ght99@$fk', 'admin'];
+            
+            if (validUsers.includes(username.toLowerCase()) && validPasswords.includes(password)) {
+                localStorage.setItem('oshoosi_logged_in', 'true');
+                overlay.style.opacity = '0';
+                setTimeout(() => {
+                    overlay.style.display = 'none';
+                    overlay.style.opacity = '1';
+                }, 300);
+                errorDiv.style.display = 'none';
+                
+                startApp();
+            } else {
+                errorDiv.style.display = 'block';
+                const card = document.querySelector('.login-card');
+                if (card) {
+                    card.style.animation = 'none';
+                    void card.offsetWidth; // Trigger reflow
+                    card.style.animation = 'login-shake 0.4s ease';
+                }
+            }
+        });
+    }
+    
+    if (logoutBtn) {
+        logoutBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            localStorage.setItem('oshoosi_logged_in', 'false');
+            window.location.reload();
+        });
+    }
 }
 
 /**
@@ -126,14 +193,15 @@ async function updateDashboard() {
     if (state._pollInFlight) return;
     state._pollInFlight = true;
     try {
-        const [status, threats, mesh, activity, malwareDetections, repairStatus, telemetryData] = await Promise.all([
+        const [status, threats, mesh, activity, malwareDetections, repairStatus, telemetryData, detectionStats] = await Promise.all([
             fetchAPI('/status'),
             fetchAPI('/threats'),
             fetchAPI('/mesh-stats'),
             fetchAPI('/activity'),
             fetchAPI('/malware-detections'),
             fetchAPI('/repair-status'),
-            fetchAPI('/telemetry/timeseries')
+            fetchAPI('/telemetry/timeseries'),
+            fetchAPI('/detection-stats')
         ]);
 
         if (status) {
@@ -174,6 +242,10 @@ async function updateDashboard() {
 
         if (telemetryData) {
             updateTelemetryChart(telemetryData);
+        }
+
+        if (detectionStats) {
+            renderDetectionStats(detectionStats);
         }
 
         // Render views
@@ -457,12 +529,22 @@ function renderThreatsView(threats) {
 /**
  * Render mesh network view
  */
-function renderMeshView(mesh) {
+async function renderMeshView(mesh) {
     const list = document.getElementById('mesh-data-list');
     if (!list) return;
 
-    // Placeholder data rendering
-    list.innerHTML = `
+    let pendingJoins = [];
+    let quarantinedPeers = [];
+    try {
+        const [pj, qp] = await Promise.all([
+            fetchAPI('/pending-joins'),
+            fetchAPI('/quarantined-peers')
+        ]);
+        if (pj) pendingJoins = pj;
+        if (qp) quarantinedPeers = qp;
+    } catch (e) {}
+
+    let html = `
         <div class="timeline-item">
             <div class="item-icon" style="background-color: rgba(0, 210, 255, 0.1); color: var(--accent-blue);">
                 <i data-lucide="network"></i>
@@ -475,8 +557,65 @@ function renderMeshView(mesh) {
             </div>
         </div>
     `;
+
+    if (pendingJoins.length > 0) {
+        html += `<h4 style="margin-top:20px; margin-bottom:10px; color:var(--text-header); font-size:14px;">Pending Joins</h4>`;
+        html += pendingJoins.map(pj => `
+            <div class="timeline-item" style="border-left: 2px solid orange;">
+                <div class="item-icon" style="background-color: rgba(255, 165, 0, 0.1); color: orange;">
+                    <i data-lucide="help-circle"></i>
+                </div>
+                <div class="item-info">
+                    <div class="item-title">${pj.peer_id}</div>
+                    <div class="item-meta">
+                        <span><i data-lucide="map-pin"></i> ${pj.address || 'Unknown'}</span>
+                        <span><i data-lucide="clock"></i> Discovered ${formatTimestamp(pj.discovered_at)}</span>
+                    </div>
+                    <div class="item-actions" style="margin-top:8px;">
+                        <button class="action-btn primary" onclick="meshAllowPeer('${pj.peer_id}')">Allow</button>
+                        <button class="action-btn" onclick="meshDenyPeer('${pj.peer_id}')">Deny</button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    if (quarantinedPeers.length > 0) {
+        html += `<h4 style="margin-top:20px; margin-bottom:10px; color:var(--text-header); font-size:14px;">Quarantined Peers</h4>`;
+        html += quarantinedPeers.map(qp => `
+            <div class="timeline-item" style="border-left: 2px solid var(--accent-red);">
+                <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
+                    <i data-lucide="shield-alert"></i>
+                </div>
+                <div class="item-info">
+                    <div class="item-title">${qp.peer_id}</div>
+                    <div class="item-meta">
+                        <span><i data-lucide="clock"></i> Quarantined ${formatTimestamp(qp.quarantined_at)}</span>
+                    </div>
+                    <div class="item-actions" style="margin-top:8px;">
+                        <button class="action-btn" onclick="meshReleasePeer('${qp.peer_id}')">Release</button>
+                    </div>
+                </div>
+            </div>
+        `).join('');
+    }
+
+    list.innerHTML = html;
     lucide.createIcons();
 }
+
+window.meshAllowPeer = async function(id) {
+    await fetch(\`${API_BASE}/pending-joins/\${id}/allow\`, { method: 'POST' });
+    updateDashboard();
+};
+window.meshDenyPeer = async function(id) {
+    await fetch(\`${API_BASE}/pending-joins/\${id}/deny\`, { method: 'POST' });
+    updateDashboard();
+};
+window.meshReleasePeer = async function(id) {
+    await fetch(\`${API_BASE}/quarantined-peers/\${id}/release\`, { method: 'POST', headers: {'x-osoosi-quarantine-key': 'admin'} });
+    updateDashboard();
+};
 
 /**
  * Render malware scanner view with drill-down details
@@ -1344,4 +1483,83 @@ async function renderGossipView() {
     }).join('');
 
     lucide.createIcons();
+}
+
+/**
+ * Render detection engine statistics
+ */
+function renderDetectionStats(stats) {
+    const grid = document.getElementById('detection-engines-grid');
+    if (!grid) return;
+
+    if (!stats || Object.keys(stats).length === 0) {
+        grid.innerHTML = '<p class="placeholder-text">No active detection engines reported.</p>';
+        return;
+    }
+
+    let html = '';
+    for (const [engine, data] of Object.entries(stats)) {
+        let statsHtml = '';
+        
+        if (engine === 'Sigma-Engine') {
+            statsHtml = `
+                <div class="engine-stat-item">
+                    <span class="engine-stat-label">Rules Loaded</span>
+                    <span class="engine-stat-value active">${data.rule_count || 0}</span>
+                </div>
+                <div class="engine-stat-item">
+                    <span class="engine-stat-label">Detections</span>
+                    <span class="engine-stat-value ${data.total_detections > 0 ? 'high' : ''}">${data.total_detections || 0}</span>
+                </div>
+            `;
+        } else if (engine === 'IOC-Scanner') {
+            statsHtml = `
+                <div class="engine-stat-item">
+                    <span class="engine-stat-label">Indicators</span>
+                    <span class="engine-stat-value active">${data.indicator_count || 0}</span>
+                </div>
+                <div class="engine-stat-item">
+                    <span class="engine-stat-label">Matches</span>
+                    <span class="engine-stat-value ${data.total_detections > 0 ? 'high' : ''}">${data.total_detections || 0}</span>
+                </div>
+            `;
+        } else if (engine.includes('Yara')) {
+             statsHtml = `
+                <div class="engine-stat-item">
+                    <span class="engine-stat-label">Type</span>
+                    <span class="engine-stat-value active">Native YARA-X</span>
+                </div>
+                <div class="engine-stat-item">
+                    <span class="engine-stat-label">Status</span>
+                    <span class="engine-stat-value active">Scanning</span>
+                </div>
+            `;
+        } else {
+             statsHtml = `
+                <div class="engine-stat-item">
+                    <span class="engine-stat-label">Status</span>
+                    <span class="engine-stat-value active">Active</span>
+                </div>
+                <div class="engine-stat-item">
+                    <span class="engine-stat-label">Voter</span>
+                    <span class="engine-stat-value">Policy</span>
+                </div>
+            `;
+        }
+
+        html += `
+            <div class="engine-card">
+                <div class="engine-header">
+                    <span class="engine-name">${engine}</span>
+                    <i data-lucide="cpu" style="width:14px; height:14px; color:var(--text-muted);"></i>
+                </div>
+                <div class="engine-stats">
+                    ${statsHtml}
+                </div>
+            </div>
+        `;
+    }
+
+    grid.innerHTML = html;
+    if (window.lucide) window.lucide.createIcons();
 }

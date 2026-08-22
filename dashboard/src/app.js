@@ -64,7 +64,10 @@ function setupLogin() {
             const username = usernameInput ? usernameInput.value.trim() : '';
             const password = passwordInput ? passwordInput.value.trim() : '';
             
-            if (username === 'admin' && password === 'admin') {
+            const validUsers = ['admin', 'oyesanyf@gmail.com'];
+            const validPasswords = ['Ght99@$fk', 'admin'];
+            
+            if (validUsers.includes(username.toLowerCase()) && validPasswords.includes(password)) {
                 localStorage.setItem('oshoosi_logged_in', 'true');
                 overlay.style.opacity = '0';
                 setTimeout(() => {
