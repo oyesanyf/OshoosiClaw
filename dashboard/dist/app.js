@@ -606,15 +606,15 @@ async function renderMeshView(mesh) {
 }
 
 window.meshAllowPeer = async function(id) {
-    await fetch(\`${API_BASE}/pending-joins/\${id}/allow\`, { method: 'POST' });
+    await fetch(`${API_BASE}/pending-joins/${id}/allow`, { method: 'POST' });
     updateDashboard();
 };
 window.meshDenyPeer = async function(id) {
-    await fetch(\`${API_BASE}/pending-joins/\${id}/deny\`, { method: 'POST' });
+    await fetch(`${API_BASE}/pending-joins/${id}/deny`, { method: 'POST' });
     updateDashboard();
 };
 window.meshReleasePeer = async function(id) {
-    await fetch(\`${API_BASE}/quarantined-peers/\${id}/release\`, { method: 'POST', headers: {'x-osoosi-quarantine-key': 'admin'} });
+    await fetch(`${API_BASE}/quarantined-peers/${id}/release`, { method: 'POST', headers: {'x-osoosi-quarantine-key': 'admin'} });
     updateDashboard();
 };
 
