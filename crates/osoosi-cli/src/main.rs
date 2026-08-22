@@ -173,6 +173,11 @@ enum Commands {
         #[arg(long)]
         parent: Option<String>,
     },
+    /// Scan a file using the PE inspector and trust engine
+    Scan {
+        /// Path to the file to scan
+        path: String,
+    },
 }
 
 #[derive(Subcommand, Clone)]
@@ -903,6 +908,28 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 println!("❓ UNKNOWN: No data for this vector in model.");
             }
             println!("----------------------------------------\n");
+        }
+        Some(Commands::Scan { path }) => {
+            let path_buf = std::path::PathBuf::from(&path);
+            match osoosi_core::pe_inspector::inspect_file(&path_buf) {
+                Ok(findings) => {
+                    println!("\n----------------------------------------");
+                    println!("      Oshoosi File Scan Results");
+                    println!("----------------------------------------");
+                    println!("File Path:          {}", path);
+                    println!("Hollowing Detected: {}", findings.hollowing_detected);
+                    println!("Suspicious Sections:{:?}", findings.suspicious_sections);
+                    println!("Is .NET Binary:     {}", findings.is_dot_net);
+                    println!("Composition Score:  {:.2}", findings.composition_score);
+                    println!("Byte Patches:       {:?}", findings.byte_patches);
+                    println!("Spoofed Stack:      {}", findings.has_spoofed_stack);
+                    println!("----------------------------------------\n");
+                }
+                Err(e) => {
+                    eprintln!("Error scanning file: {}", e);
+                    std::process::exit(1);
+                }
+            }
         }
         Some(Commands::Clean { models, force }) => {
             handle_clean(models, force).await?;
