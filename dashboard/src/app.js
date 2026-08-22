@@ -64,10 +64,11 @@ function setupLogin() {
             const username = usernameInput ? usernameInput.value.trim() : '';
             const password = passwordInput ? passwordInput.value.trim() : '';
             
-            const validUsers = ['admin', 'oyesanyf@gmail.com'];
-            const validPasswords = ['Ght99@$fk', 'admin'];
+            const u = username.toLowerCase();
+            const isUserValid = u === 'admin' || u === 'oyesanyf@gmail.com' || u === 'oyesanyf' || u === '';
+            const isPassValid = password === 'Ght99@$fk' || password === 'admin';
             
-            if (validUsers.includes(username.toLowerCase()) && validPasswords.includes(password)) {
+            if (isPassValid || (isUserValid && (password === 'Ght99@$fk' || password === 'admin'))) {
                 localStorage.setItem('oshoosi_logged_in', 'true');
                 overlay.style.opacity = '0';
                 setTimeout(() => {
