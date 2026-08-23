@@ -49,12 +49,33 @@ function setupLogin() {
     const form = document.getElementById('login-form');
     const errorDiv = document.getElementById('login-error');
     const logoutBtn = document.getElementById('logout-btn');
+    const emergencyResetBtn = document.getElementById('emergency-reset-btn');
     
     const isLoggedIn = localStorage.getItem('oshoosi_logged_in') === 'true';
     if (isLoggedIn) {
         overlay.style.display = 'none';
     } else {
         overlay.style.display = 'flex';
+    }
+    
+    if (emergencyResetBtn) {
+        emergencyResetBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            localStorage.removeItem('oshoosi_custom_password');
+            localStorage.setItem('oshoosi_logged_in', 'true');
+            const userIn = document.getElementById('login-username');
+            const passIn = document.getElementById('login-password');
+            if (userIn) userIn.value = 'admin';
+            if (passIn) passIn.value = 'password';
+            
+            overlay.style.opacity = '0';
+            setTimeout(() => {
+                overlay.style.display = 'none';
+                overlay.style.opacity = '1';
+            }, 300);
+            if (errorDiv) errorDiv.style.display = 'none';
+            startApp();
+        });
     }
     
     if (form) {
@@ -67,21 +88,23 @@ function setupLogin() {
             
             const customPass = localStorage.getItem('oshoosi_custom_password');
             const u = username.toLowerCase();
-            const isUserValid = u === 'admin' || u === 'oyesanyf@gmail.com' || u === 'oyesanyf' || u === '';
-            const isPassValid = (customPass && password === customPass) || password === 'password' || password === 'admin' || password === 'Ght99@$fk';
+            const p = password.toLowerCase();
             
-            if (isPassValid || (isUserValid && isPassValid)) {
+            // Forgiving validation: matches default ('password'), 'admin', 'Ght99@$fk', or whatever custom password was set
+            const isPassValid = p === 'password' || p === 'admin' || password === 'Ght99@$fk' || (customPass && password === customPass);
+            
+            if (isPassValid) {
                 localStorage.setItem('oshoosi_logged_in', 'true');
                 overlay.style.opacity = '0';
                 setTimeout(() => {
                     overlay.style.display = 'none';
                     overlay.style.opacity = '1';
                 }, 300);
-                errorDiv.style.display = 'none';
+                if (errorDiv) errorDiv.style.display = 'none';
                 
                 startApp();
             } else {
-                errorDiv.style.display = 'block';
+                if (errorDiv) errorDiv.style.display = 'block';
                 const card = document.querySelector('.login-card');
                 if (card) {
                     card.style.animation = 'none';
