@@ -813,16 +813,10 @@ impl EdrOrchestrator {
                     }
                 }
                 if nostr_relays.is_empty() {
-                    info!("Nostr Mesh: Geo-bootstrap failed. Falling back to global public defaults.");
-                    nostr_relays = vec![
-                        "ws://71.194.142.20:8080".to_string(),
-                    ];
+                    info!("Nostr Mesh: Geo-bootstrap skipped/empty. P2P libp2p swarm active.");
                 }
             } else {
-                warn!("Nostr Mesh: No private relays configured and allow_public_relays=false. Falling back to global safe relays for critical intelligence.");
-                nostr_relays = vec![
-                    "ws://71.194.142.20:8080".to_string(),
-                ];
+                info!("Nostr Mesh: Public Nostr relays disabled by configuration. Running in pure P2P libp2p mesh mode.");
             }
         }
         

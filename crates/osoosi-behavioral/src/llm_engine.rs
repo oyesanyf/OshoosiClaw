@@ -391,7 +391,18 @@ impl Gemma4Analyzer {
             let _ = std::fs::copy(&onnx_src, &target_onnx);
         }
 
-        let onnx_viable = target_onnx.exists() && std::fs::metadata(&target_onnx).map(|m| m.len()).unwrap_or(0) > 100_000;
+        let mut all_shards_present = true;
+        for i in 1..=8 {
+            let shard = model_dir.join(format!("decoder_model_merged.onnx_data_{}", i));
+            if !shard.exists() || std::fs::metadata(&shard).map(|m| m.len()).unwrap_or(0) == 0 {
+                all_shards_present = false;
+                break;
+            }
+        }
+
+        let onnx_viable = target_onnx.exists() 
+            && std::fs::metadata(&target_onnx).map(|m| m.len()).unwrap_or(0) > 100_000
+            && (all_shards_present || !model_dir.join("decoder_model_merged.onnx_data_1").exists());
 
         if onnx_viable {
             match (|| -> Result<Self> {

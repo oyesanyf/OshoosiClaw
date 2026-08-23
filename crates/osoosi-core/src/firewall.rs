@@ -608,9 +608,9 @@ fn block_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<String> 
             "profile=any",
             &format!("remoteip={}", payload),
         ])
-        .status()?;
+        .output()?;
 
-    if !status.success() {
+    if !status.status.success() {
         let _ = Command::new("netsh")
             .args([
                 "advfirewall",
@@ -621,7 +621,7 @@ fn block_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<String> 
                 "new",
                 "enable=yes",
             ])
-            .status();
+            .output();
     }
 
     save_blocked_rule(BlockedTarget::DnsIps {
@@ -647,7 +647,7 @@ fn unblock_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<()> {
             "rule",
             &format!("name={}", name),
         ])
-        .status()?;
+        .output()?;
     Ok(())
 }
 
