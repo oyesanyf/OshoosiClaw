@@ -893,7 +893,7 @@ pub fn bootstrap_security_rules() {
                     "rule",
                     "name=\"OpenOsoosi-Agent-Allow\"",
                 ])
-                .status();
+                .output();
 
             let _ = Command::new("netsh")
                 .creation_flags(CREATE_NO_WINDOW)
@@ -909,7 +909,7 @@ pub fn bootstrap_security_rules() {
                     "enable=yes",
                     "profile=any",
                 ])
-                .status();
+                .output();
 
             let _ = Command::new("netsh")
                 .creation_flags(CREATE_NO_WINDOW)
@@ -925,7 +925,7 @@ pub fn bootstrap_security_rules() {
                     "enable=yes",
                     "profile=any",
                 ])
-                .status();
+                .output();
 
             // 3. Explicit Port Openings for Mesh & Discovery
             let _ = Command::new("netsh")
@@ -943,7 +943,7 @@ pub fn bootstrap_security_rules() {
                     "enable=yes",
                     "profile=domain,private",
                 ])
-                .status();
+                .output();
             let _ = Command::new("netsh")
                 .creation_flags(CREATE_NO_WINDOW)
                 .args([
@@ -959,7 +959,7 @@ pub fn bootstrap_security_rules() {
                     "enable=yes",
                     "profile=any",
                 ])
-                .status();
+                .output();
 
             // 4. Inbound Web Dashboard (Allow remote access to UI)
             let _ = Command::new("netsh")
@@ -977,7 +977,7 @@ pub fn bootstrap_security_rules() {
                     "enable=yes",
                     "profile=any",
                 ])
-                .status();
+                .output();
             let _ = Command::new("netsh")
                 .creation_flags(CREATE_NO_WINDOW)
                 .args([
@@ -993,7 +993,7 @@ pub fn bootstrap_security_rules() {
                     "enable=yes",
                     "profile=any",
                 ])
-                .status();
+                .output();
 
             // 5. Inbound ICMP (Ping) for connectivity debugging
             let _ = Command::new("netsh")
@@ -1010,7 +1010,7 @@ pub fn bootstrap_security_rules() {
                     "enable=yes",
                     "profile=any",
                 ])
-                .status();
+                .output();
             let _ = Command::new("netsh")
                 .creation_flags(CREATE_NO_WINDOW)
                 .args([
@@ -1025,7 +1025,7 @@ pub fn bootstrap_security_rules() {
                     "enable=yes",
                     "profile=any",
                 ])
-                .status();
+                .output();
         }
     }
 
