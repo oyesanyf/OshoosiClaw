@@ -44,56 +44,103 @@ function startApp() {
     }
 }
 
+async function hashPassword(plainText) {
+    const encoder = new TextEncoder();
+    const data = encoder.encode(plainText);
+    const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
+    const hashArray = Array.from(new Uint8Array(hashBuffer));
+    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+}
+
 function setupLogin() {
     const overlay = document.getElementById('login-overlay');
     const form = document.getElementById('login-form');
     const errorDiv = document.getElementById('login-error');
     const logoutBtn = document.getElementById('logout-btn');
-    const emergencyResetBtn = document.getElementById('emergency-reset-btn');
+    
+    const cardTitle = document.getElementById('login-card-title');
+    const cardSubtitle = document.getElementById('login-card-subtitle');
+    const passwordLabel = document.getElementById('login-password-label');
+    const confirmGroup = document.getElementById('login-confirm-group');
+    const confirmInput = document.getElementById('login-confirm-password');
+    const usernameInput = document.getElementById('login-username');
+    const passwordInput = document.getElementById('login-password');
+    const submitBtnText = document.getElementById('login-btn-text');
+
+    const storedHash = localStorage.getItem('oshoosi_admin_hash');
+    const isFirstTime = !storedHash;
     
     const isLoggedIn = localStorage.getItem('oshoosi_logged_in') === 'true';
-    if (isLoggedIn) {
+    if (isLoggedIn && storedHash) {
         overlay.style.display = 'none';
     } else {
         overlay.style.display = 'flex';
     }
-    
-    if (emergencyResetBtn) {
-        emergencyResetBtn.addEventListener('click', (e) => {
-            e.preventDefault();
-            localStorage.removeItem('oshoosi_custom_password');
-            localStorage.setItem('oshoosi_logged_in', 'true');
-            const userIn = document.getElementById('login-username');
-            const passIn = document.getElementById('login-password');
-            if (userIn) userIn.value = 'admin';
-            if (passIn) passIn.value = 'password';
-            
-            overlay.style.opacity = '0';
-            setTimeout(() => {
-                overlay.style.display = 'none';
-                overlay.style.opacity = '1';
-            }, 300);
-            if (errorDiv) errorDiv.style.display = 'none';
-            startApp();
-        });
+
+    if (isFirstTime) {
+        if (cardTitle) cardTitle.innerHTML = 'Create <span>Admin Password</span>';
+        if (cardSubtitle) {
+            cardSubtitle.style.display = 'block';
+            cardSubtitle.innerText = 'First-time setup: please configure your master administrator credentials.';
+        }
+        if (usernameInput) usernameInput.value = 'admin';
+        if (passwordLabel) passwordLabel.innerText = 'Create Master Password';
+        if (confirmGroup) confirmGroup.style.display = 'block';
+        if (confirmInput) confirmInput.required = true;
+        if (submitBtnText) submitBtnText.innerText = 'Initialize Administrator Account';
+    } else {
+        if (cardTitle) cardTitle.innerHTML = 'Oshoosi<span>Claw</span>';
+        if (cardSubtitle) cardSubtitle.style.display = 'none';
+        if (passwordLabel) passwordLabel.innerText = 'Password';
+        if (confirmGroup) confirmGroup.style.display = 'none';
+        if (confirmInput) confirmInput.required = false;
+        if (submitBtnText) submitBtnText.innerText = 'Access System';
     }
     
     if (form) {
-        form.addEventListener('submit', (e) => {
+        form.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const usernameInput = document.getElementById('login-username');
-            const passwordInput = document.getElementById('login-password');
             const username = usernameInput ? usernameInput.value.trim() : '';
-            const password = passwordInput ? passwordInput.value.trim() : '';
+            const password = passwordInput ? passwordInput.value : '';
+            const confirmPass = confirmInput ? confirmInput.value : '';
             
-            const customPass = localStorage.getItem('oshoosi_custom_password');
-            const u = username.toLowerCase();
-            const p = password.toLowerCase();
-            
-            // Forgiving validation: matches default ('password'), 'admin', 'Ght99@$fk', or whatever custom password was set
-            const isPassValid = p === 'password' || p === 'admin' || password === 'Ght99@$fk' || (customPass && password === customPass);
-            
-            if (isPassValid) {
+            const currentHash = localStorage.getItem('oshoosi_admin_hash');
+
+            if (!currentHash) {
+                // First-time setup mode
+                if (password.length < 6) {
+                    if (errorDiv) {
+                        errorDiv.style.display = 'block';
+                        errorDiv.innerText = 'Password must be at least 6 characters long.';
+                    }
+                    return;
+                }
+                if (password !== confirmPass) {
+                    if (errorDiv) {
+                        errorDiv.style.display = 'block';
+                        errorDiv.innerText = 'Passwords do not match.';
+                    }
+                    return;
+                }
+
+                const hash = await hashPassword(password);
+                localStorage.setItem('oshoosi_admin_hash', hash);
+                localStorage.setItem('oshoosi_admin_user', username || 'admin');
+                localStorage.setItem('oshoosi_logged_in', 'true');
+
+                overlay.style.opacity = '0';
+                setTimeout(() => {
+                    overlay.style.display = 'none';
+                    overlay.style.opacity = '1';
+                }, 300);
+                if (errorDiv) errorDiv.style.display = 'none';
+                startApp();
+                return;
+            }
+
+            // Normal login mode
+            const inputHash = await hashPassword(password);
+            if (inputHash === currentHash) {
                 localStorage.setItem('oshoosi_logged_in', 'true');
                 overlay.style.opacity = '0';
                 setTimeout(() => {
@@ -101,14 +148,16 @@ function setupLogin() {
                     overlay.style.opacity = '1';
                 }, 300);
                 if (errorDiv) errorDiv.style.display = 'none';
-                
                 startApp();
             } else {
-                if (errorDiv) errorDiv.style.display = 'block';
+                if (errorDiv) {
+                    errorDiv.style.display = 'block';
+                    errorDiv.innerText = 'Invalid username or password.';
+                }
                 const card = document.querySelector('.login-card');
                 if (card) {
                     card.style.animation = 'none';
-                    void card.offsetWidth; // Trigger reflow
+                    void card.offsetWidth;
                     card.style.animation = 'login-shake 0.4s ease';
                 }
             }
@@ -165,20 +214,17 @@ function setupPasswordResetModal() {
     if (cancelBtn) cancelBtn.addEventListener('click', closeModal);
     
     if (form) {
-        form.addEventListener('submit', (e) => {
+        form.addEventListener('submit', async (e) => {
             e.preventDefault();
-            const newPass = newPassInput ? newPassInput.value.trim() : '';
-            const confirmPass = confirmPassInput ? confirmPassInput.value.trim() : '';
+            const newPass = newPassInput ? newPassInput.value : '';
+            const confirmPass = confirmPassInput ? confirmPassInput.value : '';
             
             if (!msgDiv) return;
             
-            if (!newPass && !confirmPass) {
-                // Blanked out -> Reset to default
-                localStorage.removeItem('oshoosi_custom_password');
+            if (!newPass || newPass.length < 6) {
                 msgDiv.style.display = 'block';
-                msgDiv.style.color = '#00ff7f';
-                msgDiv.innerText = 'Password reset to default (password).';
-                setTimeout(closeModal, 1200);
+                msgDiv.style.color = '#ff4d4d';
+                msgDiv.innerText = 'New password must be at least 6 characters long.';
                 return;
             }
             
@@ -189,11 +235,12 @@ function setupPasswordResetModal() {
                 return;
             }
             
-            // Save new password
-            localStorage.setItem('oshoosi_custom_password', newPass);
+            // Save new hashed password
+            const newHash = await hashPassword(newPass);
+            localStorage.setItem('oshoosi_admin_hash', newHash);
             msgDiv.style.display = 'block';
             msgDiv.style.color = '#00ff7f';
-            msgDiv.innerText = 'Password updated successfully!';
+            msgDiv.innerText = 'Administrator password updated successfully!';
             setTimeout(closeModal, 1200);
         });
     }
