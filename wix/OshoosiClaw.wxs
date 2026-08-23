@@ -1,0 +1,45 @@
+<Wix xmlns="http://wixtoolset.org/schemas/v4/wxs">
+    <Package Name="OshoosiClaw EDR Agent"
+             Manufacturer="Oshoosi Security"
+             Version="0.1.1"
+             UpgradeCode="8f219b6e-c764-4e20-94b2-c0e0b3c6b12a"
+             Scope="perMachine">
+
+        <MajorUpgrade DowngradeErrorMessage="A newer version of [ProductName] is already installed." />
+        <MediaTemplate EmbedCab="yes" />
+
+        <StandardDirectory Id="ProgramFiles64Folder">
+            <Directory Id="INSTALLFOLDER" Name="OshoosiClaw">
+                <Component Id="MainExecutable" Guid="3e0d8694-5ef8-4903-b1da-5847fa2c03cf" Bitness="always64">
+                    <File Id="OsoosiExe" Source="target\release\osoosi.exe" KeyPath="yes" />
+                </Component>
+
+                <Component Id="ConfigFile" Guid="9dbd0738-9582-4f36-9a2c-f67e2a96f120" Bitness="always64">
+                    <File Id="OsoosiToml" Source="osoosi.toml" KeyPath="yes" />
+                </Component>
+
+                <Component Id="ConfigSig" Guid="e3498bb7-f236-419b-b0b9-5ebec7dc7531" Bitness="always64">
+                    <File Id="ConfigSigFile" Source="osoosi.toml.sign" KeyPath="yes" />
+                </Component>
+
+                <Directory Id="DashboardDistDir" Name="dashboard">
+                    <Directory Id="DistDir" Name="dist">
+                        <Component Id="DashboardAssets" Guid="b4834928-86d1-4475-ba62-ec72f5d918b4" Bitness="always64">
+                            <File Id="DashIndex" Source="dashboard\dist\index.html" KeyPath="yes" />
+                            <File Id="DashApp" Source="dashboard\dist\app.js" />
+                            <File Id="DashStyle" Source="dashboard\dist\style.css" />
+                            <File Id="DashFavicon" Source="dashboard\dist\favicon.svg" />
+                        </Component>
+                    </Directory>
+                </Directory>
+            </Directory>
+        </StandardDirectory>
+
+        <Feature Id="MainFeature" Title="OshoosiClaw Agent Core" Level="1">
+            <ComponentRef Id="MainExecutable" />
+            <ComponentRef Id="ConfigFile" />
+            <ComponentRef Id="ConfigSig" />
+            <ComponentRef Id="DashboardAssets" />
+        </Feature>
+    </Package>
+</Wix>

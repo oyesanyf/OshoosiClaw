@@ -20,6 +20,8 @@
 *.d
 *.dylib
 *.so
+*.wixpdb
+*.msi
 
 # ---------- IDE ----------
 .vscode/
