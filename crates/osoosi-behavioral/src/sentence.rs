@@ -58,28 +58,144 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
         }
     }
 
-    // Sysmon-style (from osoosi-types SysmonEventId)
+    // Sysmon-style (from Event ID 1 to 29)
     if event.source.contains("Sysmon") {
-        if let Some(img) = event.data.get("Image").and_then(|v| v.as_str()) {
-            let exe = std::path::Path::new(img)
-                .file_name()
-                .and_then(|n| n.to_str())
-                .unwrap_or(img);
-            let parent = event
-                .data
-                .get("ParentImage")
-                .and_then(|v| v.as_str())
-                .and_then(|s| std::path::Path::new(s).file_name())
-                .and_then(|n| n.to_str())
-                .unwrap_or("unknown");
-            let cmd = event
-                .data
-                .get("CommandLine")
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
-            parts.push(format!("Process {} started by parent {}.", exe, parent));
-            if !cmd.is_empty() && cmd.len() < 300 {
-                parts.push(format!("Command: {}", cmd));
+        let event_id = event
+            .data
+            .get("EventId")
+            .or(event.data.get("EventID"))
+            .and_then(|v| v.as_i64())
+            .unwrap_or(event.event_id as i64);
+
+        let img = event
+            .data
+            .get("Image")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let exe = std::path::Path::new(img)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(img);
+
+        match event_id {
+            1 => {
+                // Process Creation
+                let parent = event
+                    .data
+                    .get("ParentImage")
+                    .and_then(|v| v.as_str())
+                    .and_then(|s| std::path::Path::new(s).file_name())
+                    .and_then(|n| n.to_str())
+                    .unwrap_or("unknown");
+                let cmd = event
+                    .data
+                    .get("CommandLine")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                parts.push(format!("Process {} started by parent {}.", exe, parent));
+                if !cmd.is_empty() && cmd.len() < 500 {
+                    parts.push(format!("Command: {}", cmd));
+                }
+            }
+            2 => {
+                // Change File Creation Time (Timestomping)
+                let target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("file");
+                parts.push(format!("Process {} altered creation time on {} (Timestomping Anti-Forensics).", exe, target));
+            }
+            3 => {
+                // Network Connect
+                let dest_ip = event.data.get("DestinationIp").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let port = event.data.get("DestinationPort").and_then(|v| v.as_u64()).unwrap_or(0);
+                parts.push(format!("Process {} established network connection to {}:{}.", exe, dest_ip, port));
+            }
+            6 => {
+                // Driver Loaded (Kernel Rootkit / BYOVD)
+                let loaded = event.data.get("ImageLoaded").and_then(|v| v.as_str()).unwrap_or("driver");
+                let sig = event.data.get("Signature").and_then(|v| v.as_str()).unwrap_or("unsigned");
+                parts.push(format!("Kernel driver loaded: {} (Signature: {}).", loaded, sig));
+            }
+            7 => {
+                // Image Loaded (DLL Hijacking)
+                let loaded = event.data.get("ImageLoaded").and_then(|v| v.as_str()).unwrap_or("module");
+                let sig = event.data.get("Signature").and_then(|v| v.as_str()).unwrap_or("unsigned");
+                parts.push(format!("Process {} loaded dynamic module {} (Signature: {}).", exe, loaded, sig));
+            }
+            8 => {
+                // CreateRemoteThread (Process Injection)
+                let target = event.data.get("TargetImage").and_then(|v| v.as_str()).unwrap_or("target");
+                let start_addr = event.data.get("StartAddress").and_then(|v| v.as_str()).unwrap_or("0x0");
+                parts.push(format!("Process {} injected remote thread into target {} at {}.", exe, target, start_addr));
+            }
+            9 => {
+                // RawAccessRead (Direct Volume / Shadow Copy Access)
+                let device = event.data.get("Device").and_then(|v| v.as_str()).unwrap_or("volume");
+                parts.push(format!("Process {} attempted direct raw access read on {}.", exe, device));
+            }
+            10 => {
+                // ProcessAccess (LSASS Credential Dumping)
+                let target = event.data.get("TargetImage").and_then(|v| v.as_str()).unwrap_or("target");
+                let access = event.data.get("GrantedAccess").and_then(|v| v.as_str()).unwrap_or("unknown");
+                parts.push(format!("Process {} requested handle access ({}) into target {}.", exe, access, target));
+            }
+            11 => {
+                // FileCreate (Drop / Ransomware)
+                let target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("file");
+                parts.push(format!("Process {} created file: {}.", exe, target));
+            }
+            12 | 13 | 14 => {
+                // Registry Event (Persistence / Run Keys)
+                let obj = event.data.get("TargetObject").and_then(|v| v.as_str()).unwrap_or("key");
+                let op = event.data.get("EventType").and_then(|v| v.as_str()).unwrap_or("RegistryModification");
+                parts.push(format!("Process {} performed registry operation ({}) on {}.", exe, op, obj));
+            }
+            15 => {
+                // Alternate Data Stream (MOTW Bypass)
+                let target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("stream");
+                let hash = event.data.get("Hash").and_then(|v| v.as_str()).unwrap_or("");
+                parts.push(format!("Alternate Data Stream (ADS) written to {} (Hash: {}).", target, hash));
+            }
+            17 | 18 => {
+                // Pipe Created / Connected (Cobalt Strike / C2)
+                let pipe = event.data.get("PipeName").and_then(|v| v.as_str()).unwrap_or("pipe");
+                parts.push(format!("Process {} created or connected to named pipe {}.", exe, pipe));
+            }
+            19 | 20 | 21 => {
+                // WMI Event Filter / Consumer (WMI Persistence)
+                let name = event.data.get("Name").and_then(|v| v.as_str()).unwrap_or("WMI");
+                let query = event.data.get("Query").and_then(|v| v.as_str()).unwrap_or("");
+                parts.push(format!("WMI persistence event detected (Name: {}, Query: {}).", name, query));
+            }
+            22 => {
+                // DNS Query
+                let query = event.data.get("QueryName").and_then(|v| v.as_str()).unwrap_or("query");
+                parts.push(format!("Process {} queried DNS record: {}.", exe, query));
+            }
+            23 | 26 => {
+                // File Delete / Shredding
+                let target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("file");
+                parts.push(format!("Process {} deleted file: {}.", exe, target));
+            }
+            24 => {
+                // Clipboard Capture
+                parts.push(format!("Process {} accessed or modified system clipboard contents.", exe));
+            }
+            25 => {
+                // Process Tampering (Process Hollowing / Herpaderping)
+                let kind = event.data.get("Type").and_then(|v| v.as_str()).unwrap_or("Hollowing");
+                parts.push(format!("Process tampering/hollowing anomaly detected on {} (Type: {}).", exe, kind));
+            }
+            27 | 28 | 29 => {
+                // File Block / Executable Intercept
+                let target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("executable");
+                parts.push(format!("Sysmon executable/shredding defense triggered on {} by {}.", target, exe));
+            }
+            _ => {
+                // Generic Sysmon event
+                if let Some(cmd) = event.data.get("CommandLine").and_then(|v| v.as_str()) {
+                    parts.push(format!("Sysmon Event {} from {}: {}", event_id, exe, cmd));
+                } else {
+                    parts.push(format!("Sysmon Event {} from {}.", event_id, exe));
+                }
             }
         }
     }

@@ -215,35 +215,71 @@ impl BehavioralAnalyzer {
                 let event_id = event
                     .data
                     .get("EventId")
+                    .or(event.data.get("EventID"))
                     .and_then(|v| v.as_i64())
                     .unwrap_or(0);
-                if event_id == 1 {
-                    // Process Creation
-                    let parent = event
-                        .data
-                        .get("ParentImage")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    let child = event
-                        .data
-                        .get("Image")
-                        .and_then(|v| v.as_str())
-                        .unwrap_or("unknown");
-                    let rel = crate::process_tree::ProcessRelationship {
-                        parent_name: parent.to_string(),
-                        child_name: child.to_string(),
-                        arguments: vec![],
-                        mitre_technique: None,
-                        confidence: 1.0,
-                    };
 
-                    if let Ok(embedder_guard) = embedder.lock() {
-                        if let Ok(emb) = embedder_guard.embed(&rel) {
-                            let ml_score = embedder_guard.calculate_anomaly_score(&rel, &emb);
-                            // Weight the scores: higher ML score boosts the overall anomaly verdict
-                            base_score = (base_score * 0.5) + (ml_score * 0.5);
+                match event_id {
+                    1 => {
+                        // Process Creation
+                        let parent = event
+                            .data
+                            .get("ParentImage")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown");
+                        let child = event
+                            .data
+                            .get("Image")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown");
+                        let rel = crate::process_tree::ProcessRelationship {
+                            parent_name: parent.to_string(),
+                            child_name: child.to_string(),
+                            arguments: vec![],
+                            mitre_technique: None,
+                            confidence: 1.0,
+                        };
+
+                        if let Ok(embedder_guard) = embedder.lock() {
+                            if let Ok(emb) = embedder_guard.embed(&rel) {
+                                let ml_score = embedder_guard.calculate_anomaly_score(&rel, &emb);
+                                base_score = (base_score * 0.5) + (ml_score * 0.5);
+                            }
                         }
                     }
+                    8 => {
+                        // CreateRemoteThread (Process Injection)
+                        base_score = (base_score + 0.45).min(1.0);
+                    }
+                    10 => {
+                        // ProcessAccess (LSASS / Credential Access)
+                        let access = event.data.get("GrantedAccess").and_then(|v| v.as_str()).unwrap_or("");
+                        if access.contains("0x1010") || access.contains("0x1410") || access.contains("0x1F0FFF") {
+                            base_score = (base_score + 0.40).min(1.0);
+                        } else {
+                            base_score = (base_score + 0.20).min(1.0);
+                        }
+                    }
+                    25 => {
+                        // Process Tampering (Process Hollowing / Herpaderping)
+                        base_score = (base_score + 0.50).min(1.0);
+                    }
+                    6 => {
+                        // Driver Loaded (Kernel Rootkit / BYOVD)
+                        let sig = event.data.get("Signature").and_then(|v| v.as_str()).unwrap_or("");
+                        if sig.to_lowercase() == "unsigned" || sig.is_empty() {
+                            base_score = (base_score + 0.45).min(1.0);
+                        }
+                    }
+                    2 => {
+                        // Timestomping (Anti-Forensics)
+                        base_score = (base_score + 0.30).min(1.0);
+                    }
+                    15 => {
+                        // Alternate Data Stream (MOTW Bypass)
+                        base_score = (base_score + 0.25).min(1.0);
+                    }
+                    _ => {}
                 }
             }
             base_score
