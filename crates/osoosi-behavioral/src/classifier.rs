@@ -268,22 +268,40 @@ impl BehavioralClassifier {
         fn is_trusted_activity(sentence: &str) -> bool {
             let lower = sentence.to_lowercase();
             
-            // Common system/developer activity that is often noisy
+            // Common system/developer activity that is verified benign
             let trusted_stems = [
                 "osoosi", "sysmon", "git", "cargo", "rustc", "ollama", "node", "python", 
                 "npm", "pwsh", "powershell", "cmd", "explorer", "taskmgr", "regedit",
-                "msedge", "chrome", "firefox", "svchost", "lsass", "services", "wininit",
-                "searchindexer", "mscorsvw", "tiworker", "driverquery", "wmic", "sc"
+                "msedge", "chrome", "firefox", "brave", "svchost", "lsass", "services", "wininit",
+                "searchindexer", "searchprotocolhost", "mscorsvw", "tiworker", "trustedinstaller",
+                "driverquery", "wmic", "sc", "conhost", "taskhostw", "fontdrvhost", "sihost",
+                "ctfmon", "usoclient", "mpcmdrun", "code", "antigravity", "wudfhost", "backgroundtaskhost"
+            ];
+
+            // Benign domains for routine update & development
+            let trusted_domains = [
+                "microsoft.com", "windowsupdate.com", "github.com", "githubusercontent.com",
+                "crates.io", "digicert.com", "googleapis.com", "cloudflare.com", "akadns.net"
             ];
             
             let is_system_path = lower.contains("\\windows\\system32\\") || 
                                 lower.contains("\\windows\\syswow64\\") ||
-                                lower.contains("\\program files\\");
+                                lower.contains("\\windows\\winsxs\\") ||
+                                lower.contains("\\program files\\") ||
+                                lower.contains("\\program files (x86)\\");
 
             if is_system_path {
-                // If it's in a system path, it must also be a known trusted stem to be auto-suppressed
                 for stem in &trusted_stems {
                     if lower.contains(stem) {
+                        return true;
+                    }
+                }
+            }
+
+            // Routine DNS query suppression
+            if lower.contains("queried dns record:") {
+                for dom in &trusted_domains {
+                    if lower.contains(dom) {
                         return true;
                     }
                 }
@@ -291,7 +309,7 @@ impl BehavioralClassifier {
             
             // General developer tools on common paths
             for stem in &trusted_stems {
-                if lower.contains(&format!("\\{}.exe", stem)) || lower.contains(&format!("/{}.exe", stem)) {
+                if lower.contains(&format!("\\{}.exe", stem)) || lower.contains(&format!("/{}.exe", stem)) || lower.contains(&format!("process {}.", stem)) {
                     return true;
                 }
             }
@@ -301,8 +319,8 @@ impl BehavioralClassifier {
 
         // Rule-based check against process list (if event implies process execution)
         if is_trusted_activity(sentence) {
-            // Even if trusted, if it matches a high-confidence pattern (like mimicatz), we still analyze.
-            // But for general baseline, we return neutral.
+            // Even if trusted, if it matches a high-confidence attack pattern (like mimikatz, ransomware, injection), we still analyze.
+            // But for general baseline, we immediately suppress with 0% risk score.
             let mut high_confidence_match = false;
             for re in &self.suspicious_patterns {
                 if re.is_match(sentence) {
@@ -312,7 +330,7 @@ impl BehavioralClassifier {
             }
             
             if !high_confidence_match {
-                return (false, 0.0, "Trusted process/path suppression".to_string());
+                return (false, 0.0, "Benign baseline activity ignored".to_string());
             }
         }
 

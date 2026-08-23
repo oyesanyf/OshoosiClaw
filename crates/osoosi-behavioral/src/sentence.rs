@@ -241,7 +241,71 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
         parts.push(format!("Process {} created file: {}", img, target));
     }
 
-    // PowerShell Behavioral (EventID 4104 is ScriptBlock logging)
+    // Windows Security Auditing & Management Events
+    if event.source.contains("Security") || event.source.contains("Microsoft-Windows-Security-Auditing") {
+        match event.event_id {
+            4688 => {
+                // Process Creation with Token Elevation
+                let new_proc = event.data.get("NewProcessName").and_then(|v| v.as_str()).unwrap_or("process");
+                let creator = event.data.get("ParentProcessName").and_then(|v| v.as_str()).unwrap_or("parent");
+                let cmd = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("");
+                let token = event.data.get("TokenElevationType").and_then(|v| v.as_str()).unwrap_or("");
+                parts.push(format!("Process {} executed by parent {} (Token: {}).", new_proc, creator, token));
+                if !cmd.is_empty() {
+                    parts.push(format!("Command: {}", cmd));
+                }
+            }
+            4698 | 4702 => {
+                // Scheduled Task Created / Updated (Persistence)
+                let task_name = event.data.get("TaskName").and_then(|v| v.as_str()).unwrap_or("Task");
+                let task_content = event.data.get("TaskContent").and_then(|v| v.as_str()).unwrap_or("");
+                parts.push(format!("Scheduled task created/updated: {} (Content: {}).", task_name, task_content));
+            }
+            4720 | 4726 | 4728 | 4738 => {
+                // User & Group Management (Privilege Escalation)
+                let target_user = event.data.get("TargetUserName").and_then(|v| v.as_str()).unwrap_or("user");
+                let member_name = event.data.get("MemberName").and_then(|v| v.as_str()).unwrap_or("");
+                parts.push(format!("User/Group modification event {} on target {} (Member: {}).", event.event_id, target_user, member_name));
+            }
+            1102 => {
+                // Audit Log Cleared (Anti-Forensics)
+                parts.push("Windows Security Audit Log was explicitly cleared (Event ID 1102).".to_string());
+            }
+            _ => {}
+        }
+    }
+
+    // Windows Service Control Manager (System Event 7045 - Service Installed)
+    if event.event_id == 7045 || event.source.contains("Service Control Manager") {
+        let svc_name = event.data.get("ServiceName").and_then(|v| v.as_str()).unwrap_or("service");
+        let img_path = event.data.get("ImagePath").and_then(|v| v.as_str()).unwrap_or("");
+        let svc_type = event.data.get("ServiceType").and_then(|v| v.as_str()).unwrap_or("");
+        parts.push(format!("New Windows Service installed: {} (Binary: {}, Type: {}).", svc_name, img_path, svc_type));
+    }
+
+    // Windows Defender Events (1116: Malware Detected, 1117: Action Taken, 5001: Real-time Disabled)
+    if event.source.contains("Windows Defender") {
+        match event.event_id {
+            1116 | 1117 => {
+                let threat = event.data.get("ThreatName").and_then(|v| v.as_str()).unwrap_or("Threat");
+                let path = event.data.get("Path").and_then(|v| v.as_str()).unwrap_or("");
+                parts.push(format!("Windows Defender threat alert (Event {}): {} found at {}.", event.event_id, threat, path));
+            }
+            5001 => {
+                parts.push("Windows Defender Real-time Protection was disabled (Event ID 5001).".to_string());
+            }
+            _ => {}
+        }
+    }
+
+    // AppLocker / Code Integrity (8002: Allowed, 8004: Blocked)
+    if event.source.contains("AppLocker") || event.source.contains("CodeIntegrity") {
+        let policy_name = event.data.get("PolicyName").and_then(|v| v.as_str()).unwrap_or("AppLocker");
+        let file = event.data.get("FilePath").and_then(|v| v.as_str()).unwrap_or("");
+        parts.push(format!("AppLocker policy event {} on file {}: {}.", event.event_id, file, policy_name));
+    }
+
+    // PowerShell Behavioral (EventID 4104 is ScriptBlock logging, 4103 is Pipeline)
     if event.source.contains("PowerShell") {
         if let Some(script) = event.data.get("ScriptBlockText").and_then(|v| v.as_str()) {
             parts.push(format!(
