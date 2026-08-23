@@ -17,9 +17,9 @@ mod log_reader;
 mod process_tree;
 pub mod reasoning;
 mod sentence;
+pub mod rl_engine;
 pub mod spider_eyes;
 pub mod yara_analyzer;
-
 
 pub use analyzer::{AnalysisMode, BehavioralAnalyzer, InvestigativePrompt};
 pub use classifier::{BehavioralClassifier, BehavioralResult};
@@ -29,6 +29,10 @@ pub use forensics::{PacketForensics, TriageResult};
 pub use llm_engine::{Gemma4Analyzer, SmolLMAnalyzer, FoundationSecAnalyzer};
 pub use log_reader::{BehavioralLogReader, LogEvent};
 pub use process_tree::{ProcessRelationship, ProcessTreeEmbedder};
+pub use rl_engine::{
+    ByzantineRobustAggregator, DeepQEngine, EDRRuntimeController, MitigationAction,
+    PrioritizedReplayBuffer, ProcessContext, SafetyGuardrail, TelemetryPacket, Transition,
+};
 pub use sentence::event_to_behavioral_sentence;
 pub use spider_eyes::{SpiderEyes, GemmaSupervisor};
 pub use yara_analyzer::YaraAnalyzer;
