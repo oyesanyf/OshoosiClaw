@@ -64,7 +64,7 @@ OshoosiClaw does not rely on a single ML model. It uses a **cascading AI pipelin
 | **Static Malware Detection** | [**SOREL-20M**](https://github.com/sophos-ai/SOREL-20M) / [**EMBER**](https://github.com/elastic/ember) | Triple-model consensus (FFNN, LightGBM, MalConv) using 2,381-dimension EMBER v2 features. |
 | **Behavioral NLP** | [**SecureBERT**](https://huggingface.co/ehsanaghaei/SecureBERT) | Security-domain BERT model that classifies PowerShell, CLI commands, and log sentences. |
 | **Reasoning & Context** | [**Gemma 4 9B** / **Llama 3.1 8B**](https://ollama.com/) | Local LLMs (via Ollama) that reason about complex detection chains and decide on autonomous response. |
-| **Logic Logic** | **Sigma Engine** | High-performance Sigma rule evaluation with LogSource-aware indexing. |
+| **Logic Engine** | **Sigma Engine** | High-performance Sigma rule evaluation with LogSource-aware indexing. |
 | **Indicator Matching** | **Atomic IOC** | Constant-time (O(1)) matching for malicious hashes, IPs, and domains. |
 
 ---
@@ -194,9 +194,6 @@ OshoosiClaw 1.2 introduces **Autonomous Lineage Auditing**, allowing the agent t
 ```powershell
 # Perform an autonomous, lineage-aware forensic audit
 .\osoosi.exe audit --product git.exe
-```
-
----
 ```
 
 ---
