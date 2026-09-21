@@ -5731,6 +5731,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "async-trait",
+ "base64 0.22.1",
  "blake3",
  "candle-core",
  "candle-nn",
@@ -5738,6 +5739,7 @@ dependencies = [
  "chrono",
  "compression-prompt",
  "dashmap 5.5.3",
+ "hex",
  "hostname",
  "iced-x86",
  "ndarray 0.16.1",

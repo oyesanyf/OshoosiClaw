@@ -18,6 +18,8 @@ anyhow = { workspace = true }
 chrono = { workspace = true }
 regex = { workspace = true }
 async-trait = { workspace = true }
+base64 = { workspace = true }
+hex = { workspace = true }
 dashmap = "5.5"
 blake3 = { workspace = true }
 hostname = { workspace = true }
