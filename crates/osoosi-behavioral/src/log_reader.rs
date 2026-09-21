@@ -194,7 +194,7 @@ impl BehavioralLogReader {
             ) {
                 Ok(h) => h,
                 Err(e) => {
-                    warn!("EvtQuery failed for {}: {}", channel, e);
+                    tracing::debug!("EvtQuery channel unavailable for {}: {}", channel, e);
                     return Ok(Vec::new());
                 }
             }
