@@ -51,6 +51,7 @@ pub mod remediation;
 pub mod secured_executor;
 pub mod self_healing;
 pub mod voters;
+pub mod agent_egress;
 
 pub const CONSENSUS_LOG_TARGET: &str = "osoosi_core::consensus";
 
@@ -1148,6 +1149,9 @@ impl EdrOrchestrator {
 
         // Agentic Escape Detection Voter (Process Reward & State Trajectory Scoring)
         policy.add_voter(Box::new(osoosi_policy::agentic_voter::AgenticPolicyVoter::new())).await;
+
+        // Default-Deny Agent Network Egress & Covert Side-Channel Isolation Voter
+        policy.add_voter(Box::new(osoosi_policy::agent_egress::AgentEgressVoter::new())).await;
 
         policy.add_voter(Box::new(osoosi_policy::voters::ZeroDayVoter::new())).await;
         policy.add_voter(Box::new(osoosi_policy::voters::SandboxSurfaceVoter)).await;

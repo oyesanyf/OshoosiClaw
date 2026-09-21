@@ -14,12 +14,14 @@ pub mod verified;
 pub mod voters;
 pub mod cve_cache;
 pub mod agentic_voter;
+pub mod agent_egress;
 
 pub mod admin;
 pub mod sandbox_surface;
 pub mod sigma;
 pub mod ioc;
 
+pub use agent_egress::*;
 pub use crate::admin::*;
 pub use engine::*;
 pub use feed::*;
