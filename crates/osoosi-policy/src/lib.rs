@@ -13,6 +13,7 @@ pub mod traffic_adapter;
 pub mod verified;
 pub mod voters;
 pub mod cve_cache;
+pub mod agentic_voter;
 
 pub mod admin;
 pub mod sandbox_surface;

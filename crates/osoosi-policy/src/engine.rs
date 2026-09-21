@@ -172,6 +172,7 @@ fn classify_vote(
         name if name.contains("NexusShield") => (EvidenceClass::StaticArtifact, 0.95, true),
         "ZeroDayTracker" => (EvidenceClass::ThreatIntel, 1.0, true),
         "SandboxSurfaceAnalysis" => (EvidenceClass::Behavior, 0.85, true),
+        "Agentic-Escape-Detector" => (EvidenceClass::Behavior, 0.95, true),
         "Sigma-Engine" => (EvidenceClass::Behavior, 0.90, true),
         "IOC-Scanner" => (EvidenceClass::ThreatIntel, 1.0, true),
         name if name.contains("MalConv") || name.contains("ML") => {

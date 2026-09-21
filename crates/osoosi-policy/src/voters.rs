@@ -6,6 +6,7 @@ use osoosi_audit::MerkleAuditTree;
 use osoosi_model::ThreatModel;
 use std::sync::Arc;
 use tracing::{debug, warn};
+pub use crate::agentic_voter::AgenticPolicyVoter;
 
 /// Zero-Day Vulnerability Voter
 /// Checks for known "In the Wild" exploits from Google's Zero-Day Tracker.

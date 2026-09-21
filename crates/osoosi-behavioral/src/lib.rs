@@ -7,6 +7,7 @@
 mod analyzer;
 mod classifier;
 mod colog;
+pub mod agentic_arbitrator;
 pub mod deception;
 pub mod ebpf_monitor;
 pub mod consensus;
@@ -21,6 +22,10 @@ pub mod rl_engine;
 pub mod spider_eyes;
 pub mod yara_analyzer;
 
+pub use agentic_arbitrator::{
+    AgentTrajectoryTracker, AgenticArbitrator, AgenticToolValidator, AgenticVerdict,
+    DefenseAction, Layer2Critic, TrajectoryEvent, VassilevMutator,
+};
 pub use analyzer::{AnalysisMode, BehavioralAnalyzer, InvestigativePrompt};
 pub use classifier::{BehavioralClassifier, BehavioralResult};
 pub use ebpf_monitor::EbpfMonitor;

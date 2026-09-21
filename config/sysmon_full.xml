@@ -1,0 +1,102 @@
+<Sysmon schemaversion="4.82">
+  <!-- OshoosiClaw Agentic Escape Detection & Comprehensive Host Monitoring Profile -->
+  <HashAlgorithms>SHA256,MD5</HashAlgorithms>
+  <CheckRevocation/>
+  <DnsLookup/>
+  <ArchiveDirectory>Sysmon</ArchiveDirectory>
+
+  <EventFiltering>
+    <!-- Event ID 1: Process Creation - Tracking AI Agent Escape Trajectories -->
+    <RuleGroup name="AgenticEscape_ProcessCreate" groupRelation="or">
+      <ProcessCreate onmatch="include">
+        <!-- AI Agent Runtimes Spawning Command Interpreters -->
+        <Rule groupRelation="and">
+          <ParentImage condition="contains any">python;node;ollama;cargo;uv;deno;code</ParentImage>
+          <Image condition="end with">cmd.exe</Image>
+        </Rule>
+        <Rule groupRelation="and">
+          <ParentImage condition="contains any">python;node;ollama;cargo;uv;deno;code</ParentImage>
+          <Image condition="end with">powershell.exe</Image>
+        </Rule>
+        <Rule groupRelation="and">
+          <ParentImage condition="contains any">python;node;ollama;cargo;uv;deno;code</ParentImage>
+          <Image condition="end with">pwsh.exe</Image>
+        </Rule>
+        <Rule groupRelation="and">
+          <ParentImage condition="contains any">python;node;ollama;cargo;uv;deno;code</ParentImage>
+          <Image condition="end with">bash.exe</Image>
+        </Rule>
+        <Rule groupRelation="and">
+          <ParentImage condition="contains any">python;node;ollama;cargo;uv;deno;code</ParentImage>
+          <Image condition="end with">sh.exe</Image>
+        </Rule>
+        <Rule groupRelation="and">
+          <ParentImage condition="contains any">python;node;ollama;cargo;uv;deno;code</ParentImage>
+          <Image condition="end with">wscript.exe</Image>
+        </Rule>
+        <Rule groupRelation="and">
+          <ParentImage condition="contains any">python;node;ollama;cargo;uv;deno;code</ParentImage>
+          <Image condition="end with">cscript.exe</Image>
+        </Rule>
+
+        <!-- AI Agent Runtimes Spawning Reconnaissance & Exfiltration LOLBins -->
+        <Rule groupRelation="and">
+          <ParentImage condition="contains any">python;node;ollama;cargo;uv;deno;code</ParentImage>
+          <Image condition="end with">whoami.exe</Image>
+        </Rule>
+        <Rule groupRelation="and">
+          <ParentImage condition="contains any">python;node;ollama;cargo;uv;deno;code</ParentImage>
+          <Image condition="end with">curl.exe</Image>
+        </Rule>
+        <Rule groupRelation="and">
+          <ParentImage condition="contains any">python;node;ollama;cargo;uv;deno;code</ParentImage>
+          <Image condition="end with">wget.exe</Image>
+        </Rule>
+        <Rule groupRelation="and">
+          <ParentImage condition="contains any">python;node;ollama;cargo;uv;deno;code</ParentImage>
+          <Image condition="end with">net.exe</Image>
+        </Rule>
+        <Rule groupRelation="and">
+          <ParentImage condition="contains any">python;node;ollama;cargo;uv;deno;code</ParentImage>
+          <Image condition="end with">net1.exe</Image>
+        </Rule>
+
+        <!-- Decoy Tool and Canary Token Command Line Traps -->
+        <CommandLine condition="contains any">AWS_SECRET_ACCESS_KEY_CANARY;OSOOSI_ROOT_TOKEN_CANARY;HONEY_TOKEN;OSOOSI_CANARY_TOKEN;CANARY_SECRET_LEAK;execute_system_override_admin;bypass_security_checks;disable_telemetry</CommandLine>
+      </ProcessCreate>
+    </RuleGroup>
+
+    <!-- Event ID 3: Network Connection - Tracking Outbound Network Access from AI Runtimes -->
+    <RuleGroup name="AgenticEscape_NetworkConnect" groupRelation="or">
+      <NetworkConnect onmatch="include">
+        <Image condition="contains any">python;node;ollama;cargo;uv;deno;code</Image>
+      </NetworkConnect>
+    </RuleGroup>
+
+    <!-- Event ID 11: File Creation - Tracking Script Generation & Canary Trap Access -->
+    <RuleGroup name="AgenticEscape_FileCreate" groupRelation="or">
+      <FileCreate onmatch="include">
+        <!-- Script creation by AI agent runtimes -->
+        <Rule groupRelation="and">
+          <Image condition="contains any">python;node;ollama;cargo;uv;deno;code</Image>
+          <TargetFilename condition="end with">.bat</TargetFilename>
+        </Rule>
+        <Rule groupRelation="and">
+          <Image condition="contains any">python;node;ollama;cargo;uv;deno;code</Image>
+          <TargetFilename condition="end with">.ps1</TargetFilename>
+        </Rule>
+        <Rule groupRelation="and">
+          <Image condition="contains any">python;node;ollama;cargo;uv;deno;code</Image>
+          <TargetFilename condition="end with">.sh</TargetFilename>
+        </Rule>
+        <Rule groupRelation="and">
+          <Image condition="contains any">python;node;ollama;cargo;uv;deno;code</Image>
+          <TargetFilename condition="end with">.vbs</TargetFilename>
+        </Rule>
+
+        <!-- Canary File Traps -->
+        <TargetFilename condition="contains any">CEO_Private_Strategy.docx;aws_credentials_canary;OSOOSI_CANARY_TOKEN</TargetFilename>
+      </FileCreate>
+    </RuleGroup>
+  </EventFiltering>
+</Sysmon>

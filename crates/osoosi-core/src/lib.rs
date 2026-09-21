@@ -1112,6 +1112,8 @@ impl EdrOrchestrator {
             spider: spider_eyes.clone(),
         })).await;
 
+        // Agentic Escape Detection Voter (Process Reward & State Trajectory Scoring)
+        policy.add_voter(Box::new(osoosi_policy::agentic_voter::AgenticPolicyVoter::new())).await;
 
         policy.add_voter(Box::new(osoosi_policy::voters::ZeroDayVoter::new())).await;
         policy.add_voter(Box::new(osoosi_policy::voters::SandboxSurfaceVoter)).await;

@@ -171,6 +171,25 @@ pub struct FederatedModelDelta {
     pub timestamp: DateTime<Utc>,
 }
 
+impl FederatedModelDelta {
+    /// Creates a differentially private trajectory delta update for mesh gossip.
+    pub fn new_trajectory_update(
+        source_node: impl Into<String>,
+        pattern_name: &str,
+        delta_weight: f32,
+        epsilon: f32,
+    ) -> Self {
+        let mut features = std::collections::HashMap::new();
+        features.insert(format!("agentic_trajectory:{}", pattern_name), delta_weight);
+        Self {
+            source_node: source_node.into(),
+            features,
+            epsilon,
+            timestamp: Utc::now(),
+        }
+    }
+}
+
 /// A "Threat Signature" for P2P gossip.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 pub struct ThreatSignature {

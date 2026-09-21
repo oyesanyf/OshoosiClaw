@@ -64,3 +64,30 @@ impl HoneytokenManager {
 pub fn is_trap_hit(path: &Path, trap_locations: &[PathBuf]) -> bool {
     trap_locations.iter().any(|p| p == path)
 }
+
+/// Ephemeral Agent Session Canary for Moving Target Defense.
+/// Generates per-session randomized canary environment variable keys, values, and decoy tool schemas.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq)]
+pub struct EphemeralAgentCanary {
+    pub session_id: String,
+    pub env_var_name: String,
+    pub canary_token: String,
+    pub decoy_tool_name: String,
+}
+
+impl EphemeralAgentCanary {
+    /// Generates a randomized, ephemeral canary set for an agent session.
+    pub fn generate_for_session(session_id: &str) -> Self {
+        let rand_hex = format!("{:032x}", uuid::Uuid::new_v4().as_u128());
+        let env_var_name = format!("OSOOSI_CANARY_{}", &rand_hex[..8].to_ascii_uppercase());
+        let canary_token = format!("sk-canary-{}-{}", session_id, &rand_hex[8..20]);
+        let decoy_tool_name = format!("execute_admin_privilege_override_{}", &rand_hex[..6]);
+
+        Self {
+            session_id: session_id.to_string(),
+            env_var_name,
+            canary_token,
+            decoy_tool_name,
+        }
+    }
+}

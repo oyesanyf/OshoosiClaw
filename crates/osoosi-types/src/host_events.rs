@@ -28,3 +28,13 @@ pub struct HostSecurityEvent {
     /// CEREBUS-Einstein: The hash of the previous event in this process's light-cone.
     pub causal_parent: Option<String>,
 }
+
+/// Session tracking context for autonomous AI agent runtimes.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct AgentSessionContext {
+    pub session_id: String,
+    pub root_pid: u32,
+    pub framework: String,
+    pub ephemeral_canary_hash: String,
+    pub start_time: DateTime<Utc>,
+}
