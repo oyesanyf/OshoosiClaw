@@ -88,6 +88,15 @@ impl IocEngine {
                 self.hashes.insert(line.to_lowercase());
             }
         }
+
+        if let Ok(p) = std::fs::read_to_string(base_path.join("paths.txt")) {
+            for line in p.lines().filter(|l| !l.is_empty()) {
+                self.path_patterns.push(line.to_string());
+            }
+            if !self.path_patterns.is_empty() {
+                self.path_regex = RegexSet::new(&self.path_patterns).ok();
+            }
+        }
     }
 
     pub fn check_event(&self, event: &HostSecurityEvent) -> Vec<IocMatch> {
@@ -136,11 +145,33 @@ impl IocEngine {
                 }
             }
         }
+
+        // 4. Check Path Regexes
+        if let Some(path) = event.data.get("Image").or_else(|| event.data.get("TargetFilename")).and_then(|v| v.as_str()) {
+            if let Some(ref set) = self.path_regex {
+                if let Some(matched_idx) = set.matches(path).into_iter().next() {
+                    let indicator = self.path_patterns.get(matched_idx).cloned().unwrap_or_else(|| path.to_string());
+                    matches.push(IocMatch {
+                        kind: IocKind::PathRegex,
+                        indicator,
+                        matched_value: path.to_string(),
+                        source: "local-ioc".to_string(),
+                    });
+                }
+            }
+        }
         
         if !matches.is_empty() {
             self.total_detections.fetch_add(matches.len() as u64, std::sync::atomic::Ordering::Relaxed);
         }
 
         matches
+    }
+
+    pub fn add_path_regex(&mut self, pattern: impl Into<String>) -> Result<(), regex::Error> {
+        let pat = pattern.into();
+        self.path_patterns.push(pat);
+        self.path_regex = Some(RegexSet::new(&self.path_patterns)?);
+        Ok(())
     }
 }

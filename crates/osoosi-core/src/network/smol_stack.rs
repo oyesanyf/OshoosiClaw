@@ -7,6 +7,7 @@ use wintun::Adapter;
 
 /// A wrapper around Wintun Session to implement smoltcp's Device trait.
 pub struct WintunDevice {
+    #[allow(dead_code)]
     session: Arc<wintun::Session>,
 }
 
@@ -54,10 +55,13 @@ impl smoltcp::phy::TxToken for TxToken {
 /// A high-isolation userspace network stack for Windows.
 /// Bypasses the Windows Kernel TCPIP stack using Wintun + smoltcp.
 pub struct SmolSandbox {
+    #[allow(dead_code)]
     interface: Interface,
+    #[allow(dead_code)]
     sockets: SocketSet<'static>,
+    #[allow(dead_code)]
     device: WintunDevice,
-    last_poll: Instant,
+    pub last_poll: Instant,
 }
 
 impl SmolSandbox {
