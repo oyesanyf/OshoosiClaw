@@ -1,3 +1,4 @@
+use osoosi_model::malware::is_ide_or_build_path;
 use osoosi_model::{MalwareScanResult, MalwareScanner};
 use async_trait::async_trait;
 use osoosi_policy::engine::{ThreatVoter, VoteResult};
@@ -7,15 +8,16 @@ use std::sync::Arc;
 
 fn trusted_operational_path(path: &str) -> bool {
     let p = path.replace('/', "\\").to_ascii_lowercase();
-    p.contains("\\windows\\system32\\")
+    is_ide_or_build_path(&p)
+        || p.contains("\\windows\\system32\\")
         || p.contains("\\windows\\syswow64\\")
         || p.contains("\\program files\\")
         || p.contains("\\program files (x86)\\")
         || p.contains("\\programdata\\chocolatey\\")
         || p.contains("\\programdata\\scoop\\")
         || p.contains("\\tools\\git\\")
-        || p.contains("\\oshoosiclaw\\tools\\")
-        || p.contains("\\oshoosiclaw\\target\\")
+        || p.contains("\\tools\\")
+        || p.contains("\\target\\")
 }
 
 fn event_text_field<'a>(event: &'a HostSecurityEvent, key: &str) -> Option<&'a str> {
@@ -53,6 +55,9 @@ fn trusted_identity_signal(event: &HostSecurityEvent, path: &str) -> bool {
         "cursor",
         "anysphere",
         "patientpoint",
+        "jetbrains",
+        "google",
+        "docker",
     ]
     .iter()
     .any(|needle| publisher.contains(needle));
@@ -69,28 +74,73 @@ fn trusted_identity_signal(event: &HostSecurityEvent, path: &str) -> bool {
         .is_some_and(|v| !v.is_empty() && !v.eq_ignore_ascii_case("unknown"))
 }
 
-fn scanner_skip_path(path: &str) -> bool {
+pub(crate) fn scanner_skip_path(path: &str) -> bool {
     let p = path.replace('/', "\\").to_ascii_lowercase();
-    p.contains("\\.codex\\")
+    if is_ide_or_build_path(&p)
+        || p.contains("\\.codex\\")
         || p.contains("\\.gemini\\")
         || p.contains("\\antigravity\\brain\\")
         || p.contains("\\.system_generated\\logs\\")
-        || p.contains("\\oshoosiclaw\\tools\\hayabusa\\rules\\")
-        || p.contains("\\oshoosiclaw\\dashboard\\")
-        || p.contains("\\oshoosiclaw\\target\\")
-        || p.contains("\\oshoosiclaw\\cache\\")
-        || p.contains("\\oshoosiclaw\\models\\")
-        || p.contains("\\oshoosiclaw\\logs\\")
-        || p.contains("\\oshoosiclaw\\traps\\")
-        || p.ends_with(".yml")
-        || p.ends_with(".yaml")
-        || p.ends_with(".json")
-        || p.ends_with(".jsonl")
-        || p.ends_with(".toml")
-        || p.ends_with(".txt")
-        || p.ends_with(".log")
-        || p.ends_with(".sqlite")
-        || p.ends_with(".db")
+        || p.contains("\\hugos ide\\")
+        || p.contains("\\resources\\app\\out\\vs\\")
+        || p.contains("microsoft.powershell.psreadline")
+        || p.contains("\\tools\\hayabusa\\rules\\")
+        || p.contains("\\tools\\rules\\")
+        || p.contains("\\dashboard\\")
+        || p.contains("\\cache\\")
+        || p.contains("\\models\\")
+        || p.contains("\\logs\\")
+        || p.contains("\\traps\\")
+        || p.contains("\\wavlink\\")
+        || p.contains("threat_model.json")
+    {
+        return true;
+    }
+
+    let ext = std::path::Path::new(&p)
+        .extension()
+        .and_then(|e| e.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "yml"
+            | "yaml"
+            | "json"
+            | "jsonl"
+            | "toml"
+            | "md"
+            | "txt"
+            | "log"
+            | "sqlite"
+            | "db"
+            | "pdb"
+            | "idb"
+            | "ilk"
+            | "obj"
+            | "o"
+            | "a"
+            | "lib"
+            | "rlib"
+            | "rmeta"
+            | "tmp"
+            | "lock"
+            | "rs"
+            | "go"
+            | "py"
+            | "c"
+            | "cpp"
+            | "h"
+            | "hpp"
+            | "ts"
+            | "js"
+            | "jsx"
+            | "tsx"
+            | "html"
+            | "css"
+            | "scss"
+            | "map"
+    )
 }
 
 /// Yara-X Signature Voter (Zero-Process Replacement for ClamAV)
@@ -556,3 +606,26 @@ impl ThreatVoter for BehavioralClassifierVoter {
         }).await.ok().flatten()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_voter_skip_and_trusted_paths() {
+        assert!(scanner_skip_path(r"D:\dev\project\.vscode\settings.json"));
+        assert!(scanner_skip_path(r"D:\dev\project\target\debug\build_artifact.pdb"));
+        assert!(scanner_skip_path(r"D:\dev\project\src\main.rs"));
+        assert!(scanner_skip_path(r"C:\Users\dev\.cargo\registry\cache.lock"));
+        assert!(scanner_skip_path(r"D:\dev\project\.git\objects\pack\pack-123.idx"));
+
+        assert!(!scanner_skip_path(r"C:\Windows\System32\evil.exe"));
+        assert!(!scanner_skip_path(r"C:\Users\victim\Downloads\payload.exe"));
+        assert!(!scanner_skip_path(r"C:\Windows\Temp\mimikatz.exe"));
+
+        assert!(trusted_operational_path(r"C:\Program Files\Git\bin\git.exe"));
+        assert!(trusted_operational_path(r"D:\dev\project\.vscode\extensions\bin\tool.exe"));
+        assert!(trusted_operational_path(r"D:\dev\project\target\release\my_tool.exe"));
+    }
+}
+

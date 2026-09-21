@@ -210,14 +210,19 @@ impl BehavioralAnalyzer {
                 0.0
             };
 
-            // ML Layer: Process Tree Embedding (Candle)
-            if event.source == "Microsoft-Windows-Sysmon" {
+            // ML Layer: Process Tree Embedding & Sysmon Heuristics
+            let is_sysmon = event.source.to_lowercase().contains("sysmon")
+                || event.data.get("Provider").and_then(|v| v.as_str()).map(|p| p.to_lowercase().contains("sysmon")).unwrap_or(false)
+                || event.data.get("Channel").and_then(|v| v.as_str()).map(|c| c.to_lowercase().contains("sysmon")).unwrap_or(false)
+                || (event.event_id >= 1 && event.event_id <= 29 && (event.data.contains_key("UtcTime") || event.data.contains_key("ProcessGuid")));
+
+            if is_sysmon {
                 let event_id = event
                     .data
                     .get("EventId")
                     .or(event.data.get("EventID"))
-                    .and_then(|v| v.as_i64())
-                    .unwrap_or(0);
+                    .and_then(|v| v.as_i64().or_else(|| v.as_str().and_then(|s| s.parse::<i64>().ok())))
+                    .unwrap_or(event.event_id as i64);
 
                 match event_id {
                     1 => {
@@ -247,22 +252,22 @@ impl BehavioralAnalyzer {
                             }
                         }
                     }
-                    8 => {
-                        // CreateRemoteThread (Process Injection)
-                        base_score = (base_score + 0.45).min(1.0);
+                    2 => {
+                        // Timestomping (Anti-Forensics)
+                        base_score = (base_score + 0.30).min(1.0);
                     }
-                    10 => {
-                        // ProcessAccess (LSASS / Credential Access)
-                        let access = event.data.get("GrantedAccess").and_then(|v| v.as_str()).unwrap_or("");
-                        if access.contains("0x1010") || access.contains("0x1410") || access.contains("0x1F0FFF") {
-                            base_score = (base_score + 0.40).min(1.0);
+                    3 => {
+                        // Network Connect
+                        let port = event.data.get("DestinationPort")
+                            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+                            .unwrap_or(0);
+                        let dst_ip = event.data.get("DestinationIp").and_then(|v| v.as_str()).unwrap_or("");
+                        let suspicious_ports = [4444, 1337, 8888, 6667, 31337, 5555, 9001];
+                        if suspicious_ports.contains(&port) || dst_ip.starts_with("103.") || dst_ip.starts_with("185.") {
+                            base_score = (base_score + 0.35).min(1.0);
                         } else {
-                            base_score = (base_score + 0.20).min(1.0);
+                            base_score = (base_score + 0.05).min(1.0);
                         }
-                    }
-                    25 => {
-                        // Process Tampering (Process Hollowing / Herpaderping)
-                        base_score = (base_score + 0.50).min(1.0);
                     }
                     6 => {
                         // Driver Loaded (Kernel Rootkit / BYOVD)
@@ -271,13 +276,80 @@ impl BehavioralAnalyzer {
                             base_score = (base_score + 0.45).min(1.0);
                         }
                     }
-                    2 => {
-                        // Timestomping (Anti-Forensics)
-                        base_score = (base_score + 0.30).min(1.0);
+                    7 => {
+                        // Image Loaded (DLL Hijacking)
+                        let loaded = event.data.get("ImageLoaded").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                        let sig = event.data.get("Signature").and_then(|v| v.as_str()).unwrap_or("");
+                        if sig.to_lowercase() == "unsigned" || loaded.contains("\\temp\\") || loaded.contains("\\appdata\\") {
+                            base_score = (base_score + 0.30).min(1.0);
+                        }
+                    }
+                    8 => {
+                        // CreateRemoteThread (Process Injection)
+                        base_score = (base_score + 0.45).min(1.0);
+                    }
+                    10 => {
+                        // ProcessAccess (LSASS / Credential Access)
+                        let target = event.data.get("TargetImage").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                        let access = event.data.get("GrantedAccess").and_then(|v| v.as_str()).unwrap_or("");
+                        if target.contains("lsass.exe") {
+                            base_score = (base_score + 0.50).min(1.0);
+                        } else if access.contains("0x1010") || access.contains("0x1410") || access.to_lowercase().contains("0x1f0fff") {
+                            base_score = (base_score + 0.40).min(1.0);
+                        } else {
+                            base_score = (base_score + 0.20).min(1.0);
+                        }
+                    }
+                    11 => {
+                        // FileCreate (Drop / Ransomware / Script in Temp)
+                        let target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                        if target.contains("\\temp\\") || target.ends_with(".vbs") || target.ends_with(".ps1") || target.ends_with(".bat") {
+                            base_score = (base_score + 0.25).min(1.0);
+                        }
+                    }
+                    12 | 13 | 14 => {
+                        // Registry Event (Run Keys / Persistence)
+                        let obj = event.data.get("TargetObject").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                        if obj.contains("currentversion\\run") || obj.contains("services") || obj.contains("appinit_dlls") {
+                            base_score = (base_score + 0.35).min(1.0);
+                        }
                     }
                     15 => {
                         // Alternate Data Stream (MOTW Bypass)
                         base_score = (base_score + 0.25).min(1.0);
+                    }
+                    17 | 18 => {
+                        // Named Pipe
+                        let pipe = event.data.get("PipeName").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                        if pipe.contains("msagent_") || pipe.contains("cobaltstrike") || pipe.contains("status_") {
+                            base_score = (base_score + 0.40).min(1.0);
+                        }
+                    }
+                    19 | 20 | 21 => {
+                        // WMI Persistence
+                        base_score = (base_score + 0.35).min(1.0);
+                    }
+                    22 => {
+                        // DNS Query
+                        let query = event.data.get("QueryName").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                        if query.ends_with(".onion") || query.ends_with(".top") || query.ends_with(".xyz") || query.len() > 40 {
+                            base_score = (base_score + 0.30).min(1.0);
+                        }
+                    }
+                    23 | 26 => {
+                        // File Delete (Ransomware / anti-forensics)
+                        let target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+                        if target.ends_with(".log") || target.ends_with(".evtx") {
+                            base_score = (base_score + 0.35).min(1.0);
+                        }
+                    }
+                    25 => {
+                        // Process Tampering (Process Hollowing / Herpaderping)
+                        base_score = (base_score + 0.50).min(1.0);
+                    }
+                    27 | 28 | 29 => {
+                        // File Block / Executable Defense
+                        base_score = (base_score + 0.40).min(1.0);
                     }
                     _ => {}
                 }
@@ -295,10 +367,11 @@ impl BehavioralAnalyzer {
                 .data
                 .get("Message")
                 .and_then(|m| m.as_str())
-                .unwrap_or("No message");
+                .map(|s| s.to_string())
+                .unwrap_or_else(|| crate::sentence::event_to_behavioral_sentence(ev));
             out.push_str(&format!(
-                "[{}] {} (Source: {}): {}\n",
-                ev.timestamp, ev.computer, ev.source, msg
+                "[{}] {} (Source: {}, EventID: {}): {}\n",
+                ev.timestamp, ev.computer, ev.source, ev.event_id, msg
             ));
         }
         out.push_str("</security_event_data>");
@@ -377,5 +450,58 @@ impl BehavioralAnalyzer {
             AnalysisMode::Documentation => "Create prompts that help users gather relevant information from system logs to include in official documentation (incident reports, system manuals).",
             AnalysisMode::Summarize => "Develop prompts that help users summarize the most critical aspects of logs, including notable patterns, significant anomalies, identified root causes, and recommended actions.",
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    #[tokio::test]
+    async fn test_autonomous_check_sysmon_scoring() {
+        let analyzer = BehavioralAnalyzer::new();
+
+        // Sysmon Event 3 with suspicious port 4444 as integer
+        let mut d3 = HashMap::new();
+        d3.insert("Image".to_string(), serde_json::json!(r"C:\Tools\nc.exe"));
+        d3.insert("DestinationIp".to_string(), serde_json::json!("198.51.100.1"));
+        d3.insert("DestinationPort".to_string(), serde_json::json!(4444));
+        let ev3 = LogEvent {
+            source: "Microsoft-Windows-Sysmon".to_string(),
+            event_id: 3,
+            timestamp: chrono::Utc::now(),
+            computer: "box1".to_string(),
+            data: d3,
+        };
+        let score3 = analyzer.autonomous_check(ev3).await;
+        assert!(score3 >= 0.35, "Suspicious port 4444 must score >= 0.35, got {}", score3);
+
+        // Sysmon Event 10: LSASS access
+        let mut d10 = HashMap::new();
+        d10.insert("SourceImage".to_string(), serde_json::json!(r"C:\Tools\mimikatz.exe"));
+        d10.insert("TargetImage".to_string(), serde_json::json!(r"C:\Windows\System32\lsass.exe"));
+        let ev10 = LogEvent {
+            source: "Microsoft-Windows-Sysmon".to_string(),
+            event_id: 10,
+            timestamp: chrono::Utc::now(),
+            computer: "box1".to_string(),
+            data: d10,
+        };
+        let score10 = analyzer.autonomous_check(ev10).await;
+        assert!(score10 >= 0.50, "LSASS process access must score >= 0.50, got {}", score10);
+
+        // Sysmon Event 25: Process Tampering
+        let mut d25 = HashMap::new();
+        d25.insert("Image".to_string(), serde_json::json!(r"C:\Malware\hollow.exe"));
+        let ev25 = LogEvent {
+            source: "Microsoft-Windows-Sysmon".to_string(),
+            event_id: 25,
+            timestamp: chrono::Utc::now(),
+            computer: "box1".to_string(),
+            data: d25,
+        };
+        let score25 = analyzer.autonomous_check(ev25).await;
+        assert!(score25 >= 0.50, "Process tampering must score >= 0.50, got {}", score25);
     }
 }

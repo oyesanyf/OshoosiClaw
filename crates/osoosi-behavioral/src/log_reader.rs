@@ -5,7 +5,6 @@ use anyhow::Result;
 use chrono::{DateTime, Utc};
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
-use tracing::warn;
 
 /// A single log event from any platform, normalized for behavioral analysis.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -25,8 +24,23 @@ impl From<&osoosi_types::HostSecurityEvent> for LogEvent {
                 data.insert(k.clone(), v.clone());
             }
         }
+        let source_str = if let Some(channel) = data.get("Channel").and_then(|v| v.as_str()) {
+            if channel.contains("Sysmon") {
+                "Microsoft-Windows-Sysmon".to_string()
+            } else {
+                format!("windows:{}", channel)
+            }
+        } else if let Some(provider) = data.get("Provider").and_then(|v| v.as_str()) {
+            if provider.contains("Sysmon") {
+                "Microsoft-Windows-Sysmon".to_string()
+            } else {
+                format!("windows:{}", provider)
+            }
+        } else {
+            format!("{:?}", event.source)
+        };
         Self {
-            source: format!("{:?}", event.source),
+            source: source_str,
             event_id: event.event_id,
             timestamp: event.timestamp,
             computer: event.computer.clone(),
@@ -42,7 +56,7 @@ pub struct BehavioralLogReader {
     #[cfg(target_os = "windows")]
     channels: Vec<String>,
     #[cfg(target_os = "windows")]
-    last_poll_time: std::sync::Arc<std::sync::Mutex<Option<chrono::DateTime<chrono::Utc>>>>,
+    last_poll_times: std::sync::Arc<std::sync::Mutex<HashMap<String, chrono::DateTime<chrono::Utc>>>>,
     #[cfg(target_os = "linux")]
     paths: Vec<String>,
     #[cfg(target_os = "linux")]
@@ -75,7 +89,7 @@ impl BehavioralLogReader {
                 });
             Self { 
                 channels,
-                last_poll_time: std::sync::Arc::new(std::sync::Mutex::new(None)),
+                last_poll_times: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
             }
         }
 
@@ -175,8 +189,8 @@ impl BehavioralLogReader {
         let mut query = format!("*[System[TimeCreated[timediff(@SystemTime) <= 600000]]]");
         
         {
-            let last_time = self.last_poll_time.lock().unwrap();
-            if let Some(t) = *last_time {
+            let last_times = self.last_poll_times.lock().unwrap();
+            if let Some(t) = last_times.get(channel) {
                 let ts_str = t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
                 query = format!("*[System[TimeCreated[@SystemTime > '{}']]]", ts_str);
             }
@@ -237,10 +251,14 @@ impl BehavioralLogReader {
             let _ = EvtClose(handle);
         }
 
-        // Update watermark
-        if let Some(latest) = out.iter().map(|e| e.timestamp).max() {
-            let mut last_time = self.last_poll_time.lock().unwrap();
-            *last_time = Some(latest);
+        // Update watermark per-channel
+        {
+            let mut last_times = self.last_poll_times.lock().unwrap();
+            if let Some(latest) = out.iter().map(|e| e.timestamp).max() {
+                last_times.insert(channel.to_string(), latest);
+            } else if !last_times.contains_key(channel) {
+                last_times.insert(channel.to_string(), chrono::Utc::now());
+            }
         }
 
         Ok(out)
@@ -265,8 +283,7 @@ fn parse_single_windows_event(xml: &str, channel: &str) -> Option<LogEvent> {
         .and_then(|s| s.parse::<u32>().ok())
         .unwrap_or(0);
 
-    let time_str = extract_xml_tag(xml, "TimeCreated")
-        .and_then(|s| extract_xml_attr(&s, "SystemTime"))
+    let time_str = extract_xml_attr(xml, "TimeCreated", "SystemTime")
         .or_else(|| extract_xml_tag(xml, "TimeCreated"));
     let timestamp = time_str
         .and_then(|s| DateTime::parse_from_rfc3339(&s).ok())
@@ -285,15 +302,82 @@ fn parse_single_windows_event(xml: &str, channel: &str) -> Option<LogEvent> {
     if let Some(msg) = extract_xml_tag(xml, "Message") {
         data.insert("Message".to_string(), serde_json::json!(msg));
     }
-    if let Some(provider) = extract_xml_tag(xml, "Provider") {
+    if let Some(provider) = extract_xml_attr(xml, "Provider", "Name").or_else(|| extract_xml_tag(xml, "Provider")) {
         data.insert("Provider".to_string(), serde_json::json!(provider));
     }
+    data.insert("Channel".to_string(), serde_json::json!(channel));
+
     for (name, value) in extract_event_data(xml) {
         data.insert(name, serde_json::json!(value));
     }
 
+    // Normalize numeric and hex string fields (ProcessId, Ports, etc.) into integer numbers
+    let numeric_keys = [
+        "ProcessId", "SourceProcessId", "TargetProcessId", "ParentProcessId",
+        "NewProcessId", "DestinationPort", "SourcePort",
+    ];
+    for key in numeric_keys {
+        if let Some(val) = data.get(key) {
+            if let Some(s) = val.as_str() {
+                let trimmed = s.trim();
+                let parsed = if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+                    u64::from_str_radix(hex, 16).ok()
+                } else {
+                    trimmed.parse::<u64>().ok()
+                };
+                if let Some(n) = parsed {
+                    data.insert(key.to_string(), serde_json::json!(n));
+                }
+            }
+        }
+    }
+
+    // Windows Security Event 4688 Normalization
+    if event_id == 4688 {
+        if !data.contains_key("Image") {
+            if let Some(new_proc) = data.get("NewProcessName").cloned() {
+                data.insert("Image".to_string(), new_proc);
+            }
+        }
+        if !data.contains_key("ParentImage") {
+            if let Some(parent_proc) = data.get("ParentProcessName").cloned() {
+                data.insert("ParentImage".to_string(), parent_proc);
+            }
+        }
+        if !data.contains_key("ProcessId") {
+            if let Some(pid_val) = data.get("NewProcessId").cloned() {
+                data.insert("ProcessId".to_string(), pid_val);
+            }
+        }
+        if !data.contains_key("User") {
+            if let Some(u) = data.get("SubjectUserName").cloned() {
+                data.insert("User".to_string(), u);
+            }
+        }
+    }
+
+    // Sysmon event normalization
+    if !data.contains_key("Image") {
+        if let Some(src_img) = data.get("SourceImage").cloned() {
+            data.insert("Image".to_string(), src_img);
+        }
+    }
+    if !data.contains_key("ProcessId") {
+        if let Some(src_pid) = data.get("SourceProcessId").cloned() {
+            data.insert("ProcessId".to_string(), src_pid);
+        }
+    }
+
+    let source = if channel.contains("Sysmon") 
+        || data.get("Provider").and_then(|v| v.as_str()).map(|p| p.contains("Sysmon")).unwrap_or(false) 
+    {
+        "Microsoft-Windows-Sysmon".to_string()
+    } else {
+        format!("windows:{}", channel)
+    };
+
     Some(LogEvent {
-        source: format!("windows:{}", channel),
+        source,
         event_id,
         timestamp,
         computer,
@@ -303,44 +387,99 @@ fn parse_single_windows_event(xml: &str, channel: &str) -> Option<LogEvent> {
 
 #[cfg(target_os = "windows")]
 fn extract_xml_tag(xml: &str, tag: &str) -> Option<String> {
-    let open = format!("<{}>", tag);
-    let close = format!("</{}>", tag);
-    xml.find(&open)
-        .map(|start| start + open.len())
-        .and_then(|start| xml[start..].find(&close).map(|end| (start, start + end)))
-        .map(|(start, end)| xml[start..end].trim().to_string())
+    let mut search_from = 0;
+    let pattern = format!("<{}", tag);
+    while let Some(tag_idx) = xml[search_from..].find(&pattern) {
+        let abs_start = search_from + tag_idx;
+        let after_tag_name = abs_start + pattern.len();
+        if after_tag_name < xml.len() {
+            let next_char = xml.as_bytes()[after_tag_name];
+            if next_char == b'>' || next_char == b' ' || next_char == b'/' || next_char == b'\t' || next_char == b'\n' || next_char == b'\r' {
+                if let Some(close_bracket) = xml[abs_start..].find('>') {
+                    let tag_header = &xml[abs_start..abs_start + close_bracket + 1];
+                    if tag_header.ends_with("/>") {
+                        search_from = abs_start + close_bracket + 1;
+                        continue;
+                    }
+                    let content_start = abs_start + close_bracket + 1;
+                    let close_tag = format!("</{}>", tag);
+                    if let Some(end_idx) = xml[content_start..].find(&close_tag) {
+                        return Some(xml[content_start..content_start + end_idx].trim().to_string());
+                    }
+                }
+            }
+        }
+        search_from = abs_start + 1;
+    }
+    None
 }
 
 #[cfg(target_os = "windows")]
-fn extract_xml_attr(xml: &str, attr: &str) -> Option<String> {
-    let pattern = format!("{}=\"", attr);
-    xml.find(&pattern)
-        .map(|i| i + pattern.len())
-        .and_then(|start| xml[start..].find('"').map(|end| (start, start + end)))
-        .map(|(start, end)| xml[start..end].to_string())
+fn extract_xml_attr(xml: &str, tag: &str, attr: &str) -> Option<String> {
+    let mut search_from = 0;
+    let pattern = format!("<{}", tag);
+    while let Some(tag_idx) = xml[search_from..].find(&pattern) {
+        let abs_start = search_from + tag_idx;
+        let after_tag_name = abs_start + pattern.len();
+        if after_tag_name < xml.len() {
+            let next_char = xml.as_bytes()[after_tag_name];
+            if next_char == b'>' || next_char == b' ' || next_char == b'/' || next_char == b'\t' {
+                if let Some(close_bracket) = xml[abs_start..].find('>') {
+                    let tag_header = &xml[abs_start..abs_start + close_bracket + 1];
+                    let attr_pattern = format!("{}=\"", attr);
+                    if let Some(attr_idx) = tag_header.find(&attr_pattern) {
+                        let val_start = attr_idx + attr_pattern.len();
+                        if let Some(val_end) = tag_header[val_start..].find('"') {
+                            return Some(tag_header[val_start..val_start + val_end].to_string());
+                        }
+                    }
+                }
+            }
+        }
+        search_from = abs_start + 1;
+    }
+    None
 }
 
 #[cfg(target_os = "windows")]
 fn extract_event_data(xml: &str) -> Vec<(String, String)> {
     let mut out = Vec::new();
-    if let Some(data) = xml
-        .split("<EventData>")
-        .nth(1)
-        .and_then(|s| s.split("</EventData>").next())
-    {
-        for part in data.split("<Data Name=\"") {
-            if part.contains("</Data>") {
-                if let Some(name_end) = part.find('"') {
-                    let name = part[..name_end].to_string();
-                    if let Some(val_start) = part.find(">") {
-                        let after_gt = &part[val_start + 1..];
-                        if let Some(val_end) = after_gt.find("</Data>") {
-                            let val = after_gt[..val_end].trim().to_string();
+    if let Some(event_data_idx) = xml.find("<EventData") {
+        if let Some(close_bracket) = xml[event_data_idx..].find('>') {
+            let content_start = event_data_idx + close_bracket + 1;
+            if let Some(end_idx) = xml[content_start..].find("</EventData>") {
+                let inner = &xml[content_start..content_start + end_idx];
+                let mut pos = 0;
+                let mut unnamed_idx = 0;
+                while let Some(data_idx) = inner[pos..].find("<Data") {
+                    let abs_data = pos + data_idx;
+                    if let Some(bracket) = inner[abs_data..].find('>') {
+                        let header = &inner[abs_data..abs_data + bracket + 1];
+                        let val_start = abs_data + bracket + 1;
+                        if let Some(val_end) = inner[val_start..].find("</Data>") {
+                            let val = inner[val_start..val_start + val_end].trim();
+                            let name = if let Some(n_idx) = header.find("Name=\"") {
+                                let n_start = n_idx + 6;
+                                if let Some(n_end) = header[n_start..].find('"') {
+                                    header[n_start..n_start + n_end].to_string()
+                                } else {
+                                    let s = format!("Data_{}", unnamed_idx);
+                                    unnamed_idx += 1;
+                                    s
+                                }
+                            } else {
+                                let s = format!("Data_{}", unnamed_idx);
+                                unnamed_idx += 1;
+                                s
+                            };
                             if !name.is_empty() {
-                                out.push((name, val));
+                                out.push((name, val.to_string()));
                             }
+                            pos = val_start + val_end + 7;
+                            continue;
                         }
                     }
+                    pos = abs_data + 5;
                 }
             }
         }
@@ -436,5 +575,111 @@ impl BehavioralLogReader {
             });
         }
         Ok(out)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_log_event_from_host_security_event_sysmon() {
+        let mut data = serde_json::Map::new();
+        data.insert("Image".to_string(), serde_json::json!(r"C:\Windows\System32\cmd.exe"));
+        data.insert("Provider".to_string(), serde_json::json!("Microsoft-Windows-Sysmon"));
+        data.insert("Channel".to_string(), serde_json::json!("Microsoft-Windows-Sysmon/Operational"));
+
+        let hse = osoosi_types::HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: Utc::now(),
+            computer: "host1".to_string(),
+            data: serde_json::Value::Object(data),
+            causal_parent: None,
+        };
+
+        let log_event: LogEvent = (&hse).into();
+        assert_eq!(log_event.source, "Microsoft-Windows-Sysmon");
+        assert_eq!(log_event.event_id, 1);
+        assert_eq!(log_event.data.get("Image").and_then(|v| v.as_str()), Some(r"C:\Windows\System32\cmd.exe"));
+    }
+
+    #[test]
+    fn test_log_event_from_host_security_event_security() {
+        let mut data = serde_json::Map::new();
+        data.insert("NewProcessName".to_string(), serde_json::json!(r"C:\Windows\System32\whoami.exe"));
+        data.insert("Channel".to_string(), serde_json::json!("Security"));
+
+        let hse = osoosi_types::HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 4688,
+            timestamp: Utc::now(),
+            computer: "host2".to_string(),
+            data: serde_json::Value::Object(data),
+            causal_parent: None,
+        };
+
+        let log_event: LogEvent = (&hse).into();
+        assert_eq!(log_event.source, "windows:Security");
+        assert_eq!(log_event.event_id, 4688);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_parse_single_windows_event_sysmon_xml() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Microsoft-Windows-Sysmon"/>
+    <EventID>3</EventID>
+    <Computer>node-1</Computer>
+    <TimeCreated SystemTime="2026-09-21T05:00:00.000000Z"/>
+  </System>
+  <EventData>
+    <Data Name="Image">C:\Tools\nc.exe</Data>
+    <Data Name="DestinationIp">198.51.100.23</Data>
+    <Data Name="DestinationPort">4444</Data>
+  </EventData>
+</Event>"#;
+
+        let ev = parse_single_windows_event(xml, "Microsoft-Windows-Sysmon/Operational").expect("Should parse");
+        assert_eq!(ev.source, "Microsoft-Windows-Sysmon");
+        assert_eq!(ev.event_id, 3);
+        assert_eq!(ev.data.get("DestinationIp").and_then(|v| v.as_str()), Some("198.51.100.23"));
+        assert_eq!(ev.data.get("DestinationPort").and_then(|v| v.as_u64()), Some(4444));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_parse_single_windows_event_security_4688_xml() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Microsoft-Windows-Security-Auditing"/>
+    <EventID Qualifiers="16384">4688</EventID>
+    <Computer>node-sec</Computer>
+    <TimeCreated SystemTime="2026-09-21T05:01:00.000000Z"/>
+  </System>
+  <EventData>
+    <Data Name="NewProcessId">0x1f4</Data>
+    <Data Name="NewProcessName">C:\Windows\System32\cmd.exe</Data>
+    <Data Name="ParentProcessName">C:\Windows\explorer.exe</Data>
+    <Data Name="SubjectUserName">Analyst</Data>
+  </EventData>
+</Event>"#;
+
+        let ev = parse_single_windows_event(xml, "Security").expect("Should parse");
+        assert_eq!(ev.source, "windows:Security");
+        assert_eq!(ev.event_id, 4688);
+        assert_eq!(ev.data.get("Image").and_then(|v| v.as_str()), Some(r"C:\Windows\System32\cmd.exe"));
+        assert_eq!(ev.data.get("ParentImage").and_then(|v| v.as_str()), Some(r"C:\Windows\explorer.exe"));
+        assert_eq!(ev.data.get("ProcessId").and_then(|v| v.as_u64()), Some(500));
+        assert_eq!(ev.data.get("User").and_then(|v| v.as_str()), Some("Analyst"));
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_extract_xml_tag_with_self_closing_tag_prefix() {
+        let xml = r#"<Event><System><Correlation/><Channel/><EventID>3</EventID><Channel>Microsoft-Windows-Sysmon/Operational</Channel></System></Event>"#;
+        assert_eq!(extract_xml_tag(xml, "EventID"), Some("3".to_string()));
+        assert_eq!(extract_xml_tag(xml, "Channel"), Some("Microsoft-Windows-Sysmon/Operational".to_string()));
     }
 }

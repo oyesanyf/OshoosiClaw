@@ -10,7 +10,8 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
     let mut parts = Vec::new();
 
     // Windows Event ID 4688 = Process Creation
-    if event.event_id == 4688 || event.data.contains_key("NewProcessName") {
+    let is_4688 = event.event_id == 4688 || event.data.contains_key("NewProcessName");
+    if is_4688 {
         let proc_path = event
             .data
             .get("NewProcessName")
@@ -59,7 +60,12 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
     }
 
     // Sysmon-style (from Event ID 1 to 29)
-    if event.source.contains("Sysmon") {
+    let is_sysmon = event.source.to_lowercase().contains("sysmon")
+        || event.data.get("Provider").and_then(|v| v.as_str()).map(|p| p.to_lowercase().contains("sysmon")).unwrap_or(false)
+        || event.data.get("Channel").and_then(|v| v.as_str()).map(|c| c.to_lowercase().contains("sysmon")).unwrap_or(false)
+        || (event.event_id >= 1 && event.event_id <= 29 && (event.data.contains_key("UtcTime") || event.data.contains_key("ProcessGuid")));
+
+    if is_sysmon {
         let event_id = event
             .data
             .get("EventId")
@@ -70,6 +76,7 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
         let img = event
             .data
             .get("Image")
+            .or(event.data.get("SourceImage"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
         let exe = std::path::Path::new(img)
@@ -105,8 +112,23 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             3 => {
                 // Network Connect
                 let dest_ip = event.data.get("DestinationIp").and_then(|v| v.as_str()).unwrap_or("unknown");
-                let port = event.data.get("DestinationPort").and_then(|v| v.as_u64()).unwrap_or(0);
-                parts.push(format!("Process {} established network connection to {}:{}.", exe, dest_ip, port));
+                let port = event.data.get("DestinationPort")
+                    .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+                    .unwrap_or(0);
+                let proto = event.data.get("Protocol").and_then(|v| v.as_str()).unwrap_or("TCP");
+                parts.push(format!("Process {} established network connection to {}:{} ({}).", exe, dest_ip, port, proto));
+            }
+            4 => {
+                // Sysmon Service State Change
+                let state = event.data.get("State").and_then(|v| v.as_str()).unwrap_or("state changed");
+                parts.push(format!("Sysmon service state changed: {}.", state));
+            }
+            5 => {
+                // Process Terminated
+                let pid = event.data.get("ProcessId")
+                    .and_then(|v| v.as_u64().map(|n| n.to_string()).or_else(|| v.as_str().map(String::from)))
+                    .unwrap_or_else(|| "unknown".to_string());
+                parts.push(format!("Process {} (PID {}) terminated.", exe, pid));
             }
             6 => {
                 // Driver Loaded (Kernel Rootkit / BYOVD)
@@ -116,13 +138,21 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             }
             7 => {
                 // Image Loaded (DLL Hijacking)
-                let loaded = event.data.get("ImageLoaded").and_then(|v| v.as_str()).unwrap_or("module");
+                let loaded_full = event.data.get("ImageLoaded").and_then(|v| v.as_str()).unwrap_or("module");
+                let loaded = std::path::Path::new(loaded_full)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(loaded_full);
                 let sig = event.data.get("Signature").and_then(|v| v.as_str()).unwrap_or("unsigned");
                 parts.push(format!("Process {} loaded dynamic module {} (Signature: {}).", exe, loaded, sig));
             }
             8 => {
                 // CreateRemoteThread (Process Injection)
-                let target = event.data.get("TargetImage").and_then(|v| v.as_str()).unwrap_or("target");
+                let target_full = event.data.get("TargetImage").and_then(|v| v.as_str()).unwrap_or("target");
+                let target = std::path::Path::new(target_full)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(target_full);
                 let start_addr = event.data.get("StartAddress").and_then(|v| v.as_str()).unwrap_or("0x0");
                 parts.push(format!("Process {} injected remote thread into target {} at {}.", exe, target, start_addr));
             }
@@ -133,7 +163,11 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             }
             10 => {
                 // ProcessAccess (LSASS Credential Dumping)
-                let target = event.data.get("TargetImage").and_then(|v| v.as_str()).unwrap_or("target");
+                let target_full = event.data.get("TargetImage").and_then(|v| v.as_str()).unwrap_or("target");
+                let target = std::path::Path::new(target_full)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(target_full);
                 let access = event.data.get("GrantedAccess").and_then(|v| v.as_str()).unwrap_or("unknown");
                 parts.push(format!("Process {} requested handle access ({}) into target {}.", exe, access, target));
             }
@@ -152,7 +186,12 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
                 // Alternate Data Stream (MOTW Bypass)
                 let target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("stream");
                 let hash = event.data.get("Hash").and_then(|v| v.as_str()).unwrap_or("");
-                parts.push(format!("Alternate Data Stream (ADS) written to {} (Hash: {}).", target, hash));
+                parts.push(format!("Alternate Data Stream (ADS) written to {} by {} (Hash: {}).", target, exe, hash));
+            }
+            16 => {
+                // Sysmon Config Change
+                let config = event.data.get("Configuration").and_then(|v| v.as_str()).unwrap_or("updated");
+                parts.push(format!("Sysmon configuration change detected: {}.", config));
             }
             17 | 18 => {
                 // Pipe Created / Connected (Cobalt Strike / C2)
@@ -200,8 +239,8 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
         }
     }
 
-    // Network / DNS
-    if event.data.contains_key("QueryName") || event.data.contains_key("DestinationIp") {
+    // Network / DNS (Generic, only if not already handled by Sysmon)
+    if !is_sysmon && (event.data.contains_key("QueryName") || event.data.contains_key("DestinationIp")) {
         if let Some(q) = event.data.get("QueryName").and_then(|v| v.as_str()) {
             let img = event
                 .data
@@ -219,14 +258,14 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             let port = event
                 .data
                 .get("DestinationPort")
-                .and_then(|v| v.as_u64())
+                .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
                 .unwrap_or(0);
             parts.push(format!("Process {} connected to {}:{}", img, ip, port));
         }
     }
 
-    // File creation
-    if event.data.contains_key("TargetFilename") || event.data.contains_key("TargetFileName") {
+    // File creation (Generic, only if not already handled by Sysmon and not 4688)
+    if !is_sysmon && !is_4688 && (event.data.contains_key("TargetFilename") || event.data.contains_key("TargetFileName")) {
         let target = event
             .data
             .get("TargetFilename")
@@ -242,19 +281,8 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
     }
 
     // Windows Security Auditing & Management Events
-    if event.source.contains("Security") || event.source.contains("Microsoft-Windows-Security-Auditing") {
+    if (event.source.contains("Security") || event.source.contains("Microsoft-Windows-Security-Auditing")) && !is_4688 {
         match event.event_id {
-            4688 => {
-                // Process Creation with Token Elevation
-                let new_proc = event.data.get("NewProcessName").and_then(|v| v.as_str()).unwrap_or("process");
-                let creator = event.data.get("ParentProcessName").and_then(|v| v.as_str()).unwrap_or("parent");
-                let cmd = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("");
-                let token = event.data.get("TokenElevationType").and_then(|v| v.as_str()).unwrap_or("");
-                parts.push(format!("Process {} executed by parent {} (Token: {}).", new_proc, creator, token));
-                if !cmd.is_empty() {
-                    parts.push(format!("Command: {}", cmd));
-                }
-            }
             4698 | 4702 => {
                 // Scheduled Task Created / Updated (Persistence)
                 let task_name = event.data.get("TaskName").and_then(|v| v.as_str()).unwrap_or("Task");
@@ -369,4 +397,145 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
     }
 
     parts.join(" ")
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::collections::HashMap;
+
+    fn make_sysmon_event(event_id: u32, data_kv: Vec<(&str, serde_json::Value)>) -> LogEvent {
+        let mut data = HashMap::new();
+        data.insert("Provider".to_string(), serde_json::json!("Microsoft-Windows-Sysmon"));
+        for (k, v) in data_kv {
+            data.insert(k.to_string(), v);
+        }
+        LogEvent {
+            source: "Microsoft-Windows-Sysmon".to_string(),
+            event_id,
+            timestamp: chrono::Utc::now(),
+            computer: "test-node".to_string(),
+            data,
+        }
+    }
+
+    #[test]
+    fn test_sysmon_process_creation() {
+        let ev = make_sysmon_event(1, vec![
+            ("Image", serde_json::json!(r"C:\Windows\System32\cmd.exe")),
+            ("ParentImage", serde_json::json!(r"C:\Windows\explorer.exe")),
+            ("CommandLine", serde_json::json!("cmd.exe /c dir")),
+        ]);
+        let s = event_to_behavioral_sentence(&ev);
+        assert!(s.contains("cmd.exe started by parent explorer.exe"));
+    }
+
+    #[test]
+    fn test_sysmon_network_connect() {
+        let ev = make_sysmon_event(3, vec![
+            ("Image", serde_json::json!(r"C:\Windows\System32\curl.exe")),
+            ("DestinationIp", serde_json::json!("198.51.100.1")),
+            ("DestinationPort", serde_json::json!(443)),
+            ("Protocol", serde_json::json!("TCP")),
+        ]);
+        let s = event_to_behavioral_sentence(&ev);
+        assert!(s.contains("curl.exe established network connection to 198.51.100.1:443 (TCP)"));
+    }
+
+    #[test]
+    fn test_sysmon_image_load() {
+        let ev = make_sysmon_event(7, vec![
+            ("Image", serde_json::json!(r"C:\Windows\System32\notepad.exe")),
+            ("ImageLoaded", serde_json::json!(r"C:\Windows\System32\amsi.dll")),
+            ("Signature", serde_json::json!("Microsoft Windows")),
+        ]);
+        let s = event_to_behavioral_sentence(&ev);
+        assert!(s.contains("notepad.exe loaded dynamic module amsi.dll"));
+        assert!(!s.contains("created file"));
+    }
+
+    #[test]
+    fn test_sysmon_create_remote_thread() {
+        let ev = make_sysmon_event(8, vec![
+            ("SourceImage", serde_json::json!(r"C:\Malware\inject.exe")),
+            ("TargetImage", serde_json::json!(r"C:\Windows\System32\svchost.exe")),
+            ("StartAddress", serde_json::json!("0x7FFE0000")),
+        ]);
+        let s = event_to_behavioral_sentence(&ev);
+        assert!(s.contains("inject.exe injected remote thread into target svchost.exe"));
+    }
+
+    #[test]
+    fn test_sysmon_process_access() {
+        let ev = make_sysmon_event(10, vec![
+            ("SourceImage", serde_json::json!(r"C:\Tools\mimikatz.exe")),
+            ("TargetImage", serde_json::json!(r"C:\Windows\System32\lsass.exe")),
+            ("GrantedAccess", serde_json::json!("0x1010")),
+        ]);
+        let s = event_to_behavioral_sentence(&ev);
+        assert!(s.contains("mimikatz.exe requested handle access (0x1010) into target lsass.exe"));
+    }
+
+    #[test]
+    fn test_sysmon_file_create() {
+        let ev = make_sysmon_event(11, vec![
+            ("Image", serde_json::json!(r"C:\Tools\drop.exe")),
+            ("TargetFilename", serde_json::json!(r"C:\Temp\payload.dll")),
+        ]);
+        let s = event_to_behavioral_sentence(&ev);
+        assert!(s.contains(r"drop.exe created file: C:\Temp\payload.dll"));
+    }
+
+    #[test]
+    fn test_sysmon_registry_events() {
+        let ev = make_sysmon_event(13, vec![
+            ("Image", serde_json::json!(r"C:\Windows\reg.exe")),
+            ("TargetObject", serde_json::json!(r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run\Persist")),
+            ("EventType", serde_json::json!("SetValue")),
+        ]);
+        let s = event_to_behavioral_sentence(&ev);
+        assert!(s.contains("reg.exe performed registry operation (SetValue) on HKLM"));
+    }
+
+    #[test]
+    fn test_sysmon_dns_query() {
+        let ev = make_sysmon_event(22, vec![
+            ("Image", serde_json::json!(r"C:\Windows\System32\nslookup.exe")),
+            ("QueryName", serde_json::json!("c2-beacon.example.com")),
+        ]);
+        let s = event_to_behavioral_sentence(&ev);
+        assert!(s.contains("nslookup.exe queried DNS record: c2-beacon.example.com"));
+    }
+
+    #[test]
+    fn test_sysmon_process_tampering() {
+        let ev = make_sysmon_event(25, vec![
+            ("Image", serde_json::json!(r"C:\Malware\hollow.exe")),
+            ("Type", serde_json::json!("ProcessHollowing")),
+        ]);
+        let s = event_to_behavioral_sentence(&ev);
+        assert!(s.contains("Process tampering/hollowing anomaly detected on hollow.exe (Type: ProcessHollowing)"));
+    }
+
+    #[test]
+    fn test_windows_security_4688_process_creation() {
+        let mut data = HashMap::new();
+        data.insert("NewProcessName".to_string(), serde_json::json!(r"C:\Windows\System32\powershell.exe"));
+        data.insert("ParentProcessName".to_string(), serde_json::json!(r"C:\Windows\System32\cmd.exe"));
+        data.insert("CommandLine".to_string(), serde_json::json!("powershell.exe -enc AAAA"));
+        data.insert("SubjectUserName".to_string(), serde_json::json!("SYSTEM"));
+
+        let ev = LogEvent {
+            source: "windows:Security".to_string(),
+            event_id: 4688,
+            timestamp: chrono::Utc::now(),
+            computer: "dc01".to_string(),
+            data,
+        };
+
+        let s = event_to_behavioral_sentence(&ev);
+        assert!(s.contains("Process powershell.exe"));
+        assert!(s.contains("was executed by user SYSTEM from parent cmd.exe"));
+        assert_eq!(s.matches("executed").count(), 1);
+    }
 }

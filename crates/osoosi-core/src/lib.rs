@@ -164,42 +164,73 @@ fn is_system_critical(event: &osoosi_types::HostSecurityEvent) -> bool {
     false
 }
 
-fn should_skip_file_malware_scan(path: &std::path::Path) -> bool {
-    let path_lc = path
-        .to_string_lossy()
-        .replace('/', "\\")
-        .to_ascii_lowercase();
-    if path_lc.contains("\\.codex\\")
-        || path_lc.contains("\\.gemini\\")
-        || path_lc.contains("\\antigravity\\brain\\")
-        || path_lc.contains("\\.system_generated\\logs\\")
-        || path_lc.contains("\\hugos ide\\")
-        || path_lc.contains("\\resources\\app\\out\\vs\\")
-        || path_lc.contains("microsoft.powershell.psreadline")
-        || path_lc.contains("\\oshoosiclaw\\tools\\rules\\")
-        || path_lc.contains("\\oshoosiclaw\\dashboard\\")
-        || path_lc.contains("\\oshoosiclaw\\target\\")
-        || path_lc.contains("\\oshoosiclaw\\.git\\")
-        || path_lc.contains("\\oshoosiclaw\\cache\\")
-        || path_lc.contains("\\models\\")
-        || path_lc.contains("\\logs\\")
-        || path_lc.contains("\\traps\\")
-        || path_lc.contains("\\wavlink\\")
-        || path_lc.contains("\\windows\\temp\\")
-        || path_lc.contains("threat_model.json")
-    {
+pub fn is_developer_tool(name: &str, exe_path: Option<&std::path::Path>) -> bool {
+    let name_lc = name.to_ascii_lowercase();
+    let filename_lc = std::path::Path::new(&name_lc)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&name_lc);
+    let base_name = filename_lc.strip_suffix(".exe").unwrap_or(filename_lc);
+
+    let is_dev_name = matches!(
+        base_name,
+        "git"
+            | "git-remote-http"
+            | "git-remote-https"
+            | "git-upload-pack"
+            | "git-receive-pack"
+            | "git-credential-manager"
+            | "git-lfs"
+            | "cargo"
+            | "rustc"
+            | "rust-analyzer"
+            | "cargo-clippy"
+            | "cargo-watch"
+            | "node"
+            | "npm"
+            | "npx"
+            | "yarn"
+            | "pnpm"
+            | "bun"
+            | "deno"
+            | "python"
+            | "python3"
+            | "py"
+            | "code"
+            | "code - insiders"
+            | "code-insiders"
+            | "devenv"
+            | "msbuild"
+            | "cl"
+            | "link"
+            | "cmake"
+            | "ninja"
+            | "idea64"
+            | "clion64"
+            | "pycharm64"
+            | "goland64"
+            | "webstorm64"
+            | "rustrover64"
+    ) || base_name.starts_with("git-")
+      || base_name.starts_with("cargo-")
+      || base_name.starts_with("rust-");
+
+    if is_dev_name {
         return true;
     }
 
-    let ext = path
-        .extension()
-        .and_then(|e| e.to_str())
-        .unwrap_or("")
-        .to_ascii_lowercase();
-    matches!(
-        ext.as_str(),
-        "yml" | "yaml" | "json" | "jsonl" | "toml" | "md" | "txt" | "log" | "sqlite" | "db"
-    )
+    if let Some(p) = exe_path {
+        let p_str = p.to_string_lossy();
+        if osoosi_model::malware::is_ide_or_build_path(&p_str) {
+            return true;
+        }
+    }
+
+    false
+}
+
+pub fn should_skip_file_malware_scan(path: &std::path::Path) -> bool {
+    crate::voters::scanner_skip_path(&path.to_string_lossy())
 }
 
 fn register_internal_assets(memory: &MemoryStore) {
@@ -1786,13 +1817,34 @@ impl EdrOrchestrator {
                     }
 
                     let process_name = process.name().to_string();
-                    // EXEMPTIONS: Critical system processes that legitimately spike during maintenance/updates
-                    if process_name == "MsMpEng.exe"
-                        || process_name == "TrustedInstaller.exe"
-                        || process_name == "TiWorker.exe"
-                        || process_name == "GoogleUpdater.exe"
-                        || process_name == "updater.exe"
-                    {
+                    let process_name_lc = process_name.to_lowercase();
+                    let exe_path = process.exe().map(|p| p.to_path_buf());
+
+                    // EXEMPTIONS: Critical system processes and developer tools that legitimately spike during builds/maintenance/updates
+                    let is_exempt_system = process_name_lc == "msmpeng.exe"
+                        || process_name_lc == "trustedinstaller.exe"
+                        || process_name_lc == "tiworker.exe"
+                        || process_name_lc == "googleupdater.exe"
+                        || process_name_lc == "updater.exe";
+                    let is_exempt_dev = is_developer_tool(&process_name_lc, exe_path.as_deref());
+
+                    if is_exempt_system || is_exempt_dev {
+                        let cpu_usage = process.cpu_usage();
+                        let memory_usage = process.memory();
+                        if cpu_usage > 300.0 || memory_usage > memory_threshold {
+                            orchestrator.audit.log(
+                                "CYBERSHIELD_RESOURCE_ANOMALY",
+                                serde_json::json!({
+                                    "process_name": process_name,
+                                    "pid": pid.as_u32(),
+                                    "cpu_usage": cpu_usage,
+                                    "memory_usage_kb": memory_usage / 1024,
+                                    "threshold_memory_kb": memory_threshold / 1024,
+                                    "exemption": if is_exempt_system { "system_maintenance" } else { "developer_tool" },
+                                    "action": "monitored_no_kill",
+                                }),
+                            );
+                        }
                         continue;
                     }
 
@@ -1801,7 +1853,6 @@ impl EdrOrchestrator {
 
                     // Higher thresholds for alerting (3.0 cores CPU, 50% RAM)
                     if cpu_usage > 300.0 || memory_usage > memory_threshold {
-                        let exe_path = process.exe().map(|p| p.to_path_buf());
                         let orch = orchestrator.clone();
                         let pid_val = pid.as_u32();
 
@@ -1810,11 +1861,23 @@ impl EdrOrchestrator {
                                 "CyberShield Insight: Process {} (PID {}) exceeds resource thresholds (CPU: {:.1}%, Mem: {}KB).",
                                 process_name, pid_val, cpu_usage, memory_usage / 1024
                             );
+                            orch.audit.log(
+                                "CYBERSHIELD_RESOURCE_ANOMALY",
+                                serde_json::json!({
+                                    "process_name": process_name,
+                                    "pid": pid_val,
+                                    "cpu_usage": cpu_usage,
+                                    "memory_usage_kb": memory_usage / 1024,
+                                    "threshold_memory_kb": memory_threshold / 1024,
+                                    "action": "inspecting_binary",
+                                }),
+                            );
 
                             // Analyze the image path immediately using the CEREBUS-enhanced MalwareScanner
                             if let Some(path) = exe_path {
                                 let path_str = path.to_string_lossy();
                                 if should_skip_file_malware_scan(&path)
+                                    || is_developer_tool(&process_name_lc, Some(&path))
                                     || orch
                                         .memory
                                         .is_internal_asset_path(&path_str)
@@ -1839,8 +1902,16 @@ impl EdrOrchestrator {
                                         );
                                         return; // Clean — let it go
                                     }
-                                    if result.is_malware {
-                                        warn!("CyberShield INTERCEPTION: High-resource process {} is MALICIOUS. Triggering active response.", process_name);
+                                    // Distinguish between a pure resource anomaly and confirmed malicious code.
+                                    // Never kill a process on an ambiguous or borderline heuristic ML score.
+                                    let confirmed_malicious = result.is_malware
+                                        && (result.signature_score >= 0.85
+                                            || result.ml_score >= 0.90
+                                            || (result.signature_score > 0.0 && result.combined_score >= 0.85));
+
+                                    if confirmed_malicious {
+                                        warn!("CyberShield INTERCEPTION: High-resource process {} is CONFIRMED MALICIOUS (sig: {:.2}, ml: {:.2}, combined: {:.2}). Triggering active response.",
+                                            process_name, result.signature_score, result.ml_score, result.combined_score);
 
                                         // NEW: Holographic Deception Sharding (HDS) activation
                                         // Calculate "fake" attacker IP (prototype uses local loopback for testing)
@@ -1865,6 +1936,11 @@ impl EdrOrchestrator {
                                                 let _ = CloseHandle(handle);
                                             }
                                         }
+                                    } else {
+                                        info!(
+                                            "CyberShield: High-resource process {} flagged as resource anomaly without confirmed malicious indicators (sig: {:.2}, ml: {:.2}). Skipping kill.",
+                                            process_name, result.signature_score, result.ml_score
+                                        );
                                     }
                                 }
                             }
@@ -2759,7 +2835,7 @@ impl EdrOrchestrator {
 
                 if sig.recommended_action == ResponseAction::Isolate {
                     if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()) {
-                        let _ = self.blocking_manager.block_by_pid(pid as u32);
+                        let _ = self.blocking_manager.block_by_pid(pid as u32).await;
                     }
                 }
             }
@@ -2868,7 +2944,28 @@ impl EdrOrchestrator {
         }
 
         // 1. Tier-1/2 on Async Consensus (policy)
-        let signature = self.policy.scan_event(&event).await;
+        let mut signature = self.policy.scan_event(&event).await;
+
+        // Route into Behavioral Analysis Pipeline (SecureBERT / CoLog autonomous sequence check)
+        let log_ev = osoosi_behavioral::LogEvent::from(&event);
+        let colog_score = self.behavioral_analyzer.autonomous_check(log_ev.clone()).await;
+        if colog_score > 0.85 {
+            warn!("BEHAVIORAL PIPELINE: Sysmon/Host anomaly detected (score={:.2}) for source {}", colog_score, log_ev.source);
+            if let Some(ref mut sig) = signature {
+                sig.confidence = (sig.confidence + 0.25).min(1.0);
+                sig.add_reason(format!("Behavioral CoLog Anomaly: score {:.2}", colog_score));
+            } else {
+                let mut sig = osoosi_types::ThreatSignature::new(event.computer.clone());
+                sig.confidence = colog_score;
+                sig.process_name = event.data.get("Image")
+                    .and_then(|i| i.as_str())
+                    .and_then(|p| std::path::Path::new(p).file_name())
+                    .and_then(|n| n.to_str())
+                    .map(String::from);
+                sig.add_reason(format!("Behavioral Pipeline: CoLog sequence deviation (score {:.2})", colog_score));
+                signature = Some(sig);
+            }
+        }
 
         // 2. Entropy analysis on Rayon (CPU-bound)
         // Skip entropy calculation for all events in Silent mode (extreme I/O saver)
@@ -3376,6 +3473,9 @@ impl EdrOrchestrator {
                     // Any remote thread creation is suspicious — scan both source and target
                     true
                 }
+                25 => { // ProcessTampering (Hollowing / Herpaderping)
+                    true
+                }
                 _ => false,
             };
 
@@ -3385,11 +3485,14 @@ impl EdrOrchestrator {
                     .data
                     .get("TargetProcessId")
                     .or_else(|| event.data.get("SourceProcessId"))
-                    .and_then(|v| v.as_str())
-                    .or_else(|| event.data.get("ProcessId").and_then(|v| v.as_str()));
+                    .or_else(|| event.data.get("ProcessId"))
+                    .and_then(|v| {
+                        v.as_u64()
+                            .map(|n| n as u32)
+                            .or_else(|| v.as_str().and_then(|s| s.parse::<u32>().ok()))
+                    });
 
-                if let Some(pid_str) = target_pid {
-                    if let Ok(pid) = pid_str.parse::<u32>() {
+                if let Some(pid) = target_pid {
                         warn!(
                             "MEMORY FORENSICS: Sysmon {:?} triggered native memory scan on PID {}",
                             event.event_id, pid
@@ -3438,7 +3541,6 @@ impl EdrOrchestrator {
                     }
                 }
             }
-        }
 
         if let Some(signature) = signature {
             self.handle_threat(&event, signature).await?;
@@ -5330,3 +5432,53 @@ impl EdrOrchestrator {
         unix_path.replace_all(&intermediate, "<PATH>").to_string()
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::path::Path;
+
+    #[test]
+    fn test_is_developer_tool() {
+        assert!(is_developer_tool("git.exe", None));
+        assert!(is_developer_tool("git", None));
+        assert!(is_developer_tool(r"C:\Program Files\Git\bin\git.exe", None));
+        assert!(is_developer_tool("git-remote-https.exe", None));
+        assert!(is_developer_tool("git-remote-https", None));
+        assert!(is_developer_tool("cargo.exe", None));
+        assert!(is_developer_tool("cargo", None));
+        assert!(is_developer_tool("rustc.exe", None));
+        assert!(is_developer_tool("rust-analyzer.exe", None));
+        assert!(is_developer_tool("node.exe", None));
+        assert!(is_developer_tool("node", None));
+        assert!(is_developer_tool("python.exe", None));
+        assert!(is_developer_tool("code.exe", None));
+        assert!(is_developer_tool("cargo-watch.exe", None));
+        assert!(is_developer_tool("custom-runner.exe", Some(Path::new(r"D:\project\.vscode\extensions\runner.exe"))));
+        assert!(is_developer_tool("worker.exe", Some(Path::new(r"D:\project\target\debug\worker.exe"))));
+
+        assert!(!is_developer_tool("mimikatz.exe", Some(Path::new(r"C:\Windows\Temp\mimikatz.exe"))));
+        assert!(!is_developer_tool("evil.exe", Some(Path::new(r"C:\Users\Public\evil.exe"))));
+        assert!(!is_developer_tool("cmd.exe", None));
+        assert!(!is_developer_tool("powershell.exe", None));
+        assert!(!is_developer_tool("gitminer.exe", None));
+        assert!(!is_developer_tool("gitminer", None));
+    }
+
+    #[test]
+    fn test_should_skip_file_malware_scan() {
+        assert!(should_skip_file_malware_scan(Path::new(r"D:\dev\my_project\.vscode\settings.json")));
+        assert!(should_skip_file_malware_scan(Path::new(r"D:\dev\my_project\target\debug\app.pdb")));
+        assert!(should_skip_file_malware_scan(Path::new(r"D:\dev\my_project\target\debug\incremental\app.rmeta")));
+        assert!(should_skip_file_malware_scan(Path::new(r"D:\dev\my_project\src\main.rs")));
+        assert!(should_skip_file_malware_scan(Path::new(r"D:\dev\my_project\.git\index")));
+        assert!(should_skip_file_malware_scan(Path::new(r"D:\dev\my_project\node_modules\package\index.js")));
+        assert!(should_skip_file_malware_scan(Path::new(r"C:\Users\dev\.cargo\config.toml")));
+
+        assert!(!should_skip_file_malware_scan(Path::new(r"C:\Windows\System32\unknown_driver.sys")));
+        assert!(!should_skip_file_malware_scan(Path::new(r"C:\Users\Public\Downloads\installer.exe")));
+        assert!(!should_skip_file_malware_scan(Path::new(r"C:\Windows\Temp\mimikatz.exe")));
+        assert!(!should_skip_file_malware_scan(Path::new(r"C:\Windows\Temp\ransomware.exe")));
+    }
+}
+

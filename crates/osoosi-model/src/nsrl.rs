@@ -160,7 +160,6 @@ impl NsrlIngester {
 #[cfg(test)]
 mod tests {
     use super::*;
-    use std::path::PathBuf;
 
     #[test]
     fn test_nsrl_create_and_lookup() {
