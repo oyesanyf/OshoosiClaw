@@ -1153,6 +1153,9 @@ impl EdrOrchestrator {
         // Default-Deny Agent Network Egress & Covert Side-Channel Isolation Voter
         policy.add_voter(Box::new(osoosi_policy::agent_egress::AgentEgressVoter::new())).await;
 
+        // Cloudflare AI Security Audit Voter (Tool-Argument Injection, Memory Poisoning & Memory Safety)
+        policy.add_voter(Box::new(osoosi_policy::ai_audit_voter::AiSecurityAuditVoter::new())).await;
+
         policy.add_voter(Box::new(osoosi_policy::voters::ZeroDayVoter::new())).await;
         policy.add_voter(Box::new(osoosi_policy::voters::SandboxSurfaceVoter)).await;
 

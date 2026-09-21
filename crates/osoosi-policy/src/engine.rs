@@ -174,6 +174,7 @@ fn classify_vote(
         "SandboxSurfaceAnalysis" => (EvidenceClass::Behavior, 0.85, true),
         "Agentic-Escape-Detector" => (EvidenceClass::Behavior, 0.95, true),
         "Agent-Egress-Voter" => (EvidenceClass::LiveNetwork, 1.0, true),
+        "Ai-Security-Audit-Voter" => (EvidenceClass::Behavior, 0.95, true),
         "Sigma-Engine" => (EvidenceClass::Behavior, 0.90, true),
         "IOC-Scanner" => (EvidenceClass::ThreatIntel, 1.0, true),
         name if name.contains("MalConv") || name.contains("ML") => {
