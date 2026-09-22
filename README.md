@@ -117,6 +117,19 @@ graph LR
 | **Sandboxing** | Direct host execution | Hardened via **NVIDIA OpenShell** L7 policies |
 | **Scalability** | Hub-and-spoke (bottleneck) | **Million-Node Mesh** with Zonal Sharding |
 | **Provisioning** | Admin installs tools manually | Hardened, auditable pipeline via `SecuredExecutor` |
+| **Agent Defense** | Blind to AI/Agentic attacks | Real-time AI tool-injection, memory poisoning, & egress voters |
+
+### AI Agent Security & Cloudflare Audit Integration
+
+OshoosiClaw incorporates an on-device threat matrix designed specifically for autonomous agent runtimes, integrating the **Cloudflare Security Audit Framework** into active EDR consensus:
+
+- **`AiSecurityAuditVoter`**: Evaluates Sysmon telemetry against prompt and tool injection attacks:
+  - **Tool-Argument Injection**: Intercepts command chaining (`;`, `&&`, `|`), encoded PowerShell commands, and directory traversals (`../`, `..\`) executed via agent tool calls.
+  - **Agent State & Memory Poisoning**: Blocks untrusted writes (Sysmon Event 11) targeting `.agents/memory.md`, `.agents/rules/`, and `osoosi.toml`.
+  - **Process Memory Safety**: Flags unauthorized code/remote thread injection (Sysmon Events 8 & 10) into AI inference processes.
+- **`AgenticPolicyVoter`**: Detects agentic breakout, policy violations, and adversarial prompt drift using dynamic minimax defense.
+- **`AgentEgressVoter`**: Inspects network egress for DNS covert channels, exfiltration bursts, and suspicious endpoints.
+- **CyberShield Developer & Inference Guardrails**: Local LLM runtimes (`llama-server.exe`, `ollama`, `vllm`) are recognized and safeguarded with strict C2 verification ($\ge 0.95$ threshold) before any defensive suspension actions.
 
 ### The Autonomous Decision Matrix
 

@@ -107,6 +107,28 @@ The Military Guard provides advanced detection for asymmetric warfare patterns t
 - **Sleeper-Strike (Loitering) Monitor**: Detects dormant processes that execute sudden "Alpha Strikes" after long periods of inactivity.
 - **Anti-Chaff Filter**: Neutralizes decoy traffic intended to blind the EDR's monitoring capabilities.
 
+### 6. AI Agent Security & Policy Voters (Cloudflare Audit Integration)
+Incorporating the Cloudflare Security Audit Framework, the EDR's multi-modal consensus engine incorporates real-time host telemetry voters:
+- **`AiSecurityAuditVoter`**: Evaluates live host execution events for AI-specific attacks:
+  - **Tool-Argument Injection**: Inspects command-line arguments passed to agent tools for command chaining (`;`, `&&`, `|`), encoded scripts (`powershell -enc`), and path traversals (`../`, `..\`) into sensitive system files.
+  - **State & Memory Poisoning**: Intercepts Sysmon Event 11 writes targeting agent memory stores (`.agents/memory.md`), policy rules (`.agents/rules/`), and configuration files (`osoosi.toml`).
+  - **Process Memory Safety**: Detects external processes attempting remote thread creation (Event 8) or memory modification (`PROCESS_VM_WRITE`) into AI runtimes.
+- **`AgenticPolicyVoter`**: Dynamic minimax defense, goal alignment evaluation, and agentic escape detection.
+- **`AgentEgressVoter`**: Threat-observed outbound network egress control, DNS covert channel detection, and adaptive traffic throttling.
+
+### 7. CyberShield Developer Tool & Local AI Protection
+CyberShield provides real-time resource anomaly monitoring and process mitigation with hardened developer protections:
+- **Local AI Engine Whitelist**: AI inference engines (`llama-server`, `ollama`, `vllm`, `tritonserver`, `tabby`) are recognized as developer tools and protected from false-positive active response suspensions.
+- **C2 Kill Guard**: Developer tools will never be terminated or suspended on heuristic resource anomalies unless verified by a confirmed C2 beacon signature ($\text{score} \ge 0.95$).
+- **YARA C2 Precision**: Built-in C2 detection (`C2_Beacon_Generic`) strictly matches authentic BishopFox Sliver protobuf/RPC signatures (`sliverpb.SliverRPC`, `sliver.pb.go`), eliminating false positives on English word matches.
+- **Kernel Subsystem Bypass**: System kernel processes (PID 0, PID 4, `System`, `Registry`) are exempted from user-space resource kill actions.
+- **Runtime False-Positive Exclusions**: Git MinGW binaries (`\Program Files\Git\mingw64\`), Google Drive sync temp directories (`\.tmp.driveupload\`), and Hugging Face caches are whitelisted in `scanner_skip_path` and `is_ide_or_build_path`.
+
+### 8. Resilient Model & Threat Feed Provisioning
+- **NSRL RDS Streaming**: Features dynamic directory writability probes, buffered async writes (8MB `BufWriter`), automatic fallback to alternate cache locations, and clean task cancellation handling.
+- **Cross-Crate Provisioning State**: Atomic state tracking via `osoosi_types::is_model_provisioning()` coordinates download states across crates, ensuring smooth fallback to Ollama or heuristic classifiers without transient startup error log spam.
+
+
 ## Response Matrix
 
 | Confidence | Action | Description |
