@@ -2,7 +2,7 @@ use osoosi_audit::{AuditEntry, AuditTrail};
 use osoosi_behavioral::SmolLMAnalyzer;
 use std::path::Path;
 use std::collections::HashMap;
-use tracing::{error, warn};
+use tracing::{debug, error, warn};
 
 pub struct ForensicStoryteller {
     analyzer: Option<SmolLMAnalyzer>,
@@ -44,15 +44,19 @@ impl ForensicStoryteller {
             return Self { analyzer: None, judge: None, foundation_sec_judge: None };
         }
 
-        let analyzer = match SmolLMAnalyzer::new(&model_dir) {
-            Ok(a) => Some(a),
-            Err(e) => {
-                warn!(
-                    "AI Storytelling analyzer NOT initialized: {}. Fallback to legacy templates.",
-                    e
-                );
-                None
+        let analyzer = if has_smollm {
+            match SmolLMAnalyzer::new(&model_dir) {
+                Ok(a) => Some(a),
+                Err(e) => {
+                    debug!(
+                        "AI Storytelling analyzer not initialized: {}. Fallback to narrative templates.",
+                        e
+                    );
+                    None
+                }
             }
+        } else {
+            None
         };
 
         Self { analyzer, judge, foundation_sec_judge }

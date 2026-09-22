@@ -1,7 +1,7 @@
 use sysinfo::{Pid, System};
 use iced_x86::{Decoder, DecoderOptions, Formatter, Instruction, IntelFormatter};
 use std::path::Path;
-use tracing::{info, warn, error};
+use tracing::{debug, error, info};
 
 use crate::llm_engine::Gemma4Analyzer;
 use std::sync::Arc;
@@ -31,10 +31,16 @@ impl GemmaSupervisor {
         let analyzer = match Gemma4Analyzer::new(model_dir) {
             Ok(a) => Some(Arc::new(a)),
             Err(e) => {
-                warn!(
-                    "LLM Cortex failed to initialize from {:?}: {}. Falling back to heuristic analysis.",
-                    model_dir, e
-                );
+                if osoosi_types::is_model_provisioning() {
+                    info!(
+                        "SpiderEyes: LLM model files are provisioning in background. Heuristic analysis active."
+                    );
+                } else {
+                    debug!(
+                        "LLM Cortex unavailable from {:?}: {}. Using heuristic analysis.",
+                        model_dir, e
+                    );
+                }
                 None
             }
         };

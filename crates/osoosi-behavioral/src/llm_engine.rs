@@ -13,7 +13,7 @@ use serde::Deserialize;
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use tokenizers::Tokenizer;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 
 /// Strip DeepSeek R1 thinking traces from LLM output.
 /// Handles both formats:
@@ -133,7 +133,7 @@ impl SmolLMAnalyzer {
         let config_filename = model_dir.join("config.json");
 
         if !tokenizer_filename.exists() || !weights_filename.exists() || !config_filename.exists() {
-            warn!("SmolLM3 model files (tokenizer.json, model.safetensors, config.json) not found in {:?}.", model_dir);
+            debug!("SmolLM3 model files (tokenizer.json, model.safetensors, config.json) not found in {:?}.", model_dir);
             anyhow::bail!("Missing SmolLM3 model files in {:?}", model_dir);
         }
 
@@ -400,9 +400,44 @@ impl Gemma4Analyzer {
             }
         }
 
+        let main_data_present = {
+            let d1 = model_dir.join("decoder_model_merged.onnx_data");
+            let d2 = resolved_dir.join("decoder_model_merged.onnx_data");
+            (d1.exists() && std::fs::metadata(&d1).map(|m| m.len()).unwrap_or(0) > 100_000)
+                || (d2.exists() && std::fs::metadata(&d2).map(|m| m.len()).unwrap_or(0) > 100_000)
+        };
+
+        let is_decoder_merged = target_onnx
+            .file_name()
+            .and_then(|n| n.to_str())
+            .map(|n| n.contains("decoder_model_merged"))
+            .unwrap_or(false);
+
+        let weights_ready = if is_decoder_merged {
+            all_shards_present || main_data_present
+        } else {
+            true
+        };
+
+        let tokenizer_exists = tokenizer_src.exists();
         let onnx_viable = target_onnx.exists() 
             && std::fs::metadata(&target_onnx).map(|m| m.len()).unwrap_or(0) > 100_000
-            && (all_shards_present || !model_dir.join("decoder_model_merged.onnx_data_1").exists());
+            && weights_ready
+            && tokenizer_exists;
+
+        if !onnx_viable {
+            if is_decoder_merged && !weights_ready {
+                if osoosi_types::is_model_provisioning() || target_onnx.exists() {
+                    info!(
+                        "Gemma 4 ONNX shards are still provisioning/downloading in background. Engaging reasoning fallback."
+                    );
+                } else {
+                    info!("Gemma 4 ONNX external weights not yet available in {:?}.", model_dir);
+                }
+            } else if !tokenizer_exists {
+                info!("Gemma 4 tokenizer.json not found in {:?}.", model_dir);
+            }
+        }
 
         if onnx_viable {
             match (|| -> Result<Self> {
@@ -419,7 +454,13 @@ impl Gemma4Analyzer {
                 })
             })() {
                 Ok(s) => return Ok(s),
-                Err(e) => warn!("Gemma ONNX init failed: {}. Falling back.", e),
+                Err(e) => {
+                    if osoosi_types::is_model_provisioning() {
+                        info!("Gemma ONNX load pending: {}. Waiting for provisioning to complete.", e);
+                    } else {
+                        warn!("Gemma ONNX init failed: {}. Falling back.", e);
+                    }
+                }
             }
         }
 
@@ -465,20 +506,32 @@ impl Gemma4Analyzer {
             }
         }
 
-        // Priority 4: Candle/Transformer safetensors fallback
-        info!("Attempting native transformer fallback (Candle)...");
-        match SecurityJudge::new(model_dir) {
-            Ok(judge) => return Ok(Self::Candle(judge)),
-            Err(e) => warn!("Candle fallback failed: {}", e),
+        // Priority 3: Candle/Transformer safetensors fallback
+        let has_safetensors = model_dir.join("model.safetensors").exists()
+            || resolved_dir.join("model.safetensors").exists()
+            || model_dir.join("onnx").join("model.safetensors").exists();
+        if has_safetensors {
+            info!("Attempting native transformer fallback (Candle)...");
+            match SecurityJudge::new(model_dir) {
+                Ok(judge) => return Ok(Self::Candle(judge)),
+                Err(e) => {
+                    if osoosi_types::is_model_provisioning() {
+                        debug!("Candle fallback skipped: {}", e);
+                    } else {
+                        warn!("Candle fallback failed: {}", e);
+                    }
+                }
+            }
         }
 
         // Priority 4: Ollama API (The "add back Ollama" request)
-        info!("Trying Ollama fallback at {} with model {}...", ai_cfg.reasoning_url, ai_cfg.reasoning_model);
+        info!("Engaging Ollama reasoning fallback at {} with model {}...", ai_cfg.reasoning_url, ai_cfg.reasoning_model);
         Ok(Self::Ollama {
             client: reqwest::Client::new(),
             model: ai_cfg.reasoning_model,
             endpoint: ai_cfg.reasoning_url,
         })
+
     }
 
     pub async fn reason_about_attack(&self, graph_summary: &str) -> Result<String> {

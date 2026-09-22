@@ -729,6 +729,45 @@ pub fn resolve_smollm_onnx_path() -> PathBuf {
     resolve_smollm_dir().join("smollm2-135m-it.onnx")
 }
 
+static MODEL_PROVISIONING_ACTIVE: std::sync::atomic::AtomicBool =
+    std::sync::atomic::AtomicBool::new(false);
+
+/// Returns true if model provisioning/downloading is currently in progress.
+pub fn is_model_provisioning() -> bool {
+    if MODEL_PROVISIONING_ACTIVE.load(std::sync::atomic::Ordering::Relaxed) {
+        return true;
+    }
+    if std::env::var("OSOOSI_MODELS_PROVISIONING").map(|v| v == "1").unwrap_or(false) {
+        return true;
+    }
+    let marker = resolve_models_dir().join(".provisioning");
+    if marker.exists() {
+        if let Ok(meta) = std::fs::metadata(&marker) {
+            if let Ok(mod_time) = meta.modified() {
+                if let Ok(elapsed) = mod_time.elapsed() {
+                    // Stale marker check: ignore if older than 2 hours
+                    return elapsed.as_secs() < 7200;
+                }
+            }
+        }
+        return true;
+    }
+    false
+}
+
+/// Set or clear the model provisioning state.
+pub fn set_model_provisioning(provisioning: bool) {
+    MODEL_PROVISIONING_ACTIVE.store(provisioning, std::sync::atomic::Ordering::Relaxed);
+    let marker = resolve_models_dir().join(".provisioning");
+    if provisioning {
+        std::env::set_var("OSOOSI_MODELS_PROVISIONING", "1");
+        let _ = std::fs::write(&marker, format!("{}", std::process::id()));
+    } else {
+        std::env::remove_var("OSOOSI_MODELS_PROVISIONING");
+        let _ = std::fs::remove_file(&marker);
+    }
+}
+
 /// Verify the integrity of a configuration file against a .lock signature.
 pub fn verify_config_integrity(path: &std::path::Path) -> anyhow::Result<()> {
     use sha2::{Sha256, Digest};

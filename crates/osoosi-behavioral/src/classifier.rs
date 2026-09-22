@@ -15,7 +15,7 @@ use std::path::Path;
 use std::sync::Arc;
 use std::sync::Mutex;
 use tokenizers::Tokenizer;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 /// Result of behavioral classification.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -107,7 +107,11 @@ impl BehavioralClassifier {
                         ai_loaded = true;
                     }
                     Err(e) => {
-                        warn!("BehavioralClassifier: SecureBERT failed to load: {}. AI detection may be degraded.", e);
+                        if osoosi_types::is_model_provisioning() {
+                            info!("BehavioralClassifier: SecureBERT model files are downloading/provisioning in background.");
+                        } else {
+                            debug!("BehavioralClassifier: SecureBERT not initialized: {}.", e);
+                        }
                     }
                 }
 
@@ -116,12 +120,18 @@ impl BehavioralClassifier {
                 let has_smollm = smollm_dir.join("config.json").exists()
                     && smollm_dir.join("model.safetensors").exists()
                     && smollm_dir.join("tokenizer.json").exists();
-                if has_smollm || std::env::var("OSOOSI_ENABLE_SMOLLM").map(|v| v == "1").unwrap_or(false) {
+                if has_smollm {
                     if let Ok(s) = SmolLMAnalyzer::new(&smollm_dir) {
                         let mut guard = smollm_clone.write().await;
                         *guard = Some(Arc::new(s));
                         info!("BehavioralClassifier: SmolLM tier active.");
                         ai_loaded = true;
+                    }
+                } else if std::env::var("OSOOSI_ENABLE_SMOLLM").map(|v| v == "1").unwrap_or(false) {
+                    if osoosi_types::is_model_provisioning() {
+                        info!("BehavioralClassifier: SmolLM model files are currently downloading in background.");
+                    } else {
+                        debug!("BehavioralClassifier: SmolLM files not found in {:?}.", smollm_dir);
                     }
                 }
 
@@ -150,8 +160,11 @@ impl BehavioralClassifier {
             }
             
             if !no_ai && !ai_loaded {
-                error!("🛑 [PRODUCTION-CRITICAL] All ML models failed to load. Agent is in degraded visibility mode.");
-                // In a true production environment, we might panic! here or signal a high-severity alert to the SIEM
+                if osoosi_types::is_model_provisioning() {
+                    info!("BehavioralClassifier: ML models are provisioning in background. Heuristic behavioral analysis active.");
+                } else {
+                    info!("BehavioralClassifier: ML models unavailable. Running in heuristic behavioral mode.");
+                }
             }
             info!("BehavioralClassifier: Background AI initialization complete.");
         });

@@ -212,6 +212,22 @@ pub fn is_developer_tool(name: &str, exe_path: Option<&std::path::Path>) -> bool
             | "goland64"
             | "webstorm64"
             | "rustrover64"
+            | "llama-server"
+            | "ollama"
+            | "ollama_llama_server"
+            | "vllm"
+            | "text-generation-launcher"
+            | "tritonserver"
+            | "local-ai"
+            | "tabby"
+            | "tabby-cpu"
+            | "system"
+            | "registry"
+            | "smss"
+            | "csrss"
+            | "wininit"
+            | "services"
+            | "lsass"
     ) || base_name.starts_with("git-")
       || base_name.starts_with("cargo-")
       || base_name.starts_with("rust-");
@@ -1041,10 +1057,14 @@ impl EdrOrchestrator {
             })) {
                 Ok(Ok(analyzer)) => Some(Arc::new(analyzer)),
                 Ok(Err(e)) => {
-                    warn!(
-                        "LLM ONNX cortex failed to load: {}. Check model.onnx, tokenizer.json, and ONNX Runtime (ort.dll) version vs `ort` crate.",
-                        e
-                    );
+                    if osoosi_types::is_model_provisioning() {
+                        info!("LLM Cortex waiting for model provisioning: {}. Using baseline heuristics.", e);
+                    } else {
+                        warn!(
+                            "LLM ONNX cortex failed to load: {}. Check model.onnx, tokenizer.json, and ONNX Runtime (ort.dll) version vs `ort` crate.",
+                            e
+                        );
+                    }
                     None
                 }
                 Err(_) => {
@@ -1863,6 +1883,10 @@ impl EdrOrchestrator {
                         let orch = orchestrator.clone();
                         let pid_val = pid.as_u32();
 
+                        if pid_val == 0 || pid_val == 4 || process_name.eq_ignore_ascii_case("System") || process_name.eq_ignore_ascii_case("Registry") {
+                            continue;
+                        }
+
                         orchestrator.adaptive().spawn_adaptive(ResourceCategory::AI, Priority::High, async move {
                             warn!(
                                 "CyberShield Insight: Process {} (PID {}) exceeds resource thresholds (CPU: {:.1}%, Mem: {}KB).",
@@ -1911,10 +1935,25 @@ impl EdrOrchestrator {
                                     }
                                     // Distinguish between a pure resource anomaly and confirmed malicious code.
                                     // Never kill a process on an ambiguous or borderline heuristic ML score.
-                                    let confirmed_malicious = result.is_malware
-                                        && (result.signature_score >= 0.85
-                                            || result.ml_score >= 0.90
-                                            || (result.signature_score > 0.0 && result.combined_score >= 0.85));
+                                    let is_dev = is_developer_tool(&process_name_lc, Some(&path));
+                                    let confirmed_malicious = if is_dev {
+                                        // Developer tools must not be classified as a malicious kill target
+                                        // unless signature_score >= 0.95 with confirmed C2 signatures.
+                                        let has_confirmed_c2 = result.malware_type.to_lowercase().contains("c2")
+                                            || result.malware_type.to_lowercase().contains("beacon")
+                                            || result.malware_type.to_lowercase().contains("sliver")
+                                            || result.malware_type.to_lowercase().contains("cobalt")
+                                            || result.yara_matches.iter().any(|m| {
+                                                let m_lc = m.to_lowercase();
+                                                m_lc.contains("c2") || m_lc.contains("beacon") || m_lc.contains("sliver") || m_lc.contains("cobalt")
+                                            });
+                                        result.is_malware && result.signature_score >= 0.95 && has_confirmed_c2
+                                    } else {
+                                        result.is_malware
+                                            && (result.signature_score >= 0.85
+                                                || result.ml_score >= 0.90
+                                                || (result.signature_score > 0.0 && result.combined_score >= 0.85))
+                                    };
 
                                     if confirmed_malicious {
                                         warn!("CyberShield INTERCEPTION: High-resource process {} is CONFIRMED MALICIOUS (sig: {:.2}, ml: {:.2}, combined: {:.2}). Triggering active response.",
@@ -5461,6 +5500,25 @@ mod tests {
         assert!(is_developer_tool("python.exe", None));
         assert!(is_developer_tool("code.exe", None));
         assert!(is_developer_tool("cargo-watch.exe", None));
+        assert!(is_developer_tool("llama-server.exe", None));
+        assert!(is_developer_tool("llama-server", None));
+        assert!(is_developer_tool("ollama.exe", None));
+        assert!(is_developer_tool("ollama_llama_server.exe", None));
+        assert!(is_developer_tool("vllm", None));
+        assert!(is_developer_tool("text-generation-launcher", None));
+        assert!(is_developer_tool("tritonserver.exe", None));
+        assert!(is_developer_tool("local-ai", None));
+        assert!(is_developer_tool("tabby", None));
+        assert!(is_developer_tool("tabby-cpu.exe", None));
+        assert!(is_developer_tool("System", None));
+        assert!(is_developer_tool("system", None));
+        assert!(is_developer_tool("Registry", None));
+        assert!(is_developer_tool("registry", None));
+        assert!(is_developer_tool("smss.exe", None));
+        assert!(is_developer_tool("csrss.exe", None));
+        assert!(is_developer_tool("wininit.exe", None));
+        assert!(is_developer_tool("services.exe", None));
+        assert!(is_developer_tool("lsass.exe", None));
         assert!(is_developer_tool("custom-runner.exe", Some(Path::new(r"D:\project\.vscode\extensions\runner.exe"))));
         assert!(is_developer_tool("worker.exe", Some(Path::new(r"D:\project\target\debug\worker.exe"))));
 

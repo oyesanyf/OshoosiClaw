@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::io::Write;
 use sysinfo::Disks;
-use tracing::{debug, error, info, warn};
+use tracing::{debug, info, warn};
 
 pub const CISA_KEV_FEED_URL: &str =
     "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
@@ -689,6 +689,21 @@ impl ThreatFeedFetcher {
         Ok(out)
     }
 
+    /// Test if a directory can be created and written to.
+    fn is_dir_writable(dir: &std::path::Path) -> bool {
+        if std::fs::create_dir_all(dir).is_err() {
+            return false;
+        }
+        let test_file = dir.join(format!(".write_test_{}.tmp", std::process::id()));
+        match std::fs::write(&test_file, b"ok") {
+            Ok(_) => {
+                let _ = std::fs::remove_file(&test_file);
+                true
+            }
+            Err(_) => false,
+        }
+    }
+
     /// Validate that there is enough disk space for a download.
     fn check_disk_space(&self, dest_dir: &std::path::Path, required_gb: u64) -> anyhow::Result<()> {
         let disks = Disks::new_with_refreshed_list();
@@ -724,11 +739,23 @@ impl ThreatFeedFetcher {
             "https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/rds_2026.03.1/RDS_2026.03.1_modern.zip",
         ];
 
-        if !dest_dir.exists() {
-            std::fs::create_dir_all(dest_dir)?;
+        let mut target_dir = dest_dir.to_path_buf();
+        if !Self::is_dir_writable(&target_dir) {
+            let fallbacks = [
+                osoosi_types::resolve_database_dir().join("nsrl-cache"),
+                std::env::temp_dir().join("osoosi-nsrl-shared-cache"),
+                std::env::temp_dir().join("osoosi-nsrl"),
+            ];
+            for cand in &fallbacks {
+                if Self::is_dir_writable(cand) {
+                    target_dir = cand.clone();
+                    info!("[NSRL] Using writable fallback directory {:?}", target_dir);
+                    break;
+                }
+            }
         }
 
-        let zip_path = dest_dir.join("nsrl_minimal.zip");
+        let zip_path = target_dir.join("nsrl_minimal.zip");
 
         // Use a dedicated client with a longer timeout for this large download
         let download_client = reqwest::Client::builder()
@@ -815,6 +842,9 @@ impl ThreatFeedFetcher {
             }
 
             {
+                if let Some(p) = zip_path.parent() {
+                    let _ = std::fs::create_dir_all(p);
+                }
                 let mut file = std::fs::File::create(&zip_path)?;
                 file.write_all(&bytes)?;
             }
@@ -828,15 +858,13 @@ impl ThreatFeedFetcher {
 
             for i in 0..archive.len() {
                 let mut file = archive.by_index(i)?;
-                let outpath = dest_dir.join(file.name());
+                let outpath = target_dir.join(file.name());
 
                 if (*file.name()).ends_with('/') {
-                    std::fs::create_dir_all(&outpath)?;
+                    let _ = std::fs::create_dir_all(&outpath);
                 } else {
                     if let Some(p) = outpath.parent() {
-                        if !p.exists() {
-                            std::fs::create_dir_all(p)?;
-                        }
+                        let _ = std::fs::create_dir_all(p);
                     }
                     let mut outfile = std::fs::File::create(&outpath)?;
                     std::io::copy(&mut file, &mut outfile)?;
@@ -872,17 +900,45 @@ impl ThreatFeedFetcher {
             "https://s3.amazonaws.com/rds.nsrl.nist.gov/RDS/rds_2025.03.1/RDS_2025.03.1_modern.zip",
         ];
 
-        if !dest_dir.exists() {
-            std::fs::create_dir_all(dest_dir)?;
+        let mut target_dir = dest_dir.to_path_buf();
+        if !Self::is_dir_writable(&target_dir) {
+            warn!("[NSRL Background] Cannot write to requested dest_dir {:?}. Checking fallbacks...", target_dir);
+            let fallback_candidates = [
+                osoosi_types::resolve_database_dir().join("nsrl-cache"),
+                std::env::temp_dir().join("osoosi-nsrl-shared-cache"),
+                std::env::temp_dir().join("osoosi-nsrl"),
+            ];
+            let mut resolved = false;
+            for candidate in &fallback_candidates {
+                if Self::is_dir_writable(candidate) {
+                    target_dir = candidate.clone();
+                    resolved = true;
+                    info!("[NSRL Background] Using writable fallback directory {:?}", target_dir);
+                    break;
+                }
+            }
+            if !resolved {
+                return Err(anyhow::anyhow!("No writable directory found for NSRL download"));
+            }
         }
 
-        if let Err(e) = self.check_disk_space(dest_dir, 5) {
-            error!("[NSRL] Disk check failed: {}", e);
-            return Err(e);
+        if let Err(e) = self.check_disk_space(&target_dir, 3) {
+            warn!("[NSRL Background] Disk space warning for {:?}: {}. Checking fallback locations...", target_dir, e);
+            let fallback_candidates = [
+                osoosi_types::resolve_database_dir().join("nsrl-cache"),
+                std::env::temp_dir().join("osoosi-nsrl-shared-cache"),
+            ];
+            for candidate in &fallback_candidates {
+                if candidate != &target_dir && Self::is_dir_writable(candidate) && self.check_disk_space(candidate, 3).is_ok() {
+                    target_dir = candidate.clone();
+                    info!("[NSRL Background] Switched to fallback directory with sufficient space: {:?}", target_dir);
+                    break;
+                }
+            }
         }
 
-        let zip_path = dest_dir.join("nsrl_modern_stream.zip");
-        let state_path = dest_dir.join("nsrl_modern_stream.state.json");
+        let mut zip_path = target_dir.join("nsrl_modern_stream.zip");
+        let mut state_path = target_dir.join("nsrl_modern_stream.state.json");
 
         let download_client = reqwest::Client::builder()
             .user_agent("OpenOsoosi-Agent/1.0")
@@ -955,7 +1011,7 @@ impl ThreatFeedFetcher {
                 let response = match request.send().await {
                     Ok(r) => r,
                     Err(e) => {
-                        error!("[NSRL Background] Request failed: {}", e);
+                        warn!("[NSRL Background] Request failed: {}. Will retry.", e);
                         last_error = Some(e.into());
                         retry_count += 1;
                         continue;
@@ -1003,7 +1059,7 @@ impl ThreatFeedFetcher {
                         retry_count += 1;
                         continue;
                     }
-                    error!("[NSRL Background] HTTP {} for {}.", status, url);
+                    warn!("[NSRL Background] HTTP {} for {}. Retrying...", status, url);
                     last_error = Some(anyhow::anyhow!("HTTP error {}", status));
                     retry_count += 1;
                     continue;
@@ -1024,7 +1080,7 @@ impl ThreatFeedFetcher {
                 if current_size == 0 {
                     if let Some(Ok(chunk)) = stream.next().await {
                         if !chunk.starts_with(b"PK\x03\x04") {
-                            error!("[NSRL Background] Download is NOT a valid ZIP (Magic mismatch). Likely an S3 error page.");
+                            warn!("[NSRL Background] Download is NOT a valid ZIP (Magic mismatch). Likely an S3 error page.");
                             last_error = Some(anyhow::anyhow!("Invalid ZIP magic"));
                             break;
                         }
@@ -1032,7 +1088,11 @@ impl ThreatFeedFetcher {
                     }
                 }
 
-                let mut file = match tokio::fs::OpenOptions::new()
+                if let Some(parent) = zip_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+
+                let raw_file = match tokio::fs::OpenOptions::new()
                     .create(true)
                     .write(true)
                     .append(true)
@@ -1046,16 +1106,37 @@ impl ThreatFeedFetcher {
                         f
                     }
                     Err(e) => {
-                        error!("[NSRL Background] File error: {}", e);
+                        warn!("[NSRL Background] File error opening {:?}: {}. Retrying...", zip_path, e);
                         last_error = Some(e.into());
-                        break;
+                        if retry_count >= 1 {
+                            let fallbacks = [
+                                osoosi_types::resolve_database_dir().join("nsrl-cache"),
+                                std::env::temp_dir().join("osoosi-nsrl-shared-cache"),
+                                std::env::temp_dir().join("osoosi-nsrl"),
+                            ];
+                            for cand in &fallbacks {
+                                if cand != &target_dir && Self::is_dir_writable(cand) {
+                                    target_dir = cand.clone();
+                                    zip_path = target_dir.join("nsrl_modern_stream.zip");
+                                    state_path = target_dir.join("nsrl_modern_stream.state.json");
+                                    info!("[NSRL Background] Switched to fallback target_dir {:?}", target_dir);
+                                    break;
+                                }
+                            }
+                        }
+                        retry_count += 1;
+                        continue;
                     }
                 };
+                let mut file = tokio::io::BufWriter::with_capacity(8 * 1024 * 1024, raw_file);
+
+                let mut stream_error = false;
 
                 if let Some(ref chunk) = first_chunk {
                     if let Err(e) = file.write_all(chunk).await {
-                        error!("[NSRL Background] Write error: {}", e);
-                        break;
+                        warn!("[NSRL Background] Write error on initial chunk: {}. Retrying...", e);
+                        stream_error = true;
+                        last_error = Some(e.into());
                     }
                 }
 
@@ -1065,47 +1146,86 @@ impl ThreatFeedFetcher {
                     first_chunk.as_ref().map(|c| c.len() as u64).unwrap_or(0)
                 };
                 let mut last_log_pct = 0;
-                let mut stream_error = false;
 
-                while let Some(item) = stream.next().await {
-                    let chunk = match item {
-                        Ok(c) => c,
-                        Err(e) => {
-                            error!("[NSRL Background] Stream error: {}", e);
-                            stream_error = true;
-                            break;
+                if !stream_error {
+                    while let Some(item) = stream.next().await {
+                        let chunk = match item {
+                            Ok(c) => c,
+                            Err(e) => {
+                                warn!("[NSRL Background] Stream error: {}. Resuming...", e);
+                                stream_error = true;
+                                last_error = Some(e.into());
+                                break;
+                            }
+                        };
+
+                        if let Err(e) = file.write_all(&chunk).await {
+                            let err_str = e.to_string();
+                            let is_cancelled = err_str.contains("background task failed")
+                                || err_str.contains("task was cancelled")
+                                || e.kind() == std::io::ErrorKind::Interrupted;
+                            if is_cancelled {
+                                debug!("[NSRL Background] Write cancelled or runtime shutting down: {}", e);
+                                stream_error = true;
+                                last_error = Some(e.into());
+                                break;
+                            }
+                            warn!("[NSRL Background] Write error: {}. Retrying write chunk...", e);
+                            tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+                            if let Err(e2) = file.write_all(&chunk).await {
+                                let err_str2 = e2.to_string();
+                                let is_cancelled2 = err_str2.contains("background task failed")
+                                    || err_str2.contains("task was cancelled")
+                                    || e2.kind() == std::io::ErrorKind::Interrupted;
+                                if is_cancelled2 {
+                                    debug!("[NSRL Background] Write cancelled or runtime shutting down: {}", e2);
+                                } else {
+                                    warn!("[NSRL Background] Write error persisted: {}. Resuming from offset.", e2);
+                                }
+                                stream_error = true;
+                                last_error = Some(e2.into());
+                                break;
+                            }
                         }
-                    };
 
-                    if let Err(e) = file.write_all(&chunk).await {
-                        error!("[NSRL Background] Write error: {}", e);
-                        stream_error = true;
-                        break;
-                    }
-
-                    downloaded += chunk.len() as u64;
-                    if downloaded % (512 * 1024 * 1024) < (chunk.len() as u64) {
-                        let _ = std::fs::write(
-                            &state_path,
-                            serde_json::json!({"bytes_written": downloaded}).to_string(),
-                        );
-                    }
-
-                    if total_size > 0 {
-                        let pct = (downloaded * 100) / total_size;
-                        if pct >= last_log_pct + 10 {
-                            last_log_pct = pct;
-                            info!(
-                                "[NSRL Background] Progress: {}% ({:.1} GB / {:.1} GB)",
-                                pct,
-                                downloaded as f64 / 1e9,
-                                total_size as f64 / 1e9
+                        downloaded += chunk.len() as u64;
+                        if downloaded % (512 * 1024 * 1024) < (chunk.len() as u64) {
+                            let _ = file.flush().await;
+                            let _ = std::fs::write(
+                                &state_path,
+                                serde_json::json!({"bytes_written": downloaded}).to_string(),
                             );
+                        }
+
+                        if total_size > 0 {
+                            let pct = (downloaded * 100) / total_size;
+                            if pct >= last_log_pct + 10 {
+                                last_log_pct = pct;
+                                info!(
+                                    "[NSRL Background] Progress: {}% ({:.1} GB / {:.1} GB)",
+                                    pct,
+                                    downloaded as f64 / 1e9,
+                                    total_size as f64 / 1e9
+                                );
+                            }
                         }
                     }
                 }
 
-                let _ = file.flush().await;
+                if let Err(e) = file.flush().await {
+                    let err_str = e.to_string();
+                    let is_cancelled = err_str.contains("background task failed")
+                        || err_str.contains("task was cancelled")
+                        || e.kind() == std::io::ErrorKind::Interrupted;
+                    if is_cancelled {
+                        debug!("[NSRL Background] Flush cancelled or runtime shutting down: {}", e);
+                    } else {
+                        warn!("[NSRL Background] Flush error: {}. Will resume from offset.", e);
+                    }
+                    stream_error = true;
+                    last_error = Some(e.into());
+                }
+                drop(file);
 
                 if !stream_error {
                     download_finished = true;
@@ -1119,6 +1239,7 @@ impl ThreatFeedFetcher {
                         last_processed_size = downloaded;
                     }
                     if stalled_count > 3 {
+                        warn!("[NSRL Background] Download stalled after multiple attempts. Switching mirror.");
                         break;
                     }
                 }
@@ -1126,10 +1247,10 @@ impl ThreatFeedFetcher {
 
             if download_finished {
                 info!("[NSRL Background] Download complete. Extracting...");
-                let dest_clone = dest_dir.to_path_buf();
+                let dest_clone = target_dir.clone();
                 let zip_clone = zip_path.clone();
 
-                let res = tokio::task::spawn_blocking(move || {
+                let res = tokio::task::spawn_blocking(move || -> anyhow::Result<std::path::PathBuf> {
                     let f = std::fs::File::open(&zip_clone)?;
                     let mut zip = zip::ZipArchive::new(f)?;
                     let mut db = None;
@@ -1137,30 +1258,52 @@ impl ThreatFeedFetcher {
                         let mut entry = zip.by_index(i)?;
                         let out = dest_clone.join(entry.name());
                         if entry.name().ends_with('/') {
-                            std::fs::create_dir_all(&out)?;
+                            let _ = std::fs::create_dir_all(&out);
                         } else {
                             if let Some(p) = out.parent() {
-                                if !p.exists() {
-                                    std::fs::create_dir_all(p)?;
-                                }
+                                let _ = std::fs::create_dir_all(p);
                             }
-                            let mut outfile = std::fs::File::create(&out)?;
-                            std::io::copy(&mut entry, &mut outfile)?;
+                            let outfile = match std::fs::File::create(&out) {
+                                Ok(f) => f,
+                                Err(e) => {
+                                    if let Some(p) = out.parent() {
+                                        let _ = std::fs::create_dir_all(p);
+                                    }
+                                    std::fs::File::create(&out).map_err(|e2| {
+                                        anyhow::anyhow!("Failed to create extracted file {:?}: {} (orig: {})", out, e2, e)
+                                    })?
+                                }
+                            };
+                            let mut buffered_out = std::io::BufWriter::with_capacity(4 * 1024 * 1024, outfile);
+                            std::io::copy(&mut entry, &mut buffered_out)?;
+                            use std::io::Write;
+                            let _ = buffered_out.flush();
                             if out.extension().and_then(|s| s.to_str()) == Some("db") {
                                 db = Some(out);
                             }
                         }
                     }
                     let _ = std::fs::remove_file(&zip_clone);
-                    db.ok_or_else(|| anyhow::anyhow!("No DB found"))
+                    db.ok_or_else(|| anyhow::anyhow!("No DB found in NSRL archive"))
                 })
-                .await?;
+                .await;
 
-                return res;
+                match res {
+                    Ok(Ok(db_path)) => return Ok(db_path),
+                    Ok(Err(e)) => {
+                        warn!("[NSRL Background] Archive extraction error: {}. Retrying...", e);
+                        last_error = Some(e);
+                    }
+                    Err(e) => {
+                        warn!("[NSRL Background] Extraction background task error: {}. Retrying...", e);
+                        last_error = Some(e.into());
+                    }
+                }
             }
         }
 
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("All URLs and retries exhausted")))
+
     }
 
     /// Check NIST S3 bucket for newer NSRL RDS versions and deltas.

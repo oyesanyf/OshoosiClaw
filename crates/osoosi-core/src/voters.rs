@@ -93,6 +93,15 @@ pub(crate) fn scanner_skip_path(path: &str) -> bool {
         || p.contains("\\traps\\")
         || p.contains("\\wavlink\\")
         || p.contains("threat_model.json")
+        || p.contains("\\program files\\git\\")
+        || p.contains("\\git\\mingw64\\")
+        || p.contains("\\mingw64\\libexec\\")
+        || p.contains("\\git-core\\")
+        || p.contains("\\.tmp.driveupload\\")
+        || p.contains("\\.tmp.drivedownload\\")
+        || p.contains("\\appdata\\local\\google\\drivefs\\")
+        || p.contains("\\.cache\\huggingface\\")
+        || p.contains("\\.ollama\\")
     {
         return true;
     }
@@ -618,6 +627,10 @@ mod tests {
         assert!(scanner_skip_path(r"D:\dev\project\src\main.rs"));
         assert!(scanner_skip_path(r"C:\Users\dev\.cargo\registry\cache.lock"));
         assert!(scanner_skip_path(r"D:\dev\project\.git\objects\pack\pack-123.idx"));
+        assert!(scanner_skip_path(r"C:\Program Files\Git\mingw64\bin\git.exe"));
+        assert!(scanner_skip_path(r"C:\Users\dev\AppData\Local\Google\DriveFS\temp\sync.tmp"));
+        assert!(scanner_skip_path(r"C:\Users\dev\.cache\huggingface\hub\models--bert\snapshots\model.bin"));
+        assert!(scanner_skip_path(r"C:\Users\dev\.ollama\models\blobs\sha256-abc"));
 
         assert!(!scanner_skip_path(r"C:\Windows\System32\evil.exe"));
         assert!(!scanner_skip_path(r"C:\Users\victim\Downloads\payload.exe"));

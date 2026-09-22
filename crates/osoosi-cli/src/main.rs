@@ -512,7 +512,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                             )
                             .await;
                         }
-                        Err(e) => error!("[NSRL Background] Failed to download NSRL: {}", e),
+                        Err(e) => warn!("[NSRL Background] NSRL download paused or unavailable: {}. Agent continues with in-memory NSRL cache and peer mesh intelligence.", e),
                     }
                 } else if nsrl_count == 0 && db_file.exists() {
                     info!("[NSRL Background] NSRL SQLite found on disk but agent DB empty. Importing...");
@@ -1887,6 +1887,10 @@ async fn wait_for_shutdown() {
 async fn wait_for_shutdown() {
     let _ = tokio::signal::ctrl_c().await;
 }
+pub async fn provision_models() -> anyhow::Result<()> {
+    ensure_ai_models().await
+}
+
 async fn ensure_ai_models() -> anyhow::Result<()> {
     if std::env::var("OSOOSI_NO_AI")
         .map(|v| v == "1")
@@ -1894,6 +1898,14 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
     {
         return Ok(());
     }
+
+    osoosi_types::set_model_provisioning(true);
+    let res = ensure_ai_models_inner().await;
+    osoosi_types::set_model_provisioning(false);
+    res
+}
+
+async fn ensure_ai_models_inner() -> anyhow::Result<()> {
 
     info!(
         "Verifying AI models in {}...",
@@ -2123,8 +2135,13 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
     // 4. SecureBERT (Behavioral Sentence Classification)
     info!("Ensuring SecureBERT components are cached...");
     let sb_repo = api.model("MarsSecurity/securebert-onnx".to_string());
-    let _ = sb_repo.get("tokenizer.json").await;
-    let _ = sb_repo.get("model.onnx").await;
+    let bert_dir = models_dir.join("securebert");
+    let _ = fs::create_dir_all(&bert_dir);
+    for file in ["tokenizer.json", "model.onnx", "config.json"] {
+        if let Ok(path) = sb_repo.get(file).await {
+            let _ = fs::copy(&path, bert_dir.join(file));
+        }
+    }
 
     info!("AI models verified.");
     Ok(())
