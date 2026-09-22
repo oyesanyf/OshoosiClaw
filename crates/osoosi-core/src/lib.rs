@@ -1356,7 +1356,7 @@ impl EdrOrchestrator {
         if let Some(_) = osoosi_types::resolve_nvd_api_key() {
             info!("Oshoosi Hybrid: NVD API Key detected. Enhanced rate limits enabled.");
         } else {
-            warn!("Oshoosi Hybrid: No NVD API Key found. Mesh will rely heavily on peer-to-peer intelligence to avoid public rate limits.");
+            info!("Oshoosi Hybrid: No NVD API Key configured. Mesh will rely on peer-to-peer intelligence to avoid public rate limits.");
         }
 
         self.policy.set_intel_broadcaster(Arc::new(move |intel| {
