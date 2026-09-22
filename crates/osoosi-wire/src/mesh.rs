@@ -97,10 +97,13 @@ impl MeshNode {
                     key.public().to_peer_id(),
                 )?;
 
-                let identify = identify::Behaviour::new(identify::Config::new(
+                let identify_config = identify::Config::new(
                     "/osoosi/1.0.0".into(),
                     key.public(),
-                ));
+                )
+                .with_agent_version("osoosi/0.1.1".into());
+
+                let identify = identify::Behaviour::new(identify_config);
 
                 let kademlia = kad::Behaviour::new(
                     key.public().to_peer_id(),
@@ -135,7 +138,7 @@ impl MeshNode {
                 })
             })?
             .with_swarm_config(|c| {
-                c.with_idle_connection_timeout(Duration::from_secs(30))
+                c.with_idle_connection_timeout(Duration::from_secs(300))
                  .with_dial_concurrency_factor(std::num::NonZeroU8::new(1).unwrap()) // Slow down dials
                  .with_max_negotiating_inbound_streams(16)
             })
@@ -456,14 +459,13 @@ impl MeshNode {
                     self.bootstrap_local_neighbors().await;
                 }
                 _ = bootstrap_interval.tick() => {
-                    // Zero-Config Discovery: Periodic DHT Bootstrap
-                    // Only trigger if we actually have some peers to bootstrap from, to avoid "No known peers" logs.
-                    let has_peers = self.swarm.behaviour_mut().kademlia.kbuckets().any(|b| b.num_entries() > 0);
-                    if has_peers {
+                    // Only trigger bootstrap if we have at least one connected peer
+                    let connected_count = self.swarm.connected_peers().count();
+                    if connected_count > 0 {
                         let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
-                        debug!("Oshoosi Mesh: Periodic Kademlia bootstrap triggered for autonomous discovery.");
+                        debug!("Oshoosi Mesh: Periodic Kademlia bootstrap triggered (connected peers: {}).", connected_count);
                     } else {
-                        debug!("Oshoosi Mesh: Kademlia bootstrap skipped (no known peers yet).");
+                        debug!("Oshoosi Mesh: Kademlia bootstrap skipped (no connected peers yet).");
                     }
                 }
                 _ = crawl_interval.tick() => {
@@ -558,6 +560,7 @@ impl MeshNode {
                         for (pid, addr) in list {
                             if pid != *self.swarm.local_peer_id() && !quarantined.contains(&pid) {
                                 self.swarm.behaviour_mut().kademlia.add_address(&pid, addr.clone());
+                                let _ = self.swarm.dial(addr.clone());
                                 let _ = join_gate.on_peer_discovered(pid, Some(addr.to_string()));
                             }
                         }
@@ -617,14 +620,25 @@ impl MeshNode {
                         if peer_id == *self.swarm.local_peer_id() { continue; }
                         
                         // THE IDENTIFY FINGERPRINT: Filter for Oshoosi protocol agents
-                        if info.agent_version.to_lowercase().contains("osoosi") {
+                        let is_osoosi = info.agent_version.to_lowercase().contains("osoosi")
+                            || info.protocol_version.to_lowercase().contains("osoosi")
+                            || info.protocols.iter().any(|p| p.as_ref().contains("osoosi"));
+
+                        if is_osoosi {
                             info!("[!] DYNAMIC DISCOVERY: Identified Oshoosi Node at {:?}", peer_id);
-                            for addr in info.listen_addrs {
-                                self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr);
+                            for addr in &info.listen_addrs {
+                                self.swarm.behaviour_mut().kademlia.add_address(&peer_id, addr.clone());
                             }
+                            // Explicitly add to gossipsub so threat signals and policy consensus are shared
+                            self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&peer_id);
+                            if approved.insert(peer_id) {
+                                if let Some(ref c) = peer_count { c.fetch_add(1, Ordering::Relaxed); }
+                            }
+                            let primary_addr = info.listen_addrs.first().map(|a| a.to_string());
+                            let _ = join_gate.on_peer_discovered(peer_id, primary_addr);
                         } else {
-                            // Stealth: Disconnect from non-Oshoosi nodes to save resources and remain stealthy
-                            debug!("Identify: Disconnecting from non-Oshoosi peer {}", peer_id);
+                            // Stealth: Disconnect from foreign non-Oshoosi nodes
+                            debug!("Identify: Disconnecting from foreign non-Oshoosi peer {}", peer_id);
                             let _ = self.swarm.disconnect_peer_id(peer_id);
                         }
                     }
@@ -659,10 +673,26 @@ impl MeshNode {
                             } else {
                                 debug!("Transient socket collision (WSAEADDRINUSE) to {:?}, count={}", peer_id, consecutive_exhaustion_count);
                             }
-                        } else if es.contains("Timeout") || es.contains("10061") || es.contains("refused") {
-                            debug!("Outgoing connection failed (likely non-Oshoosi node) {:?}: {}", peer_id, error);
                         } else {
-                            warn!("Outgoing connection error to {:?}: {}", peer_id, error);
+                            let es_lc = es.to_lowercase();
+                            if es_lc.contains("timeout")
+                                || es_lc.contains("timed out")
+                                || es_lc.contains("refused")
+                                || es_lc.contains("handshake")
+                                || es_lc.contains("reset by peer")
+                                || es_lc.contains("unreachable")
+                                || es_lc.contains("failed to negotiate")
+                                || es.contains("10060")
+                                || es.contains("10061")
+                                || es.contains("10054")
+                                || es.contains("10064")
+                                || es.contains("10065")
+                                || es.contains("10053")
+                            {
+                                debug!("Outgoing connection failed (unreachable/non-Oshoosi peer) {:?}: {}", peer_id, error);
+                            } else {
+                                warn!("Outgoing connection error to {:?}: {}", peer_id, error);
+                            }
                         }
                         
                         // Autonomous Repair: Remove dead/unreachable peers from DHT to stop retry loops

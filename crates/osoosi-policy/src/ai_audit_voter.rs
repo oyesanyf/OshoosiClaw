@@ -112,7 +112,7 @@ impl AiSecurityAuditVoter {
             return Some(VoteResult {
                 confidence: 0.95,
                 reason: format!(
-                    "AI Tool-Argument Injection [Cloudflare AI-AND-LLM Class]: Process '{}' (PID {}) spawned with command chaining or shell injection pattern '{}' in CommandLine: {}",
+                    "AI Tool-Argument Injection [MITRE ATLAS AML.T0043 / Cloudflare AI-AND-LLM]: Process '{}' (PID {}) spawned with command chaining or shell injection pattern '{}' in CommandLine: {}",
                     image, pid, m.as_str(), cmd_line
                 ),
                 weight: 1.0,
@@ -131,7 +131,7 @@ impl AiSecurityAuditVoter {
             return Some(VoteResult {
                 confidence: 0.94,
                 reason: format!(
-                    "AI Tool Path Traversal [Cloudflare Resource-and-File Class]: Process '{}' (PID {}) supplied traversal targeting sensitive asset '{}' in CommandLine: {}",
+                    "AI Tool Path Traversal [MITRE ATLAS AML.T0044 / Insecure Output]: Process '{}' (PID {}) supplied traversal targeting sensitive asset '{}' in CommandLine: {}",
                     image, pid, m.as_str(), cmd_line
                 ),
                 weight: 0.95,
@@ -163,7 +163,7 @@ impl AiSecurityAuditVoter {
             return Some(VoteResult {
                 confidence: 0.92,
                 reason: format!(
-                    "Agent Memory/Config Poisoning [Cloudflare AI-AND-LLM Class]: Process '{}' (PID {}) attempted unauthorized modification of protected agent asset '{}'",
+                    "Agent Memory & State Poisoning [MITRE ATLAS AML.T0048 / Persistence]: Process '{}' (PID {}) attempted unauthorized modification of protected agent asset '{}'",
                     image, pid, m.as_str()
                 ),
                 weight: 0.95,
@@ -198,7 +198,7 @@ impl AiSecurityAuditVoter {
             return Some(VoteResult {
                 confidence: 0.98,
                 reason: format!(
-                    "AI Runtime Thread Injection [Cloudflare Memory-Safety Class]: External process '{}' (PID {}) created remote thread in AI agent runtime '{}' (PID {})",
+                    "AI Runtime Remote Thread Injection [MITRE ATLAS AML.T0040 / Execution Environment Compromise]: Non-AI process '{}' (PID {}) injected remote thread into AI agent runtime '{}' (PID {})",
                     source_image, source_pid, target_image, target_pid
                 ),
                 weight: 1.0,
@@ -226,12 +226,15 @@ impl AiSecurityAuditVoter {
                 let source_pid = event.data.get("SourceProcessId")
                     .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok())))
                     .unwrap_or(0);
+                let target_pid = event.data.get("TargetProcessId")
+                    .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok())))
+                    .unwrap_or(0);
 
                 return Some(VoteResult {
                     confidence: 0.91,
                     reason: format!(
-                        "AI Runtime Memory Tampering [Cloudflare Memory-Safety Class]: External process '{}' (PID {}) requested write access ({}) into AI runtime '{}'",
-                        source_image, source_pid, granted_access, target_image
+                        "AI Runtime Memory Tampering [MITRE ATLAS AML.T0029 / Disarm AI Safeguards]: Non-AI process '{}' (PID {}) requested memory tampering access ({}) into AI agent runtime '{}' (PID {})",
+                        source_image, source_pid, granted_access, target_image, target_pid
                     ),
                     weight: 0.90,
                 });
@@ -310,6 +313,7 @@ mod tests {
         let v = vote.unwrap();
         assert_eq!(v.confidence, 0.95);
         assert!(v.reason.contains("AI Tool-Argument Injection"));
+        assert!(v.reason.contains("AML.T0043"));
     }
 
     #[test]
@@ -329,6 +333,7 @@ mod tests {
         let v = vote.unwrap();
         assert_eq!(v.confidence, 0.94);
         assert!(v.reason.contains("AI Tool Path Traversal"));
+        assert!(v.reason.contains("AML.T0044"));
     }
 
     #[test]
@@ -346,7 +351,8 @@ mod tests {
         assert!(vote.is_some());
         let v = vote.unwrap();
         assert_eq!(v.confidence, 0.92);
-        assert!(v.reason.contains("Agent Memory/Config Poisoning"));
+        assert!(v.reason.contains("Agent Memory & State Poisoning"));
+        assert!(v.reason.contains("AML.T0048"));
     }
 
     #[test]
@@ -365,6 +371,28 @@ mod tests {
         assert!(vote.is_some());
         let v = vote.unwrap();
         assert_eq!(v.confidence, 0.98);
-        assert!(v.reason.contains("AI Runtime Thread Injection"));
+        assert!(v.reason.contains("AI Runtime Remote Thread Injection"));
+        assert!(v.reason.contains("AML.T0040"));
+    }
+
+    #[test]
+    fn test_runtime_memory_tampering() {
+        let voter = AiSecurityAuditVoter::new();
+
+        // External malicious process requesting write/tampering access to python.exe runtime
+        let ev = make_test_event(10, json!({
+            "SourceImage": "C:\\Temp\\injector.exe",
+            "SourceProcessId": 7788,
+            "TargetImage": "C:\\Python311\\python.exe",
+            "TargetProcessId": 1122,
+            "GrantedAccess": "0x1F0FFF"
+        }));
+
+        let vote = voter.evaluate_event(&ev);
+        assert!(vote.is_some());
+        let v = vote.unwrap();
+        assert_eq!(v.confidence, 0.91);
+        assert!(v.reason.contains("AI Runtime Memory Tampering"));
+        assert!(v.reason.contains("AML.T0029"));
     }
 }

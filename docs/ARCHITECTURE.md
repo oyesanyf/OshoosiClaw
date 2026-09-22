@@ -107,12 +107,14 @@ The Military Guard provides advanced detection for asymmetric warfare patterns t
 - **Sleeper-Strike (Loitering) Monitor**: Detects dormant processes that execute sudden "Alpha Strikes" after long periods of inactivity.
 - **Anti-Chaff Filter**: Neutralizes decoy traffic intended to blind the EDR's monitoring capabilities.
 
-### 6. AI Agent Security & Policy Voters (Cloudflare Audit Integration)
-Incorporating the Cloudflare Security Audit Framework, the EDR's multi-modal consensus engine incorporates real-time host telemetry voters:
-- **`AiSecurityAuditVoter`**: Evaluates live host execution events for AI-specific attacks:
-  - **Tool-Argument Injection**: Inspects command-line arguments passed to agent tools for command chaining (`;`, `&&`, `|`), encoded scripts (`powershell -enc`), and path traversals (`../`, `..\`) into sensitive system files.
-  - **State & Memory Poisoning**: Intercepts Sysmon Event 11 writes targeting agent memory stores (`.agents/memory.md`), policy rules (`.agents/rules/`), and configuration files (`osoosi.toml`).
-  - **Process Memory Safety**: Detects external processes attempting remote thread creation (Event 8) or memory modification (`PROCESS_VM_WRITE`) into AI runtimes.
+### 6. AI Agent Security & Policy Voters (MITRE ATLAS™ & Cloudflare Audit Integration)
+Incorporating both the official **MITRE ATLAS™** (Adversarial Threat Landscape for Artificial-Intelligence Systems) taxonomy and Cloudflare's Security Audit Framework, the EDR's multi-modal consensus engine includes real-time host telemetry voters:
+- **`AiSecurityAuditVoter`**: Evaluates live host execution events for AI-specific attacks, mapping directly to canonical MITRE ATLAS technique IDs:
+  - **Tool-Argument Injection (`AML.T0043`)**: Inspects command-line arguments passed to agent tools for command chaining (`;`, `&&`, `|`), encoded scripts (`powershell -enc`), and dangerous subshell executions.
+  - **Insecure Output & Path Traversal (`AML.T0044`)**: Detects path traversals (`../`, `..\`) through LLM-directed tools targeting sensitive files (`/etc/passwd`, `System32`, `.env`, `.aws`, `id_rsa`).
+  - **Agent Memory & State Poisoning (`AML.T0048` / `AML.T0018`)**: Intercepts Sysmon Event 11 writes targeting persistent agent memory stores (`.agents/memory.md`), policy rules (`.agents/rules/`), and configuration files (`osoosi.toml`).
+  - **Execution Environment Tampering (`AML.T0040`)**: Detects external non-AI processes attempting remote thread creation (`CreateRemoteThread`, Event 8) into AI runtimes.
+  - **Disarm AI Safeguards & Memory Tampering (`AML.T0029`)**: Detects external processes requesting memory modification access (`PROCESS_VM_WRITE | PROCESS_VM_OPERATION`, Event 10) into AI agent runtimes.
 - **`AgenticPolicyVoter`**: Dynamic minimax defense, goal alignment evaluation, and agentic escape detection.
 - **`AgentEgressVoter`**: Threat-observed outbound network egress control, DNS covert channel detection, and adaptive traffic throttling.
 
@@ -133,6 +135,9 @@ CyberShield provides real-time resource anomaly monitoring and process mitigatio
 - **Strict Self-Dial Prevention**: Prevents node loopback collisions and Windows Winsock error 10048 (`WSAEADDRINUSE`) by blacklisting all machine-assigned IPs from subnet discovery dials.
 - **Pre-Flight TCP Discovery Probing**: Before initiating a cryptographic libp2p Swarm connection attempt against ARP-discovered subnet hosts, a lightweight non-blocking TCP probe (80ms timeout) checks if port 4001 is actively listening. Disconnected or non-Oshoosi devices (printers, IoT) are skipped immediately, preventing kernel socket exhaustion and Swarm connection state churn.
 - **Adaptive Socket Exhaustion Backoff**: Swarm connection errors track consecutive `WSAEADDRINUSE` occurrences; only persistent exhaustion ($\ge 3$ consecutive collisions) triggers aggressive discovery backoff and system-wide telemetry throttling, while transient collisions (< 3) are logged at `debug` level.
+- **Bidirectional Peer Identity Handshake**: Every node broadcasts `agent_version: "osoosi/0.1.1"` and matches peers across `agent_version`, `protocol_version`, and supported protocols (`/osoosi/1.0.0`). Discovered peers are immediately added to Gossipsub (`add_explicit_peer`), auto-approved, and dialed via mDNS to eliminate disconnect loops.
+- **Kademlia Bootstrap Protection**: Periodic DHT bootstrap triggers are gated on active peer connectivity (`self.swarm.connected_peers().count() > 0`), suppressing unseeded `Failed to trigger bootstrap: No known peers` warnings.
+- **Extended Idle Connection Keep-Alive**: Swarm idle connection timeout is extended to 300s, ensuring stable P2P telemetry channels during heavy model download or background inference tasks.
 
 
 
