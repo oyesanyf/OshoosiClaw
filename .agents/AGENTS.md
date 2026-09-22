@@ -2,7 +2,7 @@
 
 ## Git Push Guardrails
 - **Restricted Remotes:** NEVER run `git push` inside `IDE/vscode` or target any Microsoft/upstream third-party remote.
-- **Canonical Repository:** ALL code pushes must strictly target `https://github.com/oyesanyf/ModelFusion.git`.
+- **Canonical Repository:** ALL code pushes must strictly target `https://github.com/oyesanyf/OshoosiClaw.git`.
 
 ## Execution Blueprints (Flash Engine Constraints)
 - **Trigger:** Applies ONLY when running high-speed/Flash models (e.g., Gemini Flash variants).
