@@ -60,3 +60,11 @@
 - `9d03a1d9` — fix: target ONLY latest user message for slash command detection to stop transcript history hijacking
 - `853133c6` — feat: query_system_resources hardware summary & auto-enable gpu=true and ollama=true in /orchestrate
 - `7f7d6999` — feat: enforce GPU=true, Ollama=true, CPU=false in Rust server and IDE extension when GPU is present
+
+---
+
+## OshoosiClaw Project & Repository Configuration
+- **Canonical Repository URL**: `https://github.com/oyesanyf/OshoosiClaw.git`
+- **Git Push Guardrail**: All commits, branches, and code pushes in `d:\harfile\OshoosiClaw` must **always and exclusively** push to `https://github.com/oyesanyf/OshoosiClaw.git` (`origin`).
+- **Remote Isolation**: Never push `OshoosiClaw` to `ModelFusion` or any third-party remote.
+
