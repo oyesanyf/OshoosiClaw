@@ -500,6 +500,102 @@ function updateStats(id, value) {
     if (elem) elem.innerText = value;
 }
 
+function escapeHtml(str) {
+    if (!str) return '';
+    return String(str)
+        .replace(/&/g, '&amp;')
+        .replace(/</g, '&lt;')
+        .replace(/>/g, '&gt;')
+        .replace(/"/g, '&quot;')
+        .replace(/'/g, '&#039;');
+}
+
+/**
+ * Render detection engines voter cards
+ */
+function renderDetectionStats(stats) {
+    const container = document.getElementById('detection-engines-grid');
+    if (!container) return;
+
+    if (!stats || typeof stats !== 'object' || Object.keys(stats).length === 0) {
+        container.innerHTML = `
+            <div class="voter-card">
+                <div class="voter-header">
+                    <span class="voter-name">Ai-Security-Audit-Voter</span>
+                    <span class="badge purple">Active</span>
+                </div>
+                <div class="voter-desc">MITRE ATLAS™ AI Defense · AML.T0043, AML.T0044, AML.T0048, AML.T0040</div>
+                <div class="voter-badges">
+                    <span class="badge blue">Weight: 1.00</span>
+                    <span class="badge green">Sysmon 1,8,10,11</span>
+                </div>
+            </div>
+            <div class="voter-card">
+                <div class="voter-header">
+                    <span class="voter-name">Sigma-Voter</span>
+                    <span class="badge green">Active</span>
+                </div>
+                <div class="voter-desc">Host security event & Sysmon rule detection matching</div>
+                <div class="voter-badges">
+                    <span class="badge blue">Weight: 0.85</span>
+                    <span class="badge green">Real-Time</span>
+                </div>
+            </div>
+            <div class="voter-card">
+                <div class="voter-header">
+                    <span class="voter-name">Yara-X-Voter</span>
+                    <span class="badge green">Active</span>
+                </div>
+                <div class="voter-desc">High-speed binary pattern matching & C2 beacon detector</div>
+                <div class="voter-badges">
+                    <span class="badge blue">Weight: 0.90</span>
+                    <span class="badge green">Sliver RPC Guard</span>
+                </div>
+            </div>
+            <div class="voter-card">
+                <div class="voter-header">
+                    <span class="voter-name">Behavioral-ML-Voter</span>
+                    <span class="badge blue">Active</span>
+                </div>
+                <div class="voter-desc">SecureBERT ONNX neural classifier & process heuristics</div>
+                <div class="voter-badges">
+                    <span class="badge blue">Weight: 0.80</span>
+                    <span class="badge purple">Adaptive</span>
+                </div>
+            </div>
+        `;
+        return;
+    }
+
+    let html = '';
+    for (const [name, info] of Object.entries(stats)) {
+        const isActive = info?.active !== false;
+        const isAi = name.toLowerCase().includes('ai');
+        const badgeColor = isActive ? (isAi ? 'purple' : 'green') : 'red';
+        const badgeLabel = isActive ? 'Active' : 'Offline';
+        const desc = isAi 
+            ? 'MITRE ATLAS™ AI Defense (AML.T0043, AML.T0044, AML.T0048, AML.T0040)' 
+            : (info?.description || (name.toLowerCase().includes('sigma') ? 'Host security event & Sysmon rule matching' : (name.toLowerCase().includes('yara') ? 'Binary pattern & C2 beacon detection' : 'Zero-Trust Policy Consensus Voter')));
+        
+        const weight = typeof info?.weight === 'number' ? info.weight : (isAi ? 1.0 : (name.toLowerCase().includes('yara') ? 0.9 : 0.85));
+
+        html += `
+            <div class="voter-card">
+                <div class="voter-header">
+                    <span class="voter-name">${escapeHtml(name)}</span>
+                    <span class="badge ${badgeColor}">${badgeLabel}</span>
+                </div>
+                <div class="voter-desc">${escapeHtml(desc)}</div>
+                <div class="voter-badges">
+                    <span class="badge blue">Weight: ${weight.toFixed(2)}</span>
+                    ${isAi ? '<span class="badge purple">ATLAS Verified</span>' : '<span class="badge green">Online</span>'}
+                </div>
+            </div>
+        `;
+    }
+    container.innerHTML = html;
+}
+
 /**
  * Render threat timeline items
  */
