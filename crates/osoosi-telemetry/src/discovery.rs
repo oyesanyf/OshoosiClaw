@@ -50,6 +50,52 @@ impl RouteScraper {
         }
     }
 
+    /// Enumerate all local IP addresses for this machine across all adapters.
+    /// Used to strictly prevent self-dialing in P2P mesh discovery.
+    pub fn get_local_ip_addresses() -> std::collections::HashSet<String> {
+        let mut ips = std::collections::HashSet::new();
+        ips.insert("127.0.0.1".to_string());
+        ips.insert("0.0.0.0".to_string());
+        ips.insert("::1".to_string());
+        ips.insert("::".to_string());
+
+        // Quick UDP route lookup for the primary outbound interface IP (zero network traffic)
+        if let Ok(socket) = std::net::UdpSocket::bind("0.0.0.0:0") {
+            if socket.connect("8.8.8.8:80").is_ok() {
+                if let Ok(local_addr) = socket.local_addr() {
+                    ips.insert(local_addr.ip().to_string());
+                }
+            }
+        }
+
+        #[cfg(target_os = "windows")]
+        {
+            use windows_sys::Win32::NetworkManagement::IpHelper::*;
+
+            unsafe {
+                let mut size = 0u32;
+                let _ = GetIpAddrTable(std::ptr::null_mut(), &mut size, 0);
+                if size > 0 {
+                    let mut buf = vec![0u8; size as usize];
+                    if GetIpAddrTable(buf.as_mut_ptr() as *mut _, &mut size, 0) == 0 {
+                        let table = &*(buf.as_ptr() as *const MIB_IPADDRTABLE);
+                        let entries = std::slice::from_raw_parts(
+                            &table.table as *const _ as *const MIB_IPADDRROW_XP,
+                            table.dwNumEntries as usize,
+                        );
+                        for entry in entries {
+                            let addr = entry.dwAddr;
+                            let ip = std::net::Ipv4Addr::from(addr.to_ne_bytes());
+                            ips.insert(ip.to_string());
+                        }
+                    }
+                }
+            }
+        }
+
+        ips
+    }
+
     // ─────────────────────────────────────────────────────────────────────────
     // 1. ARP Cache Scraping
     // ─────────────────────────────────────────────────────────────────────────

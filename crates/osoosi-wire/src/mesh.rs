@@ -308,7 +308,7 @@ impl MeshNode {
             });
 
         // Prevent Self-Dialing: Extract and maintain a set of our own listen/observed IP addresses
-        let mut our_ips = HashSet::new();
+        let mut our_ips = osoosi_telemetry::discovery::RouteScraper::get_local_ip_addresses();
         for l_addr in self.swarm.listeners() {
             for proto in l_addr.iter() {
                 if let Protocol::Ip4(ip) = proto {
@@ -327,10 +327,6 @@ impl MeshNode {
                 }
             }
         }
-        our_ips.insert("127.0.0.1".to_string());
-        our_ips.insert("0.0.0.0".to_string());
-        our_ips.insert("::1".to_string());
-        our_ips.insert("::".to_string());
 
         info!("[Mesh] Performing Aggressive Local Subnet Discovery via ARP cache (Port {})...", listen_port);
         let scraper = osoosi_telemetry::discovery::RouteScraper::new();
@@ -341,7 +337,7 @@ impl MeshNode {
 
         for host in neighbors {
             // Basic noise filtering: skip common multicast/broadcast patterns
-            if host.ip.starts_with("224.") || host.ip.starts_with("239.") || host.ip.ends_with(".255") {
+            if host.ip.starts_with("224.") || host.ip.starts_with("239.") || host.ip.ends_with(".255") || host.ip.ends_with(".0") || host.ip == "255.255.255.255" {
                 continue;
             }
 
@@ -355,6 +351,15 @@ impl MeshNode {
                 continue;
             }
 
+            // Pre-flight TCP probe before dialing maddr
+            let sock_addr_str = format!("{}:{}", host.ip, listen_port);
+            if let Ok(sa) = sock_addr_str.parse::<std::net::SocketAddr>() {
+                if std::net::TcpStream::connect_timeout(&sa, Duration::from_millis(80)).is_err() {
+                    // Port not listening, skip dialing via Swarm to prevent port/socket churn
+                    continue;
+                }
+            }
+
             // Construct Multiaddr for the sibling's potential listen port
             let maddr_str = format!("/ip4/{}/tcp/{}", host.ip, listen_port);
             if let Ok(maddr) = maddr_str.parse::<Multiaddr>() {
@@ -365,14 +370,11 @@ impl MeshNode {
                 debug!("[Mesh] Subnet Discovery: Dialing potential sibling at {}", maddr);
                 let _ = self.swarm.dial(maddr);
                 dialed += 1;
+                tokio::time::sleep(Duration::from_millis(100)).await;
                 
                 if dialed >= 32 {
                     debug!("[Mesh] Subnet Discovery: Capping at 32 dials to prevent socket exhaustion.");
                     break;
-                }
-
-                if dialed % 4 == 0 {
-                    tokio::time::sleep(Duration::from_millis(250)).await;
                 }
             }
         }
@@ -435,6 +437,7 @@ impl MeshNode {
         let mut dial_backoff_secs = 0u64;
         let mut socket_cooldown = tokio::time::interval(Duration::from_secs(30));
         socket_cooldown.tick().await; // skip first tick
+        let mut consecutive_exhaustion_count: u32 = 0;
 
         // Initial bootstrapping with a small delay to let the system settle
         tokio::time::sleep(Duration::from_secs(2)).await;
@@ -443,6 +446,7 @@ impl MeshNode {
         loop {
             tokio::select! {
                 _ = socket_cooldown.tick() => {
+                    consecutive_exhaustion_count = 0;
                     if adaptive.is_socket_exhaustion() {
                         debug!("Mesh: Clearing socket exhaustion flag after cooldown.");
                         adaptive.set_socket_exhaustion(false);
@@ -625,6 +629,7 @@ impl MeshNode {
                         }
                     }
                     SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
+                        consecutive_exhaustion_count = 0;
                         info!("Connection established with {} via {:?}", peer_id, endpoint.get_remote_address());
                     }
                     SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
@@ -641,14 +646,19 @@ impl MeshNode {
                     SwarmEvent::OutgoingConnectionError { peer_id, error, .. } => {
                         let es = error.to_string();
                         if es.contains("10048") || es.contains("WSAEADDRINUSE") {
-                            warn!("Socket exhaustion detected (WSAEADDRINUSE). Applying aggressive discovery backoff.");
-                            adaptive.set_socket_exhaustion(true);
-                            dial_backoff_secs = (dial_backoff_secs + 60).min(3600);
-                            bootstrap_interval = tokio::time::interval(Duration::from_secs(300 + dial_backoff_secs));
-                            arp_discovery_interval = tokio::time::interval(Duration::from_secs(600 + dial_backoff_secs));
-                            // Reset the intervals
-                            let _ = bootstrap_interval.tick().await; 
-                            let _ = arp_discovery_interval.tick().await;
+                            consecutive_exhaustion_count += 1;
+                            if consecutive_exhaustion_count >= 3 {
+                                warn!("Persistent socket exhaustion detected (WSAEADDRINUSE, count={}). Applying aggressive discovery backoff.", consecutive_exhaustion_count);
+                                adaptive.set_socket_exhaustion(true);
+                                dial_backoff_secs = (dial_backoff_secs + 60).min(3600);
+                                bootstrap_interval = tokio::time::interval(Duration::from_secs(300 + dial_backoff_secs));
+                                arp_discovery_interval = tokio::time::interval(Duration::from_secs(600 + dial_backoff_secs));
+                                // Reset the intervals
+                                let _ = bootstrap_interval.tick().await; 
+                                let _ = arp_discovery_interval.tick().await;
+                            } else {
+                                debug!("Transient socket collision (WSAEADDRINUSE) to {:?}, count={}", peer_id, consecutive_exhaustion_count);
+                            }
                         } else if es.contains("Timeout") || es.contains("10061") || es.contains("refused") {
                             debug!("Outgoing connection failed (likely non-Oshoosi node) {:?}: {}", peer_id, error);
                         } else {

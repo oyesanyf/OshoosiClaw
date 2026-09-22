@@ -128,6 +128,13 @@ CyberShield provides real-time resource anomaly monitoring and process mitigatio
 - **NSRL RDS Streaming**: Features dynamic directory writability probes, buffered async writes (8MB `BufWriter`), automatic fallback to alternate cache locations, and clean task cancellation handling.
 - **Cross-Crate Provisioning State**: Atomic state tracking via `osoosi_types::is_model_provisioning()` coordinates download states across crates, ensuring smooth fallback to Ollama or heuristic classifiers without transient startup error log spam.
 
+### 9. Resilient P2P Mesh Discovery & Socket Guardrails
+- **Multi-Adapter Local IP Enumeration**: `RouteScraper::get_local_ip_addresses()` uses native Windows IP Helper APIs (`GetIpAddrTable`) and UDP routing lookups to dynamically identify all local adapter IPv4 addresses across physical, virtual (WSL2, Hyper-V), and VPN interfaces.
+- **Strict Self-Dial Prevention**: Prevents node loopback collisions and Windows Winsock error 10048 (`WSAEADDRINUSE`) by blacklisting all machine-assigned IPs from subnet discovery dials.
+- **Pre-Flight TCP Discovery Probing**: Before initiating a cryptographic libp2p Swarm connection attempt against ARP-discovered subnet hosts, a lightweight non-blocking TCP probe (80ms timeout) checks if port 4001 is actively listening. Disconnected or non-Oshoosi devices (printers, IoT) are skipped immediately, preventing kernel socket exhaustion and Swarm connection state churn.
+- **Adaptive Socket Exhaustion Backoff**: Swarm connection errors track consecutive `WSAEADDRINUSE` occurrences; only persistent exhaustion ($\ge 3$ consecutive collisions) triggers aggressive discovery backoff and system-wide telemetry throttling, while transient collisions (< 3) are logged at `debug` level.
+
+
 
 ## Response Matrix
 
