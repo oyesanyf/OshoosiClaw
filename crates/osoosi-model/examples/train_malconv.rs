@@ -1,4 +1,4 @@
-use osoosi_model::malconv_train::{MalConvTrainer, download_and_extract_dataset};
+use osoosi_model::malconv_train::MalConvTrainer;
 use candle_core::Device;
 use std::path::Path;
 

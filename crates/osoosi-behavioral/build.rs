@@ -3,7 +3,6 @@ use std::process::Command;
 fn main() {
     // Only run this if we are in a git repository
     if std::path::Path::new("../../.git").exists() || std::path::Path::new(".git").exists() {
-        println!("cargo:warning=Updating git submodules...");
         let status = Command::new("git")
             .args(&["submodule", "update", "--init", "--recursive"])
             .current_dir("../../") // Root of the workspace
@@ -11,7 +10,7 @@ fn main() {
 
         match status {
             Ok(s) if s.success() => {
-                println!("cargo:warning=Git submodules updated successfully.");
+                // Succeeded silently without emitting unnecessary warnings
             }
             Ok(s) => {
                 println!("cargo:warning=Git submodule update failed with status: {}", s);
