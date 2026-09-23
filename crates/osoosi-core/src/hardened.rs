@@ -30,6 +30,7 @@ static CACHED_DPU: OnceLock<DpuStatus> = OnceLock::new();
 
 #[cfg(target_os = "windows")]
 #[derive(serde::Deserialize, Debug)]
+#[allow(dead_code)]
 struct Win32PnpEntity {
     #[serde(rename = "Name", default)]
     name: Option<String>,
