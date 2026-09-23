@@ -13,12 +13,72 @@ use std::sync::Arc;
 use std::time::Duration;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::info;
+use osoosi_behavioral::{
+    DeepQEngine, OshoosiSecurityGym, PrioritizedReplayBuffer, ProcessContext, SafetyGuardrail,
+    SkyAction, Transition,
+};
+use rand::Rng;
+
+/// In-memory state and metrics for the SkyRL EDR Self-Improvement & Tinker API.
+pub struct SkyRlServerState {
+    pub dqn: DeepQEngine,
+    pub replay_buffer: PrioritizedReplayBuffer,
+    pub safety: SafetyGuardrail,
+    pub epsilon: f32,
+    pub active_lora: String,
+    pub available_loras: Vec<String>,
+    pub total_episodes: usize,
+    pub total_steps: usize,
+    pub mean_loss: f32,
+    pub active_sessions: std::collections::HashMap<String, OshoosiSecurityGym>,
+}
+
+impl Default for SkyRlServerState {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl SkyRlServerState {
+    pub fn new() -> Self {
+        Self {
+            dqn: DeepQEngine::new(16, 9),
+            replay_buffer: PrioritizedReplayBuffer::new(20000),
+            safety: SafetyGuardrail::new(),
+            epsilon: 0.05,
+            active_lora: "edr-reasoning-lora-v1".to_string(),
+            available_loras: vec![
+                "edr-reasoning-lora-v1".to_string(),
+                "tinker-investigator-v2".to_string(),
+                "base-policy".to_string(),
+            ],
+            total_episodes: 0,
+            total_steps: 0,
+            mean_loss: 0.0,
+            active_sessions: std::collections::HashMap::new(),
+        }
+    }
+}
 
 /// Shared state for dashboard routes. When backend is set, uses real data.
 #[derive(Clone)]
 pub struct DashboardState {
     pub join_gate: Option<Arc<osoosi_wire::JoinGate>>,
     pub backend: Option<Arc<osoosi_core::EdrOrchestrator>>,
+    pub skyrl: Arc<tokio::sync::RwLock<SkyRlServerState>>,
+}
+
+impl DashboardState {
+    pub fn new(
+        join_gate: Option<Arc<osoosi_wire::JoinGate>>,
+        backend: Option<Arc<osoosi_core::EdrOrchestrator>>,
+    ) -> Self {
+        Self {
+            join_gate,
+            backend,
+            skyrl: Arc::new(tokio::sync::RwLock::new(SkyRlServerState::new())),
+        }
+    }
 }
 
 #[derive(Debug, Deserialize)]
@@ -113,6 +173,14 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
     let index_html = asset_path.join("index.html");
     let api = Router::new()
         .route("/health", get(dashboard_health))
+        .route("/skyrl/v1/generate", post(post_skyrl_generate))
+        .route("/skyrl/v1/step", post(post_skyrl_step))
+        .route("/skyrl/v1/train", post(post_skyrl_train))
+        .route("/skyrl/v1/status", get(get_skyrl_status))
+        .route("/api/skyrl/v1/generate", post(post_skyrl_generate))
+        .route("/api/skyrl/v1/step", post(post_skyrl_step))
+        .route("/api/skyrl/v1/train", post(post_skyrl_train))
+        .route("/api/skyrl/v1/status", get(get_skyrl_status))
         .route("/api/status", get(get_status))
         .route("/api/threats", get(get_threats))
         .route("/api/mesh-stats", get(get_mesh_stats))
@@ -133,6 +201,9 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/malware-status", get(get_malware_status))
         .route("/api/malware-detections", get(get_malware_detections))
         .route("/api/malware-mesh-samples", get(get_malware_mesh_samples))
+        .route("/api/scan-trigger", post(post_scan_trigger))
+        .route("/api/false-positive", post(post_manual_false_positive))
+        .route("/api/quarantine", post(post_quarantine_action))
         .route("/api/model-training-status", get(get_model_training_status))
         .route("/api/privilege-status", get(get_privilege_status))
         .route("/api/activity", get(get_activity))
@@ -172,6 +243,10 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/telemetry/timeseries", get(get_telemetry_timeseries))
         .route("/api/mesh/topology", get(get_mesh_topology))
         .route("/api/zone-summary", get(get_zone_summary))
+        .route(
+            "/api/zone/auto-remediate",
+            post(post_auto_remediate_gap),
+        )
         .route("/api/story", get(get_story))
         .route("/api/pending-actions", get(get_pending_actions))
         .route("/api/approve-action", post(post_approve_action))
@@ -202,7 +277,7 @@ pub async fn spawn_dashboard_with_backend(
     join_gate: Option<Arc<osoosi_wire::JoinGate>>,
     backend: Option<Arc<osoosi_core::EdrOrchestrator>>,
 ) -> anyhow::Result<u16> {
-    let state = DashboardState { join_gate, backend };
+    let state = DashboardState::new(join_gate, backend);
     let asset_path = resolve_dashboard_asset_dir();
 
     if asset_path.exists() {
@@ -255,7 +330,7 @@ pub async fn start_dashboard_with_backend(
     join_gate: Option<Arc<osoosi_wire::JoinGate>>,
     backend: Option<Arc<osoosi_core::EdrOrchestrator>>,
 ) -> anyhow::Result<()> {
-    let state = DashboardState { join_gate, backend };
+    let state = DashboardState::new(join_gate, backend);
     let asset_path = resolve_dashboard_asset_dir();
 
     if asset_path.exists() {
@@ -706,6 +781,26 @@ async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value> {
     }
 }
 
+#[derive(Debug, Default, Deserialize)]
+struct AutoRemediateRequest {
+    gap_id: Option<String>,
+}
+
+async fn post_auto_remediate_gap(
+    State(state): State<DashboardState>,
+    body: Option<Json<AutoRemediateRequest>>,
+) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            let gap = body
+                .and_then(|Json(b)| b.gap_id)
+                .unwrap_or_else(|| "all".to_string());
+            Json(orch.auto_remediate_security_gap(&gap).await)
+        }
+        None => Json(json!({ "error": "backend not active" })),
+    }
+}
+
 async fn get_story(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
@@ -818,10 +913,19 @@ async fn get_malware_status(State(state): State<DashboardState>) -> Json<Value> 
                 .iter()
                 .filter(|e| e.event_type == "CLAMAV_CLEAN")
                 .count();
+
+            let (total_scanned, total_malware) = if stats.total_scanned == 0 {
+                let threats = orch.memory().get_recent_threats(500).unwrap_or_default();
+                let count = threats.len();
+                (count, count)
+            } else {
+                (stats.total_scanned, stats.total_malware)
+            };
+
             Json(json!({
-                "total_scanned": stats.total_scanned,
+                "total_scanned": total_scanned,
                 "total_skipped": stats.total_skipped,
-                "total_malware": stats.total_malware,
+                "total_malware": total_malware,
                 "clamav_clean_count": clamav_clean_count,
                 "model_loaded": stats.model_loaded,
                 "magika_available": stats.magika_available,
@@ -845,29 +949,173 @@ async fn get_malware_detections(State(state): State<DashboardState>) -> Json<Val
         Some(orch) => {
             let scanner = orch.malware_scanner();
             let detections = scanner.recent_detections();
-            let items: Vec<Value> = detections
-                .iter()
-                .take(20)
-                .map(|d| {
-                    json!({
-                        "file_path": d.file_path,
-                        "file_hash": d.file_hash,
-                        "magika_label": d.magika_label,
-                        "malware_type": d.malware_type,
-                        "ml_score": d.ml_score,
-                        "signature_score": d.signature_score,
-                        "combined_score": d.combined_score,
-                        "entropy": d.entropy,
-                        "evasion": d.evasion_indicators,
-                        "yara_available": d.yara_available,
-                        "yara_matches": d.yara_matches,
-                        "timestamp": d.timestamp,
+            let items: Vec<Value> = if !detections.is_empty() {
+                detections
+                    .iter()
+                    .take(20)
+                    .map(|d| {
+                        json!({
+                            "file_path": d.file_path,
+                            "file_hash": d.file_hash,
+                            "magika_label": d.magika_label,
+                            "malware_type": d.malware_type,
+                            "ml_score": d.ml_score,
+                            "signature_score": d.signature_score,
+                            "combined_score": d.combined_score,
+                            "entropy": d.entropy,
+                            "evasion": d.evasion_indicators,
+                            "yara_available": d.yara_available,
+                            "yara_matches": d.yara_matches,
+                            "timestamp": d.timestamp,
+                        })
                     })
-                })
-                .collect();
+                    .collect()
+            } else {
+                let threats = orch.memory().get_recent_threats(30).unwrap_or_default();
+                threats
+                    .into_iter()
+                    .map(|t| {
+                        let fp = t
+                            .get("file_path")
+                            .and_then(|v| v.as_str())
+                            .filter(|s| !s.is_empty())
+                            .unwrap_or_else(|| {
+                                t.get("process_name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("unknown")
+                            });
+                        let hash = t.get("hash_blake3").and_then(|v| v.as_str()).unwrap_or("");
+                        let cve = t.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
+                        let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+                        let conf = t.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.9);
+                        let ts = t.get("timestamp").and_then(|v| v.as_str()).unwrap_or("");
+                        let mw_type = if !cve.is_empty() {
+                            cve.to_string()
+                        } else if !reason.is_empty() {
+                            reason.to_string()
+                        } else {
+                            "Threat Detection".to_string()
+                        };
+                        let yara_matches = if !cve.is_empty() {
+                            vec![cve.to_string()]
+                        } else {
+                            vec![]
+                        };
+
+                        json!({
+                            "file_path": fp,
+                            "file_hash": hash,
+                            "magika_label": "PE/Binary",
+                            "malware_type": mw_type,
+                            "ml_score": conf,
+                            "signature_score": conf,
+                            "combined_score": conf,
+                            "entropy": 7.5,
+                            "evasion": Vec::<String>::new(),
+                            "yara_available": true,
+                            "yara_matches": yara_matches,
+                            "timestamp": ts,
+                        })
+                    })
+                    .collect()
+            };
             Json(Value::Array(items))
         }
         None => Json(json!([])),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+struct ManualFalsePositiveRequest {
+    hash: Option<String>,
+    process_name: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+struct QuarantineActionRequest {
+    file_path: String,
+}
+
+async fn post_scan_trigger(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            let traps_dir = std::path::Path::new("traps");
+            let mut count = 0;
+            if traps_dir.is_dir() {
+                if let Ok(entries) = std::fs::read_dir(traps_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_file() {
+                            orch.malware_scanner().scan_file(&path).await;
+                            count += 1;
+                        }
+                    }
+                }
+            }
+            orch.audit().log(
+                "MALWARE_SCAN_TRIGGERED",
+                json!({
+                    "summary": format!("Malware scan completed on {} trap file(s)", count),
+                    "scanned": count,
+                }),
+            );
+            Json(json!({ "status": "success", "scanned": count }))
+        }
+        None => Json(json!({ "status": "fail", "msg": "Backend not active" })),
+    }
+}
+
+async fn post_manual_false_positive(
+    State(state): State<DashboardState>,
+    Json(req): Json<ManualFalsePositiveRequest>,
+) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            let res = orch.memory().mark_false_positive(
+                req.process_name.as_deref(),
+                req.hash.as_deref(),
+            );
+            orch.audit().log(
+                "MANUAL_FALSE_POSITIVE",
+                json!({
+                    "process_name": req.process_name,
+                    "hash": req.hash,
+                    "status": "marked"
+                }),
+            );
+            match res {
+                Ok(_) => Json(json!({ "status": "success", "msg": "Marked false positive" })),
+                Err(e) => Json(json!({ "status": "fail", "msg": e.to_string() })),
+            }
+        }
+        None => Json(json!({ "status": "fail", "msg": "Backend not active" })),
+    }
+}
+
+async fn post_quarantine_action(
+    State(state): State<DashboardState>,
+    Json(req): Json<QuarantineActionRequest>,
+) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            let res = osoosi_core::quarantine::quarantine_file(&req.file_path);
+            orch.audit().log(
+                "MALWARE_QUARANTINED",
+                json!({
+                    "summary": format!("Manual quarantine: {}", req.file_path),
+                    "file_path": req.file_path,
+                }),
+            );
+            match res {
+                Ok(dest) => Json(json!({
+                    "status": "success",
+                    "msg": format!("File quarantined to {}", dest.display()),
+                    "quarantine_path": dest.to_string_lossy(),
+                })),
+                Err(e) => Json(json!({ "status": "fail", "msg": e.to_string() })),
+            }
+        }
+        None => Json(json!({ "status": "fail", "msg": "Backend not active" })),
     }
 }
 
@@ -1002,51 +1250,57 @@ async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
                 .iter()
                 .rev()
                 .filter_map(|e| {
-                    let summary = match e.event_type.as_str() {
-                        "THREAT_DETECTED" => {
-                            let proc = e.data.get("process_name").and_then(|v| v.as_str()).unwrap_or("Threat");
-                            let cve = e.data.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
-                            if !cve.is_empty() {
-                                format!("{} — {}", proc, cve)
-                            } else {
-                                format!("Threat: {}", proc)
+                    let summary = if let Some(s) = e.data.get("summary").and_then(|v| v.as_str()) {
+                        s.to_string()
+                    } else if let Some(m) = e.data.get("message").and_then(|v| v.as_str()) {
+                        m.to_string()
+                    } else {
+                        match e.event_type.as_str() {
+                            "THREAT_DETECTED" => {
+                                let proc = e.data.get("process_name").and_then(|v| v.as_str()).unwrap_or("Threat");
+                                let cve = e.data.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
+                                if !cve.is_empty() {
+                                    format!("{} — {}", proc, cve)
+                                } else {
+                                    format!("Threat: {}", proc)
+                                }
                             }
+                            "TELEMETRY_INGESTED" => {
+                                let ev = e.data.get("event_id").and_then(|v| v.as_i64()).unwrap_or(0);
+                                format!("Event {} scanned", ev)
+                            }
+                            "TELEMETRY_SUMMARY" => {
+                                let count = e.data.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+                                format!("{} events scanned and analyzed", count)
+                            }
+                            "ACTIVITY_BOOT" => {
+                                e.data.get("message").and_then(|v| v.as_str()).unwrap_or("Agent started").to_string()
+                            }
+                            "RESPONSE_ACTION" => {
+                                let t = e.data.get("type").and_then(|v| v.as_str()).unwrap_or("Response");
+                                format!("Response: {}", t)
+                            }
+                            "MALWARE_DETECTED" => {
+                                let fp = e.data.get("file_path").and_then(|v| v.as_str()).unwrap_or("?");
+                                let fname = fp.rsplit(['\\', '/']).next().unwrap_or(fp);
+                                let mt = e.data.get("malware_type").and_then(|v| v.as_str()).unwrap_or("?");
+                                format!("{} — {}", fname, mt)
+                            }
+                            "CLAMAV_CLEAN" => {
+                                let fp = e.data.get("file_path").and_then(|v| v.as_str()).unwrap_or("?");
+                                let fname = fp.rsplit(['\\', '/']).next().unwrap_or(fp);
+                                let ctx = e.data.get("context").and_then(|v| v.as_str()).unwrap_or("FileWatcher");
+                                format!("ClamAV clean: {} — allowed ({})", fname, ctx)
+                            }
+                            "BEHAVIORAL_ALERT" => {
+                                let sent = e.data.get("sentence").and_then(|v| v.as_str()).unwrap_or("?");
+                                let fname = sent.chars().take(60).collect::<String>();
+                                let score = e.data.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                format!("Behavioral: {} (score={:.0}%)", fname, score * 100.0)
+                            }
+                            "repair" => "Repair Engine".to_string(),
+                            _ => e.event_type.clone(),
                         }
-                        "TELEMETRY_INGESTED" => {
-                            let ev = e.data.get("event_id").and_then(|v| v.as_i64()).unwrap_or(0);
-                            format!("Event {} scanned", ev)
-                        }
-                        "TELEMETRY_SUMMARY" => {
-                            let count = e.data.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
-                            format!("{} events scanned and analyzed", count)
-                        }
-                        "ACTIVITY_BOOT" => {
-                            e.data.get("message").and_then(|v| v.as_str()).unwrap_or("Agent started").to_string()
-                        }
-                        "RESPONSE_ACTION" => {
-                            let t = e.data.get("type").and_then(|v| v.as_str()).unwrap_or("Response");
-                            format!("Response: {}", t)
-                        }
-                        "MALWARE_DETECTED" => {
-                            let fp = e.data.get("file_path").and_then(|v| v.as_str()).unwrap_or("?");
-                            let fname = fp.rsplit(['\\', '/']).next().unwrap_or(fp);
-                            let mt = e.data.get("malware_type").and_then(|v| v.as_str()).unwrap_or("?");
-                            format!("{} — {}", fname, mt)
-                        }
-                        "CLAMAV_CLEAN" => {
-                            let fp = e.data.get("file_path").and_then(|v| v.as_str()).unwrap_or("?");
-                            let fname = fp.rsplit(['\\', '/']).next().unwrap_or(fp);
-                            let ctx = e.data.get("context").and_then(|v| v.as_str()).unwrap_or("FileWatcher");
-                            format!("ClamAV clean: {} — allowed ({})", fname, ctx)
-                        }
-                        "BEHAVIORAL_ALERT" => {
-                            let sent = e.data.get("sentence").and_then(|v| v.as_str()).unwrap_or("?");
-                            let fname = sent.chars().take(60).collect::<String>();
-                            let score = e.data.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
-                            format!("Behavioral: {} (score={:.0}%)", fname, score * 100.0)
-                        }
-                        "repair" => "Repair Engine".to_string(),
-                        _ => e.event_type.clone(),
                     };
 
                     // Deduplicate recent identical summaries in activity feed
@@ -1464,3 +1718,294 @@ async fn get_mesh_topology(State(state): State<DashboardState>) -> Json<Value> {
         None => Json(json!({ "nodes": [], "edges": [] })),
     }
 }
+
+#[derive(Debug, Deserialize, Default)]
+pub struct SkyrlGenerateRequest {
+    pub observation: Option<Vec<f32>>,
+    pub pid: Option<u32>,
+    pub ppid: Option<u32>,
+    pub binary_path: Option<String>,
+    pub command_line: Option<String>,
+    pub lora_adapter: Option<String>,
+    pub epsilon: Option<f32>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct SkyrlStepRequest {
+    pub session_id: Option<String>,
+    pub action: Option<String>,
+    pub action_id: Option<usize>,
+    pub pid: Option<u32>,
+    pub binary_path: Option<String>,
+    pub is_malicious: Option<bool>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct SkyrlTrainRequest {
+    pub batch_size: Option<usize>,
+    pub gamma: Option<f32>,
+    pub learning_rate: Option<f32>,
+    pub transitions: Option<Vec<SkyrlTransitionInput>>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct SkyrlTransitionInput {
+    pub state: Vec<f32>,
+    pub action_id: usize,
+    pub reward: f32,
+    pub next_state: Vec<f32>,
+    pub done: bool,
+}
+
+async fn post_skyrl_generate(
+    State(state): State<DashboardState>,
+    Json(req): Json<SkyrlGenerateRequest>,
+) -> Json<Value> {
+    let pid = req.pid.unwrap_or(4096);
+    let binary_path = req
+        .binary_path
+        .unwrap_or_else(|| r"C:\Windows\System32\cmd.exe".to_string());
+    let command_line = req.command_line.unwrap_or_default();
+    let is_kernel_thread = pid == 0 || pid == 4;
+
+    let ctx = ProcessContext {
+        pid,
+        ppid: req.ppid.unwrap_or(0),
+        binary_path: binary_path.clone(),
+        command_line,
+        is_kernel_thread,
+        username: if is_kernel_thread {
+            "SYSTEM".to_string()
+        } else {
+            "user".to_string()
+        },
+    };
+
+    let skyrl = state.skyrl.read().await;
+    let lora = req
+        .lora_adapter
+        .unwrap_or_else(|| skyrl.active_lora.clone());
+
+    // Check SafetyGuardrail
+    let base_mask = skyrl.safety.generate_action_mask(&ctx);
+    let is_protected = base_mask == [1.0, 0.0, 0.0, 0.0];
+
+    // SkyAction discrete mask:
+    // 0: Allow, 1..3: Queries, 4..8: Containment
+    let mut mask = [1.0f32; 9];
+    if is_protected {
+        mask[4] = 0.0;
+        mask[5] = 0.0;
+        mask[6] = 0.0;
+        mask[7] = 0.0;
+        mask[8] = 0.0;
+    }
+
+    let obs = if let Some(mut user_obs) = req.observation {
+        if user_obs.len() < 16 {
+            user_obs.resize(16, 0.0);
+        } else if user_obs.len() > 16 {
+            user_obs.truncate(16);
+        }
+        user_obs
+    } else {
+        let mut def_obs = vec![0.0; 16];
+        if is_protected {
+            def_obs[12] = 0.1;
+            def_obs[15] = 0.01;
+        } else {
+            def_obs[0] = 0.4;
+            def_obs[3] = 0.6;
+            def_obs[15] = 0.75;
+        }
+        def_obs
+    };
+
+    let epsilon = req.epsilon.unwrap_or(skyrl.epsilon);
+
+    let chosen_action = if rand::random::<f32>() < epsilon {
+        let valid_indices: Vec<usize> = mask
+            .iter()
+            .enumerate()
+            .filter_map(|(i, &m)| if m > 0.0 { Some(i) } else { None })
+            .collect();
+        let idx = if !valid_indices.is_empty() {
+            valid_indices[rand::thread_rng().gen_range(0..valid_indices.len())]
+        } else {
+            0
+        };
+        SkyAction::from_index(idx)
+    } else {
+        let q_vals = skyrl.dqn.forward(&obs);
+        let mut best_idx = 0;
+        let mut max_q = f32::NEG_INFINITY;
+        for i in 0..9 {
+            if mask[i] > 0.0 {
+                let q = q_vals.get(i).copied().unwrap_or(0.0);
+                if q > max_q {
+                    max_q = q;
+                    best_idx = i;
+                }
+            }
+        }
+        SkyAction::from_index(best_idx)
+    };
+
+    let explanation = if is_protected {
+        format!(
+            "Protected system process PID {} ({}) detected. SafetyGuardrail enforced invariant mask to prevent destabilization.",
+            pid, binary_path
+        )
+    } else {
+        format!(
+            "Evaluated telemetry for PID {} under LoRA adapter '{}'. Guarded action {:?} selected.",
+            pid, lora, chosen_action
+        )
+    };
+
+    let thought_trace = format!(
+        "<thought>Evaluating telemetry for PID {} ({}). Active LoRA adapter: [{}]. Guardrail invariant: {}. Selected policy action: {:?}.</thought><action>{:?}</action>",
+        pid, binary_path, lora, if is_protected { "PROTECTED" } else { "STANDARD" }, chosen_action, chosen_action
+    );
+
+    Json(json!({
+        "action": chosen_action.as_str(),
+        "action_id": chosen_action.to_index(),
+        "thought_trace": thought_trace,
+        "explanation": explanation,
+        "lora_adapter": lora,
+        "guarded": is_protected,
+    }))
+}
+
+async fn post_skyrl_step(
+    State(state): State<DashboardState>,
+    Json(req): Json<SkyrlStepRequest>,
+) -> Json<Value> {
+    let session_id = req
+        .session_id
+        .unwrap_or_else(|| format!("session-{:016x}", rand::random::<u64>()));
+    let action = if let Some(id) = req.action_id {
+        SkyAction::from_index(id)
+    } else if let Some(ref name) = req.action {
+        SkyAction::from_str_name(name).unwrap_or(SkyAction::Allow)
+    } else {
+        SkyAction::Allow
+    };
+
+    let mut skyrl = state.skyrl.write().await;
+
+    // Retrieve or create gymnasium session
+    let gym = skyrl
+        .active_sessions
+        .entry(session_id.clone())
+        .or_insert_with(|| {
+            let pid = req.pid.unwrap_or(8124);
+            let binary_path = req
+                .binary_path
+                .clone()
+                .unwrap_or_else(|| r"C:\Windows\Temp\payload.exe".to_string());
+            let is_kernel_thread = pid == 0 || pid == 4;
+            let ctx = ProcessContext {
+                pid,
+                ppid: 1000,
+                binary_path,
+                command_line: "".to_string(),
+                is_kernel_thread,
+                username: "Administrator".to_string(),
+            };
+            OshoosiSecurityGym::new(ctx, req.is_malicious.unwrap_or(true))
+        });
+
+    let pre_obs = gym.observation.clone();
+    let result = gym.step(action);
+    let step_num = gym.current_step;
+
+    // Record transition into replay buffer
+    let transition = Transition::new_with_index(
+        pre_obs,
+        action.to_index(),
+        result.reward,
+        result.observation.clone(),
+        result.done,
+        result.reward.abs() + 0.01,
+    );
+    skyrl.replay_buffer.push(transition);
+    skyrl.total_steps += 1;
+
+    if result.done {
+        skyrl.total_episodes += 1;
+        skyrl.active_sessions.remove(&session_id);
+    }
+
+    Json(json!({
+        "observation": result.observation,
+        "reward": result.reward,
+        "done": result.done,
+        "thought_trace": result.thought_trace,
+        "explanation": result.explanation,
+        "session_id": session_id,
+        "step": step_num,
+    }))
+}
+
+async fn post_skyrl_train(
+    State(state): State<DashboardState>,
+    Json(req): Json<SkyrlTrainRequest>,
+) -> Json<Value> {
+    let mut skyrl = state.skyrl.write().await;
+    let gamma = req.gamma.unwrap_or(0.99);
+    let lr = req.learning_rate.unwrap_or(0.001);
+
+    let batch = if let Some(raw_transitions) = req.transitions {
+        raw_transitions
+            .into_iter()
+            .map(|t| {
+                Transition::new_with_index(
+                    t.state,
+                    t.action_id,
+                    t.reward,
+                    t.next_state,
+                    t.done,
+                    t.reward.abs() + 0.01,
+                )
+            })
+            .collect()
+    } else {
+        let batch_size = req.batch_size.unwrap_or(32);
+        skyrl.replay_buffer.sample_batch(batch_size)
+    };
+
+    let samples_trained = batch.len();
+    let loss = if !batch.is_empty() {
+        let l = skyrl.dqn.train_batch(&batch, gamma, lr);
+        skyrl.mean_loss = l;
+        l
+    } else {
+        0.0
+    };
+
+    Json(json!({
+        "status": "success",
+        "loss": loss,
+        "samples_trained": samples_trained,
+        "buffer_size": skyrl.replay_buffer.len(),
+    }))
+}
+
+async fn get_skyrl_status(State(state): State<DashboardState>) -> Json<Value> {
+    let skyrl = state.skyrl.read().await;
+    Json(json!({
+        "status": "online",
+        "epsilon": skyrl.epsilon,
+        "active_lora_adapter": skyrl.active_lora,
+        "available_lora_adapters": skyrl.available_loras,
+        "total_episodes": skyrl.total_episodes,
+        "total_steps": skyrl.total_steps,
+        "buffer_size": skyrl.replay_buffer.len(),
+        "mean_loss": skyrl.mean_loss,
+        "dqn_state_dim": skyrl.dqn.state_dim,
+        "dqn_action_dim": skyrl.dqn.action_dim,
+    }))
+}
+

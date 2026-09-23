@@ -1226,6 +1226,15 @@ impl MemoryStore {
         Ok(())
     }
 
+    /// Mark a false positive pattern from analyst/dashboard.
+    pub fn mark_false_positive(
+        &self,
+        process_name: Option<&str>,
+        hash_blake3: Option<&str>,
+    ) -> anyhow::Result<()> {
+        self.record_false_positive_pattern(process_name, hash_blake3, "analyst")
+    }
+
     /// Mark a threat as a confirmed true positive.
     /// Returns (process_name, hash_blake3) so the orchestrator can engage tarpits.
     pub fn mark_threat_true_positive(

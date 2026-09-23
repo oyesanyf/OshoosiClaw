@@ -4153,10 +4153,11 @@ impl EdrOrchestrator {
         })
     }
 
-    /// Build attack graph from audit trail and policy graph for visualization.
+    /// Build attack graph from audit trail, policy graph, and active threats for visualization.
     pub fn attack_graph(&self, limit: usize) -> serde_json::Value {
         let rels = self.policy.graph_relationships();
-        crate::attack_graph::build_attack_graph(self.audit.as_ref(), &rels, limit)
+        let threats = self.memory.get_recent_threats(limit).unwrap_or_default();
+        crate::attack_graph::build_attack_graph(self.audit.as_ref(), &rels, &threats, limit)
     }
 
     /// Current mesh peer count (approved peers).
@@ -4793,8 +4794,16 @@ impl EdrOrchestrator {
 
         // Process Global Intelligence: Gossip Sleuth Defense Learning
         let policy_orch = self.policy.clone();
+        let audit_orch = self.audit.clone();
         tokio::spawn(async move {
             while let Some(intel) = peer_intel_rx.recv().await {
+                audit_orch.log(
+                    "MESH_INTEL_RECEIVED",
+                    serde_json::json!({
+                        "summary": format!("Peer intelligence: {}", intel.summary),
+                        "source": intel.source_node,
+                    }),
+                );
                 info!(
                     "Gossip: Received intelligence from peer {}: {}",
                     intel.source_node, intel.summary
@@ -5401,10 +5410,29 @@ impl EdrOrchestrator {
             "peer_count": peer_count,
             "security_score": hardened_status.security_score,
             "recommendations": hardened_status.recommendations,
+            "structured_recommendations": hardened_status.structured_recommendations,
             "system_uptime": self.start_time.elapsed().as_secs(),
             "recent_events": self.audit.get_recent_entries(10),
             "zone": "local", // RuntimeConfig no longer carries zone; use local default
             "node_id": self.trust.did(),
+        })
+    }
+
+    /// Auto-remediate a detected platform security gap on this host.
+    pub async fn auto_remediate_security_gap(&self, gap_id: &str) -> serde_json::Value {
+        let status = crate::hardened::auto_remediate_security_gap(gap_id);
+        self.audit.log(
+            "SECURITY_GAP_REMEDIATED",
+            serde_json::json!({
+                "gap_id": gap_id,
+                "security_score": status.security_score,
+            }),
+        );
+        serde_json::json!({
+            "status": "success",
+            "security_score": status.security_score,
+            "structured_recommendations": status.structured_recommendations,
+            "recommendations": status.recommendations,
         })
     }
 

@@ -18,7 +18,8 @@ const state = {
     lastThreatsHash: '',
     lastActivityHash: '',
     gossip_count: 0,
-    _pollInFlight: false
+    _pollInFlight: false,
+    isRemediating: false
 };
 
 let updateInterval = null;
@@ -1382,7 +1383,7 @@ async function renderZoneView() {
         container.innerHTML = `
             <div class="stat-card glass">
                 <div class="stat-label">Security Score</div>
-                <div class="stat-value" style="color: ${summary.security_score > 80 ? 'var(--accent-green)' : 'var(--accent-red)'}">${summary.security_score}%</div>
+                <div class="stat-value" style="color: ${summary.security_score >= 80 ? 'var(--accent-green)' : (summary.security_score >= 60 ? 'var(--accent-orange)' : 'var(--accent-red)')}">${summary.security_score}%</div>
             </div>
             <div class="stat-card glass">
                 <div class="stat-label">Zone Node Count</div>
@@ -1395,20 +1396,139 @@ async function renderZoneView() {
         `;
     }
 
+    // Update master auto-config button state if all remediated
+    const masterBtn = document.getElementById('btn-auto-remediate-all');
+    const allRemediated = summary.structured_recommendations && 
+        summary.structured_recommendations.length > 0 && 
+        summary.structured_recommendations.every(r => r.status === 'remediated' || !r.can_auto_remediate);
+    
+    if (masterBtn) {
+        if (allRemediated || summary.security_score >= 100) {
+            masterBtn.className = 'btn-configured';
+            masterBtn.disabled = true;
+            masterBtn.innerHTML = '<i data-lucide="shield-check" style="width:14px; height:14px;"></i> All Settings Remediated (100%)';
+        } else {
+            masterBtn.className = 'btn-primary btn-sm flex items-center gap-2';
+            masterBtn.disabled = false;
+            masterBtn.innerHTML = '<i data-lucide="zap" style="width:14px; height:14px;"></i> Auto-Configure All Settings';
+        }
+    }
+
     const recs = document.getElementById('zone-recommendations');
     if (recs) {
-        if (summary.recommendations && summary.recommendations.length > 0) {
+        // If remediation is currently in flight, don't overwrite user's action spinner
+        if (state.isRemediating) {
+            return;
+        }
+
+        if (summary.structured_recommendations && summary.structured_recommendations.length > 0) {
+            recs.innerHTML = summary.structured_recommendations.map(r => {
+                const isRemediated = r.status === 'remediated';
+                const compatBadge = r.compatible 
+                    ? `<span class="badge-compatible"><i data-lucide="check-circle" style="width:12px; height:12px;"></i> Compatible Host</span>`
+                    : `<span class="badge-incompatible"><i data-lucide="alert-triangle" style="width:12px; height:12px;"></i> Compatibility Notice</span>`;
+                
+                let actionBtn;
+                if (isRemediated) {
+                    actionBtn = `<button class="btn-configured" disabled><i data-lucide="shield-check" style="width:14px; height:14px;"></i> ✓ Configured / Secured</button>`;
+                } else if (r.can_auto_remediate) {
+                    actionBtn = `<button class="btn-primary btn-sm flex items-center gap-1" onclick="autoRemediateGap('${r.id}', this)"><i data-lucide="zap" style="width:14px; height:14px;"></i> Auto-Configure</button>`;
+                } else {
+                    actionBtn = `<button class="btn-primary btn-sm flex items-center gap-1" disabled title="Incompatible on this host"><i data-lucide="slash" style="width:14px; height:14px;"></i> Incompatible</button>`;
+                }
+
+                const detailsHtml = isRemediated && r.remediation_details
+                    ? `<div class="item-remediation-active"><i data-lucide="check" style="width:12px; height:12px;"></i> ${escapeHtml(r.remediation_details)}</div>`
+                    : '';
+
+                return `
+                    <div class="zone-rec-item ${isRemediated ? 'remediated' : ''}">
+                        <div class="zone-rec-info">
+                            <div class="zone-rec-title">
+                                <span>${escapeHtml(r.title)}</span>
+                                <span class="badge-impact">+${r.impact_points}% Impact</span>
+                                ${compatBadge}
+                            </div>
+                            <div class="zone-rec-desc">${escapeHtml(r.description)}</div>
+                            <div class="zone-rec-meta">
+                                <span style="font-size: 11px; color: var(--accent-blue); font-weight: 500;">Action: ${escapeHtml(r.remediation_action)}</span>
+                            </div>
+                            ${detailsHtml}
+                        </div>
+                        <div class="zone-rec-action">
+                            ${actionBtn}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        } else if (summary.recommendations && summary.recommendations.length > 0) {
             recs.innerHTML = summary.recommendations.map(r => `
                 <div class="feed-item">
                     <div class="item-title" style="color: var(--accent-blue);">Recommendation</div>
-                    <div class="item-meta">${r}</div>
+                    <div class="item-meta">${escapeHtml(r)}</div>
                 </div>
             `).join('');
         } else {
             recs.innerHTML = '<p class="placeholder-text">Security posture is optimal.</p>';
         }
     }
+
+    if (window.lucide) {
+        lucide.createIcons();
+    }
 }
+
+window.autoRemediateGap = async function(gapId, triggerBtn) {
+    if (state.isRemediating) return;
+    state.isRemediating = true;
+    const btn = triggerBtn || (window.event ? window.event.currentTarget : null);
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader" class="spin" style="width:14px; height:14px;"></i> Configuring...';
+        if (window.lucide) lucide.createIcons();
+    }
+    try {
+        const res = await fetch(`${API_BASE}/zone/auto-remediate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ gap_id: gapId })
+        });
+        if (!res.ok) {
+            console.error(`Auto-remediation failed: HTTP ${res.status}`);
+        }
+    } catch (e) {
+        console.error('Failed to auto-remediate gap:', e);
+    } finally {
+        state.isRemediating = false;
+        await renderZoneView();
+    }
+};
+
+window.autoRemediateAllGaps = async function(triggerBtn) {
+    if (state.isRemediating) return;
+    state.isRemediating = true;
+    const btn = triggerBtn || document.getElementById('btn-auto-remediate-all') || (window.event ? window.event.currentTarget : null);
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader" class="spin" style="width:14px; height:14px;"></i> Configuring All...';
+        if (window.lucide) lucide.createIcons();
+    }
+    try {
+        const res = await fetch(`${API_BASE}/zone/auto-remediate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ gap_id: 'all' })
+        });
+        if (!res.ok) {
+            console.error(`Auto-remediation of all gaps failed: HTTP ${res.status}`);
+        }
+    } catch (e) {
+        console.error('Failed to auto-remediate all gaps:', e);
+    } finally {
+        state.isRemediating = false;
+        await renderZoneView();
+    }
+};
 
 /**
  * Render Approval Queue

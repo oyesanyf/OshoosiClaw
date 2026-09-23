@@ -193,6 +193,22 @@ impl DenseLayer {
         }
         offset
     }
+
+    pub fn backward(&mut self, input: &[f32], grad_output: &[f32], lr: f32) -> Vec<f32> {
+        let in_dim = input.len();
+        let out_dim = self.biases.len();
+        let mut grad_input = vec![0.0; in_dim];
+        for i in 0..in_dim {
+            for j in 0..out_dim {
+                grad_input[i] += grad_output[j] * self.weights[i][j];
+                self.weights[i][j] -= lr * input[i] * grad_output[j];
+            }
+        }
+        for j in 0..out_dim {
+            self.biases[j] -= lr * grad_output[j];
+        }
+        grad_input
+    }
 }
 
 /// Deep Q-Network (DQN) Policy Engine with Masked Argmax.
@@ -288,6 +304,82 @@ impl DeepQEngine {
         offset += self.fc3.load_parameters(&flat[offset..]);
         let _ = self.fc_out.load_parameters(&flat[offset..]);
     }
+
+    /// Performs one gradient descent optimization pass over a batch of experience replay transitions.
+    /// Computes the Temporal Difference (TD) loss via the Bellman optimality equation:
+    /// y_i = r + \gamma \max_{a'} Q(s', a') (or r if terminal).
+    /// Caches intermediate activations and backpropagates through layers with ReLU gradient gating.
+    pub fn train_batch(&mut self, batch: &[Transition], gamma: f32, lr: f32) -> f32 {
+        if batch.is_empty() {
+            return 0.0;
+        }
+
+        let mut total_loss = 0.0;
+
+        for transition in batch {
+            // 1. Forward pass caching intermediate activations
+            let h1 = self.fc1.forward(&transition.state, true);
+            let h2 = self.fc2.forward(&h1, true);
+            let h3 = self.fc3.forward(&h2, true);
+            let q_pred = self.fc_out.forward(&h3, false);
+
+            // 2. Bellman target calculation
+            let target = if transition.done {
+                transition.reward
+            } else {
+                let next_q = self.forward(&transition.next_state);
+                let max_next_q = next_q
+                    .into_iter()
+                    .fold(f32::NEG_INFINITY, f32::max);
+                let max_q = if max_next_q.is_finite() { max_next_q } else { 0.0 };
+                transition.reward + gamma * max_q
+            };
+
+            let action_idx = transition.get_action_index();
+            let current_q = q_pred.get(action_idx).copied().unwrap_or(0.0);
+            let td_error = current_q - target;
+            total_loss += td_error * td_error;
+
+            // 3. Output gradient for chosen action
+            let mut grad_out = vec![0.0; self.action_dim];
+            if action_idx < self.action_dim {
+                grad_out[action_idx] = td_error;
+            }
+
+            // 4. Backprop through fc_out
+            let grad_h3 = self.fc_out.backward(&h3, &grad_out, lr);
+
+            // Backprop through fc3 with ReLU gradient gating (h_k > 0.0)
+            let mut grad_z3 = grad_h3;
+            for (k, val) in grad_z3.iter_mut().enumerate() {
+                if h3.get(k).copied().unwrap_or(0.0) <= 0.0 {
+                    *val = 0.0;
+                }
+            }
+
+            // Backprop through fc2 with ReLU gradient gating
+            let grad_h2 = self.fc3.backward(&h2, &grad_z3, lr);
+            let mut grad_z2 = grad_h2;
+            for (k, val) in grad_z2.iter_mut().enumerate() {
+                if h2.get(k).copied().unwrap_or(0.0) <= 0.0 {
+                    *val = 0.0;
+                }
+            }
+
+            // Backprop through fc1 with ReLU gradient gating
+            let grad_h1 = self.fc2.backward(&h1, &grad_z2, lr);
+            let mut grad_z1 = grad_h1;
+            for (k, val) in grad_z1.iter_mut().enumerate() {
+                if h1.get(k).copied().unwrap_or(0.0) <= 0.0 {
+                    *val = 0.0;
+                }
+            }
+
+            let _ = self.fc1.backward(&transition.state, &grad_z1, lr);
+        }
+
+        total_loss / (batch.len() as f32)
+    }
 }
 
 /// Transition experience tuple stored in replay memory.
@@ -299,6 +391,54 @@ pub struct Transition {
     pub next_state: Vec<f32>,
     pub done: bool,
     pub priority: f32,
+    #[serde(default)]
+    pub action_index: Option<usize>,
+}
+
+impl Transition {
+    pub fn new(
+        state: Vec<f32>,
+        action: MitigationAction,
+        reward: f32,
+        next_state: Vec<f32>,
+        done: bool,
+        priority: f32,
+    ) -> Self {
+        let action_index = Some(action.to_index());
+        Self {
+            state,
+            action,
+            reward,
+            next_state,
+            done,
+            priority,
+            action_index,
+        }
+    }
+
+    pub fn new_with_index(
+        state: Vec<f32>,
+        action_index: usize,
+        reward: f32,
+        next_state: Vec<f32>,
+        done: bool,
+        priority: f32,
+    ) -> Self {
+        let action = MitigationAction::from_index(action_index);
+        Self {
+            state,
+            action,
+            reward,
+            next_state,
+            done,
+            priority,
+            action_index: Some(action_index),
+        }
+    }
+
+    pub fn get_action_index(&self) -> usize {
+        self.action_index.unwrap_or_else(|| self.action.to_index())
+    }
 }
 
 /// Prioritized Experience Replay Buffer for continual policy optimization.
@@ -510,6 +650,7 @@ impl EDRRuntimeController {
                 next_state: packet.telemetry_vector,
                 done: action == MitigationAction::TerminateAndIsolate,
                 priority: (reward.abs() + 0.01),
+                action_index: Some(action.to_index()),
             };
 
             {
@@ -611,6 +752,44 @@ mod tests {
         for val in agg {
             assert!(val >= 0.8 && val <= 1.2, "Byzantine outlier was not trimmed: {}", val);
         }
+    }
+
+    #[test]
+    fn test_dense_layer_backward() {
+        let mut layer = DenseLayer::new(4, 2);
+        let input = vec![1.0, 0.5, -0.5, 2.0];
+        let grad_output = vec![0.1, -0.2];
+        let lr = 0.01;
+
+        let grad_input = layer.backward(&input, &grad_output, lr);
+        assert_eq!(grad_input.len(), 4);
+    }
+
+    #[test]
+    fn test_dqn_train_batch_reduces_loss() {
+        let mut dqn = DeepQEngine::new(8, 4);
+        let s = vec![0.2, 0.4, 0.1, 0.9, 0.0, 0.5, 0.3, 0.7];
+        let next_s = vec![0.1, 0.3, 0.0, 0.8, 0.0, 0.4, 0.2, 0.6];
+
+        let batch = vec![
+            Transition::new_with_index(s.clone(), 3, 1.0, next_s.clone(), true, 1.0),
+            Transition::new_with_index(s.clone(), 0, -1.0, next_s.clone(), false, 1.0),
+        ];
+
+        let initial_loss = dqn.train_batch(&batch, 0.95, 0.05);
+        assert!(initial_loss.is_finite());
+
+        let mut final_loss = initial_loss;
+        for _ in 0..50 {
+            final_loss = dqn.train_batch(&batch, 0.95, 0.05);
+        }
+
+        assert!(
+            final_loss < initial_loss,
+            "Loss should decrease: initial={}, final={}",
+            initial_loss,
+            final_loss
+        );
     }
 }
 

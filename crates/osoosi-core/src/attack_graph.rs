@@ -11,6 +11,7 @@ use std::collections::BTreeSet;
 pub fn build_attack_graph(
     audit: &AuditTrail,
     relationships: &[Relationship],
+    threats: &[Value],
     limit: usize,
 ) -> Value {
     let limit = limit.clamp(1, 500);
@@ -37,7 +38,109 @@ pub fn build_attack_graph(
         }));
     }
 
-    // 2. Add audit-derived nodes and edges
+    // 2. Ingest active threats from SQLite memory store
+    for threat in threats.iter().take(limit) {
+        let id = threat
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
+        let proc_name = threat
+            .get("process_name")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("System");
+        let cve_id = threat
+            .get("cve_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let confidence = threat
+            .get("confidence")
+            .and_then(|v| v.as_f64())
+            .unwrap_or(0.9);
+        let reason = threat
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let source_node = threat
+            .get("source_node")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .unwrap_or("Local Node");
+        let file_path = threat
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty());
+
+        let threat_node = format!("threat:{}", id);
+        let threat_label = if cve_id.is_empty() {
+            format!("Threat ({:.0}%)", confidence * 100.0)
+        } else {
+            format!("{} ({:.0}%)", cve_id, confidence * 100.0)
+        };
+
+        nodes.insert(source_node.to_string());
+        nodes.insert(proc_name.to_string());
+        nodes.insert(threat_node.clone());
+
+        node_labels.insert(
+            source_node.to_string(),
+            (source_node.to_string(), "host".to_string()),
+        );
+        node_labels.insert(
+            proc_name.to_string(),
+            (proc_name.to_string(), "process".to_string()),
+        );
+        node_labels.insert(
+            threat_node.clone(),
+            (threat_label, "threat".to_string()),
+        );
+
+        edges.push(json!({
+            "from": source_node,
+            "to": proc_name,
+            "label": "spawned",
+            "title": format!("{} spawned {}", source_node, proc_name),
+        }));
+
+        edges.push(json!({
+            "from": proc_name,
+            "to": threat_node,
+            "label": "detected",
+            "title": format!(
+                "Threat detected (conf: {:.2}){}",
+                confidence,
+                if !reason.is_empty() {
+                    format!(" — {}", reason)
+                } else {
+                    String::new()
+                }
+            ),
+            "confidence": confidence,
+            "causal": true,
+            "reason": if reason.is_empty() { Value::Null } else { json!(reason) },
+        }));
+
+        if let Some(fp) = file_path {
+            let fname = std::path::Path::new(fp)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(fp);
+            let target_node = format!("file:{}", fname);
+            nodes.insert(target_node.clone());
+            node_labels.insert(
+                target_node.clone(),
+                (fname.to_string(), "target".to_string()),
+            );
+            edges.push(json!({
+                "from": threat_node,
+                "to": target_node,
+                "label": "targeted",
+                "title": format!("Targeted: {}", fname),
+            }));
+        }
+    }
+
+    // 3. Add audit-derived nodes and edges
     let entries = audit.entries();
     let mut count = 0u32;
     for entry in entries.iter().rev() {
@@ -241,7 +344,7 @@ pub fn build_attack_graph(
         }
     }
 
-    // 3. Build vis-network nodes array
+    // 4. Build vis-network nodes array
     let node_list: Vec<Value> = node_labels
         .iter()
         .map(|(id, (label, node_type))| {
@@ -251,6 +354,7 @@ pub fn build_attack_graph(
                 "ip" => "#f59e0b",
                 "domain" => "#ec4899",
                 "threat" => "#ef4444",
+                "target" => "#f43f5e",
                 "response" => "#10b981",
                 "predicted" => "#f97316",
                 _ => "#94a3b8",
@@ -270,3 +374,40 @@ pub fn build_attack_graph(
         "edges": edges,
     })
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_build_attack_graph_with_threats() {
+        let audit = AuditTrail::new();
+        let relationships = vec![];
+        let threats = vec![json!({
+            "id": "threat-101",
+            "process_name": "mimikatz.exe",
+            "cve_id": "CVE-2026-9999",
+            "confidence": 0.95,
+            "reason": "LSASS memory read detected",
+            "source_node": "Node-Alpha",
+            "file_path": "C:\\Windows\\Temp\\mimikatz.exe",
+        })];
+
+        let graph = build_attack_graph(&audit, &relationships, &threats, 10);
+        let nodes = graph.get("nodes").and_then(|v| v.as_array()).expect("nodes array");
+        let edges = graph.get("edges").and_then(|v| v.as_array()).expect("edges array");
+
+        let node_ids: Vec<&str> = nodes.iter().filter_map(|n| n.get("id").and_then(|v| v.as_str())).collect();
+        assert!(node_ids.contains(&"Node-Alpha"));
+        assert!(node_ids.contains(&"mimikatz.exe"));
+        assert!(node_ids.contains(&"threat:threat-101"));
+        assert!(node_ids.contains(&"file:mimikatz.exe"));
+
+        assert_eq!(edges.len(), 3);
+        let labels: Vec<&str> = edges.iter().filter_map(|e| e.get("label").and_then(|v| v.as_str())).collect();
+        assert!(labels.contains(&"spawned"));
+        assert!(labels.contains(&"detected"));
+        assert!(labels.contains(&"targeted"));
+    }
+}
+

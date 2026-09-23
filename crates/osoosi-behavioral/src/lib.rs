@@ -19,6 +19,7 @@ mod process_tree;
 pub mod reasoning;
 mod sentence;
 pub mod rl_engine;
+pub mod skyrl;
 pub mod spider_eyes;
 pub mod yara_analyzer;
 
@@ -39,6 +40,7 @@ pub use rl_engine::{
     PrioritizedReplayBuffer, ProcessContext, SafetyGuardrail, TelemetryPacket, Transition,
 };
 pub use sentence::event_to_behavioral_sentence;
+pub use skyrl::{OshoosiSecurityGym, SkyAction, StepResult};
 pub use spider_eyes::{SpiderEyes, GemmaSupervisor};
 pub use yara_analyzer::YaraAnalyzer;
 
