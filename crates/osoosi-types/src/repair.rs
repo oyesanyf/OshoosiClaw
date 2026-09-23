@@ -109,6 +109,9 @@ pub struct PeerAnnounce {
     /// Master Node signature of the source_node ID (hex). Required if Master Node security is enabled.
     #[serde(default)]
     pub membership_proof: Option<String>,
+    /// Optional TPM 2.0 attestation response proving hardware and runtime integrity.
+    #[serde(default)]
+    pub attestation: Option<crate::AttestationResponse>,
 }
 
 /// Stored peer status (from PeerAnnounce) for join rule enforcement.

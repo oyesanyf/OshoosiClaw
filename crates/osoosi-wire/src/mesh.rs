@@ -47,6 +47,7 @@ pub struct MeshNode {
     pub confidential_topic: gossipsub::IdentTopic,
     pub model_delta_topic: gossipsub::IdentTopic,
     pub tripwire_topic: gossipsub::IdentTopic,
+    pub attestation_topic: gossipsub::IdentTopic,
     pub zone: String,
     pub memory: Arc<osoosi_memory::MemoryStore>,
     pub dial_semaphore: Arc<tokio::sync::Semaphore>,
@@ -158,6 +159,8 @@ impl MeshNode {
             gossipsub::IdentTopic::new(format!("{}-{}", super::CONFIDENTIAL_TOPIC, zone));
         let model_delta_topic = gossipsub::IdentTopic::new(format!("osoosi-model-deltas-{}", zone));
         let tripwire_topic = gossipsub::IdentTopic::new(format!("osoosi-deception-tripwire-{}", zone));
+        let attestation_topic =
+            gossipsub::IdentTopic::new(format!("{}-{}", super::ATTESTATION_TOPIC, zone));
 
         swarm.behaviour_mut().gossipsub.subscribe(&threat_topic)?;
         swarm
@@ -194,6 +197,10 @@ impl MeshNode {
             .behaviour_mut()
             .gossipsub
             .subscribe(&tripwire_topic)?;
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&attestation_topic)?;
 
         let mesh_config = osoosi_types::load_mesh_listen_config();
 
@@ -288,6 +295,7 @@ impl MeshNode {
             confidential_topic,
             model_delta_topic,
             tripwire_topic,
+            attestation_topic,
             zone,
             memory,
             dial_semaphore: Arc::new(tokio::sync::Semaphore::new(16)),
@@ -484,6 +492,8 @@ impl MeshNode {
                     }
                     MeshCommand::QuarantinePeer(pid) => {
                         self.swarm.behaviour_mut().gossipsub.remove_explicit_peer(&pid);
+                        let _ = self.swarm.behaviour_mut().kademlia.remove_peer(&pid);
+                        let _ = self.swarm.disconnect_peer_id(pid);
                         quarantined.insert(pid);
                         if approved.remove(&pid) {
                             if let Some(ref c) = peer_count {
@@ -493,7 +503,7 @@ impl MeshNode {
                                 }
                             }
                         }
-                        info!("Peer {} quarantined; total mesh peers: {}", pid, peer_count.as_ref().map(|c| c.load(Ordering::Relaxed)).unwrap_or(0));
+                        info!("Peer {} quarantined, ejected from Kademlia routing, and disconnected; total mesh peers: {}", pid, peer_count.as_ref().map(|c| c.load(Ordering::Relaxed)).unwrap_or(0));
                     }
                     MeshCommand::ReleasePeer(pid) => {
                         quarantined.remove(&pid);
@@ -555,6 +565,10 @@ impl MeshNode {
                         let topic = self.tripwire_topic.clone();
                         self.publish_gossip_json(&topic, &alert);
                     }
+                    MeshCommand::BroadcastAttestation(msg) => {
+                        let topic = self.attestation_topic.clone();
+                        self.publish_gossip_json(&topic, &msg);
+                    }
                 },
                 event = self.swarm.select_next_some() => match event {
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Mdns(mdns::Event::Discovered(list))) => {
@@ -615,6 +629,39 @@ impl MeshNode {
                             if let Ok(alert) = serde_json::from_slice::<osoosi_types::MeshTripwireAlert>(&message.data) {
                                 on_tripwire(alert);
                             }
+                        } else if message.topic == self.attestation_topic.hash() {
+                            if let Ok(msg) = serde_json::from_slice::<super::MeshAttestationMessage>(&message.data) {
+                                match msg {
+                                    super::MeshAttestationMessage::Challenge {
+                                        challenger_peer_id,
+                                        target_peer_id,
+                                        challenge,
+                                    } => {
+                                        if target_peer_id == self.swarm.local_peer_id().to_string() {
+                                            if let Some(ref tm) = join_gate.trust_manager() {
+                                                if let Ok(response) = tm.respond_to_attestation(challenge) {
+                                                    let resp_msg = super::MeshAttestationMessage::Response {
+                                                        responder_peer_id: self.swarm.local_peer_id().to_string(),
+                                                        target_peer_id: challenger_peer_id,
+                                                        response,
+                                                    };
+                                                    let topic = self.attestation_topic.clone();
+                                                    self.publish_gossip_json(&topic, &resp_msg);
+                                                }
+                                            }
+                                        }
+                                    }
+                                    super::MeshAttestationMessage::Response {
+                                        responder_peer_id,
+                                        target_peer_id,
+                                        response,
+                                    } => {
+                                        if target_peer_id == self.swarm.local_peer_id().to_string() {
+                                            let _ = join_gate.handle_attestation_response(&responder_peer_id, &response);
+                                        }
+                                    }
+                                }
+                            }
                         }
                     }
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Identify(identify::Event::Received { peer_id, info, .. })) => {
@@ -644,8 +691,24 @@ impl MeshNode {
                         }
                     }
                     SwarmEvent::ConnectionEstablished { peer_id, endpoint, .. } => {
+                        if quarantined.contains(&peer_id) {
+                            warn!("Quarantined peer {} attempted connection; severing immediately.", peer_id);
+                            let _ = self.swarm.disconnect_peer_id(peer_id);
+                            continue;
+                        }
                         consecutive_exhaustion_count = 0;
                         info!("Connection established with {} via {:?}", peer_id, endpoint.get_remote_address());
+
+                        // Automatically initiate TPM 2.0 remote attestation challenge when peer connects
+                        let pid_str = peer_id.to_string();
+                        let challenge = join_gate.create_attestation_challenge(&pid_str, None);
+                        let challenge_msg = super::MeshAttestationMessage::Challenge {
+                            challenger_peer_id: self.swarm.local_peer_id().to_string(),
+                            target_peer_id: pid_str,
+                            challenge,
+                        };
+                        let topic = self.attestation_topic.clone();
+                        self.publish_gossip_json(&topic, &challenge_msg);
                     }
                     SwarmEvent::ConnectionClosed { peer_id, cause, .. } => {
                         debug!("Connection closed with {}: {:?}", peer_id, cause);

@@ -22,6 +22,24 @@ pub const TARPIT_TOPIC: &str = "osoosi-tarpit-v1";
 /// Gossipsub topic for FHE-encrypted IOCs and voting.
 pub const CONFIDENTIAL_TOPIC: &str = "osoosi-confidential-v1";
 
+/// Gossipsub topic for TPM 2.0 remote attestation challenge-response.
+pub const ATTESTATION_TOPIC: &str = "osoosi-attestation-v1";
+
+/// Attestation exchange messages across the Gossip mesh.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+pub enum MeshAttestationMessage {
+    Challenge {
+        challenger_peer_id: String,
+        target_peer_id: String,
+        challenge: osoosi_types::AttestationChallenge,
+    },
+    Response {
+        responder_peer_id: String,
+        target_peer_id: String,
+        response: osoosi_types::AttestationResponse,
+    },
+}
+
 /// Commands sent to the mesh task.
 #[derive(Debug)]
 pub enum MeshCommand {
@@ -49,6 +67,8 @@ pub enum MeshCommand {
     BroadcastModelDelta(osoosi_types::FederatedModelDelta),
     /// Broadcast a Tripwire Alert from the Phantom Memory Flux tarpit.
     BroadcastTripwire(osoosi_types::MeshTripwireAlert),
+    /// Broadcast an attestation challenge or response across the mesh.
+    BroadcastAttestation(MeshAttestationMessage),
 }
 
 /// Collaborative attacker throttling signal for the Gossip mesh.

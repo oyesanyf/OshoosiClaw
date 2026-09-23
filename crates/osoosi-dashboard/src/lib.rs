@@ -969,7 +969,7 @@ async fn get_malware_status(State(state): State<DashboardState>) -> Json<Value> 
                             .memory()
                             .is_false_positive_pattern(
                                 Some(&d.file_path),
-                                d.file_hash.as_deref(),
+                                Some(d.file_hash.as_str()),
                             )
                             .unwrap_or(false)
                     })
@@ -1012,7 +1012,7 @@ async fn get_malware_detections(State(state): State<DashboardState>) -> Json<Val
                             .memory()
                             .is_false_positive_pattern(
                                 Some(&d.file_path),
-                                d.file_hash.as_deref(),
+                                Some(d.file_hash.as_str()),
                             )
                             .unwrap_or(false)
                     })

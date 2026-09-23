@@ -1459,6 +1459,9 @@ pub struct PeerRulesConfig {
     /// Block peers on out-of-support OS (default: true).
     #[serde(default = "default_true")]
     pub require_supported_os: bool,
+    /// Require TPM 2.0 remote attestation for mesh join (default: false).
+    #[serde(default)]
+    pub require_tpm_attestation: bool,
 }
 
 impl Default for PeerRulesConfig {
@@ -1466,6 +1469,7 @@ impl Default for PeerRulesConfig {
         Self {
             require_patched: true,
             require_supported_os: true,
+            require_tpm_attestation: false,
         }
     }
 }

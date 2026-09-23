@@ -18,6 +18,8 @@ fn trusted_operational_path(path: &str) -> bool {
         || p.contains("\\tools\\git\\")
         || p.contains("\\tools\\")
         || p.contains("\\target\\")
+        || p.contains("\\vscode-win32-x64\\")
+        || p.contains("\\modelfusion\\ide\\")
 }
 
 fn event_text_field<'a>(event: &'a HostSecurityEvent, key: &str) -> Option<&'a str> {
@@ -34,6 +36,10 @@ fn trusted_identity_signal(event: &HostSecurityEvent, path: &str) -> bool {
         return false;
     }
 
+    if osoosi_types::is_trusted_signed_binary(Path::new(path)) {
+        return true;
+    }
+
     let valid_signature = event_text_field(event, "SignatureStatus")
         .or_else(|| event_text_field(event, "Signature Status"))
         .is_some_and(|status| {
@@ -46,6 +52,10 @@ fn trusted_identity_signal(event: &HostSecurityEvent, path: &str) -> bool {
         .to_ascii_lowercase();
     let trusted_publisher = [
         "microsoft",
+        "khronos",
+        "hugos",
+        "electron",
+        "vulkan",
         "git",
         "python",
         "node.js",
@@ -77,6 +87,8 @@ fn trusted_identity_signal(event: &HostSecurityEvent, path: &str) -> bool {
 pub(crate) fn scanner_skip_path(path: &str) -> bool {
     let p = path.replace('/', "\\").to_ascii_lowercase();
     if is_ide_or_build_path(&p)
+        || p.contains("\\vscode-win32-x64\\")
+        || p.contains("\\modelfusion\\ide\\")
         || p.contains("\\.codex\\")
         || p.contains("\\.gemini\\")
         || p.contains("\\antigravity\\brain\\")
@@ -641,14 +653,25 @@ mod tests {
         assert!(scanner_skip_path(r"C:\Users\dev\AppData\Local\Google\DriveFS\temp\sync.tmp"));
         assert!(scanner_skip_path(r"C:\Users\dev\.cache\huggingface\hub\models--bert\snapshots\model.bin"));
         assert!(scanner_skip_path(r"C:\Users\dev\.ollama\models\blobs\sha256-abc"));
+        assert!(scanner_skip_path(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll"));
+        assert!(scanner_skip_path(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\microsoft-authentication\dist\msalruntime.dll"));
+        assert!(scanner_skip_path(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\microsoft-authentication\dist\msal-node-runtime.node"));
+        assert!(scanner_skip_path(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\node_modules\vsda\build\Release\vsda.node"));
+        assert!(scanner_skip_path(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\ms-vscode.js-debug\src\win32-app-container-tokens.win32-x64-msvc-VCQE7GJP.node"));
 
         assert!(!scanner_skip_path(r"C:\Windows\System32\evil.exe"));
         assert!(!scanner_skip_path(r"C:\Users\victim\Downloads\payload.exe"));
         assert!(!scanner_skip_path(r"C:\Windows\Temp\mimikatz.exe"));
+        assert!(!scanner_skip_path(r"C:\Windows\Temp\vulkan-1.dll"));
+        assert!(!scanner_skip_path(r"C:\Users\victim\Downloads\msalruntime.dll"));
+        assert!(!scanner_skip_path(r"C:\Users\victim\Downloads\vsda.node"));
+        assert!(!scanner_skip_path(r"C:\Windows\Temp\win32-app-container-tokens.node"));
 
         assert!(trusted_operational_path(r"C:\Program Files\Git\bin\git.exe"));
         assert!(trusted_operational_path(r"D:\dev\project\.vscode\extensions\bin\tool.exe"));
         assert!(trusted_operational_path(r"D:\dev\project\target\release\my_tool.exe"));
+        assert!(trusted_operational_path(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll"));
+        assert!(trusted_operational_path(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\node_modules\vsda\build\Release\vsda.node"));
     }
 }
 

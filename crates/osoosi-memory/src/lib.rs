@@ -230,6 +230,23 @@ impl MemoryStore {
             [],
         )?;
 
+        // Pre-populate false positive patterns for legitimate developer and VS Code native components
+        let known_fps = [
+            ("msalruntime.dll", ""),
+            ("msal-node-runtime.node", ""),
+            ("vsda.node", ""),
+            ("vulkan-1.dll", ""),
+            ("win32-app-container-tokens.node", ""),
+            ("win32-app-container-tokens.win32-x64-msvc-VCQE7GJP.node", ""),
+            ("win32-app-container-tokens.win32-arm64-msvc-4ZJZ3U55.node", ""),
+        ];
+        for (proc_name, hash) in known_fps {
+            let _ = conn.execute(
+                "INSERT OR IGNORE INTO false_positive_patterns (process_name, hash_blake3, source_node, marked_at) VALUES (?1, ?2, 'allowlist_seed', ?3)",
+                rusqlite::params![proc_name, hash, Utc::now().to_rfc3339()],
+            );
+        }
+
         conn.execute(
             "CREATE TABLE IF NOT EXISTS internal_assets (
                 path TEXT PRIMARY KEY,
@@ -380,11 +397,14 @@ impl MemoryStore {
         Ok(())
     }
 
-    pub fn is_nsrl_known_good(&self, sha1: &str) -> anyhow::Result<bool> {
-        let key = sha1.trim().to_ascii_lowercase();
+    pub fn is_nsrl_known_good(&self, hash: &str) -> anyhow::Result<bool> {
+        let key = hash.trim().to_ascii_lowercase();
+        if key.is_empty() {
+            return Ok(false);
+        }
         let conn = self.conn.lock();
-        let mut stmt = conn.prepare_cached("SELECT 1 FROM nsrl WHERE sha1 = ? LIMIT 1")?;
-        let exists = stmt.exists([key])?;
+        let mut stmt = conn.prepare_cached("SELECT 1 FROM nsrl WHERE sha1 = ?1 OR sha256 = ?1 OR md5 = ?1 LIMIT 1")?;
+        let exists = stmt.exists([&key])?;
         Ok(exists)
     }
 
@@ -1300,12 +1320,42 @@ impl MemoryStore {
         hash_blake3: Option<&str>,
     ) -> anyhow::Result<bool> {
         let conn = self.conn.lock();
-        let proc = process_name.unwrap_or("");
-        let hash = hash_blake3.unwrap_or("");
-        let mut stmt = conn.prepare(
-            "SELECT 1 FROM false_positive_patterns WHERE (process_name != '' AND process_name = ?1) OR (hash_blake3 != '' AND hash_blake3 = ?2) LIMIT 1"
+        let raw_proc = process_name.unwrap_or("").trim();
+        let hash = hash_blake3.unwrap_or("").trim();
+        if raw_proc.is_empty() && hash.is_empty() {
+            return Ok(false);
+        }
+
+        // Support callers passing either a full file path or a bare filename
+        let file_name = std::path::Path::new(raw_proc)
+            .file_name()
+            .and_then(|n| n.to_str())
+            .unwrap_or(raw_proc);
+
+        let proc_lc = file_name.to_lowercase();
+        let is_known_component = proc_lc == "msalruntime.dll"
+            || proc_lc == "msal-node-runtime.node"
+            || proc_lc == "vsda.node"
+            || proc_lc == "vulkan-1.dll"
+            || proc_lc.starts_with("win32-app-container-tokens");
+
+        let raw_proc_lc = raw_proc.to_lowercase();
+        let is_ide_path = raw_proc_lc.contains("vscode")
+            || raw_proc_lc.contains("modelfusion")
+            || raw_proc_lc.contains(".vscode")
+            || raw_proc_lc.contains("resources\\app")
+            || raw_proc_lc.contains("resources/app");
+
+        // Allowlist-seeded components only match if within an IDE path
+        if is_known_component && is_ide_path {
+            return Ok(true);
+        }
+
+        let is_ide_int = if is_ide_path { 1 } else { 0 };
+        let mut stmt = conn.prepare_cached(
+            "SELECT 1 FROM false_positive_patterns WHERE (hash_blake3 != '' AND hash_blake3 = ?1) OR (process_name != '' AND (process_name = ?2 OR process_name = ?3) AND (source_node != 'allowlist_seed' OR ?4 = 1)) LIMIT 1"
         )?;
-        let mut rows = stmt.query(params![proc, hash])?;
+        let mut rows = stmt.query(params![hash, raw_proc, file_name, is_ide_int])?;
         Ok(rows.next()?.is_some())
     }
 
@@ -1482,5 +1532,58 @@ impl MemoryStore {
         )?;
         let exists = stmt.exists(params![kind, value])?;
         Ok(exists)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_is_false_positive_pattern() {
+        let mem = MemoryStore::new(":memory:").unwrap();
+
+        // Legitimate VS Code installation paths match
+        assert!(mem.is_false_positive_pattern(
+            Some(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll"),
+            None
+        ).unwrap());
+
+        assert!(mem.is_false_positive_pattern(
+            Some(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\resources\app\extensions\microsoft-authentication\dist\msalruntime.dll"),
+            None
+        ).unwrap());
+
+        assert!(mem.is_false_positive_pattern(
+            Some(r"C:\Users\dev\AppData\Local\Programs\Microsoft VS Code\resources\app\node_modules\vsda\build\Release\vsda.node"),
+            None
+        ).unwrap());
+
+        // Negative cases - identical file names in untrusted directories do NOT match
+        assert!(!mem.is_false_positive_pattern(
+            Some(r"C:\Windows\Temp\vulkan-1.dll"),
+            None
+        ).unwrap());
+
+        assert!(!mem.is_false_positive_pattern(
+            Some(r"C:\Users\victim\Downloads\msalruntime.dll"),
+            None
+        ).unwrap());
+
+        assert!(!mem.is_false_positive_pattern(
+            Some(r"C:\Users\victim\Downloads\vsda.node"),
+            None
+        ).unwrap());
+
+        // Empty inputs
+        assert!(!mem.is_false_positive_pattern(None, None).unwrap());
+        assert!(!mem.is_false_positive_pattern(Some(""), Some("")).unwrap());
+    }
+
+    #[test]
+    fn test_is_nsrl_known_good_empty() {
+        let mem = MemoryStore::new(":memory:").unwrap();
+        assert!(!mem.is_nsrl_known_good("").unwrap());
+        assert!(!mem.is_nsrl_known_good("   ").unwrap());
     }
 }

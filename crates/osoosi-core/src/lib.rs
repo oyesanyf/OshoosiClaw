@@ -92,10 +92,16 @@ fn is_trusted_operational_image(event: &osoosi_types::HostSecurityEvent, config:
     if image_path.is_empty() {
         return false;
     }
+    let path = std::path::Path::new(image_path);
+    if crate::win_trust::is_trusted_signed_binary(path) {
+        return true;
+    }
+
     let path_lc = image_path.to_lowercase();
     
     // 1. Check dynamic whitelists from config
-    let is_trusted_path = config.trusted_paths.iter().any(|p| path_lc.contains(&p.to_lowercase()));
+    let is_trusted_path = config.trusted_paths.iter().any(|p| path_lc.contains(&p.to_lowercase()))
+        || osoosi_model::malware::is_ide_or_build_path(&path_lc);
     let is_trusted_stem = config.trusted_stems.iter().any(|s| {
         let s_lc = s.to_lowercase();
         path_lc.ends_with(&s_lc) || path_lc.contains(&format!("\\{}\\", s_lc)) || path_lc.ends_with(&format!("\\{}", s_lc))
@@ -103,14 +109,11 @@ fn is_trusted_operational_image(event: &osoosi_types::HostSecurityEvent, config:
 
     if is_trusted_path || is_trusted_stem {
         // 2. Obtain signature and Signer Identity from the file on disk
-        if let Some(metadata) = osoosi_types::get_pe_metadata(std::path::Path::new(image_path)) {
-            let product = metadata.product_name.to_lowercase();
-            let is_trusted_vendor = product.contains("microsoft") || 
-                                   product.contains("windows") || 
-                                   product.contains("rust project") ||
-                                   product.contains("google");
+        if let Some(metadata) = osoosi_types::get_pe_metadata(path) {
+            let is_trusted = osoosi_types::is_trusted_vendor(&metadata.product_name)
+                || metadata.publisher.as_ref().map(|pub_name| osoosi_types::is_trusted_vendor(pub_name)).unwrap_or(false);
 
-            if metadata.is_signed && is_trusted_vendor {
+            if metadata.is_signed && is_trusted {
                 return true;
             }
         }
@@ -126,8 +129,8 @@ fn is_trusted_operational_image(event: &osoosi_types::HostSecurityEvent, config:
             return true;
         }
         
-        // 4. Last resort: If it's in a critical System32 path, we trust it to avoid OS breakage
-        if path_lc.contains("\\windows\\system32") || path_lc.contains("\\windows\\syswow64") {
+        // 4. Last resort: If it's in a critical System32 path or IDE path, we trust it to avoid OS breakage
+        if path_lc.contains("\\windows\\system32") || path_lc.contains("\\windows\\syswow64") || osoosi_model::malware::is_ide_or_build_path(&path_lc) {
             return true;
         }
     }
@@ -1614,6 +1617,7 @@ impl EdrOrchestrator {
                         os_version: "10/11".to_string(),
                         os_supported: true,
                         membership_proof: None, // Should be signed by master node if configured
+                        attestation: None,
                     };
                     let tx_guard = orch_announce.mesh_command_tx.lock().await;
                     if let Some(ref tx) = *tx_guard {
@@ -2184,12 +2188,20 @@ impl EdrOrchestrator {
                             );
 
                             let path = std::path::Path::new(&event.path);
+                            let file_stem = path.file_name().and_then(|n| n.to_str());
                             if should_skip_file_malware_scan(path)
                                 || orchestrator
                                     .memory
                                     .is_internal_asset_path(&event.path)
                                     .unwrap_or(false)
+                                || crate::win_trust::is_trusted_signed_binary(path)
+                                || orchestrator.memory.is_nsrl_known_good(&event.hash).unwrap_or(false)
+                                || orchestrator.memory.is_false_positive_pattern(file_stem, Some(&event.hash)).unwrap_or(false)
                             {
+                                debug!(
+                                    "File Monitor: skipping scan for trusted/excluded path {:?} (Hash: {})",
+                                    event.path, event.hash
+                                );
                                 return;
                             }
 
@@ -2217,7 +2229,10 @@ impl EdrOrchestrator {
                             let is_executable = result.magika_label.contains("exe")
                                 || result.magika_label.contains("pe")
                                 || result.magika_label.contains("elf");
-                            if result.combined_score > 0.5 || is_executable {
+                            if (result.combined_score > 0.5 || is_executable)
+                                && !crate::win_trust::is_trusted_signed_binary(path)
+                                && !osoosi_model::malware::is_ide_or_build_path(&event.path)
+                            {
                                 let analyzer = orchestrator.static_analyzer.clone();
                                 let path_buf = path.to_path_buf();
                                 let orch_clone = orchestrator.clone();
@@ -2239,6 +2254,17 @@ impl EdrOrchestrator {
                             }
 
                             if result.is_malware {
+                                // Extra guard against false-positive detection/quarantine for trusted binaries or IDE paths
+                                if crate::win_trust::is_trusted_signed_binary(path)
+                                    || osoosi_model::malware::is_ide_or_build_path(&result.file_path)
+                                {
+                                    info!(
+                                        "File Monitor: suppressed false-positive detection on trusted component: {}",
+                                        result.file_path
+                                    );
+                                    return;
+                                }
+
                                 warn!(
                                     "MALWARE DETECTED: {} (magika={}, ml={:.2}, combined={:.2})",
                                     result.file_path, result.magika_label,
@@ -5144,6 +5170,7 @@ impl EdrOrchestrator {
             os_supported,
             timestamp: chrono::Utc::now(),
             membership_proof: mesh_config.membership_proof,
+            attestation: None,
         })
     }
 
@@ -5580,11 +5607,20 @@ mod tests {
         assert!(should_skip_file_malware_scan(Path::new(r"D:\dev\my_project\.git\index")));
         assert!(should_skip_file_malware_scan(Path::new(r"D:\dev\my_project\node_modules\package\index.js")));
         assert!(should_skip_file_malware_scan(Path::new(r"C:\Users\dev\.cargo\config.toml")));
+        assert!(should_skip_file_malware_scan(Path::new(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll")));
+        assert!(should_skip_file_malware_scan(Path::new(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\microsoft-authentication\dist\msalruntime.dll")));
+        assert!(should_skip_file_malware_scan(Path::new(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\microsoft-authentication\dist\msal-node-runtime.node")));
+        assert!(should_skip_file_malware_scan(Path::new(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\node_modules\vsda\build\Release\vsda.node")));
+        assert!(should_skip_file_malware_scan(Path::new(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\extensions\ms-vscode.js-debug\src\win32-app-container-tokens.win32-x64-msvc-VCQE7GJP.node")));
 
         assert!(!should_skip_file_malware_scan(Path::new(r"C:\Windows\System32\unknown_driver.sys")));
         assert!(!should_skip_file_malware_scan(Path::new(r"C:\Users\Public\Downloads\installer.exe")));
         assert!(!should_skip_file_malware_scan(Path::new(r"C:\Windows\Temp\mimikatz.exe")));
         assert!(!should_skip_file_malware_scan(Path::new(r"C:\Windows\Temp\ransomware.exe")));
+        assert!(!should_skip_file_malware_scan(Path::new(r"C:\Windows\Temp\vulkan-1.dll")));
+        assert!(!should_skip_file_malware_scan(Path::new(r"C:\Users\victim\Downloads\msalruntime.dll")));
+        assert!(!should_skip_file_malware_scan(Path::new(r"C:\Users\victim\Downloads\vsda.node")));
+        assert!(!should_skip_file_malware_scan(Path::new(r"C:\Windows\Temp\win32-app-container-tokens.node")));
     }
 }
 

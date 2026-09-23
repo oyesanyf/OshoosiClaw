@@ -64,6 +64,16 @@ impl StaticAnalyzer {
             return Ok(None);
         }
 
+        if crate::win_trust::is_trusted_signed_binary(file_path)
+            || osoosi_model::malware::is_ide_or_build_path(&file_path.to_string_lossy())
+        {
+            debug!(
+                "Static Analyzer: skipping threat emission for trusted signed binary or IDE component {:?}",
+                file_path
+            );
+            return Ok(None);
+        }
+
         // Calculate hash first for caching
         let path_buf = file_path.to_path_buf();
         let hash = tokio::task::spawn_blocking(move || {
