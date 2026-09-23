@@ -69,6 +69,10 @@
                     <i data-lucide="book-open"></i>
                     <span>Forensic Story</span>
                 </a>
+                <a href="#" class="nav-item" data-view="skyrl">
+                    <i data-lucide="brain-circuit"></i>
+                    <span>RL Policy Training</span>
+                </a>
             </nav>
             <div class="sidebar-footer">
                 <div class="status-indicator">
@@ -493,6 +497,174 @@
                     <div class="card-body">
                         <div id="story-container" class="forensic-narrative" style="font-family: 'Outfit', sans-serif; line-height: 1.6; color: var(--text-header); min-height: 200px;">
                             <p class="placeholder-text">Click 'Regenerate Narrative' to synthesize the latest forensic evidence into a story.</p>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- SkyRL Self-Improvement & Policy Training View -->
+            <div id="skyrl-view" class="view-content">
+                <!-- Control Actions Bar -->
+                <div class="card glass shadow-glow mb-4">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <h3 style="margin:0;">SkyRL Policy Control Panel</h3>
+                            <span class="badge purple" style="font-size:11px;"><i data-lucide="sparkles" style="width:12px;height:12px;display:inline;vertical-align:middle;margin-right:3px;"></i>Self-Improvement Gym</span>
+                        </div>
+                        <div class="header-actions" style="display:flex; align-items:center; gap:12px; flex-wrap:wrap;">
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <label for="skyrl-lora-select" style="font-size:12px; color:var(--text-muted); font-weight:600;">LoRA Adapter:</label>
+                                <select id="skyrl-lora-select" class="glass-select" style="background:rgba(13,17,23,0.85); border:1px solid var(--glass-border); color:var(--text-primary); border-radius:8px; padding:6px 12px; font-size:12px; outline:none; cursor:pointer;">
+                                    <option value="edr-reasoning-lora-v1">edr-reasoning-lora-v1</option>
+                                    <option value="tinker-investigator-v2">tinker-investigator-v2</option>
+                                    <option value="base-policy">base-policy</option>
+                                </select>
+                            </div>
+                            <button id="skyrl-step-btn" class="btn-primary btn-sm flex items-center gap-1" style="background:rgba(0, 210, 255, 0.15); border:1px solid rgba(0, 210, 255, 0.3); color:var(--accent-blue);" onclick="simulateSkyrlStep()">
+                                <i data-lucide="play" style="width:14px;height:14px;"></i>
+                                <span>Simulate Gym Step</span>
+                            </button>
+                            <button id="skyrl-gen-btn" class="btn-primary btn-sm flex items-center gap-1" style="background:rgba(188, 140, 242, 0.15); border:1px solid rgba(188, 140, 242, 0.3); color:var(--accent-purple);" onclick="simulateSkyrlGenerate()">
+                                <i data-lucide="brain-circuit" style="width:14px;height:14px;"></i>
+                                <span>Run Inference</span>
+                            </button>
+                            <button id="skyrl-train-btn" class="btn-primary btn-sm flex items-center gap-1" onclick="triggerSkyrlTraining()">
+                                <i data-lucide="cpu" style="width:14px;height:14px;"></i>
+                                <span>Run Training Batch</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Stats Grid -->
+                <div class="stats-grid mb-4">
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper red">
+                            <i data-lucide="trending-down"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Mean TD Loss</span>
+                            <span class="stat-value" id="stat-skyrl-mean-loss">0.0000</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper blue">
+                            <i data-lucide="award"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Episode Count</span>
+                            <span class="stat-value" id="stat-skyrl-episodes">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper green">
+                            <i data-lucide="zap"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Total Steps</span>
+                            <span class="stat-value" id="stat-skyrl-steps">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper orange">
+                            <i data-lucide="database"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Buffer Occupancy</span>
+                            <span class="stat-value" id="stat-skyrl-buffer">0 / 20,000</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper purple">
+                            <i data-lucide="compass"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Epsilon Exploration Rate</span>
+                            <span class="stat-value" id="stat-skyrl-epsilon">0.050</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper blue">
+                            <i data-lucide="layers"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Active LoRA Adapter</span>
+                            <span class="stat-value" id="stat-skyrl-adapter" style="font-size:13px; word-break:break-all;">edr-reasoning-lora-v1</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Graphs Grid -->
+                <div class="main-grid mb-4" style="margin-bottom:24px;">
+                    <div class="card glass shadow-glow" style="min-height:280px;">
+                        <div class="card-header">
+                            <h3>Policy Convergence (Bellman TD Loss)</h3>
+                            <div class="header-actions">
+                                <span class="badge red">DQN Loss Gradient</span>
+                            </div>
+                        </div>
+                        <div class="card-body" style="height:210px; position:relative;">
+                            <canvas id="skyrl-loss-chart"></canvas>
+                        </div>
+                    </div>
+
+                    <div class="card glass shadow-glow" style="min-height:280px;">
+                        <div class="card-header">
+                            <h3>Episode Reward Trajectory</h3>
+                            <div class="header-actions">
+                                <span class="badge green">Security Gym Reward</span>
+                            </div>
+                        </div>
+                        <div class="card-body" style="height:210px; position:relative;">
+                            <canvas id="skyrl-reward-chart"></canvas>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live Thought-Trace & Action Feed -->
+                <div class="card glass shadow-glow mb-4">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                        <div style="display:flex; align-items:center; gap:10px;">
+                            <i data-lucide="terminal" style="color:var(--accent-blue);"></i>
+                            <h3>Live Thought-Trace & Action Feed</h3>
+                        </div>
+                        <div class="header-actions" style="display:flex; align-items:center; gap:8px;">
+                            <span id="skyrl-agent-mode-badge" class="badge blue">Inference Ready</span>
+                            <button class="btn-text" onclick="simulateSkyrlGenerate()" style="font-size:12px;">
+                                <i data-lucide="refresh-cw" style="width:12px;height:12px;margin-right:4px;"></i> Run Guarded Inference
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div id="skyrl-thought-container" style="background:rgba(7, 9, 13, 0.7); border:1px solid var(--glass-border); border-radius:10px; padding:16px; font-family:'SFMono-Regular', Consolas, 'Liberation Mono', Menlo, monospace; font-size:13px; line-height:1.6; min-height:80px;">
+                            <div style="color:var(--text-muted); margin-bottom:8px;">// Waiting for policy activation or gym step execution...</div>
+                            <div style="display:flex; gap:8px; align-items:center;">
+                                <span class="badge purple" style="font-size:10px;">PROMPT</span>
+                                <span style="color:var(--text-primary);">Process telemetry monitoring (PID: 4096 \ System32 \ cmd.exe)</span>
+                            </div>
+                        </div>
+                        <div id="skyrl-action-details" style="display:grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap:12px; margin-top:16px;">
+                            <div class="voter-card" style="margin:0;">
+                                <div class="voter-header">
+                                    <span class="voter-name">Selected Action</span>
+                                    <span id="skyrl-action-badge" class="badge green">ALLOW</span>
+                                </div>
+                                <div class="voter-desc" id="skyrl-action-desc">Guarded action evaluated by EDR safety supervisor.</div>
+                            </div>
+                            <div class="voter-card" style="margin:0;">
+                                <div class="voter-header">
+                                    <span class="voter-name">Safety Guardrail</span>
+                                    <span id="skyrl-guard-badge" class="badge blue">INVARIANT PASS</span>
+                                </div>
+                                <div class="voter-desc" id="skyrl-guard-desc">System process kernel invariance verified.</div>
+                            </div>
+                            <div class="voter-card" style="margin:0;">
+                                <div class="voter-header">
+                                    <span class="voter-name">Step Feedback</span>
+                                    <span id="skyrl-reward-badge" class="badge purple">Reward: 0.00</span>
+                                </div>
+                                <div class="voter-desc" id="skyrl-step-desc">Awaiting step transition from security gym.</div>
+                            </div>
                         </div>
                     </div>
                 </div>
