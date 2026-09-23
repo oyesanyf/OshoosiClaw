@@ -5959,6 +5959,7 @@ dependencies = [
  "hex",
  "hostname",
  "magika",
+ "ort",
  "osoosi-types",
  "parking_lot",
  "rusqlite",
