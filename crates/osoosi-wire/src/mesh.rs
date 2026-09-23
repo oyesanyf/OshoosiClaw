@@ -459,13 +459,14 @@ impl MeshNode {
                     self.bootstrap_local_neighbors().await;
                 }
                 _ = bootstrap_interval.tick() => {
-                    // Only trigger bootstrap if we have at least one connected peer
+                    // Only trigger bootstrap if Kademlia actually has entries in its routing table
+                    let has_kbucket_peers = self.swarm.behaviour_mut().kademlia.kbuckets().any(|b| b.num_entries() > 0);
                     let connected_count = self.swarm.connected_peers().count();
-                    if connected_count > 0 {
+                    if has_kbucket_peers {
                         let _ = self.swarm.behaviour_mut().kademlia.bootstrap();
                         debug!("Oshoosi Mesh: Periodic Kademlia bootstrap triggered (connected peers: {}).", connected_count);
                     } else {
-                        debug!("Oshoosi Mesh: Kademlia bootstrap skipped (no connected peers yet).");
+                        debug!("Oshoosi Mesh: Kademlia bootstrap skipped (no routing table peers yet).");
                     }
                 }
                 _ = crawl_interval.tick() => {

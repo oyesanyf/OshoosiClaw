@@ -102,6 +102,16 @@ pub(crate) fn scanner_skip_path(path: &str) -> bool {
         || p.contains("\\appdata\\local\\google\\drivefs\\")
         || p.contains("\\.cache\\huggingface\\")
         || p.contains("\\.ollama\\")
+        || p.contains("\\dell\\updateservice\\")
+        || p.contains("\\dell\\commandupdate\\")
+        || p.contains("\\dell\\supportassist\\")
+        || p.contains("\\invcolpc\\")
+        || p.contains("\\program files (x86)\\dell\\")
+        || p.contains("\\program files\\dell\\")
+        || p.contains("\\microsoft\\edge\\")
+        || p.contains("\\google\\chrome\\")
+        || p.contains("\\mozilla firefox\\")
+        || p.contains("\\bravesoftware\\")
     {
         return true;
     }

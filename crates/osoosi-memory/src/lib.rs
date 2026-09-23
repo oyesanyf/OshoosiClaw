@@ -434,22 +434,35 @@ impl MemoryStore {
             "SELECT COUNT(*) FROM nist.sqlite_master WHERE type='table' AND name='FILE'",
             [],
             |r| r.get(0),
-        )?;
-        if file_tbl == 0 {
+        ).unwrap_or(0);
+        let metadata_tbl: i64 = tx.query_row(
+            "SELECT COUNT(*) FROM nist.sqlite_master WHERE type='table' AND name='METADATA'",
+            [],
+            |r| r.get(0),
+        ).unwrap_or(0);
+
+        if file_tbl > 0 {
+            // Map NIST `FILE` columns -> our schema; hashes in RDS are typically hex strings.
+            tx.execute(
+                "INSERT OR REPLACE INTO main.nsrl (sha1, md5, sha256, file_name, file_size, product_code, os_code)
+                 SELECT lower(sha1), lower(md5), lower(sha256), name, size, product, os FROM nist.FILE",
+                [],
+            )?;
+        } else if metadata_tbl > 0 {
+            // Map modern NIST `METADATA` columns -> our schema
+            tx.execute(
+                "INSERT OR REPLACE INTO main.nsrl (sha1, md5, sha256, file_name, file_size, product_code, os_code)
+                 SELECT lower(sha1), lower(md5), lower(sha256), file_name, bytes, NULL, NULL FROM nist.METADATA",
+                [],
+            )?;
+        } else {
             let _ = tx.execute("DETACH DATABASE nist", []);
             tx.commit()?;
             anyhow::bail!(
-                "NSRL file has no FILE table (expected NIST modern RDS): {:?}",
+                "NSRL file has neither FILE nor METADATA table (expected NIST modern RDS): {:?}",
                 nist_rds_path
             );
         }
-
-        // Map NIST `FILE` columns \u2192 our schema; hashes in RDS are typically hex strings.
-        tx.execute(
-            "INSERT OR REPLACE INTO main.nsrl (sha1, md5, sha256, file_name, file_size, product_code, os_code)
-             SELECT lower(sha1), lower(md5), lower(sha256), name, size, product, os FROM nist.FILE",
-            [],
-        )?;
 
         let _ = tx.execute("DETACH DATABASE nist", []);
         tx.commit()?;

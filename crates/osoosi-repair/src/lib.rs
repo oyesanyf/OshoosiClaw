@@ -645,7 +645,7 @@ impl PatchEngine {
                 use windows::Win32::System::UpdateAgent::OperationResultCode;
                 let result_code = res.ResultCode().unwrap_or(OperationResultCode(4)); // 4 = orcFailed
                 if result_code.0 == 4 && (kb == "KB2267602" || kb == "KB5042320") {
-                    warn!("Non-critical failure for Defender/System update {}; continuing.", kb);
+                    info!("Non-critical notice for Defender/System update {}; continuing.", kb);
                 } else if result_code.0 != 2 && result_code.0 != 3 { // 2=Success, 3=SuccessWithErrors
                     return Err(anyhow!("Windows Update install failed with ResultCode: {}", result_code.0));
                 }

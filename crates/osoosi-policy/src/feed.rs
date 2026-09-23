@@ -135,27 +135,68 @@ impl ThreatFeedFetcher {
         use rusqlite::Connection;
 
         let conn = Connection::open(path)?;
-        let mut stmt =
-            conn.prepare("SELECT sha1, md5, sha256, name, size, product, os FROM FILE")?;
-
-        let records_iter = stmt.query_map([], |row| {
-            Ok(NsrlRecord {
-                sha1: row.get::<_, String>(0)?,
-                md5: row.get::<_, Option<String>>(1)?,
-                sha256: row.get::<_, Option<String>>(2)?,
-                file_name: row.get::<_, String>(3)?,
-                file_size: {
-                    let s: i64 = row.get(4)?;
-                    s as u64
-                },
-                product_code: row.get::<_, Option<String>>(5)?,
-                os_code: row.get::<_, Option<String>>(6)?,
-            })
-        })?;
+        let has_file: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='FILE'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
+        let has_metadata: i64 = conn
+            .query_row(
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='METADATA'",
+                [],
+                |r| r.get(0),
+            )
+            .unwrap_or(0);
 
         let mut out = Vec::new();
-        for record in records_iter {
-            out.push(record?);
+        if has_file > 0 {
+            let mut stmt =
+                conn.prepare("SELECT sha1, md5, sha256, name, size, product, os FROM FILE")?;
+
+            let records_iter = stmt.query_map([], |row| {
+                Ok(NsrlRecord {
+                    sha1: row.get::<_, String>(0)?,
+                    md5: row.get::<_, Option<String>>(1)?,
+                    sha256: row.get::<_, Option<String>>(2)?,
+                    file_name: row.get::<_, String>(3)?,
+                    file_size: {
+                        let s: i64 = row.get(4)?;
+                        s as u64
+                    },
+                    product_code: row.get::<_, Option<String>>(5)?,
+                    os_code: row.get::<_, Option<String>>(6)?,
+                })
+            })?;
+
+            for record in records_iter {
+                out.push(record?);
+            }
+        } else if has_metadata > 0 {
+            let mut stmt =
+                conn.prepare("SELECT sha1, md5, sha256, file_name, bytes FROM METADATA")?;
+
+            let records_iter = stmt.query_map([], |row| {
+                Ok(NsrlRecord {
+                    sha1: row.get::<_, String>(0)?,
+                    md5: row.get::<_, Option<String>>(1)?,
+                    sha256: row.get::<_, Option<String>>(2)?,
+                    file_name: row.get::<_, String>(3)?,
+                    file_size: {
+                        let s: i64 = row.get(4)?;
+                        s as u64
+                    },
+                    product_code: None,
+                    os_code: None,
+                })
+            })?;
+
+            for record in records_iter {
+                out.push(record?);
+            }
+        } else {
+            anyhow::bail!("NSRL sqlite file has neither FILE nor METADATA table: {:?}", path);
         }
 
         Ok(out)
@@ -567,14 +608,14 @@ impl ThreatFeedFetcher {
                 }
                 Ok(r) => {
                     let status = r.status();
-                    warn!(
+                    info!(
                         "[NVD] Attempt {} failed with status {}. Retrying...",
                         attempts + 1,
                         status
                     );
                 }
                 Err(e) => {
-                    warn!(
+                    info!(
                         "[NVD] Attempt {} network error: {}. Retrying...",
                         attempts + 1,
                         e

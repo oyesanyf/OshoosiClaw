@@ -228,6 +228,19 @@ pub fn is_developer_tool(name: &str, exe_path: Option<&std::path::Path>) -> bool
             | "wininit"
             | "services"
             | "lsass"
+            | "ssdupdate"
+            | "softwarecomponentinv"
+            | "appxinventory"
+            | "extdrvrinv"
+            | "peripheralfrmwinv"
+            | "nvmehostmetadata"
+            | "msedge"
+            | "msedge_proxy"
+            | "pwahelper"
+            | "old_msedge"
+            | "chrome"
+            | "firefox"
+            | "brave"
     ) || base_name.starts_with("git-")
       || base_name.starts_with("cargo-")
       || base_name.starts_with("rust-");
