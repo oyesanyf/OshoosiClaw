@@ -21,6 +21,26 @@ pub struct SandboxSurfaceInfo {
 }
 
 #[cfg(target_os = "windows")]
+pub fn parse_risk_privileges(privs: &[LUID_AND_ATTRIBUTES]) -> Vec<String> {
+    let mut privileges = Vec::new();
+    for luid_and_attrs in privs {
+        if (luid_and_attrs.Attributes.0 & SE_PRIVILEGE_ENABLED.0) != 0 {
+            let risk = match luid_and_attrs.Luid.LowPart {
+                20 => "SeDebugPrivilege",
+                29 => "SeImpersonatePrivilege",
+                7 => "SeTcbPrivilege",
+                30 => "SeCreateGlobalPrivilege",
+                _ => "Other",
+            };
+            if risk != "Other" {
+                privileges.push(risk.to_string());
+            }
+        }
+    }
+    privileges
+}
+
+#[cfg(target_os = "windows")]
 pub fn analyze_process_sandbox(pid: u32) -> anyhow::Result<SandboxSurfaceInfo> {
     unsafe {
         let process_handle = OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid)?;
@@ -56,16 +76,18 @@ pub fn analyze_process_sandbox(pid: u32) -> anyhow::Result<SandboxSurfaceInfo> {
         );
 
         // 3. Integrity Level
-        let mut integrity_info_buf = [0u8; 128];
+        #[repr(C, align(8))]
+        struct AlignedIntegrityBuf([u8; 128]);
+        let mut integrity_info_buf = AlignedIntegrityBuf([0u8; 128]);
         let mut integrity_level = "Medium".to_string();
         if GetTokenInformation(
             token_handle,
             TokenIntegrityLevel,
-            Some(integrity_info_buf.as_mut_ptr() as *mut _),
+            Some(integrity_info_buf.0.as_mut_ptr() as *mut _),
             128,
             &mut return_len,
-        ).is_ok() {
-            let label = &*(integrity_info_buf.as_ptr() as *const TOKEN_MANDATORY_LABEL);
+        ).is_ok() && return_len as usize >= std::mem::size_of::<TOKEN_MANDATORY_LABEL>() {
+            let label = &*(integrity_info_buf.0.as_ptr() as *const TOKEN_MANDATORY_LABEL);
             let sid = label.Label.Sid;
             if !sid.is_invalid() && IsValidSid(sid).as_bool() {
                 let count_ptr = GetSidSubAuthorityCount(sid);
@@ -92,35 +114,24 @@ pub fn analyze_process_sandbox(pid: u32) -> anyhow::Result<SandboxSurfaceInfo> {
         let mut req_len: u32 = 0;
         let _ = GetTokenInformation(token_handle, TokenPrivileges, None, 0, &mut req_len);
         if req_len > 0 {
-            let mut priv_buf = vec![0u8; req_len as usize];
+            // Ensure buffer is at least size_of::<TOKEN_PRIVILEGES>() to prevent UB when PrivilegeCount == 0
+            let alloc_len = (req_len as usize).max(std::mem::size_of::<TOKEN_PRIVILEGES>());
+            let mut priv_buf = vec![0u8; alloc_len];
             if GetTokenInformation(
                 token_handle,
                 TokenPrivileges,
                 Some(priv_buf.as_mut_ptr() as *mut _),
                 req_len,
                 &mut return_len,
-            ).is_ok() {
+            ).is_ok() && return_len as usize >= std::mem::size_of::<u32>() {
                 let token_privs = &*(priv_buf.as_ptr() as *const TOKEN_PRIVILEGES);
                 let count = token_privs.PrivilegeCount as usize;
-                let max_count = (priv_buf.len().saturating_sub(std::mem::size_of::<u32>()))
+                let max_count = (return_len as usize).saturating_sub(std::mem::size_of::<u32>())
                     / std::mem::size_of::<LUID_AND_ATTRIBUTES>();
                 let safe_count = count.min(max_count);
                 if safe_count > 0 {
                     let privs_slice = std::slice::from_raw_parts(token_privs.Privileges.as_ptr(), safe_count);
-                    for luid_and_attrs in privs_slice {
-                        if (luid_and_attrs.Attributes.0 & SE_PRIVILEGE_ENABLED.0) != 0 {
-                            let risk = match luid_and_attrs.Luid.LowPart {
-                                20 => "SeDebugPrivilege",
-                                29 => "SeImpersonatePrivilege",
-                                7 => "SeTcbPrivilege",
-                                30 => "SeCreateGlobalPrivilege",
-                                _ => "Other",
-                            };
-                            if risk != "Other" {
-                                privileges.push(risk.to_string());
-                            }
-                        }
-                    }
+                    privileges = parse_risk_privileges(privs_slice);
                 }
             }
         }
@@ -180,5 +191,87 @@ mod tests {
         {
             assert_eq!(info.integrity_level, "Medium");
         }
+    }
+
+    #[test]
+    fn test_analyze_process_sandbox_invalid_pid() {
+        // Querying non-existent PID should return Err and never panic
+        let res = analyze_process_sandbox(u32::MAX);
+        assert!(res.is_err(), "Expected error for invalid PID u32::MAX");
+
+        let res_zero = analyze_process_sandbox(0);
+        assert!(res_zero.is_err(), "Expected error for PID 0");
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_parse_risk_privileges_all_targets() {
+        use windows::Win32::Foundation::LUID;
+
+        let privs = vec![
+            LUID_AND_ATTRIBUTES {
+                Luid: LUID { LowPart: 20, HighPart: 0 },
+                Attributes: SE_PRIVILEGE_ENABLED,
+            },
+            LUID_AND_ATTRIBUTES {
+                Luid: LUID { LowPart: 29, HighPart: 0 },
+                Attributes: SE_PRIVILEGE_ENABLED,
+            },
+            LUID_AND_ATTRIBUTES {
+                Luid: LUID { LowPart: 7, HighPart: 0 },
+                Attributes: SE_PRIVILEGE_ENABLED,
+            },
+            LUID_AND_ATTRIBUTES {
+                Luid: LUID { LowPart: 30, HighPart: 0 },
+                Attributes: SE_PRIVILEGE_ENABLED,
+            },
+            LUID_AND_ATTRIBUTES {
+                Luid: LUID { LowPart: 99, HighPart: 0 },
+                Attributes: SE_PRIVILEGE_ENABLED,
+            },
+        ];
+
+        let identified = parse_risk_privileges(&privs);
+        assert_eq!(
+            identified,
+            vec![
+                "SeDebugPrivilege".to_string(),
+                "SeImpersonatePrivilege".to_string(),
+                "SeTcbPrivilege".to_string(),
+                "SeCreateGlobalPrivilege".to_string(),
+            ]
+        );
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_parse_risk_privileges_disabled_filtered() {
+        use windows::Win32::Foundation::LUID;
+        use windows::Win32::Security::TOKEN_PRIVILEGES_ATTRIBUTES;
+
+        let privs = vec![
+            LUID_AND_ATTRIBUTES {
+                Luid: LUID { LowPart: 20, HighPart: 0 },
+                Attributes: TOKEN_PRIVILEGES_ATTRIBUTES(0), // Disabled
+            },
+            LUID_AND_ATTRIBUTES {
+                Luid: LUID { LowPart: 29, HighPart: 0 },
+                Attributes: TOKEN_PRIVILEGES_ATTRIBUTES(1), // SE_PRIVILEGE_ENABLED_BY_DEFAULT but not enabled
+            },
+            LUID_AND_ATTRIBUTES {
+                Luid: LUID { LowPart: 7, HighPart: 0 },
+                Attributes: SE_PRIVILEGE_ENABLED, // Enabled
+            },
+        ];
+
+        let identified = parse_risk_privileges(&privs);
+        assert_eq!(identified, vec!["SeTcbPrivilege".to_string()]);
+    }
+
+    #[cfg(target_os = "windows")]
+    #[test]
+    fn test_parse_risk_privileges_empty() {
+        let identified = parse_risk_privileges(&[]);
+        assert!(identified.is_empty());
     }
 }
