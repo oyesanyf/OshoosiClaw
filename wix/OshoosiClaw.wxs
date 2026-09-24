@@ -14,6 +14,10 @@
                     <File Id="OsoosiExe" Source="target\release\osoosi.exe" KeyPath="yes" />
                 </Component>
 
+                <Component Id="OnnxRuntimeDll" Guid="d2a71bf5-7798-4c17-9154-374cf1ec1b73" Bitness="always64">
+                    <File Id="OnnxRuntimeFile" Source="target\release\onnxruntime.dll" KeyPath="yes" />
+                </Component>
+
                 <Component Id="ConfigFile" Guid="9dbd0738-9582-4f36-9a2c-f67e2a96f120" Bitness="always64">
                     <File Id="OsoosiToml" Source="osoosi.toml" KeyPath="yes" />
                 </Component>
@@ -37,6 +41,7 @@
 
         <Feature Id="MainFeature" Title="OshoosiClaw Agent Core" Level="1">
             <ComponentRef Id="MainExecutable" />
+            <ComponentRef Id="OnnxRuntimeDll" />
             <ComponentRef Id="ConfigFile" />
             <ComponentRef Id="ConfigSig" />
             <ComponentRef Id="DashboardAssets" />

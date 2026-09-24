@@ -22,6 +22,7 @@
 *.so
 *.wixpdb
 *.msi
+!OshoosiClaw.msi
 
 # ---------- IDE ----------
 .vscode/

@@ -4,7 +4,7 @@
   Deploy with: Sysmon64.exe -i config\sysmon-dns.xml -accepteula
   Update with: Sysmon64.exe -c config\sysmon-dns.xml
 -->
-<Sysmon schemaversion="4.90">
+<Sysmon schemaversion="4.91">
   <HashAlgorithms>SHA256</HashAlgorithms>
   <CheckRevocation/>
   <EventFiltering>

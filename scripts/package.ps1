@@ -1,3 +1,7 @@
+param(
+    [switch]$SkipBuild = $false
+)
+
 # Build and package OpenỌ̀ṣọ́ọ̀sì for deployment to another computer.
 # Creates a 'deploy/' folder with all required binaries, configs, and assets.
 
@@ -6,9 +10,17 @@ $ProjectRoot = Get-Item "."
 $DeployDir = Join-Path $ProjectRoot "deploy"
 
 # 1. Build release binaries
-Write-Host "--- Step 1: Building Release Binaries ---" -ForegroundColor Cyan
-cargo build --release --workspace
-if ($LASTEXITCODE -ne 0) { Write-Error "Build failed"; exit $LASTEXITCODE }
+if (-not $SkipBuild) {
+    Write-Host "--- Step 1: Building Release Binaries ---" -ForegroundColor Cyan
+    cargo build --release --workspace
+    if ($LASTEXITCODE -ne 0) {
+        if (Test-Path "target\release\osoosi.exe") {
+            Write-Host "Cargo build exited with code $LASTEXITCODE (binary may be locked by running agent). Proceeding with existing target\release\osoosi.exe." -ForegroundColor Yellow
+        } else {
+            Write-Error "Build failed"; exit $LASTEXITCODE
+        }
+    }
+}
 
 # 2. Prepare deployment folder
 Write-Host "--- Step 2: Preparing Deployment Folder ---" -ForegroundColor Cyan
@@ -98,7 +110,35 @@ if (Test-Path "dashboard\dist") {
     Copy-Item "dist\*" -Destination (Join-Path $DeployDir "dist") -Recurse -Force -ErrorAction SilentlyContinue
 }
 
-# 8. Create a handy installation script for the target machine
+# 8. Build WiX MSI Installer
+Write-Host "--- Step 8: Building MSI Installer ---" -ForegroundColor Cyan
+$WixWxs = Join-Path $ProjectRoot "wix\OshoosiClaw.wxs"
+if (Test-Path $WixWxs) {
+    if (-not (Test-Path "target\release\onnxruntime.dll") -and (Test-Path "onnxruntime.dll")) {
+        Copy-Item "onnxruntime.dll" -Destination "target\release\onnxruntime.dll" -Force
+    }
+
+    $WixCmd = Get-Command "wix" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1
+    if (-not $WixCmd) {
+        $FallbackWix = "C:\Users\oyesanyf\wix_tools\PFiles64\WiX Toolset v5.0\bin\wix.exe"
+        if (Test-Path $FallbackWix) {
+            $WixCmd = $FallbackWix
+        }
+    }
+
+    if ($WixCmd) {
+        Write-Host "Building MSI using $WixCmd..." -ForegroundColor Cyan
+        & $WixCmd build $WixWxs -arch x64 -out (Join-Path $ProjectRoot "OshoosiClaw.msi")
+        if (Test-Path (Join-Path $ProjectRoot "OshoosiClaw.msi")) {
+            Copy-Item (Join-Path $ProjectRoot "OshoosiClaw.msi") -Destination (Join-Path $DeployDir "OshoosiClaw.msi") -Force
+            Write-Host "   -> Successfully built OshoosiClaw.msi" -ForegroundColor Green
+        }
+    } else {
+        Write-Host "WiX tool not found in PATH or standard location - skipping MSI generation" -ForegroundColor Yellow
+    }
+}
+
+# 9. Create a handy installation script for the target machine
 $InstallScript = @"
 # OpenỌ̀ṣọ́ọ̀sì Target-Side Installation Helper
 # 1. Install/Update Sysmon

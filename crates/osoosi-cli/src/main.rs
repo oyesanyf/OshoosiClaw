@@ -47,6 +47,7 @@ async fn import_nsrl_with_fallback(
 
 #[derive(Parser)]
 #[command(name = "osoosi")]
+#[command(version)]
 #[command(about = "OpenỌ̀ṣọ́ọ̀sì: Autonomous Security Agent", long_about = None)]
 struct Cli {
     /// Grant OpenỌ̀ṣọ́ọ̀sì access to security event logs (equivalent to `grant-access` subcommand). Works before or after subcommands, e.g. `osoosi start --grant-access`

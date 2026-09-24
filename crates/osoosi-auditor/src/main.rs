@@ -112,6 +112,16 @@ fn calculate_zero_day_score(signals: &ZeroDaySignals) -> f64 {
 // 2. MAIN
 // =======================================================
 fn main() -> Result<()> {
+    let args: Vec<String> = env::args().collect();
+    if args.iter().any(|a| a == "--help" || a == "-h") {
+        println!("OpenỌ̀ṣọ́ọ̀sì Hardware Trust & Policy Auditor\n\nUsage: osoosi-auditor [OPTIONS]\n\nOptions:\n  -h, --help    Print help\n  --version     Print version\n");
+        return Ok(());
+    }
+    if args.iter().any(|a| a == "--version" || a == "-V") {
+        println!("osoosi-auditor {}", env!("CARGO_PKG_VERSION"));
+        return Ok(());
+    }
+
     dotenvy::dotenv().ok();
     let client = Client::builder().user_agent("oshoosi-auditor/0.1").build()?;
     

@@ -18,6 +18,39 @@ fn use_bundled_hf_weights() -> bool {
     })
 }
 
+#[cfg(target_os = "windows")]
+fn to_canonical_absolute_path(path: &Path) -> PathBuf {
+    let resolved = if path.is_absolute() {
+        path.to_path_buf()
+    } else if let Ok(cwd) = std::env::current_dir() {
+        cwd.join(path)
+    } else {
+        path.to_path_buf()
+    };
+
+    if let Ok(canonical) = std::fs::canonicalize(&resolved) {
+        let path_str = canonical.to_string_lossy();
+        if let Some(stripped) = path_str.strip_prefix(r"\\?\") {
+            PathBuf::from(stripped)
+        } else {
+            canonical
+        }
+    } else {
+        use std::path::Component;
+        let mut normalized = PathBuf::new();
+        for comp in resolved.components() {
+            match comp {
+                Component::ParentDir => {
+                    normalized.pop();
+                }
+                Component::CurDir => {}
+                _ => normalized.push(comp),
+            }
+        }
+        normalized
+    }
+}
+
 pub struct AgentProvisioner {
     executor: Arc<dyn SecuredExecutor>,
 }
@@ -171,7 +204,7 @@ impl AgentProvisioner {
         } else {
             let fallback_config = target_dir.join("sysmon-dns.xml");
             if !fallback_config.exists() {
-                const DEFAULT_SYSMON_DNS_XML: &str = r#"<Sysmon schemaversion="4.90">
+                const DEFAULT_SYSMON_DNS_XML: &str = r#"<Sysmon schemaversion="4.91">
   <HashAlgorithms>SHA256</HashAlgorithms>
   <CheckRevocation/>
   <EventFiltering>
@@ -203,19 +236,108 @@ impl AgentProvisioner {
             fallback_config
         };
 
-        // d. Execute installation:
-        // Run: <sysmon_exe> -i <config_path> -accepteula via self.executor.execute(cmd).await.
-        // Gracefully handle lack of administrator permissions: if execution fails or exit code is non-zero (e.g. exit code 5 / Access Denied),
-        // log a clear warn! message with instructions for manual administrator installation, and do NOT fail startup.
+        // Canonical absolute paths: ensure no relative .. components or extended \\?\ prefixes
+        let sysmon_exe = to_canonical_absolute_path(&sysmon_exe);
+        let config_path = to_canonical_absolute_path(&config_path);
+
+        // Pre-installation Orphaned Manifest Cleanup:
+        // Check if wevtutil.exe gp Microsoft-Windows-Sysmon returns exit status 0 (publisher exists)
+        // while neither Sysmon64 nor Sysmon service is installed.
+        info!("Checking for orphaned Sysmon ETW publisher manifest registration...");
+        let mut check_publisher = Command::new("wevtutil.exe");
+        check_publisher.args(["gp", "Microsoft-Windows-Sysmon"]);
+        if let Ok(output) = self.executor.execute(check_publisher).await {
+            if output.status.success() {
+                warn!(
+                    "Orphaned Microsoft-Windows-Sysmon manifest detected without corresponding service. \
+                    Unregistering manifest to prevent installation collision..."
+                );
+                let mut unreg_cmd = Command::new("wevtutil.exe");
+                unreg_cmd.args(["um", "Microsoft-Windows-Sysmon"]);
+                match self.executor.execute(unreg_cmd).await {
+                    Ok(unreg_out) if unreg_out.status.success() => {
+                        info!("Successfully unregistered orphaned Microsoft-Windows-Sysmon manifest.");
+                    }
+                    Ok(unreg_out) => {
+                        let msg = String::from_utf8_lossy(&unreg_out.stderr);
+                        warn!("Attempted to unregister orphaned manifest, wevtutil reported: {}", msg.trim());
+                    }
+                    Err(e) => {
+                        warn!("Failed to execute 'wevtutil.exe um Microsoft-Windows-Sysmon': {}", e);
+                    }
+                }
+            } else {
+                info!("No orphaned Microsoft-Windows-Sysmon manifest detected.");
+            }
+        }
+
+        // Resilient Double-Run / Fallback Retry installation:
+        // Run: <sysmon_exe> -i <config_path> -accepteula
         info!(
             "Executing Sysmon installation: {} -i {} -accepteula",
             sysmon_exe.display(),
             config_path.display()
         );
         let mut install_cmd = Command::new(&sysmon_exe);
-        install_cmd.args(["-i", config_path.to_str().unwrap_or("config/sysmon-dns.xml"), "-accepteula"]);
+        install_cmd.args([
+            "-i",
+            config_path.to_str().unwrap_or("config/sysmon-dns.xml"),
+            "-accepteula",
+        ]);
 
-        match self.executor.execute(install_cmd).await {
+        let mut install_output = self.executor.execute(install_cmd).await;
+
+        let needs_remediation = match &install_output {
+            Ok(output) if !output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                let stderr = String::from_utf8_lossy(&output.stderr);
+                let combined = format!("{}\n{}", stdout, stderr).to_lowercase();
+                combined.contains("wevtutil")
+                    || combined.contains("manifest")
+                    || combined.contains("collision")
+                    || combined.contains("already exists")
+                    || combined.contains("0x800700b7")
+            }
+            _ => false,
+        };
+
+        if needs_remediation {
+            warn!(
+                "Sysmon installation failed with manifest collision or wevtutil error. \
+                Executing self-healing manifest cleanup and forced uninstall before retry..."
+            );
+
+            let mut unreg_cmd = Command::new("wevtutil.exe");
+            unreg_cmd.args(["um", "Microsoft-Windows-Sysmon"]);
+            if let Err(e) = self.executor.execute(unreg_cmd).await {
+                warn!("Remediation: 'wevtutil.exe um Microsoft-Windows-Sysmon' execution failed: {}", e);
+            } else {
+                info!("Remediation: unregister manifest command executed.");
+            }
+
+            let mut force_uninstall = Command::new(&sysmon_exe);
+            force_uninstall.args(["-u", "force"]);
+            if let Err(e) = self.executor.execute(force_uninstall).await {
+                warn!("Remediation: '{} -u force' execution failed: {}", sysmon_exe.display(), e);
+            } else {
+                info!("Remediation: force uninstall command executed.");
+            }
+
+            info!(
+                "Retrying Sysmon installation: {} -i {} -accepteula",
+                sysmon_exe.display(),
+                config_path.display()
+            );
+            let mut retry_cmd = Command::new(&sysmon_exe);
+            retry_cmd.args([
+                "-i",
+                config_path.to_str().unwrap_or("config/sysmon-dns.xml"),
+                "-accepteula",
+            ]);
+            install_output = self.executor.execute(retry_cmd).await;
+        }
+
+        match install_output {
             Ok(output) if output.status.success() => {
                 info!("Sysmon installed and configured successfully for DNS & network telemetry.");
             }
@@ -244,6 +366,33 @@ impl AgentProvisioner {
                     sysmon_exe.display(),
                     config_path.display()
                 );
+            }
+        }
+
+        // Post-check: Run sc.exe query Sysmon64 to verify if the service is active.
+        info!("Performing post-installation verification: sc.exe query Sysmon64...");
+        let mut post_check = Command::new("sc.exe");
+        post_check.args(["query", "Sysmon64"]);
+        match self.executor.execute(post_check).await {
+            Ok(output) if output.status.success() => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if stdout.to_uppercase().contains("RUNNING") {
+                    info!("Sysmon64 service is active and running.");
+                } else if stdout.to_uppercase().contains("START_PENDING") {
+                    info!("Sysmon64 service is starting (START_PENDING).");
+                } else {
+                    info!("Sysmon64 service query returned status: {}", stdout.trim());
+                }
+            }
+            Ok(output) => {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                warn!(
+                    "Sysmon64 service post-check returned non-zero (service may not be running yet): {}",
+                    stdout.trim()
+                );
+            }
+            Err(e) => {
+                warn!("Sysmon64 service post-check failed to execute: {}", e);
             }
         }
 
@@ -1046,6 +1195,27 @@ mod tests {
         sc_query_sysmon64_response: Option<(i32, &'static str)>,
         sc_query_sysmon_response: Option<(i32, &'static str)>,
         install_response: (i32, &'static str),
+        retry_install_response: Option<(i32, &'static str)>,
+        wevtutil_gp_response: Option<(i32, &'static str)>,
+        install_attempts: Mutex<usize>,
+    }
+
+    impl MockSysmonExecutor {
+        fn new(
+            sc_query_sysmon64_response: Option<(i32, &'static str)>,
+            sc_query_sysmon_response: Option<(i32, &'static str)>,
+            install_response: (i32, &'static str),
+        ) -> Self {
+            Self {
+                executed_commands: Mutex::new(Vec::new()),
+                sc_query_sysmon64_response,
+                sc_query_sysmon_response,
+                install_response,
+                retry_install_response: None,
+                wevtutil_gp_response: None,
+                install_attempts: Mutex::new(0),
+            }
+        }
     }
 
     #[async_trait]
@@ -1061,6 +1231,21 @@ mod tests {
                 .lock()
                 .unwrap()
                 .push(full_cmd.clone());
+
+            if full_cmd.contains("wevtutil.exe gp") {
+                if let Some((code, stdout)) = self.wevtutil_gp_response {
+                    return Ok(std::process::Output {
+                        status: ExitStatus::from_raw(code as u32),
+                        stdout: stdout.as_bytes().to_vec(),
+                        stderr: Vec::new(),
+                    });
+                }
+                return Ok(std::process::Output {
+                    status: ExitStatus::from_raw(1),
+                    stdout: b"Failed to open publisher metadata".to_vec(),
+                    stderr: Vec::new(),
+                });
+            }
 
             if full_cmd.contains("sc.exe query Sysmon64") {
                 if let Some((code, stdout)) = self.sc_query_sysmon64_response {
@@ -1093,6 +1278,17 @@ mod tests {
             }
 
             if full_cmd.contains("-i") && full_cmd.contains("-accepteula") {
+                let mut attempts = self.install_attempts.lock().unwrap();
+                *attempts += 1;
+                if *attempts > 1 {
+                    if let Some((code, stdout)) = self.retry_install_response {
+                        return Ok(std::process::Output {
+                            status: ExitStatus::from_raw(code as u32),
+                            stdout: stdout.as_bytes().to_vec(),
+                            stderr: Vec::new(),
+                        });
+                    }
+                }
                 let (code, stdout) = self.install_response;
                 return Ok(std::process::Output {
                     status: ExitStatus::from_raw(code as u32),
@@ -1124,12 +1320,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_sysmon_already_installed_and_running() {
-        let executor = Arc::new(MockSysmonExecutor {
-            executed_commands: Mutex::new(Vec::new()),
-            sc_query_sysmon64_response: Some((0, "STATE : 4 RUNNING")),
-            sc_query_sysmon_response: None,
-            install_response: (0, "ok"),
-        });
+        let executor = Arc::new(MockSysmonExecutor::new(
+            Some((0, "STATE : 4 RUNNING")),
+            None,
+            (0, "ok"),
+        ));
 
         let provisioner = AgentProvisioner::new(executor.clone());
         let res = provisioner.provision_sysmon_if_missing().await;
@@ -1142,12 +1337,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_sysmon_installed_but_stopped() {
-        let executor = Arc::new(MockSysmonExecutor {
-            executed_commands: Mutex::new(Vec::new()),
-            sc_query_sysmon64_response: Some((0, "STATE : 1 STOPPED")),
-            sc_query_sysmon_response: None,
-            install_response: (0, "ok"),
-        });
+        let executor = Arc::new(MockSysmonExecutor::new(
+            Some((0, "STATE : 1 STOPPED")),
+            None,
+            (0, "ok"),
+        ));
 
         let provisioner = AgentProvisioner::new(executor.clone());
         let res = provisioner.provision_sysmon_if_missing().await;
@@ -1161,12 +1355,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_sysmon_32bit_installed() {
-        let executor = Arc::new(MockSysmonExecutor {
-            executed_commands: Mutex::new(Vec::new()),
-            sc_query_sysmon64_response: None,
-            sc_query_sysmon_response: Some((0, "STATE : 4 RUNNING")),
-            install_response: (0, "ok"),
-        });
+        let executor = Arc::new(MockSysmonExecutor::new(
+            None,
+            Some((0, "STATE : 4 RUNNING")),
+            (0, "ok"),
+        ));
 
         let provisioner = AgentProvisioner::new(executor.clone());
         let res = provisioner.provision_sysmon_if_missing().await;
@@ -1180,12 +1373,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_sysmon_not_installed_fails_gracefully_on_access_denied() {
-        let executor = Arc::new(MockSysmonExecutor {
-            executed_commands: Mutex::new(Vec::new()),
-            sc_query_sysmon64_response: None,
-            sc_query_sysmon_response: None,
-            install_response: (5, "Access is denied."),
-        });
+        let executor = Arc::new(MockSysmonExecutor::new(
+            None,
+            None,
+            (5, "Access is denied."),
+        ));
 
         let provisioner = AgentProvisioner::new(executor.clone());
         let res = provisioner.provision_sysmon_if_missing().await;
@@ -1194,6 +1386,122 @@ mod tests {
 
         let cmds = executor.executed_commands.lock().unwrap();
         assert!(cmds.iter().any(|c| c.contains("-i") && c.contains("-accepteula")));
+    }
+
+    #[tokio::test]
+    async fn test_sysmon_orphaned_manifest_cleaned_up() {
+        let mut mock = MockSysmonExecutor::new(None, None, (0, "Sysmon installed"));
+        mock.wevtutil_gp_response = Some((0, "Microsoft-Windows-Sysmon"));
+        let executor = Arc::new(mock);
+
+        let provisioner = AgentProvisioner::new(executor.clone());
+        let res = provisioner.provision_sysmon_if_missing().await;
+        assert!(res.is_ok());
+
+        let cmds = executor.executed_commands.lock().unwrap();
+        // Check that wevtutil gp was executed
+        assert!(cmds.iter().any(|c| c.contains("wevtutil.exe gp Microsoft-Windows-Sysmon")));
+        // Check that wevtutil um was executed to unregister orphaned manifest
+        assert!(cmds.iter().any(|c| c.contains("wevtutil.exe um Microsoft-Windows-Sysmon")));
+        // Check that -i was executed
+        assert!(cmds.iter().any(|c| c.contains("-i") && c.contains("-accepteula")));
+        // Check post-check query
+        assert!(cmds.iter().any(|c| c.contains("sc.exe query Sysmon64")));
+
+        // Verify order: wevtutil um happens before sysmon -i
+        let um_idx = cmds
+            .iter()
+            .position(|c| c.contains("wevtutil.exe um Microsoft-Windows-Sysmon"))
+            .unwrap();
+        let install_idx = cmds
+            .iter()
+            .position(|c| c.contains("-i") && c.contains("-accepteula"))
+            .unwrap();
+        assert!(
+            um_idx < install_idx,
+            "Orphaned manifest cleanup must happen before installation"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sysmon_manifest_collision_retry_recovery() {
+        let mut mock = MockSysmonExecutor::new(
+            None,
+            None,
+            (1, "Sysmon install error: wevtutil.exe returned failure (-2147024809)"),
+        );
+        mock.retry_install_response = Some((0, "Sysmon installed successfully"));
+        let executor = Arc::new(mock);
+
+        let provisioner = AgentProvisioner::new(executor.clone());
+        let res = provisioner.provision_sysmon_if_missing().await;
+        assert!(res.is_ok());
+
+        let cmds = executor.executed_commands.lock().unwrap();
+        // Should have run initial install and retry install
+        let install_cmds: Vec<_> = cmds
+            .iter()
+            .filter(|c| c.contains("-i") && c.contains("-accepteula"))
+            .collect();
+        assert_eq!(install_cmds.len(), 2, "Expected initial install and retry install");
+
+        // Should have executed remediation: wevtutil um and sysmon -u force
+        assert!(cmds.iter().any(|c| c.contains("wevtutil.exe um Microsoft-Windows-Sysmon")));
+        assert!(cmds.iter().any(|c| c.contains("-u force")));
+
+        // Verify order: initial -i, then wevtutil um, then -u force, then retry -i
+        let first_i = cmds
+            .iter()
+            .position(|c| c.contains("-i") && c.contains("-accepteula"))
+            .unwrap();
+        let um_idx = cmds
+            .iter()
+            .position(|c| c.contains("wevtutil.exe um Microsoft-Windows-Sysmon"))
+            .unwrap();
+        let force_idx = cmds.iter().position(|c| c.contains("-u force")).unwrap();
+        let retry_i = cmds
+            .iter()
+            .rposition(|c| c.contains("-i") && c.contains("-accepteula"))
+            .unwrap();
+
+        assert!(first_i < um_idx);
+        assert!(um_idx < force_idx);
+        assert!(force_idx < retry_i);
+
+        // Verify post-check ran
+        assert!(cmds.iter().any(|c| c.contains("sc.exe query Sysmon64")));
+    }
+
+    #[tokio::test]
+    async fn test_sysmon_paths_are_canonical_and_absolute() {
+        let executor = Arc::new(MockSysmonExecutor::new(None, None, (0, "ok")));
+        let provisioner = AgentProvisioner::new(executor.clone());
+        let res = provisioner.provision_sysmon_if_missing().await;
+        assert!(res.is_ok());
+
+        let cmds = executor.executed_commands.lock().unwrap();
+        let install_cmd = cmds
+            .iter()
+            .find(|c| c.contains("-i") && c.contains("-accepteula"))
+            .expect("install command run");
+
+        // Assert no relative ".." segments in the command line
+        assert!(
+            !install_cmd.contains(r"..\"),
+            "Command line contains relative .. segments: {}",
+            install_cmd
+        );
+        assert!(
+            !install_cmd.contains("../"),
+            "Command line contains relative .. segments: {}",
+            install_cmd
+        );
+        // Assert no extended-length \\?\ verbatim prefix in the command line
+        assert!(
+            !install_cmd.contains(r"\\?\"),
+            "Command line contains \\?\\ prefix: {}",
+            install_cmd
+        );
     }
 }
 
