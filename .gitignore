@@ -73,6 +73,7 @@ tools/
 /traps/
 /malware/
 /cache/
+/rules/osoosi_generated/
 
 # ---------- Build Check Artifacts ----------
 build_check_*.txt

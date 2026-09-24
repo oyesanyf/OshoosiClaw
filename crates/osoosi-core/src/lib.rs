@@ -3662,6 +3662,21 @@ impl EdrOrchestrator {
         Ok(())
     }
 
+    /// Compute alert suppression deduplication key for a ThreatSignature.
+    /// Deduplicates by {hash}:{process_name}:{reason_category}.
+    pub fn compute_suppression_key(signature: &osoosi_types::ThreatSignature) -> String {
+        let hash = signature.hash_blake3.as_deref().unwrap_or("unknown");
+        let reason_category = signature
+            .reason
+            .as_deref()
+            .and_then(|r| r.split(':').next())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .unwrap_or("generic");
+        let proc = signature.process_name.as_deref().unwrap_or("unknown");
+        format!("{}:{}:{}", hash, proc, reason_category)
+    }
+
     /// Internal helper to handle identified threats (broadcast, audit, remediation, triage).
     async fn handle_threat(
         &self,
@@ -3695,14 +3710,7 @@ impl EdrOrchestrator {
             }
         }
 
-        let hash = signature.hash_blake3.as_deref().unwrap_or("unknown");
-        let reason_category = signature
-            .reason
-            .as_deref()
-            .and_then(|r| r.split(':').next())
-            .unwrap_or("generic");
-        let proc = signature.process_name.as_deref().unwrap_or("unknown");
-        let suppression_key = format!("{}:{}:{}", hash, proc, reason_category);
+        let suppression_key = Self::compute_suppression_key(&signature);
             
         let cooldown = Duration::from_secs(self.policy.config.alert_suppression_secs);
         if let Some(last) = self.alert_suppression_cache.get(&suppression_key) {
@@ -5897,30 +5905,29 @@ mod tests {
 
         assert_ne!(sig1.id, sig2.id);
 
-        let key1 = {
-            let hash = sig1.hash_blake3.as_deref().unwrap_or("unknown");
-            let reason_category = sig1
-                .reason
-                .as_deref()
-                .and_then(|r| r.split(':').next())
-                .unwrap_or("generic");
-            let proc = sig1.process_name.as_deref().unwrap_or("unknown");
-            format!("{}:{}:{}", hash, proc, reason_category)
-        };
-
-        let key2 = {
-            let hash = sig2.hash_blake3.as_deref().unwrap_or("unknown");
-            let reason_category = sig2
-                .reason
-                .as_deref()
-                .and_then(|r| r.split(':').next())
-                .unwrap_or("generic");
-            let proc = sig2.process_name.as_deref().unwrap_or("unknown");
-            format!("{}:{}:{}", hash, proc, reason_category)
-        };
+        let key1 = EdrOrchestrator::compute_suppression_key(&sig1);
+        let key2 = EdrOrchestrator::compute_suppression_key(&sig2);
 
         assert_eq!(key1, "abc123hash:powershell.exe:Intelligent Correlation");
         assert_eq!(key1, key2, "Suppression keys must match regardless of random UUID id");
+
+        // Edge case: Empty or whitespace reason gracefully defaults to "generic"
+        let mut sig_empty = ThreatSignature::new("node-1".to_string());
+        sig_empty.process_name = Some("cmd.exe".to_string());
+        sig_empty.reason = Some("   ".to_string());
+        assert_eq!(
+            EdrOrchestrator::compute_suppression_key(&sig_empty),
+            "unknown:cmd.exe:generic"
+        );
+
+        // Edge case: Reason starting with colon defaults to "generic"
+        let mut sig_colon = ThreatSignature::new("node-1".to_string());
+        sig_colon.process_name = Some("cmd.exe".to_string());
+        sig_colon.reason = Some(": empty category".to_string());
+        assert_eq!(
+            EdrOrchestrator::compute_suppression_key(&sig_colon),
+            "unknown:cmd.exe:generic"
+        );
     }
 }
 

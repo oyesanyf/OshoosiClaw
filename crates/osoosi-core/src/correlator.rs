@@ -41,13 +41,20 @@ impl ProcessContext {
         }
     }
 
-    pub fn add_event(&mut self, event_type: &str, details: &str, score: f32) {
-        let now = Utc::now();
+    pub fn apply_decay(&mut self, now: DateTime<Utc>) -> bool {
         let elapsed_secs = (now - self.last_updated).num_seconds().max(0) as f32;
         if elapsed_secs > 30.0 {
             let decay = 0.1 * (elapsed_secs / 30.0);
             self.total_score = (self.total_score - decay).max(0.0);
+            true
+        } else {
+            false
         }
+    }
+
+    pub fn add_event(&mut self, event_type: &str, details: &str, score: f32) {
+        let now = Utc::now();
+        let decayed = self.apply_decay(now);
 
         if self.timeline.len() >= 50 {
             self.timeline.pop_front();
@@ -58,8 +65,18 @@ impl ProcessContext {
             details: details.to_string(),
             confidence: score,
         });
-        self.total_score = (self.total_score + score).min(1.0);
-        self.last_updated = now;
+
+        if score > 0.0 {
+            self.total_score = (self.total_score + score).min(1.0);
+            self.last_updated = now;
+        } else if decayed {
+            // Decay occurred, update baseline timestamp for next decay cycle
+            self.last_updated = now;
+        }
+        // If score == 0.0 and no decay threshold was reached (elapsed <= 30.0),
+        // we deliberately do NOT update last_updated to `now`. Otherwise, high-frequency
+        // benign events (e.g. 5,000 EPS) would perpetually reset the 30-second window
+        // and prevent total_score from ever decaying.
     }
 }
 
@@ -84,9 +101,23 @@ impl EventCorrelator {
 
     /// Process a new host event and correlate it with existing findings.
     pub async fn correlate_sysmon(&self, event: &HostSecurityEvent) -> Option<ThreatSignature> {
-        let pid = event.data.get("ProcessId").and_then(|v| v.as_u64())? as u32;
+        let pid = event
+            .data
+            .get("ProcessId")
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+            })? as u32;
+
         // Ignore PID 0 (Idle) and PID 4 (System) from generic network/IO correlation
         if pid == 0 || pid == 4 {
+            return None;
+        }
+
+        // Sysmon Event ID 5: Process Terminated
+        // Clean up process context immediately to free memory and eliminate PID reuse contamination
+        if event.event_id == 5 {
+            self.processes.remove(&pid);
             return None;
         }
 
@@ -94,14 +125,30 @@ impl EventCorrelator {
             .data
             .get("Image")
             .and_then(|i| i.as_str())
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
             .unwrap_or("unknown");
 
+        // Periodic capacity pruning for inactive contexts under extreme PID churn (>5000 processes)
+        if self.processes.len() > 5000 {
+            let cutoff = Utc::now() - chrono::Duration::seconds(600);
+            self.processes.retain(|_, c| c.last_updated > cutoff);
+        }
+
+        // Sysmon Event ID 1: Process Creation
+        // Signifies a new process instance. If a context exists for this PID, it is from a previous
+        // process whose PID was recycled by the OS and must be cleanly reset.
         let mut ctx = self
             .processes
             .entry(pid)
+            .and_modify(|existing| {
+                if event.event_id == 1 {
+                    *existing = ProcessContext::new(pid, image.to_string());
+                }
+            })
             .or_insert_with(|| ProcessContext::new(pid, image.to_string()));
 
-        if ctx.image == "unknown" && image != "unknown" {
+        if (ctx.image == "unknown" || ctx.image.trim().is_empty()) && image != "unknown" {
             ctx.image = image.to_string();
         }
 
@@ -147,8 +194,12 @@ impl EventCorrelator {
                 let dest_port = event
                     .data
                     .get("DestinationPort")
-                    .and_then(|v| v.as_str())
-                    .unwrap_or("");
+                    .and_then(|v| {
+                        v.as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| v.as_u64().map(|n| n.to_string()))
+                    })
+                    .unwrap_or_default();
 
                 // Check if process has C2 capabilities from CAPA/Static analysis
                 let has_c2_cap = ctx.static_findings.iter().any(|f| {
@@ -284,7 +335,12 @@ impl EventCorrelator {
                 }
             }
 
-            let mut sig = ThreatSignature::new("localhost".to_string());
+            let source = if event.computer.trim().is_empty() {
+                "localhost".to_string()
+            } else {
+                event.computer.clone()
+            };
+            let mut sig = ThreatSignature::new(source);
             sig.confidence = ctx.total_score.min(0.99);
             sig.process_name = Some(ctx.image.clone());
             sig.add_reason(format!("Intelligent Correlation: {}", reason));
@@ -295,8 +351,9 @@ impl EventCorrelator {
                 ResponseAction::Alert
             };
 
-            // If image is unknown, cap action to Alert (never Isolate unknown image)
-            if ctx.image == "unknown" && action == ResponseAction::Isolate {
+            // If image is unknown or empty, cap action to Alert (never Isolate unknown image)
+            let is_unknown = ctx.image == "unknown" || ctx.image.trim().is_empty();
+            if is_unknown && action == ResponseAction::Isolate {
                 action = ResponseAction::Alert;
             }
 
@@ -318,13 +375,15 @@ impl EventCorrelator {
 
     /// Add a static analysis finding (from CAPA, YARA, etc.) to a process context.
     pub fn add_static_finding(&self, pid: u32, image: &str, finding: &str, confidence: f32) {
+        let now = Utc::now();
         let mut ctx = self
             .processes
             .entry(pid)
             .or_insert_with(|| ProcessContext::new(pid, image.to_string()));
+        ctx.apply_decay(now);
         ctx.static_findings.push(finding.to_string());
         ctx.total_score = (ctx.total_score + confidence * 0.5).min(1.0);
-        ctx.last_updated = Utc::now();
+        ctx.last_updated = now;
         info!(
             "Correlator: Added static finding for PID {}: {} (New Score: {:.2})",
             pid, finding, ctx.total_score
@@ -498,5 +557,112 @@ mod tests {
         // 60 secs elapsed: decay = 0.1 * (60 / 30) = 0.2. New total_score should be 0.6.
         assert!((ctx.total_score - 0.6).abs() < 0.01);
     }
+
+    #[test]
+    fn test_continuous_benign_traffic_allows_decay() {
+        let mut ctx = ProcessContext::new(1111, "traffic.exe".to_string());
+        ctx.total_score = 0.8;
+        let start = Utc::now() - chrono::Duration::seconds(90);
+        ctx.last_updated = start;
+
+        // Simulate 6 benign events spaced 10 seconds apart from start to now
+        // Even with frequent zero-score events, decay must occur across intervals
+        for i in 1..=6 {
+            let sim_now = start + chrono::Duration::seconds(i * 10);
+            let decayed = ctx.apply_decay(sim_now);
+            if decayed {
+                ctx.last_updated = sim_now;
+            }
+        }
+
+        // Over 60 seconds of activity, score must have decayed from 0.8 down to ~0.6 or lower
+        assert!(ctx.total_score < 0.75, "Continuous traffic must not prevent score decay; got {:.2}", ctx.total_score);
+    }
+
+    #[tokio::test]
+    async fn test_process_terminate_event_5_cleans_context() {
+        let correlator = EventCorrelator::new();
+        let pid = 7777;
+
+        // Populate context with network connection
+        let ev_net = make_sysmon_event(3, pid, "app.exe", vec![("DestinationIp", "1.1.1.1"), ("DestinationPort", "80")]);
+        let _ = correlator.correlate_sysmon(&ev_net).await;
+        assert!(correlator.processes.contains_key(&(pid as u32)));
+
+        // Event 5: Process Terminated
+        let mut map = serde_json::Map::new();
+        map.insert("ProcessId".to_string(), serde_json::json!(pid));
+        let ev_term = HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 5,
+            timestamp: Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: serde_json::Value::Object(map),
+            causal_parent: None,
+        };
+
+        let res = correlator.correlate_sysmon(&ev_term).await;
+        assert!(res.is_none());
+        assert!(!correlator.processes.contains_key(&(pid as u32)), "Event 5 must purge terminated process from context table");
+    }
+
+    #[tokio::test]
+    async fn test_pid_reuse_resets_context() {
+        let correlator = EventCorrelator::new();
+        let pid = 6666;
+
+        // Seed old malicious process context on this PID
+        correlator.add_static_finding(pid, "old_malware.exe", "c2_activity", 1.0);
+        correlator.add_static_finding(pid, "old_malware.exe", "credential_dump", 1.0);
+        assert_eq!(correlator.processes.get(&pid).unwrap().total_score, 1.0);
+
+        // A new benign process is spawned with recycled PID (Event 1)
+        let ev_spawn = make_sysmon_event(1, pid as u64, "notepad.exe", vec![("CommandLine", "notepad.exe file.txt")]);
+        let _ = correlator.correlate_sysmon(&ev_spawn).await;
+
+        let ctx = correlator.processes.get(&pid).expect("Context should exist");
+        assert_eq!(ctx.image, "notepad.exe", "Recycled PID context must update image name");
+        assert_eq!(ctx.total_score, 0.0, "Recycled PID must reset total_score on Event 1");
+    }
+
+    #[tokio::test]
+    async fn test_empty_image_capped_to_alert() {
+        let correlator = EventCorrelator::new();
+        let pid = 4444;
+
+        correlator.add_static_finding(pid, "unknown", "c2", 1.0);
+        correlator.add_static_finding(pid, "unknown", "tamper", 1.0);
+
+        // Event with whitespace / empty string image
+        let ev = make_sysmon_event(10, pid as u64, "   ", vec![("TargetImage", "lsass.exe")]);
+        let sig = correlator.correlate_sysmon(&ev).await.expect("Should trigger");
+        assert_eq!(sig.recommended_action, ResponseAction::Alert, "Empty image must be capped to Alert");
+    }
+
+    #[tokio::test]
+    async fn test_string_pid_and_numeric_port_parsed() {
+        let correlator = EventCorrelator::new();
+        let mut map = serde_json::Map::new();
+        map.insert("ProcessId".to_string(), serde_json::json!("5555")); // String PID
+        map.insert("Image".to_string(), serde_json::json!("net_tool.exe"));
+        map.insert("DestinationIp".to_string(), serde_json::json!("9.9.9.9"));
+        map.insert("DestinationPort".to_string(), serde_json::json!(443)); // Numeric Port
+
+        let ev = HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 3,
+            timestamp: Utc::now(),
+            computer: "ENDPOINT-01".to_string(),
+            data: serde_json::Value::Object(map),
+            causal_parent: None,
+        };
+
+        let _ = correlator.correlate_sysmon(&ev).await;
+        let ctx = correlator.processes.get(&5555).expect("String PID should be parsed into context table");
+        assert_eq!(ctx.pid, 5555);
+        let timeline_last = ctx.timeline.back().unwrap();
+        assert!(timeline_last.details.contains("To 9.9.9.9:443"), "Numeric port must be formatted into details string");
+    }
 }
+
 
