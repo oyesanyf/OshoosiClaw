@@ -36,8 +36,11 @@ pub use llm_engine::{Gemma4Analyzer, SmolLMAnalyzer, FoundationSecAnalyzer};
 pub use log_reader::{BehavioralLogReader, LogEvent};
 pub use process_tree::{ProcessRelationship, ProcessTreeEmbedder};
 pub use rl_engine::{
-    ByzantineRobustAggregator, DeepQEngine, EDRRuntimeController, MitigationAction,
-    PrioritizedReplayBuffer, ProcessContext, SafetyGuardrail, TelemetryPacket, Transition,
+    ByzantineRobustAggregator, DeepQEngine, DigitalTwinSimulator, DoubleDeepQEngine,
+    EDRRuntimeController, EdrAction, EdrRewardEngine, HeuristicPriorScores, LinUcbBandit,
+    MeshContext, MitigationAction, PrioritizedReplayBuffer, ProcessContext,
+    ProcessLineageVector, RolloutMetrics, SafetyFilter, SafetyGuardrail, StateFeaturePipeline,
+    TelemetryPacket, TelemetryVelocity, Transition,
 };
 pub use sentence::event_to_behavioral_sentence;
 pub use skyrl::{OshoosiSecurityGym, SkyAction, StepResult};

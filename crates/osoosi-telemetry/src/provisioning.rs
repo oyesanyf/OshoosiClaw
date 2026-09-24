@@ -89,23 +89,33 @@ impl AgentProvisioner {
         // Determine target directory: prefer tools/sysmon in the workspace / working directory.
         // If creation fails, fall back to %LOCALAPPDATA%\OshoosiClaw\tools\sysmon or temp dir.
         let target_dir = {
-            let workspace_dir = std::env::current_dir()
-                .map(|cd| cd.join("tools").join("sysmon"))
-                .unwrap_or_else(|_| PathBuf::from("tools").join("sysmon"));
-            if std::fs::create_dir_all(&workspace_dir).is_ok() {
-                workspace_dir
+            let candidates = [
+                PathBuf::from("tools").join("sysmon"),
+                PathBuf::from("..").join("..").join("tools").join("sysmon"),
+                PathBuf::from("..").join("tools").join("sysmon"),
+            ];
+            let existing = candidates.into_iter().find(|p| p.is_dir());
+            if let Some(dir) = existing {
+                dir
             } else {
-                let local_app_data = std::env::var("LOCALAPPDATA")
-                    .ok()
-                    .map(|lad| PathBuf::from(&lad).join("OshoosiClaw").join("tools").join("sysmon"));
-                if let Some(lad_dir) = local_app_data {
-                    if std::fs::create_dir_all(&lad_dir).is_ok() {
-                        lad_dir
+                let workspace_dir = std::env::current_dir()
+                    .map(|cd| cd.join("tools").join("sysmon"))
+                    .unwrap_or_else(|_| PathBuf::from("tools").join("sysmon"));
+                if std::fs::create_dir_all(&workspace_dir).is_ok() {
+                    workspace_dir
+                } else {
+                    let local_app_data = std::env::var("LOCALAPPDATA")
+                        .ok()
+                        .map(|lad| PathBuf::from(&lad).join("OshoosiClaw").join("tools").join("sysmon"));
+                    if let Some(lad_dir) = local_app_data {
+                        if std::fs::create_dir_all(&lad_dir).is_ok() {
+                            lad_dir
+                        } else {
+                            std::env::temp_dir().join("OshoosiClaw").join("tools").join("sysmon")
+                        }
                     } else {
                         std::env::temp_dir().join("OshoosiClaw").join("tools").join("sysmon")
                     }
-                } else {
-                    std::env::temp_dir().join("OshoosiClaw").join("tools").join("sysmon")
                 }
             }
         };
@@ -149,12 +159,15 @@ impl AgentProvisioner {
         // c. Resolve configuration XML:
         // Check for config/sysmon-dns.xml (current directory or repo root).
         // If not found, write a built-in default XML to <target_dir>/sysmon-dns.xml containing Event ID 22 and Event ID 3.
-        let default_config = std::env::current_dir()
-            .map(|cd| cd.join("config").join("sysmon-dns.xml"))
-            .unwrap_or_else(|_| PathBuf::from("config").join("sysmon-dns.xml"));
+        let config_candidates = [
+            PathBuf::from("config").join("sysmon-dns.xml"),
+            PathBuf::from("..").join("..").join("config").join("sysmon-dns.xml"),
+            PathBuf::from("..").join("config").join("sysmon-dns.xml"),
+        ];
+        let default_config = config_candidates.into_iter().find(|p| p.is_file());
 
-        let config_path = if default_config.exists() {
-            default_config
+        let config_path = if let Some(cfg) = default_config {
+            cfg
         } else {
             let fallback_config = target_dir.join("sysmon-dns.xml");
             if !fallback_config.exists() {
@@ -1095,7 +1108,16 @@ mod tests {
             })
         }
 
-        async fn download(&self, _url: &str, _dest: &Path, _resume: bool) -> anyhow::Result<()> {
+        async fn download(&self, _url: &str, dest: &Path, _resume: bool) -> anyhow::Result<()> {
+            let file = std::fs::File::create(dest)?;
+            let mut zip = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default()
+                .compression_method(zip::CompressionMethod::Stored);
+            zip.start_file("Sysmon64.exe", options)?;
+            use std::io::Write;
+            let payload = vec![0x90u8; 150 * 1024];
+            zip.write_all(&payload)?;
+            zip.finish()?;
             Ok(())
         }
     }
