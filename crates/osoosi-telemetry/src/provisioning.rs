@@ -1168,7 +1168,7 @@ mod tests {
         let provisioner = AgentProvisioner::new(executor.clone());
         let res = provisioner.provision_sysmon_if_missing().await;
         // Graceful handling requirement: do NOT fail startup!
-        assert!(res.is_ok());
+        assert!(res.is_ok(), "provision_sysmon_if_missing failed with error: {:?}", res.as_ref().err());
 
         let cmds = executor.executed_commands.lock().unwrap();
         assert!(cmds.iter().any(|c| c.contains("-i") && c.contains("-accepteula")));
