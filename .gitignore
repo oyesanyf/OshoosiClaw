@@ -60,6 +60,8 @@ osoosi.toml.sign
 /Sysmon64a.exe
 /sysmonconfig-export.xml
 /Eula.txt
+tools/
+/tools/
 
 # ---------- Runtime Data ----------
 /data/

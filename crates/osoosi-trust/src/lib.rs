@@ -9,6 +9,11 @@ use osoosi_types::{
 pub use osoosi_types::{
     verify_tpm_ek_certificate, TpmEkCertificate, TpmOemVendor, VerifiedEkIdentity,
 };
+pub mod oem_roots;
+pub mod tbs;
+
+pub use oem_roots::*;
+pub use tbs::*;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
@@ -556,6 +561,7 @@ pub fn generate_mock_oem_ek_certificate(
         TpmOemVendor::Infineon => "Infineon Technologies AG",
         TpmOemVendor::StMicro => "STMicroelectronics",
         TpmOemVendor::Nuvoton => "Nuvoton Technology",
+        TpmOemVendor::Nationz => "Nationz Technologies Inc.",
         TpmOemVendor::Microchip => "Microchip Technology Inc.",
         TpmOemVendor::Unknown => "Unknown Hardware OEM",
     };
@@ -581,6 +587,8 @@ pub fn generate_mock_oem_ek_certificate(
     let leaf_der = leaf_cert.der().to_vec();
 
     let mut ek = TpmEkCertificate::from_der(leaf_der).map_err(|e| anyhow::anyhow!("{}", e))?;
+    let ca_fp = hex::encode(Sha256::digest(&ca_der)).to_lowercase();
+    crate::oem_roots::register_trusted_oem_root(vendor, ca_fp);
     ek.issuer_der = Some(ca_der);
     Ok(ek)
 }

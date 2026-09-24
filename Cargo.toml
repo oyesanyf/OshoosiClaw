@@ -128,10 +128,11 @@ pelite = "0.10"
 debug = 1
 
 [profile.release]
-lto = true
-codegen-units = 1
-strip = true
 opt-level = 3
+lto = "thin"
+codegen-units = 16
+strip = true
+panic = "abort"
 
 
 

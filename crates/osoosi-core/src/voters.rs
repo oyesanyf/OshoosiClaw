@@ -331,6 +331,12 @@ impl ThreatVoter for MalConvVoter {
         }
 
         let conf = (res.combined_score.min(1.0)) as f32;
+        let mut weight = 0.88f32;
+        if is_ide_or_build_path(path_note) || scanner_skip_path(path_note) {
+            weight *= 0.25;
+        } else if trusted_identity_signal(event, path_note) || osoosi_types::is_trusted_signed_binary(Path::new(path_note)) {
+            weight *= 0.35;
+        }
         Some(VoteResult {
             confidence: conf,
             reason: format!(
@@ -341,7 +347,7 @@ impl ThreatVoter for MalConvVoter {
                 res.magika_label,
                 path_note
             ),
-            weight: 0.88,
+            weight,
         })
     }
 }
@@ -387,10 +393,16 @@ impl ThreatVoter for CapaVoter {
 
             // If CAPA found specific persistence/c2 capabilities, we yield a vote
             if res.confidence > 0.4 {
+                let mut weight = 0.85f32;
+                if is_ide_or_build_path(image_path) || scanner_skip_path(image_path) {
+                    weight *= 0.25;
+                } else if trusted_identity_signal(event, image_path) || osoosi_types::is_trusted_signed_binary(Path::new(image_path)) {
+                    weight *= 0.35;
+                }
                 return Some(VoteResult {
                     confidence: res.confidence,
                     reason: res.reason.unwrap_or_else(|| "CAPA: Detected suspicious capabilities".to_string()),
-                    weight: 0.85,
+                    weight,
                 });
             }
         }
@@ -439,10 +451,16 @@ impl ThreatVoter for CompositionVoter {
 
             // If it looks like a composition threat (ID starts with COMP-)
             if res.id.starts_with("COMP-") && res.confidence >= 0.5 {
+                let mut weight = 0.9f32;
+                if is_ide_or_build_path(image_path) || scanner_skip_path(image_path) {
+                    weight *= 0.25;
+                } else if trusted_identity_signal(event, image_path) || osoosi_types::is_trusted_signed_binary(Path::new(image_path)) {
+                    weight *= 0.35;
+                }
                 return Some(VoteResult {
                     confidence: res.confidence as f32,
                     reason: res.reason.unwrap_or_else(|| "Nabla: Suspicious composition detected".to_string()),
-                    weight: 0.9,
+                    weight,
                 });
             }
         }
@@ -624,13 +642,27 @@ impl ThreatVoter for BehavioralClassifierVoter {
         let classifier = self.classifier.clone();
         let adaptive = self.adaptive.clone();
 
+        let mut downweight = 1.0f32;
+        for key in ["Image", "TargetImage", "TargetFilename", "FilePath"] {
+            if let Some(p) = event.data.get(key).and_then(|v| v.as_str()) {
+                if is_ide_or_build_path(p) || scanner_skip_path(p) {
+                    downweight = 0.25;
+                    break;
+                }
+                if trusted_identity_signal(event, p) || osoosi_types::is_trusted_signed_binary(Path::new(p)) {
+                    downweight = 0.35;
+                    break;
+                }
+            }
+        }
+
         adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
             let (is_suspicious, score, reason) = classifier.classify_sentence(&sentence).await;
             if is_suspicious {
                 return Some(VoteResult {
                     confidence: score,
                     reason: format!("BehavioralAI: {} - {}", reason, sentence),
-                    weight: 0.95,
+                    weight: 0.95 * downweight,
                 });
             }
             None

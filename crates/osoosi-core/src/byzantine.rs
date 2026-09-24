@@ -40,6 +40,15 @@ pub struct BftConsensusParams {
     pub enable_reputation_tie_breaker: bool,
     /// Minimum reputation delta required to break a tie via reputation (e.g. 0.05).
     pub tie_breaker_reputation_margin: f32,
+    /// Enable automated embedded virtual witness / local deterministic arbiter rule to resolve 2-host deadlocks instantly.
+    pub enable_autonomous_arbiter: bool,
+}
+
+impl BftConsensusParams {
+    pub fn with_autonomous_arbiter(mut self, enable: bool) -> Self {
+        self.enable_autonomous_arbiter = enable;
+        self
+    }
 }
 
 impl Default for BftConsensusParams {
@@ -101,6 +110,9 @@ impl Default for BftConsensusParams {
                 .ok()
                 .and_then(|s| s.parse().ok())
                 .unwrap_or(0.05),
+            enable_autonomous_arbiter: std::env::var("OSOOSI_BFT_AUTONOMOUS_ARBITER")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false),
         }
     }
 }
@@ -433,6 +445,47 @@ pub fn analyze_policy_consensus(
                 winning_status = Some(PolicyHealthStatus::CriticalFailure);
             }
         }
+
+        if !witness_resolved && params.enable_autonomous_arbiter {
+            let opt_id = optimal_ids.first();
+            let crit_id = critical_ids.first();
+            let target_pid = target_policy_id.unwrap_or("default");
+
+            let opt_vote = opt_id.and_then(|id| latest.get(id));
+            let crit_vote = crit_id.and_then(|id| latest.get(id));
+
+            let opt_uptime = opt_vote.map(|v| v.uptime_seconds).unwrap_or(0);
+            let crit_uptime = crit_vote.map(|v| v.uptime_seconds).unwrap_or(0);
+
+            let chosen_status = if opt_uptime > crit_uptime {
+                PolicyHealthStatus::Optimal
+            } else if crit_uptime > opt_uptime {
+                PolicyHealthStatus::CriticalFailure
+            } else {
+                let mut h_opt = Sha256::new();
+                h_opt.update(target_pid.as_bytes());
+                h_opt.update(b"|AUTONOMOUS_ARBITER|");
+                h_opt.update(opt_id.map(|s| s.as_bytes()).unwrap_or(b""));
+                let d_opt = h_opt.finalize();
+
+                let mut h_crit = Sha256::new();
+                h_crit.update(target_pid.as_bytes());
+                h_crit.update(b"|AUTONOMOUS_ARBITER|");
+                h_crit.update(crit_id.map(|s| s.as_bytes()).unwrap_or(b""));
+                let d_crit = h_crit.finalize();
+
+                if d_opt <= d_crit {
+                    PolicyHealthStatus::Optimal
+                } else {
+                    PolicyHealthStatus::CriticalFailure
+                }
+            };
+
+            witness_resolved = true;
+            stalemate_conflict = false;
+            winning_status = Some(chosen_status.clone());
+            mesh_validated = chosen_status == PolicyHealthStatus::Optimal;
+        }
     }
 
     let penalize_critical_voters = if mesh_validated && !witness_resolved {
@@ -458,6 +511,65 @@ pub fn analyze_policy_consensus(
         pbft_max_faults,
         witness_resolved,
         winning_status,
+    }
+}
+
+/// Autonomous embedded witness provider for resolving 2-host mesh stalemates
+/// without requiring external 3rd-party infrastructure.
+#[derive(Clone, Debug)]
+pub struct AutonomousWitnessProvider {
+    signing_key: ed25519_dalek::SigningKey,
+    verifying_key: ed25519_dalek::VerifyingKey,
+    witness_id: String,
+}
+
+impl AutonomousWitnessProvider {
+    /// Derive a deterministic embedded virtual witness keypair from a mesh zone.
+    pub fn from_zone(zone: &str) -> Self {
+        let mut hasher = Sha256::new();
+        hasher.update(b"OSOOSI_EMBEDDED_VIRTUAL_WITNESS_KEYPAIR_SEED:");
+        hasher.update(zone.as_bytes());
+        let seed: [u8; 32] = hasher.finalize().into();
+        let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
+        let verifying_key = signing_key.verifying_key();
+        let witness_id = format!("arbiter:virtual:{}", &hex::encode(verifying_key.to_bytes())[..16]);
+        Self {
+            signing_key,
+            verifying_key,
+            witness_id,
+        }
+    }
+
+    pub fn witness_id(&self) -> &str {
+        &self.witness_id
+    }
+
+    pub fn public_key_hex(&self) -> String {
+        hex::encode(self.verifying_key.to_bytes())
+    }
+
+    /// Sign and generate an autonomous witness vote to resolve 2-host deadlock.
+    pub fn arbitrate_two_host_deadlock(
+        &self,
+        policy_id: &str,
+        favored_status: PolicyHealthStatus,
+    ) -> WitnessVote {
+        use ed25519_dalek::Signer;
+        let timestamp = chrono::Utc::now();
+        let digest = osoosi_types::compute_witness_digest(
+            policy_id,
+            &self.witness_id,
+            &favored_status,
+            timestamp.timestamp(),
+        );
+        let signature = hex::encode(self.signing_key.sign(&digest).to_bytes());
+        WitnessVote {
+            policy_id: policy_id.to_string(),
+            witness_id: self.witness_id.clone(),
+            favored_status,
+            signature,
+            timestamp,
+        }
     }
 }
 
@@ -964,6 +1076,111 @@ mod tests {
         assert!(o.witness_resolved);
         assert_eq!(o.winning_status, Some(PolicyHealthStatus::CriticalFailure));
     }
+
+    #[test]
+    fn two_host_autonomous_arbiter_uptime_seniority_resolution() {
+        let msgs = vec![
+            PolicyConsensusMessage::Vote(PolicyHealthVote {
+                policy_id: "KB1".into(),
+                voter_id: "host_senior".into(),
+                status: PolicyHealthStatus::Optimal,
+                uptime_seconds: 5000,
+                timestamp: chrono::Utc::now(),
+                work_nonce: None,
+            }),
+            PolicyConsensusMessage::Vote(PolicyHealthVote {
+                policy_id: "KB1".into(),
+                voter_id: "host_junior".into(),
+                status: PolicyHealthStatus::CriticalFailure,
+                uptime_seconds: 100,
+                timestamp: chrono::Utc::now(),
+                work_nonce: None,
+            }),
+        ];
+
+        let p = BftConsensusParams {
+            enable_reputation_tie_breaker: false,
+            enable_autonomous_arbiter: true,
+            ..Default::default()
+        };
+
+        // Both nodes have identical reputation 0.85 -> autonomous arbiter uses uptime seniority
+        let o = analyze_policy_consensus(&msgs, |_| 0.85, &p);
+        assert!(o.mesh_validated);
+        assert!(o.witness_resolved);
+        assert!(!o.stalemate_conflict);
+        assert_eq!(o.winning_status, Some(PolicyHealthStatus::Optimal));
+    }
+
+    #[test]
+    fn two_host_autonomous_arbiter_deterministic_hash_tie_breaker() {
+        let msgs = vec![
+            vote("hostA", PolicyHealthStatus::Optimal),
+            vote("hostB", PolicyHealthStatus::CriticalFailure),
+        ];
+
+        let p = BftConsensusParams {
+            enable_reputation_tie_breaker: false,
+            enable_autonomous_arbiter: true,
+            ..Default::default()
+        };
+
+        // Identical reputation and uptime -> autonomous arbiter resolves via pure deterministic hash
+        let o1 = analyze_policy_consensus(&msgs, |_| 0.85, &p);
+        let o2 = analyze_policy_consensus(&msgs, |_| 0.85, &p);
+
+        assert!(o1.witness_resolved);
+        assert!(!o1.stalemate_conflict);
+        assert!(o1.winning_status.is_some());
+        // Determinism check: both runs produce identical verdict
+        assert_eq!(o1.winning_status, o2.winning_status);
+        assert_eq!(o1.mesh_validated, o2.mesh_validated);
+    }
+
+    #[test]
+    fn two_host_embedded_virtual_witness_provider_arbitration() {
+        let provider = AutonomousWitnessProvider::from_zone("us-east-1");
+        let witness_id = provider.witness_id().to_string();
+        let pubkey_hex = provider.public_key_hex();
+
+        let vote = provider.arbitrate_two_host_deadlock("KB_POLICY_7", PolicyHealthStatus::Optimal);
+        assert_eq!(vote.policy_id, "KB_POLICY_7");
+        assert_eq!(vote.witness_id, witness_id);
+
+        let msgs = vec![
+            PolicyConsensusMessage::Vote(PolicyHealthVote {
+                policy_id: "KB_POLICY_7".into(),
+                voter_id: "node_1".into(),
+                status: PolicyHealthStatus::Optimal,
+                uptime_seconds: 100,
+                timestamp: chrono::Utc::now(),
+                work_nonce: None,
+            }),
+            PolicyConsensusMessage::Vote(PolicyHealthVote {
+                policy_id: "KB_POLICY_7".into(),
+                voter_id: "node_2".into(),
+                status: PolicyHealthStatus::CriticalFailure,
+                uptime_seconds: 100,
+                timestamp: chrono::Utc::now(),
+                work_nonce: None,
+            }),
+            PolicyConsensusMessage::Witness(vote),
+        ];
+
+        let p = BftConsensusParams {
+            designated_witness_id: Some(witness_id),
+            witness_public_key: Some(pubkey_hex),
+            enable_reputation_tie_breaker: false,
+            ..Default::default()
+        };
+
+        let o = analyze_policy_consensus(&msgs, |_| 0.85, &p);
+        assert!(o.mesh_validated);
+        assert!(o.witness_resolved);
+        assert!(!o.stalemate_conflict);
+        assert_eq!(o.winning_status, Some(PolicyHealthStatus::Optimal));
+    }
 }
+
 
 

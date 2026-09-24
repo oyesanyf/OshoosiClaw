@@ -6,7 +6,7 @@
 //! macOS: Endpoint Security Framework
 
 use osoosi_types::{extract_zip, SecuredExecutor};
-use std::path::Path;
+use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
 use tracing::{info, warn};
@@ -32,6 +32,213 @@ impl AgentProvisioner {
         self.provision_firewall().await?;
         self.provision_malconv_weights().await?;
         self.provision_behavioral_model().await?;
+        #[cfg(target_os = "windows")]
+        self.provision_sysmon_if_missing().await?;
+        Ok(())
+    }
+
+    /// Dynamically acquire, extract, and install Sysmon if missing on Windows.
+    #[cfg(target_os = "windows")]
+    pub async fn provision_sysmon_if_missing(&self) -> anyhow::Result<()> {
+        info!("Checking Sysmon telemetry service status...");
+
+        // a. Check if Sysmon service is already installed
+        let mut installed_service: Option<&'static str> = None;
+        let mut is_stopped = false;
+
+        let mut check_sysmon64 = Command::new("sc.exe");
+        check_sysmon64.args(["query", "Sysmon64"]);
+        if let Ok(output) = self.executor.execute(check_sysmon64).await {
+            if output.status.success() {
+                installed_service = Some("Sysmon64");
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                if stdout.to_uppercase().contains("STOPPED") {
+                    is_stopped = true;
+                }
+            }
+        }
+
+        if installed_service.is_none() {
+            let mut check_sysmon = Command::new("sc.exe");
+            check_sysmon.args(["query", "Sysmon"]);
+            if let Ok(output) = self.executor.execute(check_sysmon).await {
+                if output.status.success() {
+                    installed_service = Some("Sysmon");
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    if stdout.to_uppercase().contains("STOPPED") {
+                        is_stopped = true;
+                    }
+                }
+            }
+        }
+
+        if let Some(svc) = installed_service {
+            if is_stopped {
+                info!("Sysmon service '{}' is stopped. Starting service...", svc);
+                let mut start_cmd = Command::new("sc.exe");
+                start_cmd.args(["start", svc]);
+                let _ = self.executor.execute(start_cmd).await;
+            }
+            info!("Sysmon service is already installed and active.");
+            return Ok(());
+        }
+
+        info!("Sysmon service is not installed. Initiating dynamic acquisition and installation...");
+
+        // b. If Sysmon is NOT installed:
+        // Determine target directory: prefer tools/sysmon in the workspace / working directory.
+        // If creation fails, fall back to %LOCALAPPDATA%\OshoosiClaw\tools\sysmon or temp dir.
+        let target_dir = {
+            let workspace_dir = std::env::current_dir()
+                .map(|cd| cd.join("tools").join("sysmon"))
+                .unwrap_or_else(|_| PathBuf::from("tools").join("sysmon"));
+            if std::fs::create_dir_all(&workspace_dir).is_ok() {
+                workspace_dir
+            } else {
+                let local_app_data = std::env::var("LOCALAPPDATA")
+                    .ok()
+                    .map(|lad| PathBuf::from(&lad).join("OshoosiClaw").join("tools").join("sysmon"));
+                if let Some(lad_dir) = local_app_data {
+                    if std::fs::create_dir_all(&lad_dir).is_ok() {
+                        lad_dir
+                    } else {
+                        std::env::temp_dir().join("OshoosiClaw").join("tools").join("sysmon")
+                    }
+                } else {
+                    std::env::temp_dir().join("OshoosiClaw").join("tools").join("sysmon")
+                }
+            }
+        };
+        std::fs::create_dir_all(&target_dir)?;
+
+        // Choose executable: detect architecture. On 64-bit Windows, use target_dir.join("Sysmon64.exe"), else Sysmon.exe.
+        let is_64bit = cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64");
+        let sysmon_exe_name = if is_64bit { "Sysmon64.exe" } else { "Sysmon.exe" };
+        let sysmon_exe = target_dir.join(sysmon_exe_name);
+
+        let has_binary = sysmon_exe.exists()
+            && std::fs::metadata(&sysmon_exe).map(|m| m.len() > 100 * 1024).unwrap_or(false);
+
+        if !has_binary {
+            info!(
+                "Sysmon binary missing at {}. Downloading Microsoft Sysinternals Sysmon...",
+                sysmon_exe.display()
+            );
+            let zip_path = target_dir.join("sysmon_temp.zip");
+            let download_url = "https://download.sysinternals.com/files/Sysmon.zip";
+
+            self.download_with_resume(download_url, &zip_path).await?;
+
+            // Verify downloaded file exists and is > 100 KB
+            let metadata = std::fs::metadata(&zip_path)?;
+            if metadata.len() <= 100 * 1024 {
+                let _ = std::fs::remove_file(&zip_path);
+                return Err(anyhow::anyhow!(
+                    "Downloaded Sysmon.zip is too small ({} bytes, expected > 100 KB)",
+                    metadata.len()
+                ));
+            }
+
+            info!("Extracting Sysmon to {}...", target_dir.display());
+            extract_zip(&zip_path, &target_dir)?;
+            let _ = std::fs::remove_file(&zip_path);
+        } else {
+            info!("Sysmon binary already present at {}.", sysmon_exe.display());
+        }
+
+        // c. Resolve configuration XML:
+        // Check for config/sysmon-dns.xml (current directory or repo root).
+        // If not found, write a built-in default XML to <target_dir>/sysmon-dns.xml containing Event ID 22 and Event ID 3.
+        let default_config = std::env::current_dir()
+            .map(|cd| cd.join("config").join("sysmon-dns.xml"))
+            .unwrap_or_else(|_| PathBuf::from("config").join("sysmon-dns.xml"));
+
+        let config_path = if default_config.exists() {
+            default_config
+        } else {
+            let fallback_config = target_dir.join("sysmon-dns.xml");
+            if !fallback_config.exists() {
+                const DEFAULT_SYSMON_DNS_XML: &str = r#"<Sysmon schemaversion="4.90">
+  <HashAlgorithms>SHA256</HashAlgorithms>
+  <CheckRevocation/>
+  <EventFiltering>
+    <!-- Event ID 22: DNS Query Logging -->
+    <RuleGroup name="DNS Queries" groupRelation="or">
+      <DnsQuery onmatch="exclude">
+        <QueryName condition="end with">.local</QueryName>
+        <QueryName condition="end with">.lan</QueryName>
+        <QueryName condition="end with">.home</QueryName>
+        <QueryName condition="is">localhost</QueryName>
+      </DnsQuery>
+    </RuleGroup>
+
+    <!-- Event ID 3: Network Connection Logging -->
+    <RuleGroup name="Network Connections" groupRelation="or">
+      <NetworkConnect onmatch="include">
+        <DestinationPort condition="is">53</DestinationPort>
+        <DestinationPort condition="is">853</DestinationPort>
+        <DestinationPort condition="is">443</DestinationPort>
+        <DestinationPort condition="is">80</DestinationPort>
+      </NetworkConnect>
+    </RuleGroup>
+  </EventFiltering>
+</Sysmon>
+"#;
+                std::fs::write(&fallback_config, DEFAULT_SYSMON_DNS_XML)?;
+                info!("Wrote default Sysmon DNS XML configuration to {}", fallback_config.display());
+            }
+            fallback_config
+        };
+
+        // d. Execute installation:
+        // Run: <sysmon_exe> -i <config_path> -accepteula via self.executor.execute(cmd).await.
+        // Gracefully handle lack of administrator permissions: if execution fails or exit code is non-zero (e.g. exit code 5 / Access Denied),
+        // log a clear warn! message with instructions for manual administrator installation, and do NOT fail startup.
+        info!(
+            "Executing Sysmon installation: {} -i {} -accepteula",
+            sysmon_exe.display(),
+            config_path.display()
+        );
+        let mut install_cmd = Command::new(&sysmon_exe);
+        install_cmd.args(["-i", config_path.to_str().unwrap_or("config/sysmon-dns.xml"), "-accepteula"]);
+
+        match self.executor.execute(install_cmd).await {
+            Ok(output) if output.status.success() => {
+                info!("Sysmon installed and configured successfully for DNS & network telemetry.");
+            }
+            Ok(output) => {
+                let code = output.status.code().unwrap_or(-1);
+                let out_msg = String::from_utf8_lossy(&output.stdout);
+                let err_msg = String::from_utf8_lossy(&output.stderr);
+                warn!(
+                    "Failed to automatically install Sysmon (exit code {}). Sysmon installation requires Administrator privileges. \
+                    To enable kernel DNS and network telemetry, please execute the following command in an elevated Administrator prompt:\n\
+                    \"{}\" -i \"{}\" -accepteula\n\
+                    Details: {}{}",
+                    code,
+                    sysmon_exe.display(),
+                    config_path.display(),
+                    out_msg.trim(),
+                    err_msg.trim()
+                );
+            }
+            Err(e) => {
+                warn!(
+                    "Failed to execute Sysmon installer at '{}': {}. Administrator privileges are required. \
+                    Please run '\"{}\" -i \"{}\" -accepteula' in an elevated Administrator prompt.",
+                    sysmon_exe.display(),
+                    e,
+                    sysmon_exe.display(),
+                    config_path.display()
+                );
+            }
+        }
+
+        Ok(())
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub async fn provision_sysmon_if_missing(&self) -> anyhow::Result<()> {
         Ok(())
     }
 
@@ -811,6 +1018,160 @@ impl AgentProvisioner {
         info!("Behavioral model weights provisioned successfully.");
         Ok(())
     }
+}
 
+#[cfg(all(test, target_os = "windows"))]
+mod tests {
+    use super::*;
+    use osoosi_types::async_trait;
+    use std::os::windows::process::ExitStatusExt;
+    use std::process::ExitStatus;
+    use std::sync::Mutex;
+
+    struct MockSysmonExecutor {
+        executed_commands: Mutex<Vec<String>>,
+        sc_query_sysmon64_response: Option<(i32, &'static str)>,
+        sc_query_sysmon_response: Option<(i32, &'static str)>,
+        install_response: (i32, &'static str),
+    }
+
+    #[async_trait]
+    impl SecuredExecutor for MockSysmonExecutor {
+        async fn execute(&self, cmd: Command) -> anyhow::Result<std::process::Output> {
+            let prog = cmd.get_program().to_string_lossy().to_string();
+            let args: Vec<String> = cmd
+                .get_args()
+                .map(|a| a.to_string_lossy().to_string())
+                .collect();
+            let full_cmd = format!("{} {}", prog, args.join(" "));
+            self.executed_commands
+                .lock()
+                .unwrap()
+                .push(full_cmd.clone());
+
+            if full_cmd.contains("sc.exe query Sysmon64") {
+                if let Some((code, stdout)) = self.sc_query_sysmon64_response {
+                    return Ok(std::process::Output {
+                        status: ExitStatus::from_raw(code as u32),
+                        stdout: stdout.as_bytes().to_vec(),
+                        stderr: Vec::new(),
+                    });
+                }
+                return Ok(std::process::Output {
+                    status: ExitStatus::from_raw(1),
+                    stdout: b"FAILED 1060".to_vec(),
+                    stderr: Vec::new(),
+                });
+            }
+
+            if full_cmd.contains("sc.exe query Sysmon") {
+                if let Some((code, stdout)) = self.sc_query_sysmon_response {
+                    return Ok(std::process::Output {
+                        status: ExitStatus::from_raw(code as u32),
+                        stdout: stdout.as_bytes().to_vec(),
+                        stderr: Vec::new(),
+                    });
+                }
+                return Ok(std::process::Output {
+                    status: ExitStatus::from_raw(1),
+                    stdout: b"FAILED 1060".to_vec(),
+                    stderr: Vec::new(),
+                });
+            }
+
+            if full_cmd.contains("-i") && full_cmd.contains("-accepteula") {
+                let (code, stdout) = self.install_response;
+                return Ok(std::process::Output {
+                    status: ExitStatus::from_raw(code as u32),
+                    stdout: stdout.as_bytes().to_vec(),
+                    stderr: Vec::new(),
+                });
+            }
+
+            Ok(std::process::Output {
+                status: ExitStatus::from_raw(0),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            })
+        }
+
+        async fn download(&self, _url: &str, _dest: &Path, _resume: bool) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_sysmon_already_installed_and_running() {
+        let executor = Arc::new(MockSysmonExecutor {
+            executed_commands: Mutex::new(Vec::new()),
+            sc_query_sysmon64_response: Some((0, "STATE : 4 RUNNING")),
+            sc_query_sysmon_response: None,
+            install_response: (0, "ok"),
+        });
+
+        let provisioner = AgentProvisioner::new(executor.clone());
+        let res = provisioner.provision_sysmon_if_missing().await;
+        assert!(res.is_ok());
+
+        let cmds = executor.executed_commands.lock().unwrap();
+        assert_eq!(cmds.len(), 1);
+        assert!(cmds[0].contains("sc.exe query Sysmon64"));
+    }
+
+    #[tokio::test]
+    async fn test_sysmon_installed_but_stopped() {
+        let executor = Arc::new(MockSysmonExecutor {
+            executed_commands: Mutex::new(Vec::new()),
+            sc_query_sysmon64_response: Some((0, "STATE : 1 STOPPED")),
+            sc_query_sysmon_response: None,
+            install_response: (0, "ok"),
+        });
+
+        let provisioner = AgentProvisioner::new(executor.clone());
+        let res = provisioner.provision_sysmon_if_missing().await;
+        assert!(res.is_ok());
+
+        let cmds = executor.executed_commands.lock().unwrap();
+        assert_eq!(cmds.len(), 2);
+        assert!(cmds[0].contains("sc.exe query Sysmon64"));
+        assert!(cmds[1].contains("sc.exe start Sysmon64"));
+    }
+
+    #[tokio::test]
+    async fn test_sysmon_32bit_installed() {
+        let executor = Arc::new(MockSysmonExecutor {
+            executed_commands: Mutex::new(Vec::new()),
+            sc_query_sysmon64_response: None,
+            sc_query_sysmon_response: Some((0, "STATE : 4 RUNNING")),
+            install_response: (0, "ok"),
+        });
+
+        let provisioner = AgentProvisioner::new(executor.clone());
+        let res = provisioner.provision_sysmon_if_missing().await;
+        assert!(res.is_ok());
+
+        let cmds = executor.executed_commands.lock().unwrap();
+        assert_eq!(cmds.len(), 2);
+        assert!(cmds[0].contains("sc.exe query Sysmon64"));
+        assert!(cmds[1].contains("sc.exe query Sysmon"));
+    }
+
+    #[tokio::test]
+    async fn test_sysmon_not_installed_fails_gracefully_on_access_denied() {
+        let executor = Arc::new(MockSysmonExecutor {
+            executed_commands: Mutex::new(Vec::new()),
+            sc_query_sysmon64_response: None,
+            sc_query_sysmon_response: None,
+            install_response: (5, "Access is denied."),
+        });
+
+        let provisioner = AgentProvisioner::new(executor.clone());
+        let res = provisioner.provision_sysmon_if_missing().await;
+        // Graceful handling requirement: do NOT fail startup!
+        assert!(res.is_ok());
+
+        let cmds = executor.executed_commands.lock().unwrap();
+        assert!(cmds.iter().any(|c| c.contains("-i") && c.contains("-accepteula")));
+    }
 }
 

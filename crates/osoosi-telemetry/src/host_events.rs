@@ -190,6 +190,13 @@ impl WindowsEventReader {
                 last_poll_time: None,
                 is_available: true,
             });
+            // Native Windows DNS Client Operational channel
+            channels.push(WindowsChannelSubscription {
+                channel: "Microsoft-Windows-DNS-Client/Operational".to_string(),
+                query_filter: None,
+                last_poll_time: None,
+                is_available: true,
+            });
         } else {
             // User requested a specific channel
             channels.push(WindowsChannelSubscription {
@@ -421,6 +428,50 @@ impl WindowsEventReader {
             data.insert("EventRecordID".to_string(), serde_json::json!(record_id));
         }
 
+        // For Event ID 3008 (DNS Client query completed), ensure fields like QueryName, QueryType, QueryResults, QueryStatus are populated into data
+        if event_id == 3008 {
+            let dns_fields = [
+                "QueryName",
+                "QueryType",
+                "QueryResults",
+                "QueryStatus",
+                "QueryOptions",
+            ];
+            for field in dns_fields {
+                if !data.contains_key(field) {
+                    if let Some(val) = Self::extract_tag_value(xml, field) {
+                        data.insert(field.to_string(), serde_json::json!(val));
+                    }
+                }
+            }
+            // Positional fallback if EventData had unnamed <Data>...</Data>
+            if !data.contains_key("QueryName") {
+                if let Some(v) = data.get("Data_0").cloned() {
+                    data.insert("QueryName".to_string(), v);
+                }
+            }
+            if !data.contains_key("QueryType") {
+                if let Some(v) = data.get("Data_1").cloned() {
+                    data.insert("QueryType".to_string(), v);
+                }
+            }
+            if !data.contains_key("QueryOptions") {
+                if let Some(v) = data.get("Data_2").cloned() {
+                    data.insert("QueryOptions".to_string(), v);
+                }
+            }
+            if !data.contains_key("QueryStatus") {
+                if let Some(v) = data.get("Data_3").cloned() {
+                    data.insert("QueryStatus".to_string(), v);
+                }
+            }
+            if !data.contains_key("QueryResults") {
+                if let Some(v) = data.get("Data_4").cloned() {
+                    data.insert("QueryResults".to_string(), v);
+                }
+            }
+        }
+
         // --- NORMALIZATION ---
         // Normalize numeric and hex string fields (ProcessId, Ports, etc.) into integer numbers
         let numeric_keys = [
@@ -479,6 +530,23 @@ impl WindowsEventReader {
             }
         }
 
+        // If ProcessId is not found in EventData, check <Execution ProcessID="..." /> and parse as integer
+        if !data.contains_key("ProcessId") {
+            if let Some(exec_pid_str) = Self::extract_tag_attribute(xml, "Execution", "ProcessID")
+                .or_else(|| Self::extract_tag_attribute(xml, "Execution", "ProcessId"))
+            {
+                let trimmed = exec_pid_str.trim();
+                let parsed = if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+                    u64::from_str_radix(hex, 16).ok()
+                } else {
+                    trimmed.parse::<u64>().ok()
+                };
+                if let Some(pid) = parsed {
+                    data.insert("ProcessId".to_string(), serde_json::json!(pid));
+                }
+            }
+        }
+
         Some(HostSecurityEvent {
             source: osoosi_types::HostEventSource::WindowsEventLog,
             event_id,
@@ -532,6 +600,13 @@ impl WindowsEventReader {
                         if let Some(attr_idx) = tag_header.find(&attr_pattern) {
                             let val_start = attr_idx + attr_pattern.len();
                             if let Some(val_end) = tag_header[val_start..].find('"') {
+                                return Some(tag_header[val_start..val_start + val_end].to_string());
+                            }
+                        }
+                        let attr_single = format!("{}='", attr);
+                        if let Some(attr_idx) = tag_header.find(&attr_single) {
+                            let val_start = attr_idx + attr_single.len();
+                            if let Some(val_end) = tag_header[val_start..].find('\'') {
                                 return Some(tag_header[val_start..val_start + val_end].to_string());
                             }
                         }
@@ -730,6 +805,192 @@ mod windows_tests {
         let xml = r#"<Event><System><Correlation/><Channel/><EventID>1</EventID><Channel>Security</Channel></System></Event>"#;
         assert_eq!(WindowsEventReader::extract_tag_value(xml, "EventID"), Some("1".to_string()));
         assert_eq!(WindowsEventReader::extract_tag_value(xml, "Channel"), Some("Security".to_string()));
+    }
+
+    #[tokio::test]
+    async fn parses_sysmon_dns_event_22_comprehensive() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Microsoft-Windows-Sysmon" Guid="{5770385F-C22A-43E0-BF4C-06F5698FFBD9}"/>
+    <EventID>22</EventID>
+    <Version>5</Version>
+    <Level>4</Level>
+    <Computer>win-sensor-01</Computer>
+    <EventRecordID>34567</EventRecordID>
+    <TimeCreated SystemTime="2026-09-23T20:15:30.000000Z"/>
+    <Channel>Microsoft-Windows-Sysmon/Operational</Channel>
+  </System>
+  <EventData>
+    <Data Name="RuleName">-</Data>
+    <Data Name="UtcTime">2026-09-23 20:15:30.123</Data>
+    <Data Name="ProcessGuid">{B856338C-D9AA-63D1-2B00-000000000E00}</Data>
+    <Data Name="ProcessId">4321</Data>
+    <Data Name="QueryName">c2.malicious.example.com</Data>
+    <Data Name="QueryStatus">0</Data>
+    <Data Name="QueryResults">::ffff:192.0.2.1;198.51.100.10;</Data>
+    <Data Name="Image">C:\Windows\System32\curl.exe</Data>
+    <Data Name="User">WORKGROUP\SYSTEM</Data>
+  </EventData>
+</Event>"#;
+
+        let event = WindowsEventReader::parse_xml(xml).expect("Sysmon Event 22 should parse");
+        assert_eq!(event.event_id, 22);
+        assert_eq!(event.computer, "win-sensor-01");
+        assert_eq!(
+            event.data.get("Provider").and_then(|v| v.as_str()),
+            Some("Microsoft-Windows-Sysmon")
+        );
+        assert_eq!(
+            event.data.get("ProcessId").and_then(|v| v.as_u64()),
+            Some(4321)
+        );
+        assert_eq!(
+            event.data.get("QueryName").and_then(|v| v.as_str()),
+            Some("c2.malicious.example.com")
+        );
+        assert_eq!(
+            event.data.get("QueryStatus").and_then(|v| v.as_str()),
+            Some("0")
+        );
+        assert_eq!(
+            event.data.get("QueryResults").and_then(|v| v.as_str()),
+            Some("::ffff:192.0.2.1;198.51.100.10;")
+        );
+        assert_eq!(
+            event.data.get("Image").and_then(|v| v.as_str()),
+            Some(r"C:\Windows\System32\curl.exe")
+        );
+    }
+
+    #[tokio::test]
+    async fn parses_windows_dns_client_event_3008() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Microsoft-Windows-DNS-Client" Guid="{1C950233-BE22-409B-B16E-2E3890372570}"/>
+    <EventID>3008</EventID>
+    <Version>0</Version>
+    <Level>4</Level>
+    <Task>1014</Task>
+    <Opcode>0</Opcode>
+    <Keywords>0x4000000000000000</Keywords>
+    <TimeCreated SystemTime="2026-09-23T20:20:00.000000Z"/>
+    <EventRecordID>98765</EventRecordID>
+    <Execution ProcessID="5544" ThreadID="1122"/>
+    <Channel>Microsoft-Windows-DNS-Client/Operational</Channel>
+    <Computer>dns-host-01</Computer>
+  </System>
+  <EventData>
+    <Data Name="QueryName">api.github.com</Data>
+    <Data Name="QueryType">1</Data>
+    <Data Name="QueryOptions">1073741824</Data>
+    <Data Name="QueryStatus">0</Data>
+    <Data Name="QueryResults">140.82.121.4;</Data>
+  </EventData>
+</Event>"#;
+
+        let event = WindowsEventReader::parse_xml(xml).expect("Windows DNS Client Event 3008 should parse");
+        assert_eq!(event.event_id, 3008);
+        assert_eq!(event.computer, "dns-host-01");
+        assert_eq!(
+            event.data.get("Provider").and_then(|v| v.as_str()),
+            Some("Microsoft-Windows-DNS-Client")
+        );
+        assert_eq!(
+            event.data.get("Channel").and_then(|v| v.as_str()),
+            Some("Microsoft-Windows-DNS-Client/Operational")
+        );
+        // ProcessID must be extracted from <Execution ProcessID="5544" ... />
+        assert_eq!(
+            event.data.get("ProcessId").and_then(|v| v.as_u64()),
+            Some(5544)
+        );
+        assert_eq!(
+            event.data.get("QueryName").and_then(|v| v.as_str()),
+            Some("api.github.com")
+        );
+        assert_eq!(
+            event.data.get("QueryType").and_then(|v| v.as_str()),
+            Some("1")
+        );
+        assert_eq!(
+            event.data.get("QueryStatus").and_then(|v| v.as_str()),
+            Some("0")
+        );
+        assert_eq!(
+            event.data.get("QueryResults").and_then(|v| v.as_str()),
+            Some("140.82.121.4;")
+        );
+    }
+
+    #[tokio::test]
+    async fn parses_windows_dns_client_event_3008_hex_pid() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Microsoft-Windows-DNS-Client"/>
+    <EventID>3008</EventID>
+    <Execution ProcessID="0x15A8"/>
+    <Channel>Microsoft-Windows-DNS-Client/Operational</Channel>
+  </System>
+  <EventData>
+    <Data Name="QueryName">update.microsoft.com</Data>
+    <Data Name="QueryType">28</Data>
+    <Data Name="QueryStatus">0</Data>
+    <Data Name="QueryResults">2603:1030:b:1::1f;</Data>
+  </EventData>
+</Event>"#;
+
+        let event = WindowsEventReader::parse_xml(xml).expect("Hex ProcessID 3008 should parse");
+        assert_eq!(event.event_id, 3008);
+        // 0x15A8 = 5544
+        assert_eq!(
+            event.data.get("ProcessId").and_then(|v| v.as_u64()),
+            Some(5544)
+        );
+        assert_eq!(
+            event.data.get("QueryName").and_then(|v| v.as_str()),
+            Some("update.microsoft.com")
+        );
+        assert_eq!(
+            event.data.get("QueryResults").and_then(|v| v.as_str()),
+            Some("2603:1030:b:1::1f;")
+        );
+    }
+
+    #[tokio::test]
+    async fn parses_windows_dns_client_event_3008_unnamed_data() {
+        let xml = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Microsoft-Windows-DNS-Client"/>
+    <EventID>3008</EventID>
+    <Execution ProcessID="7788"/>
+  </System>
+  <EventData>
+    <Data>auth.example.org</Data>
+    <Data>1</Data>
+    <Data>0</Data>
+    <Data>0</Data>
+    <Data>192.0.2.53;</Data>
+  </EventData>
+</Event>"#;
+
+        let event = WindowsEventReader::parse_xml(xml).expect("Unnamed EventData 3008 should parse");
+        assert_eq!(event.event_id, 3008);
+        assert_eq!(
+            event.data.get("ProcessId").and_then(|v| v.as_u64()),
+            Some(7788)
+        );
+        assert_eq!(
+            event.data.get("QueryName").and_then(|v| v.as_str()),
+            Some("auth.example.org")
+        );
+        assert_eq!(
+            event.data.get("QueryType").and_then(|v| v.as_str()),
+            Some("1")
+        );
+        assert_eq!(
+            event.data.get("QueryResults").and_then(|v| v.as_str()),
+            Some("192.0.2.53;")
+        );
     }
 }
 

@@ -172,6 +172,7 @@ sequenceDiagram
     O->>O: Confidence 0.95 -> ISOLATE
     O->>M: Broadcast Threat
     O->>O: Kill Process
+```
 
 ### C2 Detection Strategy (Windows/Linux/macOS)
 

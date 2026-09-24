@@ -8,13 +8,18 @@ pub mod holograph;
 pub mod join_gate;
 pub mod mesh;
 pub mod pqc;
+pub mod reconciliation;
 pub mod tarpit;
 
 pub use confidential::*;
 pub use ghost_node::*;
 pub use join_gate::JoinGate;
 pub use mesh::*;
+pub use reconciliation::*;
 pub use tarpit::*;
+
+/// Gossipsub topic for self-healing mesh heartbeat gossip.
+pub const HEARTBEAT_TOPIC: &str = "osoosi-heartbeat-v1";
 
 /// Gossipsub topic for mesh-wide tarpitting signals.
 pub const TARPIT_TOPIC: &str = "osoosi-tarpit-v1";
@@ -24,6 +29,16 @@ pub const CONFIDENTIAL_TOPIC: &str = "osoosi-confidential-v1";
 
 /// Gossipsub topic for TPM 2.0 remote attestation challenge-response.
 pub const ATTESTATION_TOPIC: &str = "osoosi-attestation-v1";
+
+/// Mesh heartbeat payload for P2P peer liveness tracking and partition reconciliation.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+pub struct MeshHeartbeat {
+    pub peer_id: String,
+    pub zone: String,
+    pub sequence: u64,
+    pub uptime_secs: u64,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+}
 
 /// Attestation exchange messages across the Gossip mesh.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
@@ -71,6 +86,10 @@ pub enum MeshCommand {
     BroadcastAttestation(MeshAttestationMessage),
     /// Broadcast a witness / arbiter tie-breaker vote for 2-host stalemate resolution.
     BroadcastWitnessVote(osoosi_types::WitnessVote),
+    /// Broadcast peer heartbeat across the mesh for self-healing gossip reconciliation.
+    BroadcastHeartbeat(MeshHeartbeat),
+    /// Trigger peer liveness reconciliation and partition recovery sweep.
+    ReconcilePeers,
 }
 
 /// Collaborative attacker throttling signal for the Gossip mesh.

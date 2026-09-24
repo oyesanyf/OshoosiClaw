@@ -73,13 +73,14 @@ impl AttestationChallenge {
 }
 
 /// Hardware OEM vendor identifying the physical TPM silicon manufacturer.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum TpmOemVendor {
     Intel,
     Amd,
     Infineon,
     StMicro,
     Nuvoton,
+    Nationz,
     Microchip,
     Unknown,
 }
@@ -92,6 +93,7 @@ impl std::fmt::Display for TpmOemVendor {
             Self::Infineon => write!(f, "Infineon"),
             Self::StMicro => write!(f, "STMicroelectronics"),
             Self::Nuvoton => write!(f, "Nuvoton"),
+            Self::Nationz => write!(f, "Nationz"),
             Self::Microchip => write!(f, "Microchip"),
             Self::Unknown => write!(f, "Unknown"),
         }
@@ -149,6 +151,8 @@ impl TpmEkCertificate {
             TpmOemVendor::StMicro
         } else if issuer_lc.contains("nuvoton") || subject_lc.contains("nuvoton") {
             TpmOemVendor::Nuvoton
+        } else if issuer_lc.contains("nationz") || subject_lc.contains("nationz") {
+            TpmOemVendor::Nationz
         } else if issuer_lc.contains("microchip") || issuer_lc.contains("atmel") || subject_lc.contains("microchip") {
             TpmOemVendor::Microchip
         } else {
@@ -389,6 +393,8 @@ pub fn verify_tpm_ek_certificate(
         TpmOemVendor::StMicro
     } else if issuer_lc.contains("nuvoton") || subject_lc.contains("nuvoton") {
         TpmOemVendor::Nuvoton
+    } else if issuer_lc.contains("nationz") || subject_lc.contains("nationz") {
+        TpmOemVendor::Nationz
     } else if issuer_lc.contains("microchip") || issuer_lc.contains("atmel") || subject_lc.contains("microchip") {
         TpmOemVendor::Microchip
     } else {

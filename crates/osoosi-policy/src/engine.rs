@@ -140,12 +140,43 @@ fn is_trusted_operational_tool(event: &HostSecurityEvent, config: &osoosi_types:
     false
 }
 
+fn is_ide_or_developer_path(path: &str) -> bool {
+    let p = path.replace('/', "\\").to_ascii_lowercase();
+    p.contains("\\.vscode\\")
+        || p.contains("\\vscode-win32-x64\\")
+        || p.contains("\\modelfusion\\ide\\")
+        || p.contains("\\resources\\app\\")
+        || p.contains("\\extensions\\")
+        || p.contains("\\target\\debug\\")
+        || p.contains("\\target\\release\\")
+        || p.contains("\\node_modules\\")
+        || p.contains("\\.cargo\\")
+        || p.contains("\\.rustup\\")
+        || p.contains("\\.idea\\")
+        || p.contains("\\plugins\\")
+        || p.contains("\\git\\mingw64\\")
+        || p.contains("\\git-core\\")
+}
+
+fn is_event_dev_or_signed(event: &HostSecurityEvent) -> bool {
+    for key in ["Image", "TargetImage", "TargetFilename"] {
+        if let Some(p) = event.data.get(key).and_then(|v| v.as_str()) {
+            if is_ide_or_developer_path(p) || osoosi_types::is_trusted_signed_binary(std::path::Path::new(p)) {
+                return true;
+            }
+        }
+    }
+    false
+}
+
 fn classify_vote(
     voter: &str,
     result: &VoteResult,
     event: &HostSecurityEvent,
 ) -> (EvidenceClass, f32, bool) {
     let reason_lc = result.reason.to_ascii_lowercase();
+    let is_dev_or_signed = is_event_dev_or_signed(event);
+
     match voter {
         "OTX-C2" => {
             let live = matches!(
@@ -164,11 +195,35 @@ fn classify_vote(
         "YaraX-Signatures" | "YaraX-Memory" | "HollowsHunter-Memory" | "MemoryInspection-Native" => {
             (EvidenceClass::Memory, 1.0, true)
         }
-        "SemanticIntent" | "LLM-Reasoning" => (EvidenceClass::Behavior, 0.78, true),
+        "SemanticIntent" | "LLM-Reasoning" | "BehavioralAI-Cortex" => {
+            if is_dev_or_signed {
+                (EvidenceClass::Behavior, 0.35, false)
+            } else {
+                (EvidenceClass::Behavior, 0.78, true)
+            }
+        }
         "Decompile" => (EvidenceClass::Behavior, 0.96, true),
-        "Capa-Behavior" => (EvidenceClass::Behavior, 0.92, true),
-        "Floss-Artifact" => (EvidenceClass::StaticArtifact, 0.82, false),
-        "Dotscope-Forensics" => (EvidenceClass::StaticArtifact, 0.85, true),
+        "Capa-Behavior" => {
+            if is_dev_or_signed {
+                (EvidenceClass::Behavior, 0.35, false)
+            } else {
+                (EvidenceClass::Behavior, 0.92, true)
+            }
+        }
+        "Floss-Artifact" => {
+            if is_dev_or_signed {
+                (EvidenceClass::StaticArtifact, 0.25, false)
+            } else {
+                (EvidenceClass::StaticArtifact, 0.82, false)
+            }
+        }
+        "Dotscope-Forensics" => {
+            if is_dev_or_signed {
+                (EvidenceClass::StaticArtifact, 0.30, false)
+            } else {
+                (EvidenceClass::StaticArtifact, 0.85, true)
+            }
+        }
         name if name.contains("NexusShield") => (EvidenceClass::StaticArtifact, 0.95, true),
         "ZeroDayTracker" => (EvidenceClass::ThreatIntel, 1.0, true),
         "SandboxSurfaceAnalysis" => (EvidenceClass::Behavior, 0.85, true),
@@ -180,8 +235,8 @@ fn classify_vote(
         name if name.contains("MalConv") || name.contains("ML") => {
             let weak_pe_signature =
                 reason_lc.contains("ml=0.000") && reason_lc.contains("sig=1.000");
-            if weak_pe_signature {
-                (EvidenceClass::StaticArtifact, 0.42, false)
+            if weak_pe_signature || is_dev_or_signed {
+                (EvidenceClass::StaticArtifact, 0.28, false)
             } else {
                 (EvidenceClass::StaticArtifact, 0.78, true)
             }
@@ -230,6 +285,7 @@ fn orchestrate_evidence(votes: &[EvidenceVote], event: &HostSecurityEvent, confi
         1 | 5 // 1: ProcessCreate, 5: ProcessTerminate
     );
     let trusted_operational_tool = is_trusted_operational_tool(event, config);
+    let is_dev_or_signed_target = is_event_dev_or_signed(event);
 
     if threat_intel_only {
         confidence = confidence.min(0.49);
@@ -240,10 +296,10 @@ fn orchestrate_evidence(votes: &[EvidenceVote], event: &HostSecurityEvent, confi
     if has_static && !has_behavior && !has_memory && !has_live_network && independent < 3 {
         confidence = confidence.min(0.68);
     }
-    if trusted_operational_tool && !has_live_network && !has_behavior && !has_memory {
+    if (trusted_operational_tool || is_dev_or_signed_target) && !has_live_network && !has_behavior && !has_memory {
         confidence = confidence.min(0.18);
-    } else if trusted_operational_tool && !strong_action {
-        confidence = confidence.min(0.45);
+    } else if (trusted_operational_tool || is_dev_or_signed_target) && !strong_action {
+        confidence = confidence.min(0.40);
     }
 
     // NVD-Negative Suppression: if the CVE lookup explicitly found NO CVEs, and we only have static/intel evidence,

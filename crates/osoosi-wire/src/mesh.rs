@@ -48,6 +48,8 @@ pub struct MeshNode {
     pub model_delta_topic: gossipsub::IdentTopic,
     pub tripwire_topic: gossipsub::IdentTopic,
     pub attestation_topic: gossipsub::IdentTopic,
+    pub heartbeat_topic: gossipsub::IdentTopic,
+    pub reconciliation: Arc<super::MeshReconciliationEngine>,
     pub zone: String,
     pub memory: Arc<osoosi_memory::MemoryStore>,
     pub dial_semaphore: Arc<tokio::sync::Semaphore>,
@@ -161,6 +163,8 @@ impl MeshNode {
         let tripwire_topic = gossipsub::IdentTopic::new(format!("osoosi-deception-tripwire-{}", zone));
         let attestation_topic =
             gossipsub::IdentTopic::new(format!("{}-{}", super::ATTESTATION_TOPIC, zone));
+        let heartbeat_topic =
+            gossipsub::IdentTopic::new(format!("{}-{}", super::HEARTBEAT_TOPIC, zone));
 
         swarm.behaviour_mut().gossipsub.subscribe(&threat_topic)?;
         swarm
@@ -201,6 +205,10 @@ impl MeshNode {
             .behaviour_mut()
             .gossipsub
             .subscribe(&attestation_topic)?;
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&heartbeat_topic)?;
 
         let mesh_config = osoosi_types::load_mesh_listen_config();
 
@@ -296,6 +304,8 @@ impl MeshNode {
             model_delta_topic,
             tripwire_topic,
             attestation_topic,
+            heartbeat_topic,
+            reconciliation: Arc::new(super::MeshReconciliationEngine::default()),
             zone,
             memory,
             dial_semaphore: Arc::new(tokio::sync::Semaphore::new(16)),
@@ -448,6 +458,7 @@ impl MeshNode {
         let mut dial_backoff_secs = 0u64;
         let mut socket_cooldown = tokio::time::interval(Duration::from_secs(30));
         socket_cooldown.tick().await; // skip first tick
+        let mut heartbeat_sweep_interval = tokio::time::interval(Duration::from_secs(15));
         let mut consecutive_exhaustion_count: u32 = 0;
 
         // Initial bootstrapping with a small delay to let the system settle
@@ -482,6 +493,16 @@ impl MeshNode {
                     let target_random = PeerId::random();
                     debug!("[Crawler] Actively hunting for nodes near: {:?}", target_random);
                     self.swarm.behaviour_mut().kademlia.get_closest_peers(target_random);
+                }
+                _ = heartbeat_sweep_interval.tick() => {
+                    let actions = self.reconciliation.reconcile_partitions();
+                    for action in actions {
+                        if action.action == super::ReconciliationKind::RedialPartition {
+                            if let Ok(pid) = action.peer_id.parse::<PeerId>() {
+                                let _ = self.swarm.behaviour_mut().kademlia.get_closest_peers(pid);
+                            }
+                        }
+                    }
                 }
                 Some(cmd) = command_rx.recv() => match cmd {
                     MeshCommand::ApprovePeer(pid) => {
@@ -572,6 +593,20 @@ impl MeshNode {
                     MeshCommand::BroadcastWitnessVote(witness) => {
                         let topic = self.consensus_topic.clone();
                         self.publish_gossip_json(&topic, &osoosi_types::PolicyConsensusMessage::Witness(witness));
+                    }
+                    MeshCommand::BroadcastHeartbeat(hb) => {
+                        let topic = self.heartbeat_topic.clone();
+                        self.publish_gossip_json(&topic, &hb);
+                    }
+                    MeshCommand::ReconcilePeers => {
+                        let actions = self.reconciliation.reconcile_partitions();
+                        for action in actions {
+                            if action.action == super::ReconciliationKind::RedialPartition {
+                                if let Ok(pid) = action.peer_id.parse::<PeerId>() {
+                                    let _ = self.swarm.behaviour_mut().kademlia.get_closest_peers(pid);
+                                }
+                            }
+                        }
                     }
                 },
                 event = self.swarm.select_next_some() => match event {
@@ -664,6 +699,13 @@ impl MeshNode {
                                             let _ = join_gate.handle_attestation_response(&responder_peer_id, &response);
                                         }
                                     }
+                                }
+                            }
+                        } else if message.topic == self.heartbeat_topic.hash() {
+                            if let Ok(hb) = serde_json::from_slice::<super::MeshHeartbeat>(&message.data) {
+                                let action = self.reconciliation.process_heartbeat(&hb);
+                                if action.action == super::ReconciliationKind::CatchUpGossip {
+                                    debug!("Self-healing: Catch-up gossip triggered for peer {}", hb.peer_id);
                                 }
                             }
                         }

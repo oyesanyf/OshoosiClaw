@@ -22,3 +22,7 @@ rand = { workspace = true }
 uuid = { workspace = true }
 async-trait = { workspace = true }
 
+[target.'cfg(windows)'.dependencies]
+windows = { workspace = true }
+wmi = "0.13"
+

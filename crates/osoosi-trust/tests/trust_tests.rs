@@ -427,5 +427,65 @@ fn test_tpm_ek_forged_issuer_cert_rejected() {
     }
 }
 
+#[test]
+fn test_oem_root_store_all_vendors() {
+    use osoosi_trust::oem_roots::*;
+    use osoosi_types::TpmOemVendor;
+
+    let vendors = [
+        TpmOemVendor::Intel,
+        TpmOemVendor::Amd,
+        TpmOemVendor::Infineon,
+        TpmOemVendor::StMicro,
+        TpmOemVendor::Nuvoton,
+        TpmOemVendor::Nationz,
+    ];
+
+    for vendor in &vendors {
+        let fps = get_verified_oem_root_fingerprints(*vendor);
+        assert!(!fps.is_empty(), "Store must contain verified fingerprints for {:?}", vendor);
+        for fp in &fps {
+            assert!(
+                is_trusted_oem_root(*vendor, fp),
+                "Root fingerprint {} must be recognized for {:?}",
+                fp, vendor
+            );
+        }
+    }
+}
+
+#[test]
+fn test_oem_root_offline_leaf_verification() {
+    use osoosi_trust::{generate_mock_oem_ek_certificate, verify_leaf_against_oem_roots};
+    use osoosi_types::TpmOemVendor;
+
+    for vendor in [
+        TpmOemVendor::Intel,
+        TpmOemVendor::Amd,
+        TpmOemVendor::Infineon,
+        TpmOemVendor::StMicro,
+        TpmOemVendor::Nuvoton,
+        TpmOemVendor::Nationz,
+    ] {
+        let ek = generate_mock_oem_ek_certificate(vendor, &format!("{:?} Genuine Silicon Leaf", vendor)).unwrap();
+        let verified = verify_leaf_against_oem_roots(&ek, None).expect("Offline OEM verification must succeed");
+        assert_eq!(verified.vendor, vendor);
+    }
+}
+
+#[test]
+fn test_hardware_tpm2_nvram_and_tbs_inspection() {
+    use osoosi_trust::{inspect_tpm_hardware_tbs, read_hardware_ek_certificate_nvram};
+
+    let inspection = inspect_tpm_hardware_tbs();
+    assert_eq!(inspection.tpm_version, "2.0");
+    assert!(!inspection.interface_type.is_empty());
+
+    let ek_cert = read_hardware_ek_certificate_nvram().expect("NVRAM EK certificate read must succeed with seamless fallback");
+    assert!(!ek_cert.raw_der.is_empty());
+    assert!(ek_cert.cert_fingerprint.is_some());
+}
+
+
 
 
