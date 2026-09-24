@@ -45,11 +45,14 @@ async fn import_nsrl_with_fallback(
     }
 }
 
-#[derive(Parser)]
+#[derive(Parser, Clone)]
 #[command(name = "osoosi")]
 #[command(version)]
 #[command(about = "OpenỌ̀ṣọ́ọ̀sì: Autonomous Security Agent", long_about = None)]
 struct Cli {
+    /// Internal canary probe UUID for zero-overhead anti-blinding verification
+    #[arg(long, hide = true, global = true, alias = "worker-heartbeat", alias = "diag-session", alias = "runtime-sync", alias = "telemetry-canary")]
+    canary_probe: Option<String>,
     /// Grant OpenỌ̀ṣọ́ọ̀sì access to security event logs (equivalent to `grant-access` subcommand). Works before or after subcommands, e.g. `osoosi start --grant-access`
     #[arg(long, global = true)]
     grant_access: bool,
@@ -255,6 +258,24 @@ pub enum SandboxAction {
 }
 
 fn main() -> anyhow::Result<()> {
+    // Fast-path zero-overhead (< 1ms) exit for synthetic telemetry canary probes:
+    // If any CLI argument matches polymorphic canary flags or --canary-probe, exit immediately
+    for arg in std::env::args().skip(1) {
+        if arg == "--canary-probe"
+            || arg == "canary_probe"
+            || osoosi_telemetry::canary::CANARY_FLAGS
+                .iter()
+                .any(|&flag| arg == flag || arg == flag.trim_start_matches('-') || arg.starts_with(&format!("{}=", flag)))
+        {
+            return Ok(());
+        }
+    }
+
+    let cli = Cli::parse();
+    if let Some(_uuid_str) = cli.canary_probe.as_ref() {
+        return Ok(());
+    }
+
     osoosi_types::persist_environment_paths();
     osoosi_core::init_hybrid_concurrency();
 
@@ -280,7 +301,6 @@ fn main() -> anyhow::Result<()> {
                 
             rt.block_on(async {
                 set_panic_hook();
-                let cli = Cli::parse();
                 let _guard = init_logging(cli.debug)?;
                 async_main(cli).await
             })

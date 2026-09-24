@@ -30,7 +30,9 @@ fn to_canonical_absolute_path(path: &Path) -> PathBuf {
 
     if let Ok(canonical) = std::fs::canonicalize(&resolved) {
         let path_str = canonical.to_string_lossy();
-        if let Some(stripped) = path_str.strip_prefix(r"\\?\") {
+        if let Some(unc) = path_str.strip_prefix(r"\\?\UNC\") {
+            PathBuf::from(format!(r"\\{}", unc))
+        } else if let Some(stripped) = path_str.strip_prefix(r"\\?\") {
             PathBuf::from(stripped)
         } else {
             canonical
@@ -41,7 +43,18 @@ fn to_canonical_absolute_path(path: &Path) -> PathBuf {
         for comp in resolved.components() {
             match comp {
                 Component::ParentDir => {
-                    normalized.pop();
+                    let at_root = normalized
+                        .as_os_str()
+                        .to_str()
+                        .map(|s| {
+                            s.ends_with(r":\")
+                                || s == r"\"
+                                || (s.starts_with(r"\\") && !s[2..].contains(r"\"))
+                        })
+                        .unwrap_or(false);
+                    if !at_root && normalized.parent().is_some() {
+                        normalized.pop();
+                    }
                 }
                 Component::CurDir => {}
                 _ => normalized.push(comp),
@@ -246,8 +259,8 @@ impl AgentProvisioner {
         info!("Checking for orphaned Sysmon ETW publisher manifest registration...");
         let mut check_publisher = Command::new("wevtutil.exe");
         check_publisher.args(["gp", "Microsoft-Windows-Sysmon"]);
-        if let Ok(output) = self.executor.execute(check_publisher).await {
-            if output.status.success() {
+        match self.executor.execute(check_publisher).await {
+            Ok(output) if output.status.success() => {
                 warn!(
                     "Orphaned Microsoft-Windows-Sysmon manifest detected without corresponding service. \
                     Unregistering manifest to prevent installation collision..."
@@ -259,15 +272,21 @@ impl AgentProvisioner {
                         info!("Successfully unregistered orphaned Microsoft-Windows-Sysmon manifest.");
                     }
                     Ok(unreg_out) => {
-                        let msg = String::from_utf8_lossy(&unreg_out.stderr);
-                        warn!("Attempted to unregister orphaned manifest, wevtutil reported: {}", msg.trim());
+                        let out_msg = String::from_utf8_lossy(&unreg_out.stdout);
+                        let err_msg = String::from_utf8_lossy(&unreg_out.stderr);
+                        let combined_msg = format!("{} {}", out_msg.trim(), err_msg.trim()).trim().to_string();
+                        warn!("Attempted to unregister orphaned manifest, wevtutil reported: {}", combined_msg);
                     }
                     Err(e) => {
                         warn!("Failed to execute 'wevtutil.exe um Microsoft-Windows-Sysmon': {}", e);
                     }
                 }
-            } else {
+            }
+            Ok(_) => {
                 info!("No orphaned Microsoft-Windows-Sysmon manifest detected.");
+            }
+            Err(e) => {
+                warn!("Failed to query Microsoft-Windows-Sysmon manifest via wevtutil: {}", e);
             }
         }
 
@@ -279,24 +298,32 @@ impl AgentProvisioner {
             config_path.display()
         );
         let mut install_cmd = Command::new(&sysmon_exe);
-        install_cmd.args([
-            "-i",
-            config_path.to_str().unwrap_or("config/sysmon-dns.xml"),
-            "-accepteula",
-        ]);
+        install_cmd.arg("-i").arg(&config_path).arg("-accepteula");
 
         let mut install_output = self.executor.execute(install_cmd).await;
 
         let needs_remediation = match &install_output {
             Ok(output) if !output.status.success() => {
+                let code = output.status.code().unwrap_or(0);
+                let exit_code_indicates_collision = code == 183
+                    || code == -2147024713
+                    || code == -2147024809
+                    || (code as u32) == 0x800700B7
+                    || (code as u32) == 183;
+
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let stderr = String::from_utf8_lossy(&output.stderr);
                 let combined = format!("{}\n{}", stdout, stderr).to_lowercase();
-                combined.contains("wevtutil")
+                let output_indicates_collision = combined.contains("wevtutil")
                     || combined.contains("manifest")
                     || combined.contains("collision")
                     || combined.contains("already exists")
                     || combined.contains("0x800700b7")
+                    || combined.contains("2147024713")
+                    || combined.contains("2147024809")
+                    || combined.contains("183");
+
+                exit_code_indicates_collision || output_indicates_collision
             }
             _ => false,
         };
@@ -329,11 +356,7 @@ impl AgentProvisioner {
                 config_path.display()
             );
             let mut retry_cmd = Command::new(&sysmon_exe);
-            retry_cmd.args([
-                "-i",
-                config_path.to_str().unwrap_or("config/sysmon-dns.xml"),
-                "-accepteula",
-            ]);
+            retry_cmd.arg("-i").arg(&config_path).arg("-accepteula");
             install_output = self.executor.execute(retry_cmd).await;
         }
 
@@ -1501,6 +1524,101 @@ mod tests {
             !install_cmd.contains(r"\\?\"),
             "Command line contains \\?\\ prefix: {}",
             install_cmd
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sysmon_manifest_collision_by_exit_code_183() {
+        let mut mock = MockSysmonExecutor::new(
+            None,
+            None,
+            (183, "Installation failed with code 183"),
+        );
+        mock.retry_install_response = Some((0, "Sysmon installed successfully"));
+        let executor = Arc::new(mock);
+
+        let provisioner = AgentProvisioner::new(executor.clone());
+        let res = provisioner.provision_sysmon_if_missing().await;
+        assert!(res.is_ok());
+
+        let cmds = executor.executed_commands.lock().unwrap();
+        // Should have executed remediation: wevtutil um and sysmon -u force
+        assert!(
+            cmds.iter().any(|c| c.contains("wevtutil.exe um Microsoft-Windows-Sysmon")),
+            "Expected wevtutil um on exit code 183, but commands were: {:?}",
+            cmds
+        );
+        assert!(
+            cmds.iter().any(|c| c.contains("-u force")),
+            "Expected -u force on exit code 183, but commands were: {:?}",
+            cmds
+        );
+    }
+
+    #[tokio::test]
+    async fn test_sysmon_manifest_collision_by_hresult_error_code() {
+        // Exit code -2147024713 is 0x800700B7 (ERROR_ALREADY_EXISTS HRESULT)
+        let mut mock = MockSysmonExecutor::new(
+            None,
+            None,
+            (-2147024713, "Installation failed (-2147024713)"),
+        );
+        mock.retry_install_response = Some((0, "Sysmon installed successfully"));
+        let executor = Arc::new(mock);
+
+        let provisioner = AgentProvisioner::new(executor.clone());
+        let res = provisioner.provision_sysmon_if_missing().await;
+        assert!(res.is_ok());
+
+        let cmds = executor.executed_commands.lock().unwrap();
+        assert!(
+            cmds.iter().any(|c| c.contains("wevtutil.exe um Microsoft-Windows-Sysmon")),
+            "Expected wevtutil um on HRESULT error code, but commands were: {:?}",
+            cmds
+        );
+        assert!(
+            cmds.iter().any(|c| c.contains("-u force")),
+            "Expected -u force on HRESULT error code, but commands were: {:?}",
+            cmds
+        );
+    }
+
+    #[test]
+    fn test_canonical_path_preserves_drive_root_on_excessive_parent_segments() {
+        let path = Path::new(r"C:\a\b\..\..\..\..\tools\sysmon\Sysmon64.exe");
+        let canonical = to_canonical_absolute_path(path);
+        let s = canonical.to_string_lossy();
+        assert!(
+            s.starts_with(r"C:\"),
+            "Expected path to remain an absolute drive path, got: {}",
+            s
+        );
+        assert!(
+            !s.contains(r"..\"),
+            "Expected no relative .. segments in normalized path, got: {}",
+            s
+        );
+    }
+
+    #[test]
+    fn test_canonical_path_handles_unc_prefix() {
+        let unc_path = Path::new(r"\\server\share\config\sysmon-dns.xml");
+        let canonical = to_canonical_absolute_path(unc_path);
+        let s = canonical.to_string_lossy();
+        assert!(
+            !s.starts_with(r"\\?\"),
+            "Expected \\?\\ prefix stripped, got: {}",
+            s
+        );
+        assert!(
+            !s.starts_with("UNC"),
+            "Expected UNC share prefix preserved, got: {}",
+            s
+        );
+        assert!(
+            s.starts_with(r"\\server\share"),
+            "Expected \\\\server\\share prefix, got: {}",
+            s
         );
     }
 }

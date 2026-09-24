@@ -3,6 +3,7 @@
 //! Manages event ingestion, hashing, and real-time watching.
 //! Supports Windows ETW, Linux auditd/eBPF, and macOS ESF.
 
+pub mod canary;
 pub mod discovery;
 pub mod file_watch;
 pub mod hash;
@@ -12,6 +13,7 @@ pub mod native;
 pub mod linux_ebpf;
 pub mod provisioning;
 
+pub use canary::*;
 pub use discovery::*;
 pub use file_watch::*;
 pub use hash::*;

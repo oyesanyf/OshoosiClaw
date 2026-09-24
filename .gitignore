@@ -53,7 +53,7 @@ certs/
 *.p12
 *.pfx
 osoosi.toml.sig
-osoosi.toml.sign
+!osoosi.toml.sign
 
 # ---------- Provisioned Tools (auto-downloaded at runtime) ----------
 /Sysmon.exe

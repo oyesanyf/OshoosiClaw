@@ -12,6 +12,7 @@
             <Directory Id="INSTALLFOLDER" Name="OshoosiClaw">
                 <Component Id="MainExecutable" Guid="3e0d8694-5ef8-4903-b1da-5847fa2c03cf" Bitness="always64">
                     <File Id="OsoosiExe" Source="target\release\osoosi.exe" KeyPath="yes" />
+                    <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
                 </Component>
 
                 <Component Id="OnnxRuntimeDll" Guid="d2a71bf5-7798-4c17-9154-374cf1ec1b73" Bitness="always64">
@@ -25,6 +26,17 @@
                 <Component Id="ConfigSig" Guid="e3498bb7-f236-419b-b0b9-5ebec7dc7531" Bitness="always64">
                     <File Id="ConfigSigFile" Source="osoosi.toml.sign" KeyPath="yes" />
                 </Component>
+
+                <Directory Id="ConfigDir" Name="config">
+                    <Component Id="ConfigFiles" Guid="7a4f912c-3b18-4e89-9a2c-f67e2a96f121" Bitness="always64">
+                        <File Id="SysmonDnsXml" Source="config\sysmon-dns.xml" KeyPath="yes" />
+                        <File Id="SysmonExportXml" Source="config\sysmonconfig-export.xml" />
+                        <File Id="OpenShellPolicy" Source="config\openshell-policy.yaml" />
+                        <File Id="OpenShellPolicySig" Source="config\openshell-policy.yaml.sign" />
+                        <File Id="FirewallAllowlist" Source="config\firewall_allowlist.txt" />
+                        <File Id="FirewallAllowlistSig" Source="config\firewall_allowlist.txt.sign" />
+                    </Component>
+                </Directory>
 
                 <Directory Id="DashboardDistDir" Name="dashboard">
                     <Directory Id="DistDir" Name="dist">
@@ -44,6 +56,7 @@
             <ComponentRef Id="OnnxRuntimeDll" />
             <ComponentRef Id="ConfigFile" />
             <ComponentRef Id="ConfigSig" />
+            <ComponentRef Id="ConfigFiles" />
             <ComponentRef Id="DashboardAssets" />
         </Feature>
     </Package>

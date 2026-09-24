@@ -12,19 +12,32 @@ $DeployDir = Join-Path $ProjectRoot "deploy"
 # 1. Build release binaries
 if (-not $SkipBuild) {
     Write-Host "--- Step 1: Building Release Binaries ---" -ForegroundColor Cyan
-    cargo build --release --workspace
-    if ($LASTEXITCODE -ne 0) {
-        if (Test-Path "target\release\osoosi.exe") {
-            Write-Host "Cargo build exited with code $LASTEXITCODE (binary may be locked by running agent). Proceeding with existing target\release\osoosi.exe." -ForegroundColor Yellow
-        } else {
-            Write-Error "Build failed"; exit $LASTEXITCODE
+    if (Test-Path "target\release\osoosi.exe") {
+        $isLocked = $false
+        try {
+            $stream = [System.IO.File]::OpenWrite((Join-Path $ProjectRoot "target\release\osoosi.exe"))
+            $stream.Close()
+        } catch {
+            $isLocked = $true
         }
+        if ($isLocked) {
+            Write-Host "target\release\osoosi.exe is locked by running process; moving to temporary file for rebuild..." -ForegroundColor Yellow
+            $tempLocked = Join-Path $ProjectRoot ("target\release\osoosi.exe.locked." + (Get-Random))
+            Move-Item "target\release\osoosi.exe" -Destination $tempLocked -Force
+        }
+    }
+    cargo build --release -p osoosi-cli
+    if ($LASTEXITCODE -ne 0) {
+        Write-Error "Build failed"; exit $LASTEXITCODE
+    }
+    if (Test-Path "target\release\osoosi.exe") {
+        & "target\release\osoosi.exe" sign-configs
     }
 }
 
 # 2. Prepare deployment folder
 Write-Host "--- Step 2: Preparing Deployment Folder ---" -ForegroundColor Cyan
-if (Test-Path $DeployDir) { Remove-Item $DeployDir -Recurse -Force }
+# Ensure deploy directory exists without wiping tracked files
 New-Item -ItemType Directory -Path $DeployDir -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $DeployDir "config") -Force | Out-Null
 New-Item -ItemType Directory -Path (Join-Path $DeployDir "yara") -Force | Out-Null
@@ -85,7 +98,14 @@ if (Test-Path "yara") {
     Copy-Item "yara\*" -Destination (Join-Path $DeployDir "yara") -Recurse -Force
 }
 if (Test-Path "models") {
-    Copy-Item "models\*" -Destination (Join-Path $DeployDir "models") -Recurse -Force
+    $ModelJsonFiles = Get-ChildItem -Path "models" -Recurse -Filter "*.json" -ErrorAction SilentlyContinue
+    foreach ($mFile in $ModelJsonFiles) {
+        $rel = $mFile.FullName.Substring((Join-Path $ProjectRoot "models").Length).TrimStart('\', '/')
+        $targetSub = Join-Path (Join-Path $DeployDir "models") (Split-Path $rel -Parent)
+        if (-not (Test-Path $targetSub)) { New-Item -ItemType Directory -Path $targetSub -Force | Out-Null }
+        Copy-Item $mFile.FullName -Destination (Join-Path $targetSub $mFile.Name) -Force
+    }
+    Set-Content -Path (Join-Path $DeployDir "models\README_AI.txt") -Value "NOTE: Heavy AI model weights (.onnx_data, .safetensors) were excluded to keep this package portable.`r`nThe Oshoosi agent will autonomously download required weights on first start."
 }
 if (Test-Path "rules") {
     Copy-Item "rules\*" -Destination (Join-Path $DeployDir "rules") -Recurse -Force

@@ -495,9 +495,16 @@ pub struct EdrOrchestrator {
     last_telemetry_summary_count: Arc<std::sync::atomic::AtomicU64>,
     /// Total Gossip messages received from peers
     mesh_gossip_count_atomic: Arc<AtomicU32>,
+    /// Synthetic Canary Correlator: Tracking probe health and anti-blinding
+    pub canary_correlator: Arc<tokio::sync::Mutex<osoosi_telemetry::canary::CanaryCorrelator>>,
 }
 
 impl EdrOrchestrator {
+    /// Access the synthetic canary correlator.
+    pub fn canary_correlator(&self) -> Arc<tokio::sync::Mutex<osoosi_telemetry::canary::CanaryCorrelator>> {
+        self.canary_correlator.clone()
+    }
+
     /// Morphic Hyper-Web: Entangle a suspicious process.
     pub async fn entangle_process(&self, pid: u32, name: &str) {
         let mut engine = self.deception_engine.write().await;
@@ -1336,6 +1343,12 @@ impl EdrOrchestrator {
             telemetry_total_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
             last_telemetry_summary: Arc::new(tokio::sync::Mutex::new(Instant::now())),
             last_telemetry_summary_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+            canary_correlator: {
+                let (canary_alert_tx, _canary_alert_rx) = tokio::sync::mpsc::channel(100);
+                Arc::new(tokio::sync::Mutex::new(
+                    osoosi_telemetry::canary::CanaryCorrelator::new(canary_alert_tx, 3),
+                ))
+            },
         })
     }
 
@@ -2051,6 +2064,12 @@ impl EdrOrchestrator {
                                 })
                                 .unwrap_or(false);
                             if is_self { continue; }
+
+                            // Synthetic Canary Filter: suppress canary heartbeats from sliding-window
+                            // process tree and prevent RL baseline drift.
+                            if osoosi_telemetry::canary::is_canary_event(&event) {
+                                continue;
+                            }
 
                             let classifier_clone = classifier.clone();
                             let orchestrator_clone = orchestrator.clone();
@@ -2840,6 +2859,15 @@ impl EdrOrchestrator {
         mut event: osoosi_types::HostSecurityEvent,
     ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
+
+        // Synthetic Canary Fast-Path & Suppression:
+        // Update canary correlation, suppress from RL feature vector & baseline drift,
+        // and return immediately to prevent disk I/O exhaustion and skip tactical AI inference.
+        if osoosi_telemetry::canary::is_canary_event(&event) {
+            let mut correlator = self.canary_correlator.lock().await;
+            osoosi_telemetry::canary::inspect_event_for_canary(&mut correlator, &event);
+            return Ok(());
+        }
 
         // 1. Report event rate to adaptive controller.
         self.adaptive.report_event();

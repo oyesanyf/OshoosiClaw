@@ -1272,3 +1272,46 @@ impl HostEventReader for MacAuditReader {
         format!("mac-log:{}", self.path)
     }
 }
+
+// --- Synthetic Canary Telemetry Stream Integration ---
+
+/// Maps an incoming HostSecurityEvent to its corresponding CanaryChannel and string payload.
+pub fn event_to_canary_payload(event: &HostSecurityEvent) -> Option<(crate::canary::CanaryChannel, String)> {
+    let payload = event.data.to_string();
+    let channel = match (event.source, event.event_id) {
+        (osoosi_types::HostEventSource::WindowsEventLog, 1 | 4688) => Some(crate::canary::CanaryChannel::ProcessCreation),
+        (osoosi_types::HostEventSource::LinuxAudit | osoosi_types::HostEventSource::Ebpf | osoosi_types::HostEventSource::MacAudit | osoosi_types::HostEventSource::MacUnifiedLog, 1 | 59 | 221) => Some(crate::canary::CanaryChannel::ProcessCreation),
+        (osoosi_types::HostEventSource::WindowsEventLog, 22 | 3008) => Some(crate::canary::CanaryChannel::DnsResolution),
+        (osoosi_types::HostEventSource::WindowsEventLog, 7) => Some(crate::canary::CanaryChannel::ImageLoad),
+        _ => {
+            if crate::canary::is_canary_payload(&payload) {
+                if payload.contains(".probe.invalid") || payload.contains("probe.invalid") {
+                    Some(crate::canary::CanaryChannel::DnsResolution)
+                } else if payload.contains("osoosi_canary_") {
+                    Some(crate::canary::CanaryChannel::ImageLoad)
+                } else {
+                    Some(crate::canary::CanaryChannel::ProcessCreation)
+                }
+            } else {
+                None
+            }
+        }
+    }?;
+
+    Some((channel, payload))
+}
+
+// Internal import of inspect_event_for_canary for batch helper
+use crate::canary::inspect_event_for_canary;
+
+/// Batch inspection of incoming HostSecurityEvents against a CanaryCorrelator.
+pub fn inspect_events_for_canary_batch(
+    correlator: &mut crate::canary::CanaryCorrelator,
+    events: &[HostSecurityEvent],
+) -> Vec<uuid::Uuid> {
+    events
+        .iter()
+        .filter_map(|ev| inspect_event_for_canary(correlator, ev))
+        .collect()
+}
+

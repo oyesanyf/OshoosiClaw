@@ -24,6 +24,7 @@ mkdir %DEPLOY_DIR%\yara
 mkdir %DEPLOY_DIR%\models
 mkdir %DEPLOY_DIR%\logs
 mkdir %DEPLOY_DIR%\dashboard\dist
+mkdir %DEPLOY_DIR%\config
 
 :: 3. Copy binaries and core assets
 echo [3/6] Collecting binaries and core assets...
@@ -36,6 +37,8 @@ if exist %TARGET_DIR%\onnxruntime.dll copy %TARGET_DIR%\onnxruntime.dll %DEPLOY_
 if exist onnxruntime.dll copy onnxruntime.dll %DEPLOY_DIR%\
 if exist run_osoosi.bat copy run_osoosi.bat %DEPLOY_DIR%\
 copy osoosi.toml %DEPLOY_DIR%\
+if exist osoosi.toml.sign copy osoosi.toml.sign %DEPLOY_DIR%\
+if exist config xcopy /s /e /y config\* %DEPLOY_DIR%\config\
 if exist deceptive_techniques.py copy deceptive_techniques.py %DEPLOY_DIR%\
 
 :: Copy YARA rules

@@ -22,6 +22,6 @@ magika = { workspace = true }
 ort = { workspace = true }
 goblin = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
-winapi = { workspace = true, features = ["memoryapi", "processthreadsapi", "winnt", "handleapi"] }
+winapi = { workspace = true, features = ["memoryapi", "processthreadsapi", "winnt", "handleapi", "tlhelp32", "libloaderapi"] }
 bloomfilter = "1.0"
 parking_lot = "0.12"

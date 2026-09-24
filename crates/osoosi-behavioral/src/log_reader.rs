@@ -49,6 +49,31 @@ impl From<&osoosi_types::HostSecurityEvent> for LogEvent {
     }
 }
 
+impl osoosi_telemetry::canary::CanaryEventRef for LogEvent {
+    fn canary_payload(&self) -> String {
+        serde_json::to_string(&self.data).unwrap_or_default()
+    }
+}
+
+impl osoosi_telemetry::canary::CanaryEventRef for &LogEvent {
+    fn canary_payload(&self) -> String {
+        serde_json::to_string(&self.data).unwrap_or_default()
+    }
+}
+
+impl From<&LogEvent> for osoosi_types::HostSecurityEvent {
+    fn from(event: &LogEvent) -> Self {
+        Self {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: event.event_id,
+            timestamp: event.timestamp,
+            computer: event.computer.clone(),
+            data: serde_json::to_value(&event.data).unwrap_or(serde_json::Value::Null),
+            causal_parent: None,
+        }
+    }
+}
+
 /// Cross-platform behavioral log reader.
 /// Reads System, Application, and Security logs (Windows) or equivalents (Linux, macOS).
 #[derive(Clone)]
