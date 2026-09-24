@@ -543,14 +543,13 @@ pub fn verify_attestation_with_policy(
 }
 
 /// Generate a mock hardware OEM Endorsement Key (EK) certificate for tests and silicon anchoring validation.
+/// Generates an authentic two-tier hierarchy: an OEM Root CA and a Leaf EK Certificate cryptographically signed by the CA.
 pub fn generate_mock_oem_ek_certificate(
     vendor: TpmOemVendor,
     common_name: &str,
 ) -> anyhow::Result<TpmEkCertificate> {
-    use rcgen::{CertificateParams, DistinguishedName, KeyPair};
+    use rcgen::{CertificateParams, DistinguishedName, IsCa, KeyPair};
 
-    let mut params = CertificateParams::default();
-    params.distinguished_name = DistinguishedName::new();
     let org = match vendor {
         TpmOemVendor::Intel => "Intel Corporation",
         TpmOemVendor::Amd => "Advanced Micro Devices",
@@ -560,12 +559,28 @@ pub fn generate_mock_oem_ek_certificate(
         TpmOemVendor::Microchip => "Microchip Technology Inc.",
         TpmOemVendor::Unknown => "Unknown Hardware OEM",
     };
-    params.distinguished_name.push(rcgen::DnType::OrganizationName, org);
-    params.distinguished_name.push(rcgen::DnType::CommonName, common_name);
 
-    let key_pair = KeyPair::generate()?;
-    let cert = params.self_signed(&key_pair)?;
-    let raw_der = cert.der().to_vec();
+    // 1. Generate OEM Root CA
+    let mut ca_params = CertificateParams::default();
+    ca_params.is_ca = IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
+    ca_params.distinguished_name = DistinguishedName::new();
+    ca_params.distinguished_name.push(rcgen::DnType::OrganizationName, org);
+    ca_params.distinguished_name.push(rcgen::DnType::CommonName, format!("{} EK Root CA", org));
+    let ca_key_pair = KeyPair::generate()?;
+    let ca_cert = ca_params.self_signed(&ca_key_pair)?;
+    let ca_der = ca_cert.der().to_vec();
 
-    TpmEkCertificate::from_der(raw_der).map_err(|e| anyhow::anyhow!("{}", e))
+    // 2. Generate Leaf EK Certificate signed by the OEM Root CA
+    let mut leaf_params = CertificateParams::default();
+    leaf_params.distinguished_name = DistinguishedName::new();
+    leaf_params.distinguished_name.push(rcgen::DnType::OrganizationName, org);
+    leaf_params.distinguished_name.push(rcgen::DnType::CommonName, common_name);
+    leaf_params.is_ca = IsCa::NoCa;
+    let leaf_key_pair = KeyPair::generate()?;
+    let leaf_cert = leaf_params.signed_by(&leaf_key_pair, &ca_cert, &ca_key_pair)?;
+    let leaf_der = leaf_cert.der().to_vec();
+
+    let mut ek = TpmEkCertificate::from_der(leaf_der).map_err(|e| anyhow::anyhow!("{}", e))?;
+    ek.issuer_der = Some(ca_der);
+    Ok(ek)
 }

@@ -5133,6 +5133,15 @@ impl EdrOrchestrator {
                             }
                         }
                     }
+                } else if outcome.witness_resolved {
+                    info!(
+                        "Policy {} stalemate resolved by witness/tie-breaker to {:?}",
+                        policy_id, outcome.winning_status
+                    );
+                    let _ = memory_consensus.set_repair_status(
+                        &format!("mesh_bft_{}", policy_id),
+                        "witness_resolved_non_optimal",
+                    );
                 } else if outcome.stalemate_conflict {
                     warn!(
                         "Policy {} mesh vote STALEMATE (possible Byzantine split): optimal={} critical={} participants={}",

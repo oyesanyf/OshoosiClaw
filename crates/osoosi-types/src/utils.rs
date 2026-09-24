@@ -231,8 +231,8 @@ pub fn verify_and_extract_publisher_native(file_path: &str) -> anyhow::Result<St
         
         // Base Case: We reached the top of the chain (Self-Signed Root CA)
         if current_cert.subject() == current_cert.issuer() {
-            // If we don't verify the Root, a hacker can just self-sign their own fake Root CA!
-            verify_root_against_os_store(&issuer_name)?;
+            // Verify the Root CA against the OS Trust Store matching Subject AND Public Key
+            verify_root_against_os_store(current_cert)?;
             break;
         }
 
@@ -252,17 +252,19 @@ pub fn verify_and_extract_publisher_native(file_path: &str) -> anyhow::Result<St
     Ok(publisher_name)
 }
 
-/// Verifies that the extracted Root CA actually exists in the host's Trust Store.
-fn verify_root_against_os_store(target_root: &str) -> anyhow::Result<()> {
+/// Verifies that the extracted Root CA actually exists in the host's Trust Store,
+/// comparing both Subject and Public Key to prevent spoofed self-signed CAs.
+fn verify_root_against_os_store(root_cert: &x509_parser::prelude::X509Certificate) -> anyhow::Result<()> {
     use x509_parser::prelude::*;
     use rustls_native_certs::load_native_certs;
 
     // Loads the actual trusted roots from the host operating system
     let os_roots = load_native_certs().map_err(|e| anyhow::anyhow!("Could not load OS native certs: {}", e))?;
+    let target_pk = root_cert.public_key().raw;
     
     for root in os_roots {
         if let Ok((_, cert)) = X509Certificate::from_der(root.as_ref()) {
-            if cert.subject().to_string() == target_root {
+            if cert.subject() == root_cert.subject() && cert.public_key().raw == target_pk {
                 return Ok(());
             }
         }
@@ -362,7 +364,7 @@ pub fn is_pinned_thumbprint_allowed(thumbprints: &[String]) -> bool {
         .ok()
         .map(|s| {
             s.split(',')
-                .map(|t| t.trim().to_lowercase().replace(':', ""))
+                .map(|t| t.trim().to_lowercase().replace(':', "").replace(' ', ""))
                 .filter(|t| !t.is_empty())
                 .collect()
         })
@@ -373,7 +375,7 @@ pub fn is_pinned_thumbprint_allowed(thumbprints: &[String]) -> bool {
     }
 
     for tp in thumbprints {
-        let normalized = tp.to_lowercase().replace(':', "");
+        let normalized = tp.to_lowercase().replace(':', "").replace(' ', "");
         if configured_pins.contains(&normalized) {
             return true;
         }
@@ -414,7 +416,7 @@ pub fn check_authenticode_status(path: &str) -> AuthenticodeStatus {
         dwStateAction: WTD_STATEACTION_IGNORE,
         hWVTStateData: HANDLE::default(),
         pwszURLReference: windows::core::PWSTR::null(),
-        dwProvFlags: WTD_CACHE_ONLY_URL_RETRIEVAL,
+        dwProvFlags: WINTRUST_DATA_PROVIDER_FLAGS(0),
         dwUIContext: WTD_UICONTEXT_EXECUTE,
         pSignatureSettings: std::ptr::null_mut(),
     };
@@ -578,6 +580,12 @@ mod tests {
 
         assert!(is_pinned_thumbprint_allowed(&[test_tp.to_string()]));
         assert!(is_pinned_thumbprint_allowed(&[test_tp.to_uppercase()]));
+        // Test space-separated formatting
+        let spaced_tp = "a1 b2 c3 d4 e5 f6 78 90 ab cd ef 12 34 56 78 90 ab cd ef 12 34 56 78 90 ab cd ef 12 34 56 78 90";
+        assert!(is_pinned_thumbprint_allowed(&[spaced_tp.to_string()]));
+        // Test colon-separated formatting
+        let colon_tp = "a1:b2:c3:d4:e5:f6:78:90:ab:cd:ef:12:34:56:78:90:ab:cd:ef:12:34:56:78:90:ab:cd:ef:12:34:56:78:90";
+        assert!(is_pinned_thumbprint_allowed(&[colon_tp.to_string()]));
         assert!(!is_pinned_thumbprint_allowed(&["11223344556677889900aabbccddeeff".to_string()]));
         assert!(!is_pinned_thumbprint_allowed(&[]));
 

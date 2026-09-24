@@ -103,6 +103,9 @@ impl std::fmt::Display for TpmOemVendor {
 pub struct TpmEkCertificate {
     /// Raw DER-encoded X.509 certificate provisioned by the TPM manufacturer
     pub raw_der: Vec<u8>,
+    /// Optional DER-encoded issuing CA or OEM Root CA certificate in the silicon chain
+    #[serde(default)]
+    pub issuer_der: Option<Vec<u8>>,
     /// Hardware OEM vendor (e.g. Intel, AMD, Infineon, STMicro)
     pub vendor: TpmOemVendor,
     /// Subject Common Name or Serial Number from the EK certificate
@@ -154,6 +157,7 @@ impl TpmEkCertificate {
 
         Ok(Self {
             raw_der,
+            issuer_der: None,
             vendor,
             subject: Some(subject),
             issuer: Some(issuer),
@@ -222,6 +226,9 @@ pub struct GoldenBaseline {
     /// Pinned TPM EK certificate SHA-256 fingerprints (empty = allow any verified OEM root).
     #[serde(default)]
     pub pinned_ek_fingerprints: Vec<String>,
+    /// Pinned OEM Root CA certificate SHA-256 fingerprints (empty = allow any recognized OEM root).
+    #[serde(default)]
+    pub allowed_tpm_root_fingerprints: Vec<String>,
 }
 
 fn default_max_nonce_age_secs() -> u64 {
@@ -239,6 +246,7 @@ impl Default for GoldenBaseline {
             require_tpm_ek_validation: false,
             allowed_tpm_vendors: Vec::new(),
             pinned_ek_fingerprints: Vec::new(),
+            allowed_tpm_root_fingerprints: Vec::new(),
         }
     }
 }
@@ -285,6 +293,11 @@ impl GoldenBaseline {
 
     pub fn pin_ek_fingerprint(mut self, fingerprint: impl Into<String>) -> Self {
         self.pinned_ek_fingerprints.push(fingerprint.into().to_lowercase());
+        self
+    }
+
+    pub fn allow_root_fingerprint(mut self, fingerprint: impl Into<String>) -> Self {
+        self.allowed_tpm_root_fingerprints.push(fingerprint.into().to_lowercase());
         self
     }
 }
@@ -346,7 +359,23 @@ pub fn verify_tpm_ek_certificate(
     let calculated_fingerprint = hex::encode(Sha256::digest(&ek_cert.raw_der)).to_lowercase();
     let public_key_hex = hex::encode(cert.public_key().raw);
 
-    // 2. Detect and verify OEM Root CA authenticity
+    // 2. Cryptographic signature and silicon root verification
+    if let Some(ref issuer_bytes) = ek_cert.issuer_der {
+        let (_, issuer_cert) = X509Certificate::from_der(issuer_bytes)
+            .map_err(|e| AttestationError::EkValidationFailed(format!("Invalid issuing CA certificate: {}", e)))?;
+        cert.verify_signature(Some(&issuer_cert.public_key()))
+            .map_err(|e| AttestationError::EkValidationFailed(format!("EK signature verification against issuer CA failed: {}", e)))?;
+        if issuer_cert.subject() == issuer_cert.issuer() {
+            issuer_cert.verify_signature(Some(&issuer_cert.public_key()))
+                .map_err(|e| AttestationError::EkValidationFailed(format!("OEM Root CA self-signature verification failed: {}", e)))?;
+        }
+    } else if cert.subject() == cert.issuer() {
+        // Self-signed certificate (e.g. standalone test or single-tier mock)
+        cert.verify_signature(Some(&cert.public_key()))
+            .map_err(|e| AttestationError::EkValidationFailed(format!("Self-signed EK certificate signature verification failed: {}", e)))?;
+    }
+
+    // 3. Detect and verify OEM Root CA authenticity
     let issuer_lc = issuer.to_lowercase();
     let subject_lc = subject.to_lowercase();
 
@@ -383,20 +412,34 @@ pub fn verify_tpm_ek_certificate(
         ek_cert.vendor
     };
 
-    // 3. Golden Baseline policy enforcement
+    // 4. Golden Baseline policy enforcement
     if let Some(pol) = policy {
         // Enforce allowed vendors if restricted
         if !pol.allowed_tpm_vendors.is_empty() && !pol.allowed_tpm_vendors.contains(&effective_vendor) {
             return Err(AttestationError::DisallowedTpmVendor(effective_vendor.to_string()));
         }
 
-        // Enforce pinned fingerprints if restricted
+        // Enforce pinned leaf fingerprints if restricted
         if !pol.pinned_ek_fingerprints.is_empty()
             && !pol.pinned_ek_fingerprints.iter().any(|f| f.to_lowercase() == calculated_fingerprint)
         {
             return Err(AttestationError::EkValidationFailed(
                 format!("EK certificate fingerprint {} is not in pinned allowed list", calculated_fingerprint)
             ));
+        }
+
+        // Enforce pinned OEM Root CA fingerprints if configured
+        if !pol.allowed_tpm_root_fingerprints.is_empty() {
+            let root_fp = if let Some(ref ib) = ek_cert.issuer_der {
+                hex::encode(Sha256::digest(ib)).to_lowercase()
+            } else {
+                calculated_fingerprint.clone()
+            };
+            if !pol.allowed_tpm_root_fingerprints.iter().any(|f| f.to_lowercase() == root_fp) {
+                return Err(AttestationError::EkValidationFailed(
+                    format!("OEM Root CA fingerprint {} is not in allowed root list", root_fp)
+                ));
+            }
         }
     }
 

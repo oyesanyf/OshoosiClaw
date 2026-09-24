@@ -370,4 +370,62 @@ fn test_tpm_ek_fingerprint_pinning() {
     }
 }
 
+#[test]
+fn test_tpm_ek_tampered_bytes_rejected() {
+    use osoosi_trust::generate_mock_oem_ek_certificate;
+    use osoosi_types::TpmOemVendor;
+
+    let mut ek_cert = generate_mock_oem_ek_certificate(TpmOemVendor::Intel, "Intel Tampered EK").unwrap();
+    // Tamper raw DER bytes in signature or key block
+    let len = ek_cert.raw_der.len();
+    ek_cert.raw_der[len - 10] ^= 0x5a;
+
+    let result = osoosi_trust::verify_tpm_ek_certificate(&ek_cert, None);
+    assert!(result.is_err(), "Tampered EK certificate must fail cryptographic signature verification");
+}
+
+#[test]
+fn test_tpm_ek_root_ca_fingerprint_pinning() {
+    use osoosi_trust::generate_mock_oem_ek_certificate;
+    use osoosi_types::{GoldenBaseline, TpmOemVendor};
+    use sha2::{Digest, Sha256};
+
+    let ek_cert = generate_mock_oem_ek_certificate(TpmOemVendor::Amd, "AMD Root Pinned EK").unwrap();
+    let root_der = ek_cert.issuer_der.as_ref().expect("issuer_der must be present in hierarchy");
+    let root_fp = hex::encode(Sha256::digest(root_der)).to_lowercase();
+
+    // Matching root fingerprint passes
+    let policy_pass = GoldenBaseline::new().allow_root_fingerprint(&root_fp);
+    assert!(osoosi_trust::verify_tpm_ek_certificate(&ek_cert, Some(&policy_pass)).is_ok());
+
+    // Mismatched root fingerprint fails
+    let policy_fail = GoldenBaseline::new().allow_root_fingerprint("1111111111111111111111111111111111111111111111111111111111111111");
+    match osoosi_trust::verify_tpm_ek_certificate(&ek_cert, Some(&policy_fail)) {
+        Err(osoosi_types::AttestationError::EkValidationFailed(msg)) => {
+            assert!(msg.contains("not in allowed root list"));
+        }
+        other => panic!("Expected EkValidationFailed for mismatched root fingerprint, got: {:?}", other),
+    }
+}
+
+#[test]
+fn test_tpm_ek_forged_issuer_cert_rejected() {
+    use osoosi_trust::generate_mock_oem_ek_certificate;
+    use osoosi_types::TpmOemVendor;
+
+    let mut ek_cert = generate_mock_oem_ek_certificate(TpmOemVendor::Intel, "Intel Node EK").unwrap();
+    // Generate a completely different root CA that did NOT sign this EK certificate
+    let other_ek = generate_mock_oem_ek_certificate(TpmOemVendor::Intel, "Other Node EK").unwrap();
+    ek_cert.issuer_der = other_ek.issuer_der;
+
+    let result = osoosi_trust::verify_tpm_ek_certificate(&ek_cert, None);
+    match result {
+        Err(osoosi_types::AttestationError::EkValidationFailed(msg)) => {
+            assert!(msg.contains("verification against issuer CA failed") || msg.contains("failed"));
+        }
+        other => panic!("Expected EkValidationFailed for forged issuer cert, got: {:?}", other),
+    }
+}
+
+
 

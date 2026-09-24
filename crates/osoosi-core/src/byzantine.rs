@@ -345,15 +345,40 @@ pub fn analyze_policy_consensus(
 
     // Stalemate resolution: Designated witness signature or weighted reputation tie-breaker
     if stalemate_conflict && participating == 2 {
-        let mut valid_witness_vote: Option<&WitnessVote> = None;
-        for msg in messages {
-            if let PolicyConsensusMessage::Witness(w) = msg {
-                if let Some(ref designated) = params.designated_witness_id {
-                    if &w.witness_id != designated {
+        let now = chrono::Utc::now();
+        let target_policy_id = latest.values().next().map(|v| v.policy_id.as_str());
+        let mut freshest_witness_vote: Option<&WitnessVote> = None;
+
+        // Witness resolution is only permitted when a designated witness or public key is configured
+        let witness_configured = params.designated_witness_id.is_some() || params.witness_public_key.is_some();
+        if witness_configured {
+            for msg in messages {
+                if let PolicyConsensusMessage::Witness(w) = msg {
+                    // Match policy ID
+                    if let Some(target_pid) = target_policy_id {
+                        if w.policy_id != target_pid {
+                            continue;
+                        }
+                    }
+                    // Validate designated witness ID
+                    if let Some(ref designated) = params.designated_witness_id {
+                        if &w.witness_id != designated {
+                            continue;
+                        }
+                    }
+                    // Reject future-dated witness votes (>120s into the future) to prevent timeline poisoning
+                    if (w.timestamp - now).num_seconds() > 120 {
                         continue;
                     }
-                }
-                if let Some(ref pk_hex) = params.witness_public_key {
+                    // Reject excessively stale witness votes (>3600s old)
+                    if (now - w.timestamp).num_seconds() > 3600 {
+                        continue;
+                    }
+                    // Cryptographic Ed25519 signature verification: mandatory when witness is configured
+                    let Some(ref pk_hex) = params.witness_public_key else {
+                        // Reject unauthenticated witness votes if no verifying key is configured
+                        continue;
+                    };
                     let Ok(pk_bytes) = hex::decode(pk_hex) else { continue };
                     let Ok(verifying_key) = VerifyingKey::try_from(pk_bytes.as_slice()) else { continue };
                     let Ok(sig_bytes) = hex::decode(&w.signature) else { continue };
@@ -367,13 +392,22 @@ pub fn analyze_policy_consensus(
                     if verifying_key.verify(&digest, &sig).is_err() {
                         continue;
                     }
+
+                    // Select the freshest valid witness vote
+                    match freshest_witness_vote {
+                        Some(current) if w.timestamp > current.timestamp => {
+                            freshest_witness_vote = Some(w);
+                        }
+                        None => {
+                            freshest_witness_vote = Some(w);
+                        }
+                        _ => {}
+                    }
                 }
-                valid_witness_vote = Some(w);
-                break;
             }
         }
 
-        if let Some(w) = valid_witness_vote {
+        if let Some(w) = freshest_witness_vote {
             witness_resolved = true;
             stalemate_conflict = false;
             winning_status = Some(w.favored_status.clone());
@@ -710,4 +744,226 @@ mod tests {
         assert!(!o.stalemate_conflict);
         assert_eq!(o.winning_status, Some(PolicyHealthStatus::Optimal));
     }
+
+    #[test]
+    fn two_host_unauthenticated_witness_ignored() {
+        let msgs = vec![
+            vote("host1", PolicyHealthStatus::Optimal),
+            vote("host2", PolicyHealthStatus::CriticalFailure),
+            PolicyConsensusMessage::Witness(WitnessVote {
+                policy_id: "KB1".to_string(),
+                witness_id: "attacker_arbiter".to_string(),
+                favored_status: PolicyHealthStatus::Optimal,
+                signature: "deadbeef".to_string(),
+                timestamp: chrono::Utc::now(),
+            }),
+        ];
+        // Witness credentials are NOT configured -> injected witness vote must NOT resolve stalemate
+        let p = BftConsensusParams {
+            enable_reputation_tie_breaker: false,
+            designated_witness_id: None,
+            witness_public_key: None,
+            ..Default::default()
+        };
+
+        let o = analyze_policy_consensus(&msgs, |_| 0.85, &p);
+        assert!(!o.mesh_validated);
+        assert!(!o.witness_resolved);
+        assert!(o.stalemate_conflict);
+    }
+
+    #[test]
+    fn two_host_tampered_witness_sig_ignored() {
+        use ed25519_dalek::Signer;
+        let mut csprng = rand::thread_rng();
+        let signing_key = ed25519_dalek::SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
+        let pubkey_hex = hex::encode(verifying_key.to_bytes());
+
+        let timestamp = chrono::Utc::now();
+        let digest = osoosi_types::compute_witness_digest(
+            "KB1",
+            "arbiter_node",
+            &PolicyHealthStatus::Optimal,
+            timestamp.timestamp(),
+        );
+        let signature = signing_key.sign(&digest);
+        let mut sig_bytes = signature.to_bytes();
+        sig_bytes[0] ^= 0xff; // Tamper signature
+        let tampered_sig_hex = hex::encode(sig_bytes);
+
+        let msgs = vec![
+            vote("host1", PolicyHealthStatus::Optimal),
+            vote("host2", PolicyHealthStatus::CriticalFailure),
+            PolicyConsensusMessage::Witness(WitnessVote {
+                policy_id: "KB1".to_string(),
+                witness_id: "arbiter_node".to_string(),
+                favored_status: PolicyHealthStatus::Optimal,
+                signature: tampered_sig_hex,
+                timestamp,
+            }),
+        ];
+
+        let p = BftConsensusParams {
+            designated_witness_id: Some("arbiter_node".to_string()),
+            witness_public_key: Some(pubkey_hex),
+            enable_reputation_tie_breaker: false,
+            ..Default::default()
+        };
+
+        let o = analyze_policy_consensus(&msgs, |_| 0.85, &p);
+        assert!(!o.mesh_validated);
+        assert!(!o.witness_resolved);
+        assert!(o.stalemate_conflict);
+    }
+
+    #[test]
+    fn two_host_mismatched_policy_witness_ignored() {
+        use ed25519_dalek::Signer;
+        let mut csprng = rand::thread_rng();
+        let signing_key = ed25519_dalek::SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
+        let pubkey_hex = hex::encode(verifying_key.to_bytes());
+
+        let timestamp = chrono::Utc::now();
+        // Witness was signed for KB2, but votes are for KB1
+        let digest = osoosi_types::compute_witness_digest(
+            "KB2",
+            "arbiter_node",
+            &PolicyHealthStatus::Optimal,
+            timestamp.timestamp(),
+        );
+        let signature = signing_key.sign(&digest);
+        let sig_hex = hex::encode(signature.to_bytes());
+
+        let msgs = vec![
+            vote("host1", PolicyHealthStatus::Optimal),
+            vote("host2", PolicyHealthStatus::CriticalFailure),
+            PolicyConsensusMessage::Witness(WitnessVote {
+                policy_id: "KB2".to_string(),
+                witness_id: "arbiter_node".to_string(),
+                favored_status: PolicyHealthStatus::Optimal,
+                signature: sig_hex,
+                timestamp,
+            }),
+        ];
+
+        let p = BftConsensusParams {
+            designated_witness_id: Some("arbiter_node".to_string()),
+            witness_public_key: Some(pubkey_hex),
+            enable_reputation_tie_breaker: false,
+            ..Default::default()
+        };
+
+        let o = analyze_policy_consensus(&msgs, |_| 0.85, &p);
+        assert!(!o.mesh_validated);
+        assert!(!o.witness_resolved);
+        assert!(o.stalemate_conflict);
+    }
+
+    #[test]
+    fn two_host_future_dated_witness_ignored() {
+        use ed25519_dalek::Signer;
+        let mut csprng = rand::thread_rng();
+        let signing_key = ed25519_dalek::SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
+        let pubkey_hex = hex::encode(verifying_key.to_bytes());
+
+        // Future-dated timestamp (>120s into the future)
+        let future_timestamp = chrono::Utc::now() + chrono::Duration::seconds(300);
+        let digest = osoosi_types::compute_witness_digest(
+            "KB1",
+            "arbiter_node",
+            &PolicyHealthStatus::Optimal,
+            future_timestamp.timestamp(),
+        );
+        let signature = signing_key.sign(&digest);
+        let sig_hex = hex::encode(signature.to_bytes());
+
+        let msgs = vec![
+            vote("host1", PolicyHealthStatus::Optimal),
+            vote("host2", PolicyHealthStatus::CriticalFailure),
+            PolicyConsensusMessage::Witness(WitnessVote {
+                policy_id: "KB1".to_string(),
+                witness_id: "arbiter_node".to_string(),
+                favored_status: PolicyHealthStatus::Optimal,
+                signature: sig_hex,
+                timestamp: future_timestamp,
+            }),
+        ];
+
+        let p = BftConsensusParams {
+            designated_witness_id: Some("arbiter_node".to_string()),
+            witness_public_key: Some(pubkey_hex),
+            enable_reputation_tie_breaker: false,
+            ..Default::default()
+        };
+
+        let o = analyze_policy_consensus(&msgs, |_| 0.85, &p);
+        assert!(!o.mesh_validated);
+        assert!(!o.witness_resolved);
+        assert!(o.stalemate_conflict);
+    }
+
+    #[test]
+    fn two_host_freshest_witness_vote_precedence() {
+        use ed25519_dalek::Signer;
+        let mut csprng = rand::thread_rng();
+        let signing_key = ed25519_dalek::SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
+        let pubkey_hex = hex::encode(verifying_key.to_bytes());
+
+        let older_timestamp = chrono::Utc::now() - chrono::Duration::seconds(50);
+        let newer_timestamp = chrono::Utc::now() - chrono::Duration::seconds(10);
+
+        let digest_older = osoosi_types::compute_witness_digest(
+            "KB1",
+            "arbiter_node",
+            &PolicyHealthStatus::Optimal,
+            older_timestamp.timestamp(),
+        );
+        let sig_older = hex::encode(signing_key.sign(&digest_older).to_bytes());
+
+        let digest_newer = osoosi_types::compute_witness_digest(
+            "KB1",
+            "arbiter_node",
+            &PolicyHealthStatus::CriticalFailure,
+            newer_timestamp.timestamp(),
+        );
+        let sig_newer = hex::encode(signing_key.sign(&digest_newer).to_bytes());
+
+        // Put the older vote first in the messages list
+        let msgs = vec![
+            vote("host1", PolicyHealthStatus::Optimal),
+            vote("host2", PolicyHealthStatus::CriticalFailure),
+            PolicyConsensusMessage::Witness(WitnessVote {
+                policy_id: "KB1".to_string(),
+                witness_id: "arbiter_node".to_string(),
+                favored_status: PolicyHealthStatus::Optimal,
+                signature: sig_older,
+                timestamp: older_timestamp,
+            }),
+            PolicyConsensusMessage::Witness(WitnessVote {
+                policy_id: "KB1".to_string(),
+                witness_id: "arbiter_node".to_string(),
+                favored_status: PolicyHealthStatus::CriticalFailure,
+                signature: sig_newer,
+                timestamp: newer_timestamp,
+            }),
+        ];
+
+        let p = BftConsensusParams {
+            designated_witness_id: Some("arbiter_node".to_string()),
+            witness_public_key: Some(pubkey_hex),
+            enable_reputation_tie_breaker: false,
+            ..Default::default()
+        };
+
+        let o = analyze_policy_consensus(&msgs, |_| 0.85, &p);
+        assert!(!o.mesh_validated);
+        assert!(o.witness_resolved);
+        assert_eq!(o.winning_status, Some(PolicyHealthStatus::CriticalFailure));
+    }
 }
+
+
