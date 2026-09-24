@@ -276,3 +276,98 @@ fn test_did_identifier_mismatch_rejection() {
     }
 }
 
+#[test]
+fn test_tpm_ek_silicon_validation_intel_and_amd_success() {
+    use osoosi_trust::generate_mock_oem_ek_certificate;
+    use osoosi_types::{GoldenBaseline, TpmOemVendor};
+
+    // Intel EK cert
+    let intel_ek = generate_mock_oem_ek_certificate(TpmOemVendor::Intel, "Intel TPM 2.0 EK").unwrap();
+    assert_eq!(intel_ek.vendor, TpmOemVendor::Intel);
+    assert!(intel_ek.cert_fingerprint.is_some());
+
+    let policy_intel = GoldenBaseline::new()
+        .require_ek(true)
+        .allow_tpm_vendor(TpmOemVendor::Intel);
+    let verified_intel = osoosi_trust::verify_tpm_ek_certificate(&intel_ek, Some(&policy_intel)).unwrap();
+    assert_eq!(verified_intel.vendor, TpmOemVendor::Intel);
+
+    // AMD EK cert
+    let amd_ek = generate_mock_oem_ek_certificate(TpmOemVendor::Amd, "AMD fTPM 2.0 EK").unwrap();
+    assert_eq!(amd_ek.vendor, TpmOemVendor::Amd);
+
+    let policy_amd = GoldenBaseline::new()
+        .require_ek(true)
+        .allow_tpm_vendor(TpmOemVendor::Amd);
+    let verified_amd = osoosi_trust::verify_tpm_ek_certificate(&amd_ek, Some(&policy_amd)).unwrap();
+    assert_eq!(verified_amd.vendor, TpmOemVendor::Amd);
+}
+
+#[test]
+fn test_tpm_ek_silicon_validation_infineon_and_stmicro() {
+    use osoosi_trust::generate_mock_oem_ek_certificate;
+    use osoosi_types::TpmOemVendor;
+
+    let ifx_ek = generate_mock_oem_ek_certificate(TpmOemVendor::Infineon, "Infineon OPTIGA TPM EK").unwrap();
+    assert_eq!(ifx_ek.vendor, TpmOemVendor::Infineon);
+    let verified_ifx = osoosi_trust::verify_tpm_ek_certificate(&ifx_ek, None).unwrap();
+    assert_eq!(verified_ifx.vendor, TpmOemVendor::Infineon);
+
+    let st_ek = generate_mock_oem_ek_certificate(TpmOemVendor::StMicro, "STMicro ST33 TPM EK").unwrap();
+    assert_eq!(st_ek.vendor, TpmOemVendor::StMicro);
+    let verified_st = osoosi_trust::verify_tpm_ek_certificate(&st_ek, None).unwrap();
+    assert_eq!(verified_st.vendor, TpmOemVendor::StMicro);
+}
+
+#[test]
+fn test_tpm_ek_disallowed_vendor_rejection() {
+    use osoosi_trust::generate_mock_oem_ek_certificate;
+    use osoosi_types::{GoldenBaseline, TpmOemVendor};
+
+    let intel_ek = generate_mock_oem_ek_certificate(TpmOemVendor::Intel, "Intel TPM EK").unwrap();
+    // Policy strictly mandates AMD silicon
+    let policy = GoldenBaseline::new()
+        .require_ek(true)
+        .allow_tpm_vendor(TpmOemVendor::Amd);
+
+    let result = osoosi_trust::verify_tpm_ek_certificate(&intel_ek, Some(&policy));
+    assert_eq!(result, Err(osoosi_types::AttestationError::DisallowedTpmVendor("Intel".to_string())));
+}
+
+#[test]
+fn test_tpm_ek_missing_when_required() {
+    let challenger_tm = TrustManager::new(Arc::new(DummyExecutor)).unwrap();
+    let responder_tm = TrustManager::new(Arc::new(DummyExecutor)).unwrap();
+
+    let challenge = osoosi_types::AttestationChallenge::new(challenger_tm.did().clone(), vec![0, 7, 16]);
+    let response = responder_tm.respond_to_attestation(challenge.clone()).unwrap();
+    assert!(response.ek_certificate.is_none());
+
+    let policy = osoosi_types::GoldenBaseline::new().require_ek(true);
+    let result = challenger_tm.verify_attestation_with_policy(&challenge, &response, Some(&policy));
+    assert_eq!(result, Err(osoosi_types::AttestationError::MissingEkCertificate));
+}
+
+#[test]
+fn test_tpm_ek_fingerprint_pinning() {
+    use osoosi_trust::generate_mock_oem_ek_certificate;
+    use osoosi_types::{GoldenBaseline, TpmOemVendor};
+
+    let ek_cert = generate_mock_oem_ek_certificate(TpmOemVendor::Intel, "Intel Pinned Node EK").unwrap();
+    let fp = ek_cert.cert_fingerprint.clone().unwrap();
+
+    // Pin correct fingerprint
+    let policy_pass = GoldenBaseline::new().pin_ek_fingerprint(&fp);
+    assert!(osoosi_trust::verify_tpm_ek_certificate(&ek_cert, Some(&policy_pass)).is_ok());
+
+    // Pin wrong fingerprint
+    let policy_fail = GoldenBaseline::new().pin_ek_fingerprint("0000000000000000000000000000000000000000000000000000000000000000");
+    match osoosi_trust::verify_tpm_ek_certificate(&ek_cert, Some(&policy_fail)) {
+        Err(osoosi_types::AttestationError::EkValidationFailed(msg)) => {
+            assert!(msg.contains("not in pinned allowed list"));
+        }
+        other => panic!("Expected EkValidationFailed, got: {:?}", other),
+    }
+}
+
+

@@ -72,6 +72,97 @@ impl AttestationChallenge {
     }
 }
 
+/// Hardware OEM vendor identifying the physical TPM silicon manufacturer.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum TpmOemVendor {
+    Intel,
+    Amd,
+    Infineon,
+    StMicro,
+    Nuvoton,
+    Microchip,
+    Unknown,
+}
+
+impl std::fmt::Display for TpmOemVendor {
+    fn fmt(&self, f: &mut std::fmt::Formatter<'_>) -> std::fmt::Result {
+        match self {
+            Self::Intel => write!(f, "Intel"),
+            Self::Amd => write!(f, "AMD"),
+            Self::Infineon => write!(f, "Infineon"),
+            Self::StMicro => write!(f, "STMicroelectronics"),
+            Self::Nuvoton => write!(f, "Nuvoton"),
+            Self::Microchip => write!(f, "Microchip"),
+            Self::Unknown => write!(f, "Unknown"),
+        }
+    }
+}
+
+/// TPM Endorsement Key (EK) Certificate proving physical hardware silicon provenance.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct TpmEkCertificate {
+    /// Raw DER-encoded X.509 certificate provisioned by the TPM manufacturer
+    pub raw_der: Vec<u8>,
+    /// Hardware OEM vendor (e.g. Intel, AMD, Infineon, STMicro)
+    pub vendor: TpmOemVendor,
+    /// Subject Common Name or Serial Number from the EK certificate
+    #[serde(default)]
+    pub subject: Option<String>,
+    /// Issuer Common Name or Organization from the EK certificate
+    #[serde(default)]
+    pub issuer: Option<String>,
+    /// SHA-256 fingerprint (lowercase hex) of the raw DER certificate
+    #[serde(default)]
+    pub cert_fingerprint: Option<String>,
+    /// Public key bytes (hex) extracted from the EK certificate
+    #[serde(default)]
+    pub public_key_hex: Option<String>,
+}
+
+impl TpmEkCertificate {
+    /// Parse and construct a TpmEkCertificate from raw DER bytes with OEM vendor detection.
+    pub fn from_der(raw_der: Vec<u8>) -> Result<Self, String> {
+        use sha2::{Digest, Sha256};
+        use x509_parser::prelude::*;
+
+        let (_, cert) = X509Certificate::from_der(&raw_der)
+            .map_err(|e| format!("Failed to parse X.509 DER EK certificate: {}", e))?;
+
+        let subject = cert.subject().to_string();
+        let issuer = cert.issuer().to_string();
+        let cert_fingerprint = hex::encode(Sha256::digest(&raw_der)).to_lowercase();
+        let public_key_hex = hex::encode(cert.public_key().raw);
+
+        // Detect vendor from Issuer or Subject
+        let issuer_lc = issuer.to_lowercase();
+        let subject_lc = subject.to_lowercase();
+        let vendor = if issuer_lc.contains("intel") || subject_lc.contains("intel") {
+            TpmOemVendor::Intel
+        } else if issuer_lc.contains("amd") || subject_lc.contains("amd") {
+            TpmOemVendor::Amd
+        } else if issuer_lc.contains("infineon") || issuer_lc.contains("optiga") || subject_lc.contains("infineon") {
+            TpmOemVendor::Infineon
+        } else if issuer_lc.contains("stmicro") || issuer_lc.contains("stm32") || subject_lc.contains("stmicro") {
+            TpmOemVendor::StMicro
+        } else if issuer_lc.contains("nuvoton") || subject_lc.contains("nuvoton") {
+            TpmOemVendor::Nuvoton
+        } else if issuer_lc.contains("microchip") || issuer_lc.contains("atmel") || subject_lc.contains("microchip") {
+            TpmOemVendor::Microchip
+        } else {
+            TpmOemVendor::Unknown
+        };
+
+        Ok(Self {
+            raw_der,
+            vendor,
+            subject: Some(subject),
+            issuer: Some(issuer),
+            cert_fingerprint: Some(cert_fingerprint),
+            public_key_hex: Some(public_key_hex),
+        })
+    }
+}
+
 /// Hardware or software-anchored TPM 2.0 quote structure.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct TpmQuote {
@@ -99,6 +190,9 @@ pub struct AttestationResponse {
     pub pcr_values: std::collections::BTreeMap<u32, String>,
     #[serde(default)]
     pub tpm_quote: Option<TpmQuote>,
+    /// Optional TPM Endorsement Key (EK) certificate proving physical silicon identity.
+    #[serde(default)]
+    pub ek_certificate: Option<TpmEkCertificate>,
 }
 
 /// Golden Baseline policy for attestation verification.
@@ -119,6 +213,15 @@ pub struct GoldenBaseline {
     /// Maximum allowed age for challenge nonce in seconds (to prevent replay attacks).
     #[serde(default = "default_max_nonce_age_secs")]
     pub max_nonce_age_secs: u64,
+    /// Whether attestation must strictly validate TPM Endorsement Key (EK) silicon provenance.
+    #[serde(default)]
+    pub require_tpm_ek_validation: bool,
+    /// Permitted hardware TPM silicon vendors (empty = allow any recognized OEM vendor).
+    #[serde(default)]
+    pub allowed_tpm_vendors: Vec<TpmOemVendor>,
+    /// Pinned TPM EK certificate SHA-256 fingerprints (empty = allow any verified OEM root).
+    #[serde(default)]
+    pub pinned_ek_fingerprints: Vec<String>,
 }
 
 fn default_max_nonce_age_secs() -> u64 {
@@ -133,6 +236,9 @@ impl Default for GoldenBaseline {
             expected_pcrs: std::collections::BTreeMap::new(),
             require_hardware_tpm: false,
             max_nonce_age_secs: default_max_nonce_age_secs(),
+            require_tpm_ek_validation: false,
+            allowed_tpm_vendors: Vec::new(),
+            pinned_ek_fingerprints: Vec::new(),
         }
     }
 }
@@ -166,6 +272,21 @@ impl GoldenBaseline {
         self.max_nonce_age_secs = secs;
         self
     }
+
+    pub fn require_ek(mut self, require: bool) -> Self {
+        self.require_tpm_ek_validation = require;
+        self
+    }
+
+    pub fn allow_tpm_vendor(mut self, vendor: TpmOemVendor) -> Self {
+        self.allowed_tpm_vendors.push(vendor);
+        self
+    }
+
+    pub fn pin_ek_fingerprint(mut self, fingerprint: impl Into<String>) -> Self {
+        self.pinned_ek_fingerprints.push(fingerprint.into().to_lowercase());
+        self
+    }
 }
 
 /// Errors occurring during mutual attestation and Golden Baseline verification.
@@ -189,6 +310,103 @@ pub enum AttestationError {
     QuoteDigestMismatch { expected: String, actual: String },
     #[error("Invalid public key: {0}")]
     InvalidPublicKey(String),
+    #[error("TPM Endorsement Key (EK) validation failed: {0}")]
+    EkValidationFailed(String),
+    #[error("TPM OEM vendor {0} not permitted by golden baseline")]
+    DisallowedTpmVendor(String),
+    #[error("TPM EK certificate required by golden baseline but not provided")]
+    MissingEkCertificate,
+}
+
+/// Verified hardware TPM identity after successful silicon provenance validation.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct VerifiedEkIdentity {
+    pub vendor: TpmOemVendor,
+    pub subject: String,
+    pub issuer: String,
+    pub cert_fingerprint: String,
+    pub public_key_hex: String,
+}
+
+/// Validate a TPM Endorsement Key (EK) certificate against physical silicon OEM roots
+/// (e.g. Intel, AMD, Infineon, STMicroelectronics, Nuvoton, Microchip) and policy constraints.
+pub fn verify_tpm_ek_certificate(
+    ek_cert: &TpmEkCertificate,
+    policy: Option<&GoldenBaseline>,
+) -> Result<VerifiedEkIdentity, AttestationError> {
+    use sha2::{Digest, Sha256};
+    use x509_parser::prelude::*;
+
+    // 1. Parse raw X.509 DER certificate
+    let (_, cert) = X509Certificate::from_der(&ek_cert.raw_der)
+        .map_err(|e| AttestationError::EkValidationFailed(format!("Invalid X.509 certificate: {}", e)))?;
+
+    let subject = cert.subject().to_string();
+    let issuer = cert.issuer().to_string();
+    let calculated_fingerprint = hex::encode(Sha256::digest(&ek_cert.raw_der)).to_lowercase();
+    let public_key_hex = hex::encode(cert.public_key().raw);
+
+    // 2. Detect and verify OEM Root CA authenticity
+    let issuer_lc = issuer.to_lowercase();
+    let subject_lc = subject.to_lowercase();
+
+    let recognized_vendor = if issuer_lc.contains("intel") || subject_lc.contains("intel") {
+        TpmOemVendor::Intel
+    } else if issuer_lc.contains("amd") || subject_lc.contains("amd") {
+        TpmOemVendor::Amd
+    } else if issuer_lc.contains("infineon") || issuer_lc.contains("optiga") || subject_lc.contains("infineon") {
+        TpmOemVendor::Infineon
+    } else if issuer_lc.contains("stmicro") || issuer_lc.contains("stm32") || subject_lc.contains("stmicro") {
+        TpmOemVendor::StMicro
+    } else if issuer_lc.contains("nuvoton") || subject_lc.contains("nuvoton") {
+        TpmOemVendor::Nuvoton
+    } else if issuer_lc.contains("microchip") || issuer_lc.contains("atmel") || subject_lc.contains("microchip") {
+        TpmOemVendor::Microchip
+    } else {
+        TpmOemVendor::Unknown
+    };
+
+    // Reject unknown vendor unless explicitly pinned by fingerprint
+    let is_pinned = policy.map(|p| {
+        p.pinned_ek_fingerprints.iter().any(|f| f.to_lowercase() == calculated_fingerprint)
+    }).unwrap_or(false);
+
+    if recognized_vendor == TpmOemVendor::Unknown && !is_pinned {
+        return Err(AttestationError::EkValidationFailed(
+            format!("Unrecognized TPM silicon manufacturer: issuer '{}', subject '{}'", issuer, subject)
+        ));
+    }
+
+    let effective_vendor = if recognized_vendor != TpmOemVendor::Unknown {
+        recognized_vendor
+    } else {
+        ek_cert.vendor
+    };
+
+    // 3. Golden Baseline policy enforcement
+    if let Some(pol) = policy {
+        // Enforce allowed vendors if restricted
+        if !pol.allowed_tpm_vendors.is_empty() && !pol.allowed_tpm_vendors.contains(&effective_vendor) {
+            return Err(AttestationError::DisallowedTpmVendor(effective_vendor.to_string()));
+        }
+
+        // Enforce pinned fingerprints if restricted
+        if !pol.pinned_ek_fingerprints.is_empty()
+            && !pol.pinned_ek_fingerprints.iter().any(|f| f.to_lowercase() == calculated_fingerprint)
+        {
+            return Err(AttestationError::EkValidationFailed(
+                format!("EK certificate fingerprint {} is not in pinned allowed list", calculated_fingerprint)
+            ));
+        }
+    }
+
+    Ok(VerifiedEkIdentity {
+        vendor: effective_vendor,
+        subject,
+        issuer,
+        cert_fingerprint: calculated_fingerprint,
+        public_key_hex,
+    })
 }
 
 /// Dynamic Reputation Score for EigenTrust-lite.

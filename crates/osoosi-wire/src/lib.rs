@@ -69,6 +69,8 @@ pub enum MeshCommand {
     BroadcastTripwire(osoosi_types::MeshTripwireAlert),
     /// Broadcast an attestation challenge or response across the mesh.
     BroadcastAttestation(MeshAttestationMessage),
+    /// Broadcast a witness / arbiter tie-breaker vote for 2-host stalemate resolution.
+    BroadcastWitnessVote(osoosi_types::WitnessVote),
 }
 
 /// Collaborative attacker throttling signal for the Gossip mesh.

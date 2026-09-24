@@ -569,6 +569,10 @@ impl MeshNode {
                         let topic = self.attestation_topic.clone();
                         self.publish_gossip_json(&topic, &msg);
                     }
+                    MeshCommand::BroadcastWitnessVote(witness) => {
+                        let topic = self.consensus_topic.clone();
+                        self.publish_gossip_json(&topic, &osoosi_types::PolicyConsensusMessage::Witness(witness));
+                    }
                 },
                 event = self.swarm.select_next_some() => match event {
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Mdns(mdns::Event::Discovered(list))) => {

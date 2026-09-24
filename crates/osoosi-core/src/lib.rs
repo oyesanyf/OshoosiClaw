@@ -5087,6 +5087,7 @@ impl EdrOrchestrator {
                 let policy_id = match &msg {
                     osoosi_types::PolicyConsensusMessage::Announcement(a) => a.policy_id.clone(),
                     osoosi_types::PolicyConsensusMessage::Vote(v) => v.policy_id.clone(),
+                    osoosi_types::PolicyConsensusMessage::Witness(w) => w.policy_id.clone(),
                 };
                 let snapshot = {
                     // DashMap: lock-free entry mutation

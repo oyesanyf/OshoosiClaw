@@ -6,6 +6,9 @@ use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
 use osoosi_types::{
     AttestationChallenge, AttestationError, AttestationResponse, GoldenBaseline, NodeDID, TpmQuote,
 };
+pub use osoosi_types::{
+    verify_tpm_ek_certificate, TpmEkCertificate, TpmOemVendor, VerifiedEkIdentity,
+};
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
@@ -17,6 +20,7 @@ pub struct TrustManager {
     golden_baseline: Option<GoldenBaseline>,
     local_binary_hash: Option<String>,
     local_config_hash: Option<String>,
+    local_ek_certificate: Option<TpmEkCertificate>,
     _executor: std::sync::Arc<dyn osoosi_types::SecuredExecutor>,
 }
 
@@ -82,6 +86,7 @@ impl TrustManager {
             golden_baseline: None,
             local_binary_hash: None,
             local_config_hash: None,
+            local_ek_certificate: None,
             _executor: executor,
         })
     }
@@ -97,6 +102,19 @@ impl TrustManager {
 
     pub fn golden_baseline(&self) -> Option<&GoldenBaseline> {
         self.golden_baseline.as_ref()
+    }
+
+    pub fn with_ek_certificate(mut self, ek: TpmEkCertificate) -> Self {
+        self.local_ek_certificate = Some(ek);
+        self
+    }
+
+    pub fn set_ek_certificate(&mut self, ek: TpmEkCertificate) {
+        self.local_ek_certificate = Some(ek);
+    }
+
+    pub fn ek_certificate(&self) -> Option<&TpmEkCertificate> {
+        self.local_ek_certificate.as_ref()
     }
 
     pub fn set_local_binary_hash(&mut self, hash: String) {
@@ -266,6 +284,7 @@ impl TrustManager {
             signature: hex::encode(signature.to_bytes()),
             pcr_values,
             tpm_quote: Some(tpm_quote),
+            ek_certificate: self.local_ek_certificate.clone(),
         })
     }
 
@@ -352,6 +371,23 @@ pub fn verify_attestation_with_policy(
                     return Err(AttestationError::HardwareTpmRequired);
                 }
             }
+        }
+    }
+
+    // 3b. TPM Endorsement Key (EK) and Silicon Chain Validation
+    if let Some(ref ek_cert) = response.ek_certificate {
+        let verified_ek = verify_tpm_ek_certificate(ek_cert, policy)?;
+        let data_hash = hex::encode(Sha256::digest(
+            format!("ek_verified:{}:{}", verified_ek.vendor, verified_ek.cert_fingerprint).as_bytes(),
+        ));
+        let _ = osoosi_audit::tpm::extend_audit_to_tpm("ek_chain_verified", &data_hash);
+    } else if let Some(pol) = policy {
+        if pol.require_tpm_ek_validation {
+            let _ = osoosi_audit::tpm::extend_audit_to_tpm(
+                "attestation_failed",
+                &hex::encode(Sha256::digest(b"missing_ek_certificate")),
+            );
+            return Err(AttestationError::MissingEkCertificate);
         }
     }
 
@@ -504,4 +540,32 @@ pub fn verify_attestation_with_policy(
     osoosi_audit::tpm::extend_audit_to_tpm("attestation_verified", &data_hash);
 
     Ok(())
+}
+
+/// Generate a mock hardware OEM Endorsement Key (EK) certificate for tests and silicon anchoring validation.
+pub fn generate_mock_oem_ek_certificate(
+    vendor: TpmOemVendor,
+    common_name: &str,
+) -> anyhow::Result<TpmEkCertificate> {
+    use rcgen::{CertificateParams, DistinguishedName, KeyPair};
+
+    let mut params = CertificateParams::default();
+    params.distinguished_name = DistinguishedName::new();
+    let org = match vendor {
+        TpmOemVendor::Intel => "Intel Corporation",
+        TpmOemVendor::Amd => "Advanced Micro Devices",
+        TpmOemVendor::Infineon => "Infineon Technologies AG",
+        TpmOemVendor::StMicro => "STMicroelectronics",
+        TpmOemVendor::Nuvoton => "Nuvoton Technology",
+        TpmOemVendor::Microchip => "Microchip Technology Inc.",
+        TpmOemVendor::Unknown => "Unknown Hardware OEM",
+    };
+    params.distinguished_name.push(rcgen::DnType::OrganizationName, org);
+    params.distinguished_name.push(rcgen::DnType::CommonName, common_name);
+
+    let key_pair = KeyPair::generate()?;
+    let cert = params.self_signed(&key_pair)?;
+    let raw_der = cert.der().to_vec();
+
+    TpmEkCertificate::from_der(raw_der).map_err(|e| anyhow::anyhow!("{}", e))
 }

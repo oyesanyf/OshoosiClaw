@@ -89,10 +89,45 @@ pub struct PolicyHealthVote {
     pub work_nonce: Option<String>,
 }
 
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct WitnessVote {
+    pub policy_id: String,
+    pub witness_id: String,
+    pub favored_status: PolicyHealthStatus,
+    /// Cryptographic signature over SHA256(policy_id || witness_id || favored_status || timestamp)
+    pub signature: String,
+    pub timestamp: DateTime<Utc>,
+}
+
+/// Compute canonical digest for witness signature verification.
+pub fn compute_witness_digest(
+    policy_id: &str,
+    witness_id: &str,
+    favored_status: &PolicyHealthStatus,
+    timestamp_secs: i64,
+) -> [u8; 32] {
+    use sha2::{Digest, Sha256};
+    let mut hasher = Sha256::new();
+    hasher.update(policy_id.as_bytes());
+    hasher.update(b"|");
+    hasher.update(witness_id.as_bytes());
+    hasher.update(b"|");
+    let status_str = match favored_status {
+        PolicyHealthStatus::Optimal => "Optimal",
+        PolicyHealthStatus::Degraded => "Degraded",
+        PolicyHealthStatus::CriticalFailure => "CriticalFailure",
+    };
+    hasher.update(status_str.as_bytes());
+    hasher.update(b"|");
+    hasher.update(timestamp_secs.to_le_bytes());
+    hasher.finalize().into()
+}
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum PolicyConsensusMessage {
     Announcement(PolicyAnnouncement),
     Vote(PolicyHealthVote),
+    Witness(WitnessVote),
 }
 
 /// Peer status broadcast for mesh join rules. Peers publish this so others can enforce require_patched / require_supported_os.

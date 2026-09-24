@@ -8,7 +8,8 @@
 //! - **Permissioned / PoA**: `OSOOSI_MESH_VOTER_WHITELIST` — comma-separated `voter_id`s; others’ votes are ignored.
 //! - **pBFT context**: optional `mesh_peer_hint` records max tolerable faults `f = ⌊(n−1)/3⌋` for ops logging.
 
-use osoosi_types::{PolicyConsensusMessage, PolicyHealthStatus, PolicyHealthVote};
+use ed25519_dalek::{Signature, Verifier, VerifyingKey};
+use osoosi_types::{PolicyConsensusMessage, PolicyHealthStatus, PolicyHealthVote, WitnessVote};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 
@@ -29,6 +30,16 @@ pub struct BftConsensusParams {
     pub pos_stake_exponent: f64,
     /// Observed mesh size (e.g. from `mesh_peer_count`) for pBFT `f` diagnostics.
     pub mesh_peer_hint: Option<u32>,
+    /// Minimum reputation required for both nodes in a 2-host mesh to establish quorum of 2 (default 0.80).
+    pub two_host_reputation_threshold: f32,
+    /// Designated arbiter / witness ID for breaking 2-host stalemates.
+    pub designated_witness_id: Option<String>,
+    /// Designated witness Ed25519 public key (hex) for verifying witness signature.
+    pub witness_public_key: Option<String>,
+    /// Enable weighted reputation tie-breaker when no witness vote is received.
+    pub enable_reputation_tie_breaker: bool,
+    /// Minimum reputation delta required to break a tie via reputation (e.g. 0.05).
+    pub tie_breaker_reputation_margin: f32,
 }
 
 impl Default for BftConsensusParams {
@@ -77,6 +88,19 @@ impl Default for BftConsensusParams {
                 .unwrap_or(1.0)
                 .clamp(0.5_f64, 4.0_f64),
             mesh_peer_hint: None,
+            two_host_reputation_threshold: std::env::var("OSOOSI_BFT_TWO_HOST_TRUST")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.80),
+            designated_witness_id: std::env::var("OSOOSI_BFT_WITNESS_ID").ok(),
+            witness_public_key: std::env::var("OSOOSI_BFT_WITNESS_PUBKEY").ok(),
+            enable_reputation_tie_breaker: std::env::var("OSOOSI_BFT_REP_TIE_BREAKER")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(true),
+            tie_breaker_reputation_margin: std::env::var("OSOOSI_BFT_TIE_MARGIN")
+                .ok()
+                .and_then(|s| s.parse().ok())
+                .unwrap_or(0.05),
         }
     }
 }
@@ -84,6 +108,7 @@ impl Default for BftConsensusParams {
 #[derive(Clone, Debug, Default)]
 pub struct PolicyBftOutcome {
     pub mesh_validated: bool,
+    pub quorum: usize,
     pub participating_voters: usize,
     pub optimal_count: usize,
     pub critical_count: usize,
@@ -95,6 +120,10 @@ pub struct PolicyBftOutcome {
     pub stalemate_conflict: bool,
     /// pBFT: max Byzantine faults tolerated for hinted mesh size `n`: `f = ⌊(n−1)/3⌋`.
     pub pbft_max_faults: Option<u32>,
+    /// Whether consensus was resolved via witness/arbiter tie-breaker.
+    pub witness_resolved: bool,
+    /// The winning health status if consensus succeeded or was resolved by witness/tie-breaker.
+    pub winning_status: Option<PolicyHealthStatus>,
 }
 
 /// Count leading zero bits (MSB-first) of SHA-256 output.
@@ -217,7 +246,16 @@ pub fn analyze_policy_consensus(
         return PolicyBftOutcome::default();
     }
 
-    let quorum = std::cmp::max(3usize, (2 * participating + 2) / 3);
+    let both_high_trust = participating == 2
+        && latest
+            .values()
+            .all(|v| reputation(&v.voter_id) >= params.two_host_reputation_threshold);
+
+    let quorum = if both_high_trust {
+        2usize
+    } else {
+        std::cmp::max(3usize, (2 * participating + 2) / 3)
+    };
 
     let mut optimal_ids = Vec::new();
     let mut critical_ids = Vec::new();
@@ -286,18 +324,84 @@ pub fn analyze_policy_consensus(
         Some(_) => participating >= 3,
     };
 
-    let mesh_validated = (bft_unweighted || bft_weighted)
+    let mut mesh_validated = (bft_unweighted || bft_weighted)
         && trust_gate
         && optimal_count > 0
         && !sybil_optimal_cluster
         && whitelist_min_participants;
 
-    let stalemate_conflict = participating >= 6
+    let mut stalemate_conflict = (participating >= 6
         && optimal_count >= 2
         && critical_count >= 2
-        && (optimal_count as isize - critical_count as isize).unsigned_abs() <= 1;
+        && (optimal_count as isize - critical_count as isize).unsigned_abs() <= 1)
+        || (participating == 2 && optimal_count == 1 && critical_count == 1);
 
-    let penalize_critical_voters = if mesh_validated {
+    let mut witness_resolved = false;
+    let mut winning_status = if mesh_validated {
+        Some(PolicyHealthStatus::Optimal)
+    } else {
+        None
+    };
+
+    // Stalemate resolution: Designated witness signature or weighted reputation tie-breaker
+    if stalemate_conflict && participating == 2 {
+        let mut valid_witness_vote: Option<&WitnessVote> = None;
+        for msg in messages {
+            if let PolicyConsensusMessage::Witness(w) = msg {
+                if let Some(ref designated) = params.designated_witness_id {
+                    if &w.witness_id != designated {
+                        continue;
+                    }
+                }
+                if let Some(ref pk_hex) = params.witness_public_key {
+                    let Ok(pk_bytes) = hex::decode(pk_hex) else { continue };
+                    let Ok(verifying_key) = VerifyingKey::try_from(pk_bytes.as_slice()) else { continue };
+                    let Ok(sig_bytes) = hex::decode(&w.signature) else { continue };
+                    let Ok(sig) = Signature::try_from(sig_bytes.as_slice()) else { continue };
+                    let digest = osoosi_types::compute_witness_digest(
+                        &w.policy_id,
+                        &w.witness_id,
+                        &w.favored_status,
+                        w.timestamp.timestamp(),
+                    );
+                    if verifying_key.verify(&digest, &sig).is_err() {
+                        continue;
+                    }
+                }
+                valid_witness_vote = Some(w);
+                break;
+            }
+        }
+
+        if let Some(w) = valid_witness_vote {
+            witness_resolved = true;
+            stalemate_conflict = false;
+            winning_status = Some(w.favored_status.clone());
+            if w.favored_status == PolicyHealthStatus::Optimal {
+                mesh_validated = true;
+            } else {
+                mesh_validated = false;
+            }
+        } else if params.enable_reputation_tie_breaker {
+            let opt_rep = optimal_ids.first().map(|id| reputation(id)).unwrap_or(0.0);
+            let crit_rep = critical_ids.first().map(|id| reputation(id)).unwrap_or(0.0);
+            let margin = params.tie_breaker_reputation_margin;
+
+            if opt_rep - crit_rep >= margin {
+                witness_resolved = true;
+                stalemate_conflict = false;
+                mesh_validated = true;
+                winning_status = Some(PolicyHealthStatus::Optimal);
+            } else if crit_rep - opt_rep >= margin {
+                witness_resolved = true;
+                stalemate_conflict = false;
+                mesh_validated = false;
+                winning_status = Some(PolicyHealthStatus::CriticalFailure);
+            }
+        }
+    }
+
+    let penalize_critical_voters = if mesh_validated && !witness_resolved {
         critical_ids.clone()
     } else {
         Vec::new()
@@ -307,6 +411,7 @@ pub fn analyze_policy_consensus(
 
     PolicyBftOutcome {
         mesh_validated,
+        quorum,
         participating_voters: participating,
         optimal_count,
         critical_count,
@@ -317,6 +422,8 @@ pub fn analyze_policy_consensus(
         penalize_critical_voters,
         stalemate_conflict,
         pbft_max_faults,
+        witness_resolved,
+        winning_status,
     }
 }
 
@@ -464,5 +571,143 @@ mod tests {
         let o = analyze_policy_consensus(&msgs, |_| 0.7, &p);
         assert!(o.mesh_validated);
         assert!(o.penalize_critical_voters.contains(&"liar".to_string()));
+    }
+
+    #[test]
+    fn two_host_quorum_both_high_trust_passes() {
+        let msgs = vec![
+            vote("host1", PolicyHealthStatus::Optimal),
+            vote("host2", PolicyHealthStatus::Optimal),
+        ];
+        let p = BftConsensusParams {
+            two_host_reputation_threshold: 0.80,
+            ..Default::default()
+        };
+        // Both nodes have high reputation >= 0.80 -> quorum adapts to 2
+        let o = analyze_policy_consensus(&msgs, |_| 0.85, &p);
+        assert!(o.mesh_validated);
+        assert_eq!(o.quorum, 2);
+        assert_eq!(o.participating_voters, 2);
+        assert_eq!(o.optimal_count, 2);
+        assert!(!o.stalemate_conflict);
+    }
+
+    #[test]
+    fn two_host_quorum_low_trust_reverts_to_three() {
+        let msgs = vec![
+            vote("host1", PolicyHealthStatus::Optimal),
+            vote("host2", PolicyHealthStatus::Optimal),
+        ];
+        let p = BftConsensusParams {
+            two_host_reputation_threshold: 0.80,
+            ..Default::default()
+        };
+        // Nodes have reputation 0.70 < 0.80 -> quorum remains 3
+        let o = analyze_policy_consensus(&msgs, |_| 0.70, &p);
+        assert_eq!(o.quorum, 3);
+        assert_eq!(o.participating_voters, 2);
+    }
+
+    #[test]
+    fn two_host_quorum_split_optimal_degraded_fails() {
+        let msgs = vec![
+            vote("host1", PolicyHealthStatus::Optimal),
+            vote("host2", PolicyHealthStatus::Degraded),
+        ];
+        let p = BftConsensusParams {
+            two_host_reputation_threshold: 0.80,
+            ..Default::default()
+        };
+        let o = analyze_policy_consensus(&msgs, |_| 0.85, &p);
+        assert!(!o.mesh_validated);
+        assert_eq!(o.quorum, 2);
+        assert_eq!(o.optimal_count, 1);
+        assert_eq!(o.degraded_count, 1);
+        assert!(!o.stalemate_conflict);
+    }
+
+    #[test]
+    fn two_host_stalemate_detected_one_vs_one() {
+        let msgs = vec![
+            vote("host1", PolicyHealthStatus::Optimal),
+            vote("host2", PolicyHealthStatus::CriticalFailure),
+        ];
+        let p = BftConsensusParams {
+            enable_reputation_tie_breaker: false,
+            ..Default::default()
+        };
+        let o = analyze_policy_consensus(&msgs, |_| 0.85, &p);
+        assert!(!o.mesh_validated);
+        assert!(o.stalemate_conflict, "1-vs-1 split vote must trigger stalemate_conflict");
+    }
+
+    #[test]
+    fn two_host_witness_resolves_stalemate() {
+        use ed25519_dalek::Signer;
+        let mut csprng = rand::thread_rng();
+        let signing_key = ed25519_dalek::SigningKey::generate(&mut csprng);
+        let verifying_key = signing_key.verifying_key();
+        let pubkey_hex = hex::encode(verifying_key.to_bytes());
+
+        let timestamp = chrono::Utc::now();
+        let digest = osoosi_types::compute_witness_digest(
+            "KB1",
+            "arbiter_node",
+            &PolicyHealthStatus::Optimal,
+            timestamp.timestamp(),
+        );
+        let signature = signing_key.sign(&digest);
+        let sig_hex = hex::encode(signature.to_bytes());
+
+        let msgs = vec![
+            vote("host1", PolicyHealthStatus::Optimal),
+            vote("host2", PolicyHealthStatus::CriticalFailure),
+            PolicyConsensusMessage::Witness(WitnessVote {
+                policy_id: "KB1".to_string(),
+                witness_id: "arbiter_node".to_string(),
+                favored_status: PolicyHealthStatus::Optimal,
+                signature: sig_hex,
+                timestamp,
+            }),
+        ];
+
+        let p = BftConsensusParams {
+            designated_witness_id: Some("arbiter_node".to_string()),
+            witness_public_key: Some(pubkey_hex),
+            ..Default::default()
+        };
+
+        let o = analyze_policy_consensus(&msgs, |_| 0.85, &p);
+        assert!(o.mesh_validated);
+        assert!(o.witness_resolved);
+        assert!(!o.stalemate_conflict);
+        assert_eq!(o.winning_status, Some(PolicyHealthStatus::Optimal));
+    }
+
+    #[test]
+    fn two_host_weighted_reputation_tie_breaker() {
+        let msgs = vec![
+            vote("high_trust_node", PolicyHealthStatus::Optimal),
+            vote("low_trust_node", PolicyHealthStatus::CriticalFailure),
+        ];
+        let p = BftConsensusParams {
+            enable_reputation_tie_breaker: true,
+            tie_breaker_reputation_margin: 0.10,
+            ..Default::default()
+        };
+
+        let rep_fn = |id: &str| {
+            if id == "high_trust_node" {
+                0.90
+            } else {
+                0.50
+            }
+        };
+
+        let o = analyze_policy_consensus(&msgs, rep_fn, &p);
+        assert!(o.mesh_validated);
+        assert!(o.witness_resolved);
+        assert!(!o.stalemate_conflict);
+        assert_eq!(o.winning_status, Some(PolicyHealthStatus::Optimal));
     }
 }

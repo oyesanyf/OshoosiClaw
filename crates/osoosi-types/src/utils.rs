@@ -338,10 +338,50 @@ pub enum AuthenticodeStatus {
     TamperedBadDigest,  // 0x80096010 / TRUST_E_BAD_DIGEST: Hash mismatch, file has been tampered with
     NotSigned,          // 0x800B0100 / TRUST_E_NOSIGNATURE: No signature present
     ExplicitDistrust,   // 0x800B0111 / TRUST_E_EXPLICIT_DISTRUST
+    Revoked,            // 0x800B010C / CERT_E_REVOKED or 0x80092013 / CRYPT_E_REVOKED
     OtherError(i32),
 }
 
-/// Verify file signature using Windows WinVerifyTrust API with detailed status code.
+/// Extracts SHA-256 certificate thumbprints (lowercase hex) from all Authenticode certificates in binary.
+pub fn extract_certificate_thumbprints(file_path: &str) -> Vec<String> {
+    use sha2::{Digest, Sha256};
+    let mut thumbprints = Vec::new();
+    if let Some(certs) = extract_all_certificates(file_path) {
+        for der in certs {
+            let digest = Sha256::digest(&der);
+            thumbprints.push(hex::encode(digest).to_lowercase());
+        }
+    }
+    thumbprints
+}
+
+/// Checks whether any extracted certificate thumbprint matches explicitly pinned thumbprints
+/// (from OSOOSI_PINNED_CERT_THUMBPRINTS env var or pinned store).
+pub fn is_pinned_thumbprint_allowed(thumbprints: &[String]) -> bool {
+    let configured_pins: std::collections::HashSet<String> = std::env::var("OSOOSI_PINNED_CERT_THUMBPRINTS")
+        .ok()
+        .map(|s| {
+            s.split(',')
+                .map(|t| t.trim().to_lowercase().replace(':', ""))
+                .filter(|t| !t.is_empty())
+                .collect()
+        })
+        .unwrap_or_default();
+
+    if configured_pins.is_empty() {
+        return false;
+    }
+
+    for tp in thumbprints {
+        let normalized = tp.to_lowercase().replace(':', "");
+        if configured_pins.contains(&normalized) {
+            return true;
+        }
+    }
+    false
+}
+
+/// Verify file signature using Windows WinVerifyTrust API with revocation check and graceful offline fallback.
 #[cfg(target_os = "windows")]
 pub fn check_authenticode_status(path: &str) -> AuthenticodeStatus {
     use std::os::windows::ffi::OsStrExt;
@@ -366,7 +406,7 @@ pub fn check_authenticode_status(path: &str) -> AuthenticodeStatus {
         pPolicyCallbackData: std::ptr::null_mut(),
         pSIPClientData: std::ptr::null_mut(),
         dwUIChoice: WTD_UI_NONE,
-        fdwRevocationChecks: WTD_REVOKE_NONE,
+        fdwRevocationChecks: WTD_REVOKE_WHOLECHAIN,
         dwUnionChoice: WTD_CHOICE_FILE,
         Anonymous: WINTRUST_DATA_0 {
             pFile: &mut file_info,
@@ -389,6 +429,48 @@ pub fn check_authenticode_status(path: &str) -> AuthenticodeStatus {
         );
         match result {
             0 => AuthenticodeStatus::ValidTrusted,
+            -2146762484 | -2146885613 => AuthenticodeStatus::Revoked, // CERT_E_REVOKED (0x800B010C) or CRYPT_E_REVOKED (0x80092013)
+            -2146762482 | -2146885614 => {
+                // CERT_E_REVOCATION_FAILURE (0x800B010E) or CRYPT_E_REVOCATION_OFFLINE (0x80092012)
+                // Graceful fallback for offline / air-gapped systems:
+                // Retry verification without online revocation checks.
+                let mut fallback_file_info = WINTRUST_FILE_INFO {
+                    cbStruct: std::mem::size_of::<WINTRUST_FILE_INFO>() as u32,
+                    pcwszFilePath: PCWSTR(path_wide.as_ptr()),
+                    hFile: HANDLE::default(),
+                    pgKnownSubject: std::ptr::null_mut(),
+                };
+                let mut fallback_data = WINTRUST_DATA {
+                    cbStruct: std::mem::size_of::<WINTRUST_DATA>() as u32,
+                    pPolicyCallbackData: std::ptr::null_mut(),
+                    pSIPClientData: std::ptr::null_mut(),
+                    dwUIChoice: WTD_UI_NONE,
+                    fdwRevocationChecks: WTD_REVOKE_NONE,
+                    dwUnionChoice: WTD_CHOICE_FILE,
+                    Anonymous: WINTRUST_DATA_0 {
+                        pFile: &mut fallback_file_info,
+                    },
+                    dwStateAction: WTD_STATEACTION_IGNORE,
+                    hWVTStateData: HANDLE::default(),
+                    pwszURLReference: windows::core::PWSTR::null(),
+                    dwProvFlags: WTD_CACHE_ONLY_URL_RETRIEVAL,
+                    dwUIContext: WTD_UICONTEXT_EXECUTE,
+                    pSignatureSettings: std::ptr::null_mut(),
+                };
+                let fallback_res = WinVerifyTrust(
+                    HWND::default(),
+                    &action_id as *const _ as *mut _,
+                    &mut fallback_data as *mut _ as *mut _,
+                );
+                match fallback_res {
+                    0 => AuthenticodeStatus::ValidTrusted,
+                    -2146762487 => AuthenticodeStatus::UntrustedRoot,
+                    -2146869232 => AuthenticodeStatus::TamperedBadDigest,
+                    -2146762496 => AuthenticodeStatus::NotSigned,
+                    -2146762479 => AuthenticodeStatus::ExplicitDistrust,
+                    err => AuthenticodeStatus::OtherError(err),
+                }
+            }
             -2146762487 => AuthenticodeStatus::UntrustedRoot,     // 0x800B0109
             -2146869232 => AuthenticodeStatus::TamperedBadDigest, // 0x80096010
             -2146762496 => AuthenticodeStatus::NotSigned,         // 0x800B0100
@@ -419,27 +501,15 @@ pub fn is_trusted_signed_binary(path: &Path) -> bool {
                 false
             }
             AuthenticodeStatus::UntrustedRoot => {
-                // Signature is intact/untampered, but root CA is not in OS store.
-                // Permit local development/enterprise authorities (e.g. "HugOS IDE") ONLY if
-                // located in an IDE or development directory.
-                if let Some(meta) = get_pe_metadata(path) {
-                    if let Some(ref pub_name) = meta.publisher {
-                        let p_lc = pub_name.to_lowercase();
-                        if p_lc.contains("hugos") {
-                            let path_lc = path_str.to_lowercase();
-                            if path_lc.contains("vscode")
-                                || path_lc.contains("modelfusion")
-                                || path_lc.contains(".vscode")
-                            {
-                                return true;
-                            }
-                        }
-                    }
+                // Strict hardening: eliminate loose substring checks for development certs
+                // and require explicit thumbprint or recognized root store pinning.
+                let cert_thumbprints = extract_certificate_thumbprints(&path_str);
+                if is_pinned_thumbprint_allowed(&cert_thumbprints) {
+                    return true;
                 }
-                // Never trust unverified third-party or fake vendor certs claiming to be Microsoft
                 false
             }
-            // TamperedBadDigest, NotSigned, ExplicitDistrust: NEVER trust
+            // TamperedBadDigest, NotSigned, ExplicitDistrust, Revoked: NEVER trust
             _ => false,
         }
     }
@@ -499,5 +569,36 @@ mod tests {
     #[test]
     fn test_is_trusted_signed_binary_nonexistent() {
         assert!(!is_trusted_signed_binary(Path::new(r"C:\nonexistent\fake.dll")));
+    }
+
+    #[test]
+    fn test_is_pinned_thumbprint_allowed() {
+        let test_tp = "a1b2c3d4e5f67890abcdef1234567890abcdef1234567890abcdef1234567890";
+        std::env::set_var("OSOOSI_PINNED_CERT_THUMBPRINTS", format!("deadbeef,{},cafebabe", test_tp));
+
+        assert!(is_pinned_thumbprint_allowed(&[test_tp.to_string()]));
+        assert!(is_pinned_thumbprint_allowed(&[test_tp.to_uppercase()]));
+        assert!(!is_pinned_thumbprint_allowed(&["11223344556677889900aabbccddeeff".to_string()]));
+        assert!(!is_pinned_thumbprint_allowed(&[]));
+
+        std::env::remove_var("OSOOSI_PINNED_CERT_THUMBPRINTS");
+        assert!(!is_pinned_thumbprint_allowed(&[test_tp.to_string()]));
+    }
+
+    #[test]
+    fn test_authenticode_status_variants() {
+        let revoked = AuthenticodeStatus::Revoked;
+        assert_eq!(revoked, AuthenticodeStatus::Revoked);
+        assert_ne!(revoked, AuthenticodeStatus::ValidTrusted);
+        assert_ne!(revoked, AuthenticodeStatus::UntrustedRoot);
+
+        let non_existent_status = check_authenticode_status(r"C:\nonexistent\dummy.exe");
+        assert_ne!(non_existent_status, AuthenticodeStatus::ValidTrusted);
+    }
+
+    #[test]
+    fn test_extract_certificate_thumbprints_nonexistent() {
+        let tps = extract_certificate_thumbprints(r"C:\nonexistent\dummy.exe");
+        assert!(tps.is_empty());
     }
 }
