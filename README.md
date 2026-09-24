@@ -6,19 +6,21 @@
 <h3 align="center"><em>The Decentralized Immune System for the Modern Endpoint</em></h3>
 
 <p align="center">
+  <a href="#-features"><img src="https://img.shields.io/badge/Security%20Grade-100%25%20A%2B-emerald?style=for-the-badge" alt="Grade"/></a>
   <a href="#-features"><img src="https://img.shields.io/badge/Engine-Rust%20🦀-orange?style=for-the-badge" alt="Rust"/></a>
-  <a href="#-detection-arsenal"><img src="https://img.shields.io/badge/Detection-12%20Engines-red?style=for-the-badge" alt="Detection"/></a>
-  <a href="#-mesh-networking"><img src="https://img.shields.io/badge/Mesh-libp2p%20P2P-blue?style=for-the-badge" alt="Mesh"/></a>
+  <a href="#-mesh-networking"><img src="https://img.shields.io/badge/Wire-ML--KEM--768%20PQC-blueviolet?style=for-the-badge" alt="PQC"/></a>
+  <a href="#-architecture"><img src="https://img.shields.io/badge/Hardware-TPM%202.0%20Silicon-blue?style=for-the-badge" alt="TPM 2.0"/></a>
+  <a href="#-adversarial-verification"><img src="https://img.shields.io/badge/Adversarial%20Tests-61%2F61%20Passed-brightgreen?style=for-the-badge" alt="Tests"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"/></a>
-  <a href="#-architecture"><img src="https://img.shields.io/badge/Crates-20-purple?style=for-the-badge" alt="Crates"/></a>
 </p>
 
 <p align="center">
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-architecture">Architecture</a> •
-  <a href="#-detection-arsenal">Detection Arsenal</a> •
-  <a href="#-cli-reference">CLI Reference</a> •
-  <a href="#-contributing">Contributing</a>
+  <a href="#-dns-telemetry-setup">DNS & Sysmon Setup</a> •
+  <a href="#-two-host-mesh-consensus">Two-Host BFT Mesh</a> •
+  <a href="#-adversarial-verification">Adversarial Testing</a> •
+  <a href="#-cli-reference">CLI Reference</a>
 </p>
 
 ---
@@ -207,6 +209,61 @@ OshoosiClaw 1.2 introduces **Autonomous Lineage Auditing**, allowing the agent t
 ```powershell
 # Perform an autonomous, lineage-aware forensic audit
 .\osoosi.exe audit --product git.exe
+```
+
+---
+
+## 🔍 DNS & Sysmon Telemetry Setup
+
+OshoosiClaw actively inspects DNS queries using process-attributed domain analysis (`SysmonDnsQueryVoter`) to detect DGA domains, DNS tunneling, and C2 beacons.
+
+### Why Sysmon May Not Capture DNS Traffic By Default
+Sysmon **Event ID 22 (DnsQuery)** is disabled by default in vanilla Sysmon installations to prevent high event volume. To capture DNS traffic, use either **Method A** (Zero Install) or **Method B** (Sysmon Event ID 22):
+
+#### Method A: Native Windows DNS Client Logging (Instant, Zero Installs)
+Enable Windows native DNS Client operational logging. OshoosiClaw ingests this channel automatically:
+```powershell
+# Run in Administrator PowerShell:
+wevtutil sl Microsoft-Windows-DNS-Client/Operational /e:true
+```
+
+#### Method B: Deploy Sysmon with Event ID 22 Configuration
+Use the included [`config/sysmon-dns.xml`](config/sysmon-dns.xml) configuration:
+```powershell
+# Install Sysmon with DNS Query capture enabled:
+.\Sysmon64.exe -i config\sysmon-dns.xml -accepteula
+
+# Or update an existing Sysmon installation:
+.\Sysmon64.exe -c config\sysmon-dns.xml
+```
+
+---
+
+## 🌐 Two-Host BFT Mesh & Hardware Attestation
+
+OshoosiClaw supports multi-node clustering and edge deployments down to a strict **2-host cluster** ($N=2$):
+
+* **Adaptive 2-Host BFT Quorum**: When both nodes are high-trust ($r \ge 0.85$, configured via `two_host_reputation_threshold`), unweighted quorum adapts to `2` to ensure consensus proceeds smoothly.
+* **1-vs-1 Stalemate Detection**: A 1-vs-1 split vote (`optimal: 1, critical: 1`) is formally recognized as `stalemate_conflict = true`.
+* **Designated Witness Arbiter**: An optional lightweight cloud observer or local witness can sign a `WitnessVote` over `SHA256(policy_id | witness_id | status | timestamp)` to break ties deterministically.
+* **TPM 2.0 Silicon Attestation**: Evaluates remote PCR quotes and authenticates the manufacturer's silicon Endorsement Key (EK) certificate chain (Intel, AMD, Infineon, STMicro) before admitting nodes into the mesh.
+* **Whole-Chain Revocation Checking**: Windows PE validation enforces `WTD_REVOKE_WHOLECHAIN` with graceful offline fallback (`WTD_CACHE_ONLY_URL_RETRIEVAL`).
+
+---
+
+## ⚡ Adversarial Security Verification (61/61 Tests)
+
+OshoosiClaw includes 61 automated adversarial attack simulation tests evaluating host and peer resilience:
+
+```powershell
+# 1. Attestation, Nonce Replay & TPM Quote Tampering (26 tests)
+cargo test -p osoosi-trust --test adversarial_trust_tests
+
+# 2. Wire Mesh, Peer Replay & Gossip Poisoning (22 tests)
+cargo test -p osoosi-wire --test adversarial_mesh_tests
+
+# 3. Host Core, Byzantine Consensus & Quarantine Isolation (13 tests)
+cargo test -p osoosi-core --test host_adversarial_tests
 ```
 
 ---

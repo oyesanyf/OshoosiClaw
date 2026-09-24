@@ -1,0 +1,37 @@
+<!--
+  OpenỌ̀ṣọ́ọ̀sì Sysmon DNS Query & Network Telemetry Configuration
+  Enables Event ID 22 (DnsQuery) and Event ID 3 (NetworkConnect)
+  Deploy with: Sysmon64.exe -i config\sysmon-dns.xml -accepteula
+  Update with: Sysmon64.exe -c config\sysmon-dns.xml
+-->
+<Sysmon schemaversion="4.90">
+  <HashAlgorithms>SHA256</HashAlgorithms>
+  <CheckRevocation/>
+  <EventFiltering>
+    <!-- Event ID 22: DNS Query Logging -->
+    <RuleGroup name="DNS Queries" groupRelation="or">
+      <DnsQuery onmatch="exclude">
+        <!-- Exclude local loopback and noisy mDNS / link-local suffixes -->
+        <QueryName condition="end with">.local</QueryName>
+        <QueryName condition="end with">.lan</QueryName>
+        <QueryName condition="end with">.home</QueryName>
+        <QueryName condition="is">localhost</QueryName>
+      </DnsQuery>
+    </RuleGroup>
+
+    <!-- Event ID 3: Network Connection Logging -->
+    <RuleGroup name="Network Connections" groupRelation="or">
+      <NetworkConnect onmatch="include">
+        <DestinationPort condition="is">53</DestinationPort>
+        <DestinationPort condition="is">853</DestinationPort>
+        <DestinationPort condition="is">443</DestinationPort>
+        <DestinationPort condition="is">80</DestinationPort>
+      </NetworkConnect>
+    </RuleGroup>
+
+    <!-- Event ID 1: Process Creation with full command lines -->
+    <RuleGroup name="Process Creation" groupRelation="or">
+      <ProcessCreate onmatch="exclude" />
+    </RuleGroup>
+  </EventFiltering>
+</Sysmon>
