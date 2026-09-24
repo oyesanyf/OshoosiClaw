@@ -10,7 +10,7 @@
   <a href="#-features"><img src="https://img.shields.io/badge/Engine-Rust%20🦀-orange?style=for-the-badge" alt="Rust"/></a>
   <a href="#-mesh-networking"><img src="https://img.shields.io/badge/Wire-ML--KEM--768%20PQC-blueviolet?style=for-the-badge" alt="PQC"/></a>
   <a href="#-architecture"><img src="https://img.shields.io/badge/Hardware-TPM%202.0%20Silicon-blue?style=for-the-badge" alt="TPM 2.0"/></a>
-  <a href="#-adversarial-verification"><img src="https://img.shields.io/badge/Adversarial%20Tests-61%2F61%20Passed-brightgreen?style=for-the-badge" alt="Tests"/></a>
+  <a href="#-adversarial-verification"><img src="https://img.shields.io/badge/Adversarial%20Tests-97%2F97%20Passed-brightgreen?style=for-the-badge" alt="Tests"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"/></a>
 </p>
 
@@ -20,6 +20,7 @@
   <a href="#-dns-telemetry-setup">DNS & Sysmon Setup</a> •
   <a href="#-two-host-mesh-consensus">Two-Host BFT Mesh</a> •
   <a href="#-adversarial-verification">Adversarial Testing</a> •
+  <a href="#-synthetic-telemetry-canaries--anti-blinding-engine">Canary Anti-Blinding</a> •
   <a href="#-cli-reference">CLI Reference</a>
 </p>
 
@@ -252,9 +253,9 @@ OshoosiClaw supports multi-node clustering and edge deployments down to a strict
 
 ---
 
-## ⚡ Adversarial Security Verification (61/61 Tests)
+## ⚡ Adversarial Security Verification (97/97 Tests)
 
-OshoosiClaw includes 61 automated adversarial attack simulation tests evaluating host and peer resilience:
+OshoosiClaw includes 97 automated adversarial attack simulation tests evaluating host, peer, telemetry anti-blinding, and in-memory evasion resilience:
 
 ```powershell
 # 1. Attestation, Nonce Replay & TPM Quote Tampering (26 tests)
@@ -265,7 +266,39 @@ cargo test -p osoosi-wire --test adversarial_mesh_tests
 
 # 3. Host Core, Byzantine Consensus & Quarantine Isolation (13 tests)
 cargo test -p osoosi-core --test host_adversarial_tests
+
+# 4. Telemetry Anti-Blinding, BYOVD Rootkit Canaries & Sysmon (32 tests)
+cargo test -p osoosi-telemetry
+
+# 5. In-Memory Evasion & Unbacked Thread Execution (4 tests)
+cargo test -p osoosi-memory
 ```
+
+---
+
+## 🕊️ Synthetic Telemetry Canaries & Anti-Blinding Engine
+
+To defend against advanced Bring Your Own Vulnerable Driver (BYOVD) rootkits, kernel-mode callback unhooking, and silent Event Tracing for Windows (ETW) blinding, OshoosiClaw incorporates an autonomous **Synthetic Telemetry Canary & Anti-Blinding Engine** (`osoosi-telemetry`).
+
+Passive EDR sensors fail when an adversary loads a vulnerable kernel driver to zero out kernel notify routines or patch ETW provider registrations. In this blinded state, malicious activity continues unnoticed. OshoosiClaw solves this via active, closed-loop stimulus-response verification:
+
+### 1. Closed-Loop Verification
+- **Kernel Stimulus Probes**: Periodically dispatches lightweight, benign synthetic probes across three vital telemetry channels:
+  - **Process Creation**: Sysmon Event 1 / Windows Security Event 4688 probes.
+  - **DNS Resolution**: Sysmon Event 22 DNS query probes.
+  - **Image Loading**: Sysmon Event 7 module/driver load events.
+- **Deadline Monitoring & Alerting**: Each dispatched canary probe expects a corresponding kernel callback to arrive within a deterministic window. If kernel callbacks fail to arrive within the deadline, the engine declares telemetry tampering and triggers `BlindingAlert::ChannelMuted`.
+
+### 2. Engineering Trade-Offs & Countermeasures
+
+- **Trade-Off 1 (Event Noise & RL Drift Suppression)**: Continuous synthetic probes risk polluting forensic logs and causing drift in behavioral anomaly detection. OshoosiClaw tags canary events with ephemeral correlation IDs and filters them prior to SQLite persistence. Furthermore, canary events are removed from behavioral detector sliding windows and SkyRL baseline drift calculation, guaranteeing clean forensic databases and unpolluted ML models.
+- **Trade-Off 2 (Adversary Whitelisting Defense)**: Attackers monitoring telemetry streams could attempt to fingerprint static canary probes to selectively whitelist them while blinding real activity. OshoosiClaw defends against probe discrimination using:
+  - **Dynamic HMAC-SHA256 Tokens**: Cryptographic time-slotted payload signatures (`v1.<uuid>.<slot>.<sig>`).
+  - **5 Polymorphic CLI Entrypoints**: Probes rotate randomly across `--canary-probe`, `--worker-heartbeat`, `--diag-session`, `--runtime-sync`, and `--telemetry-canary`.
+  - **Timing Jitter**: Probes execute with pseudo-randomized sleep jitter (0–6000ms) and perform sub-millisecond fast-path exits.
+- **Trade-Off 3 (In-Memory Evasion & Unbacked Thread Detection)**: To counter fileless malware and in-memory reflective injection that bypass process creation telemetry entirely, the `MemoryScanner::scan_unbacked_threads(pid)` routine performs deep Win32 thread introspection:
+  - Inspects thread start addresses (`ThreadQuerySetWin32StartAddress`) and context instruction pointers (`GetThreadContext` RIP/EIP).
+  - Queries memory descriptor headers via `VirtualQueryEx` to flag execution occurring in unbacked memory regions (`MEM_PRIVATE` / `MEM_MAPPED`) and executable RWX (`PAGE_EXECUTE_READWRITE`) pages.
 
 ---
 
@@ -279,6 +312,14 @@ cargo test -p osoosi-core --test host_adversarial_tests
 | **Sysmon** | 15.0+ | Kernel-level telemetry (Windows) |
 | **ClamAV** | 1.0+ | Signature-based AV scanning |
 | **Ollama** | 0.1.0+ | Local LLM inference (optional) |
+
+### Windows Installer (MSI)
+
+```powershell
+# Download & install via standalone Windows Installer (OshoosiClaw.msi, ~25MB)
+msiexec /i OshoosiClaw.msi /quiet /qn
+# Bundles osoosi.exe, onnxruntime.dll (1.22.x), sysmon-dns.xml 4.91, signed osoosi.toml, and dashboard
+```
 
 ### Build From Source
 
@@ -815,6 +856,11 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 
 Recent hardening efforts have focused on agent resilience and production stability:
 
+- **Active Telemetry Anti-Blinding**: Closed-loop canary stimulus engine detecting kernel notify unhooking and ETW blinding.
+- **Polymorphic Probe Verification**: Dynamic HMAC-SHA256 time-slotted tokens and 5 polymorphic CLI entrypoints.
+- **In-Memory Unbacked Thread Forensics**: Native Win32 thread start and instruction pointer inspection against unmapped memory regions.
+- **Sysmon 4.91 Manifest Self-Healing**: Resilient auto-provisioning with pre-installation orphaned manifest cleanup and fallback unregistration.
+- **WiX v5 Standalone MSI**: Packaged `OshoosiClaw.msi` installer bundling release binaries, ONNX runtime, and signed policies.
 - **Resilient Threat Ingestion**: OTX/NVD feeds now feature exponential backoff and jitter to handle transient API failures.
 - **Hardened Repair Engine**: PowerShell parameter binding fixes for `Checkpoint-Computer` and non-fatal DISM rollback handling.
 - **Auto-Provisioning AI**: Background weight downloader for `MalConv` allows the agent to start immediately and hot-load ML capabilities once ready.
