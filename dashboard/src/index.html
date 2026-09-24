@@ -443,16 +443,62 @@
 
             <!-- OpenTelemetry Map View -->
             <div id="otel-map-view" class="view-content">
-                <div class="card glass shadow-glow" style="height: calc(100vh - 200px);">
-                    <div class="card-header">
-                        <h3>Global Telemetry Mesh Map</h3>
-                        <div class="header-actions">
-                            <span class="badge blue">Live Topology</span>
+                <div class="card glass shadow-glow" style="height: calc(100vh - 170px); display: flex; flex-direction: column;">
+                    <div class="card-header" style="flex-wrap: wrap; gap: 12px; padding: 12px 20px;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <h3>Global Telemetry Mesh Map</h3>
+                            <span class="badge blue" id="mesh-peer-badge">5 Mesh Nodes Active</span>
+                            <span class="badge green" id="mesh-attestation-badge" style="display: flex; align-items: center; gap: 4px;"><i data-lucide="shield-check" style="width: 12px; height: 12px;"></i> TPM 2.0 Anchored</span>
+                        </div>
+                        <div class="header-actions" style="display: flex; align-items: center; gap: 8px; flex-wrap: wrap;">
+                            <!-- Filter Peer Status -->
+                            <div style="display: flex; align-items: center; gap: 6px;">
+                                <label for="mesh-filter-status" style="font-size: 11px; color: var(--text-muted); text-transform: uppercase; font-weight: 600; letter-spacing: 0.5px;">Filter:</label>
+                                <select id="mesh-filter-status" class="glass-select" style="background: rgba(13, 17, 28, 0.85); color: var(--text-primary); border: 1px solid var(--glass-border); border-radius: 6px; padding: 5px 10px; font-size: 12px; cursor: pointer;" onchange="filterMeshNodes(this.value)">
+                                    <option value="all">All Mesh Nodes</option>
+                                    <option value="verified">TPM 2.0 Verified Only</option>
+                                    <option value="peer">Connected Peers Only</option>
+                                    <option value="relay">Gateways &amp; Relays</option>
+                                    <option value="telemetry">Telemetry Collectors</option>
+                                </select>
+                            </div>
+                            <!-- Topology Control Buttons -->
+                            <div style="display: flex; gap: 4px; align-items: center;">
+                                <button type="button" class="action-btn" onclick="otelZoomIn()" title="Zoom In" style="padding: 5px 10px; display: inline-flex; align-items: center; gap: 4px;"><i data-lucide="zoom-in" style="width: 14px; height: 14px;"></i> <span>Zoom +</span></button>
+                                <button type="button" class="action-btn" onclick="otelZoomOut()" title="Zoom Out" style="padding: 5px 10px; display: inline-flex; align-items: center; gap: 4px;"><i data-lucide="zoom-out" style="width: 14px; height: 14px;"></i> <span>Zoom -</span></button>
+                                <button type="button" class="action-btn" onclick="otelResetCenter()" title="Reset Center" style="padding: 5px 10px; display: inline-flex; align-items: center; gap: 4px;"><i data-lucide="crosshair" style="width: 14px; height: 14px;"></i> <span>Center</span></button>
+                                <button type="button" id="mesh-toggle-labels-btn" class="action-btn active" onclick="otelToggleLabels()" title="Toggle Labels" style="padding: 5px 10px; display: inline-flex; align-items: center; gap: 4px;"><i data-lucide="tag" style="width: 14px; height: 14px;"></i> <span>Labels</span></button>
+                                <button type="button" class="action-btn" onclick="renderOtelMapView(true)" title="Force Refresh" style="padding: 5px 10px;"><i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i></button>
+                            </div>
                         </div>
                     </div>
-                    <div class="card-body" style="height: 100%; padding:0; position:relative;">
+                    <div class="card-body" style="flex: 1; padding: 0; position: relative; overflow: hidden; background: radial-gradient(circle at 50% 50%, rgba(13, 22, 40, 0.4) 0%, rgba(7, 9, 13, 0.95) 100%);">
                         <div id="otel-mesh-map" style="height: 100%; width: 100%;"></div>
-                        <div id="otel-map-loading" class="placeholder-text" style="position:absolute; top:50%; left:50%; transform:translate(-50%, -50%);">Initializing 10/10 Mesh Topology...</div>
+                        <div id="otel-map-loading" class="placeholder-text" style="position: absolute; top: 50%; left: 50%; transform: translate(-50%, -50%); z-index: 10;">Initializing 10/10 Mesh Topology...</div>
+                        
+                        <!-- Map Legend (Bottom-Left) -->
+                        <div class="mesh-map-legend" style="position: absolute; bottom: 16px; left: 16px; z-index: 20; padding: 12px 14px; border-radius: 8px; font-size: 11px; display: flex; flex-direction: column; gap: 7px; background: rgba(10, 14, 23, 0.85); border: 1px solid var(--glass-border); box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5); backdrop-filter: blur(8px); pointer-events: auto;">
+                            <div style="font-weight: 600; color: var(--text-muted); text-transform: uppercase; font-size: 10px; letter-spacing: 0.6px; margin-bottom: 2px;">Mesh Node Classification</div>
+                            <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 50%; background: #00d2ff; box-shadow: 0 0 8px #00d2ff; display: inline-block;"></span> <span style="color: #e6edf3;">Local Node (Core)</span></div>
+                            <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 50%; background: #10b981; box-shadow: 0 0 8px #10b981; display: inline-block;"></span> <span style="color: #e6edf3;">Connected Peer (DESKTOP-4MJ7SCN)</span></div>
+                            <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 50%; background: #a855f7; box-shadow: 0 0 8px #a855f7; display: inline-block;"></span> <span style="color: #e6edf3;">Gateway / Rendezvous Relay</span></div>
+                            <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 50%; background: #3b82f6; box-shadow: 0 0 8px #3b82f6; display: inline-block;"></span> <span style="color: #e6edf3;">OTel Telemetry Collector</span></div>
+                            <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 50%; background: #f59e0b; box-shadow: 0 0 8px #f59e0b; display: inline-block;"></span> <span style="color: #e6edf3;">Edge Sensor Sentinel</span></div>
+                        </div>
+
+                        <!-- Live Pulse Telemetry Stream Stats (Top-Left overlay) -->
+                        <div class="mesh-telemetry-hud" style="position: absolute; top: 16px; left: 16px; z-index: 20; padding: 10px 14px; border-radius: 8px; font-size: 11px; background: rgba(10, 14, 23, 0.8); border: 1px solid var(--glass-border); box-shadow: 0 4px 20px rgba(0, 0, 0, 0.4); backdrop-filter: blur(8px); pointer-events: auto; display: flex; gap: 16px; align-items: center;">
+                            <div><span style="color: var(--text-muted); font-size: 10px; display: block; text-transform: uppercase;">Mesh Latency</span><strong id="mesh-hud-latency" style="color: #10b981; font-size: 13px;">0.8 ms</strong></div>
+                            <div style="width: 1px; height: 22px; background: var(--glass-border);"></div>
+                            <div><span style="color: var(--text-muted); font-size: 10px; display: block; text-transform: uppercase;">Sync Status</span><strong id="mesh-hud-sync" style="color: #00d2ff; font-size: 13px;">Synchronized</strong></div>
+                            <div style="width: 1px; height: 22px; background: var(--glass-border);"></div>
+                            <div><span style="color: var(--text-muted); font-size: 10px; display: block; text-transform: uppercase;">Packet Stream</span><strong id="mesh-hud-packets" style="color: #a855f7; font-size: 13px;">1,420 pkts/s</strong></div>
+                        </div>
+
+                        <!-- Interactive Node Status Badge Modal/Panel (Bottom-Right) -->
+                        <div id="otel-node-badge" class="otel-node-details glass shadow-glow" style="display: none; position: absolute; bottom: 16px; right: 16px; z-index: 30; width: 340px; padding: 14px 16px; border-radius: 10px; background: rgba(13, 17, 28, 0.94); border: 1px solid var(--glass-border); box-shadow: 0 8px 32px rgba(0, 0, 0, 0.55); backdrop-filter: blur(14px); pointer-events: auto;">
+                            <!-- Dynamically populated on click/hover -->
+                        </div>
                     </div>
                 </div>
             </div>

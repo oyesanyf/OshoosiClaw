@@ -72,6 +72,14 @@ impl JoinGate {
         announce: &PeerAnnounce,
         rules: &PeerRulesConfig,
     ) -> anyhow::Result<()> {
+        if self.is_quarantined(&announce.source_node)? {
+            warn!(
+                "Ignoring announcement from quarantined peer {}",
+                announce.source_node
+            );
+            return Ok(());
+        }
+
         self.memory.upsert_peer_status(announce)?;
 
         // Master Node Verification
@@ -501,6 +509,9 @@ impl JoinGate {
     pub fn auto_approve_backlog(&self) -> anyhow::Result<()> {
         let pending = self.memory.get_pending_joins()?;
         for req in pending {
+            if self.is_quarantined(&req.peer_id)? {
+                continue;
+            }
             if self.peer_rules.require_tpm_attestation && !self.is_attestation_verified(&req.peer_id) {
                 continue;
             }
@@ -644,6 +655,14 @@ impl JoinGate {
         peer_id: &str,
         response: &AttestationResponse,
     ) -> Result<(), AttestationError> {
+        if self.is_quarantined(peer_id).unwrap_or(false) {
+            warn!(
+                "Rejecting attestation response from quarantined peer {}",
+                peer_id
+            );
+            return Err(AttestationError::NonceReplayDetected);
+        }
+
         let challenge = match self.active_challenges.remove(peer_id) {
             Some((_, ch)) => ch,
             None => {
@@ -870,4 +889,122 @@ mod tests {
         }
         assert!(received_quarantine);
     }
+
+    #[test]
+    fn test_join_gate_expired_announce_quarantines_peer() {
+        let (gate, mut rx, memory, _challenger_tm) = test_gate_setup();
+        let peer_tm = TrustManager::new(Arc::new(DummyExecutor)).unwrap();
+        let peer_id = PeerId::random().to_string();
+
+        let challenge = AttestationChallenge::new(peer_tm.did().clone(), vec![0, 7, 16]);
+        let attestation = peer_tm.respond_to_attestation(challenge).unwrap();
+
+        // Expired announce timestamp (> 300s TTL)
+        let stale_timestamp = Utc::now() - chrono::Duration::seconds(350);
+        let announce = PeerAnnounce {
+            source_node: peer_id.clone(),
+            is_patched: true,
+            os_name: "Windows".to_string(),
+            os_version: "11".to_string(),
+            os_supported: true,
+            timestamp: stale_timestamp,
+            membership_proof: None,
+            attestation: Some(attestation),
+        };
+
+        let rules = PeerRulesConfig::default();
+        let _ = gate.on_peer_announce_received(&announce, &rules);
+
+        assert!(gate.is_quarantined(&peer_id).unwrap(), "Stale announce must trigger quarantine");
+        let rep = memory.get_reputation(&peer_id).unwrap().unwrap();
+        assert_eq!(rep.score, 0.0);
+
+        let mut received_quarantine = false;
+        while let Ok(cmd) = rx.try_recv() {
+            if let MeshCommand::QuarantinePeer(_) = cmd {
+                received_quarantine = true;
+            }
+        }
+        assert!(received_quarantine);
+    }
+
+    #[test]
+    fn test_join_gate_unsolicited_attestation_response_rejected() {
+        let (gate, mut rx, memory, _challenger_tm) = test_gate_setup();
+        let peer_tm = TrustManager::new(Arc::new(DummyExecutor)).unwrap();
+        let peer_id = PeerId::random().to_string();
+
+        let challenge = AttestationChallenge::new(peer_tm.did().clone(), vec![0, 7, 16]);
+        let response = peer_tm.respond_to_attestation(challenge).unwrap();
+
+        // No active challenge was created on this gate
+        let res = gate.handle_attestation_response(&peer_id, &response);
+        assert_eq!(res, Err(AttestationError::NonceReplayDetected));
+
+        assert!(gate.is_quarantined(&peer_id).unwrap());
+        let rep = memory.get_reputation(&peer_id).unwrap().unwrap();
+        assert_eq!(rep.score, 0.0);
+
+        let mut received_quarantine = false;
+        while let Ok(cmd) = rx.try_recv() {
+            if let MeshCommand::QuarantinePeer(_) = cmd {
+                received_quarantine = true;
+            }
+        }
+        assert!(received_quarantine);
+    }
+
+    #[tokio::test]
+    async fn test_join_gate_cannot_allow_quarantined_peer() {
+        let (gate, _rx, _memory, _tm) = test_gate_setup();
+        let peer_id = PeerId::random().to_string();
+
+        gate.quarantine_peer(&peer_id, "Hostile behavioral pattern").unwrap();
+        assert!(gate.is_quarantined(&peer_id).unwrap());
+
+        let res = gate.allow(&peer_id).await;
+        assert!(res.is_err());
+        assert!(res.unwrap_err().to_string().contains("quarantined"));
+    }
+
+    #[test]
+    fn test_join_gate_behavioral_penalties_cascade_to_quarantine() {
+        let (gate, mut rx, memory, _tm) = test_gate_setup();
+        let peer_id = PeerId::random().to_string();
+
+        // Start with high reputation 0.9
+        let rep = osoosi_types::ReputationScore {
+            node_id: peer_id.clone(),
+            score: 0.9,
+            alerts_verified: 10,
+            false_positives: 0,
+            last_updated: Utc::now(),
+        };
+        memory.upsert_reputation(&rep).unwrap();
+
+        // First penalty: 0.35 -> score becomes 0.55
+        gate.penalize_peer(&peer_id, "Suspicious rapid egress", 0.35).unwrap();
+        assert!(!gate.is_quarantined(&peer_id).unwrap());
+        let rep1 = memory.get_reputation(&peer_id).unwrap().unwrap();
+        assert!((rep1.score - 0.55).abs() < 1e-4);
+
+        // Second penalty: 0.40 -> score becomes 0.15 <= 0.20 (quarantine threshold)
+        gate.penalize_peer(&peer_id, "Poisoned gossip injection", 0.40).unwrap();
+        assert!(gate.is_quarantined(&peer_id).unwrap());
+        let rep2 = memory.get_reputation(&peer_id).unwrap().unwrap();
+        assert_eq!(rep2.score, 0.0);
+
+        let mut received_quarantine = false;
+        let mut received_tripwire = false;
+        while let Ok(cmd) = rx.try_recv() {
+            match cmd {
+                MeshCommand::QuarantinePeer(_) => received_quarantine = true,
+                MeshCommand::BroadcastTripwire(_) => received_tripwire = true,
+                _ => (),
+            }
+        }
+        assert!(received_quarantine);
+        assert!(received_tripwire);
+    }
 }
+

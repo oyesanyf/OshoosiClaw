@@ -221,9 +221,18 @@ impl ThreatModel {
             delta.features.len()
         );
         for (feat, &weight) in &delta.features {
+            // Adversarial Defense: Reject non-finite weights (NaN, Inf) and clamp extreme values
+            if !weight.is_finite() {
+                tracing::warn!(
+                    "Adversarial / malformed model delta from {}: ignoring non-finite weight ({}) for feature {}",
+                    delta.source_node, weight, feat
+                );
+                continue;
+            }
+            let clamped_weight = weight.clamp(-5.0, 5.0);
             let entry = self.weights.features.entry(feat.clone()).or_insert(0.0);
             // Influence blending: Give peer data significant weight
-            *entry = (*entry + weight) / 2.0;
+            *entry = (*entry + clamped_weight) / 2.0;
         }
     }
 

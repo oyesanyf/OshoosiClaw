@@ -274,11 +274,11 @@ impl ThreatSignature {
     pub fn sign(&mut self, signing_key: &ed25519_dalek::SigningKey) -> anyhow::Result<()> {
         use ed25519_dalek::Signer;
 
+        self.public_key = Some(hex::encode(signing_key.verifying_key().to_bytes()));
         let data = self.to_signing_bytes()?;
         let signature = signing_key.sign(&data);
 
         self.signature = Some(hex::encode(signature.to_bytes()));
-        self.public_key = Some(hex::encode(signing_key.verifying_key().to_bytes()));
 
         Ok(())
     }
@@ -319,9 +319,10 @@ impl ThreatSignature {
     }
 
     fn to_signing_bytes(&self) -> anyhow::Result<Vec<u8>> {
-        // Sign the core data except the signature itself
+        // Sign the core data except the signature and public key themselves
         let mut clone = self.clone();
         clone.signature = None;
+        clone.public_key = None;
         Ok(serde_json::to_vec(&clone)?)
     }
 }

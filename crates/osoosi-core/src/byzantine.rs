@@ -158,9 +158,24 @@ pub fn mine_vote_work_nonce(voter_id: &str, policy_id: &str, required_bits: u8) 
 
 fn latest_votes_per_peer(messages: &[PolicyConsensusMessage]) -> HashMap<String, PolicyHealthVote> {
     let mut m: HashMap<String, PolicyHealthVote> = HashMap::new();
+    let now = chrono::Utc::now();
     for msg in messages {
         if let PolicyConsensusMessage::Vote(v) = msg {
-            m.insert(v.voter_id.clone(), v.clone());
+            // Drop future-dated votes (> 120s into the future) to prevent timeline poisoning
+            if (v.timestamp - now).num_seconds() > 120 {
+                continue;
+            }
+            match m.get_mut(&v.voter_id) {
+                Some(existing) => {
+                    // Retain only the freshest vote; replayed older votes cannot overwrite newer votes
+                    if v.timestamp > existing.timestamp {
+                        *existing = v.clone();
+                    }
+                }
+                None => {
+                    m.insert(v.voter_id.clone(), v.clone());
+                }
+            }
         }
     }
     m

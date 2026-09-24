@@ -124,6 +124,9 @@ winapi = { version = "0.3", features = ["memoryapi", "processthreadsapi", "winnt
 winreg = "0.52"
 pelite = "0.10"
 
+[profile.dev]
+debug = 1
+
 [profile.release]
 lto = true
 codegen-units = 1

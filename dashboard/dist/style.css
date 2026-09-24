@@ -1334,3 +1334,128 @@ body::before {
     font-size: 12px;
 }
 
+/* --- Global Telemetry Mesh Map Styles --- */
+.mesh-map-legend {
+    user-select: none;
+}
+
+.mesh-telemetry-hud {
+    user-select: none;
+}
+
+.otel-node-details {
+    animation: fadeInNodeBadge 0.25s cubic-bezier(0.16, 1, 0.3, 1) forwards;
+}
+
+@keyframes fadeInNodeBadge {
+    from {
+        opacity: 0;
+        transform: translateY(10px) scale(0.97);
+    }
+    to {
+        opacity: 1;
+        transform: translateY(0) scale(1);
+    }
+}
+
+.otel-badge-header {
+    display: flex;
+    align-items: center;
+    justify-content: space-between;
+    margin-bottom: 12px;
+    padding-bottom: 10px;
+    border-bottom: 1px solid var(--glass-border);
+}
+
+.otel-badge-title {
+    font-size: 14px;
+    font-weight: 600;
+    color: var(--text-header);
+    display: flex;
+    align-items: center;
+    gap: 8px;
+}
+
+.otel-badge-close {
+    background: none;
+    border: none;
+    color: var(--text-muted);
+    cursor: pointer;
+    font-size: 16px;
+    line-height: 1;
+    padding: 2px 6px;
+    border-radius: 4px;
+    transition: color 0.2s, background 0.2s;
+}
+
+.otel-badge-close:hover {
+    color: var(--text-primary);
+    background: rgba(255, 255, 255, 0.1);
+}
+
+.otel-badge-row {
+    display: flex;
+    justify-content: space-between;
+    align-items: center;
+    margin-bottom: 8px;
+    font-size: 12px;
+}
+
+.otel-badge-label {
+    color: var(--text-muted);
+    font-weight: 500;
+}
+
+.otel-badge-value {
+    color: var(--text-primary);
+    font-weight: 600;
+    text-align: right;
+    max-width: 200px;
+    overflow: hidden;
+    text-overflow: ellipsis;
+    white-space: nowrap;
+}
+
+.otel-badge-pill {
+    padding: 2px 8px;
+    border-radius: 4px;
+    font-size: 11px;
+    font-weight: 600;
+    display: inline-flex;
+    align-items: center;
+    gap: 4px;
+}
+
+.otel-badge-pill.verified {
+    background: rgba(16, 185, 129, 0.15);
+    color: #10b981;
+    border: 1px solid rgba(16, 185, 129, 0.3);
+}
+
+.otel-badge-pill.optimal {
+    background: rgba(0, 210, 255, 0.15);
+    color: #00d2ff;
+    border: 1px solid rgba(0, 210, 255, 0.3);
+}
+
+.otel-badge-pill.warning {
+    background: rgba(245, 158, 11, 0.15);
+    color: #f59e0b;
+    border: 1px solid rgba(245, 158, 11, 0.3);
+}
+
+.otel-badge-bar {
+    width: 100%;
+    height: 4px;
+    background: rgba(255, 255, 255, 0.08);
+    border-radius: 2px;
+    overflow: hidden;
+    margin-top: 4px;
+}
+
+.otel-badge-bar-fill {
+    height: 100%;
+    background: linear-gradient(90deg, #10b981, #00d2ff);
+    border-radius: 2px;
+}
+

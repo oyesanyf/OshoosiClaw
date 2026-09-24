@@ -15,11 +15,13 @@ pub fn quarantine_file(file_path: &str) -> anyhow::Result<PathBuf> {
     std::fs::create_dir_all(quarantine_dir)?;
     
     let filename = src.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
-    let timestamp = std::time::SystemTime::now()
+    let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
-        .as_secs();
-    let dest = Path::new(quarantine_dir).join(format!("{}_{}", timestamp, filename));
+        .as_nanos();
+    let rand_suffix = uuid::Uuid::new_v4().simple().to_string();
+    let unique_tag = &rand_suffix[..8];
+    let dest = Path::new(quarantine_dir).join(format!("{}_{}_{}", nanos, unique_tag, filename));
 
     if std::fs::rename(src, &dest).is_err() {
         std::fs::copy(src, &dest)?;

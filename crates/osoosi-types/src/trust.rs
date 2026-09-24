@@ -161,6 +161,11 @@ impl GoldenBaseline {
         self.require_hardware_tpm = require;
         self
     }
+
+    pub fn with_max_nonce_age(mut self, secs: u64) -> Self {
+        self.max_nonce_age_secs = secs;
+        self
+    }
 }
 
 /// Errors occurring during mutual attestation and Golden Baseline verification.
