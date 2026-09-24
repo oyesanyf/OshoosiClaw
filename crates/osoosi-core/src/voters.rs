@@ -571,47 +571,76 @@ impl ThreatVoter for MemoryInspectionVoter {
     }
 
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        if !matches!(event.event_id, 1 | 7 | 8 | 10 | 25) {
+            return None;
+        }
+
+        let pid = event
+            .data
+            .get("ProcessId")
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+            })?;
+
+        if pid <= 4 {
+            return None;
+        }
+
+        if let Some(image) = event.data.get("Image").and_then(|v| v.as_str()) {
+            if scanner_skip_path(image) {
+                return None;
+            }
+        }
+
+        let pid = pid as u32;
+
 #[cfg(target_os = "windows")]
         {
-            if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()) {
-                let adaptive = self.adaptive.clone();
-                adaptive.run_adaptive(ResourceCategory::IO, Priority::High, async move {
-                    // Use pelite to parse the process memory and find hollowing
-                    if let Ok(findings) = crate::pe_inspector::inspect_process(pid as u32) {
-                        if findings.hollowing_detected {
-                            return Some(VoteResult {
-                                confidence: 1.0,
-                                reason: format!("MemoryInspection: Process hollowing detected in PID {}", pid),
-                                weight: 1.0,
-                            });
-                        }
-                        if !findings.byte_patches.is_empty() {
-                            return Some(VoteResult {
-                                confidence: 0.98,
-                                reason: format!(
-                                    "MemoryInspection: User-mode unhooking/byte patches detected in PID {}: {}",
-                                    pid,
-                                    findings.byte_patches.join("; ")
-                                ),
-                                weight: 1.0,
-                            });
-                        }
-                        if findings.has_spoofed_stack {
-                            return Some(VoteResult {
-                                confidence: 0.95,
-                                reason: format!("MemoryInspection: Call stack spoofing detected in PID {}", pid),
-                                weight: 0.95,
-                            });
-                        }
+            let adaptive = self.adaptive.clone();
+            adaptive
+                .run_adaptive(ResourceCategory::IO, Priority::High, async move {
+                    let findings = tokio::task::spawn_blocking(move || {
+                        crate::pe_inspector::inspect_process(pid)
+                    })
+                    .await
+                    .ok()?
+                    .ok()?;
+
+                    if findings.hollowing_detected {
+                        return Some(VoteResult {
+                            confidence: 1.0,
+                            reason: format!("MemoryInspection: Process hollowing detected in PID {}", pid),
+                            weight: 1.0,
+                        });
+                    }
+                    if !findings.byte_patches.is_empty() {
+                        return Some(VoteResult {
+                            confidence: 0.98,
+                            reason: format!(
+                                "MemoryInspection: User-mode unhooking/byte patches detected in PID {}: {}",
+                                pid,
+                                findings.byte_patches.join("; ")
+                            ),
+                            weight: 1.0,
+                        });
+                    }
+                    if findings.has_spoofed_stack {
+                        return Some(VoteResult {
+                            confidence: 0.95,
+                            reason: format!("MemoryInspection: Call stack spoofing detected in PID {}", pid),
+                            weight: 0.95,
+                        });
                     }
                     None
-                }).await.ok().flatten()
-            } else {
-                None
-            }
+                })
+                .await
+                .ok()
+                .flatten()
         }
 #[cfg(not(target_os = "windows"))]
         {
+            let _ = pid;
             None
         }
     }
@@ -704,6 +733,74 @@ mod tests {
         assert!(trusted_operational_path(r"D:\dev\project\target\release\my_tool.exe"));
         assert!(trusted_operational_path(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\vulkan-1.dll"));
         assert!(trusted_operational_path(r"D:\harfile\ModelFusion\IDE\VSCode-win32-x64\7e7950df89\resources\app\node_modules\vsda\build\Release\vsda.node"));
+    }
+
+    #[tokio::test]
+    async fn test_memory_inspection_voter_filtering() {
+        use osoosi_types::HostEventSource;
+        use serde_json::json;
+
+        let memory = Arc::new(osoosi_memory::MemoryStore::new(":memory:").expect("memory store"));
+        let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
+        let voter = MemoryInspectionVoter { memory, adaptive };
+
+        // Event ID 3 (Network) returns None immediately without running inspection
+        let ev_network = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 3,
+            timestamp: chrono::Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "ProcessId": 1234,
+                "Image": r"C:\Windows\System32\curl.exe"
+            }),
+            causal_parent: None,
+        };
+        assert!(voter.vote(&ev_network).await.is_none());
+
+        // Event ID 22 (DNS Query) returns None immediately
+        let ev_dns = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 22,
+            timestamp: chrono::Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "ProcessId": 1234,
+                "Image": r"C:\Windows\System32\svchost.exe"
+            }),
+            causal_parent: None,
+        };
+        assert!(voter.vote(&ev_dns).await.is_none());
+
+        // PID <= 4 returns None immediately (testing PID 0 and 4 as integer and string)
+        for pid_val in [json!(0), json!(4), json!("0"), json!("4")] {
+            let ev_system_pid = HostSecurityEvent {
+                source: HostEventSource::WindowsEventLog,
+                event_id: 1, // ProcessCreate
+                timestamp: chrono::Utc::now(),
+                computer: "TEST-HOST".to_string(),
+                data: json!({
+                    "ProcessId": pid_val,
+                    "Image": r"C:\Windows\System32\ntoskrnl.exe"
+                }),
+                causal_parent: None,
+            };
+            assert!(voter.vote(&ev_system_pid).await.is_none());
+        }
+
+        // Scanner-skipped path returns None immediately
+        let ev_skip_path = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: chrono::Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "ProcessId": 5678,
+                "Image": r"C:\Program Files\Git\mingw64\bin\git.exe"
+            }),
+            causal_parent: None,
+        };
+        assert!(voter.vote(&ev_skip_path).await.is_none());
     }
 }
 
