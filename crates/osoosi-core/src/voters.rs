@@ -575,15 +575,28 @@ impl ThreatVoter for MemoryInspectionVoter {
             return None;
         }
 
-        let pid = event
+        let pid_val = event
             .data
             .get("ProcessId")
-            .and_then(|v| {
-                v.as_u64()
-                    .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
-            })?;
+            .or_else(|| event.data.get("TargetProcessId"))
+            .or_else(|| event.data.get("SourceProcessId"));
 
-        if pid <= 4 {
+        let pid = pid_val.and_then(|v| {
+            v.as_u64().or_else(|| {
+                v.as_str().and_then(|s| {
+                    let s = s.trim();
+                    if let Some(hex) = s.strip_prefix("0x").or_else(|| s.strip_prefix("0X")) {
+                        u64::from_str_radix(hex, 16).ok()
+                    } else {
+                        s.parse::<u64>().ok()
+                    }
+                })
+            })
+        })?;
+
+        // Guard against integer truncation on 32-bit PIDs, and discard System/Idle/Self/OS-critical PIDs
+        let pid = u32::try_from(pid).ok()?;
+        if pid <= 4 || pid == std::process::id() {
             return None;
         }
 
@@ -592,8 +605,11 @@ impl ThreatVoter for MemoryInspectionVoter {
                 return None;
             }
         }
-
-        let pid = pid as u32;
+        if let Some(target_image) = event.data.get("TargetImage").and_then(|v| v.as_str()) {
+            if scanner_skip_path(target_image) {
+                return None;
+            }
+        }
 
 #[cfg(target_os = "windows")]
         {
@@ -772,8 +788,26 @@ mod tests {
         };
         assert!(voter.vote(&ev_dns).await.is_none());
 
-        // PID <= 4 returns None immediately (testing PID 0 and 4 as integer and string)
-        for pid_val in [json!(0), json!(4), json!("0"), json!("4")] {
+        // Event ID 11 (File Create) returns None immediately
+        let ev_file = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 11,
+            timestamp: chrono::Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "ProcessId": 1234,
+                "Image": r"C:\Windows\System32\notepad.exe"
+            }),
+            causal_parent: None,
+        };
+        assert!(voter.vote(&ev_file).await.is_none());
+
+        // PID <= 4 returns None immediately (testing PIDs 0..=4 as integer, string, whitespace, and hex)
+        for pid_val in [
+            json!(0), json!(1), json!(2), json!(3), json!(4),
+            json!("0"), json!("1"), json!("2"), json!("3"), json!("4"),
+            json!(" 4 "), json!("0x4"), json!("0x0")
+        ] {
             let ev_system_pid = HostSecurityEvent {
                 source: HostEventSource::WindowsEventLog,
                 event_id: 1, // ProcessCreate
@@ -788,6 +822,34 @@ mod tests {
             assert!(voter.vote(&ev_system_pid).await.is_none());
         }
 
+        // PID > u32::MAX (integer overflow / truncation guard) returns None immediately
+        let ev_overflow = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: chrono::Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "ProcessId": (1u64 << 32) + 4, // 4294967300, which would truncate to 4 if cast as u32
+                "Image": r"C:\Windows\System32\cmd.exe"
+            }),
+            causal_parent: None,
+        };
+        assert!(voter.vote(&ev_overflow).await.is_none());
+
+        // Current process PID (self-inspection guard) returns None immediately
+        let ev_self = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: chrono::Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "ProcessId": std::process::id(),
+                "Image": r"C:\Windows\System32\osoosi.exe"
+            }),
+            causal_parent: None,
+        };
+        assert!(voter.vote(&ev_self).await.is_none());
+
         // Scanner-skipped path returns None immediately
         let ev_skip_path = HostSecurityEvent {
             source: HostEventSource::WindowsEventLog,
@@ -801,6 +863,35 @@ mod tests {
             causal_parent: None,
         };
         assert!(voter.vote(&ev_skip_path).await.is_none());
+
+        // Scanner-skipped target path returns None immediately
+        let ev_skip_target_path = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 8, // CreateRemoteThread
+            timestamp: chrono::Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "SourceProcessId": 1234,
+                "TargetProcessId": 5678,
+                "TargetImage": r"D:\dev\project\.vscode\extensions\bin\tool.exe"
+            }),
+            causal_parent: None,
+        };
+        assert!(voter.vote(&ev_skip_target_path).await.is_none());
+
+        // TargetProcessId fallback with PID <= 4 returns None immediately
+        let ev_target_pid_sys = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 8, // CreateRemoteThread
+            timestamp: chrono::Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "TargetProcessId": "4",
+                "TargetImage": r"C:\Windows\System32\lsass.exe"
+            }),
+            causal_parent: None,
+        };
+        assert!(voter.vote(&ev_target_pid_sys).await.is_none());
     }
 }
 
