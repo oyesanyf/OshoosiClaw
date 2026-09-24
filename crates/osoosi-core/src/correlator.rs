@@ -24,6 +24,7 @@ pub struct ProcessContext {
     pub total_score: f32,
     pub last_updated: DateTime<Utc>,
     pub is_signed: bool,
+    pub last_alerted: Option<DateTime<Utc>>,
 }
 
 impl ProcessContext {
@@ -36,21 +37,29 @@ impl ProcessContext {
             total_score: 0.0,
             last_updated: Utc::now(),
             is_signed: false,
+            last_alerted: None,
         }
     }
 
     pub fn add_event(&mut self, event_type: &str, details: &str, score: f32) {
+        let now = Utc::now();
+        let elapsed_secs = (now - self.last_updated).num_seconds().max(0) as f32;
+        if elapsed_secs > 30.0 {
+            let decay = 0.1 * (elapsed_secs / 30.0);
+            self.total_score = (self.total_score - decay).max(0.0);
+        }
+
         if self.timeline.len() >= 50 {
             self.timeline.pop_front();
         }
         self.timeline.push_back(TimelinedEvent {
-            timestamp: Utc::now(),
+            timestamp: now,
             event_type: event_type.to_string(),
             details: details.to_string(),
             confidence: score,
         });
         self.total_score = (self.total_score + score).min(1.0);
-        self.last_updated = Utc::now();
+        self.last_updated = now;
     }
 }
 
@@ -76,6 +85,11 @@ impl EventCorrelator {
     /// Process a new host event and correlate it with existing findings.
     pub async fn correlate_sysmon(&self, event: &HostSecurityEvent) -> Option<ThreatSignature> {
         let pid = event.data.get("ProcessId").and_then(|v| v.as_u64())? as u32;
+        // Ignore PID 0 (Idle) and PID 4 (System) from generic network/IO correlation
+        if pid == 0 || pid == 4 {
+            return None;
+        }
+
         let image = event
             .data
             .get("Image")
@@ -86,6 +100,10 @@ impl EventCorrelator {
             .processes
             .entry(pid)
             .or_insert_with(|| ProcessContext::new(pid, image.to_string()));
+
+        if ctx.image == "unknown" && image != "unknown" {
+            ctx.image = image.to_string();
+        }
 
         let event_id = event.event_id;
         let mut alert_score: f32 = 0.0;
@@ -258,23 +276,39 @@ impl EventCorrelator {
             _ => {}
         }
 
-        if alert_score > 0.3 || ctx.total_score > 0.7 {
+        if alert_score > 0.25 && ctx.total_score >= 0.70 {
+            let now = Utc::now();
+            if let Some(last) = ctx.last_alerted {
+                if now - last < chrono::Duration::seconds(60) {
+                    return None;
+                }
+            }
+
             let mut sig = ThreatSignature::new("localhost".to_string());
             sig.confidence = ctx.total_score.min(0.99);
             sig.process_name = Some(ctx.image.clone());
             sig.add_reason(format!("Intelligent Correlation: {}", reason));
             sig.add_reason(format!("Combined Suspicion Score: {:.2}", ctx.total_score));
-            sig.recommended_action = if ctx.total_score > 0.85 {
+            let mut action = if ctx.total_score > 0.85 {
                 ResponseAction::Isolate
             } else {
                 ResponseAction::Alert
             };
+
+            // If image is unknown, cap action to Alert (never Isolate unknown image)
+            if ctx.image == "unknown" && action == ResponseAction::Isolate {
+                action = ResponseAction::Alert;
+            }
+
+            sig.recommended_action = action;
 
             // If very high confidence, mark for human approval if disruptive
             if sig.recommended_action == ResponseAction::Isolate {
                 sig.require_approval = true;
                 sig.action_state = ActionState::Pending;
             }
+
+            ctx.last_alerted = Some(now);
 
             return Some(sig);
         }
@@ -290,6 +324,7 @@ impl EventCorrelator {
             .or_insert_with(|| ProcessContext::new(pid, image.to_string()));
         ctx.static_findings.push(finding.to_string());
         ctx.total_score = (ctx.total_score + confidence * 0.5).min(1.0);
+        ctx.last_updated = Utc::now();
         info!(
             "Correlator: Added static finding for PID {}: {} (New Score: {:.2})",
             pid, finding, ctx.total_score
@@ -361,3 +396,107 @@ impl EventCorrelator {
         Ok(None)
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    fn make_sysmon_event(event_id: u32, pid: u64, image: &str, extra_data: Vec<(&str, &str)>) -> HostSecurityEvent {
+        let mut map = serde_json::Map::new();
+        map.insert("ProcessId".to_string(), serde_json::json!(pid));
+        map.insert("Image".to_string(), serde_json::json!(image));
+        for (k, v) in extra_data {
+            map.insert(k.to_string(), serde_json::json!(v));
+        }
+
+        HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id,
+            timestamp: Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: serde_json::Value::Object(map),
+            causal_parent: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_ignore_kernel_pids() {
+        let correlator = EventCorrelator::new();
+
+        // PID 0 (Idle)
+        let ev0 = make_sysmon_event(3, 0, "unknown", vec![("DestinationIp", "8.8.8.8"), ("DestinationPort", "53")]);
+        assert!(correlator.correlate_sysmon(&ev0).await.is_none());
+        assert!(!correlator.processes.contains_key(&0));
+
+        // PID 4 (System)
+        let ev4 = make_sysmon_event(3, 4, "System", vec![("DestinationIp", "1.1.1.1"), ("DestinationPort", "445")]);
+        assert!(correlator.correlate_sysmon(&ev4).await.is_none());
+        assert!(!correlator.processes.contains_key(&4));
+    }
+
+    #[tokio::test]
+    async fn test_benign_event_does_not_trigger_even_with_high_total_score() {
+        let correlator = EventCorrelator::new();
+        let pid = 1234;
+
+        // Seed high score statically
+        correlator.add_static_finding(pid, "malicious.exe", "c2_network_beacon", 1.0);
+        correlator.add_static_finding(pid, "malicious.exe", "persistence_registry", 1.0);
+        // total_score is now 1.0
+
+        // Send a benign event (event_id 999 with alert_score 0.0)
+        let benign = make_sysmon_event(999, pid as u64, "malicious.exe", vec![]);
+        let alert = correlator.correlate_sysmon(&benign).await;
+        assert!(alert.is_none(), "Benign event with alert_score 0.0 must not trigger an alert");
+    }
+
+    #[tokio::test]
+    async fn test_debounce_and_cooldown_per_pid() {
+        let correlator = EventCorrelator::new();
+        let pid = 5678;
+
+        // Seed context so total_score >= 0.70
+        correlator.add_static_finding(pid, "cmd.exe", "c2_activity", 1.0);
+        correlator.add_static_finding(pid, "cmd.exe", "credential_dump", 1.0);
+
+        // High alert_score event: Process Access to lsass.exe (alert_score 0.7)
+        let ev1 = make_sysmon_event(10, pid as u64, "cmd.exe", vec![("TargetImage", "C:\\Windows\\System32\\lsass.exe")]);
+        let sig1 = correlator.correlate_sysmon(&ev1).await;
+        assert!(sig1.is_some(), "First suspicious event should trigger threat signature");
+
+        // Immediately send another suspicious event (Process Creation with -enc)
+        let ev2 = make_sysmon_event(1, pid as u64, "cmd.exe", vec![("CommandLine", "powershell -enc AAAA")]);
+        let sig2 = correlator.correlate_sysmon(&ev2).await;
+        assert!(sig2.is_none(), "Second event within 60s debounce window should be suppressed");
+    }
+
+    #[tokio::test]
+    async fn test_unknown_image_action_capped_to_alert() {
+        let correlator = EventCorrelator::new();
+        let pid = 8888;
+
+        // Seed high score
+        correlator.add_static_finding(pid, "unknown", "c2", 1.0);
+        correlator.add_static_finding(pid, "unknown", "tamper", 1.0);
+
+        // Process Access lsass.exe (alert_score 0.7) -> total_score > 0.85
+        let ev = make_sysmon_event(10, pid as u64, "unknown", vec![("TargetImage", "lsass.exe")]);
+        let sig = correlator.correlate_sysmon(&ev).await.expect("Should trigger");
+        assert_eq!(sig.recommended_action, ResponseAction::Alert, "Unknown image must never be isolated");
+    }
+
+    #[test]
+    fn test_score_decay_after_inactivity() {
+        let mut ctx = ProcessContext::new(9999, "test.exe".to_string());
+        ctx.total_score = 0.8;
+        // Set last_updated to 60 seconds ago
+        ctx.last_updated = Utc::now() - chrono::Duration::seconds(60);
+
+        // Add event with 0 score
+        ctx.add_event("FileCreate", "benign.txt", 0.0);
+
+        // 60 secs elapsed: decay = 0.1 * (60 / 30) = 0.2. New total_score should be 0.6.
+        assert!((ctx.total_score - 0.6).abs() < 0.01);
+    }
+}
+

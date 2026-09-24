@@ -4,7 +4,7 @@ use nostr_sdk::prelude::*;
 use rand_distr::{Distribution, Exp};
 use rand::thread_rng;
 use osoosi_types::ThreatSignature;
-use tracing::info;
+use tracing::{debug, info};
 
 /// Nostr Event Kinds for OshoosiClaw Mesh
 pub const KIND_EDR_ALERT: Kind = Kind::Custom(20001);
@@ -73,6 +73,12 @@ impl NostrMeshOrchestrator {
     /// Broadcast a privacy-hardened threat signature to the decentralized mesh.
     pub async fn broadcast_threat(&self, mut sig: ThreatSignature) -> anyhow::Result<()> {
         let client = self.client.read().await;
+
+        let relays = client.relays().await;
+        if relays.is_empty() {
+            debug!("Nostr Mesh: No relays configured; skipping broadcast.");
+            return Ok(());
+        }
         
         // --- 1. MALCHELA DIFFERENTIAL PRIVACY ---
         // Inject Laplacian noise to prevent relay-side fingerprinting of specific threats.
@@ -129,6 +135,11 @@ impl NostrMeshOrchestrator {
     /// Pulse: Heartbeat for node discovery.
     pub async fn send_heartbeat(&self, node_id: &str) -> anyhow::Result<()> {
         let client = self.client.read().await;
+        let relays = client.relays().await;
+        if relays.is_empty() {
+            debug!("Nostr Mesh: No relays configured; skipping heartbeat.");
+            return Ok(());
+        }
         let event = EventBuilder::new(
             KIND_NODE_HEARTBEAT,
             format!("Node {} is active", node_id),
@@ -145,5 +156,25 @@ impl NostrMeshOrchestrator {
         let offset = rand::thread_rng().gen_range(-900..900);
         let now = Timestamp::now().as_u64() as i64;
         Timestamp::from((now + offset) as u64)
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_broadcast_threat_no_relays_returns_ok() {
+        let orch = NostrMeshOrchestrator::new(None, 1.0).await.expect("Failed to create orchestrator");
+        let sig = ThreatSignature::new("test-node".to_string());
+        let res = orch.broadcast_threat(sig).await;
+        assert!(res.is_ok(), "broadcast_threat with no relays must return Ok(()) without error");
+    }
+
+    #[tokio::test]
+    async fn test_send_heartbeat_no_relays_returns_ok() {
+        let orch = NostrMeshOrchestrator::new(None, 1.0).await.expect("Failed to create orchestrator");
+        let res = orch.send_heartbeat("node-123").await;
+        assert!(res.is_ok(), "send_heartbeat with no relays must return Ok(()) without error");
     }
 }

@@ -55,10 +55,10 @@ db_path = "./database/osoosi.db"
 peers = []
 # Nostr Relays for decentralized threat intelligence sharing (BitChat style)
 # Set to custom active relays if available, e.g. ["wss://relay.damus.io"]
-nostr_relays = []
+nostr_relays = ["wss://relay.damus.io", "wss://nos.lol"]
 # Security: If true, allows fallback to public Nostr relays if private ones are offline.
 # WARNING: This may leak encrypted telemetry metadata to public servers.
-allow_public_relays = false
+allow_public_relays = true
 
 [backup]
 # Enable backup on agent start

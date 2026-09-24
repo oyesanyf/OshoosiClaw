@@ -3696,11 +3696,13 @@ impl EdrOrchestrator {
         }
 
         let hash = signature.hash_blake3.as_deref().unwrap_or("unknown");
-        let suppression_key = format!("{}:{}:{}", 
-            hash, 
-            signature.process_name.as_deref().unwrap_or("unknown"),
-            signature.id.split(':').next().unwrap_or("generic")
-        );
+        let reason_category = signature
+            .reason
+            .as_deref()
+            .and_then(|r| r.split(':').next())
+            .unwrap_or("generic");
+        let proc = signature.process_name.as_deref().unwrap_or("unknown");
+        let suppression_key = format!("{}:{}:{}", hash, proc, reason_category);
             
         let cooldown = Duration::from_secs(self.policy.config.alert_suppression_secs);
         if let Some(last) = self.alert_suppression_cache.get(&suppression_key) {
@@ -3806,9 +3808,9 @@ impl EdrOrchestrator {
             let sig_clone = signature.clone();
             tokio::spawn(async move {
                 if let Err(e) = nostr.broadcast_threat(sig_clone).await {
-                    error!("Failed to broadcast threat via Nostr relay: {}", e);
+                    debug!("Failed to broadcast threat via Nostr relay: {}", e);
                 } else {
-                    info!("BitChat: Threat broadcasted to global Nostr relays.");
+                    debug!("BitChat: Threat broadcasted to global Nostr relays.");
                 }
             });
         } else {
@@ -5806,6 +5808,7 @@ impl EdrOrchestrator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use osoosi_types::ThreatSignature;
     use std::path::Path;
 
     #[test]
@@ -5877,6 +5880,47 @@ mod tests {
         assert!(!should_skip_file_malware_scan(Path::new(r"C:\Users\victim\Downloads\msalruntime.dll")));
         assert!(!should_skip_file_malware_scan(Path::new(r"C:\Users\victim\Downloads\vsda.node")));
         assert!(!should_skip_file_malware_scan(Path::new(r"C:\Windows\Temp\win32-app-container-tokens.node")));
+    }
+
+    #[test]
+    fn test_suppression_key_deduplication() {
+        let mut sig1 = ThreatSignature::new("node-1".to_string());
+        sig1.hash_blake3 = Some("abc123hash".to_string());
+        sig1.process_name = Some("powershell.exe".to_string());
+        sig1.add_reason("Intelligent Correlation: Suspicious command line execution".to_string());
+
+        let mut sig2 = ThreatSignature::new("node-1".to_string());
+        // Notice sig2 has a different UUID id
+        sig2.hash_blake3 = Some("abc123hash".to_string());
+        sig2.process_name = Some("powershell.exe".to_string());
+        sig2.add_reason("Intelligent Correlation: Repeated suspicious command line".to_string());
+
+        assert_ne!(sig1.id, sig2.id);
+
+        let key1 = {
+            let hash = sig1.hash_blake3.as_deref().unwrap_or("unknown");
+            let reason_category = sig1
+                .reason
+                .as_deref()
+                .and_then(|r| r.split(':').next())
+                .unwrap_or("generic");
+            let proc = sig1.process_name.as_deref().unwrap_or("unknown");
+            format!("{}:{}:{}", hash, proc, reason_category)
+        };
+
+        let key2 = {
+            let hash = sig2.hash_blake3.as_deref().unwrap_or("unknown");
+            let reason_category = sig2
+                .reason
+                .as_deref()
+                .and_then(|r| r.split(':').next())
+                .unwrap_or("generic");
+            let proc = sig2.process_name.as_deref().unwrap_or("unknown");
+            format!("{}:{}:{}", hash, proc, reason_category)
+        };
+
+        assert_eq!(key1, "abc123hash:powershell.exe:Intelligent Correlation");
+        assert_eq!(key1, key2, "Suppression keys must match regardless of random UUID id");
     }
 }
 
