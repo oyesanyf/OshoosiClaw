@@ -3962,6 +3962,67 @@ mod tests {
         // Cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
+
+    #[tokio::test]
+    async fn test_skyrl_endpoints() {
+        let state = DashboardState::new(None, None);
+
+        // 1. Get initial status: should have pre-seeded scenarios, positive loss, buffer entries
+        let status = get_skyrl_status(State(state.clone())).await.0;
+        assert_eq!(status["status"], "online");
+        assert!((status["epsilon"].as_f64().unwrap() - 0.05).abs() < 1e-4);
+        assert_eq!(status["active_lora_adapter"], "edr-reasoning-lora-v1");
+        assert!(status["total_episodes"].as_u64().unwrap() >= 4);
+        assert!(status["total_steps"].as_u64().unwrap() >= 10);
+        assert!(status["buffer_size"].as_u64().unwrap() >= 10);
+        assert!(status["mean_loss"].as_f64().unwrap() > 0.0);
+
+        // 2. Step gym
+        let step_req = SkyrlStepRequest {
+            session_id: Some("test-session".to_string()),
+            pid: Some(9999),
+            binary_path: Some(r"C:\Windows\Temp\malware.exe".to_string()),
+            is_malicious: Some(true),
+            action: Some("Suspend".to_string()),
+            action_id: None,
+        };
+        let step_res = post_skyrl_step(State(state.clone()), Json(step_req)).await.0;
+        assert_eq!(step_res["session_id"], "test-session");
+        assert_eq!(step_res["step"], 1);
+        assert!(step_res["thought_trace"].as_str().is_some());
+
+        // 3. Train batch
+        let train_req = SkyrlTrainRequest {
+            batch_size: Some(16),
+            gamma: Some(0.99),
+            learning_rate: Some(0.001),
+            transitions: None,
+        };
+        let train_res = post_skyrl_train(State(state.clone()), Json(train_req)).await.0;
+        assert_eq!(train_res["status"], "success");
+        assert!(train_res["loss"].as_f64().is_some());
+        assert!(train_res["samples_trained"].as_u64().unwrap() > 0);
+
+        // 4. Generate policy inference
+        let gen_req = SkyrlGenerateRequest {
+            pid: Some(4096),
+            binary_path: Some(r"C:\Windows\System32\cmd.exe".to_string()),
+            command_line: Some("cmd.exe /c whoami".to_string()),
+            lora_adapter: Some("tinker-investigator-v2".to_string()),
+            ..Default::default()
+        };
+        let gen_res = post_skyrl_generate(State(state.clone()), Json(gen_req)).await.0;
+        assert!(gen_res["action"].as_str().is_some());
+        assert_eq!(gen_res["lora_adapter"], "tinker-investigator-v2");
+
+        // 5. Change adapter
+        let adapter_req = SkyrlAdapterRequest {
+            adapter: "base-policy".to_string(),
+        };
+        let adapter_res = post_skyrl_adapter(State(state.clone()), Json(adapter_req)).await.0;
+        assert_eq!(adapter_res["status"], "success");
+        assert_eq!(adapter_res["active_lora_adapter"], "base-policy");
+    }
 }
 
 

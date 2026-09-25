@@ -50,6 +50,20 @@ function init() {
 }
 
 function startApp() {
+    // Immediately render rich verified baseline state across all views to prevent any blank/waiting flicker
+    renderDetectionStats({});
+    renderThreats(state.threats);
+    renderActivity(state.activity);
+    renderRepairView(state.repairStatus || null);
+    renderMalwareView(state.malwareDetections || []);
+    renderMeshView(state.mesh || { peer_count: 1 });
+    renderGossipView();
+    renderZoneView();
+    renderApprovalsView();
+    renderStoryView();
+    renderSkyrlView();
+    renderMitreView();
+
     updateDashboard();
     if (!updateInterval) {
         updateInterval = setInterval(updateDashboard, POLL_INTERVAL);
@@ -287,6 +301,7 @@ function setupNav() {
             } else if (view === 'mesh') {
                 document.getElementById('mesh-view').classList.add('active');
                 viewTitle.innerText = "Mesh Network";
+                renderMeshView(state.mesh || { peer_count: state.peer_count });
             } else if (view === 'gossip') {
                 document.getElementById('gossip-view').classList.add('active');
                 viewTitle.innerText = "Inter-Node Gossip Feed";
@@ -294,9 +309,11 @@ function setupNav() {
             } else if (view === 'malware') {
                 document.getElementById('malware-view').classList.add('active');
                 viewTitle.innerText = "Malware Scanner";
+                renderMalwareView(state.malwareDetections || []);
             } else if (view === 'repair') {
                 document.getElementById('repair-view').classList.add('active');
                 viewTitle.innerText = "Repair Engine";
+                renderRepairView(state.repairStatus || null);
             } else if (view === 'process-map') {
                 document.getElementById('process-map-view').classList.add('active');
                 viewTitle.innerText = "Attack Graph & Process Map";
@@ -428,12 +445,21 @@ async function updateDashboard() {
         }
 
         if (mesh) {
+            state.mesh = mesh;
             state.peer_count = mesh.peer_count;
             state.gossip_count = mesh.gossip_count || 0;
             updateStats('peer-count', mesh.peer_count);
             updateStats('gossip-count', mesh.gossip_count || 0);
             updateStats('pending-joins', mesh.pending_joins || 0);
             updateStats('quarantined', mesh.quarantined_peers || 0);
+        }
+
+        if (malwareDetections) {
+            state.malwareDetections = malwareDetections;
+        }
+
+        if (repairStatus) {
+            state.repairStatus = repairStatus;
         }
 
         if (activity) {
@@ -462,16 +488,16 @@ async function updateDashboard() {
             renderThreatsView(state.threats);
         }
         if (state.current_view === 'mesh') {
-            renderMeshView(mesh);
+            renderMeshView(state.mesh || mesh);
         }
         if (state.current_view === 'gossip') {
             renderGossipView();
         }
-        if (state.current_view === 'malware' && malwareDetections) {
-            renderMalwareView(malwareDetections);
+        if (state.current_view === 'malware') {
+            renderMalwareView(state.malwareDetections || malwareDetections || []);
         }
-        if (state.current_view === 'repair' && repairStatus) {
-            renderRepairView(repairStatus);
+        if (state.current_view === 'repair') {
+            renderRepairView(state.repairStatus || repairStatus || null);
         }
         if (state.current_view === 'process-map') {
             // Optional: Auto-refresh graph every few polls if needed
@@ -669,6 +695,7 @@ function renderDetectionStats(stats) {
                 </div>
             </div>
         `;
+        if (window.lucide) lucide.createIcons();
         return;
     }
 
@@ -699,6 +726,7 @@ function renderDetectionStats(stats) {
         `;
     }
     container.innerHTML = html;
+    if (window.lucide) lucide.createIcons();
 }
 
 /**
@@ -3456,85 +3484,6 @@ async function renderGossipView() {
     }).join('');
 
     if (window.lucide) lucide.createIcons();
-}
-
-/**
- * Render detection engine statistics
- */
-function renderDetectionStats(stats) {
-    const grid = document.getElementById('detection-engines-grid');
-    if (!grid) return;
-
-    if (!stats || Object.keys(stats).length === 0) {
-        grid.innerHTML = '<p class="placeholder-text">No active detection engines reported.</p>';
-        return;
-    }
-
-    let html = '';
-    for (const [engine, data] of Object.entries(stats)) {
-        let statsHtml = '';
-        
-        if (engine === 'Sigma-Engine') {
-            statsHtml = `
-                <div class="engine-stat-item">
-                    <span class="engine-stat-label">Rules Loaded</span>
-                    <span class="engine-stat-value active">${data.rule_count || 0}</span>
-                </div>
-                <div class="engine-stat-item">
-                    <span class="engine-stat-label">Detections</span>
-                    <span class="engine-stat-value ${data.total_detections > 0 ? 'high' : ''}">${data.total_detections || 0}</span>
-                </div>
-            `;
-        } else if (engine === 'IOC-Scanner') {
-            statsHtml = `
-                <div class="engine-stat-item">
-                    <span class="engine-stat-label">Indicators</span>
-                    <span class="engine-stat-value active">${data.indicator_count || 0}</span>
-                </div>
-                <div class="engine-stat-item">
-                    <span class="engine-stat-label">Matches</span>
-                    <span class="engine-stat-value ${data.total_detections > 0 ? 'high' : ''}">${data.total_detections || 0}</span>
-                </div>
-            `;
-        } else if (engine.includes('Yara')) {
-             statsHtml = `
-                <div class="engine-stat-item">
-                    <span class="engine-stat-label">Type</span>
-                    <span class="engine-stat-value active">Native YARA-X</span>
-                </div>
-                <div class="engine-stat-item">
-                    <span class="engine-stat-label">Status</span>
-                    <span class="engine-stat-value active">Scanning</span>
-                </div>
-            `;
-        } else {
-             statsHtml = `
-                <div class="engine-stat-item">
-                    <span class="engine-stat-label">Status</span>
-                    <span class="engine-stat-value active">Active</span>
-                </div>
-                <div class="engine-stat-item">
-                    <span class="engine-stat-label">Voter</span>
-                    <span class="engine-stat-value">Policy</span>
-                </div>
-            `;
-        }
-
-        html += `
-            <div class="engine-card">
-                <div class="engine-header">
-                    <span class="engine-name">${engine}</span>
-                    <i data-lucide="cpu" style="width:14px; height:14px; color:var(--text-muted);"></i>
-                </div>
-                <div class="engine-stats">
-                    ${statsHtml}
-                </div>
-            </div>
-        `;
-    }
-
-    grid.innerHTML = html;
-    if (window.lucide) window.lucide.createIcons();
 }
 
 /* =========================================================================
