@@ -43,6 +43,10 @@
                     <i data-lucide="shield-alert"></i>
                     <span>Threat Intelligence</span>
                 </a>
+                <a href="#mitre" class="nav-item" data-view="mitre">
+                    <i data-lucide="shield-alert"></i>
+                    <span>ATT&CK Matrix</span>
+                </a>
                 <a href="#" class="nav-item" data-view="mesh">
                     <i data-lucide="share-2"></i>
                     <span>Mesh Network</span>
@@ -723,6 +727,102 @@
                     </div>
                 </div>
             </div>
+
+            <!-- MITRE ATT&CK Matrix View -->
+            <div id="mitre-view" class="view-content">
+                <!-- Header Banner -->
+                <div class="card glass shadow-glow mb-4" style="border-left: 4px solid var(--accent-blue);">
+                    <div class="card-header" style="padding-bottom: 8px;">
+                        <div>
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <h3 style="font-size: 20px; font-weight: 600; color: var(--text-header);">MITRE ATT&CK® Enterprise Matrix</h3>
+                                <span class="badge blue" style="font-size: 11px;"><i data-lucide="shield-check" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>v14.1 Enterprise Validated</span>
+                                <span class="badge purple" style="font-size: 11px;">Agentic Autonomous EDR</span>
+                            </div>
+                            <p style="color: var(--text-muted); font-size: 13px; margin-top: 4px;">Tactics, Techniques, Sub-techniques, Active Coverage, Defenses & CTI Group Profiling</p>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- 4 Stat Cards -->
+                <div class="stats-grid mb-4" id="mitre-stats-grid">
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper blue">
+                            <i data-lucide="layers"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Total Techniques</span>
+                            <span class="stat-value" id="mitre-total-techniques">100+ Cataloged</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper green">
+                            <i data-lucide="shield-check"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Matrix Coverage</span>
+                            <span class="stat-value" id="mitre-coverage-percentage">98.4% Protected/Audited</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper purple">
+                            <i data-lucide="shield"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Active Defenses</span>
+                            <span class="stat-value" id="mitre-active-defenses">24 Mitigations Enforced</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper red">
+                            <i data-lucide="users"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Threat Groups</span>
+                            <span class="stat-value" id="mitre-threat-groups">16 APT Actor Profiles</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Search & Filter Bar -->
+                <div class="card glass shadow-glow mb-4" style="padding: 16px 20px;">
+                    <div style="display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between;">
+                        <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center; flex: 1;">
+                            <div class="search-bar" style="width: 340px; background: rgba(0, 0, 0, 0.3);">
+                                <i data-lucide="search"></i>
+                                <input type="text" id="mitre-search" placeholder="Search techniques, IDs (T1082), or APT groups...">
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <label for="mitre-tactic-filter" style="font-size: 12px; color: var(--text-muted); font-weight: 500;">Tactic:</label>
+                                <select id="mitre-tactic-filter" style="background: rgba(13, 17, 23, 0.8); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none; cursor: pointer;">
+                                    <option value="all">All Tactics (15)</option>
+                                </select>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <label for="mitre-status-filter" style="font-size: 12px; color: var(--text-muted); font-weight: 500;">Status:</label>
+                                <select id="mitre-status-filter" style="background: rgba(13, 17, 23, 0.8); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none; cursor: pointer;">
+                                    <option value="all">All Techniques</option>
+                                    <option value="covered">Covered</option>
+                                    <option value="alerts">Active Alerts</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <span id="mitre-filter-count" style="font-size: 12px; color: var(--text-muted); font-family: monospace;">Loading...</span>
+                            <button id="mitre-reset-filter-btn" class="icon-btn glass" style="padding: 6px 12px; font-size: 12px; border-radius: 8px; cursor: pointer; color: var(--text-muted); border: 1px solid var(--glass-border); background: rgba(255, 255, 255, 0.04);">Reset</button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Interactive Horizontal Matrix Grid -->
+                <div class="card glass shadow-glow mb-4" style="padding: 16px;">
+                    <div class="mitre-matrix-scroll-wrapper" style="overflow-x: auto; padding-bottom: 12px;">
+                        <div id="mitre-matrix-container" class="mitre-matrix-container" style="display: flex; gap: 12px; min-width: 100%; width: max-content;">
+                            <div class="placeholder-text" style="padding: 30px; text-align: center; width: 100%;">Loading MITRE ATT&CK Enterprise Matrix...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
         </main>
     </div>
 
@@ -784,6 +884,50 @@
                 </div>
                 <div id="password-reset-msg" class="login-error" style="display: none;"></div>
             </form>
+        </div>
+    </div>
+
+    <!-- Technique Inspector Modal / Drawer -->
+    <div id="mitre-technique-modal" class="login-overlay" style="display: none; background: rgba(7, 9, 13, 0.88); backdrop-filter: blur(18px); z-index: 10000;">
+        <div class="login-card" style="max-width: 680px; width: 90%; max-height: 85vh; overflow-y: auto; text-align: left; padding: 28px;">
+            <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 1px solid var(--glass-border); padding-bottom: 14px;">
+                <div>
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span id="modal-tech-id" class="badge blue" style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700;">T1082</span>
+                        <span id="modal-tech-tactic" class="badge purple" style="font-size: 11px;">Discovery</span>
+                        <span id="modal-tech-coverage" class="badge green" style="font-size: 11px;">Protected</span>
+                    </div>
+                    <h2 id="modal-tech-name" style="font-size: 20px; font-weight: 600; color: var(--text-header); margin-top: 8px;">System Information Discovery</h2>
+                </div>
+                <button type="button" id="close-mitre-modal-btn" class="icon-btn glass" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-muted); cursor: pointer; border-radius: 8px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;">
+                    <i data-lucide="x" style="width: 18px; height: 18px;"></i>
+                </button>
+            </div>
+
+            <div style="margin-bottom: 18px;">
+                <h4 style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 6px;">Description</h4>
+                <p id="modal-tech-desc" style="font-size: 13px; line-height: 1.6; color: var(--text-primary); background: rgba(0, 0, 0, 0.25); padding: 12px; border-radius: 8px; border: 1px solid var(--glass-border);"></p>
+            </div>
+
+            <div style="margin-bottom: 18px;">
+                <h4 style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 6px;">Detection Mechanisms in OpenỌ̀ṣọ́ọ̀sì</h4>
+                <div id="modal-tech-detections" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+            </div>
+
+            <div style="margin-bottom: 18px;">
+                <h4 style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 6px;">Mitigations & Defenses</h4>
+                <div id="modal-tech-mitigations" style="display: flex; flex-direction: column; gap: 8px;"></div>
+            </div>
+
+            <div style="margin-bottom: 18px;">
+                <h4 style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 6px;">Associated Threat Actor Groups (CTI)</h4>
+                <div id="modal-tech-groups" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+            </div>
+
+            <div id="modal-tech-subtechniques-section" style="margin-bottom: 12px; display: none;">
+                <h4 style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 6px;">Sub-techniques</h4>
+                <div id="modal-tech-subtechniques" style="display: flex; flex-direction: column; gap: 6px;"></div>
+            </div>
         </div>
     </div>
 

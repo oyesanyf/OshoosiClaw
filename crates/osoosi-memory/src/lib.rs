@@ -1149,6 +1149,9 @@ impl MemoryStore {
                 require_approval: false,
                 action_state: ActionState::Executed,
                 is_signed: false,
+                mitre_tactic: None,
+                mitre_technique: None,
+                mitre_technique_name: None,
             })
         })?;
         let mut out = Vec::new();

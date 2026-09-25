@@ -6,6 +6,7 @@ edition.workspace = true
 [dependencies]
 osoosi-types = { path = "../osoosi-types" }
 osoosi-core = { path = "../osoosi-core" }
+osoosi-policy = { path = "../osoosi-policy" }
 osoosi-wire = { path = "../osoosi-wire" }
 osoosi-behavioral = { path = "../osoosi-behavioral" }
 axum.workspace = true

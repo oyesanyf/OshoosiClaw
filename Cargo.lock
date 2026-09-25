@@ -5876,6 +5876,7 @@ dependencies = [
  "chrono",
  "osoosi-behavioral",
  "osoosi-core",
+ "osoosi-policy",
  "osoosi-types",
  "osoosi-wire",
  "rand 0.8.6",

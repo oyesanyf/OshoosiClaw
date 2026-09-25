@@ -803,6 +803,21 @@ impl PolicyEngine {
             }
         }
 
+        // Enrich signature with MITRE ATT&CK Framework metadata if missing
+        if signature.mitre_technique.is_none() {
+            let cmdline = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("");
+            let reason_str = signature.reason.as_deref().unwrap_or("");
+            if let Some((tac, tech, name)) = crate::mitre_kb::extract_mitre_from_text(reason_str) {
+                signature.mitre_tactic = Some(tac);
+                signature.mitre_technique = Some(tech);
+                signature.mitre_technique_name = Some(name);
+            } else if let Some((tac, tech, name)) = crate::mitre_kb::infer_mitre_from_event(event.event_id, image_path, cmdline) {
+                signature.mitre_tactic = Some(tac);
+                signature.mitre_technique = Some(tech);
+                signature.mitre_technique_name = Some(name);
+            }
+        }
+
         info!(
             target: CONSENSUS_LOG_TARGET,
             event_id = ?event.event_id,

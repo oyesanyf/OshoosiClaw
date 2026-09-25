@@ -225,6 +225,15 @@ pub struct ThreatSignature {
     /// Whether the originating binary is digitally signed.
     #[serde(default)]
     pub is_signed: bool,
+    /// MITRE ATT&CK Tactic ID (e.g. "TA0002" or "Execution")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mitre_tactic: Option<String>,
+    /// MITRE ATT&CK Technique ID (e.g. "T1059.001")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mitre_technique: Option<String>,
+    /// MITRE ATT&CK Technique Name (e.g. "Command and Scripting Interpreter: PowerShell")
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mitre_technique_name: Option<String>,
 }
 
 impl ThreatSignature {
@@ -250,6 +259,9 @@ impl ThreatSignature {
             require_approval: false,
             action_state: ActionState::Pending,
             is_signed: false,
+            mitre_tactic: None,
+            mitre_technique: None,
+            mitre_technique_name: None,
         }
     }
 

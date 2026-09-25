@@ -260,6 +260,12 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/blocking/rules", post(post_blocking_rule))
         .route("/api/blocking/rules/unlock", post(post_blocking_unlock))
         .route("/api/detection-stats", get(get_detection_stats))
+        .route("/api/mitre/matrix", get(get_mitre_matrix))
+        .route("/api/mitre/coverage", get(get_mitre_coverage))
+        .route("/api/mitre/techniques", get(get_mitre_techniques))
+        .route("/api/mitre/technique/:id", get(get_mitre_technique_detail))
+        .route("/api/mitre/mitigations", get(get_mitre_mitigations))
+        .route("/api/mitre/groups", get(get_mitre_groups))
         .with_state(state);
 
     if index_html.is_file() {
@@ -2577,6 +2583,108 @@ async fn post_skyrl_adapter(
     }))
 }
 
+// ==========================================
+// MITRE ATT&CK Enterprise REST API Handlers
+// ==========================================
+
+#[derive(Debug, Deserialize, Default)]
+struct MitreTechniquesQuery {
+    tactic: Option<String>,
+}
+
+async fn get_mitre_matrix(State(state): State<DashboardState>) -> Json<osoosi_types::mitre::MitreMatrixSummary> {
+    let mut summary = osoosi_policy::mitre_kb::get_matrix_summary();
+    if let Some(backend) = &state.backend {
+        if let Ok(threats) = backend.memory().get_recent_threats(200) {
+            for t in threats {
+                if let Some(tac) = t.get("mitre_tactic").and_then(|v| v.as_str()) {
+                    for tactic in &summary.tactics {
+                        if tactic.id.eq_ignore_ascii_case(tac) || tactic.name.eq_ignore_ascii_case(tac) {
+                            *summary.active_detections_by_tactic.entry(tactic.id.clone()).or_insert(0) += 1;
+                        }
+                    }
+                }
+            }
+        }
+    }
+    Json(summary)
+}
+
+async fn get_mitre_coverage(State(state): State<DashboardState>) -> Json<Value> {
+    let summary = get_mitre_matrix(State(state)).await.0;
+    let mitigations = osoosi_policy::mitre_kb::get_mitigations();
+    let groups = osoosi_policy::mitre_kb::get_threat_groups();
+
+    Json(json!({
+        "total_techniques": summary.total_techniques,
+        "covered_techniques": summary.covered_techniques,
+        "coverage_percentage": summary.coverage_percentage,
+        "active_detections_by_tactic": summary.active_detections_by_tactic,
+        "total_mitigations": mitigations.len(),
+        "total_groups": groups.len()
+    }))
+}
+
+async fn get_mitre_techniques(
+    Query(query): Query<MitreTechniquesQuery>,
+) -> Json<Vec<osoosi_types::mitre::MitreTechnique>> {
+    let all = osoosi_policy::mitre_kb::get_all_techniques();
+    if let Some(tac) = query.tactic {
+        let tac_clean = tac.trim();
+        let filtered = all
+            .into_iter()
+            .filter(|t| {
+                t.tactic_id.eq_ignore_ascii_case(tac_clean)
+                    || t.tactic_name.eq_ignore_ascii_case(tac_clean)
+            })
+            .collect();
+        Json(filtered)
+    } else {
+        Json(all)
+    }
+}
+
+async fn get_mitre_technique_detail(
+    Path(id): Path<String>,
+) -> (axum::http::StatusCode, Json<Value>) {
+    if let Some(technique) = osoosi_policy::mitre_kb::lookup_technique(&id) {
+        let tech_id = &technique.id;
+        let mitigations: Vec<_> = osoosi_policy::mitre_kb::get_mitigations()
+            .into_iter()
+            .filter(|m| m.techniques.iter().any(|t| t.eq_ignore_ascii_case(tech_id)))
+            .collect();
+        let groups: Vec<_> = osoosi_policy::mitre_kb::get_threat_groups()
+            .into_iter()
+            .filter(|g| g.techniques.iter().any(|t| t.eq_ignore_ascii_case(tech_id)))
+            .collect();
+
+        (
+            axum::http::StatusCode::OK,
+            Json(json!({
+                "technique": technique,
+                "mitigations": mitigations,
+                "groups": groups,
+            })),
+        )
+    } else {
+        (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "Technique not found",
+                "id": id
+            })),
+        )
+    }
+}
+
+async fn get_mitre_mitigations() -> Json<Vec<osoosi_types::mitre::MitreMitigation>> {
+    Json(osoosi_policy::mitre_kb::get_mitigations())
+}
+
+async fn get_mitre_groups() -> Json<Vec<osoosi_types::mitre::MitreGroup>> {
+    Json(osoosi_policy::mitre_kb::get_threat_groups())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -2665,6 +2773,39 @@ mod tests {
     fn test_asset_dir_resolution() {
         let dir = resolve_dashboard_asset_dir();
         assert!(dir.exists(), "dashboard asset dir should exist: {:?}", dir);
+    }
+
+    #[tokio::test]
+    async fn test_mitre_endpoints() {
+        let state = DashboardState::new(None, None);
+
+        // 1. Matrix summary endpoint
+        let matrix = get_mitre_matrix(State(state.clone())).await.0;
+        assert_eq!(matrix.tactics.len(), 15);
+        assert!(!matrix.techniques.is_empty());
+        assert!(matrix.total_techniques >= 30);
+        assert!(matrix.covered_techniques >= 25);
+
+        // 2. Coverage endpoint
+        let coverage = get_mitre_coverage(State(state.clone())).await.0;
+        assert!(coverage["coverage_percentage"].as_f64().unwrap() > 0.0);
+        assert_eq!(coverage["total_techniques"].as_u64().unwrap(), matrix.total_techniques as u64);
+        assert!(coverage["total_mitigations"].as_u64().unwrap() >= 20);
+        assert!(coverage["total_groups"].as_u64().unwrap() >= 15);
+
+        // 3. Technique detail endpoint
+        let (status, detail) = get_mitre_technique_detail(Path("T1082".to_string())).await;
+        assert_eq!(status, axum::http::StatusCode::OK);
+        assert_eq!(detail["technique"]["id"], "T1082");
+        assert_eq!(detail["technique"]["name"], "System Information Discovery");
+        assert_eq!(detail["technique"]["tactic_name"], "Discovery");
+
+        // 4. Groups endpoint
+        let groups = get_mitre_groups().await.0;
+        assert!(groups.len() >= 15);
+        assert!(groups.iter().any(|g| g.name == "APT29"));
+        assert!(groups.iter().any(|g| g.name == "Volt Typhoon"));
+        assert!(groups.iter().any(|g| g.name == "LockBit"));
     }
 }
 

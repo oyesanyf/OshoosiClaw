@@ -1204,7 +1204,13 @@ impl EdrOrchestrator {
 
         // Enhanced Detection Engines (Adapted from Rustinel)
         let mut sigma_engine = osoosi_policy::sigma::SigmaEngine::new();
-        sigma_engine.load_rules_from_dir(std::path::Path::new("config/sigma"));
+        let sigma_dir = osoosi_types::config::resolve_sigma_rules_dir();
+        let sigma_dir = if sigma_dir.is_dir() {
+            sigma_dir
+        } else {
+            std::path::PathBuf::from("config/sigma")
+        };
+        sigma_engine.load_rules_from_dir(&sigma_dir);
         let sigma_engine = Arc::new(sigma_engine);
         policy.add_voter(Box::new(osoosi_policy::voters::SigmaVoter { engine: sigma_engine })).await;
 
@@ -3710,6 +3716,22 @@ impl EdrOrchestrator {
             }
         }
 
+        // Enrich signature with MITRE ATT&CK Framework metadata if missing
+        if signature.mitre_technique.is_none() {
+            let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+            let cmdline = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("");
+            let reason_str = signature.reason.as_deref().unwrap_or("");
+            if let Some((tac, tech, name)) = osoosi_policy::mitre_kb::extract_mitre_from_text(reason_str) {
+                signature.mitre_tactic = Some(tac);
+                signature.mitre_technique = Some(tech);
+                signature.mitre_technique_name = Some(name);
+            } else if let Some((tac, tech, name)) = osoosi_policy::mitre_kb::infer_mitre_from_event(event.event_id, image, cmdline) {
+                signature.mitre_tactic = Some(tac);
+                signature.mitre_technique = Some(tech);
+                signature.mitre_technique_name = Some(name);
+            }
+        }
+
         let suppression_key = Self::compute_suppression_key(&signature);
             
         let cooldown = Duration::from_secs(self.policy.config.alert_suppression_secs);
@@ -4843,6 +4865,9 @@ impl EdrOrchestrator {
             require_approval: false,
             action_state: osoosi_types::ActionState::Executed,
             is_signed: false,
+            mitre_tactic: None,
+            mitre_technique: None,
+            mitre_technique_name: None,
         })?;
 
         // 3. Call the confirm and entangle logic
