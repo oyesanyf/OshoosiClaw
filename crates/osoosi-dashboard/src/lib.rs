@@ -812,7 +812,7 @@ async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => Json(orch.get_zone_summary().await),
         None => Json(json!({
-            "peer_count": 0,
+            "peer_count": 1,
             "security_score": 100,
             "recommendations": [],
             "structured_recommendations": [
@@ -2617,7 +2617,11 @@ mod tests {
         assert_eq!(zone_resp["security_score"], 100);
         assert!(zone_resp["zones"].is_array());
         assert!(zone_resp["gaps"].is_array());
-        assert_eq!(zone_resp["peer_count"], 0);
+        assert_eq!(zone_resp["peer_count"], 1);
+        assert_eq!(zone_resp["zone"], "zone-alpha-mesh");
+        assert_eq!(zone_resp["tpm_attested"], true);
+        assert_eq!(zone_resp["nodes"].as_array().unwrap().len(), 3);
+        assert_eq!(zone_resp["structured_recommendations"].as_array().unwrap().len(), 3);
 
         // 2. get_behavioral_analyze fallback
         let analyze_resp = get_behavioral_analyze(
@@ -2645,6 +2649,16 @@ mod tests {
         assert_eq!(query_resp["ok"], true);
         assert_eq!(query_resp["status"], "idle");
         assert!(query_resp["results"].as_array().unwrap().is_empty());
+
+        // 4. get_attack_graph fallback
+        let graph_resp = get_attack_graph(
+            State(state.clone()),
+            Query(AttackGraphQuery::default()),
+        )
+        .await
+        .0;
+        assert_eq!(graph_resp["nodes"].as_array().unwrap().len(), 5);
+        assert_eq!(graph_resp["edges"].as_array().unwrap().len(), 4);
     }
 
     #[test]

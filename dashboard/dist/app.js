@@ -784,6 +784,9 @@ function renderThreatsView(threats) {
         if (window.lucide) lucide.createIcons();
         return;
     }
+
+    const groups = {};
+    threats.forEach(t => {
         const key = `${t.type}-${t.source_node || 'Unknown'}`;
         if (!groups[key]) groups[key] = [];
         groups[key].push(t);
