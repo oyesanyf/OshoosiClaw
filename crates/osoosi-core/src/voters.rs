@@ -570,6 +570,10 @@ impl ThreatVoter for MemoryInspectionVoter {
         "MemoryInspection-Native".to_string()
     }
 
+    fn is_heavy(&self) -> bool {
+        true
+    }
+
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         if !matches!(event.event_id, 1 | 7 | 8 | 10 | 25) {
             return None;
@@ -613,46 +617,42 @@ impl ThreatVoter for MemoryInspectionVoter {
 
 #[cfg(target_os = "windows")]
         {
-            let adaptive = self.adaptive.clone();
-            adaptive
-                .run_adaptive(ResourceCategory::IO, Priority::High, async move {
-                    let findings = tokio::task::spawn_blocking(move || {
-                        crate::pe_inspector::inspect_process(pid)
-                    })
-                    .await
-                    .ok()?
-                    .ok()?;
+            let findings = match tokio::time::timeout(
+                std::time::Duration::from_secs(2),
+                tokio::task::spawn_blocking(move || crate::pe_inspector::inspect_process(pid)),
+            )
+            .await
+            {
+                Ok(Ok(Ok(f))) => f,
+                _ => return None,
+            };
 
-                    if findings.hollowing_detected {
-                        return Some(VoteResult {
-                            confidence: 1.0,
-                            reason: format!("MemoryInspection: Process hollowing detected in PID {}", pid),
-                            weight: 1.0,
-                        });
-                    }
-                    if !findings.byte_patches.is_empty() {
-                        return Some(VoteResult {
-                            confidence: 0.98,
-                            reason: format!(
-                                "MemoryInspection: User-mode unhooking/byte patches detected in PID {}: {}",
-                                pid,
-                                findings.byte_patches.join("; ")
-                            ),
-                            weight: 1.0,
-                        });
-                    }
-                    if findings.has_spoofed_stack {
-                        return Some(VoteResult {
-                            confidence: 0.95,
-                            reason: format!("MemoryInspection: Call stack spoofing detected in PID {}", pid),
-                            weight: 0.95,
-                        });
-                    }
-                    None
-                })
-                .await
-                .ok()
-                .flatten()
+            if findings.hollowing_detected {
+                return Some(VoteResult {
+                    confidence: 1.0,
+                    reason: format!("MemoryInspection: Process hollowing detected in PID {}", pid),
+                    weight: 1.0,
+                });
+            }
+            if !findings.byte_patches.is_empty() {
+                return Some(VoteResult {
+                    confidence: 0.98,
+                    reason: format!(
+                        "MemoryInspection: User-mode unhooking/byte patches detected in PID {}: {}",
+                        pid,
+                        findings.byte_patches.join("; ")
+                    ),
+                    weight: 1.0,
+                });
+            }
+            if findings.has_spoofed_stack {
+                return Some(VoteResult {
+                    confidence: 0.95,
+                    reason: format!("MemoryInspection: Call stack spoofing detected in PID {}", pid),
+                    weight: 0.95,
+                });
+            }
+            None
         }
 #[cfg(not(target_os = "windows"))]
         {
@@ -759,6 +759,7 @@ mod tests {
         let memory = Arc::new(osoosi_memory::MemoryStore::new(":memory:").expect("memory store"));
         let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
         let voter = MemoryInspectionVoter { memory, adaptive };
+        assert!(voter.is_heavy());
 
         // Event ID 3 (Network) returns None immediately without running inspection
         let ev_network = HostSecurityEvent {
