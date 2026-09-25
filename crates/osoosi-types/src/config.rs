@@ -681,6 +681,45 @@ pub fn resolve_sigma_rules_dir() -> PathBuf {
     }
 }
 
+/// Resolve the path to the authoritative MITRE ATT&CK & ATLAS Enterprise Catalog.
+pub fn resolve_mitre_catalog_path() -> PathBuf {
+    if let Ok(p) = std::env::var("OSOOSI_MITRE_CATALOG") {
+        let pb = PathBuf::from(p.trim());
+        if pb.is_file() {
+            return pb;
+        }
+    }
+
+    if let Some(root) = resolve_project_root() {
+        let candidate = root.join("config").join("mitre_attack_catalog.json");
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+
+    for start in [
+        std::env::current_dir().ok(),
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf())),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let mut dir = Some(start);
+        for _ in 0..10 {
+            let Some(d) = dir else { break };
+            let candidate = d.join("config").join("mitre_attack_catalog.json");
+            if candidate.is_file() {
+                return candidate;
+            }
+            dir = d.parent().map(|p| p.to_path_buf());
+        }
+    }
+
+    PathBuf::from("config/mitre_attack_catalog.json")
+}
+
 /// Automatically sets critical OSOOSI_* environment variables by discovering the project root.
 /// This ensures that even if the agent is run from target/release or a nested directory,
 /// all internal logic and sub-processes correctly resolve their assets.
@@ -718,6 +757,11 @@ pub fn persist_environment_paths() {
     let sigma_dir = resolve_sigma_rules_dir();
     if std::env::var("OSOOSI_SIGMA_DIR").is_err() {
         std::env::set_var("OSOOSI_SIGMA_DIR", sigma_dir.to_string_lossy().to_string());
+    }
+
+    let catalog_path = resolve_mitre_catalog_path();
+    if std::env::var("OSOOSI_MITRE_CATALOG").is_err() {
+        std::env::set_var("OSOOSI_MITRE_CATALOG", catalog_path.to_string_lossy().to_string());
     }
 }
 

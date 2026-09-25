@@ -61,17 +61,31 @@ pub struct MitreTechnique {
     pub tactic_id: String,
     pub tactic_name: String,
     pub description: String,
+    #[serde(default)]
+    pub platforms: Vec<String>,
+    #[serde(default)]
     pub data_sources: Vec<String>,
+    #[serde(default)]
     pub mitigations: Vec<String>,
+    #[serde(default)]
     pub groups: Vec<String>,
+    #[serde(default)]
     pub detection_mechanisms: Vec<String>,
+    #[serde(default)]
+    pub voter: String,
+    #[serde(default)]
+    pub consensus_action: String,
+    #[serde(default)]
+    pub sigma_rules: Vec<String>,
+    #[serde(default)]
+    pub is_atlas: bool,
     #[serde(default)]
     pub subtechniques: Vec<MitreSubtechnique>,
 }
 
 impl MitreTechnique {
     pub fn is_covered(&self) -> bool {
-        !self.detection_mechanisms.is_empty() || !self.mitigations.is_empty()
+        !self.detection_mechanisms.is_empty() || !self.mitigations.is_empty() || !self.sigma_rules.is_empty()
     }
 }
 
@@ -95,6 +109,17 @@ pub struct MitreGroup {
     pub techniques: Vec<String>,
 }
 
+/// Complete MITRE ATT&CK and ATLAS Enterprise Catalog payload
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+pub struct MitreCatalog {
+    pub tactics: Vec<MitreTactic>,
+    pub techniques: Vec<MitreTechnique>,
+    #[serde(default)]
+    pub mitigations: Vec<MitreMitigation>,
+    #[serde(default)]
+    pub groups: Vec<MitreGroup>,
+}
+
 /// MITRE ATT&CK Enterprise Matrix Summary & Posture Stats
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct MitreMatrixSummary {
@@ -104,6 +129,12 @@ pub struct MitreMatrixSummary {
     pub covered_techniques: usize,
     pub coverage_percentage: f32,
     pub active_detections_by_tactic: HashMap<String, usize>,
+    #[serde(default)]
+    pub active_detections_by_technique: HashMap<String, usize>,
+    #[serde(default)]
+    pub total_mitigations: usize,
+    #[serde(default)]
+    pub total_groups: usize,
 }
 
 #[cfg(test)]
@@ -140,6 +171,7 @@ mod tests {
                 "PowerShell",
                 "Abuse PowerShell commands.",
             )],
+            ..Default::default()
         };
 
         let json = serde_json::to_string(&tech).expect("serialize");
@@ -152,6 +184,8 @@ mod tests {
     fn test_mitre_matrix_summary_calculation() {
         let mut active = HashMap::new();
         active.insert("TA0002".into(), 3);
+        let mut active_tech = HashMap::new();
+        active_tech.insert("T1059".into(), 2);
 
         let summary = MitreMatrixSummary {
             tactics: vec![MitreTactic::new("TA0002", "Execution", "Exec", 5)],
@@ -160,12 +194,18 @@ mod tests {
             covered_techniques: 9,
             coverage_percentage: 90.0,
             active_detections_by_tactic: active,
+            active_detections_by_technique: active_tech,
+            total_mitigations: 24,
+            total_groups: 16,
         };
 
         assert_eq!(summary.total_techniques, 10);
         assert_eq!(summary.covered_techniques, 9);
         assert_eq!(summary.coverage_percentage, 90.0);
         assert_eq!(summary.active_detections_by_tactic.get("TA0002"), Some(&3));
+        assert_eq!(summary.active_detections_by_technique.get("T1059"), Some(&2));
+        assert_eq!(summary.total_mitigations, 24);
+        assert_eq!(summary.total_groups, 16);
     }
 
     #[test]
@@ -195,6 +235,7 @@ mod tests {
             groups: vec!["APT29".into()],
             detection_mechanisms: vec!["Sysmon Event 1".into()],
             subtechniques: vec![],
+            ..Default::default()
         };
         assert_eq!(tech.tactic_id, "TA0007");
         assert_eq!(tech.tactic_name, "Discovery");

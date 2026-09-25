@@ -301,7 +301,7 @@ impl AgenticPolicyVoter {
             return Some(VoteResult {
                 confidence: 1.0,
                 reason: format!(
-                    "Canary Trap Breach [Action: {:?}]: Agent/Process accessed canary credential or trap ({}) in command line: {}",
+                    "Canary Trap Breach [Action: {:?}, MITRE ATLAS AML.T0054 / Training Data & System Prompt Exfiltration]: Agent/Process accessed canary credential or trap ({}) in command line: {}",
                     defense_action, matched_canary, cmd_line
                 ),
                 weight: 1.0,
@@ -406,7 +406,7 @@ impl AgenticPolicyVoter {
                 Some(VoteResult {
                     confidence: 0.98,
                     reason: format!(
-                        "Agentic Trajectory Breach [DefenseAction: IsolateProcess(pid={})]: {} - Runtime '{}' (PID {}) reached stage '{}' across {} step(s) (cumulative penalty: {:.2}, drift: {:.2}). Action: {}",
+                        "Agentic Trajectory Breach [DefenseAction: IsolateProcess(pid={}), MITRE ATLAS AML.T0042 / Denial of ML Service & Sponge Attack]: {} - Runtime '{}' (PID {}) reached stage '{}' across {} step(s) (cumulative penalty: {:.2}, drift: {:.2}). Action: {}",
                         pid, reason, runtime_name, tracked_pid, current_stage, step_count, cumulative, drift, cmd_line
                     ),
                     weight: 1.0,
@@ -416,7 +416,7 @@ impl AgenticPolicyVoter {
                 Some(VoteResult {
                     confidence: 0.85,
                     reason: format!(
-                        "Agentic Trajectory Warning [DefenseAction: TarpitAndThrottle(pid={})]: Runtime '{}' (PID {}) drifting in stage '{}' across {} step(s) (cumulative penalty: {:.2}, drift: {:.2}). Action: {}",
+                        "Agentic Trajectory Warning [DefenseAction: TarpitAndThrottle(pid={}), MITRE ATLAS AML.T0042 / Trajectory Anomaly]: Runtime '{}' (PID {}) drifting in stage '{}' across {} step(s) (cumulative penalty: {:.2}, drift: {:.2}). Action: {}",
                         pid, runtime_name, tracked_pid, current_stage, step_count, cumulative, drift, cmd_line
                     ),
                     weight: 0.85,
@@ -424,11 +424,16 @@ impl AgenticPolicyVoter {
             }
             DefenseAction::Allow => {
                 if confidence >= 0.40 {
+                    let atlas_tag = if has_injection {
+                        "MITRE ATLAS AML.T0051 / LLM Jailbreak & Obfuscation"
+                    } else {
+                        "MITRE ATLAS AML.T0042 / Sponge Attack Warning"
+                    };
                     Some(VoteResult {
                         confidence,
                         reason: format!(
-                            "Agentic Trajectory Anomaly: AI Runtime '{}' (PID {}) reached stage '{}' across {} step(s) (cumulative penalty: {:.2}). Last action: {}",
-                            runtime_name, tracked_pid, current_stage, step_count, cumulative, cmd_line
+                            "Agentic Trajectory Anomaly [{}]: AI Runtime '{}' (PID {}) reached stage '{}' across {} step(s) (cumulative penalty: {:.2}). Last action: {}",
+                            atlas_tag, runtime_name, tracked_pid, current_stage, step_count, cumulative, cmd_line
                         ),
                         weight: if confidence >= 0.85 { 1.0 } else { 0.75 },
                     })

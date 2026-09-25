@@ -3798,10 +3798,10 @@ async function renderMitreView() {
     if (coverageEl) coverageEl.innerText = `${(data.coverage_percentage || 98.4).toFixed(1)}% Protected/Audited`;
 
     const defensesEl = document.getElementById('mitre-active-defenses');
-    if (defensesEl) defensesEl.innerText = `24 Mitigations Enforced`;
+    if (defensesEl) defensesEl.innerText = `${data.total_mitigations || 24} Mitigations Enforced`;
 
     const groupsEl = document.getElementById('mitre-threat-groups');
-    if (groupsEl) groupsEl.innerText = `16 APT Actor Profiles`;
+    if (groupsEl) groupsEl.innerText = `${data.total_groups || 16} APT Actor Profiles`;
 
     // Populate Tactic Filter Dropdown if not already populated
     const tacticFilter = document.getElementById('mitre-tactic-filter');
@@ -3824,12 +3824,16 @@ async function renderMitreView() {
 
 function setupMitreFilters() {
     const searchInput = document.getElementById('mitre-search');
+    const frameworkFilter = document.getElementById('mitre-framework-filter');
     const tacticFilter = document.getElementById('mitre-tactic-filter');
     const statusFilter = document.getElementById('mitre-status-filter');
     const resetBtn = document.getElementById('mitre-reset-filter-btn');
 
     if (searchInput) {
         searchInput.addEventListener('input', () => applyMitreFiltersAndRender());
+    }
+    if (frameworkFilter) {
+        frameworkFilter.addEventListener('change', () => applyMitreFiltersAndRender());
     }
     if (tacticFilter) {
         tacticFilter.addEventListener('change', () => applyMitreFiltersAndRender());
@@ -3840,6 +3844,7 @@ function setupMitreFilters() {
     if (resetBtn) {
         resetBtn.addEventListener('click', () => {
             if (searchInput) searchInput.value = '';
+            if (frameworkFilter) frameworkFilter.value = 'all';
             if (tacticFilter) tacticFilter.value = 'all';
             if (statusFilter) statusFilter.value = 'all';
             applyMitreFiltersAndRender();
@@ -3866,16 +3871,19 @@ function applyMitreFiltersAndRender() {
     if (!container) return;
 
     const searchInput = document.getElementById('mitre-search');
+    const frameworkFilter = document.getElementById('mitre-framework-filter');
     const tacticFilter = document.getElementById('mitre-tactic-filter');
     const statusFilter = document.getElementById('mitre-status-filter');
     const countEl = document.getElementById('mitre-filter-count');
 
     const searchVal = (searchInput?.value || '').trim().toLowerCase();
+    const frameworkVal = frameworkFilter?.value || 'all';
     const tacticVal = tacticFilter?.value || 'all';
     const statusVal = statusFilter?.value || 'all';
 
     let totalVisible = 0;
     const activeDetections = mitreDataCache.active_detections_by_tactic || {};
+    const activeDetectionsByTech = mitreDataCache.active_detections_by_technique || {};
 
     let html = '';
 
@@ -3890,12 +3898,21 @@ function applyMitreFiltersAndRender() {
                 return false;
             }
 
+            const isAtlas = t.is_atlas || t.id.startsWith('AML.');
+            if (frameworkVal === 'atlas') {
+                if (!isAtlas) return false;
+            } else if (frameworkVal === 'enterprise') {
+                if (isAtlas) return false;
+            }
+
             if (searchVal) {
                 const matchId = t.id.toLowerCase().includes(searchVal);
                 const matchName = t.name.toLowerCase().includes(searchVal);
+                const matchVoter = (t.voter || '').toLowerCase().includes(searchVal);
+                const matchAction = (t.consensus_action || '').toLowerCase().includes(searchVal);
                 const matchGroups = (t.groups || []).some(g => g.toLowerCase().includes(searchVal));
                 const matchSubs = (t.subtechniques || []).some(s => s.id.toLowerCase().includes(searchVal) || s.name.toLowerCase().includes(searchVal));
-                if (!matchId && !matchName && !matchGroups && !matchSubs) {
+                if (!matchId && !matchName && !matchVoter && !matchAction && !matchGroups && !matchSubs) {
                     return false;
                 }
             }
@@ -3904,8 +3921,8 @@ function applyMitreFiltersAndRender() {
                 const isCovered = (t.detection_mechanisms && t.detection_mechanisms.length > 0) || (t.mitigations && t.mitigations.length > 0);
                 if (!isCovered) return false;
             } else if (statusVal === 'alerts') {
-                const alertsCount = activeDetections[tactic.id] || 0;
-                if (alertsCount === 0) return false;
+                const techAlertCount = activeDetectionsByTech[t.id] || 0;
+                if (techAlertCount === 0) return false;
             }
 
             return true;
@@ -3931,16 +3948,26 @@ function applyMitreFiltersAndRender() {
                 <div class="mitre-techniques-list">
                     ${techniquesForTactic.length === 0 ? '<div style="font-size: 11px; color: var(--text-muted); text-align: center; padding: 20px 8px;">No matching techniques</div>' : ''}
                     ${techniquesForTactic.map(tech => {
-                        const hasAlert = tacticAlertCount > 0 && Math.random() < 0.2;
+                        const techAlertCount = activeDetectionsByTech[tech.id] || 0;
+                        const hasAlert = techAlertCount > 0;
                         const subCount = tech.subtechniques?.length || 0;
+                        const isAtlas = tech.is_atlas || tech.id.startsWith('AML.');
+                        const voter = tech.voter;
+                        const action = tech.consensus_action;
+                        const sigmaCount = tech.sigma_rules?.length || 0;
+
                         return `
                             <div class="mitre-technique-card ${hasAlert ? 'has-alerts' : ''}" data-tech-id="${tech.id}" onclick="openMitreTechniqueModalById('${tech.id}')">
                                 <div class="mitre-tech-header">
                                     <span class="mitre-tech-id">${tech.id}</span>
-                                    ${hasAlert ? '<span class="badge red" style="font-size: 9px; padding: 1px 4px;">Alert</span>' : '<span class="badge green" style="font-size: 9px; padding: 1px 4px;">Protected</span>'}
+                                    ${isAtlas ? '<span class="badge magenta" style="font-size: 9px; padding: 1px 4px; background: rgba(255, 0, 128, 0.15); color: #ff3399; border: 1px solid rgba(255, 0, 128, 0.3);">ATLAS</span>' : ''}
+                                    ${hasAlert ? `<span class="badge red" style="font-size: 9px; padding: 1px 4px;">${techAlertCount > 1 ? techAlertCount + ' Alerts' : 'Alert'}</span>` : '<span class="badge green" style="font-size: 9px; padding: 1px 4px;">Protected</span>'}
                                 </div>
                                 <div class="mitre-tech-title">${tech.name}</div>
                                 <div class="mitre-tech-badges">
+                                    ${voter ? `<span class="badge cyan" style="font-size: 9px; padding: 1px 4px; background: rgba(0, 210, 255, 0.12); color: #00d2ff; border: 1px solid rgba(0, 210, 255, 0.25);">${voter}</span>` : ''}
+                                    ${action ? `<span class="badge yellow" style="font-size: 9px; padding: 1px 4px; background: rgba(255, 170, 0, 0.12); color: #ffaa00; border: 1px solid rgba(255, 170, 0, 0.25);">${action}</span>` : ''}
+                                    ${sigmaCount > 0 ? `<span class="badge blue" style="font-size: 9px; padding: 1px 4px;" title="${sigmaCount} Sigma rules">${sigmaCount}σ</span>` : ''}
                                     ${subCount > 0 ? `<span class="badge blue" style="font-size: 9px; padding: 1px 4px;">.${subCount} sub</span>` : ''}
                                     ${tech.groups && tech.groups.length > 0 ? `<span class="badge purple" style="font-size: 9px; padding: 1px 4px;">${tech.groups[0]}</span>` : ''}
                                 </div>
@@ -3992,6 +4019,39 @@ async function openMitreTechniqueModalById(techId) {
     document.getElementById('modal-tech-name').innerText = tech.name;
     document.getElementById('modal-tech-desc').innerText = tech.description || 'No description available.';
 
+    // Voter & Consensus Action Badges
+    const voterEl = document.getElementById('modal-tech-voter');
+    if (voterEl) {
+        voterEl.innerText = tech.voter || 'SigmaVoter';
+        voterEl.style.display = 'inline-block';
+    }
+
+    const actionEl = document.getElementById('modal-tech-action');
+    if (actionEl) {
+        actionEl.innerText = `Action: ${tech.consensus_action || 'Alert'}`;
+        actionEl.style.display = 'inline-block';
+    }
+
+    // Platforms
+    const platformsDiv = document.getElementById('modal-tech-platforms');
+    if (platformsDiv) {
+        const plats = tech.platforms && tech.platforms.length > 0 ? tech.platforms : ['Windows', 'Linux', 'macOS'];
+        platformsDiv.innerHTML = plats.map(p => `
+            <span class="badge" style="font-size: 10px; padding: 2px 6px; background: rgba(255, 255, 255, 0.06); color: var(--text-muted); border: 1px solid var(--glass-border);">${p}</span>
+        `).join('');
+    }
+
+    // Telemetry & Data Sources
+    const telemetryDiv = document.getElementById('modal-tech-telemetry');
+    if (telemetryDiv) {
+        const sources = tech.data_sources && tech.data_sources.length > 0 ? tech.data_sources : ['Kernel ETW Telemetry', 'Sysmon Event Correlation'];
+        telemetryDiv.innerHTML = sources.map(s => `
+            <span class="badge cyan" style="font-size: 11px; padding: 4px 8px; background: rgba(0, 210, 255, 0.1); color: #00d2ff; border: 1px solid rgba(0, 210, 255, 0.25);">
+                <i data-lucide="activity" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 4px;"></i>${s}
+            </span>
+        `).join('');
+    }
+
     // Detections
     const detectionsDiv = document.getElementById('modal-tech-detections');
     if (detectionsDiv) {
@@ -3999,10 +4059,36 @@ async function openMitreTechniqueModalById(techId) {
         detectionsDiv.innerHTML = dets.map(d => `<span class="badge blue" style="font-size: 11px; padding: 4px 8px;"><i data-lucide="crosshair" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 4px;"></i>${d}</span>`).join('');
     }
 
+    // Sigma Rules Section
+    const sigmaSec = document.getElementById('modal-tech-sigma-section');
+    const sigmaCountEl = document.getElementById('modal-tech-sigma-count');
+    const sigmaListEl = document.getElementById('modal-tech-sigma-list');
+    if (sigmaSec && sigmaCountEl && sigmaListEl) {
+        const rules = tech.sigma_rules || [];
+        if (rules.length > 0) {
+            sigmaSec.style.display = 'block';
+            sigmaCountEl.innerText = rules.length;
+            sigmaListEl.innerHTML = rules.map(r => `
+                <div style="font-size: 11px; font-family: 'JetBrains Mono', monospace; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                    <i data-lucide="file-code" style="width: 12px; height: 12px; color: var(--accent-cyan); flex-shrink: 0;"></i>
+                    <span>${r}</span>
+                </div>
+            `).join('');
+        } else {
+            sigmaSec.style.display = 'none';
+        }
+    }
+
     // Mitigations
     const mitigationsDiv = document.getElementById('modal-tech-mitigations');
     if (mitigationsDiv) {
-        const mits = tech._mitigations_detail || (tech.mitigations || ['M1038: Execution Prevention', 'M1047: Audit & Security Logging']).map(m => ({ id: m.split(':')[0], name: m, description: 'Enforced via OpenỌ̀ṣọ́ọ̀sì Agentic policy runtime and kernel telemetry.' }));
+        const mits = tech._mitigations_detail || (tech.mitigations || ['M1038: Execution Prevention', 'M1047: Audit & Security Logging']).map(m => {
+            if (typeof m === 'string') {
+                const parts = m.split(':');
+                return { id: parts[0].trim(), name: parts.slice(1).join(':').trim() || parts[0].trim(), description: 'Enforced via OpenỌ̀ṣọ́ọ̀sì Agentic policy runtime and kernel telemetry.' };
+            }
+            return m;
+        });
         mitigationsDiv.innerHTML = mits.map(m => `
             <div style="background: rgba(0, 0, 0, 0.2); border: 1px solid var(--glass-border); border-radius: 6px; padding: 8px 12px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
@@ -4030,7 +4116,7 @@ async function openMitreTechniqueModalById(techId) {
             subDiv.innerHTML = tech.subtechniques.map(s => `
                 <div style="background: rgba(0, 0, 0, 0.2); border: 1px solid var(--glass-border); border-radius: 6px; padding: 6px 10px;">
                     <div style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--accent-blue); font-weight: 600;">${s.id}: ${s.name}</div>
-                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${s.description}</div>
+                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${s.description || ''}</div>
                 </div>
             `).join('');
         } else {
@@ -4047,6 +4133,11 @@ function getBuiltInMitreData() {
         total_techniques: 100,
         covered_techniques: 98,
         coverage_percentage: 98.4,
+        total_mitigations: 24,
+        total_groups: 16,
+        active_detections_by_technique: {
+            "T1059": 8, "T1082": 6, "T1490": 4, "T1003": 5, "T1055": 7, "T1547": 3, "T1071": 5
+        },
         active_detections_by_tactic: {
             "TA0043": 12, "TA0042": 8, "TA0001": 19, "TA0002": 34, "TA0003": 28,
             "TA0004": 22, "TA0005": 38, "TA0112": 15, "TA0006": 29, "TA0007": 31,

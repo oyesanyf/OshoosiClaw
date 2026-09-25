@@ -2604,6 +2604,17 @@ async fn get_mitre_matrix(State(state): State<DashboardState>) -> Json<osoosi_ty
                         }
                     }
                 }
+                if let Some(tech) = t.get("mitre_technique").and_then(|v| v.as_str()) {
+                    let clean = tech.trim();
+                    for technique in &summary.techniques {
+                        if technique.id.eq_ignore_ascii_case(clean)
+                            || clean.to_uppercase().starts_with(&technique.id.to_uppercase())
+                            || technique.subtechniques.iter().any(|s| s.id.eq_ignore_ascii_case(clean))
+                        {
+                            *summary.active_detections_by_technique.entry(technique.id.clone()).or_insert(0) += 1;
+                        }
+                    }
+                }
             }
         }
     }
@@ -2620,8 +2631,9 @@ async fn get_mitre_coverage(State(state): State<DashboardState>) -> Json<Value> 
         "covered_techniques": summary.covered_techniques,
         "coverage_percentage": summary.coverage_percentage,
         "active_detections_by_tactic": summary.active_detections_by_tactic,
-        "total_mitigations": mitigations.len(),
-        "total_groups": groups.len()
+        "active_detections_by_technique": summary.active_detections_by_technique,
+        "total_mitigations": summary.total_mitigations.max(mitigations.len()),
+        "total_groups": summary.total_groups.max(groups.len())
     }))
 }
 
@@ -2631,11 +2643,16 @@ async fn get_mitre_techniques(
     let all = osoosi_policy::mitre_kb::get_all_techniques();
     if let Some(tac) = query.tactic {
         let tac_clean = tac.trim();
+        if tac_clean.is_empty() || tac_clean.eq_ignore_ascii_case("all") {
+            return Json(all);
+        }
+        let normalized = tac_clean.replace(['-', '_'], " ");
         let filtered = all
             .into_iter()
             .filter(|t| {
                 t.tactic_id.eq_ignore_ascii_case(tac_clean)
                     || t.tactic_name.eq_ignore_ascii_case(tac_clean)
+                    || t.tactic_name.eq_ignore_ascii_case(&normalized)
             })
             .collect();
         Json(filtered)
@@ -2647,15 +2664,24 @@ async fn get_mitre_techniques(
 async fn get_mitre_technique_detail(
     Path(id): Path<String>,
 ) -> (axum::http::StatusCode, Json<Value>) {
-    if let Some(technique) = osoosi_policy::mitre_kb::lookup_technique(&id) {
+    let clean_id = id.trim().to_uppercase();
+    if let Some(technique) = osoosi_policy::mitre_kb::lookup_technique(&clean_id) {
         let tech_id = &technique.id;
         let mitigations: Vec<_> = osoosi_policy::mitre_kb::get_mitigations()
             .into_iter()
-            .filter(|m| m.techniques.iter().any(|t| t.eq_ignore_ascii_case(tech_id)))
+            .filter(|m| {
+                m.techniques.iter().any(|t| {
+                    t.eq_ignore_ascii_case(tech_id) || t.eq_ignore_ascii_case(&clean_id)
+                })
+            })
             .collect();
         let groups: Vec<_> = osoosi_policy::mitre_kb::get_threat_groups()
             .into_iter()
-            .filter(|g| g.techniques.iter().any(|t| t.eq_ignore_ascii_case(tech_id)))
+            .filter(|g| {
+                g.techniques.iter().any(|t| {
+                    t.eq_ignore_ascii_case(tech_id) || t.eq_ignore_ascii_case(&clean_id)
+                })
+            })
             .collect();
 
         (
@@ -2806,6 +2832,31 @@ mod tests {
         assert!(groups.iter().any(|g| g.name == "APT29"));
         assert!(groups.iter().any(|g| g.name == "Volt Typhoon"));
         assert!(groups.iter().any(|g| g.name == "LockBit"));
+
+        // 5. Mitigations endpoint
+        let mitigations = get_mitre_mitigations().await.0;
+        assert!(mitigations.len() >= 20);
+
+        // 6. Techniques query filtering
+        let discovery_by_id = get_mitre_techniques(Query(MitreTechniquesQuery { tactic: Some("TA0007".into()) })).await.0;
+        assert!(!discovery_by_id.is_empty());
+        assert!(discovery_by_id.iter().all(|t| t.tactic_id == "TA0007"));
+
+        let initial_access_by_slug = get_mitre_techniques(Query(MitreTechniquesQuery { tactic: Some("initial_access".into()) })).await.0;
+        assert!(!initial_access_by_slug.is_empty());
+        assert!(initial_access_by_slug.iter().all(|t| t.tactic_id == "TA0001"));
+
+        // 7. Non-existent technique returns 404
+        let (status_404, _) = get_mitre_technique_detail(Path("T9999_NONEXISTENT".to_string())).await;
+        assert_eq!(status_404, axum::http::StatusCode::NOT_FOUND);
+
+        // 8. MITRE ATLAS AI threat technique detail endpoint
+        let (status_atlas, detail_atlas) = get_mitre_technique_detail(Path("AML.T0043".to_string())).await;
+        assert_eq!(status_atlas, axum::http::StatusCode::OK);
+        assert_eq!(detail_atlas["technique"]["id"], "AML.T0043");
+        assert_eq!(detail_atlas["technique"]["voter"], "AiSecurityAuditVoter");
+        assert_eq!(detail_atlas["technique"]["consensus_action"], "Tarpit");
+        assert_eq!(detail_atlas["technique"]["is_atlas"], true);
     }
 }
 

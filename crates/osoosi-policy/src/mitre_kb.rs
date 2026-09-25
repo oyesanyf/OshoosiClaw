@@ -5,9 +5,47 @@
 
 use osoosi_types::mitre::*;
 use std::collections::HashMap;
+use std::sync::OnceLock;
+
+static CATALOG: OnceLock<Option<MitreCatalog>> = OnceLock::new();
+
+/// Return a reference to the loaded authoritative MITRE ATT&CK & ATLAS catalog if available on disk.
+pub fn get_catalog() -> Option<&'static MitreCatalog> {
+    CATALOG.get_or_init(|| {
+        let path = osoosi_types::config::resolve_mitre_catalog_path();
+        if path.is_file() {
+            if let Ok(content) = std::fs::read_to_string(&path) {
+                if let Ok(cat) = serde_json::from_str::<MitreCatalog>(&content) {
+                    tracing::info!(
+                        "Loaded authoritative MITRE ATT&CK Catalog from {}: {} tactics, {} techniques, {} mitigations, {} groups",
+                        path.display(),
+                        cat.tactics.len(),
+                        cat.techniques.len(),
+                        cat.mitigations.len(),
+                        cat.groups.len()
+                    );
+                    return Some(cat);
+                } else {
+                    tracing::warn!("Failed to parse MITRE catalog at {}", path.display());
+                }
+            }
+        }
+        None
+    }).as_ref()
+}
 
 /// Returns all 15 MITRE ATT&CK Enterprise Tactics.
 pub fn get_all_tactics() -> Vec<MitreTactic> {
+    if let Some(cat) = get_catalog() {
+        if !cat.tactics.is_empty() {
+            return cat.tactics.clone();
+        }
+    }
+    get_static_tactics()
+}
+
+/// Fallback static compiled tactics.
+pub fn get_static_tactics() -> Vec<MitreTactic> {
     let techniques = get_all_techniques();
     let mut count_map: HashMap<&str, usize> = HashMap::new();
     for t in &techniques {
@@ -108,8 +146,18 @@ pub fn get_all_tactics() -> Vec<MitreTactic> {
     ]
 }
 
-/// Returns the comprehensive catalog of MITRE ATT&CK Enterprise Techniques.
+/// Returns the comprehensive catalog of MITRE ATT&CK & ATLAS Enterprise Techniques.
 pub fn get_all_techniques() -> Vec<MitreTechnique> {
+    if let Some(cat) = get_catalog() {
+        if !cat.techniques.is_empty() {
+            return cat.techniques.clone();
+        }
+    }
+    get_static_techniques()
+}
+
+/// Fallback static compiled techniques.
+pub fn get_static_techniques() -> Vec<MitreTechnique> {
     vec![
         // --- 1. Reconnaissance (TA0043) ---
         MitreTechnique {
@@ -126,6 +174,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1595.001", "Scanning IP Blocks", "Scanning broad IP blocks to discover targets."),
                 MitreSubtechnique::new("T1595.002", "Vulnerability Scanning", "Targeting specific network services with vulnerability probe suites."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1592".into(),
@@ -141,6 +190,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1592.001", "Hardware", "Extracting system vendor, BIOS, and device specs."),
                 MitreSubtechnique::new("T1592.002", "Software", "Identifying installed software and runtime patch levels."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1596".into(),
@@ -156,6 +206,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1596.001", "DNS Records", "Querying public DNS zone records."),
                 MitreSubtechnique::new("T1596.002", "WHOIS", "Extracting domain registration identities."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1598".into(),
@@ -170,6 +221,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             subtechniques: vec![
                 MitreSubtechnique::new("T1598.001", "Spearphishing Service", "Targeting technical personnel via fake vendor queries."),
             ],
+            ..Default::default()
         },
 
         // --- 2. Resource Development (TA0042) ---
@@ -184,6 +236,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["LockBit".into(), "BlackCat".into(), "Wizard Spider".into()],
             detection_mechanisms: vec!["OTX Darknet CTI Voter".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1583".into(),
@@ -199,6 +252,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1583.001", "Domains", "Purchasing deceptive lookalike domains."),
                 MitreSubtechnique::new("T1583.003", "Virtual Private Server", "Leasing cloud compute instances for C2 staging."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1586".into(),
@@ -213,6 +267,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             subtechniques: vec![
                 MitreSubtechnique::new("T1586.002", "Email Accounts", "Hijacking corporate email accounts for trusted spearphishing."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1587".into(),
@@ -228,6 +283,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1587.001", "Malware", "Writing compiled C/Rust/Go custom implants."),
                 MitreSubtechnique::new("T1587.004", "Exploits", "Engineering zero-day and n-day weaponized exploits."),
             ],
+            ..Default::default()
         },
 
         // --- 3. Initial Access (TA0001) ---
@@ -245,6 +301,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1566.001", "Spearphishing Attachment", "Sending email with weaponized Office, PDF, or ISO attachment."),
                 MitreSubtechnique::new("T1566.002", "Spearphishing Link", "Luring user to click a link delivering payload or credential harvester."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1190".into(),
@@ -257,6 +314,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["Volt Typhoon".into(), "LockBit".into(), "Lazarus Group".into()],
             detection_mechanisms: vec!["CISA KEV Matcher".into(), "NVD CVE Tagger".into(), "Sysmon Event 1".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1133".into(),
@@ -269,6 +327,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["Volt Typhoon".into(), "BlackCat".into()],
             detection_mechanisms: vec!["Windows Event 4624 (Logon Type 10)".into(), "Agent Egress Isolation Voter".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1195".into(),
@@ -284,6 +343,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1195.001", "Compromise Software Dependencies", "Backdooring npm, PyPI, or crates dependencies."),
                 MitreSubtechnique::new("T1195.002", "Compromise Software Supply Chain", "Injecting malicious updates into official distribution mirrors."),
             ],
+            ..Default::default()
         },
 
         // --- 4. Execution (TA0002) ---
@@ -303,6 +363,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1059.004", "Unix Shell", "Executing commands via sh, bash, or zsh scripts."),
                 MitreSubtechnique::new("T1059.005", "Visual Basic", "Executing scripts via wscript.exe or cscript.exe."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1053".into(),
@@ -318,6 +379,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1053.005", "Scheduled Task", "Creating Windows scheduled tasks via schtasks.exe or COM interfaces."),
                 MitreSubtechnique::new("T1053.003", "Cron", "Creating Linux cron jobs in /etc/crontab or crontab -e."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1569".into(),
@@ -332,6 +394,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             subtechniques: vec![
                 MitreSubtechnique::new("T1569.002", "Service Execution", "Using sc.exe or PowerShell Start-Service to run payloads."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1047".into(),
@@ -344,6 +407,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["APT29".into(), "FIN7".into()],
             detection_mechanisms: vec!["Sysmon Event 19, 20, 21".into(), "Sigma Rule: wmic process call create".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
 
         // --- 5. Persistence (TA0003) ---
@@ -361,6 +425,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1547.001", "Registry Run Keys / Startup Folder", "Adding entries under HKCU/HKLM Run keys or Startup folder."),
                 MitreSubtechnique::new("T1547.009", "Shortcut Modification", "Modifying .lnk files pointing to clean executables to add payload arguments."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1543".into(),
@@ -375,6 +440,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             subtechniques: vec![
                 MitreSubtechnique::new("T1543.003", "Windows Service", "Creating new service via sc create pointing to malicious binary."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1574".into(),
@@ -390,6 +456,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1574.002", "DLL Side-Loading", "Placing an unsigned malicious DLL adjacent to a signed executable."),
                 MitreSubtechnique::new("T1574.001", "DLL Search Order Hijacking", "Exploiting search directory priority to execute rogue libraries."),
             ],
+            ..Default::default()
         },
 
         // --- 6. Privilege Escalation (TA0004) ---
@@ -407,6 +474,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1055.001", "Dynamic-link Library Injection", "Injecting DLL paths via VirtualAllocEx and CreateRemoteThread."),
                 MitreSubtechnique::new("T1055.012", "Process Hollowing", "Unmapping process memory space and replacing with malicious payload."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1548".into(),
@@ -421,6 +489,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             subtechniques: vec![
                 MitreSubtechnique::new("T1548.002", "Bypass User Account Control", "Leveraging auto-elevating binaries or registry mockups to bypass UAC."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1134".into(),
@@ -435,6 +504,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             subtechniques: vec![
                 MitreSubtechnique::new("T1134.001", "Token Impersonation/Theft", "Duplicating tokens from privileged processes like winlogon or lsass."),
             ],
+            ..Default::default()
         },
 
         // --- 7. Defense Evasion (TA0005) ---
@@ -452,6 +522,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1564.001", "Hidden Files and Directories", "Applying hidden or system attribute flags to evasion targets."),
                 MitreSubtechnique::new("T1564.004", "NTFS File Attributes", "Writing malicious executables into alternate data streams (ADS)."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1036".into(),
@@ -466,6 +537,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             subtechniques: vec![
                 MitreSubtechnique::new("T1036.005", "Match Legitimate Name or Location", "Running svchost.exe or lsass.exe outside of System32."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1112".into(),
@@ -478,6 +550,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["LockBit".into(), "BlackCat".into()],
             detection_mechanisms: vec!["Sysmon Event 13".into(), "Registry Repair Rollback".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1070".into(),
@@ -493,6 +566,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1070.001", "Clear Windows Event Logs", "Executing wevtutil.exe to wipe Security/System logs."),
                 MitreSubtechnique::new("T1070.004", "File Deletion", "Securely wiping artifacts via sdelete or native del."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1218".into(),
@@ -509,6 +583,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1218.005", "Mshta", "Executing malicious VBScript or JScript via mshta.exe."),
                 MitreSubtechnique::new("T1218.010", "Regsvr32", "Executing COM scriptlets via regsvr32.exe /s /u /i."),
             ],
+            ..Default::default()
         },
 
         // --- 8. Defense Impairment (TA0112) ---
@@ -526,6 +601,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1562.001", "Disable or Modify Tools", "Unloading drivers, killing EDR processes, disabling AMSI."),
                 MitreSubtechnique::new("T1562.004", "Disable or Modify System Firewall", "Using netsh advfirewall to allow arbitrary ingress."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1685".into(),
@@ -538,6 +614,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["Wizard Spider".into(), "LockBit".into()],
             detection_mechanisms: vec!["Agent Self-Defense Sentinel".into(), "eBPF/ETW Stream Integrity Check".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
 
         // --- 9. Credential Access (TA0006) ---
@@ -556,6 +633,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1003.002", "Security Account Manager", "Extracting local hashes from HKLM\\SAM and HKLM\\SYSTEM."),
                 MitreSubtechnique::new("T1003.003", "NTDS", "Extracting Active Directory ntds.dit database via ntdsutil or vssadmin."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1110".into(),
@@ -571,6 +649,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1110.001", "Password Guessing", "Targeting single accounts with high-frequency password dictionary attacks."),
                 MitreSubtechnique::new("T1110.003", "Password Spraying", "Iterating a single common password across hundreds of domain users."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1558".into(),
@@ -585,6 +664,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             subtechniques: vec![
                 MitreSubtechnique::new("T1558.003", "Kerberoasting", "Requesting TGS service tickets for user accounts with SPNs to crack offline."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1555".into(),
@@ -599,6 +679,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             subtechniques: vec![
                 MitreSubtechnique::new("T1555.003", "Web Browsers", "Extracting SQLite Login Data and cookies from Chrome, Edge, Firefox."),
             ],
+            ..Default::default()
         },
 
         // --- 10. Discovery (TA0007) ---
@@ -613,6 +694,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["APT29".into(), "APT28".into(), "Lazarus Group".into(), "Volt Typhoon".into(), "BlackCat".into()],
             detection_mechanisms: vec!["Sysmon Event 1 (systeminfo / whoami / hostname)".into(), "Sigma Rule: Discovery Commands".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1057".into(),
@@ -625,6 +707,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["APT29".into(), "Sandworm Team".into(), "Volt Typhoon".into()],
             detection_mechanisms: vec!["Sysmon Event 1 (tasklist / ps)".into(), "Sigma: Process Enumeration".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1046".into(),
@@ -637,6 +720,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["Volt Typhoon".into(), "APT28".into()],
             detection_mechanisms: vec!["Military Engine: Phantom Mesh Scout".into(), "Sysmon Event 3".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1016".into(),
@@ -649,6 +733,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["Volt Typhoon".into(), "Lazarus Group".into(), "APT29".into()],
             detection_mechanisms: vec!["Sysmon Event 1 (ipconfig / route print / netstat)".into(), "Sigma: Network Discovery".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1087".into(),
@@ -664,6 +749,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1087.001", "Local Accounts", "Querying local SAM accounts via net localgroup."),
                 MitreSubtechnique::new("T1087.002", "Domain Accounts", "Querying Active Directory LDAP for domain admin accounts."),
             ],
+            ..Default::default()
         },
 
         // --- 11. Lateral Movement (TA0008) ---
@@ -682,6 +768,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1021.002", "SMB/Windows Admin Shares", "Accessing ADMIN$ or C$ shares to push payloads."),
                 MitreSubtechnique::new("T1021.004", "SSH", "Logging into Unix servers via SSH keys."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1570".into(),
@@ -694,6 +781,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["Sandworm Team".into(), "Lazarus Group".into()],
             detection_mechanisms: vec!["Sysmon Event 11".into(), "YARA-X Lateral Wire Scanner".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1550".into(),
@@ -708,6 +796,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             subtechniques: vec![
                 MitreSubtechnique::new("T1550.002", "Pass the Hash", "Authenticating to remote services using NTLM hashes instead of plain text."),
             ],
+            ..Default::default()
         },
 
         // --- 12. Collection (TA0009) ---
@@ -722,6 +811,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["APT28".into(), "Volt Typhoon".into(), "BlackCat".into()],
             detection_mechanisms: vec!["Sysmon Event 1".into(), "PII Classifier".into(), "Sigma: Scripted File Gathering".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1005".into(),
@@ -734,6 +824,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["APT29".into(), "LockBit".into()],
             detection_mechanisms: vec!["Sysmon Event 11".into(), "Military Engine: Loitering Strike Watcher".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1113".into(),
@@ -746,6 +837,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["FIN7".into(), "Silence".into()],
             detection_mechanisms: vec!["GDI Screen Capture Hook".into(), "Sysmon Event 1".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
 
         // --- 13. Command and Control (TA0011) ---
@@ -763,6 +855,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1071.001", "Web Protocols", "C2 beacons disguised as HTTPS web browser requests."),
                 MitreSubtechnique::new("T1071.004", "DNS", "C2 communication tunneled through malicious DNS subdomains (DNS Tunneling)."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1573".into(),
@@ -778,6 +871,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1573.001", "Symmetric Cryptography", "C2 commands encrypted with AES or ChaCha20."),
                 MitreSubtechnique::new("T1573.002", "Asymmetric Cryptography", "Implant using RSA or Curve25519 to verify operator keys."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1105".into(),
@@ -790,6 +884,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["Volt Typhoon".into(), "Lazarus Group".into(), "LockBit".into(), "BlackCat".into()],
             detection_mechanisms: vec!["Sysmon Event 1 (certutil -urlcache / curl / bitsadmin)".into(), "Static Analyzer (CAPA/YARA)".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
 
         // --- 14. Exfiltration (TA0010) ---
@@ -804,6 +899,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["APT29".into(), "Lazarus Group".into(), "Sandworm Team".into()],
             detection_mechanisms: vec!["High-Volume Egress Alert".into(), "Agent Network Egress Voter".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1567".into(),
@@ -818,6 +914,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             subtechniques: vec![
                 MitreSubtechnique::new("T1567.002", "Exfiltration to Cloud Storage", "Uploading archived bundles to AWS S3 or MEGA."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1048".into(),
@@ -832,6 +929,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             subtechniques: vec![
                 MitreSubtechnique::new("T1048.003", "Exfiltration Over Unencrypted Non-C2 Protocol", "Pushing stolen files over raw FTP or DNS."),
             ],
+            ..Default::default()
         },
 
         // --- 15. Impact (TA0040) ---
@@ -846,6 +944,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["LockBit".into(), "BlackCat".into(), "Wizard Spider".into()],
             detection_mechanisms: vec!["Synthetic Ransomware Honey-Canary".into(), "Mass File Renaming Sentinel".into(), "Entropy Spike Detector".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1490".into(),
@@ -858,6 +957,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["LockBit".into(), "BlackCat".into(), "Sandworm Team".into()],
             detection_mechanisms: vec!["Sysmon Event 1 (vssadmin delete shadows / wbadmin / bcdedit)".into(), "Sigma: Inhibit System Recovery".into(), "WORM Backup Lock".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1499".into(),
@@ -872,6 +972,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             subtechniques: vec![
                 MitreSubtechnique::new("T1499.001", "OS Exhaustion Flood", "Flooding internal handles and thread creation to induce BSOD."),
             ],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1489".into(),
@@ -884,6 +985,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
             groups: vec!["LockBit".into(), "Sandworm Team".into()],
             detection_mechanisms: vec!["Sysmon Event 1 (net stop / sc stop)".into(), "Service Supervisor".into()],
             subtechniques: vec![],
+            ..Default::default()
         },
         MitreTechnique {
             id: "T1561".into(),
@@ -899,6 +1001,7 @@ pub fn get_all_techniques() -> Vec<MitreTechnique> {
                 MitreSubtechnique::new("T1561.001", "Disk Content Wipe", "Zeroing or corrupting raw filesystem partitions."),
                 MitreSubtechnique::new("T1561.002", "Disk Structure Wipe", "Destroying MBR/GPT partition tables to induce boot failure."),
             ],
+            ..Default::default()
         },
     ]
 }
@@ -1216,10 +1319,16 @@ pub fn get_matrix_summary() -> MitreMatrixSummary {
     };
 
     let mut active_detections_by_tactic: HashMap<String, usize> = HashMap::new();
+    let mut active_detections_by_technique: HashMap<String, usize> = HashMap::new();
     for tech in &techniques {
         let count = active_detections_by_tactic.entry(tech.tactic_id.clone()).or_insert(0);
         *count += tech.detection_mechanisms.len();
+        if !tech.detection_mechanisms.is_empty() {
+            active_detections_by_technique.insert(tech.id.clone(), tech.detection_mechanisms.len());
+        }
     }
+    let total_mitigations = get_mitigations().len();
+    let total_groups = get_threat_groups().len();
 
     MitreMatrixSummary {
         tactics,
@@ -1228,13 +1337,19 @@ pub fn get_matrix_summary() -> MitreMatrixSummary {
         covered_techniques,
         coverage_percentage,
         active_detections_by_tactic,
+        active_detections_by_technique,
+        total_mitigations,
+        total_groups,
     }
 }
 
-/// Look up a technique by ID or Name (case-insensitive, e.g. "T1082", "t1082", "attack.t1082").
+/// Look up a technique by ID or Name (case-insensitive, e.g. "T1082", "t1082", "attack.t1082", "AML.T0043").
 pub fn lookup_technique(id_or_name: &str) -> Option<MitreTechnique> {
     let raw = id_or_name.trim().to_uppercase();
-    let clean_id = raw.strip_prefix("ATTACK.").unwrap_or(&raw);
+    let clean_id = raw
+        .strip_prefix("ATTACK.")
+        .or_else(|| raw.strip_prefix("ATLAS."))
+        .unwrap_or(&raw);
 
     get_all_techniques().into_iter().find(|t| {
         t.id.eq_ignore_ascii_case(clean_id)
@@ -1256,16 +1371,43 @@ pub fn lookup_tactic(id_or_name: &str) -> Option<MitreTactic> {
 pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
     let text_lower = text.to_lowercase();
 
-    // Look for explicit T-pattern like T1082 or t1059.001
-    let mut words = text_lower.split(|c: char| !c.is_alphanumeric() && c != '.' && c != '_');
-    for word in words.by_ref() {
-        let candidate = word.strip_prefix("attack.").unwrap_or(word);
-        if candidate.starts_with('t') && candidate.len() >= 5 {
+    // Look for explicit T-pattern like T1082 or t1059.001 or ATLAS AML.T0043
+    let words = text_lower.split(|c: char| {
+        c.is_whitespace() || c == ',' || c == ';' || c == ':' || c == '[' || c == ']' || c == '(' || c == ')' || c == '{' || c == '}' || c == '|' || c == '/' || c == '\\' || c == '"' || c == '\''
+    });
+    for raw_word in words {
+        let word = raw_word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.');
+        let candidate = word
+            .strip_prefix("attack.")
+            .or_else(|| word.strip_prefix("atlas."))
+            .unwrap_or(word);
+
+        if candidate.starts_with("aml.t") {
+            if let Some(tech) = lookup_technique(candidate) {
+                return Some((tech.tactic_name, tech.id, tech.name));
+            }
+        } else if candidate.starts_with('t') && candidate.len() >= 5 {
             let num_part = &candidate[1..5];
             if num_part.chars().all(|c| c.is_ascii_digit()) {
                 if let Some(tech) = lookup_technique(candidate) {
+                    // Check if candidate matched a specific subtechnique
+                    if let Some(sub) = tech.subtechniques.iter().find(|s| s.id.eq_ignore_ascii_case(candidate)) {
+                        return Some((tech.tactic_name, sub.id.clone(), format!("{}: {}", tech.name, sub.name)));
+                    }
                     return Some((tech.tactic_name, tech.id, tech.name));
                 }
+            }
+        }
+    }
+
+    // Check for tactic-level tags like attack.execution, attack.defense_evasion, etc.
+    let tactic_words = text_lower.split(|c: char| !c.is_alphanumeric() && c != '.' && c != '_');
+    for word in tactic_words {
+        let candidate = word.strip_prefix("attack.").unwrap_or(word);
+        let normalized = candidate.replace('_', " ");
+        if let Some(tac) = lookup_tactic(&normalized) {
+            if let Some(first_tech) = get_all_techniques().into_iter().find(|t| t.tactic_id == tac.id) {
+                return Some((tac.name, first_tech.id, first_tech.name));
             }
         }
     }
@@ -1275,16 +1417,16 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
         return lookup_technique("T1082").map(|t| (t.tactic_name, t.id, t.name));
     }
     if text_lower.contains("powershell") || text_lower.contains("pwsh") {
-        return lookup_technique("T1059").map(|t| (t.tactic_name, t.id, t.name));
+        return lookup_technique("T1059").map(|t| (t.tactic_name, "T1059.001".into(), "Command and Scripting Interpreter: PowerShell".into()));
     }
     if text_lower.contains("shadows") || text_lower.contains("vssadmin") {
         return lookup_technique("T1490").map(|t| (t.tactic_name, t.id, t.name));
     }
     if text_lower.contains("lsass") || text_lower.contains("mimikatz") {
-        return lookup_technique("T1003").map(|t| (t.tactic_name, t.id, t.name));
+        return lookup_technique("T1003").map(|t| (t.tactic_name, "T1003.001".into(), "OS Credential Dumping: LSASS Memory".into()));
     }
     if text_lower.contains("attrib") {
-        return lookup_technique("T1564").map(|t| (t.tactic_name, t.id, t.name));
+        return lookup_technique("T1564").map(|t| (t.tactic_name, "T1564.001".into(), "Hide Artifacts: Hidden Files and Directories".into()));
     }
 
     None
@@ -1441,14 +1583,24 @@ pub fn infer_mitre_from_event(
         }
 
         // Execution: Command and Scripting Interpreter (T1059.001 / T1059.003)
-        if img_lower.ends_with("powershell.exe") || img_lower.ends_with("pwsh.exe") {
+        if img_lower.ends_with("powershell.exe")
+            || img_lower.ends_with("pwsh.exe")
+            || img_lower == "powershell"
+            || img_lower == "pwsh"
+            || cmd_lower.contains("powershell")
+            || cmd_lower.contains("pwsh")
+        {
             return Some((
                 "Execution".into(),
                 "T1059.001".into(),
                 "Command and Scripting Interpreter: PowerShell".into(),
             ));
         }
-        if img_lower.ends_with("cmd.exe") {
+        if img_lower.ends_with("cmd.exe")
+            || img_lower == "cmd"
+            || cmd_lower.contains("cmd.exe /c")
+            || cmd_lower.contains("cmd /c")
+        {
             return Some((
                 "Execution".into(),
                 "T1059.003".into(),
@@ -1486,23 +1638,45 @@ pub fn infer_mitre_from_event(
 
     // 5. ProcessAccess (Sysmon Event ID 10)
     if event_id == 10 {
-        if img_lower.contains("lsass") || cmd_lower.contains("lsass") {
+        if img_lower.contains("lsass")
+            || cmd_lower.contains("lsass")
+            || cmd_lower.contains("procdump")
+            || cmd_lower.contains("mimikatz")
+            || cmd_lower.contains("comsvcs")
+        {
             return Some((
                 "Credential Access".into(),
                 "T1003.001".into(),
                 "OS Credential Dumping: LSASS Memory".into(),
             ));
         }
-        return Some((
-            "Credential Access".into(),
-            "T1003".into(),
-            "OS Credential Dumping".into(),
-        ));
+        if cmd_lower.contains("sam") || cmd_lower.contains("security") || cmd_lower.contains("ntds.dit") {
+            return Some((
+                "Credential Access".into(),
+                "T1003.002".into(),
+                "OS Credential Dumping: Security Account Manager".into(),
+            ));
+        }
+        // Generic handle opens without credential store targets are not credential dumping
     }
 
     // 6. FileCreate (Sysmon Event ID 11)
     if event_id == 11 {
-        if img_lower.ends_with(".exe") || img_lower.ends_with(".dll") || img_lower.ends_with(".ps1") {
+        // Autostart execution when dropped into Startup folders
+        if cmd_lower.contains("\\startup\\")
+            || cmd_lower.contains("start menu\\programs\\startup")
+            || cmd_lower.contains("\\windows\\system32\\drivers")
+        {
+            return Some((
+                "Persistence".into(),
+                "T1547.001".into(),
+                "Boot or Logon Autostart Execution: Registry Run Keys / Startup Folder".into(),
+            ));
+        }
+        // Dropping executables or scripts into user AppData/Temp paths for persistence
+        if (cmd_lower.ends_with(".exe") || cmd_lower.ends_with(".dll") || cmd_lower.ends_with(".ps1") || cmd_lower.ends_with(".vbs"))
+            && (cmd_lower.contains("\\appdata\\") || cmd_lower.contains("\\temp\\") || cmd_lower.contains("\\public\\"))
+        {
             return Some((
                 "Persistence".into(),
                 "T1547".into(),
@@ -1513,11 +1687,30 @@ pub fn infer_mitre_from_event(
 
     // 7. RegistryEvent (Sysmon Event ID 12, 13, 14)
     if event_id == 12 || event_id == 13 || event_id == 14 {
-        return Some((
-            "Persistence".into(),
-            "T1547.001".into(),
-            "Boot or Logon Autostart Execution: Registry Run Keys / Startup Folder".into(),
-        ));
+        if cmd_lower.contains("\\currentversion\\run")
+            || cmd_lower.contains("\\runonce")
+            || cmd_lower.contains("\\services\\")
+            || cmd_lower.contains("startup")
+            || cmd_lower.contains("image file execution options")
+        {
+            return Some((
+                "Persistence".into(),
+                "T1547.001".into(),
+                "Boot or Logon Autostart Execution: Registry Run Keys / Startup Folder".into(),
+            ));
+        }
+        if cmd_lower.contains("policies")
+            || cmd_lower.contains("windows defender")
+            || cmd_lower.contains("firewallpolicy")
+            || cmd_lower.contains("uac")
+            || cmd_lower.contains("safeboot")
+        {
+            return Some((
+                "Defense Evasion".into(),
+                "T1112".into(),
+                "Modify Registry".into(),
+            ));
+        }
     }
 
     // 8. ProcessTampering (Sysmon Event ID 25)
@@ -1620,6 +1813,39 @@ mod tests {
             .expect("extract T1082");
         assert_eq!(res.1, "T1082");
         assert_eq!(res.0, "Discovery");
+
+        // Subtechnique precision test
+        let sub_res = extract_mitre_from_text("Rule attack.t1059.001 powershell execution")
+            .expect("extract T1059.001");
+        assert_eq!(sub_res.1, "T1059.001");
+        assert_eq!(sub_res.0, "Execution");
+
+        // Tactic tag parsing
+        let tac_res = extract_mitre_from_text("Alert tags: attack.privilege_escalation")
+            .expect("extract privilege escalation");
+        assert_eq!(tac_res.0, "Privilege Escalation");
+    }
+
+    #[test]
+    fn test_infer_mitre_false_positive_prevention() {
+        // Benign notepad creating a text file should NOT be flagged as T1547
+        let benign_file = infer_mitre_from_event(11, "C:\\Windows\\notepad.exe", "notepad.exe C:\\Users\\Alice\\notes.txt");
+        assert!(benign_file.is_none(), "Benign file creation should not be flagged as persistence");
+
+        // Dropping executable into AppData should be flagged
+        let drop_file = infer_mitre_from_event(11, "dropper.exe", "C:\\Users\\Alice\\AppData\\Local\\Temp\\update.exe")
+            .expect("drop into Temp");
+        assert_eq!(drop_file.1, "T1547");
+
+        // Generic benign process handle should NOT be flagged as credential dumping
+        let benign_handle = infer_mitre_from_event(10, "C:\\Windows\\explorer.exe", "notepad.exe");
+        assert!(benign_handle.is_none(), "Generic process handle should not be flagged as credential dumping");
+
+        // LSASS process access should be flagged as T1003.001
+        let lsass_handle = infer_mitre_from_event(10, "mimikatz.exe", "lsass.exe")
+            .expect("lsass access");
+        assert_eq!(lsass_handle.1, "T1003.001");
+        assert_eq!(lsass_handle.0, "Credential Access");
     }
 
     #[test]
@@ -1631,5 +1857,43 @@ mod tests {
         assert!(groups.iter().any(|g| g.name == "APT29"));
         assert!(groups.iter().any(|g| g.name == "LockBit"));
         assert!(groups.iter().any(|g| g.name == "Volt Typhoon"));
+    }
+
+    #[test]
+    fn test_mitre_atlas_catalog_and_extraction() {
+        // 1. ATLAS technique lookup
+        let aml43 = lookup_technique("AML.T0043").expect("AML.T0043 technique found");
+        assert_eq!(aml43.name, "Adversarial Prompt Injection / Tool-Argument Injection");
+        assert_eq!(aml43.voter, "AiSecurityAuditVoter");
+        assert_eq!(aml43.consensus_action, "Tarpit");
+        assert!(aml43.is_atlas);
+
+        let aml54 = lookup_technique("AML.T0054").expect("AML.T0054 technique found");
+        assert_eq!(aml54.voter, "AgenticVoter");
+        assert_eq!(aml54.consensus_action, "Alert");
+        assert!(aml54.is_atlas);
+
+        let aml48 = lookup_technique("AML.T0048").expect("AML.T0048 technique found");
+        assert_eq!(aml48.consensus_action, "Isolate");
+
+        // 2. ATLAS text extraction
+        let (tac, tech, name) = extract_mitre_from_text(
+            "AI Tool-Argument Injection [MITRE ATLAS AML.T0043 / Cloudflare AI-AND-LLM]: Process python spawned shell injection"
+        ).expect("extract AML.T0043 from text");
+        assert_eq!(tech, "AML.T0043");
+        assert_eq!(tac, "Execution");
+        assert!(name.contains("Adversarial Prompt Injection"));
+
+        let (tac2, tech2, _) = extract_mitre_from_text(
+            "Canary Trap Breach [Action: Isolate, MITRE ATLAS AML.T0054 / System Prompt Exfiltration]"
+        ).expect("extract AML.T0054 from text");
+        assert_eq!(tech2, "AML.T0054");
+        assert_eq!(tac2, "Exfiltration");
+
+        let (tac3, tech3, _) = extract_mitre_from_text(
+            "Agentic Trajectory Breach [DefenseAction: IsolateProcess, MITRE ATLAS AML.T0042 / Denial of ML Service]"
+        ).expect("extract AML.T0042 from text");
+        assert_eq!(tech3, "AML.T0042");
+        assert_eq!(tac3, "Impact");
     }
 }

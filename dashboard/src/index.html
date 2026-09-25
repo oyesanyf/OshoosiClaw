@@ -793,6 +793,14 @@
                                 <input type="text" id="mitre-search" placeholder="Search techniques, IDs (T1082), or APT groups...">
                             </div>
                             <div style="display: flex; align-items: center; gap: 8px;">
+                                <label for="mitre-framework-filter" style="font-size: 12px; color: var(--text-muted); font-weight: 500;">Framework:</label>
+                                <select id="mitre-framework-filter" style="background: rgba(13, 17, 23, 0.8); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none; cursor: pointer;">
+                                    <option value="all">Enterprise & AI (All)</option>
+                                    <option value="enterprise">Enterprise ATT&CK</option>
+                                    <option value="atlas">MITRE ATLAS (AI Threats)</option>
+                                </select>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
                                 <label for="mitre-tactic-filter" style="font-size: 12px; color: var(--text-muted); font-weight: 500;">Tactic:</label>
                                 <select id="mitre-tactic-filter" style="background: rgba(13, 17, 23, 0.8); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none; cursor: pointer;">
                                     <option value="all">All Tactics (15)</option>
@@ -889,15 +897,18 @@
 
     <!-- Technique Inspector Modal / Drawer -->
     <div id="mitre-technique-modal" class="login-overlay" style="display: none; background: rgba(7, 9, 13, 0.88); backdrop-filter: blur(18px); z-index: 10000;">
-        <div class="login-card" style="max-width: 680px; width: 90%; max-height: 85vh; overflow-y: auto; text-align: left; padding: 28px;">
+        <div class="login-card" style="max-width: 720px; width: 92%; max-height: 88vh; overflow-y: auto; text-align: left; padding: 28px;">
             <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 16px; border-bottom: 1px solid var(--glass-border); padding-bottom: 14px;">
                 <div>
-                    <div style="display: flex; align-items: center; gap: 8px;">
+                    <div style="display: flex; flex-wrap: wrap; align-items: center; gap: 8px;">
                         <span id="modal-tech-id" class="badge blue" style="font-family: 'JetBrains Mono', monospace; font-size: 13px; font-weight: 700;">T1082</span>
                         <span id="modal-tech-tactic" class="badge purple" style="font-size: 11px;">Discovery</span>
                         <span id="modal-tech-coverage" class="badge green" style="font-size: 11px;">Protected</span>
+                        <span id="modal-tech-voter" class="badge cyan" style="font-size: 11px; background: rgba(0, 210, 255, 0.15); color: #00d2ff; border: 1px solid rgba(0, 210, 255, 0.3);">SigmaVoter</span>
+                        <span id="modal-tech-action" class="badge yellow" style="font-size: 11px; background: rgba(255, 170, 0, 0.15); color: #ffaa00; border: 1px solid rgba(255, 170, 0, 0.3);">Alert</span>
                     </div>
                     <h2 id="modal-tech-name" style="font-size: 20px; font-weight: 600; color: var(--text-header); margin-top: 8px;">System Information Discovery</h2>
+                    <div id="modal-tech-platforms" style="display: flex; flex-wrap: wrap; gap: 6px; margin-top: 6px;"></div>
                 </div>
                 <button type="button" id="close-mitre-modal-btn" class="icon-btn glass" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-muted); cursor: pointer; border-radius: 8px; width: 34px; height: 34px; display: flex; align-items: center; justify-content: center;">
                     <i data-lucide="x" style="width: 18px; height: 18px;"></i>
@@ -910,8 +921,18 @@
             </div>
 
             <div style="margin-bottom: 18px;">
+                <h4 style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 6px;">EDR Telemetry & Kernel Data Sources</h4>
+                <div id="modal-tech-telemetry" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+            </div>
+
+            <div style="margin-bottom: 18px;">
                 <h4 style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 6px;">Detection Mechanisms in OpenỌ̀ṣọ́ọ̀sì</h4>
                 <div id="modal-tech-detections" style="display: flex; flex-wrap: wrap; gap: 8px;"></div>
+            </div>
+
+            <div id="modal-tech-sigma-section" style="margin-bottom: 18px; display: none;">
+                <h4 style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 6px;">Associated Sigma Detection Rules (<span id="modal-tech-sigma-count">0</span>)</h4>
+                <div id="modal-tech-sigma-list" style="max-height: 160px; overflow-y: auto; background: rgba(0, 0, 0, 0.25); border: 1px solid var(--glass-border); border-radius: 8px; padding: 8px 12px; display: flex; flex-direction: column; gap: 6px;"></div>
             </div>
 
             <div style="margin-bottom: 18px;">

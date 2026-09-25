@@ -3798,10 +3798,10 @@ async function renderMitreView() {
     if (coverageEl) coverageEl.innerText = `${(data.coverage_percentage || 98.4).toFixed(1)}% Protected/Audited`;
 
     const defensesEl = document.getElementById('mitre-active-defenses');
-    if (defensesEl) defensesEl.innerText = `24 Mitigations Enforced`;
+    if (defensesEl) defensesEl.innerText = `${data.total_mitigations || 24} Mitigations Enforced`;
 
     const groupsEl = document.getElementById('mitre-threat-groups');
-    if (groupsEl) groupsEl.innerText = `16 APT Actor Profiles`;
+    if (groupsEl) groupsEl.innerText = `${data.total_groups || 16} APT Actor Profiles`;
 
     // Populate Tactic Filter Dropdown if not already populated
     const tacticFilter = document.getElementById('mitre-tactic-filter');
@@ -3876,6 +3876,7 @@ function applyMitreFiltersAndRender() {
 
     let totalVisible = 0;
     const activeDetections = mitreDataCache.active_detections_by_tactic || {};
+    const activeDetectionsByTech = mitreDataCache.active_detections_by_technique || {};
 
     let html = '';
 
@@ -3904,8 +3905,8 @@ function applyMitreFiltersAndRender() {
                 const isCovered = (t.detection_mechanisms && t.detection_mechanisms.length > 0) || (t.mitigations && t.mitigations.length > 0);
                 if (!isCovered) return false;
             } else if (statusVal === 'alerts') {
-                const alertsCount = activeDetections[tactic.id] || 0;
-                if (alertsCount === 0) return false;
+                const techAlertCount = activeDetectionsByTech[t.id] || 0;
+                if (techAlertCount === 0) return false;
             }
 
             return true;
@@ -3931,13 +3932,14 @@ function applyMitreFiltersAndRender() {
                 <div class="mitre-techniques-list">
                     ${techniquesForTactic.length === 0 ? '<div style="font-size: 11px; color: var(--text-muted); text-align: center; padding: 20px 8px;">No matching techniques</div>' : ''}
                     ${techniquesForTactic.map(tech => {
-                        const hasAlert = tacticAlertCount > 0 && Math.random() < 0.2;
+                        const techAlertCount = activeDetectionsByTech[tech.id] || 0;
+                        const hasAlert = techAlertCount > 0;
                         const subCount = tech.subtechniques?.length || 0;
                         return `
                             <div class="mitre-technique-card ${hasAlert ? 'has-alerts' : ''}" data-tech-id="${tech.id}" onclick="openMitreTechniqueModalById('${tech.id}')">
                                 <div class="mitre-tech-header">
                                     <span class="mitre-tech-id">${tech.id}</span>
-                                    ${hasAlert ? '<span class="badge red" style="font-size: 9px; padding: 1px 4px;">Alert</span>' : '<span class="badge green" style="font-size: 9px; padding: 1px 4px;">Protected</span>'}
+                                    ${hasAlert ? `<span class="badge red" style="font-size: 9px; padding: 1px 4px;">${techAlertCount > 1 ? techAlertCount + ' Alerts' : 'Alert'}</span>` : '<span class="badge green" style="font-size: 9px; padding: 1px 4px;">Protected</span>'}
                                 </div>
                                 <div class="mitre-tech-title">${tech.name}</div>
                                 <div class="mitre-tech-badges">
@@ -4047,6 +4049,11 @@ function getBuiltInMitreData() {
         total_techniques: 100,
         covered_techniques: 98,
         coverage_percentage: 98.4,
+        total_mitigations: 24,
+        total_groups: 16,
+        active_detections_by_technique: {
+            "T1059": 8, "T1082": 6, "T1490": 4, "T1003": 5, "T1055": 7, "T1547": 3, "T1071": 5
+        },
         active_detections_by_tactic: {
             "TA0043": 12, "TA0042": 8, "TA0001": 19, "TA0002": 34, "TA0003": 28,
             "TA0004": 22, "TA0005": 38, "TA0112": 15, "TA0006": 29, "TA0007": 31,

@@ -3718,8 +3718,16 @@ impl EdrOrchestrator {
 
         // Enrich signature with MITRE ATT&CK Framework metadata if missing
         if signature.mitre_technique.is_none() {
-            let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
-            let cmdline = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("");
+            let image = event.data.get("Image")
+                .or_else(|| event.data.get("image"))
+                .or_else(|| event.data.get("ImagePath"))
+                .and_then(|v| v.as_str())
+                .unwrap_or_else(|| signature.process_name.as_deref().unwrap_or(""));
+            let cmdline = event.data.get("CommandLine")
+                .or_else(|| event.data.get("command_line"))
+                .or_else(|| event.data.get("cmdline"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("");
             let reason_str = signature.reason.as_deref().unwrap_or("");
             if let Some((tac, tech, name)) = osoosi_policy::mitre_kb::extract_mitre_from_text(reason_str) {
                 signature.mitre_tactic = Some(tac);
