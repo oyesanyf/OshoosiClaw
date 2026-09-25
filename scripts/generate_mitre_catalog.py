@@ -26,8 +26,12 @@ from collections import defaultdict
 
 STIX_DIR = "tmp_stix"
 STIX_FILE = os.path.join(STIX_DIR, "v19.2", "enterprise-attack.json")
+CONFIG_STIX_FILE = os.path.join("config", "stix-atlas-attack-enterprise.json")
+DASHBOARD_STIX_FILE = os.path.join("dashboard", "dist", "stix-atlas-attack-enterprise.json")
 OUTPUT_FILE = os.path.join("config", "mitre_attack_catalog.json")
+DASHBOARD_OUTPUT_FILE = os.path.join("dashboard", "dist", "mitre_attack_catalog.json")
 SIGMA_DIR = os.path.join("rules", "sigma")
+STIX_BUNDLE_URL = "https://raw.githubusercontent.com/mitre-atlas/atlas-navigator-data/main/dist/stix-atlas-attack-enterprise.json"
 
 TACTIC_INFO = [
     ("TA0043", "Reconnaissance", "Adversaries gathering information to plan future adversary operations."),
@@ -50,7 +54,9 @@ TACTIC_INFO = [
 PHASE_TO_TACTIC = {
     "reconnaissance": ("TA0043", "Reconnaissance"),
     "resource-development": ("TA0042", "Resource Development"),
+    "ai-attack-staging": ("TA0042", "Resource Development"),
     "initial-access": ("TA0001", "Initial Access"),
+    "ai-model-access": ("TA0001", "Initial Access"),
     "execution": ("TA0002", "Execution"),
     "persistence": ("TA0003", "Persistence"),
     "privilege-escalation": ("TA0004", "Privilege Escalation"),
@@ -183,17 +189,27 @@ PRESET_GROUPS = [
 ]
 
 def ensure_stix_bundle():
-    """Ensure MITRE ATT&CK Enterprise STIX 2.1 bundle is present."""
-    if os.path.exists(STIX_FILE) and os.path.getsize(STIX_FILE) > 1000000:
-        return STIX_FILE
-    
+    """Ensure MITRE ATT&CK Enterprise + ATLAS STIX 2.1 bundle is present."""
+    if os.path.exists(CONFIG_STIX_FILE) and os.path.getsize(CONFIG_STIX_FILE) > 1000000:
+        return CONFIG_STIX_FILE
+
     # Try finding any existing download in tmp_stix
     candidates = glob.glob(f"{STIX_DIR}/**/enterprise-attack*.json", recursive=True)
     for c in candidates:
         if os.path.getsize(c) > 1000000:
             return c
 
-    print("Downloading MITRE ATT&CK Enterprise STIX 2.1 via mitreattack-python...")
+    print(f"Downloading authoritative combined ATT&CK + ATLAS STIX 2.1 bundle from {STIX_BUNDLE_URL}...")
+    os.makedirs(os.path.dirname(CONFIG_STIX_FILE), exist_ok=True)
+    import urllib.request
+    req = urllib.request.Request(STIX_BUNDLE_URL, headers={"User-Agent": "Mozilla/5.0 OpenOsoosi/0.1.1"})
+    try:
+        with urllib.request.urlopen(req) as resp, open(CONFIG_STIX_FILE, "wb") as out_f:
+            out_f.write(resp.read())
+        return CONFIG_STIX_FILE
+    except Exception as e:
+        print(f"Direct download failed ({e}), attempting fallback methods...")
+
     os.makedirs(STIX_DIR, exist_ok=True)
     try:
         from mitreattack.download_stix import download_domains
@@ -215,7 +231,7 @@ def ensure_stix_bundle():
 
 def get_mitre_id(obj):
     for ref in obj.get("external_references", []):
-        if ref.get("source_name") in ("mitre-attack", "mitre-enterprise-attack"):
+        if ref.get("source_name") in ("mitre-attack", "mitre-enterprise-attack", "mitre-atlas"):
             return ref.get("external_id")
     return None
 
@@ -304,6 +320,14 @@ def assign_edr_voter(tech_id, tech_name, tactic_id):
     t = tech_id.upper()
     name_l = tech_name.lower()
 
+    if t.startswith("AML."):
+        if t in ("AML.T0051", "AML.T0054", "AML.T0042"):
+            return "AgenticVoter"
+        elif t == "AML.T0031":
+            return "ZeroDayVoter"
+        else:
+            return "AiSecurityAuditVoter"
+
     if t.startswith("T1055") or t.startswith("T1003") or t in ("T1093", "T1620") or "injection" in name_l or "hollowing" in name_l or "lsass" in name_l:
         return "MemoryInspectionVoter"
     elif t in ("T1027", "T1140", "T1036", "T1486", "T1566", "T1204") or "obfuscat" in name_l or "packer" in name_l or "malware" in name_l:
@@ -319,6 +343,14 @@ def assign_consensus_action(tech_id, tech_name, tactic_id):
     """Designate the consensus response action."""
     t = tech_id.upper()
     name_l = tech_name.lower()
+
+    if t.startswith("AML."):
+        if t in ("AML.T0043", "AML.T0044", "AML.T0051", "AML.T0042"):
+            return "Tarpit"
+        elif t in ("AML.T0048", "AML.T0040", "AML.T0029", "AML.T0031"):
+            return "Isolate"
+        else:
+            return "Alert"
 
     if (
         t.startswith("T1003")
@@ -360,13 +392,13 @@ def build_catalog():
     for obj in objects:
         if obj.get("type") == "course-of-action" and not obj.get("revoked", False) and not obj.get("x_mitre_deprecated", False):
             mid = get_mitre_id(obj)
-            if mid and mid.startswith("M"):
+            if mid and (mid.startswith("M") or mid.startswith("AML.M")):
                 mitigations_dict[mid] = {
                     "id": mid,
                     "name": obj.get("name", ""),
                     "description": obj.get("description", "").split("\n\n")[0],
                     "techniques": [],
-                    "defense_type": "Security Control",
+                    "defense_type": "AI Guardrail" if mid.startswith("AML.M") else "Security Control",
                 }
                 mit_stix_to_mid[obj["id"]] = mid
 
@@ -415,7 +447,7 @@ def build_catalog():
     for obj in objects:
         if obj.get("type") == "attack-pattern" and not obj.get("revoked", False) and not obj.get("x_mitre_deprecated", False):
             tid = get_mitre_id(obj)
-            if not tid or not tid.startswith("T"):
+            if not tid or not (tid.startswith("T") or tid.startswith("AML.T")):
                 continue
             techniques_by_stix[obj["id"]] = obj
             stix_to_tech_id[obj["id"]] = tid
@@ -531,12 +563,13 @@ def build_catalog():
             detection_mechanisms.append(data_sources[1])
 
         # Associated mitigations and groups
+        is_atlas = tid.startswith("AML.")
         mits = tech_to_mits.get(tid, [])
         if not mits:
-            mits = ["M1038: Execution Prevention", "M1047: Audit & Security Logging"]
+            mits = ["AML.M0015: User Prompt Sanitization & Invariant Enforcement", "AML.M0016: Restrict Tool / Subprocess Execution Privileges"] if is_atlas else ["M1038: Execution Prevention", "M1047: Audit & Security Logging"]
         grps = tech_to_grps.get(tid, [])
         if not grps:
-            grps = ["APT29", "Volt Typhoon"]
+            grps = ["Volt Typhoon", "Lazarus Group", "Scattered Spider"] if is_atlas else ["APT29", "Volt Typhoon"]
 
         tech_entry = {
             "id": tid,
@@ -552,7 +585,7 @@ def build_catalog():
             "voter": voter,
             "consensus_action": consensus_action,
             "sigma_rules": associated_sigma,
-            "is_atlas": False,
+            "is_atlas": is_atlas,
             "subtechniques": sub_list,
         }
         final_techniques.append(tech_entry)
@@ -741,13 +774,17 @@ def build_catalog():
         },
     ]
 
+    existing_tech_indices = {t["id"]: i for i, t in enumerate(final_techniques)}
     for at in atlas_techniques:
         at["detection_mechanisms"] = [
             f"OpenỌ̀ṣọ́ọ̀sì {at['voter']}",
             at["data_sources"][0],
             at["data_sources"][1] if len(at["data_sources"]) > 1 else "Agentic Behavioral Guardrail",
         ]
-        final_techniques.append(at)
+        if at["id"] in existing_tech_indices:
+            final_techniques[existing_tech_indices[at["id"]]].update(at)
+        else:
+            final_techniques.append(at)
 
     # MITRE ATLAS Mitigations
     atlas_mitigations = [
@@ -789,7 +826,10 @@ def build_catalog():
     ]
 
     for am in atlas_mitigations:
-        mitigations_dict[am["id"]] = am
+        if am["id"] in mitigations_dict:
+            mitigations_dict[am["id"]].update(am)
+        else:
+            mitigations_dict[am["id"]] = am
 
     # Sort techniques deterministically by tactic then ID
     final_techniques.sort(key=lambda t: (t["tactic_id"], t["id"]))
@@ -823,6 +863,13 @@ def build_catalog():
     print(f"Writing complete MITRE ATT&CK Catalog to {OUTPUT_FILE}...")
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(catalog, f, indent=2)
+
+    if os.path.exists("dashboard/dist"):
+        import shutil
+        shutil.copy2(OUTPUT_FILE, DASHBOARD_OUTPUT_FILE)
+        if os.path.exists(CONFIG_STIX_FILE):
+            shutil.copy2(CONFIG_STIX_FILE, DASHBOARD_STIX_FILE)
+        print("Copied catalog and STIX bundle to dashboard/dist/")
 
     file_size_mb = os.path.getsize(OUTPUT_FILE) / (1024 * 1024)
     print(f"Successfully generated {OUTPUT_FILE} ({file_size_mb:.2f} MB)")

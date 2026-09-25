@@ -49,11 +49,13 @@ pub struct MeshNode {
     pub tripwire_topic: gossipsub::IdentTopic,
     pub attestation_topic: gossipsub::IdentTopic,
     pub heartbeat_topic: gossipsub::IdentTopic,
+    pub stix_update_topic: gossipsub::IdentTopic,
     pub reconciliation: Arc<super::MeshReconciliationEngine>,
     pub zone: String,
     pub memory: Arc<osoosi_memory::MemoryStore>,
     pub dial_semaphore: Arc<tokio::sync::Semaphore>,
     pub last_audit_proof: Option<String>,
+    pub last_stix_manifest: Option<super::StixManifest>,
 }
 
 impl MeshNode {
@@ -166,6 +168,8 @@ impl MeshNode {
             gossipsub::IdentTopic::new(format!("{}-{}", super::ATTESTATION_TOPIC, zone));
         let heartbeat_topic =
             gossipsub::IdentTopic::new(format!("{}-{}", super::HEARTBEAT_TOPIC, zone));
+        let stix_update_topic =
+            gossipsub::IdentTopic::new(super::STIX_UPDATE_TOPIC);
 
         swarm.behaviour_mut().gossipsub.subscribe(&threat_topic)?;
         swarm
@@ -210,6 +214,10 @@ impl MeshNode {
             .behaviour_mut()
             .gossipsub
             .subscribe(&heartbeat_topic)?;
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&stix_update_topic)?;
 
         let mesh_config = osoosi_types::load_mesh_listen_config();
 
@@ -306,11 +314,13 @@ impl MeshNode {
             tripwire_topic,
             attestation_topic,
             heartbeat_topic,
+            stix_update_topic,
             reconciliation: Arc::new(super::MeshReconciliationEngine::default()),
             zone,
             memory,
             dial_semaphore: Arc::new(tokio::sync::Semaphore::new(16)),
             last_audit_proof: None,
+            last_stix_manifest: None,
         })
     }
 
@@ -625,6 +635,11 @@ impl MeshNode {
                         let topic = self.heartbeat_topic.clone();
                         self.publish_gossip_json(&topic, &hb);
                     }
+                    MeshCommand::BroadcastStixUpdate(manifest) => {
+                        let topic = self.stix_update_topic.clone();
+                        self.publish_gossip_json(&topic, &manifest);
+                        self.last_stix_manifest = Some(manifest);
+                    }
                     MeshCommand::ReconcilePeers => {
                         let actions = self.reconciliation.reconcile_partitions();
                         for action in actions {
@@ -738,6 +753,20 @@ impl MeshNode {
                         } else if message.topic == self.audit_proof_topic.hash() {
                             if let Ok(proof_str) = std::str::from_utf8(&message.data) {
                                 debug!("[mesh] Received audit proof from {}: {}", propagation_source, proof_str);
+                            }
+                        } else if message.topic == self.stix_update_topic.hash() {
+                            if let Ok(manifest) = serde_json::from_slice::<super::StixManifest>(&message.data) {
+                                let is_newer = match &self.last_stix_manifest {
+                                    Some(local) => manifest.timestamp > local.timestamp || manifest.blake3_hash != local.blake3_hash,
+                                    None => true,
+                                };
+                                if is_newer {
+                                    info!(
+                                        "[wire-mesh] Received newer MITRE STIX manifest over wire: version={} hash={} count={}",
+                                        manifest.version, manifest.blake3_hash, manifest.object_count
+                                    );
+                                    self.last_stix_manifest = Some(manifest);
+                                }
                             }
                         }
                     }
@@ -893,5 +922,40 @@ impl MeshNode {
                 }
             }
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use crate::StixManifest;
+
+    #[test]
+    fn test_stix_manifest_serialization_deserialization() {
+        let manifest = StixManifest::new(
+            "2.1",
+            "3f8a4e12c5b7890123456789abcdef0123456789abcdef0123456789abcdef01",
+            26381,
+            "https://raw.githubusercontent.com/mitre-atlas/atlas-navigator-data/main/dist/stix-atlas-attack-enterprise.json",
+        );
+
+        let json_str = serde_json::to_string(&manifest).expect("serialize StixManifest");
+        assert!(json_str.contains("26381"));
+        assert!(json_str.contains("3f8a4e12c5b78901"));
+
+        let deserialized: StixManifest =
+            serde_json::from_str(&json_str).expect("deserialize StixManifest");
+        assert_eq!(manifest, deserialized);
+        assert_eq!(deserialized.object_count, 26381);
+        assert_eq!(deserialized.version, "2.1");
+    }
+
+    #[tokio::test]
+    async fn test_stix_update_topic_subscription() {
+        let memory = Arc::new(osoosi_memory::MemoryStore::new(":memory:").expect("in-memory db"));
+        let node = MeshNode::new(memory).await.expect("initialize MeshNode");
+
+        assert_eq!(node.stix_update_topic.hash().as_str(), "osoosi-stix-sync-v1");
+        assert!(node.last_stix_manifest.is_none());
     }
 }

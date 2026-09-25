@@ -720,6 +720,45 @@ pub fn resolve_mitre_catalog_path() -> PathBuf {
     PathBuf::from("config/mitre_attack_catalog.json")
 }
 
+/// Resolve the path to the authoritative combined MITRE ATT&CK + ATLAS STIX 2.1 bundle.
+pub fn resolve_stix_bundle_path() -> PathBuf {
+    if let Ok(p) = std::env::var("OSOOSI_STIX_BUNDLE") {
+        let pb = PathBuf::from(p.trim());
+        if pb.is_file() {
+            return pb;
+        }
+    }
+
+    if let Some(root) = resolve_project_root() {
+        let candidate = root.join("config").join("stix-atlas-attack-enterprise.json");
+        if candidate.is_file() {
+            return candidate;
+        }
+    }
+
+    for start in [
+        std::env::current_dir().ok(),
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf())),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let mut dir = Some(start);
+        for _ in 0..10 {
+            let Some(d) = dir else { break };
+            let candidate = d.join("config").join("stix-atlas-attack-enterprise.json");
+            if candidate.is_file() {
+                return candidate;
+            }
+            dir = d.parent().map(|p| p.to_path_buf());
+        }
+    }
+
+    PathBuf::from("config/stix-atlas-attack-enterprise.json")
+}
+
 /// Automatically sets critical OSOOSI_* environment variables by discovering the project root.
 /// This ensures that even if the agent is run from target/release or a nested directory,
 /// all internal logic and sub-processes correctly resolve their assets.

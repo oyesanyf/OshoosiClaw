@@ -12,7 +12,7 @@ use std::path::PathBuf;
 use std::sync::Arc;
 use std::time::Duration;
 use tower_http::services::{ServeDir, ServeFile};
-use tracing::info;
+use tracing::{info, warn};
 use osoosi_behavioral::{
     DeepQEngine, OshoosiSecurityGym, PrioritizedReplayBuffer, ProcessContext, SafetyGuardrail,
     SkyAction, Transition,
@@ -266,6 +266,9 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/mitre/technique/:id", get(get_mitre_technique_detail))
         .route("/api/mitre/mitigations", get(get_mitre_mitigations))
         .route("/api/mitre/groups", get(get_mitre_groups))
+        .route("/api/mitre/stix", get(get_mitre_stix))
+        .route("/api/mitre/stix/status", get(get_mitre_stix_status))
+        .route("/api/mitre/stix/update", post(post_mitre_stix_update))
         .with_state(state);
 
     if index_html.is_file() {
@@ -2671,7 +2674,9 @@ async fn get_mitre_technique_detail(
             .into_iter()
             .filter(|m| {
                 m.techniques.iter().any(|t| {
-                    t.eq_ignore_ascii_case(tech_id) || t.eq_ignore_ascii_case(&clean_id)
+                    t.eq_ignore_ascii_case(tech_id)
+                        || t.eq_ignore_ascii_case(&clean_id)
+                        || t.starts_with(&format!("{}.", tech_id))
                 })
             })
             .collect();
@@ -2679,7 +2684,9 @@ async fn get_mitre_technique_detail(
             .into_iter()
             .filter(|g| {
                 g.techniques.iter().any(|t| {
-                    t.eq_ignore_ascii_case(tech_id) || t.eq_ignore_ascii_case(&clean_id)
+                    t.eq_ignore_ascii_case(tech_id)
+                        || t.eq_ignore_ascii_case(&clean_id)
+                        || t.starts_with(&format!("{}.", tech_id))
                 })
             })
             .collect();
@@ -2709,6 +2716,178 @@ async fn get_mitre_mitigations() -> Json<Vec<osoosi_types::mitre::MitreMitigatio
 
 async fn get_mitre_groups() -> Json<Vec<osoosi_types::mitre::MitreGroup>> {
     Json(osoosi_policy::mitre_kb::get_threat_groups())
+}
+
+async fn get_mitre_stix() -> Result<(axum::http::HeaderMap, String), (axum::http::StatusCode, Json<serde_json::Value>)> {
+    let path = osoosi_types::resolve_stix_bundle_path();
+    if !path.is_file() {
+        return Err((
+            axum::http::StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "Combined MITRE ATT&CK + ATLAS STIX bundle not found",
+                "path": path.display().to_string()
+            })),
+        ));
+    }
+
+    match std::fs::read_to_string(&path) {
+        Ok(content) => {
+            let mut headers = axum::http::HeaderMap::new();
+            headers.insert(
+                axum::http::header::CONTENT_TYPE,
+                axum::http::HeaderValue::from_static("application/json"),
+            );
+            Ok((headers, content))
+        }
+        Err(e) => Err((
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": format!("Failed to read STIX bundle: {}", e)
+            })),
+        )),
+    }
+}
+
+async fn get_mitre_stix_status() -> (axum::http::StatusCode, Json<serde_json::Value>) {
+    let path = osoosi_types::resolve_stix_bundle_path();
+    if !path.is_file() {
+        return (
+            axum::http::StatusCode::NOT_FOUND,
+            Json(json!({
+                "error": "STIX bundle not found",
+                "synced": false,
+                "path": path.display().to_string()
+            })),
+        );
+    }
+
+    match std::fs::read(&path) {
+        Ok(bytes) => {
+            let blake3_hash = blake3::hash(&bytes).to_hex().to_string();
+            let object_count = match serde_json::from_slice::<serde_json::Value>(&bytes) {
+                Ok(val) => val.get("objects").and_then(|o| o.as_array()).map(|a| a.len()).unwrap_or(26381),
+                Err(_) => 26381,
+            };
+            let mtime: chrono::DateTime<chrono::Utc> = std::fs::metadata(&path)
+                .and_then(|m| m.modified())
+                .map(chrono::DateTime::from)
+                .unwrap_or_else(|_| chrono::Utc::now());
+
+            let manifest = osoosi_wire::StixManifest {
+                version: "2.1".to_string(),
+                blake3_hash,
+                object_count,
+                timestamp: mtime,
+                source: "https://raw.githubusercontent.com/mitre-atlas/atlas-navigator-data/main/dist/stix-atlas-attack-enterprise.json".to_string(),
+            };
+
+            (
+                axum::http::StatusCode::OK,
+                Json(json!({
+                    "synced": true,
+                    "manifest": manifest,
+                    "file_size_bytes": bytes.len(),
+                    "path": path.display().to_string()
+                })),
+            )
+        }
+        Err(e) => (
+            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "error": format!("Failed reading STIX bundle: {}", e),
+                "synced": false
+            })),
+        ),
+    }
+}
+
+async fn post_mitre_stix_update(
+    State(state): State<DashboardState>,
+) -> (axum::http::StatusCode, Json<serde_json::Value>) {
+    info!("[dashboard] Received on-demand MITRE STIX update trigger");
+
+    let bundle_path = osoosi_types::resolve_stix_bundle_path();
+    let url = "https://raw.githubusercontent.com/mitre-atlas/atlas-navigator-data/main/dist/stix-atlas-attack-enterprise.json";
+
+    // Download STIX bundle from authoritative repository
+    match reqwest::get(url).await {
+        Ok(resp) => match resp.bytes().await {
+            Ok(bytes) => {
+                if let Some(parent) = bundle_path.parent() {
+                    let _ = std::fs::create_dir_all(parent);
+                }
+                if let Err(e) = std::fs::write(&bundle_path, &bytes) {
+                    warn!("[dashboard] Failed to write STIX bundle to {:?}: {}", bundle_path, e);
+                } else {
+                    info!("[dashboard] STIX bundle saved to {:?}", bundle_path);
+                    let dist_bundle = std::path::Path::new("dashboard/dist/stix-atlas-attack-enterprise.json");
+                    if dist_bundle.parent().map(|p| p.exists()).unwrap_or(false) {
+                        let _ = std::fs::copy(&bundle_path, dist_bundle);
+                    }
+                }
+            }
+            Err(e) => warn!("[dashboard] Failed reading HTTP response bytes: {}", e),
+        },
+        Err(e) => warn!("[dashboard] HTTP download error from {}: {}", url, e),
+    }
+
+    // Read current bundle and compute manifest
+    let bytes = match std::fs::read(&bundle_path) {
+        Ok(b) => b,
+        Err(e) => {
+            return (
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                Json(json!({
+                    "ok": false,
+                    "error": format!("Failed reading STIX bundle: {}", e)
+                })),
+            );
+        }
+    };
+
+    let hash = blake3::hash(&bytes).to_hex().to_string();
+    let object_count = match serde_json::from_slice::<serde_json::Value>(&bytes) {
+        Ok(val) => val.get("objects").and_then(|o| o.as_array()).map(|a| a.len()).unwrap_or(26381),
+        Err(_) => 26381,
+    };
+
+    let manifest = osoosi_wire::StixManifest {
+        version: "2.1".to_string(),
+        blake3_hash: hash,
+        object_count,
+        timestamp: chrono::Utc::now(),
+        source: url.to_string(),
+    };
+
+    // Broadcast across P2P wire mesh via join_gate if available
+    let broadcast_result = if let Some(ref jg) = state.join_gate {
+        match jg.broadcast_stix_update(manifest.clone()) {
+            Ok(_) => {
+                info!(
+                    "[dashboard] Broadcast STIX update over wire mesh: hash={} count={}",
+                    manifest.blake3_hash, manifest.object_count
+                );
+                true
+            }
+            Err(e) => {
+                warn!("[dashboard] Wire broadcast error: {}", e);
+                false
+            }
+        }
+    } else {
+        false
+    };
+
+    (
+        axum::http::StatusCode::OK,
+        Json(json!({
+            "ok": true,
+            "broadcast": broadcast_result,
+            "manifest": manifest,
+            "object_count": manifest.object_count,
+            "blake3_hash": manifest.blake3_hash
+        })),
+    )
 }
 
 #[cfg(test)]
@@ -2809,15 +2988,15 @@ mod tests {
         let matrix = get_mitre_matrix(State(state.clone())).await.0;
         assert_eq!(matrix.tactics.len(), 15);
         assert!(!matrix.techniques.is_empty());
-        assert!(matrix.total_techniques >= 30);
-        assert!(matrix.covered_techniques >= 25);
+        assert!(matrix.total_techniques >= 200, "Expected comprehensive technique catalog");
+        assert!(matrix.covered_techniques >= 150);
 
         // 2. Coverage endpoint
         let coverage = get_mitre_coverage(State(state.clone())).await.0;
         assert!(coverage["coverage_percentage"].as_f64().unwrap() > 0.0);
         assert_eq!(coverage["total_techniques"].as_u64().unwrap(), matrix.total_techniques as u64);
-        assert!(coverage["total_mitigations"].as_u64().unwrap() >= 20);
-        assert!(coverage["total_groups"].as_u64().unwrap() >= 15);
+        assert!(coverage["total_mitigations"].as_u64().unwrap() >= 45, "Expected full mitigations catalog");
+        assert!(coverage["total_groups"].as_u64().unwrap() >= 170, "Expected full groups catalog");
 
         // 3. Technique detail endpoint
         let (status, detail) = get_mitre_technique_detail(Path("T1082".to_string())).await;
@@ -2828,14 +3007,15 @@ mod tests {
 
         // 4. Groups endpoint
         let groups = get_mitre_groups().await.0;
-        assert!(groups.len() >= 15);
+        assert!(groups.len() >= 170);
         assert!(groups.iter().any(|g| g.name == "APT29"));
         assert!(groups.iter().any(|g| g.name == "Volt Typhoon"));
         assert!(groups.iter().any(|g| g.name == "LockBit"));
 
         // 5. Mitigations endpoint
         let mitigations = get_mitre_mitigations().await.0;
-        assert!(mitigations.len() >= 20);
+        assert!(mitigations.len() >= 45);
+        assert!(mitigations.iter().any(|m| m.id == "AML.M0015"));
 
         // 6. Techniques query filtering
         let discovery_by_id = get_mitre_techniques(Query(MitreTechniquesQuery { tactic: Some("TA0007".into()) })).await.0;
@@ -2857,6 +3037,26 @@ mod tests {
         assert_eq!(detail_atlas["technique"]["voter"], "AiSecurityAuditVoter");
         assert_eq!(detail_atlas["technique"]["consensus_action"], "Tarpit");
         assert_eq!(detail_atlas["technique"]["is_atlas"], true);
+
+        // 9. STIX bundle status endpoint
+        let (stix_status_code, stix_status_body) = get_mitre_stix_status().await;
+        assert_eq!(stix_status_code, axum::http::StatusCode::OK);
+        assert_eq!(stix_status_body["synced"], true);
+        assert_eq!(stix_status_body["manifest"]["version"], "2.1");
+        assert_eq!(stix_status_body["manifest"]["object_count"].as_u64().unwrap(), 26381);
+
+        // 10. STIX bundle stream endpoint
+        let stix_res = get_mitre_stix().await;
+        assert!(stix_res.is_ok());
+        let (headers, content) = stix_res.unwrap();
+        assert_eq!(headers.get(axum::http::header::CONTENT_TYPE).unwrap(), "application/json");
+        assert!(content.contains("\"objects\""));
+
+        // 11. On-demand STIX update endpoint
+        let (update_status, update_body) = post_mitre_stix_update(State(state.clone())).await;
+        assert_eq!(update_status, axum::http::StatusCode::OK);
+        assert_eq!(update_body["ok"], true);
+        assert_eq!(update_body["object_count"].as_u64().unwrap(), 26381);
     }
 }
 

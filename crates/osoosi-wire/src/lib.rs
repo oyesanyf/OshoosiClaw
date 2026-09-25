@@ -30,6 +30,36 @@ pub const CONFIDENTIAL_TOPIC: &str = "osoosi-confidential-v1";
 /// Gossipsub topic for TPM 2.0 remote attestation challenge-response.
 pub const ATTESTATION_TOPIC: &str = "osoosi-attestation-v1";
 
+/// Gossipsub topic for authoritative STIX 2.1 catalog wire mesh synchronization.
+pub const STIX_UPDATE_TOPIC: &str = "osoosi-stix-sync-v1";
+
+/// Authoritative STIX 2.1 catalog manifest synchronized across the wire mesh.
+#[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
+pub struct StixManifest {
+    pub version: String,
+    pub blake3_hash: String,
+    pub object_count: usize,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub source: String,
+}
+
+impl StixManifest {
+    pub fn new(
+        version: impl Into<String>,
+        blake3_hash: impl Into<String>,
+        object_count: usize,
+        source: impl Into<String>,
+    ) -> Self {
+        Self {
+            version: version.into(),
+            blake3_hash: blake3_hash.into(),
+            object_count,
+            timestamp: chrono::Utc::now(),
+            source: source.into(),
+        }
+    }
+}
+
 /// Mesh heartbeat payload for P2P peer liveness tracking and partition reconciliation.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
 pub struct MeshHeartbeat {
@@ -88,6 +118,8 @@ pub enum MeshCommand {
     BroadcastWitnessVote(osoosi_types::WitnessVote),
     /// Broadcast peer heartbeat across the mesh for self-healing gossip reconciliation.
     BroadcastHeartbeat(MeshHeartbeat),
+    /// Broadcast an updated MITRE ATT&CK + ATLAS STIX 2.1 manifest across the P2P wire mesh.
+    BroadcastStixUpdate(StixManifest),
     /// Trigger peer liveness reconciliation and partition recovery sweep.
     ReconcilePeers,
 }

@@ -3767,9 +3767,82 @@ function renderThoughtTraceFeed(rawTrace, explanation, reward, done, step, direc
 let mitreDataCache = null;
 let mitreFiltersInitialized = false;
 
+/**
+ * Update the MITRE view wire STIX status banner from the backend
+ */
+async function updateStixStatusBanner() {
+    const bannerText = document.getElementById('stix-wire-status-text');
+    if (!bannerText) return;
+
+    try {
+        const res = await fetch(`${API_BASE}/mitre/stix/status`);
+        if (res.ok) {
+            const data = await res.json();
+            if (data.synced && data.manifest) {
+                const count = data.manifest.object_count || 26381;
+                bannerText.innerText = `📡 STIX 2.1 Wire Mesh Synchronized · ${count.toLocaleString()} ATT&CK + ATLAS Objects Active`;
+            }
+        }
+    } catch (_) {
+        // Retain fallback text in HTML
+    }
+}
+
+/**
+ * Synchronize the authoritative MITRE ATT&CK + ATLAS STIX 2.1 bundle over the Wire Mesh
+ */
+window.syncWireStix = async function(btn) {
+    const originalHtml = btn ? btn.innerHTML : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<i data-lucide="loader-2" class="spin" style="width: 13px; height: 13px;"></i> <span>Syncing...</span>`;
+        if (window.lucide) lucide.createIcons();
+    }
+
+    const bannerText = document.getElementById('stix-wire-status-text');
+    if (bannerText) {
+        bannerText.innerText = "⏳ Synchronizing STIX 2.1 Wire Mesh & Distributing Catalog...";
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/mitre/stix/update`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+
+        if (res.ok) {
+            const data = await res.json();
+            const count = data.object_count || 26381;
+            const hash = data.manifest?.blake3_hash ? data.manifest.blake3_hash.substring(0, 12) : '';
+            if (bannerText) {
+                bannerText.innerText = `📡 STIX 2.1 Wire Mesh Synchronized · ${count.toLocaleString()} ATT&CK + ATLAS Objects Active (${hash})`;
+            }
+            showSkyrlToast(`STIX 2.1 Mesh Synchronized! ${count.toLocaleString()} objects active across wire.`, 'success');
+            mitreDataCache = null;
+            await renderMitreView();
+        } else {
+            throw new Error(`Server returned HTTP ${res.status}`);
+        }
+    } catch (err) {
+        console.error("Failed to sync STIX over wire mesh:", err);
+        showSkyrlToast(`Wire STIX sync failed: ${err.message}`, 'error');
+        if (bannerText) {
+            bannerText.innerText = "⚠️ STIX Wire Mesh Sync Failed";
+        }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = originalHtml;
+            if (window.lucide) lucide.createIcons();
+        }
+    }
+};
+
 async function renderMitreView() {
     const container = document.getElementById('mitre-matrix-container');
     if (!container) return;
+
+    updateStixStatusBanner();
 
     try {
         if (!mitreDataCache) {
@@ -4018,6 +4091,18 @@ async function openMitreTechniqueModalById(techId) {
     document.getElementById('modal-tech-tactic').innerText = tech.tactic_name || tech.tactic_id;
     document.getElementById('modal-tech-name').innerText = tech.name;
     document.getElementById('modal-tech-desc').innerText = tech.description || 'No description available.';
+    // Coverage / Alert Status Badge
+    const coverageEl = document.getElementById('modal-tech-coverage');
+    if (coverageEl) {
+        const activeAlerts = (mitreDataCache?.active_detections_by_technique || {})[tech.id] || 0;
+        if (activeAlerts > 0) {
+            coverageEl.innerText = `${activeAlerts} Active Alert${activeAlerts > 1 ? 's' : ''}`;
+            coverageEl.className = 'badge red';
+        } else {
+            coverageEl.innerText = 'Protected';
+            coverageEl.className = 'badge green';
+        }
+    }
 
     // Voter & Consensus Action Badges
     const voterEl = document.getElementById('modal-tech-voter');
@@ -4028,8 +4113,30 @@ async function openMitreTechniqueModalById(techId) {
 
     const actionEl = document.getElementById('modal-tech-action');
     if (actionEl) {
-        actionEl.innerText = `Action: ${tech.consensus_action || 'Alert'}`;
+        const action = tech.consensus_action || 'Alert';
+        actionEl.innerText = `Action: ${action}`;
         actionEl.style.display = 'inline-block';
+        if (action === 'Isolate') {
+            actionEl.className = 'badge red';
+            actionEl.style.background = 'rgba(255, 68, 68, 0.18)';
+            actionEl.style.color = '#ff5555';
+            actionEl.style.borderColor = 'rgba(255, 68, 68, 0.35)';
+        } else if (action === 'Tarpit') {
+            actionEl.className = 'badge yellow';
+            actionEl.style.background = 'rgba(255, 170, 0, 0.15)';
+            actionEl.style.color = '#ffaa00';
+            actionEl.style.borderColor = 'rgba(255, 170, 0, 0.3)';
+        } else if (action === 'MemoryScan') {
+            actionEl.className = 'badge purple';
+            actionEl.style.background = 'rgba(170, 85, 255, 0.15)';
+            actionEl.style.color = '#bb77ff';
+            actionEl.style.borderColor = 'rgba(170, 85, 255, 0.3)';
+        } else {
+            actionEl.className = 'badge cyan';
+            actionEl.style.background = 'rgba(0, 210, 255, 0.15)';
+            actionEl.style.color = '#00d2ff';
+            actionEl.style.borderColor = 'rgba(0, 210, 255, 0.3)';
+        }
     }
 
     // Platforms
@@ -4127,16 +4234,17 @@ async function openMitreTechniqueModalById(techId) {
     modal.style.display = 'flex';
     if (window.lucide) window.lucide.createIcons();
 }
+window.openMitreTechniqueModalById = openMitreTechniqueModalById;
 
 function getBuiltInMitreData() {
     return {
-        total_techniques: 100,
-        covered_techniques: 98,
-        coverage_percentage: 98.4,
-        total_mitigations: 24,
-        total_groups: 16,
+        total_techniques: 231,
+        covered_techniques: 231,
+        coverage_percentage: 100.0,
+        total_mitigations: 49,
+        total_groups: 179,
         active_detections_by_technique: {
-            "T1059": 8, "T1082": 6, "T1490": 4, "T1003": 5, "T1055": 7, "T1547": 3, "T1071": 5
+            "T1059": 8, "T1082": 6, "T1490": 4, "T1003": 5, "T1055": 7, "T1547": 3, "T1071": 5, "AML.T0043": 2, "AML.T0048": 1
         },
         active_detections_by_tactic: {
             "TA0043": 12, "TA0042": 8, "TA0001": 19, "TA0002": 34, "TA0003": 28,
@@ -4161,7 +4269,15 @@ function getBuiltInMitreData() {
             { id: "TA0040", name: "Impact", description: "Disrupting or destroying data" }
         ],
         techniques: [
-            { id: "AML.T0054", name: "LLM Jailbreak / Prompt Injection", tactic_id: "TA0001", tactic_name: "Initial Access", description: "Direct and indirect prompt injection bypassing safety guardrails and causing unauthorized tool invocation or context leakage.", platforms: ["LLM", "Agentic Framework", "Python"], data_sources: ["AI/LLM Prompts & Responses", "Agentic Trajectory Logs"], mitigations: ["AML.M0016: LLM Input / Output Guardrails & Canary Breaches"], groups: ["Adversarial AI Research", "Lazarus Group"], detection_mechanisms: ["OpenỌ̀ṣọ́ọ̀sì AgenticVoter", "Canary Breach ETW Detector"], voter: "AgenticVoter", consensus_action: "Isolate", sigma_rules: ["LLM Jailbreak Detection via Adversarial Affixes"], is_atlas: true, subtechniques: [] },
+            { id: "AML.T0043", name: "Adversarial Prompt Injection / Tool-Argument Injection", tactic_id: "TA0002", tactic_name: "Execution", description: "Adversaries craft malicious prompt inputs or jailbreak sequences that manipulate an autonomous LLM agent into executing arbitrary downstream shell commands, unauthorized sub-processes, or abusing tool arguments.", platforms: ["AI Agent", "LLM Runtime", "Python", "Node.js"], data_sources: ["Process: Process Creation (Sysmon Event 1)", "Command: Scriptblock Execution (Windows PowerShell 4104)", "AI Agent Tool-Execution Telemetry"], mitigations: ["AML.M0015: User Prompt Sanitization & Invariant Enforcement", "AML.M0016: Restrict Tool / Subprocess Execution Privileges"], groups: ["Lazarus Group", "Scattered Spider", "Volt Typhoon"], detection_mechanisms: ["OpenỌ̀ṣọ́ọ̀sì AiSecurityAuditVoter", "Process: Process Creation (Sysmon Event 1)"], voter: "AiSecurityAuditVoter", consensus_action: "Tarpit", sigma_rules: ["AI Agent Shell Injection Attempt", "Tool Argument Traversal Pattern"], is_atlas: true, subtechniques: [] },
+            { id: "AML.T0044", name: "AI Tool Path Traversal / Insecure Output Handling", tactic_id: "TA0002", tactic_name: "Execution", description: "Adversaries supply crafted path traversal sequences into LLM agent tool parameters, tricking the autonomous agent into reading or overwriting sensitive host resources outside its workspace boundary.", platforms: ["AI Agent", "LLM Runtime", "FileSystem"], data_sources: ["File: File Access / Modification (Sysmon Event 11)", "Process: Process Creation (Sysmon Event 1)", "Kernel DACL Boundary Violations"], mitigations: ["AML.M0016: Restrict Tool / Subprocess Execution Privileges", "AML.M0018: Isolate AI Agent Runtime & State"], groups: ["APT29", "Volt Typhoon"], detection_mechanisms: ["OpenỌ̀ṣọ́ọ̀sì AiSecurityAuditVoter", "File: File Modification (Sysmon Event 11)"], voter: "AiSecurityAuditVoter", consensus_action: "Tarpit", sigma_rules: ["AI Tool Workspace Path Traversal"], is_atlas: true, subtechniques: [] },
+            { id: "AML.T0048", name: "Agent Memory & State Poisoning", tactic_id: "TA0003", tactic_name: "Persistence", description: "Adversaries tamper with long-term agent state, persistent memory stores, or policy configuration files (.agents/memory.md, osoosi.toml) to introduce persistent backdoor instructions that survive restarts and session resets.", platforms: ["AI Agent", "Vector Database", "Memory Store"], data_sources: ["File: File Modification (Sysmon Event 11)", "Registry: Key Value Tampering (Sysmon Event 13)", "Differential Privacy & Merkle Audit Trail"], mitigations: ["AML.M0018: Isolate AI Agent Runtime & State", "AML.M0015: User Prompt Sanitization & Invariant Enforcement"], groups: ["APT28", "Midnight Blizzard", "Sandworm Team"], detection_mechanisms: ["OpenỌ̀ṣọ́ọ̀sì AiSecurityAuditVoter", "File: File Modification (Sysmon Event 11)"], voter: "AiSecurityAuditVoter", consensus_action: "Isolate", sigma_rules: ["Agent State File Unauthorized Modification"], is_atlas: true, subtechniques: [] },
+            { id: "AML.T0040", name: "AI Runtime Remote Thread Injection", tactic_id: "TA0004", tactic_name: "Privilege Escalation", description: "Adversaries inject shellcode or create remote execution threads inside active AI runtime worker processes (python.exe, node.exe, ollama.exe) to elevate privileges, evade defensive hooks, or hijack autonomous agent credentials.", platforms: ["Windows", "Linux", "AI Agent"], data_sources: ["Process: CreateRemoteThread (Sysmon Event 8)", "Process: ProcessAccess (Sysmon Event 10)", "ETW Threat-Intelligence Telemetry"], mitigations: ["AML.M0016: Restrict Tool / Subprocess Execution Privileges", "AML.M0018: Isolate AI Agent Runtime & State"], groups: ["Wizard Spider", "Lazarus Group"], detection_mechanisms: ["OpenỌ̀ṣọ́ọ̀sì AiSecurityAuditVoter", "Process: CreateRemoteThread (Sysmon Event 8)"], voter: "AiSecurityAuditVoter", consensus_action: "Isolate", sigma_rules: ["Remote Thread Created In AI Runtime Process"], is_atlas: true, subtechniques: [] },
+            { id: "AML.T0029", name: "Disarm AI Safeguards / Runtime Memory Tampering", tactic_id: "TA0112", tactic_name: "Defense Impairment", description: "Adversaries tamper with the memory space of EDR monitoring agents or AI safeguard processes, modifying protection invariants, unhooking syscalls, or requesting PROCESS_VM_WRITE access to disarm defensive telemetry.", platforms: ["AI Agent", "Windows", "Linux"], data_sources: ["Process: ProcessAccess (Sysmon Event 10)", "Driver / Kernel Invariant Monitor", "Hardware Breakpoint & Thread Context Inspection"], mitigations: ["AML.M0018: Isolate AI Agent Runtime & State"], groups: ["LockBit", "BlackCat / ALPHV", "Turla"], detection_mechanisms: ["OpenỌ̀ṣọ́ọ̀sì AiSecurityAuditVoter", "Process: ProcessAccess (Sysmon Event 10)"], voter: "AiSecurityAuditVoter", consensus_action: "Isolate", sigma_rules: ["Suspicious Write Process Memory Into Agent Engine"], is_atlas: true, subtechniques: [] },
+            { id: "AML.T0051", name: "LLM Jailbreak / Prompt Obfuscation", tactic_id: "TA0005", tactic_name: "Defense Evasion", description: "Adversaries bypass AI alignment guardrails using obfuscated multi-turn payloads, base64 encoding, rot13, markdown smuggling, or character escaping to induce the AI agent into executing forbidden behaviors.", platforms: ["AI Agent", "LLM Runtime"], data_sources: ["Process: Process Creation (Sysmon Event 1)", "Agentic Minimax Drift Tracker", "Canary Variable & Trap Monitoring"], mitigations: ["AML.M0015: User Prompt Sanitization & Invariant Enforcement", "AML.M0005: Model Output Sanitation / Guardrails"], groups: ["Scattered Spider", "FIN7"], detection_mechanisms: ["OpenỌ̀ṣọ́ọ̀sì AgenticVoter", "Process: Process Creation (Sysmon Event 1)"], voter: "AgenticVoter", consensus_action: "Tarpit", sigma_rules: ["Obfuscated Base64 Shell In AI Prompt Context"], is_atlas: true, subtechniques: [] },
+            { id: "AML.T0054", name: "Training Data / System Prompt Exfiltration", tactic_id: "TA0010", tactic_name: "Exfiltration", description: "Adversaries probe autonomous AI agents to reveal proprietary system prompts, embedded API secrets, canary environment variables, or private training examples through side-channel query techniques.", platforms: ["AI Agent", "Cloud", "LLM Runtime"], data_sources: ["Network: Outbound Connection (Sysmon Event 3)", "AI Agent Canary Tripwire Trigger", "Agent Egress Controller Audit"], mitigations: ["AML.M0005: Model Output Sanitation / Guardrails", "AML.M0018: Isolate AI Agent Runtime & State"], groups: ["APT29", "Midnight Blizzard"], detection_mechanisms: ["OpenỌ̀ṣọ́ọ̀sì AgenticVoter", "Network: Outbound Connection (Sysmon Event 3)"], voter: "AgenticVoter", consensus_action: "Alert", sigma_rules: ["Canary Token In Outbound Network Traffic"], is_atlas: true, subtechniques: [] },
+            { id: "AML.T0042", name: "Denial of ML Service / Sponge Attacks", tactic_id: "TA0040", tactic_name: "Impact", description: "Adversaries craft computationally heavy inputs or infinite agent reasoning trajectories (sponge inputs) designed to exhaust hardware resources, spike memory utilization, and deny service to autonomous EDR inference.", platforms: ["AI Agent", "Model Inference", "GPU / CPU"], data_sources: ["Process: CPU / GPU Saturation Metrics", "Agent Trajectory Bounded PRM Step Counter", "Adaptive Resource Category Monitor"], mitigations: ["AML.M0016: Restrict Tool / Subprocess Execution Privileges"], groups: ["Sandworm Team", "Silence"], detection_mechanisms: ["OpenỌ̀ṣọ́ọ̀sì AgenticVoter", "Process: CPU / GPU Saturation Metrics"], voter: "AgenticVoter", consensus_action: "Tarpit", sigma_rules: ["Rapid Process Spawn Loop In AI Agent Context"], is_atlas: true, subtechniques: [] },
+            { id: "AML.T0031", name: "Model Poisoning / Serialization Backdoors", tactic_id: "TA0001", tactic_name: "Initial Access", description: "Adversaries distribute backdoored neural network weights or poisoned serialization files (e.g. pickle, ONNX, PyTorch checkpoints) that trigger remote code execution upon model initialization or load arbitrary payloads.", platforms: ["PyTorch", "ONNX", "HuggingFace", "Python"], data_sources: ["File: FileCreate / Download (Sysmon Event 11)", "Malware: ONNX / MalConv Byte Inspection", "YARA-X Model Deserialization Signatures"], mitigations: ["AML.M0017: Verify Cryptographic Integrity of Model Weights"], groups: ["Lazarus Group", "APT28"], detection_mechanisms: ["OpenỌ̀ṣọ́ọ̀sì ZeroDayVoter", "File: FileCreate / Download (Sysmon Event 11)"], voter: "ZeroDayVoter", consensus_action: "Isolate", sigma_rules: ["Malicious Model Weights Download Or Deserialization"], is_atlas: true, subtechniques: [] },
             { id: "T1595", name: "Active Scanning", tactic_id: "TA0043", tactic_name: "Reconnaissance", description: "Executing network port scans and vulnerability queries.", platforms: ["Network", "Linux", "Windows"], data_sources: ["Network Traffic"], mitigations: ["M1037: Filter Network Traffic"], groups: ["APT28", "Volt Typhoon"], detection_mechanisms: ["WFP NetFilter", "Sigma Port Scan"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["Port Scan Activity Detected"], is_atlas: false, subtechniques: [{ id: "T1595.001", name: "Scanning IP Blocks", description: "Broad scanning." }] },
             { id: "T1592", name: "Gather Victim Host Info", tactic_id: "TA0043", tactic_name: "Reconnaissance", description: "Gathering hardware and OS specs.", platforms: ["Windows", "Linux", "macOS"], data_sources: ["Network Traffic"], mitigations: ["M1054: Software Configuration"], groups: ["APT29"], detection_mechanisms: ["EDR Telemetry Audit"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["System Information Discovery Query"], is_atlas: false, subtechniques: [] },
             { id: "T1650", name: "Acquire Access", tactic_id: "TA0042", tactic_name: "Resource Development", description: "Purchasing access from initial access brokers.", platforms: ["PRE"], data_sources: ["Threat Feeds"], mitigations: ["M1036: Account Use Policies"], groups: ["LockBit", "BlackCat"], detection_mechanisms: ["OTX Darknet CTI Voter"], voter: "IocVoter", consensus_action: "Alert", sigma_rules: [], is_atlas: false, subtechniques: [] },

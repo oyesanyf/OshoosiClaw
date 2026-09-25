@@ -732,14 +732,24 @@
             <div id="mitre-view" class="view-content">
                 <!-- Header Banner -->
                 <div class="card glass shadow-glow mb-4" style="border-left: 4px solid var(--accent-blue);">
-                    <div class="card-header" style="padding-bottom: 8px;">
+                    <div class="card-header" style="padding-bottom: 8px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
                         <div>
                             <div style="display: flex; align-items: center; gap: 10px;">
-                                <h3 style="font-size: 20px; font-weight: 600; color: var(--text-header);">MITRE ATT&CK® Enterprise Matrix</h3>
-                                <span class="badge blue" style="font-size: 11px;"><i data-lucide="shield-check" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>v14.1 Enterprise Validated</span>
+                                <h3 style="font-size: 20px; font-weight: 600; color: var(--text-header);">MITRE ATT&CK® Enterprise + ATLAS Matrix</h3>
+                                <span class="badge blue" style="font-size: 11px;"><i data-lucide="shield-check" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>v14.1 Enterprise + ATLAS Validated</span>
                                 <span class="badge purple" style="font-size: 11px;">Agentic Autonomous EDR</span>
                             </div>
                             <p style="color: var(--text-muted); font-size: 13px; margin-top: 4px;">Tactics, Techniques, Sub-techniques, Active Coverage, Defenses & CTI Group Profiling</p>
+                        </div>
+                        <div style="display: flex; align-items: center; gap: 12px; flex-wrap: wrap;">
+                            <div class="stix-wire-banner glass" id="stix-wire-status-banner" style="display: inline-flex; align-items: center; gap: 8px; padding: 6px 14px; border-radius: 8px; font-size: 12px; font-weight: 500; border: 1px solid rgba(0, 242, 254, 0.3); background: rgba(0, 242, 254, 0.05); color: #00f2fe;">
+                                <span class="pulse-dot" style="width: 8px; height: 8px; border-radius: 50%; background-color: #00f2fe; box-shadow: 0 0 8px #00f2fe; display: inline-block;"></span>
+                                <span id="stix-wire-status-text">📡 STIX 2.1 Wire Mesh Synchronized · 26,381 ATT&CK + ATLAS Objects Active</span>
+                            </div>
+                            <button id="btn-sync-wire-stix" class="action-btn" onclick="syncWireStix(this)" style="display: inline-flex; align-items: center; gap: 6px; padding: 6px 14px; font-size: 12px; font-weight: 500; border-radius: 8px; cursor: pointer; background: rgba(0, 242, 254, 0.12); color: #00f2fe; border: 1px solid rgba(0, 242, 254, 0.35);">
+                                <i data-lucide="refresh-cw" style="width: 13px; height: 13px;"></i>
+                                <span>Sync Wire STIX</span>
+                            </button>
                         </div>
                     </div>
                 </div>

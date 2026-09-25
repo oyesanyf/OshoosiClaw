@@ -521,6 +521,15 @@ impl PolicyEngine {
 
         let image_path = event_image_path(event).unwrap_or("unknown");
         let hash = preferred_hash_from_event(event).unwrap_or_else(|| "no-hash".to_string());
+        let cmdline = event.data.get("CommandLine")
+            .or_else(|| event.data.get("command_line"))
+            .or_else(|| event.data.get("cmdline"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let target_file = event.data.get("TargetFilename")
+            .or_else(|| event.data.get("TargetFile"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         // 0. Global Exclusions: Skip all voting if path is in consensus_exclude_paths
         let path_lc = image_path.to_lowercase();
@@ -559,7 +568,7 @@ impl PolicyEngine {
         let is_noisy = self.config.consensus_noisy_stems.iter().any(|s| s.eq_ignore_ascii_case(&stem))
             || self.config.consensus_trusted_paths.iter().any(|p| path_lc.contains(&p.to_lowercase()));
 
-        let cache_key = format!("{:?}:{:?}:{}", event.event_id, image_path, hash);
+        let cache_key = format!("{:?}:{:?}:{}:{}:{}", event.event_id, image_path, hash, cmdline, target_file);
 
         // Deduplication: Avoid re-running consensus for the same event in a short window (30s)
         if let Some(cached) = self.consensus_cache.get(&cache_key) {
@@ -805,11 +814,6 @@ impl PolicyEngine {
 
         // Enrich signature with MITRE ATT&CK Framework metadata if missing
         if signature.mitre_technique.is_none() {
-            let cmdline = event.data.get("CommandLine")
-                .or_else(|| event.data.get("command_line"))
-                .or_else(|| event.data.get("cmdline"))
-                .and_then(|v| v.as_str())
-                .unwrap_or("");
             let reason_str = signature.reason.as_deref().unwrap_or("");
             if let Some((tac, tech, name)) = crate::mitre_kb::extract_mitre_from_text(reason_str) {
                 signature.mitre_tactic = Some(tac);
@@ -819,6 +823,30 @@ impl PolicyEngine {
                 signature.mitre_tactic = Some(tac);
                 signature.mitre_technique = Some(tech);
                 signature.mitre_technique_name = Some(name);
+            }
+        }
+
+        // Align consensus response action with authoritative MITRE technique designation
+        if let Some(ref tech_id) = signature.mitre_technique {
+            if let Some(tech_meta) = crate::mitre_kb::lookup_technique(tech_id) {
+                match tech_meta.consensus_action.as_str() {
+                    "Isolate" => {
+                        if signature.confidence >= 0.50 {
+                            signature.recommended_action = ResponseAction::Isolate;
+                        }
+                    }
+                    "Tarpit" => {
+                        if signature.recommended_action == ResponseAction::Alert && signature.confidence >= 0.40 {
+                            signature.recommended_action = ResponseAction::Tarpit;
+                        }
+                    }
+                    "MemoryScan" => {
+                        if signature.recommended_action == ResponseAction::Alert {
+                            signature.recommended_action = ResponseAction::MemoryScan;
+                        }
+                    }
+                    _ => {}
+                }
             }
         }
 
@@ -843,7 +871,7 @@ mod tests {
     use crate::feed::OtxIndicators;
     use crate::voters::{OtxVoter, SemanticVoter};
     use chrono::Utc;
-    use osoosi_types::HostSecurityEvent;
+    use osoosi_types::{HostSecurityEvent, ResponseAction};
     use serde_json::json;
     use std::sync::Arc;
 
@@ -1048,5 +1076,70 @@ mod tests {
             decision.action,
             osoosi_types::ResponseAction::Tarpit | osoosi_types::ResponseAction::GhostTarpit
         ));
+    }
+
+    #[tokio::test]
+    async fn test_mitre_atlas_voters_consensus_emission() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+
+        // Register AiSecurityAuditVoter and AgenticPolicyVoter
+        engine.add_voter(Box::new(crate::ai_audit_voter::AiSecurityAuditVoter::new())).await;
+        engine.add_voter(Box::new(crate::agentic_voter::AgenticPolicyVoter::new())).await;
+
+        // 1. Tool-argument injection: AML.T0043 (Execution, Tarpit)
+        let mut event_tool_inject = make_event("C:\\Python311\\python.exe", "python.exe -c \"import os; os.system('whoami && calc.exe')\"");
+        event_tool_inject.data = json!({
+            "Image": "C:\\Python311\\python.exe",
+            "CommandLine": "python.exe -c \"import os; os.system('whoami && calc.exe')\"",
+            "ParentImage": "C:\\Program Files\\Modelfusion\\agent.exe",
+            "ProcessId": 5566,
+        });
+
+        let sig_opt = engine.scan_event(&event_tool_inject).await;
+        assert!(sig_opt.is_some(), "Expected threat signature for tool argument injection");
+        let sig = sig_opt.unwrap();
+        assert_eq!(sig.mitre_technique.as_deref(), Some("AML.T0043"));
+        assert_eq!(sig.mitre_tactic.as_deref(), Some("Execution"));
+        assert!(sig.mitre_technique_name.as_deref().unwrap().contains("Adversarial Prompt Injection"));
+        assert_eq!(sig.recommended_action, ResponseAction::Tarpit);
+
+        // 2. Canary credential breach: AML.T0054 (Exfiltration, Alert)
+        let mut event_canary = make_event("C:\\Python311\\python.exe", "python.exe script.py --key AWS_SECRET_ACCESS_KEY_CANARY");
+        event_canary.data = json!({
+            "Image": "C:\\Python311\\python.exe",
+            "CommandLine": "python.exe script.py --key AWS_SECRET_ACCESS_KEY_CANARY",
+            "ParentImage": "C:\\Program Files\\Modelfusion\\agent.exe",
+            "ProcessId": 5567,
+        });
+
+        let sig_opt2 = engine.scan_event(&event_canary).await;
+        assert!(sig_opt2.is_some(), "Expected threat signature for canary breach");
+        let sig2 = sig_opt2.unwrap();
+        assert_eq!(sig2.mitre_technique.as_deref(), Some("AML.T0054"));
+        assert_eq!(sig2.mitre_tactic.as_deref(), Some("Exfiltration"));
+        assert_eq!(sig2.recommended_action, ResponseAction::Alert);
+
+        // 3. Agent memory tampering: AML.T0048 (Persistence, Isolate)
+        let event_memory_tamper = HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 11, // FileCreate / FileModification
+            timestamp: Utc::now(),
+            computer: "test-host".to_string(),
+            data: json!({
+                "Image": "C:\\Windows\\System32\\cmd.exe",
+                "TargetFilename": "D:\\harfile\\OshoosiClaw\\.agents\\memory.md",
+                "ProcessId": 5568,
+            }),
+            causal_parent: None,
+        };
+
+        let sig_opt3 = engine.scan_event(&event_memory_tamper).await;
+        assert!(sig_opt3.is_some(), "Expected threat signature for agent memory tampering");
+        let sig3 = sig_opt3.unwrap();
+        assert_eq!(sig3.mitre_technique.as_deref(), Some("AML.T0048"));
+        assert_eq!(sig3.mitre_tactic.as_deref(), Some("Persistence"));
+        assert_eq!(sig3.recommended_action, ResponseAction::Isolate);
     }
 }

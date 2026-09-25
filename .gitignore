@@ -99,6 +99,7 @@ error_core.log
 
 # ---------- Temp / Misc ----------
 /tmp/
+/tmp_stix/
 .cargo/
 .crates.toml
 .crates2.json

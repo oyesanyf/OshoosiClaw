@@ -46,6 +46,8 @@ impl std::str::FromStr for ResponseAction {
             "tarpit" => Ok(ResponseAction::Tarpit),
             "ghosttarpit" | "ghost_tarpit" => Ok(ResponseAction::GhostTarpit),
             "isolate" | "kill" => Ok(ResponseAction::Isolate),
+            "memoryscan" | "memory_scan" => Ok(ResponseAction::MemoryScan),
+            "registryrepair" | "registry_repair" => Ok(ResponseAction::RegistryRepair),
             _ => Err(()),
         }
     }

@@ -387,6 +387,13 @@ impl JoinGate {
         Ok(())
     }
 
+    /// Broadcast an updated MITRE ATT&CK + ATLAS STIX 2.1 manifest across the P2P wire mesh.
+    pub fn broadcast_stix_update(&self, manifest: super::StixManifest) -> anyhow::Result<()> {
+        self.command_tx
+            .try_send(MeshCommand::BroadcastStixUpdate(manifest))
+            .map_err(|e| anyhow::anyhow!("Failed to dispatch STIX update to mesh: {}", e))
+    }
+
     /// Quarantine a peer immediately and remove it from active mesh participation.
     /// Drops reputation score to 0.0, ejects from routing, severs socket connectivity, and broadcasts a tripwire alert.
     pub fn quarantine_peer(&self, peer_id: &str, reason: &str) -> anyhow::Result<()> {

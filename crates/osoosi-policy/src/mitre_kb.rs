@@ -1003,11 +1003,176 @@ pub fn get_static_techniques() -> Vec<MitreTechnique> {
             ],
             ..Default::default()
         },
+
+        // --- MITRE ATLAS AI Threat Matrix Techniques ---
+        MitreTechnique {
+            id: "AML.T0043".into(),
+            name: "Adversarial Prompt Injection / Tool-Argument Injection".into(),
+            tactic_id: "TA0002".into(),
+            tactic_name: "Execution".into(),
+            description: "Adversaries craft malicious prompt inputs or jailbreak sequences that manipulate an autonomous LLM agent into executing arbitrary downstream shell commands, unauthorized sub-processes, or abusing tool arguments.".into(),
+            platforms: vec!["AI Agent".into(), "LLM Runtime".into(), "Python".into(), "Node.js".into()],
+            data_sources: vec!["Process: Process Creation (Sysmon Event 1)".into(), "Command: Scriptblock Execution (Windows PowerShell 4104)".into(), "AI Agent Tool-Execution Telemetry".into()],
+            voter: "AiSecurityAuditVoter".into(),
+            consensus_action: "Tarpit".into(),
+            mitigations: vec!["AML.M0015: User Prompt Sanitization & Invariant Enforcement".into(), "AML.M0016: Restrict Tool / Subprocess Execution Privileges".into()],
+            groups: vec!["Lazarus Group".into(), "Scattered Spider".into(), "Volt Typhoon".into()],
+            detection_mechanisms: vec!["OpenỌ̀ṣọ́ọ̀sì AiSecurityAuditVoter".into(), "Sysmon Event 1 (Process Creation)".into()],
+            is_atlas: true,
+            sigma_rules: vec!["AI Agent Shell Injection Attempt".into(), "Tool Argument Traversal Pattern".into()],
+            subtechniques: vec![],
+        },
+        MitreTechnique {
+            id: "AML.T0044".into(),
+            name: "AI Tool Path Traversal / Insecure Output Handling".into(),
+            tactic_id: "TA0002".into(),
+            tactic_name: "Execution".into(),
+            description: "Adversaries supply crafted path traversal sequences into LLM agent tool parameters, tricking the autonomous agent into reading or overwriting sensitive host resources outside its workspace boundary.".into(),
+            platforms: vec!["AI Agent".into(), "LLM Runtime".into(), "FileSystem".into()],
+            data_sources: vec!["File: File Access / Modification (Sysmon Event 11)".into(), "Process: Process Creation (Sysmon Event 1)".into(), "Kernel DACL Boundary Violations".into()],
+            voter: "AiSecurityAuditVoter".into(),
+            consensus_action: "Tarpit".into(),
+            mitigations: vec!["AML.M0016: Restrict Tool / Subprocess Execution Privileges".into(), "AML.M0018: Isolate AI Agent Runtime & State".into()],
+            groups: vec!["APT29".into(), "Volt Typhoon".into()],
+            detection_mechanisms: vec!["OpenỌ̀ṣọ́ọ̀sì AiSecurityAuditVoter".into(), "Sysmon Event 11 (File Modification)".into()],
+            is_atlas: true,
+            sigma_rules: vec!["AI Tool Workspace Path Traversal".into()],
+            subtechniques: vec![],
+        },
+        MitreTechnique {
+            id: "AML.T0048".into(),
+            name: "Agent Memory & State Poisoning".into(),
+            tactic_id: "TA0003".into(),
+            tactic_name: "Persistence".into(),
+            description: "Adversaries tamper with long-term agent state, persistent memory stores, or policy configuration files (.agents/memory.md, osoosi.toml) to introduce persistent backdoor instructions that survive restarts and session resets.".into(),
+            platforms: vec!["AI Agent".into(), "Vector Database".into(), "Memory Store".into()],
+            data_sources: vec!["File: File Modification (Sysmon Event 11)".into(), "Registry: Key Value Tampering (Sysmon Event 13)".into(), "Differential Privacy & Merkle Audit Trail".into()],
+            voter: "AiSecurityAuditVoter".into(),
+            consensus_action: "Isolate".into(),
+            mitigations: vec!["AML.M0018: Isolate AI Agent Runtime & State".into(), "AML.M0015: User Prompt Sanitization & Invariant Enforcement".into()],
+            groups: vec!["APT28".into(), "Midnight Blizzard".into(), "Sandworm Team".into()],
+            detection_mechanisms: vec!["OpenỌ̀ṣọ́ọ̀sì AiSecurityAuditVoter".into(), "Sysmon Event 11 (File Modification)".into()],
+            is_atlas: true,
+            sigma_rules: vec!["Agent State File Unauthorized Modification".into()],
+            subtechniques: vec![],
+        },
+        MitreTechnique {
+            id: "AML.T0040".into(),
+            name: "AI Runtime Remote Thread Injection".into(),
+            tactic_id: "TA0004".into(),
+            tactic_name: "Privilege Escalation".into(),
+            description: "Adversaries inject shellcode or create remote execution threads inside active AI runtime worker processes (python.exe, node.exe, ollama.exe) to elevate privileges, evade defensive hooks, or hijack autonomous agent credentials.".into(),
+            platforms: vec!["Windows".into(), "Linux".into(), "AI Agent".into()],
+            data_sources: vec!["Process: CreateRemoteThread (Sysmon Event 8)".into(), "Process: ProcessAccess (Sysmon Event 10)".into(), "ETW Threat-Intelligence Telemetry".into()],
+            voter: "AiSecurityAuditVoter".into(),
+            consensus_action: "Isolate".into(),
+            mitigations: vec!["AML.M0016: Restrict Tool / Subprocess Execution Privileges".into(), "AML.M0018: Isolate AI Agent Runtime & State".into()],
+            groups: vec!["Wizard Spider".into(), "Lazarus Group".into()],
+            detection_mechanisms: vec!["OpenỌ̀ṣọ́ọ̀sì AiSecurityAuditVoter".into(), "Sysmon Event 8 (CreateRemoteThread)".into()],
+            is_atlas: true,
+            sigma_rules: vec!["Remote Thread Created In AI Runtime Process".into()],
+            subtechniques: vec![],
+        },
+        MitreTechnique {
+            id: "AML.T0029".into(),
+            name: "Disarm AI Safeguards / Runtime Memory Tampering".into(),
+            tactic_id: "TA0112".into(),
+            tactic_name: "Defense Impairment".into(),
+            description: "Adversaries tamper with the memory space of EDR monitoring agents or AI safeguard processes, modifying protection invariants, unhooking syscalls, or requesting PROCESS_VM_WRITE access to disarm defensive telemetry.".into(),
+            platforms: vec!["AI Agent".into(), "Windows".into(), "Linux".into()],
+            data_sources: vec!["Process: ProcessAccess (Sysmon Event 10)".into(), "Driver / Kernel Invariant Monitor".into(), "Hardware Breakpoint & Thread Context Inspection".into()],
+            voter: "AiSecurityAuditVoter".into(),
+            consensus_action: "Isolate".into(),
+            mitigations: vec!["AML.M0018: Isolate AI Agent Runtime & State".into()],
+            groups: vec!["LockBit".into(), "BlackCat / ALPHV".into(), "Turla".into()],
+            detection_mechanisms: vec!["OpenỌ̀ṣọ́ọ̀sì AiSecurityAuditVoter".into(), "Sysmon Event 10 (ProcessAccess)".into()],
+            is_atlas: true,
+            sigma_rules: vec!["Suspicious Write Process Memory Into Agent Engine".into()],
+            subtechniques: vec![],
+        },
+        MitreTechnique {
+            id: "AML.T0051".into(),
+            name: "LLM Jailbreak / Prompt Obfuscation".into(),
+            tactic_id: "TA0005".into(),
+            tactic_name: "Defense Evasion".into(),
+            description: "Adversaries bypass AI alignment guardrails using obfuscated multi-turn payloads, base64 encoding, rot13, markdown smuggling, or character escaping to induce the AI agent into executing forbidden behaviors.".into(),
+            platforms: vec!["AI Agent".into(), "LLM Runtime".into()],
+            data_sources: vec!["Process: Process Creation (Sysmon Event 1)".into(), "Agentic Minimax Drift Tracker".into(), "Canary Variable & Trap Monitoring".into()],
+            voter: "AgenticVoter".into(),
+            consensus_action: "Tarpit".into(),
+            mitigations: vec!["AML.M0015: User Prompt Sanitization & Invariant Enforcement".into(), "AML.M0005: Model Output Sanitation / Guardrails".into()],
+            groups: vec!["Scattered Spider".into(), "FIN7".into()],
+            detection_mechanisms: vec!["OpenỌ̀ṣọ́ọ̀sì AgenticVoter".into(), "Sysmon Event 1 (Process Creation)".into()],
+            is_atlas: true,
+            sigma_rules: vec!["Obfuscated Base64 Shell In AI Prompt Context".into()],
+            subtechniques: vec![],
+        },
+        MitreTechnique {
+            id: "AML.T0054".into(),
+            name: "Training Data / System Prompt Exfiltration".into(),
+            tactic_id: "TA0010".into(),
+            tactic_name: "Exfiltration".into(),
+            description: "Adversaries probe autonomous AI agents to reveal proprietary system prompts, embedded API secrets, canary environment variables, or private training examples through side-channel query techniques.".into(),
+            platforms: vec!["AI Agent".into(), "Cloud".into(), "LLM Runtime".into()],
+            data_sources: vec!["Network: Outbound Connection (Sysmon Event 3)".into(), "AI Agent Canary Tripwire Trigger".into(), "Agent Egress Controller Audit".into()],
+            voter: "AgenticVoter".into(),
+            consensus_action: "Alert".into(),
+            mitigations: vec!["AML.M0005: Model Output Sanitation / Guardrails".into(), "AML.M0018: Isolate AI Agent Runtime & State".into()],
+            groups: vec!["APT29".into(), "Midnight Blizzard".into()],
+            detection_mechanisms: vec!["OpenỌ̀ṣọ́ọ̀sì AgenticVoter".into(), "Sysmon Event 3 (Network Connection)".into()],
+            is_atlas: true,
+            sigma_rules: vec!["Canary Token In Outbound Network Traffic".into()],
+            subtechniques: vec![],
+        },
+        MitreTechnique {
+            id: "AML.T0042".into(),
+            name: "Denial of ML Service / Sponge Attacks".into(),
+            tactic_id: "TA0040".into(),
+            tactic_name: "Impact".into(),
+            description: "Adversaries craft computationally heavy inputs or infinite agent reasoning trajectories (sponge inputs) designed to exhaust hardware resources, spike memory utilization, and deny service to autonomous EDR inference.".into(),
+            platforms: vec!["AI Agent".into(), "Model Inference".into(), "GPU / CPU".into()],
+            data_sources: vec!["Process: CPU / GPU Saturation Metrics".into(), "Agent Trajectory Bounded PRM Step Counter".into(), "Adaptive Resource Category Monitor".into()],
+            voter: "AgenticVoter".into(),
+            consensus_action: "Tarpit".into(),
+            mitigations: vec!["AML.M0016: Restrict Tool / Subprocess Execution Privileges".into()],
+            groups: vec!["Sandworm Team".into(), "Silence".into()],
+            detection_mechanisms: vec!["OpenỌ̀ṣọ́ọ̀sì AgenticVoter".into(), "Process Saturation Watchdog".into()],
+            is_atlas: true,
+            sigma_rules: vec!["Rapid Process Spawn Loop In AI Agent Context".into()],
+            subtechniques: vec![],
+        },
+        MitreTechnique {
+            id: "AML.T0031".into(),
+            name: "Model Poisoning / Serialization Backdoors".into(),
+            tactic_id: "TA0001".into(),
+            tactic_name: "Initial Access".into(),
+            description: "Adversaries distribute backdoored neural network weights or poisoned serialization files (e.g. pickle, ONNX, PyTorch checkpoints) that trigger remote code execution upon model initialization or load arbitrary payloads.".into(),
+            platforms: vec!["PyTorch".into(), "ONNX".into(), "HuggingFace".into(), "Python".into()],
+            data_sources: vec!["File: FileCreate / Download (Sysmon Event 11)".into(), "Malware: ONNX / MalConv Byte Inspection".into(), "YARA-X Model Deserialization Signatures".into()],
+            voter: "ZeroDayVoter".into(),
+            consensus_action: "Isolate".into(),
+            mitigations: vec!["AML.M0017: Verify Cryptographic Integrity of Model Weights".into()],
+            groups: vec!["Lazarus Group".into(), "APT28".into()],
+            detection_mechanisms: vec!["OpenỌ̀ṣọ́ọ̀sì ZeroDayVoter".into(), "Sysmon Event 11 (FileCreate)".into()],
+            is_atlas: true,
+            sigma_rules: vec!["Malicious Model Weights Download Or Deserialization".into()],
+            subtechniques: vec![],
+        },
     ]
 }
 
 /// Returns the comprehensive catalog of MITRE ATT&CK Mitigations.
 pub fn get_mitigations() -> Vec<MitreMitigation> {
+    if let Some(cat) = get_catalog() {
+        if !cat.mitigations.is_empty() {
+            return cat.mitigations.clone();
+        }
+    }
+    get_static_mitigations()
+}
+
+/// Fallback static compiled mitigations.
+pub fn get_static_mitigations() -> Vec<MitreMitigation> {
     vec![
         MitreMitigation {
             id: "M1010".into(),
@@ -1184,11 +1349,58 @@ pub fn get_mitigations() -> Vec<MitreMitigation> {
             techniques: vec!["T1596".into(), "T1583".into()],
             defense_type: "Threat Intelligence".into(),
         },
+
+        // --- MITRE ATLAS AI Mitigations ---
+        MitreMitigation {
+            id: "AML.M0005".into(),
+            name: "Model Output Sanitation / Guardrails".into(),
+            description: "Filter and validate all generative AI tool outputs and function calls before passing to system shells or execution sinks.".into(),
+            techniques: vec!["AML.T0043".into(), "AML.T0051".into(), "AML.T0054".into()],
+            defense_type: "AI Guardrail".into(),
+        },
+        MitreMitigation {
+            id: "AML.M0015".into(),
+            name: "User Prompt Sanitization & Invariant Enforcement".into(),
+            description: "Enforce strict syntactic and semantic input guardrails and invariant constraints to neutralize adversarial prompt injections.".into(),
+            techniques: vec!["AML.T0043".into(), "AML.T0048".into(), "AML.T0051".into()],
+            defense_type: "AI Guardrail".into(),
+        },
+        MitreMitigation {
+            id: "AML.M0016".into(),
+            name: "Restrict Tool / Subprocess Execution Privileges".into(),
+            description: "Sandbox downstream tool processes spawned by AI agents with restricted kernel access tokens and path isolation.".into(),
+            techniques: vec!["AML.T0043".into(), "AML.T0044".into(), "AML.T0040".into(), "AML.T0042".into()],
+            defense_type: "Kernel Isolation".into(),
+        },
+        MitreMitigation {
+            id: "AML.M0017".into(),
+            name: "Verify Cryptographic Integrity of Model Weights".into(),
+            description: "Enforce SHA-256 and digital signature validation on all ONNX, PyTorch, and GGUF model binaries before loading into runtime.".into(),
+            techniques: vec!["AML.T0031".into()],
+            defense_type: "Cryptographic Verification".into(),
+        },
+        MitreMitigation {
+            id: "AML.M0018".into(),
+            name: "Isolate AI Agent Runtime & State".into(),
+            description: "Isolate agent memory files (.agents/memory.md), state directories, and runtime memory spaces using OS DACLs and memory protection.".into(),
+            techniques: vec!["AML.T0044".into(), "AML.T0048".into(), "AML.T0040".into(), "AML.T0029".into(), "AML.T0054".into()],
+            defense_type: "State Isolation".into(),
+        },
     ]
 }
 
 /// Returns the catalog of MITRE Threat Actor Groups / CTI Profiles.
 pub fn get_threat_groups() -> Vec<MitreGroup> {
+    if let Some(cat) = get_catalog() {
+        if !cat.groups.is_empty() {
+            return cat.groups.clone();
+        }
+    }
+    get_static_threat_groups()
+}
+
+/// Fallback static compiled threat groups.
+pub fn get_static_threat_groups() -> Vec<MitreGroup> {
     vec![
         MitreGroup {
             id: "G0016".into(),
@@ -1350,11 +1562,15 @@ pub fn lookup_technique(id_or_name: &str) -> Option<MitreTechnique> {
         .strip_prefix("ATTACK.")
         .or_else(|| raw.strip_prefix("ATLAS."))
         .unwrap_or(&raw);
+    let normalized_id = clean_id.replace(['-', '_'], ".");
 
     get_all_techniques().into_iter().find(|t| {
         t.id.eq_ignore_ascii_case(clean_id)
+            || t.id.eq_ignore_ascii_case(&normalized_id)
             || t.name.eq_ignore_ascii_case(id_or_name.trim())
-            || t.subtechniques.iter().any(|s| s.id.eq_ignore_ascii_case(clean_id))
+            || t.subtechniques.iter().any(|s| {
+                s.id.eq_ignore_ascii_case(clean_id) || s.id.eq_ignore_ascii_case(&normalized_id)
+            })
     })
 }
 
@@ -1376,14 +1592,15 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
         c.is_whitespace() || c == ',' || c == ';' || c == ':' || c == '[' || c == ']' || c == '(' || c == ')' || c == '{' || c == '}' || c == '|' || c == '/' || c == '\\' || c == '"' || c == '\''
     });
     for raw_word in words {
-        let word = raw_word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.');
+        let word = raw_word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_');
         let candidate = word
             .strip_prefix("attack.")
             .or_else(|| word.strip_prefix("atlas."))
             .unwrap_or(word);
 
-        if candidate.starts_with("aml.t") {
-            if let Some(tech) = lookup_technique(candidate) {
+        let cand_norm = candidate.replace(['-', '_'], ".");
+        if cand_norm.starts_with("aml.t") {
+            if let Some(tech) = lookup_technique(&cand_norm) {
                 return Some((tech.tactic_name, tech.id, tech.name));
             }
         } else if candidate.starts_with('t') && candidate.len() >= 5 {
@@ -1851,29 +2068,37 @@ mod tests {
     #[test]
     fn test_mitigations_and_groups() {
         let mitigations = get_mitigations();
-        assert!(mitigations.len() >= 20);
+        assert!(mitigations.len() >= 45, "Expected comprehensive mitigations from catalog, got {}", mitigations.len());
+        assert!(mitigations.iter().any(|m| m.id == "AML.M0015"));
+        assert!(mitigations.iter().any(|m| m.id == "AML.M0018"));
+
         let groups = get_threat_groups();
-        assert!(groups.len() >= 15);
+        assert!(groups.len() >= 170, "Expected comprehensive threat groups from catalog, got {}", groups.len());
         assert!(groups.iter().any(|g| g.name == "APT29"));
         assert!(groups.iter().any(|g| g.name == "LockBit"));
         assert!(groups.iter().any(|g| g.name == "Volt Typhoon"));
+        assert!(groups.iter().any(|g| g.name == "Lazarus Group"));
     }
 
     #[test]
     fn test_mitre_atlas_catalog_and_extraction() {
-        // 1. ATLAS technique lookup
+        // 1. ATLAS technique lookup (standard and hyphenated/underscore formats)
         let aml43 = lookup_technique("AML.T0043").expect("AML.T0043 technique found");
         assert_eq!(aml43.name, "Adversarial Prompt Injection / Tool-Argument Injection");
         assert_eq!(aml43.voter, "AiSecurityAuditVoter");
         assert_eq!(aml43.consensus_action, "Tarpit");
         assert!(aml43.is_atlas);
 
+        let aml43_hyphen = lookup_technique("AML-T0043").expect("AML-T0043 hyphenated lookup");
+        assert_eq!(aml43_hyphen.id, "AML.T0043");
+
         let aml54 = lookup_technique("AML.T0054").expect("AML.T0054 technique found");
         assert_eq!(aml54.voter, "AgenticVoter");
         assert_eq!(aml54.consensus_action, "Alert");
         assert!(aml54.is_atlas);
 
-        let aml48 = lookup_technique("AML.T0048").expect("AML.T0048 technique found");
+        let aml48 = lookup_technique("AML_T0048").expect("AML_T0048 underscore lookup");
+        assert_eq!(aml48.id, "AML.T0048");
         assert_eq!(aml48.consensus_action, "Isolate");
 
         // 2. ATLAS text extraction
@@ -1895,5 +2120,11 @@ mod tests {
         ).expect("extract AML.T0042 from text");
         assert_eq!(tech3, "AML.T0042");
         assert_eq!(tac3, "Impact");
+
+        // Hyphenated ATLAS token in text extraction
+        let (_, tech4, _) = extract_mitre_from_text(
+            "Detection match: MITRE ATLAS AML-T0040 AI Runtime Remote Thread Injection"
+        ).expect("extract hyphenated AML-T0040");
+        assert_eq!(tech4, "AML.T0040");
     }
 }

@@ -5769,7 +5769,9 @@ name = "osoosi-cli"
 version = "0.1.1"
 dependencies = [
  "anyhow",
+ "blake3",
  "candle-core",
+ "chrono",
  "clap",
  "ed25519-dalek",
  "flate2",
@@ -5784,9 +5786,11 @@ dependencies = [
  "osoosi-policy",
  "osoosi-telemetry",
  "osoosi-types",
+ "osoosi-wire",
  "rand 0.8.6",
  "regex",
  "reqwest",
+ "serde_json",
  "sysinfo",
  "tar",
  "tokio",
@@ -5873,6 +5877,7 @@ version = "0.1.1"
 dependencies = [
  "anyhow",
  "axum",
+ "blake3",
  "chrono",
  "osoosi-behavioral",
  "osoosi-core",
@@ -5880,6 +5885,7 @@ dependencies = [
  "osoosi-types",
  "osoosi-wire",
  "rand 0.8.6",
+ "reqwest",
  "serde",
  "serde_json",
  "tokio",

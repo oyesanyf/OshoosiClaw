@@ -18,3 +18,5 @@ tracing.workspace = true
 anyhow.workspace = true
 rand.workspace = true
 chrono = { version = "0.4", features = ["serde"] }
+blake3.workspace = true
+reqwest.workspace = true
