@@ -216,6 +216,7 @@ OshoosiClaw 1.2 introduces **Autonomous Lineage Auditing**, allowing the agent t
 
 ---
 
+<a id="-dns-telemetry-setup"></a>
 ## 🔍 DNS & Sysmon Telemetry Setup
 
 OshoosiClaw actively inspects DNS queries using process-attributed domain analysis (`SysmonDnsQueryVoter`) to detect DGA domains, DNS tunneling, and C2 beacons.
@@ -242,6 +243,7 @@ Use the included [`config/sysmon-dns.xml`](config/sysmon-dns.xml) configuration:
 
 ---
 
+<a id="-two-host-mesh-consensus"></a>
 ## 🌐 Two-Host BFT Mesh & Hardware Attestation
 
 OshoosiClaw supports multi-node clustering and edge deployments down to a strict **2-host cluster** ($N=2$):
@@ -254,9 +256,10 @@ OshoosiClaw supports multi-node clustering and edge deployments down to a strict
 
 ---
 
+<a id="-adversarial-verification"></a>
 ## ⚡ Adversarial Security Verification (105/105 Tests)
 
-OshoosiClaw includes 105 automated adversarial attack simulation tests evaluating host, peer, telemetry anti-blinding, and in-memory evasion resilience:
+OshoosiClaw includes 105 automated adversarial attack simulation tests evaluating host, peer, telemetry anti-blinding, policy engine sandbox, and in-memory evasion resilience:
 
 ```powershell
 # 1. Attestation, Nonce Replay & TPM Quote Tampering (26 tests)
@@ -324,7 +327,7 @@ To sustain enterprise throughput under high-volume event bursts without saturati
 ### 3. Correlator Alarm Storm Hardening & Threat Deduplication
 - **Windows System PID Protection**: Built-in safeguards automatically protect Windows System PIDs (`0`, `4`) and unknown image paths from aggressive correlation and isolation actions.
 - **Exponential Score Decay & Alert Debouncing**: Process suspicion scores dynamically decay over time (reducing stale conviction), coupled with a 60-second alert debouncing window per process context to suppress alarm fatigue.
-- **Deterministic Suppression Cache**: The alert suppression cache is keyed on `{hash}:{process_name}:{threat_category}` instead of transient UUIDs, preventing alert storms while maintaining an accurate forensic audit trail.
+- **Deterministic Suppression Cache**: Alert suppression cache keyed on process name, threat category, and binary hash (`{hash}:{process_name}:{category}`) instead of transient UUIDs, preventing alert storms while maintaining an accurate forensic audit trail.
 
 ---
 
