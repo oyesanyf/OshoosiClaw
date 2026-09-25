@@ -16,7 +16,7 @@
                 </Component>
 
                 <Component Id="OnnxRuntimeDll" Guid="d2a71bf5-7798-4c17-9154-374cf1ec1b73" Bitness="always64">
-                    <File Id="OnnxRuntimeFile" Source="target\release\onnxruntime.dll" KeyPath="yes" />
+                    <File Id="OnnxRuntimeFile" Source="onnxruntime.dll" KeyPath="yes" />
                 </Component>
 
                 <Component Id="ConfigFile" Guid="9dbd0738-9582-4f36-9a2c-f67e2a96f120" Bitness="always64">

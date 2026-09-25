@@ -140,9 +140,19 @@ if (Test-Path $WixWxs) {
 
     $WixCmd = Get-Command "wix" -ErrorAction SilentlyContinue | Select-Object -ExpandProperty Source -First 1
     if (-not $WixCmd) {
-        $FallbackWix = "C:\Users\oyesanyf\wix_tools\PFiles64\WiX Toolset v5.0\bin\wix.exe"
-        if (Test-Path $FallbackWix) {
-            $WixCmd = $FallbackWix
+        $PossibleWixPaths = @(
+            (Join-Path $env:USERPROFILE ".dotnet\tools\wix.exe"),
+            (Join-Path $env:ProgramFiles "WiX Toolset v5.0\bin\wix.exe"),
+            (Join-Path ${env:ProgramFiles(x86)} "WiX Toolset v5.0\bin\wix.exe"),
+            (Join-Path $env:LOCALAPPDATA "Programs\wix\wix.exe"),
+            (Join-Path $env:USERPROFILE "wix_tools\PFiles64\WiX Toolset v5.0\bin\wix.exe"),
+            "C:\Users\oyesanyf\wix_tools\PFiles64\WiX Toolset v5.0\bin\wix.exe"
+        )
+        foreach ($cand in $PossibleWixPaths) {
+            if ($cand -and (Test-Path $cand)) {
+                $WixCmd = $cand
+                break
+            }
         }
     }
 
