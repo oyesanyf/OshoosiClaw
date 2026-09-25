@@ -124,6 +124,8 @@ pub fn verify_all_critical_configs() -> Vec<String> {
         "config/openshell-policy.yaml",
         "osoosi.toml",
         "config/firewall_allowlist.txt",
+        "config/mitre_attack_catalog.json",
+        "config/stix-atlas-attack-enterprise.json",
     ];
 
     let mut tampered = Vec::new();
@@ -153,6 +155,8 @@ pub fn sign_all_critical_configs() {
         "config/openshell-policy.yaml",
         "osoosi.toml",
         "config/firewall_allowlist.txt",
+        "config/mitre_attack_catalog.json",
+        "config/stix-atlas-attack-enterprise.json",
     ];
 
     for file in &critical_files {

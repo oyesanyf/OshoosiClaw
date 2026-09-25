@@ -28,8 +28,10 @@ STIX_DIR = "tmp_stix"
 STIX_FILE = os.path.join(STIX_DIR, "v19.2", "enterprise-attack.json")
 CONFIG_STIX_FILE = os.path.join("config", "stix-atlas-attack-enterprise.json")
 DASHBOARD_STIX_FILE = os.path.join("dashboard", "dist", "stix-atlas-attack-enterprise.json")
+DASHBOARD_SRC_STIX_FILE = os.path.join("dashboard", "src", "stix-atlas-attack-enterprise.json")
 OUTPUT_FILE = os.path.join("config", "mitre_attack_catalog.json")
 DASHBOARD_OUTPUT_FILE = os.path.join("dashboard", "dist", "mitre_attack_catalog.json")
+DASHBOARD_SRC_OUTPUT_FILE = os.path.join("dashboard", "src", "mitre_attack_catalog.json")
 SIGMA_DIR = os.path.join("rules", "sigma")
 STIX_BUNDLE_URL = "https://raw.githubusercontent.com/mitre-atlas/atlas-navigator-data/main/dist/stix-atlas-attack-enterprise.json"
 
@@ -864,26 +866,30 @@ def build_catalog():
     with open(OUTPUT_FILE, "w", encoding="utf-8") as f:
         json.dump(catalog, f, indent=2)
 
-    if os.path.exists("dashboard/dist"):
-        import shutil
-        try:
-            shutil.copy2(OUTPUT_FILE, DASHBOARD_OUTPUT_FILE)
-        except Exception:
+    for target_cat, target_stix, target_dir_name in [
+        (DASHBOARD_OUTPUT_FILE, DASHBOARD_STIX_FILE, "dashboard/dist"),
+        (DASHBOARD_SRC_OUTPUT_FILE, DASHBOARD_SRC_STIX_FILE, "dashboard/src"),
+    ]:
+        if os.path.exists(target_dir_name):
+            import shutil
             try:
-                with open(OUTPUT_FILE, "r", encoding="utf-8") as rf, open(DASHBOARD_OUTPUT_FILE, "w", encoding="utf-8") as wf:
-                    wf.write(rf.read())
-            except Exception as e:
-                print(f"Warning copying catalog to dashboard/dist: {e}")
-        if os.path.exists(CONFIG_STIX_FILE):
-            try:
-                shutil.copy2(CONFIG_STIX_FILE, DASHBOARD_STIX_FILE)
+                shutil.copy2(OUTPUT_FILE, target_cat)
             except Exception:
                 try:
-                    with open(CONFIG_STIX_FILE, "rb") as rf, open(DASHBOARD_STIX_FILE, "wb") as wf:
+                    with open(OUTPUT_FILE, "r", encoding="utf-8") as rf, open(target_cat, "w", encoding="utf-8") as wf:
                         wf.write(rf.read())
                 except Exception as e:
-                    print(f"Note: Could not overwrite {DASHBOARD_STIX_FILE}: {e}")
-        print("Copied catalog and STIX bundle to dashboard/dist/")
+                    print(f"Warning copying catalog to {target_dir_name}: {e}")
+            if os.path.exists(CONFIG_STIX_FILE):
+                try:
+                    shutil.copy2(CONFIG_STIX_FILE, target_stix)
+                except Exception:
+                    try:
+                        with open(CONFIG_STIX_FILE, "rb") as rf, open(target_stix, "wb") as wf:
+                            wf.write(rf.read())
+                    except Exception as e:
+                        print(f"Note: Could not overwrite {target_stix}: {e}")
+            print(f"Copied catalog and STIX bundle to {target_dir_name}/")
 
     file_size_mb = os.path.getsize(OUTPUT_FILE) / (1024 * 1024)
     print(f"Successfully generated {OUTPUT_FILE} ({file_size_mb:.2f} MB)")

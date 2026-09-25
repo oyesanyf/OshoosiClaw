@@ -1662,12 +1662,28 @@ async fn handle_update_stix(force: bool, broadcast: bool) -> anyhow::Result<()> 
                 let _ = fs::copy(&bundle_path, dist_bundle);
             }
         }
+        let src_bundle = Path::new("dashboard/src/stix-atlas-attack-enterprise.json");
+        if let Some(p) = src_bundle.parent() {
+            if p.exists() {
+                let _ = fs::copy(&bundle_path, src_bundle);
+            }
+        }
     } else {
         println!("✓ Authoritative STIX bundle found at {:?}", bundle_path);
+        // Ensure dashboard copies exist
+        for target in [
+            Path::new("dashboard/dist/stix-atlas-attack-enterprise.json"),
+            Path::new("dashboard/src/stix-atlas-attack-enterprise.json"),
+        ] {
+            if target.parent().map(|p| p.exists()).unwrap_or(false) && !target.exists() {
+                let _ = fs::copy(&bundle_path, target);
+            }
+        }
     }
 
     // Run catalog generation script if available
     let gen_script = Path::new("scripts/generate_mitre_catalog.py");
+    let catalog_path = Path::new("config/mitre_attack_catalog.json");
     if gen_script.exists() {
         println!("⚙️  Regenerating MITRE ATT&CK + ATLAS unified catalog...");
         let python_cmds = ["python", "python3", "py"];
@@ -1687,6 +1703,18 @@ async fn handle_update_stix(force: bool, broadcast: bool) -> anyhow::Result<()> 
         if !script_ran {
             warn!("Could not run scripts/generate_mitre_catalog.py via python interpreter");
         }
+
+        // Ensure both dashboard dist and src receive the updated catalog
+        if catalog_path.exists() {
+            for cat_target in [
+                Path::new("dashboard/dist/mitre_attack_catalog.json"),
+                Path::new("dashboard/src/mitre_attack_catalog.json"),
+            ] {
+                if cat_target.parent().map(|p| p.exists()).unwrap_or(false) {
+                    let _ = fs::copy(catalog_path, cat_target);
+                }
+            }
+        }
     }
 
     // Verify STIX bundle hash and counts
@@ -1697,7 +1725,6 @@ async fn handle_update_stix(force: bool, broadcast: bool) -> anyhow::Result<()> 
         Err(_) => 26381,
     };
 
-    let catalog_path = Path::new("config/mitre_attack_catalog.json");
     let mut tactics_cnt = 15;
     let mut tech_cnt = 854;
     let mut mit_cnt = 79;
@@ -1707,9 +1734,21 @@ async fn handle_update_stix(force: bool, broadcast: bool) -> anyhow::Result<()> 
         if let Ok(cat_bytes) = fs::read(catalog_path) {
             if let Ok(cat) = serde_json::from_slice::<serde_json::Value>(&cat_bytes) {
                 tactics_cnt = cat.get("tactics").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(tactics_cnt);
-                tech_cnt = cat.get("techniques").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(tech_cnt);
+                if let Some(techs) = cat.get("techniques").and_then(|t| t.as_array()) {
+                    let parents = techs.len();
+                    let subs: usize = techs
+                        .iter()
+                        .filter_map(|t| t.get("subtechniques").and_then(|s| s.as_array()))
+                        .map(|s| s.len())
+                        .sum();
+                    tech_cnt = parents + subs;
+                }
                 mit_cnt = cat.get("mitigations").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(mit_cnt);
-                group_cnt = cat.get("threat_groups").and_then(|t| t.as_array()).map(|a| a.len()).unwrap_or(group_cnt);
+                group_cnt = cat.get("groups")
+                    .or_else(|| cat.get("threat_groups"))
+                    .and_then(|t| t.as_array())
+                    .map(|a| a.len())
+                    .unwrap_or(group_cnt);
             }
         }
     }
@@ -1734,18 +1773,20 @@ async fn handle_update_stix(force: bool, broadcast: bool) -> anyhow::Result<()> 
     println!("  Wire Sync Status:   SYNCHRONIZED");
     println!("----------------------------------------------------------------------\n");
 
-    // Wire Mesh Broadcast
-    if broadcast {
-        println!("📡 Broadcasting STIX update manifest across P2P wire mesh...");
-        let client = reqwest::Client::builder()
-            .timeout(std::time::Duration::from_secs(3))
-            .build()?;
-        match client.post("http://127.0.0.1:3030/api/mitre/stix/update").send().await {
-            Ok(resp) if resp.status().is_success() => {
-                println!("✓ P2P Wire Mesh gossip broadcast triggered via daemon (http://127.0.0.1:3030)");
-            }
-            _ => {
-                println!("ℹ️  Local daemon is offline (http://127.0.0.1:3030). Manifest is cached locally and will synchronize on daemon startup.");
+    // Wire Mesh Broadcast: if --broadcast specified or local mesh daemon is running
+    println!("📡 Checking P2P wire mesh daemon status...");
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(3))
+        .build()?;
+    match client.post("http://127.0.0.1:3030/api/mitre/stix/update").send().await {
+        Ok(resp) if resp.status().is_success() => {
+            println!("✓ P2P Wire Mesh gossip broadcast triggered via daemon (http://127.0.0.1:3030)");
+        }
+        _ => {
+            if broadcast {
+                println!("ℹ️  Broadcast requested, but local daemon is offline (http://127.0.0.1:3030). Manifest is cached locally and will synchronize on daemon startup.");
+            } else {
+                println!("ℹ️  Wire mesh daemon is offline (http://127.0.0.1:3030). Manifest is cached locally.");
             }
         }
     }

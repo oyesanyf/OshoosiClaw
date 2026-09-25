@@ -2748,6 +2748,21 @@ async fn get_mitre_stix() -> Result<(axum::http::HeaderMap, String), (axum::http
     }
 }
 
+#[derive(serde::Deserialize)]
+struct StixBundleFastCounter {
+    #[serde(default)]
+    objects: Vec<serde::de::IgnoredAny>,
+}
+
+fn count_stix_objects_fast(bytes: &[u8]) -> usize {
+    serde_json::from_slice::<StixBundleFastCounter>(bytes)
+        .map(|c| c.objects.len())
+        .unwrap_or(26381)
+}
+
+static CACHED_STIX_STATUS: std::sync::RwLock<Option<(u64, Option<std::time::SystemTime>, osoosi_wire::StixManifest, usize, String)>> =
+    std::sync::RwLock::new(None);
+
 async fn get_mitre_stix_status() -> (axum::http::StatusCode, Json<serde_json::Value>) {
     let path = osoosi_types::resolve_stix_bundle_path();
     if !path.is_file() {
@@ -2761,25 +2776,46 @@ async fn get_mitre_stix_status() -> (axum::http::StatusCode, Json<serde_json::Va
         );
     }
 
+    let meta = std::fs::metadata(&path).ok();
+    let file_len = meta.as_ref().map(|m| m.len()).unwrap_or(0);
+    let mtime = meta.as_ref().and_then(|m| m.modified().ok());
+
+    if let Ok(guard) = CACHED_STIX_STATUS.read() {
+        if let Some((cached_len, cached_mtime, ref manifest, size_bytes, ref cached_path)) = *guard {
+            if cached_len == file_len && cached_mtime == mtime && cached_path == &path.display().to_string() {
+                return (
+                    axum::http::StatusCode::OK,
+                    Json(json!({
+                        "synced": true,
+                        "manifest": manifest,
+                        "file_size_bytes": size_bytes,
+                        "path": cached_path
+                    })),
+                );
+            }
+        }
+    }
+
     match std::fs::read(&path) {
         Ok(bytes) => {
             let blake3_hash = blake3::hash(&bytes).to_hex().to_string();
-            let object_count = match serde_json::from_slice::<serde_json::Value>(&bytes) {
-                Ok(val) => val.get("objects").and_then(|o| o.as_array()).map(|a| a.len()).unwrap_or(26381),
-                Err(_) => 26381,
-            };
-            let mtime: chrono::DateTime<chrono::Utc> = std::fs::metadata(&path)
-                .and_then(|m| m.modified())
+            let object_count = count_stix_objects_fast(&bytes);
+            let mtime_chrono: chrono::DateTime<chrono::Utc> = mtime
                 .map(chrono::DateTime::from)
-                .unwrap_or_else(|_| chrono::Utc::now());
+                .unwrap_or_else(chrono::Utc::now);
 
             let manifest = osoosi_wire::StixManifest {
                 version: "2.1".to_string(),
                 blake3_hash,
                 object_count,
-                timestamp: mtime,
+                timestamp: mtime_chrono,
                 source: "https://raw.githubusercontent.com/mitre-atlas/atlas-navigator-data/main/dist/stix-atlas-attack-enterprise.json".to_string(),
             };
+
+            let path_str = path.display().to_string();
+            if let Ok(mut guard) = CACHED_STIX_STATUS.write() {
+                *guard = Some((file_len, mtime, manifest.clone(), bytes.len(), path_str.clone()));
+            }
 
             (
                 axum::http::StatusCode::OK,
@@ -2787,7 +2823,7 @@ async fn get_mitre_stix_status() -> (axum::http::StatusCode, Json<serde_json::Va
                     "synced": true,
                     "manifest": manifest,
                     "file_size_bytes": bytes.len(),
-                    "path": path.display().to_string()
+                    "path": path_str
                 })),
             )
         }
@@ -2809,25 +2845,44 @@ async fn post_mitre_stix_update(
     let bundle_path = osoosi_types::resolve_stix_bundle_path();
     let url = "https://raw.githubusercontent.com/mitre-atlas/atlas-navigator-data/main/dist/stix-atlas-attack-enterprise.json";
 
-    // Download STIX bundle from authoritative repository
-    match reqwest::get(url).await {
-        Ok(resp) => match resp.bytes().await {
-            Ok(bytes) => {
-                if let Some(parent) = bundle_path.parent() {
-                    let _ = std::fs::create_dir_all(parent);
-                }
-                if let Err(e) = std::fs::write(&bundle_path, &bytes) {
-                    warn!("[dashboard] Failed to write STIX bundle to {:?}: {}", bundle_path, e);
-                } else {
-                    info!("[dashboard] STIX bundle saved to {:?}", bundle_path);
-                    let dist_bundle = std::path::Path::new("dashboard/dist/stix-atlas-attack-enterprise.json");
-                    if dist_bundle.parent().map(|p| p.exists()).unwrap_or(false) {
-                        let _ = std::fs::copy(&bundle_path, dist_bundle);
+    // Download STIX bundle with strict validation and 60-second timeout
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(60))
+        .build();
+    let client = client.unwrap_or_default();
+
+    match client.get(url).send().await {
+        Ok(resp) => {
+            if resp.status().is_success() {
+                match resp.bytes().await {
+                    Ok(bytes) if bytes.len() > 1_000_000 => {
+                        if let Some(parent) = bundle_path.parent() {
+                            let _ = std::fs::create_dir_all(parent);
+                        }
+                        if let Err(e) = std::fs::write(&bundle_path, &bytes) {
+                            warn!("[dashboard] Failed to write STIX bundle to {:?}: {}", bundle_path, e);
+                        } else {
+                            info!("[dashboard] STIX bundle ({} bytes) saved to {:?}", bytes.len(), bundle_path);
+                            // Maintain 100% exact parity across both dist and src
+                            for dist_target in [
+                                std::path::Path::new("dashboard/dist/stix-atlas-attack-enterprise.json"),
+                                std::path::Path::new("dashboard/src/stix-atlas-attack-enterprise.json"),
+                            ] {
+                                if dist_target.parent().map(|p| p.exists()).unwrap_or(false) {
+                                    let _ = std::fs::copy(&bundle_path, dist_target);
+                                }
+                            }
+                        }
                     }
+                    Ok(bytes) => {
+                        warn!("[dashboard] Downloaded STIX bundle suspiciously small ({} bytes); retaining existing file", bytes.len());
+                    }
+                    Err(e) => warn!("[dashboard] Failed reading HTTP response bytes: {}", e),
                 }
+            } else {
+                warn!("[dashboard] HTTP download error HTTP {}: retaining existing STIX bundle", resp.status());
             }
-            Err(e) => warn!("[dashboard] Failed reading HTTP response bytes: {}", e),
-        },
+        }
         Err(e) => warn!("[dashboard] HTTP download error from {}: {}", url, e),
     }
 
@@ -2846,10 +2901,7 @@ async fn post_mitre_stix_update(
     };
 
     let hash = blake3::hash(&bytes).to_hex().to_string();
-    let object_count = match serde_json::from_slice::<serde_json::Value>(&bytes) {
-        Ok(val) => val.get("objects").and_then(|o| o.as_array()).map(|a| a.len()).unwrap_or(26381),
-        Err(_) => 26381,
-    };
+    let object_count = count_stix_objects_fast(&bytes);
 
     let manifest = osoosi_wire::StixManifest {
         version: "2.1".to_string(),
@@ -2858,6 +2910,14 @@ async fn post_mitre_stix_update(
         timestamp: chrono::Utc::now(),
         source: url.to_string(),
     };
+
+    // Update in-memory manifest cache
+    let meta = std::fs::metadata(&bundle_path).ok();
+    let file_len = meta.as_ref().map(|m| m.len()).unwrap_or(bytes.len() as u64);
+    let mtime = meta.as_ref().and_then(|m| m.modified().ok());
+    if let Ok(mut guard) = CACHED_STIX_STATUS.write() {
+        *guard = Some((file_len, mtime, manifest.clone(), bytes.len(), bundle_path.display().to_string()));
+    }
 
     // Broadcast across P2P wire mesh via join_gate if available
     let broadcast_result = if let Some(ref jg) = state.join_gate {

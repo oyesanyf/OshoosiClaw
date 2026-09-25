@@ -35,6 +35,10 @@
                         <File Id="OpenShellPolicySig" Source="config\openshell-policy.yaml.sign" />
                         <File Id="FirewallAllowlist" Source="config\firewall_allowlist.txt" />
                         <File Id="FirewallAllowlistSig" Source="config\firewall_allowlist.txt.sign" />
+                        <File Id="MitreCatalogJson" Source="config\mitre_attack_catalog.json" />
+                        <File Id="MitreCatalogJsonSig" Source="config\mitre_attack_catalog.json.sign" />
+                        <File Id="StixAtlasAttackJson" Source="config\stix-atlas-attack-enterprise.json" />
+                        <File Id="StixAtlasAttackJsonSig" Source="config\stix-atlas-attack-enterprise.json.sign" />
                     </Component>
                 </Directory>
 
@@ -45,6 +49,8 @@
                             <File Id="DashApp" Source="dashboard\dist\app.js" />
                             <File Id="DashStyle" Source="dashboard\dist\style.css" />
                             <File Id="DashFavicon" Source="dashboard\dist\favicon.svg" />
+                            <File Id="DashMitreCatalog" Source="dashboard\dist\mitre_attack_catalog.json" />
+                            <File Id="DashStixAtlasAttack" Source="dashboard\dist\stix-atlas-attack-enterprise.json" />
                         </Component>
                     </Directory>
                 </Directory>
