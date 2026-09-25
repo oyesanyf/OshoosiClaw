@@ -394,11 +394,11 @@ As AI agents and LLM runtimes become integrated into enterprise infrastructure, 
 
 | Technique ID | Technique Name / Vector | Consensus Voter | Autonomous Response | Attack Vector & Evaluation Mechanics |
 |:---|:---|:---|:---|:---|
-| `AML.T0043` | Tool Argument Injection & Prompt Chaining | `AiSecurityAuditVoter` | `ResponseAction::Tarpit` | Command chaining (`;`, `&&`, `\|`), encoded scripts (`-enc`), and nested subshell executions injected into agent tool parameters. |
+| `AML.T0043` | Tool Argument Injection & Prompt Chaining | `AiSecurityAuditVoter` | `ResponseAction::Tarpit` | Command chaining (`;`, `&&`, `&#124;`), encoded scripts (`-enc`), and nested subshell executions injected into agent tool parameters. |
 | `AML.T0044` | Tool Path Traversal & Sensitive File Read | `AiSecurityAuditVoter` | `ResponseAction::Tarpit` | Directory traversal (`../`, `..\`) targeting host credentials (`id_rsa`, `.env`, `SAM`, `System32`) via agent tool inputs. |
 | `AML.T0048` | Agent State & Memory Poisoning | `AiSecurityAuditVoter` | `ResponseAction::Isolate` | Unauthorized writes (Sysmon Event 11) tampering with long-term memory stores (`.agents/memory.md`), policies, or `osoosi.toml`. |
 | `AML.T0040` | AI Runtime Remote Thread Injection | `AiSecurityAuditVoter` | `ResponseAction::Isolate` | Foreign non-AI processes attempting remote thread creation (`CreateRemoteThread`, Event 8) into runtime workers (`python.exe`, `ollama.exe`). |
-| `AML.T0029` | Disarm AI Safeguards & Runtime Memory Tampering | `AiSecurityAuditVoter` | `ResponseAction::Isolate` | Foreign processes requesting `PROCESS_VM_WRITE \| PROCESS_VM_OPERATION` (Event 10) to patch security hooks or disarm guardrails in AI memory. |
+| `AML.T0029` | Disarm AI Safeguards & Runtime Memory Tampering | `AiSecurityAuditVoter` | `ResponseAction::Isolate` | Foreign processes requesting `PROCESS_VM_WRITE &#124; PROCESS_VM_OPERATION` (Event 10) to patch security hooks or disarm guardrails in AI memory. |
 | `AML.T0051` | LLM Jailbreaks & Obfuscated Injections | `AgenticVoter` | `ResponseAction::Tarpit` | Base64-encoded, caret-escaped (`p^w^r^s^h^e^l^l`), and polymorphic jailbreak prompts attempting LLM safety bypass. |
 | `AML.T0054` | Training Data / System Prompt Exfiltration | `AgenticVoter` | `ResponseAction::Alert` | Covert exfiltration of system prompt directives, proprietary RAG context, or embedded credentials to external endpoints. |
 | `AML.T0042` | Denial of ML Service (Sponge / Token Exhaustion) | `AgenticVoter` | `ResponseAction::Tarpit` | Algorithmic sponge attacks, recursive tool loops, and quadratic token expansion designed to starve inference compute and freeze response. |
@@ -451,6 +451,8 @@ To sustain enterprise throughput under high-volume event bursts without saturati
 
 ---
 
+<a id="-quick-start"></a>
+<a id="quick-start"></a>
 ## ⚡ Quick Start
 
 ### Prerequisites
@@ -544,6 +546,8 @@ docker run --privileged --net=host oyesanyf/oshoosiclaw
 
 ---
 
+<a id="-architecture"></a>
+<a id="architecture"></a>
 ## 🏛️ Architecture
 
 OshoosiClaw is built as a **modular monolith** — 20 specialized crates that compile into a single, high-performance binary.
@@ -703,6 +707,8 @@ Treats the system as a **Causal Manifold**:
 
 ---
 
+<a id="-mesh-networking"></a>
+<a id="mesh-networking"></a>
 ## 🌐 Mesh Networking
 
 OshoosiClaw agents form a **decentralized P2P mesh** using libp2p Gossipsub:
@@ -922,6 +928,7 @@ $env:OSOOSI_LLM_AGENT_ENABLED="1"
 | **FLOSS** | String de-obfuscation | ✅ Yes |
 | **HollowsHunter** | Memory forensics | ✅ Yes |
 
+<a id="environment-variables"></a>
 ### Environment Variables
 
 | Variable | Default | Description |
@@ -1070,11 +1077,6 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 
 ---
 
-<p align="center">
-  <strong>Built with ❤️ in Rust for the next generation of decentralized security.</strong>
-  <br/>
-  <em>"Like Ọ̀ṣọ́ọ̀sì, it is both patient and decisive."</em>
-</p>
 ## 🏗️ Production Stability & Hardening (v1.1)
 
 Recent hardening efforts have focused on agent resilience and production stability:
@@ -1117,3 +1119,11 @@ Recent hardening efforts have focused on agent resilience and production stabili
 - **Resilient AI Reasoning**: Integrated **Ollama** as a first-class fallback reasoning engine. If local ONNX/GGUF models fail due to hardware constraints, the agent pivots to Ollama for deep behavioral analysis.
 - **Atomic IOC Engine**: New high-speed indicator scanner providing O(1) constant-time lookups for millions of malicious hashes, IPs, and domains using `HashSet` and `RegexSet`.
 - **In-Memory Telemetry Stats**: Real-time voter statistics are now reported using thread-safe `AtomicU64` counters, visible instantly on the Oshoosi dashboard.
+
+---
+
+<p align="center">
+  <strong>Built with ❤️ in Rust for the next generation of decentralized security.</strong>
+  <br/>
+  <em>"Like Ọ̀ṣọ́ọ̀sì, it is both patient and decisive."</em>
+</p>

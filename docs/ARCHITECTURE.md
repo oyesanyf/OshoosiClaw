@@ -110,11 +110,17 @@ The Military Guard provides advanced detection for asymmetric warfare patterns t
 ### 6. AI Agent Security & Policy Voters (MITRE ATLAS™ & Cloudflare Audit Integration)
 Incorporating both the official **MITRE ATLAS™** (Adversarial Threat Landscape for Artificial-Intelligence Systems) taxonomy and Cloudflare's Security Audit Framework, the EDR's multi-modal consensus engine includes real-time host telemetry voters:
 - **`AiSecurityAuditVoter`**: Evaluates live host execution events for AI-specific attacks, mapping directly to canonical MITRE ATLAS technique IDs:
-  - **Tool-Argument Injection (`AML.T0043`)**: Inspects command-line arguments passed to agent tools for command chaining (`;`, `&&`, `|`), encoded scripts (`powershell -enc`), and dangerous subshell executions.
-  - **Insecure Output & Path Traversal (`AML.T0044`)**: Detects path traversals (`../`, `..\`) through LLM-directed tools targeting sensitive files (`/etc/passwd`, `System32`, `.env`, `.aws`, `id_rsa`).
-  - **Agent Memory & State Poisoning (`AML.T0048` / `AML.T0018`)**: Intercepts Sysmon Event 11 writes targeting persistent agent memory stores (`.agents/memory.md`), policy rules (`.agents/rules/`), and configuration files (`osoosi.toml`).
-  - **Execution Environment Tampering (`AML.T0040`)**: Detects external non-AI processes attempting remote thread creation (`CreateRemoteThread`, Event 8) into AI runtimes.
-  - **Disarm AI Safeguards & Memory Tampering (`AML.T0029`)**: Detects external processes requesting memory modification access (`PROCESS_VM_WRITE | PROCESS_VM_OPERATION`, Event 10) into AI agent runtimes.
+  - **Tool-Argument Injection (`AML.T0043`)**: Inspects command-line arguments passed to agent tools for command chaining (`;`, `&&`, `|`), encoded scripts (`powershell -enc`), and dangerous subshell executions -> `ResponseAction::Tarpit`.
+  - **Insecure Output & Path Traversal (`AML.T0044`)**: Detects path traversals (`../`, `..\`) through LLM-directed tools targeting sensitive files (`/etc/passwd`, `System32`, `.env`, `.aws`, `id_rsa`) -> `ResponseAction::Tarpit`.
+  - **Agent Memory & State Poisoning (`AML.T0048` / `AML.T0018`)**: Intercepts Sysmon Event 11 writes targeting persistent agent memory stores (`.agents/memory.md`), policy rules (`.agents/rules/`), and configuration files (`osoosi.toml`) -> `ResponseAction::Isolate`.
+  - **Execution Environment Tampering (`AML.T0040`)**: Detects external non-AI processes attempting remote thread creation (`CreateRemoteThread`, Event 8) into AI runtimes (`python.exe`, `ollama.exe`) -> `ResponseAction::Isolate`.
+  - **Disarm AI Safeguards & Memory Tampering (`AML.T0029`)**: Detects external processes requesting memory modification access (`PROCESS_VM_WRITE | PROCESS_VM_OPERATION`, Event 10) into AI agent runtimes -> `ResponseAction::Isolate`.
+- **`AgenticVoter`**: Evaluates generative and agentic runtime vectors:
+  - **LLM Jailbreaks & Obfuscated Injections (`AML.T0051`)**: Detects Base64-encoded, caret-escaped (`p^w^r^s^h^e^l^l`), and polymorphic jailbreak prompts attempting safety bypass -> `ResponseAction::Tarpit`.
+  - **Training Data / System Prompt Exfiltration (`AML.T0054`)**: Alerts on unauthorized exfiltration of system prompt directives, proprietary RAG context, or credentials -> `ResponseAction::Alert`.
+  - **Denial of ML Service (`AML.T0042`)**: Detects algorithmic sponge attacks, recursive tool loops, and token exhaustion -> `ResponseAction::Tarpit`.
+- **`ZeroDayVoter`**: Detects model serialization backdoors and poisoned checkpoints (`AML.T0031`) -> `ResponseAction::Isolate`.
+- **Consensus Deduplication Cache Hardening**: Caches multi-voter verdicts using a multi-attribute tuple Blake3 hash: $\text{Blake3}(\text{BinaryHash} \parallel \text{ProcessName} \parallel \text{ReasonCategory} \parallel \text{CommandLine} \parallel \text{TargetFilename})$, guaranteeing zero cross-command verdict collisions while sustaining sub-millisecond evaluation.
 - **`AgenticPolicyVoter`**: Dynamic minimax defense, goal alignment evaluation, and agentic escape detection.
 - **`AgentEgressVoter`**: Threat-observed outbound network egress control, DNS covert channel detection, and adaptive traffic throttling.
 
@@ -138,6 +144,12 @@ CyberShield provides real-time resource anomaly monitoring and process mitigatio
 - **Bidirectional Peer Identity Handshake**: Every node broadcasts `agent_version: "osoosi/0.1.1"` and matches peers across `agent_version`, `protocol_version`, and supported protocols (`/osoosi/1.0.0`). Discovered peers are immediately added to Gossipsub (`add_explicit_peer`), auto-approved, and dialed via mDNS to eliminate disconnect loops.
 - **Kademlia Bootstrap Protection**: Periodic DHT bootstrap triggers are gated on active peer connectivity (`self.swarm.connected_peers().count() > 0`), suppressing unseeded `Failed to trigger bootstrap: No known peers` warnings.
 - **Extended Idle Connection Keep-Alive**: Swarm idle connection timeout is extended to 300s, ensuring stable P2P telemetry channels during heavy model download or background inference tasks.
+
+### 10. P2P Wire Mesh STIX 2.1 Synchronization (`osoosi-wire`)
+- **Authoritative STIX 2.1 Bundle**: 26,381 objects uniting MITRE ATT&CK Enterprise (v19.2) and MITRE ATLAS (v2026.09), correlated with 4,334 production Sigma rules.
+- **GossipSub Channel (`osoosi-stix-sync-v1`)**: Peer-to-peer distribution of cryptographic `StixManifest` with Blake3 checksum and verified object count.
+- **Zero-Downtime Hot-Reloading**: In-memory catalog replacement without daemon restart or telemetry interruption.
+- **Dual-Target Parity**: Strict synchronization across development (`dashboard/src/`) and production (`dashboard/dist/`) directories.
 
 
 
