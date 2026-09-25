@@ -10,7 +10,7 @@
   <a href="#-features"><img src="https://img.shields.io/badge/Engine-Rust%20🦀-orange?style=for-the-badge" alt="Rust"/></a>
   <a href="#-mesh-networking"><img src="https://img.shields.io/badge/Wire-ML--KEM--768%20PQC-blueviolet?style=for-the-badge" alt="PQC"/></a>
   <a href="#-architecture"><img src="https://img.shields.io/badge/Hardware-TPM%202.0%20Silicon-blue?style=for-the-badge" alt="TPM 2.0"/></a>
-  <a href="#-adversarial-verification"><img src="https://img.shields.io/badge/Adversarial%20Tests-97%2F97%20Passed-brightgreen?style=for-the-badge" alt="Tests"/></a>
+  <a href="#-adversarial-verification"><img src="https://img.shields.io/badge/Adversarial%20Tests-105%2F105%20Passed-brightgreen?style=for-the-badge" alt="Tests"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"/></a>
 </p>
 
@@ -21,6 +21,7 @@
   <a href="#-two-host-mesh-consensus">Two-Host BFT Mesh</a> •
   <a href="#-adversarial-verification">Adversarial Testing</a> •
   <a href="#-synthetic-telemetry-canaries--anti-blinding-engine">Canary Anti-Blinding</a> •
+  <a href="#-high-throughput-p2p-mesh--consensus-stability">Mesh Stability</a> •
   <a href="#-cli-reference">CLI Reference</a>
 </p>
 
@@ -253,15 +254,15 @@ OshoosiClaw supports multi-node clustering and edge deployments down to a strict
 
 ---
 
-## ⚡ Adversarial Security Verification (97/97 Tests)
+## ⚡ Adversarial Security Verification (105/105 Tests)
 
-OshoosiClaw includes 97 automated adversarial attack simulation tests evaluating host, peer, telemetry anti-blinding, and in-memory evasion resilience:
+OshoosiClaw includes 105 automated adversarial attack simulation tests evaluating host, peer, telemetry anti-blinding, and in-memory evasion resilience:
 
 ```powershell
 # 1. Attestation, Nonce Replay & TPM Quote Tampering (26 tests)
 cargo test -p osoosi-trust --test adversarial_trust_tests
 
-# 2. Wire Mesh, Peer Replay & Gossip Poisoning (22 tests)
+# 2. Wire Mesh, Peer Replay, Gossip Deduplication & Poisoning (25 tests)
 cargo test -p osoosi-wire --test adversarial_mesh_tests
 
 # 3. Host Core, Byzantine Consensus & Quarantine Isolation (13 tests)
@@ -270,7 +271,10 @@ cargo test -p osoosi-core --test host_adversarial_tests
 # 4. Telemetry Anti-Blinding, BYOVD Rootkit Canaries & Sysmon (32 tests)
 cargo test -p osoosi-telemetry
 
-# 5. In-Memory Evasion & Unbacked Thread Execution (4 tests)
+# 5. Policy Engine, Sandbox Surface & Privilege Security (5 tests)
+cargo test -p osoosi-policy
+
+# 6. In-Memory Evasion & Unbacked Thread Execution (4 tests)
 cargo test -p osoosi-memory
 ```
 
@@ -302,6 +306,28 @@ Passive EDR sensors fail when an adversary loads a vulnerable kernel driver to z
 
 ---
 
+## 🌐 High-Throughput P2P Mesh & Consensus Stability
+
+To sustain enterprise throughput under high-volume event bursts without saturating peer-to-peer network bandwidth or stalling real-time threat response, OshoosiClaw incorporates dedicated mesh deduplication, asynchronous consensus optimization, and correlator alarm debouncing:
+
+### 1. GossipSub Deduplication & Noise Suppression
+- **Dynamic Merkle Root Caching**: Upstream `last_audit_proof` Merkle root deduplication in `MeshNode` prevents redundant gossip chatter across the network when audit ledger roots remain unchanged.
+- **Resilient Error Recovery**: Robust publish handling ensures that `PublishError::InsufficientPeers` leaves `last_audit_proof` unlocked, allowing bootstrap re-broadcasts to automatically succeed once remote peers join the mesh.
+- **Trace-Level Noise Suppression**: GossipSub duplicate rejection returns (`PublishError::Duplicate`) are handled gracefully and demoted to `trace!` logging, preventing normal distributed duplicate re-announcements from polluting operational logs.
+- **Subscriber Log Filtering**: Configured subscriber log filter `libp2p_gossipsub=error` in both file and console loggers to silence normal distributed duplicate cache rejections and protocol noise.
+- **Peer Audit Proof Ingestion**: Fully handled incoming peer audit proofs on `audit_proof_topic` with debug-level logging and validation.
+
+### 2. Consensus Memory Inspection Voter Optimization
+- **Heavy Voter Categorization**: `MemoryInspectionVoter` is categorized as heavy (`fn is_heavy(&self) -> bool { true }`), enabling the consensus engine to automatically bypass heavy PE memory and unbacked thread scans during `SILENT` mode and high-volume event bursts.
+- **Asynchronous 2-Second Timeout**: Internal 2-second timeout wraps asynchronous memory inspections via `tokio::task::spawn_blocking`, eliminating 30-second voter consensus stalls (`[CONSENSUS] voter TIMEOUT — treating as abstain`) and guaranteeing deterministic consensus evaluation latencies.
+
+### 3. Correlator Alarm Storm Hardening & Threat Deduplication
+- **Windows System PID Protection**: Built-in safeguards automatically protect Windows System PIDs (`0`, `4`) and unknown image paths from aggressive correlation and isolation actions.
+- **Exponential Score Decay & Alert Debouncing**: Process suspicion scores dynamically decay over time (reducing stale conviction), coupled with a 60-second alert debouncing window per process context to suppress alarm fatigue.
+- **Deterministic Suppression Cache**: The alert suppression cache is keyed on `{hash}:{process_name}:{threat_category}` instead of transient UUIDs, preventing alert storms while maintaining an accurate forensic audit trail.
+
+---
+
 ## ⚡ Quick Start
 
 ### Prerequisites
@@ -315,10 +341,35 @@ Passive EDR sensors fail when an adversary loads a vulnerable kernel driver to z
 
 ### Windows Installer (MSI)
 
+OshoosiClaw provides a standalone, production-ready Windows Installer (`OshoosiClaw.msi`, ~25MB) built with WiX v5 that bundles all necessary dependencies for immediate zero-touch deployment:
+- `osoosi.exe`: Release binary automatically registered to the system `PATH`.
+- `onnxruntime.dll`: Root ONNX Runtime (1.22.x) engine for local ML inference.
+- Signed Configurations: Cryptographically signed policies (`osoosi.toml` + `osoosi.toml.sign`, `openshell-policy.yaml`, `firewall_allowlist.txt`).
+- Sysmon 4.91 Profiles: Production ETW profiles (`sysmon-dns.xml` and `sysmonconfig-export.xml`).
+- Web UI Assets: Complete dashboard distribution assets (`dashboard/dist/*`).
+
+#### Installation Methods
+
 ```powershell
-# Download & install via standalone Windows Installer (OshoosiClaw.msi, ~25MB)
+# Interactive installation
+msiexec /i OshoosiClaw.msi
+
+# Silent / unattended background deployment
 msiexec /i OshoosiClaw.msi /quiet /qn
-# Bundles osoosi.exe, onnxruntime.dll (1.22.x), sysmon-dns.xml 4.91, signed osoosi.toml, and dashboard
+```
+
+#### Building the MSI from Source (WiX v5)
+
+```powershell
+# 1. Compile release binary and sign configurations
+cargo build --release -p osoosi-cli
+.\target\release\osoosi.exe sign-configs
+
+# 2. Build standalone MSI directly using WiX v5
+wix build wix\OshoosiClaw.wxs -arch x64 -out OshoosiClaw.msi
+
+# Or run the automated deployment packager
+powershell -ExecutionPolicy Bypass -File scripts\package.ps1
 ```
 
 ### Build From Source
@@ -345,6 +396,21 @@ cargo build --release --all-features
 On each `start`, the agent **discovers** `git` and `openshell` from `PATH` and standard locations, then **persists** absolute paths under `%APPDATA%\osoosi\tool_paths.json` (see [Environment Variables](#environment-variables)). This avoids repeated lookups on later runs.
 
 The **osoosi-dashboard** crate is a workspace member and a direct dependency of **osoosi-cli** (Axum web UI for `start --dashboard` and the `dashboard` subcommand). Standard `cargo build --release` compiles it; you should not exclude it from release builds.
+
+### 🛡️ Windows Smart App Control (SAC) & Code Integrity Notes
+
+On Windows 11 systems with **Smart App Control (SAC)** or AppLocker / Windows Defender Application Control (WDAC) enabled in evaluation or enforcement mode, policy enforcement events may be recorded in Event Viewer under `Microsoft-Windows-CodeIntegrity/Operational` (Event IDs **3077** or **3118**: `An Application Control policy has blocked this file`).
+
+- **Procedural Macro DLL Reputation Delays**: During release compilation on fresh checkouts, the Rust compiler links and executes host procedural macro dynamic libraries (such as `zeroize_derive-*.dll` in `target/release/deps`). Windows Smart App Control submits newly compiled procedural macro binaries to cloud reputation services. If cloud verification is still resolving, SAC may temporarily block the DLL from loading, causing `rustc` to emit cascading compilation errors:
+  ```text
+  error[E0463]: can't find crate for `zeroize_derive` which `zeroize` depends on
+  ```
+- **Remediation**: This is a transient cloud reputation lookup delay on unsigned host build artifacts. Once the local reputation cache settles (typically within 10–30 seconds), simply query or re-run compilation to proceed cleanly:
+  ```powershell
+  # Query the built binary or re-run release compilation once reputation settles
+  cargo run --release -p osoosi-cli -- --help
+  cargo build --release
+  ```
 
 ### Docker (Coming Soon)
 
@@ -856,6 +922,10 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 
 Recent hardening efforts have focused on agent resilience and production stability:
 
+- **P2P Gossip Deduplication & Noise Suppression**: Dynamic Merkle root caching with `InsufficientPeers` recovery and subscriber-level `libp2p_gossipsub=error` log filtering.
+- **Consensus Voter Timeout Elimination**: `MemoryInspectionVoter` heavy categorization and 2-second asynchronous timeout to eliminate consensus stalls.
+- **Correlator Alarm Storm Hardening**: Score decay, system PID protections, and category-based suppression keys.
+- **Self-Contained WiX v5 Packaging**: Clean root DLL path references and dynamic WiX executable discovery in `package.ps1`.
 - **Active Telemetry Anti-Blinding**: Closed-loop canary stimulus engine detecting kernel notify unhooking and ETW blinding.
 - **Polymorphic Probe Verification**: Dynamic HMAC-SHA256 time-slotted tokens and 5 polymorphic CLI entrypoints.
 - **In-Memory Unbacked Thread Forensics**: Native Win32 thread start and instruction pointer inspection against unmapped memory regions.
