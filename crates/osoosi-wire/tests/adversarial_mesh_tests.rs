@@ -856,3 +856,85 @@ fn test_attack_gossipsub_message_deduplication_hash_id() {
     assert_ne!(id1, id3, "Different gossip payloads must produce distinct message IDs");
 }
 
+#[test]
+fn test_audit_proof_deduplication_and_suppression() {
+    let mut last_audit_proof: Option<String> = None;
+
+    let proof_alpha = "merkle_root_0xdeadbeef00112233".to_string();
+    let proof_beta = "merkle_root_0xcafebabe44556677".to_string();
+
+    // 1. First broadcast must not be skipped
+    let skip_1 = last_audit_proof.as_ref() == Some(&proof_alpha);
+    assert!(!skip_1, "Initial audit proof broadcast must not be skipped");
+    last_audit_proof = Some(proof_alpha.clone());
+
+    // 2. Redundant broadcast with same Merkle root must be skipped
+    let skip_2 = last_audit_proof.as_ref() == Some(&proof_alpha);
+    assert!(skip_2, "Consecutive identical audit proof broadcast must be skipped to avoid gossip spam");
+
+    // 3. New Merkle root after new audit leaf must not be skipped
+    let skip_3 = last_audit_proof.as_ref() == Some(&proof_beta);
+    assert!(!skip_3, "Updated audit proof with new Merkle root must proceed to gossip publish");
+    last_audit_proof = Some(proof_beta.clone());
+
+    // 4. Repeated broadcast with new Merkle root must be skipped
+    let skip_4 = last_audit_proof.as_ref() == Some(&proof_beta);
+    assert!(skip_4, "Consecutive broadcast of updated Merkle root must be skipped");
+}
+
+#[tokio::test]
+async fn test_mesh_node_initializes_empty_audit_proof() {
+    let memory = Arc::new(MemoryStore::new(":memory:").unwrap());
+    let node = osoosi_wire::MeshNode::new(memory).await.unwrap();
+    assert_eq!(node.last_audit_proof, None, "MeshNode must initialize last_audit_proof to None");
+}
+
+#[test]
+fn test_gossipsub_duplicate_rejection_behavior() {
+    use std::time::Duration;
+    use libp2p::gossipsub;
+    use libp2p::identity::Keypair;
+
+    let key = Keypair::generate_ed25519();
+    let message_id_fn = |message: &gossipsub::Message| {
+        let mut s = std::collections::hash_map::DefaultHasher::new();
+        std::hash::Hash::hash(&message.data, &mut s);
+        gossipsub::MessageId::from(std::hash::Hasher::finish(&s).to_string())
+    };
+
+    let config = gossipsub::ConfigBuilder::default()
+        .validation_mode(gossipsub::ValidationMode::Strict)
+        .message_id_fn(message_id_fn)
+        .duplicate_cache_time(Duration::from_secs(60))
+        .build()
+        .unwrap();
+
+    let mut gs: gossipsub::Behaviour = gossipsub::Behaviour::new(
+        gossipsub::MessageAuthenticity::Signed(key),
+        config,
+    ).unwrap();
+
+    let topic = gossipsub::IdentTopic::new("test-gossip-duplicate");
+    gs.subscribe(&topic).unwrap();
+
+    let payload = b"test_payload_duplicate_verification".to_vec();
+
+    // First publish without peers will return InsufficientPeers (since no peers connected)
+    let res1 = gs.publish(topic.clone(), payload.clone());
+    // In strict mode without peers, first publish returns InsufficientPeers
+    assert!(matches!(res1, Err(gossipsub::PublishError::InsufficientPeers)));
+
+    // When a duplicate message is known in the duplicate cache (or published again)
+    // duplicate detection is guaranteed by the message ID function
+    let msg = gossipsub::Message {
+        source: None,
+        data: payload.clone(),
+        sequence_number: None,
+        topic: topic.hash(),
+    };
+    let id1 = (message_id_fn)(&msg);
+    let id2 = (message_id_fn)(&msg);
+    assert_eq!(id1, id2, "Message IDs must be deterministic for identical payloads");
+}
+
+

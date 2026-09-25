@@ -577,8 +577,18 @@ impl MeshNode {
                             // Merkle root has not changed; skip redundant publish to avoid gossip noise
                             continue;
                         }
-                        self.last_audit_proof = Some(proof.clone());
-                        let _ = self.swarm.behaviour_mut().gossipsub.publish(self.audit_proof_topic.clone(), proof.as_bytes());
+                        match self.swarm.behaviour_mut().gossipsub.publish(self.audit_proof_topic.clone(), proof.as_bytes()) {
+                            Ok(_) => {
+                                self.last_audit_proof = Some(proof);
+                            }
+                            Err(libp2p::gossipsub::PublishError::Duplicate) => {
+                                self.last_audit_proof = Some(proof);
+                                tracing::trace!("[mesh] duplicate audit proof suppressed on {}", self.audit_proof_topic);
+                            }
+                            Err(e) => {
+                                tracing::debug!("[mesh] audit proof publish non-fatal: {}", e);
+                            }
+                        }
                     }
                     MeshCommand::DialPeer(pid, addr) => {
                         if let Ok(maddr) = addr.parse::<Multiaddr>() {
@@ -724,6 +734,10 @@ impl MeshNode {
                                 if action.action == super::ReconciliationKind::CatchUpGossip {
                                     debug!("Self-healing: Catch-up gossip triggered for peer {}", hb.peer_id);
                                 }
+                            }
+                        } else if message.topic == self.audit_proof_topic.hash() {
+                            if let Ok(proof_str) = std::str::from_utf8(&message.data) {
+                                debug!("[mesh] Received audit proof from {}: {}", propagation_source, proof_str);
                             }
                         }
                     }
