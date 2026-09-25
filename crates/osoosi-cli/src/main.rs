@@ -1632,13 +1632,44 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
     let file_appender = tracing_appender::rolling::daily(&log_dir, "osoosi.log");
     let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
     
-    // File Filter: Always INFO (or DEBUG if requested) to capture full forensics
+    let file_filter = create_file_filter(debug);
+    let console_filter = create_console_filter(debug);
+
+    let console_layer = fmt::Layer::default()
+        .with_writer(std::io::stdout)
+        .with_filter(console_filter);
+    
+    let file_layer = fmt::Layer::default()
+        .with_writer(non_blocking)
+        .with_ansi(false)
+        .with_filter(file_filter);
+
+    let _ = tracing_subscriber::registry()
+        .with(console_layer)
+        .with(file_layer)
+        .with(osoosi_exporter::init_opentelemetry_layer())
+        .try_init();
+
+    if !debug {
+        println!("[*] Logging initialized. Console level: WARN, File level: INFO");
+        println!("[*] Logs available at: {}", log_dir.display());
+    } else {
+        info!(
+            path = %log_dir.display(),
+            "Debug logging enabled. Console level: DEBUG, File level: DEBUG"
+        );
+    }
+    
+    Ok(guard)
+}
+
+pub fn create_file_filter(debug: bool) -> EnvFilter {
     let file_level = if debug {
         tracing::Level::DEBUG
     } else {
         tracing::Level::INFO
     };
-    let file_filter = EnvFilter::from_default_env()
+    EnvFilter::from_default_env()
         .add_directive(file_level.into())
         .add_directive("nostr_relay_pool=off".parse().expect("static directive"))
         .add_directive("nostr=error".parse().expect("static directive"))
@@ -1655,15 +1686,16 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
         .add_directive("tokenizers=error".parse().expect("static directive"))
         .add_directive("libp2p_kad=error".parse().expect("static directive"))
         .add_directive("libp2p_gossipsub=error".parse().expect("static directive"))
-        .add_directive("regalloc2=warn".parse().expect("static directive"));
+        .add_directive("regalloc2=warn".parse().expect("static directive"))
+}
 
-    // Console Filter: WARN by default to prevent system freezes/I/O bottleneck
+pub fn create_console_filter(debug: bool) -> EnvFilter {
     let console_level = if debug {
         tracing::Level::DEBUG
     } else {
         tracing::Level::WARN
     };
-    let console_filter = EnvFilter::from_default_env()
+    EnvFilter::from_default_env()
         .add_directive(console_level.into())
         .add_directive("nostr_relay_pool=off".parse().expect("static directive"))
         .add_directive("nostr=error".parse().expect("static directive"))
@@ -1680,34 +1712,7 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
         .add_directive("wasmtime_jit=warn".parse().expect("static directive"))
         .add_directive("wasmtime=warn".parse().expect("static directive"))
         .add_directive("wasmtime_wasi=warn".parse().expect("static directive"))
-        .add_directive("regalloc2=warn".parse().expect("static directive"));
-
-    let console_layer = fmt::Layer::default()
-        .with_writer(std::io::stdout)
-        .with_filter(console_filter);
-    
-    let file_layer = fmt::Layer::default()
-        .with_writer(non_blocking)
-        .with_ansi(false)
-        .with_filter(file_filter);
-
-    tracing_subscriber::registry()
-        .with(console_layer)
-        .with(file_layer)
-        .with(osoosi_exporter::init_opentelemetry_layer())
-        .init();
-
-    if !debug {
-        println!("[*] Logging initialized. Console level: WARN, File level: INFO");
-        println!("[*] Logs available at: {}", log_dir.display());
-    } else {
-        info!(
-            path = %log_dir.display(),
-            "Debug logging enabled. Console level: DEBUG, File level: DEBUG"
-        );
-    }
-    
-    Ok(guard)
+        .add_directive("regalloc2=warn".parse().expect("static directive"))
 }
 
 fn run_yara_sanitizer() {
@@ -2365,5 +2370,181 @@ async fn install_ollama_best_effort() {
             Ok(Err(e)) => warn!("Failed to start Ollama Linux installer: {}", e),
             Err(_) => warn!("Ollama Linux installer timed out."),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use std::sync::{Arc, Mutex};
+    use std::io::Write;
+    use tracing_subscriber::fmt::MakeWriter;
+
+    #[derive(Clone)]
+    struct BufferWriter(Arc<Mutex<Vec<u8>>>);
+
+    impl Write for BufferWriter {
+        fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+            self.0.lock().unwrap().extend_from_slice(buf);
+            Ok(buf.len())
+        }
+        fn flush(&mut self) -> std::io::Result<()> {
+            Ok(())
+        }
+    }
+
+    impl<'a> MakeWriter<'a> for BufferWriter {
+        type Writer = BufferWriter;
+        fn make_writer(&'a self) -> Self::Writer {
+            self.clone()
+        }
+    }
+
+    #[test]
+    fn test_file_filter_silences_nostr_relay_pool() {
+        let log_buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = BufferWriter(log_buffer.clone());
+
+        let layer = fmt::Layer::default()
+            .with_writer(writer)
+            .with_ansi(false)
+            .with_filter(create_file_filter(false));
+
+        let subscriber = tracing_subscriber::registry().with(layer);
+
+        tracing::subscriber::with_default(subscriber, || {
+            // Simulated nostr_relay_pool background retry error
+            tracing::error!(
+                target: "nostr_relay_pool::relay::internal",
+                "Impossible to connect to 'wss://nos.lol/': ws error: HTTP error: 502 Bad Gateway"
+            );
+            // Simulated nostr_relay_pool latency warning
+            tracing::warn!(
+                target: "nostr_relay_pool::relay::internal",
+                "Latency of 'wss://nos.lol/' relay is high"
+            );
+            // Simulated regular application log
+            tracing::info!(target: "osoosi_core", "Telemetry heartbeat normal");
+        });
+
+        let output = String::from_utf8(log_buffer.lock().unwrap().clone()).expect("valid utf8");
+        assert!(
+            !output.contains("502 Bad Gateway"),
+            "nostr_relay_pool connection errors must be silenced by file_filter"
+        );
+        assert!(
+            !output.contains("Latency of"),
+            "nostr_relay_pool latency warnings must be silenced by file_filter"
+        );
+        assert!(
+            output.contains("Telemetry heartbeat normal"),
+            "Normal application INFO logs must be captured by file_filter"
+        );
+    }
+
+    #[test]
+    fn test_console_filter_silences_nostr_relay_pool_and_nostr_warnings() {
+        let log_buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = BufferWriter(log_buffer.clone());
+
+        let layer = fmt::Layer::default()
+            .with_writer(writer)
+            .with_ansi(false)
+            .with_filter(create_console_filter(false));
+
+        let subscriber = tracing_subscriber::registry().with(layer);
+
+        tracing::subscriber::with_default(subscriber, || {
+            // nostr_relay_pool retry error
+            tracing::error!(
+                target: "nostr_relay_pool::relay::internal",
+                "Impossible to connect to 'wss://nos.lol/': ws error: HTTP error: 502 Bad Gateway"
+            );
+            // nostr warning (should be suppressed by nostr=error)
+            tracing::warn!(target: "nostr", "Minor nostr protocol warning");
+            // nostr error (should be allowed through by nostr=error)
+            tracing::error!(target: "nostr", "Critical nostr protocol corruption");
+            // General application warning
+            tracing::warn!(target: "osoosi_core", "System firewall warning");
+        });
+
+        let output = String::from_utf8(log_buffer.lock().unwrap().clone()).expect("valid utf8");
+        assert!(
+            !output.contains("502 Bad Gateway"),
+            "nostr_relay_pool error must be silenced in console_filter"
+        );
+        assert!(
+            !output.contains("Minor nostr protocol warning"),
+            "nostr warnings must be filtered out by console_filter"
+        );
+        assert!(
+            output.contains("Critical nostr protocol corruption"),
+            "nostr errors must pass through console_filter"
+        );
+        assert!(
+            output.contains("System firewall warning"),
+            "Standard WARN logs must pass through console_filter"
+        );
+    }
+
+    #[test]
+    fn test_debug_mode_retains_nostr_relay_pool_silence() {
+        let log_buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = BufferWriter(log_buffer.clone());
+
+        let layer = fmt::Layer::default()
+            .with_writer(writer)
+            .with_ansi(false)
+            .with_filter(create_file_filter(true));
+
+        let subscriber = tracing_subscriber::registry().with(layer);
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::error!(
+                target: "nostr_relay_pool::relay::internal",
+                "Impossible to connect to 'wss://nos.lol/': ws error: HTTP error: 502 Bad Gateway"
+            );
+            tracing::debug!(target: "osoosi_core", "Detailed diagnostic trace");
+        });
+
+        let output = String::from_utf8(log_buffer.lock().unwrap().clone()).expect("valid utf8");
+        assert!(
+            !output.contains("502 Bad Gateway"),
+            "nostr_relay_pool must remain silenced even when debug logging is active"
+        );
+        assert!(
+            output.contains("Detailed diagnostic trace"),
+            "Core debug logs must appear when debug is active"
+        );
+    }
+
+    #[tokio::test]
+    async fn test_live_nostr_relay_pool_connection_failure_silence() {
+        let log_buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = BufferWriter(log_buffer.clone());
+
+        let layer = fmt::Layer::default()
+            .with_writer(writer)
+            .with_ansi(false)
+            .with_filter(create_file_filter(false));
+
+        let subscriber = tracing_subscriber::registry().with(layer);
+
+        let _guard = tracing::subscriber::set_default(subscriber);
+
+        let orch = osoosi_core::nostr_mesh::NostrMeshOrchestrator::new(None, 1.0)
+            .await
+            .expect("orchestrator initialized");
+        let _ = orch.add_relay("ws://127.0.0.1:19").await;
+        orch.connect().await;
+
+        tokio::time::sleep(tokio::time::Duration::from_millis(600)).await;
+
+        let output = String::from_utf8(log_buffer.lock().unwrap().clone()).expect("valid utf8");
+        assert!(
+            !output.contains("Impossible to connect"),
+            "Live nostr_relay_pool connection failure log must be suppressed by filter, but got: {}",
+            output
+        );
     }
 }
