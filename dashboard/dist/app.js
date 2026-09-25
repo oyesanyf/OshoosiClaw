@@ -3824,12 +3824,16 @@ async function renderMitreView() {
 
 function setupMitreFilters() {
     const searchInput = document.getElementById('mitre-search');
+    const frameworkFilter = document.getElementById('mitre-framework-filter');
     const tacticFilter = document.getElementById('mitre-tactic-filter');
     const statusFilter = document.getElementById('mitre-status-filter');
     const resetBtn = document.getElementById('mitre-reset-filter-btn');
 
     if (searchInput) {
         searchInput.addEventListener('input', () => applyMitreFiltersAndRender());
+    }
+    if (frameworkFilter) {
+        frameworkFilter.addEventListener('change', () => applyMitreFiltersAndRender());
     }
     if (tacticFilter) {
         tacticFilter.addEventListener('change', () => applyMitreFiltersAndRender());
@@ -3840,6 +3844,7 @@ function setupMitreFilters() {
     if (resetBtn) {
         resetBtn.addEventListener('click', () => {
             if (searchInput) searchInput.value = '';
+            if (frameworkFilter) frameworkFilter.value = 'all';
             if (tacticFilter) tacticFilter.value = 'all';
             if (statusFilter) statusFilter.value = 'all';
             applyMitreFiltersAndRender();
@@ -3866,11 +3871,13 @@ function applyMitreFiltersAndRender() {
     if (!container) return;
 
     const searchInput = document.getElementById('mitre-search');
+    const frameworkFilter = document.getElementById('mitre-framework-filter');
     const tacticFilter = document.getElementById('mitre-tactic-filter');
     const statusFilter = document.getElementById('mitre-status-filter');
     const countEl = document.getElementById('mitre-filter-count');
 
     const searchVal = (searchInput?.value || '').trim().toLowerCase();
+    const frameworkVal = frameworkFilter?.value || 'all';
     const tacticVal = tacticFilter?.value || 'all';
     const statusVal = statusFilter?.value || 'all';
 
@@ -3891,12 +3898,21 @@ function applyMitreFiltersAndRender() {
                 return false;
             }
 
+            const isAtlas = t.is_atlas || t.id.startsWith('AML.');
+            if (frameworkVal === 'atlas') {
+                if (!isAtlas) return false;
+            } else if (frameworkVal === 'enterprise') {
+                if (isAtlas) return false;
+            }
+
             if (searchVal) {
                 const matchId = t.id.toLowerCase().includes(searchVal);
                 const matchName = t.name.toLowerCase().includes(searchVal);
+                const matchVoter = (t.voter || '').toLowerCase().includes(searchVal);
+                const matchAction = (t.consensus_action || '').toLowerCase().includes(searchVal);
                 const matchGroups = (t.groups || []).some(g => g.toLowerCase().includes(searchVal));
                 const matchSubs = (t.subtechniques || []).some(s => s.id.toLowerCase().includes(searchVal) || s.name.toLowerCase().includes(searchVal));
-                if (!matchId && !matchName && !matchGroups && !matchSubs) {
+                if (!matchId && !matchName && !matchVoter && !matchAction && !matchGroups && !matchSubs) {
                     return false;
                 }
             }
@@ -3935,14 +3951,23 @@ function applyMitreFiltersAndRender() {
                         const techAlertCount = activeDetectionsByTech[tech.id] || 0;
                         const hasAlert = techAlertCount > 0;
                         const subCount = tech.subtechniques?.length || 0;
+                        const isAtlas = tech.is_atlas || tech.id.startsWith('AML.');
+                        const voter = tech.voter;
+                        const action = tech.consensus_action;
+                        const sigmaCount = tech.sigma_rules?.length || 0;
+
                         return `
                             <div class="mitre-technique-card ${hasAlert ? 'has-alerts' : ''}" data-tech-id="${tech.id}" onclick="openMitreTechniqueModalById('${tech.id}')">
                                 <div class="mitre-tech-header">
                                     <span class="mitre-tech-id">${tech.id}</span>
+                                    ${isAtlas ? '<span class="badge magenta" style="font-size: 9px; padding: 1px 4px; background: rgba(255, 0, 128, 0.15); color: #ff3399; border: 1px solid rgba(255, 0, 128, 0.3);">ATLAS</span>' : ''}
                                     ${hasAlert ? `<span class="badge red" style="font-size: 9px; padding: 1px 4px;">${techAlertCount > 1 ? techAlertCount + ' Alerts' : 'Alert'}</span>` : '<span class="badge green" style="font-size: 9px; padding: 1px 4px;">Protected</span>'}
                                 </div>
                                 <div class="mitre-tech-title">${tech.name}</div>
                                 <div class="mitre-tech-badges">
+                                    ${voter ? `<span class="badge cyan" style="font-size: 9px; padding: 1px 4px; background: rgba(0, 210, 255, 0.12); color: #00d2ff; border: 1px solid rgba(0, 210, 255, 0.25);">${voter}</span>` : ''}
+                                    ${action ? `<span class="badge yellow" style="font-size: 9px; padding: 1px 4px; background: rgba(255, 170, 0, 0.12); color: #ffaa00; border: 1px solid rgba(255, 170, 0, 0.25);">${action}</span>` : ''}
+                                    ${sigmaCount > 0 ? `<span class="badge blue" style="font-size: 9px; padding: 1px 4px;" title="${sigmaCount} Sigma rules">${sigmaCount}σ</span>` : ''}
                                     ${subCount > 0 ? `<span class="badge blue" style="font-size: 9px; padding: 1px 4px;">.${subCount} sub</span>` : ''}
                                     ${tech.groups && tech.groups.length > 0 ? `<span class="badge purple" style="font-size: 9px; padding: 1px 4px;">${tech.groups[0]}</span>` : ''}
                                 </div>
@@ -3994,6 +4019,39 @@ async function openMitreTechniqueModalById(techId) {
     document.getElementById('modal-tech-name').innerText = tech.name;
     document.getElementById('modal-tech-desc').innerText = tech.description || 'No description available.';
 
+    // Voter & Consensus Action Badges
+    const voterEl = document.getElementById('modal-tech-voter');
+    if (voterEl) {
+        voterEl.innerText = tech.voter || 'SigmaVoter';
+        voterEl.style.display = 'inline-block';
+    }
+
+    const actionEl = document.getElementById('modal-tech-action');
+    if (actionEl) {
+        actionEl.innerText = `Action: ${tech.consensus_action || 'Alert'}`;
+        actionEl.style.display = 'inline-block';
+    }
+
+    // Platforms
+    const platformsDiv = document.getElementById('modal-tech-platforms');
+    if (platformsDiv) {
+        const plats = tech.platforms && tech.platforms.length > 0 ? tech.platforms : ['Windows', 'Linux', 'macOS'];
+        platformsDiv.innerHTML = plats.map(p => `
+            <span class="badge" style="font-size: 10px; padding: 2px 6px; background: rgba(255, 255, 255, 0.06); color: var(--text-muted); border: 1px solid var(--glass-border);">${p}</span>
+        `).join('');
+    }
+
+    // Telemetry & Data Sources
+    const telemetryDiv = document.getElementById('modal-tech-telemetry');
+    if (telemetryDiv) {
+        const sources = tech.data_sources && tech.data_sources.length > 0 ? tech.data_sources : ['Kernel ETW Telemetry', 'Sysmon Event Correlation'];
+        telemetryDiv.innerHTML = sources.map(s => `
+            <span class="badge cyan" style="font-size: 11px; padding: 4px 8px; background: rgba(0, 210, 255, 0.1); color: #00d2ff; border: 1px solid rgba(0, 210, 255, 0.25);">
+                <i data-lucide="activity" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 4px;"></i>${s}
+            </span>
+        `).join('');
+    }
+
     // Detections
     const detectionsDiv = document.getElementById('modal-tech-detections');
     if (detectionsDiv) {
@@ -4001,10 +4059,36 @@ async function openMitreTechniqueModalById(techId) {
         detectionsDiv.innerHTML = dets.map(d => `<span class="badge blue" style="font-size: 11px; padding: 4px 8px;"><i data-lucide="crosshair" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 4px;"></i>${d}</span>`).join('');
     }
 
+    // Sigma Rules Section
+    const sigmaSec = document.getElementById('modal-tech-sigma-section');
+    const sigmaCountEl = document.getElementById('modal-tech-sigma-count');
+    const sigmaListEl = document.getElementById('modal-tech-sigma-list');
+    if (sigmaSec && sigmaCountEl && sigmaListEl) {
+        const rules = tech.sigma_rules || [];
+        if (rules.length > 0) {
+            sigmaSec.style.display = 'block';
+            sigmaCountEl.innerText = rules.length;
+            sigmaListEl.innerHTML = rules.map(r => `
+                <div style="font-size: 11px; font-family: 'JetBrains Mono', monospace; color: var(--text-primary); display: flex; align-items: center; gap: 6px;">
+                    <i data-lucide="file-code" style="width: 12px; height: 12px; color: var(--accent-cyan); flex-shrink: 0;"></i>
+                    <span>${r}</span>
+                </div>
+            `).join('');
+        } else {
+            sigmaSec.style.display = 'none';
+        }
+    }
+
     // Mitigations
     const mitigationsDiv = document.getElementById('modal-tech-mitigations');
     if (mitigationsDiv) {
-        const mits = tech._mitigations_detail || (tech.mitigations || ['M1038: Execution Prevention', 'M1047: Audit & Security Logging']).map(m => ({ id: m.split(':')[0], name: m, description: 'Enforced via OpenỌ̀ṣọ́ọ̀sì Agentic policy runtime and kernel telemetry.' }));
+        const mits = tech._mitigations_detail || (tech.mitigations || ['M1038: Execution Prevention', 'M1047: Audit & Security Logging']).map(m => {
+            if (typeof m === 'string') {
+                const parts = m.split(':');
+                return { id: parts[0].trim(), name: parts.slice(1).join(':').trim() || parts[0].trim(), description: 'Enforced via OpenỌ̀ṣọ́ọ̀sì Agentic policy runtime and kernel telemetry.' };
+            }
+            return m;
+        });
         mitigationsDiv.innerHTML = mits.map(m => `
             <div style="background: rgba(0, 0, 0, 0.2); border: 1px solid var(--glass-border); border-radius: 6px; padding: 8px 12px;">
                 <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 2px;">
@@ -4032,7 +4116,7 @@ async function openMitreTechniqueModalById(techId) {
             subDiv.innerHTML = tech.subtechniques.map(s => `
                 <div style="background: rgba(0, 0, 0, 0.2); border: 1px solid var(--glass-border); border-radius: 6px; padding: 6px 10px;">
                     <div style="font-size: 12px; font-family: 'JetBrains Mono', monospace; color: var(--accent-blue); font-weight: 600;">${s.id}: ${s.name}</div>
-                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${s.description}</div>
+                    <div style="font-size: 11px; color: var(--text-muted); margin-top: 2px;">${s.description || ''}</div>
                 </div>
             `).join('');
         } else {
@@ -4077,31 +4161,32 @@ function getBuiltInMitreData() {
             { id: "TA0040", name: "Impact", description: "Disrupting or destroying data" }
         ],
         techniques: [
-            { id: "T1595", name: "Active Scanning", tactic_id: "TA0043", tactic_name: "Reconnaissance", description: "Executing network port scans and vulnerability queries.", data_sources: ["Network Traffic"], mitigations: ["M1037: Filter Network Traffic"], groups: ["APT28", "Volt Typhoon"], detection_mechanisms: ["WFP NetFilter", "Sigma Port Scan"], subtechniques: [{ id: "T1595.001", name: "Scanning IP Blocks", description: "Broad scanning." }] },
-            { id: "T1592", name: "Gather Victim Host Info", tactic_id: "TA0043", tactic_name: "Reconnaissance", description: "Gathering hardware and OS specs.", data_sources: ["Network Traffic"], mitigations: ["M1054: Software Configuration"], groups: ["APT29"], detection_mechanisms: ["EDR Telemetry Audit"], subtechniques: [] },
-            { id: "T1650", name: "Acquire Access", tactic_id: "TA0042", tactic_name: "Resource Development", description: "Purchasing access from initial access brokers.", data_sources: ["Threat Feeds"], mitigations: ["M1036: Account Use Policies"], groups: ["LockBit", "BlackCat"], detection_mechanisms: ["OTX Darknet CTI Voter"], subtechniques: [] },
-            { id: "T1583", name: "Acquire Infrastructure", tactic_id: "TA0042", tactic_name: "Resource Development", description: "Buying domains or leasing VPS.", data_sources: ["External CTI"], mitigations: ["M1056: Pre-compromise Threat Intelligence"], groups: ["APT29", "Volt Typhoon"], detection_mechanisms: ["OTX TAXII Feed"], subtechniques: [] },
-            { id: "T1566", name: "Phishing", tactic_id: "TA0001", tactic_name: "Initial Access", description: "Sending deceptive emails with malicious payloads.", data_sources: ["Process Creation"], mitigations: ["M1021: Restrict Web-Based Content"], groups: ["APT29", "FIN7"], detection_mechanisms: ["Sysmon Event 1", "Sigma Rule"], subtechniques: [{ id: "T1566.001", name: "Spearphishing Attachment", description: "Weaponized attachments." }] },
-            { id: "T1190", name: "Exploit Public-Facing App", tactic_id: "TA0001", tactic_name: "Initial Access", description: "Exploiting remote unauthenticated bugs in web servers.", data_sources: ["Application Log"], mitigations: ["M1051: Update Software & Patching"], groups: ["Volt Typhoon", "LockBit"], detection_mechanisms: ["CISA KEV Matcher", "NVD CVE Tagger"], subtechniques: [] },
-            { id: "T1059", name: "Command and Scripting Interpreter", tactic_id: "TA0002", tactic_name: "Execution", description: "Abusing PowerShell or command shell.", data_sources: ["Process Creation"], mitigations: ["M1038: Execution Prevention"], groups: ["APT29", "Volt Typhoon", "Lazarus Group"], detection_mechanisms: ["Sysmon Event 1", "AMSI Inspection"], subtechniques: [{ id: "T1059.001", name: "PowerShell", description: "Encoded commands." }] },
-            { id: "T1053", name: "Scheduled Task/Job", tactic_id: "TA0002", tactic_name: "Execution", description: "Scheduling tasks for execution.", data_sources: ["Scheduled Job"], mitigations: ["M1028: OS Configuration"], groups: ["LockBit", "Sandworm Team"], detection_mechanisms: ["Sysmon Event 1", "Task Scheduler ETW"], subtechniques: [] },
-            { id: "T1547", name: "Boot or Logon Autostart Execution", tactic_id: "TA0003", tactic_name: "Persistence", description: "Adding Run registry keys or startup entries.", data_sources: ["Registry Key Modification"], mitigations: ["M1022: Restrict Permissions"], groups: ["LockBit", "Lazarus Group"], detection_mechanisms: ["Sysmon Event 13", "Registry Repair Engine"], subtechniques: [{ id: "T1547.001", name: "Registry Run Keys", description: "HKCU/HKLM Run keys." }] },
-            { id: "T1574", name: "Hijack Execution Flow", tactic_id: "TA0003", tactic_name: "Persistence", description: "DLL Side-Loading adjacent to signed binaries.", data_sources: ["Module Load"], mitigations: ["M1038: Execution Prevention"], groups: ["Volt Typhoon", "APT29"], detection_mechanisms: ["Sysmon Event 7", "Authenticode Verifier"], subtechniques: [] },
-            { id: "T1055", name: "Process Injection", tactic_id: "TA0004", tactic_name: "Privilege Escalation", description: "Injecting shellcode into clean processes.", data_sources: ["Process Access"], mitigations: ["M1050: Exploit Protection"], groups: ["APT29", "BlackCat", "LockBit"], detection_mechanisms: ["Sysmon Event 8", "HollowsHunter Native Memory Scanner"], subtechniques: [{ id: "T1055.001", name: "DLL Injection", description: "CreateRemoteThread." }] },
-            { id: "T1548", name: "Abuse Elevation Control", tactic_id: "TA0004", tactic_name: "Privilege Escalation", description: "Bypassing User Account Control (UAC).", data_sources: ["Process Creation"], mitigations: ["M1052: User Account Control"], groups: ["FIN7"], detection_mechanisms: ["Sysmon Event 1", "Sigma UAC Bypass"], subtechniques: [] },
-            { id: "T1564", name: "Hide Artifacts", tactic_id: "TA0005", tactic_name: "Defense Evasion", description: "Concealing files with attrib +h.", data_sources: ["File Modification"], mitigations: ["M1022: Restrict Permissions"], groups: ["Lazarus Group"], detection_mechanisms: ["Sysmon Event 1", "Sigma Attrib"], subtechniques: [] },
-            { id: "T1036", name: "Masquerading", tactic_id: "TA0005", tactic_name: "Defense Evasion", description: "Spoofing legitimate system process names.", data_sources: ["Process Creation"], mitigations: ["M1038: Execution Prevention"], groups: ["Volt Typhoon"], detection_mechanisms: ["Military Decoy Process Locator"], subtechniques: [] },
-            { id: "T1562", name: "Impair Defenses", tactic_id: "TA0112", tactic_name: "Defense Impairment", description: "Disabling Windows Defender or firewalls.", data_sources: ["Service Modification"], mitigations: ["M1028: OS Configuration"], groups: ["LockBit", "BlackCat"], detection_mechanisms: ["Heartbeat Anti-Blinding Engine"], subtechniques: [] },
-            { id: "T1003", name: "OS Credential Dumping", tactic_id: "TA0006", tactic_name: "Credential Access", description: "Dumping passwords from LSASS memory.", data_sources: ["Process Access"], mitigations: ["M1026: Privileged Account Management"], groups: ["APT29", "Volt Typhoon", "FIN7"], detection_mechanisms: ["Sysmon Event 10", "Synthetic Honey-Credentials"], subtechniques: [{ id: "T1003.001", name: "LSASS Memory", description: "Mimikatz dump." }] },
-            { id: "T1082", name: "System Information Discovery", tactic_id: "TA0007", tactic_name: "Discovery", description: "Running systeminfo or whoami.", data_sources: ["Process Creation"], mitigations: ["M1047: Audit & Security Logging"], groups: ["APT29", "Volt Typhoon", "BlackCat"], detection_mechanisms: ["Sysmon Event 1", "Sigma Discovery"], subtechniques: [] },
-            { id: "T1057", name: "Process Discovery", tactic_id: "TA0007", tactic_name: "Discovery", description: "Enumerating running tasks via tasklist.", data_sources: ["Process Creation"], mitigations: ["M1047: Audit & Logging"], groups: ["Sandworm Team"], detection_mechanisms: ["Sysmon Event 1"], subtechniques: [] },
-            { id: "T1021", name: "Remote Services", tactic_id: "TA0008", tactic_name: "Lateral Movement", description: "Pivoting via RDP or SMB admin shares.", data_sources: ["Network Connection"], mitigations: ["M1030: Network Segmentation"], groups: ["Volt Typhoon", "LockBit"], detection_mechanisms: ["Sysmon Event 3", "Military Mesh Whispering"], subtechniques: [{ id: "T1021.001", name: "RDP", description: "Remote Desktop Protocol." }] },
-            { id: "T1119", name: "Automated Collection", tactic_id: "TA0009", tactic_name: "Collection", description: "Batch script harvesting sensitive files.", data_sources: ["Process Creation"], mitigations: ["M1022: Restrict Permissions"], groups: ["BlackCat"], detection_mechanisms: ["Sysmon Event 1", "PII Classifier"], subtechniques: [] },
-            { id: "T1071", name: "Application Layer Protocol", tactic_id: "TA0011", tactic_name: "Command and Control", description: "C2 beacons disguised as HTTPS.", data_sources: ["Network Traffic"], mitigations: ["M1037: Filter Network Traffic"], groups: ["APT29", "Volt Typhoon"], detection_mechanisms: ["WFP NetFilter", "Sysmon Event 3"], subtechniques: [{ id: "T1071.001", name: "Web Protocols", description: "HTTPS C2." }] },
-            { id: "T1105", name: "Ingress Tool Transfer", tactic_id: "TA0011", tactic_name: "Command and Control", description: "Downloading payloads via certutil or curl.", data_sources: ["File Creation"], mitigations: ["M1038: Execution Prevention"], groups: ["Volt Typhoon", "LockBit"], detection_mechanisms: ["Sysmon Event 1", "Static Analyzer"], subtechniques: [] },
-            { id: "T1041", name: "Exfiltration Over C2", tactic_id: "TA0010", tactic_name: "Exfiltration", description: "Transmitting stolen archives over C2 channel.", data_sources: ["Network Traffic"], mitigations: ["M1037: Filter Network Traffic"], groups: ["APT29", "Lazarus Group"], detection_mechanisms: ["High-Volume Egress Alert"], subtechniques: [] },
-            { id: "T1486", name: "Data Encrypted for Impact", tactic_id: "TA0040", tactic_name: "Impact", description: "Ransomware encryption of endpoint volumes.", data_sources: ["File Modification"], mitigations: ["M1053: Data Backup & Immutability"], groups: ["LockBit", "BlackCat", "Wizard Spider"], detection_mechanisms: ["Synthetic Ransomware Canary", "Entropy Spike Detector"], subtechniques: [] },
-            { id: "T1490", name: "Inhibit System Recovery", tactic_id: "TA0040", tactic_name: "Impact", description: "Deleting volume shadow copies via vssadmin.", data_sources: ["Process Creation"], mitigations: ["M1053: Data Backup & Immutability"], groups: ["LockBit", "Sandworm Team"], detection_mechanisms: ["Sysmon Event 1", "WORM Backup Lock"], subtechniques: [] }
+            { id: "AML.T0054", name: "LLM Jailbreak / Prompt Injection", tactic_id: "TA0001", tactic_name: "Initial Access", description: "Direct and indirect prompt injection bypassing safety guardrails and causing unauthorized tool invocation or context leakage.", platforms: ["LLM", "Agentic Framework", "Python"], data_sources: ["AI/LLM Prompts & Responses", "Agentic Trajectory Logs"], mitigations: ["AML.M0016: LLM Input / Output Guardrails & Canary Breaches"], groups: ["Adversarial AI Research", "Lazarus Group"], detection_mechanisms: ["OpenỌ̀ṣọ́ọ̀sì AgenticVoter", "Canary Breach ETW Detector"], voter: "AgenticVoter", consensus_action: "Isolate", sigma_rules: ["LLM Jailbreak Detection via Adversarial Affixes"], is_atlas: true, subtechniques: [] },
+            { id: "T1595", name: "Active Scanning", tactic_id: "TA0043", tactic_name: "Reconnaissance", description: "Executing network port scans and vulnerability queries.", platforms: ["Network", "Linux", "Windows"], data_sources: ["Network Traffic"], mitigations: ["M1037: Filter Network Traffic"], groups: ["APT28", "Volt Typhoon"], detection_mechanisms: ["WFP NetFilter", "Sigma Port Scan"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["Port Scan Activity Detected"], is_atlas: false, subtechniques: [{ id: "T1595.001", name: "Scanning IP Blocks", description: "Broad scanning." }] },
+            { id: "T1592", name: "Gather Victim Host Info", tactic_id: "TA0043", tactic_name: "Reconnaissance", description: "Gathering hardware and OS specs.", platforms: ["Windows", "Linux", "macOS"], data_sources: ["Network Traffic"], mitigations: ["M1054: Software Configuration"], groups: ["APT29"], detection_mechanisms: ["EDR Telemetry Audit"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["System Information Discovery Query"], is_atlas: false, subtechniques: [] },
+            { id: "T1650", name: "Acquire Access", tactic_id: "TA0042", tactic_name: "Resource Development", description: "Purchasing access from initial access brokers.", platforms: ["PRE"], data_sources: ["Threat Feeds"], mitigations: ["M1036: Account Use Policies"], groups: ["LockBit", "BlackCat"], detection_mechanisms: ["OTX Darknet CTI Voter"], voter: "IocVoter", consensus_action: "Alert", sigma_rules: [], is_atlas: false, subtechniques: [] },
+            { id: "T1583", name: "Acquire Infrastructure", tactic_id: "TA0042", tactic_name: "Resource Development", description: "Buying domains or leasing VPS.", platforms: ["PRE"], data_sources: ["External CTI"], mitigations: ["M1056: Pre-compromise Threat Intelligence"], groups: ["APT29", "Volt Typhoon"], detection_mechanisms: ["OTX TAXII Feed"], voter: "IocVoter", consensus_action: "Alert", sigma_rules: [], is_atlas: false, subtechniques: [] },
+            { id: "T1566", name: "Phishing", tactic_id: "TA0001", tactic_name: "Initial Access", description: "Sending deceptive emails with malicious payloads.", platforms: ["Windows", "macOS", "Linux"], data_sources: ["Process Creation"], mitigations: ["M1021: Restrict Web-Based Content"], groups: ["APT29", "FIN7"], detection_mechanisms: ["Sysmon Event 1", "Sigma Rule"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["Suspicious Office Child Process"], is_atlas: false, subtechniques: [{ id: "T1566.001", name: "Spearphishing Attachment", description: "Weaponized attachments." }] },
+            { id: "T1190", name: "Exploit Public-Facing App", tactic_id: "TA0001", tactic_name: "Initial Access", description: "Exploiting remote unauthenticated bugs in web servers.", platforms: ["Windows", "Linux"], data_sources: ["Application Log"], mitigations: ["M1051: Update Software & Patching"], groups: ["Volt Typhoon", "LockBit"], detection_mechanisms: ["CISA KEV Matcher", "NVD CVE Tagger"], voter: "SigmaVoter", consensus_action: "Isolate", sigma_rules: ["Exploitation of Web Application"], is_atlas: false, subtechniques: [] },
+            { id: "T1059", name: "Command and Scripting Interpreter", tactic_id: "TA0002", tactic_name: "Execution", description: "Abusing PowerShell or command shell.", platforms: ["Windows", "Linux", "macOS"], data_sources: ["Process Creation"], mitigations: ["M1038: Execution Prevention"], groups: ["APT29", "Volt Typhoon", "Lazarus Group"], detection_mechanisms: ["Sysmon Event 1", "AMSI Inspection"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["PowerShell Suspicious Execution Via EncodedCommand"], is_atlas: false, subtechniques: [{ id: "T1059.001", name: "PowerShell", description: "Encoded commands." }] },
+            { id: "T1053", name: "Scheduled Task/Job", tactic_id: "TA0002", tactic_name: "Execution", description: "Scheduling tasks for execution.", platforms: ["Windows", "Linux"], data_sources: ["Scheduled Job"], mitigations: ["M1028: OS Configuration"], groups: ["LockBit", "Sandworm Team"], detection_mechanisms: ["Sysmon Event 1", "Task Scheduler ETW"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["Scheduled Task Creation Via Schtasks.EXE"], is_atlas: false, subtechniques: [] },
+            { id: "T1547", name: "Boot or Logon Autostart Execution", tactic_id: "TA0003", tactic_name: "Persistence", description: "Adding Run registry keys or startup entries.", platforms: ["Windows"], data_sources: ["Registry Key Modification"], mitigations: ["M1022: Restrict Permissions"], groups: ["LockBit", "Lazarus Group"], detection_mechanisms: ["Sysmon Event 13", "Registry Repair Engine"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["Suspicious Registry Run Key Creation"], is_atlas: false, subtechniques: [{ id: "T1547.001", name: "Registry Run Keys", description: "HKCU/HKLM Run keys." }] },
+            { id: "T1574", name: "Hijack Execution Flow", tactic_id: "TA0003", tactic_name: "Persistence", description: "DLL Side-Loading adjacent to signed binaries.", platforms: ["Windows"], data_sources: ["Module Load"], mitigations: ["M1038: Execution Prevention"], groups: ["Volt Typhoon", "APT29"], detection_mechanisms: ["Sysmon Event 7", "Authenticode Verifier"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["Potential DLL Side-Loading"], is_atlas: false, subtechniques: [] },
+            { id: "T1055", name: "Process Injection", tactic_id: "TA0004", tactic_name: "Privilege Escalation", description: "Injecting shellcode into clean processes.", platforms: ["Windows"], data_sources: ["Process Access"], mitigations: ["M1050: Exploit Protection"], groups: ["APT29", "BlackCat", "LockBit"], detection_mechanisms: ["Sysmon Event 8", "HollowsHunter Native Memory Scanner"], voter: "MemoryInspectionVoter", consensus_action: "MemoryScan", sigma_rules: ["Suspicious Process Injection Via CreateRemoteThread"], is_atlas: false, subtechniques: [{ id: "T1055.001", name: "DLL Injection", description: "CreateRemoteThread." }] },
+            { id: "T1548", name: "Abuse Elevation Control", tactic_id: "TA0004", tactic_name: "Privilege Escalation", description: "Bypassing User Account Control (UAC).", platforms: ["Windows"], data_sources: ["Process Creation"], mitigations: ["M1052: User Account Control"], groups: ["FIN7"], detection_mechanisms: ["Sysmon Event 1", "Sigma UAC Bypass"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["Bypass UAC Via Fodhelper"], is_atlas: false, subtechniques: [] },
+            { id: "T1564", name: "Hide Artifacts", tactic_id: "TA0005", tactic_name: "Defense Evasion", description: "Concealing files with attrib +h.", platforms: ["Windows", "Linux"], data_sources: ["File Modification"], mitigations: ["M1022: Restrict Permissions"], groups: ["Lazarus Group"], detection_mechanisms: ["Sysmon Event 1", "Sigma Attrib"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["Hidden File Creation Via Attrib"], is_atlas: false, subtechniques: [] },
+            { id: "T1036", name: "Masquerading", tactic_id: "TA0005", tactic_name: "Defense Evasion", description: "Spoofing legitimate system process names.", platforms: ["Windows", "Linux"], data_sources: ["Process Creation"], mitigations: ["M1038: Execution Prevention"], groups: ["Volt Typhoon"], detection_mechanisms: ["Military Decoy Process Locator"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["Process Masquerading With Legitimate Name"], is_atlas: false, subtechniques: [] },
+            { id: "T1562", name: "Impair Defenses", tactic_id: "TA0112", tactic_name: "Defense Impairment", description: "Disabling Windows Defender or firewalls.", platforms: ["Windows"], data_sources: ["Service Modification"], mitigations: ["M1028: OS Configuration"], groups: ["LockBit", "BlackCat"], detection_mechanisms: ["Heartbeat Anti-Blinding Engine"], voter: "SigmaVoter", consensus_action: "Tarpit", sigma_rules: ["Windows Defender Tampering / Disabling"], is_atlas: false, subtechniques: [] },
+            { id: "T1003", name: "OS Credential Dumping", tactic_id: "TA0006", tactic_name: "Credential Access", description: "Dumping passwords from LSASS memory.", platforms: ["Windows"], data_sources: ["Process Access"], mitigations: ["M1026: Privileged Account Management"], groups: ["APT29", "Volt Typhoon", "FIN7"], detection_mechanisms: ["Sysmon Event 10", "Synthetic Honey-Credentials"], voter: "MemoryInspectionVoter", consensus_action: "MemoryScan", sigma_rules: ["LSASS Memory Dump Via Comsvcs / Procdump"], is_atlas: false, subtechniques: [{ id: "T1003.001", name: "LSASS Memory", description: "Mimikatz dump." }] },
+            { id: "T1082", name: "System Information Discovery", tactic_id: "TA0007", tactic_name: "Discovery", description: "Running systeminfo or whoami.", platforms: ["Windows", "Linux", "macOS"], data_sources: ["Process Creation"], mitigations: ["M1047: Audit & Security Logging"], groups: ["APT29", "Volt Typhoon", "BlackCat"], detection_mechanisms: ["Sysmon Event 1", "Sigma Discovery"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["System Information Discovery Via Command"], is_atlas: false, subtechniques: [] },
+            { id: "T1057", name: "Process Discovery", tactic_id: "TA0007", tactic_name: "Discovery", description: "Enumerating running tasks via tasklist.", platforms: ["Windows", "Linux"], data_sources: ["Process Creation"], mitigations: ["M1047: Audit & Logging"], groups: ["Sandworm Team"], detection_mechanisms: ["Sysmon Event 1"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["Process Discovery Via Tasklist"], is_atlas: false, subtechniques: [] },
+            { id: "T1021", name: "Remote Services", tactic_id: "TA0008", tactic_name: "Lateral Movement", description: "Pivoting via RDP or SMB admin shares.", platforms: ["Windows"], data_sources: ["Network Connection"], mitigations: ["M1030: Network Segmentation"], groups: ["Volt Typhoon", "LockBit"], detection_mechanisms: ["Sysmon Event 3", "Military Mesh Whispering"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["Remote Desktop Protocol Network Connection"], is_atlas: false, subtechniques: [{ id: "T1021.001", name: "RDP", description: "Remote Desktop Protocol." }] },
+            { id: "T1119", name: "Automated Collection", tactic_id: "TA0009", tactic_name: "Collection", description: "Batch script harvesting sensitive files.", platforms: ["Windows", "Linux"], data_sources: ["Process Creation"], mitigations: ["M1022: Restrict Permissions"], groups: ["BlackCat"], detection_mechanisms: ["Sysmon Event 1", "PII Classifier"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["Automated Data Collection Script"], is_atlas: false, subtechniques: [] },
+            { id: "T1071", name: "Application Layer Protocol", tactic_id: "TA0011", tactic_name: "Command and Control", description: "C2 beacons disguised as HTTPS.", platforms: ["Windows", "Linux", "macOS"], data_sources: ["Network Traffic"], mitigations: ["M1037: Filter Network Traffic"], groups: ["APT29", "Volt Typhoon"], detection_mechanisms: ["WFP NetFilter", "Sysmon Event 3"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["Suspicious Web Request To Dynamic DNS"], is_atlas: false, subtechniques: [{ id: "T1071.001", name: "Web Protocols", description: "HTTPS C2." }] },
+            { id: "T1105", name: "Ingress Tool Transfer", tactic_id: "TA0011", tactic_name: "Command and Control", description: "Downloading payloads via certutil or curl.", platforms: ["Windows", "Linux"], data_sources: ["File Creation"], mitigations: ["M1038: Execution Prevention"], groups: ["Volt Typhoon", "LockBit"], detection_mechanisms: ["Sysmon Event 1", "Static Analyzer"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["Ingress Tool Transfer Via Certutil"], is_atlas: false, subtechniques: [] },
+            { id: "T1041", name: "Exfiltration Over C2", tactic_id: "TA0010", tactic_name: "Exfiltration", description: "Transmitting stolen archives over C2 channel.", platforms: ["Windows", "Linux"], data_sources: ["Network Traffic"], mitigations: ["M1037: Filter Network Traffic"], groups: ["APT29", "Lazarus Group"], detection_mechanisms: ["High-Volume Egress Alert"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["High-Volume Exfiltration Over Network"], is_atlas: false, subtechniques: [] },
+            { id: "T1486", name: "Data Encrypted for Impact", tactic_id: "TA0040", tactic_name: "Impact", description: "Ransomware encryption of endpoint volumes.", platforms: ["Windows", "Linux"], data_sources: ["File Modification"], mitigations: ["M1053: Data Backup & Immutability"], groups: ["LockBit", "BlackCat", "Wizard Spider"], detection_mechanisms: ["Synthetic Ransomware Canary", "Entropy Spike Detector"], voter: "ZeroDayVoter", consensus_action: "Isolate", sigma_rules: ["Ransomware Mass File Encryption Activity"], is_atlas: false, subtechniques: [] },
+            { id: "T1490", name: "Inhibit System Recovery", tactic_id: "TA0040", tactic_name: "Impact", description: "Deleting volume shadow copies via vssadmin.", platforms: ["Windows"], data_sources: ["Process Creation"], mitigations: ["M1053: Data Backup & Immutability"], groups: ["LockBit", "Sandworm Team"], detection_mechanisms: ["Sysmon Event 1", "WORM Backup Lock"], voter: "SigmaVoter", consensus_action: "Tarpit", sigma_rules: ["Shadow Copies Deletion Via Vssadmin.EXE"], is_atlas: false, subtechniques: [] }
         ]
     };
 }
