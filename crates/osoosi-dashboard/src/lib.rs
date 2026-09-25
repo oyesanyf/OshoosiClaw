@@ -559,6 +559,48 @@ fn authorize_quarantine_release(remote: SocketAddr, headers: &HeaderMap) -> Resu
     Ok(())
 }
 
+fn enrich_mitre_threat(
+    process_name: &str,
+    cve_id: &str,
+    reason: &str,
+    existing_tech: Option<&str>,
+    existing_name: Option<&str>,
+) -> (String, String, String) {
+    if let (Some(t), Some(n)) = (existing_tech, existing_name) {
+        if !t.is_empty() && !n.is_empty() {
+            return (t.to_string(), n.to_string(), format!("[{}] {}", t, n));
+        }
+    }
+    let r_lower = reason.to_lowercase();
+    let p_lower = process_name.to_lowercase();
+
+    let (tech_id, tech_name, display_title) = if r_lower.contains("sandboxsurface") || r_lower.contains("high-risk privilege") || r_lower.contains("whoami") {
+        ("T1033", "System Owner/User Discovery", "[T1033] System Owner/User Discovery (Elevated Probe)".to_string())
+    } else if r_lower.contains("anti_dbg") || r_lower.contains("debuggercheck") || r_lower.contains("debuggerexception") {
+        let target = if !process_name.is_empty() { process_name } else { "Binary" };
+        ("T1622", "Debugger Evasion", format!("[T1622] Debugger Evasion ({})", target))
+    } else if r_lower.contains("win_mutex") || r_lower.contains("mutex") {
+        let target = if !process_name.is_empty() { process_name } else { "Binary" };
+        ("T1027", "Obfuscated Files: Mutex Lock", format!("[T1027] Obfuscated Files: Mutex Lock ({})", target))
+    } else if r_lower.contains("intelligent correlation") || r_lower.contains("suspicion score") {
+        ("T1082", "System Discovery: Heuristic Anomaly", "[T1082] System Discovery (Heuristic Anomaly)".to_string())
+    } else if p_lower.contains("mcp-cli") || p_lower.contains("powershell") || p_lower.contains("cmd.exe") {
+        let target = if !process_name.is_empty() { process_name } else { "Interpreter" };
+        ("T1059", "Command and Scripting Interpreter", format!("[T1059] Command and Scripting Interpreter ({})", target))
+    } else if p_lower.contains("invcol") || p_lower.contains("smbios") || p_lower.contains("update.exe") || p_lower.contains("inv.exe") {
+        let target = if !process_name.is_empty() { process_name } else { "System Tool" };
+        ("T1082", "System Information Discovery", format!("[T1082] System Information Discovery ({})", target))
+    } else if p_lower.ends_with(".rbf") {
+        let target = if !process_name.is_empty() { process_name } else { "Rollback" };
+        ("T1547", "Boot or Logon Autostart: Installer Rollback", format!("[T1547] Boot/Logon Autostart: Installer Rollback ({})", target))
+    } else if !cve_id.is_empty() {
+        ("T1190", "Exploit Public-Facing Application", format!("[{}] Vulnerability Trigger ({})", cve_id, if !process_name.is_empty() { process_name } else { "Target" }))
+    } else {
+        ("T1082", "System Information Discovery", if !process_name.is_empty() { format!("[T1082] Discovery ({})", process_name) } else { "[T1082] System Discovery".to_string() })
+    };
+    (tech_id.to_string(), tech_name.to_string(), display_title)
+}
+
 async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
@@ -616,6 +658,11 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                         let reason = d.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         let predicted_next = d.get("predicted_next").and_then(|v| v.as_str()).unwrap_or("").to_string();
                         let file_path = d.get("image_path").or(d.get("file_path")).or(d.get("target_path")).and_then(|v| v.as_str()).map(String::from);
+
+                        let existing_tech = d.get("mitre_technique").and_then(|v| v.as_str());
+                        let existing_name = d.get("mitre_technique_name").and_then(|v| v.as_str());
+                        let (tech_id, tech_name, display_title) = enrich_mitre_threat(&process_for_feedback, cve_id, &reason, existing_tech, existing_name);
+
                         Some(json!({
                             "id": id,
                             "cve_id": cve_id,
@@ -628,7 +675,10 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                             "hash_blake3": if hash_blake3.is_empty() { Value::Null } else { json!(hash_blake3) },
                             "reason": if reason.is_empty() { Value::Null } else { json!(reason) },
                             "entropy": d.get("entropy").cloned().unwrap_or(Value::Null),
-                            "predicted_next": if predicted_next.is_empty() { Value::Null } else { json!(predicted_next) }
+                            "predicted_next": if predicted_next.is_empty() { Value::Null } else { json!(predicted_next) },
+                            "mitre_technique": tech_id,
+                            "mitre_technique_name": tech_name,
+                            "display_title": display_title
                         }))
                     })
                     .take(20)
@@ -652,6 +702,19 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                         let cve_id = obj.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
                         let reason = obj.get("reason").and_then(|v| v.as_str());
                         let predicted_next = obj.get("predicted_next").and_then(|v| v.as_str());
+
+                        let proc_for_mitre = if !process_name.is_empty() {
+                            process_name
+                        } else if !image_path.is_empty() {
+                            image_path.rsplit(['\\', '/']).next().unwrap_or(image_path)
+                        } else {
+                            ""
+                        };
+                        let reason_str = reason.unwrap_or("");
+                        let existing_tech = obj.get("mitre_technique").and_then(|v| v.as_str());
+                        let existing_name = obj.get("mitre_technique_name").and_then(|v| v.as_str());
+                        let (tech_id, tech_name, display_title) = enrich_mitre_threat(proc_for_mitre, cve_id, reason_str, existing_tech, existing_name);
+
                         json!({
                             "id": obj.get("id"),
                             "type": title,
@@ -663,7 +726,10 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                             "hash_blake3": obj.get("hash_blake3"),
                             "reason": reason,
                             "entropy": obj.get("entropy"),
-                            "predicted_next": predicted_next
+                            "predicted_next": predicted_next,
+                            "mitre_technique": tech_id,
+                            "mitre_technique_name": tech_name,
+                            "display_title": display_title
                         })
                     })
                     .collect();
@@ -3117,6 +3183,70 @@ mod tests {
         assert_eq!(update_status, axum::http::StatusCode::OK);
         assert_eq!(update_body["ok"], true);
         assert_eq!(update_body["object_count"].as_u64().unwrap(), 26381);
+    }
+
+    #[test]
+    fn test_enrich_mitre_threat() {
+        // 1. Elevated Probe / Privilege / Whoami
+        let (id, name, title) = enrich_mitre_threat("whoami.exe", "", "High-risk privilege escalation detected", None, None);
+        assert_eq!(id, "T1033");
+        assert_eq!(name, "System Owner/User Discovery");
+        assert_eq!(title, "[T1033] System Owner/User Discovery (Elevated Probe)");
+
+        // 2. Debugger Evasion
+        let (id, name, title) = enrich_mitre_threat("smbiosinfo.exe", "", "anti_dbg detected", None, None);
+        assert_eq!(id, "T1622");
+        assert_eq!(name, "Debugger Evasion");
+        assert_eq!(title, "[T1622] Debugger Evasion (smbiosinfo.exe)");
+
+        // 3. Mutex Lock
+        let (id, name, title) = enrich_mitre_threat("malware.exe", "", "win_mutex lock active", None, None);
+        assert_eq!(id, "T1027");
+        assert_eq!(name, "Obfuscated Files: Mutex Lock");
+        assert_eq!(title, "[T1027] Obfuscated Files: Mutex Lock (malware.exe)");
+
+        // 4. Intelligent Correlation
+        let (id, name, title) = enrich_mitre_threat("suspicious.exe", "", "intelligent correlation anomaly", None, None);
+        assert_eq!(id, "T1082");
+        assert_eq!(name, "System Discovery: Heuristic Anomaly");
+        assert_eq!(title, "[T1082] System Discovery (Heuristic Anomaly)");
+
+        // 5. Command & Scripting Interpreter
+        let (id, name, title) = enrich_mitre_threat("mcp-cli.exe", "", "Execution detected", None, None);
+        assert_eq!(id, "T1059");
+        assert_eq!(name, "Command and Scripting Interpreter");
+        assert_eq!(title, "[T1059] Command and Scripting Interpreter (mcp-cli.exe)");
+
+        // 6. System Tool
+        let (id, name, title) = enrich_mitre_threat("invcol.exe", "", "System scan", None, None);
+        assert_eq!(id, "T1082");
+        assert_eq!(name, "System Information Discovery");
+        assert_eq!(title, "[T1082] System Information Discovery (invcol.exe)");
+
+        // 7. Installer Rollback (.rbf)
+        let (id, name, title) = enrich_mitre_threat("temp.rbf", "", "Payload drop", None, None);
+        assert_eq!(id, "T1547");
+        assert_eq!(name, "Boot or Logon Autostart: Installer Rollback");
+        assert_eq!(title, "[T1547] Boot/Logon Autostart: Installer Rollback (temp.rbf)");
+
+        // 8. CVE Trigger
+        let (id, name, title) = enrich_mitre_threat("nginx.exe", "CVE-2024-21413", "Remote code execution", None, None);
+        assert_eq!(id, "T1190");
+        assert_eq!(name, "Exploit Public-Facing Application");
+        assert_eq!(title, "[CVE-2024-21413] Vulnerability Trigger (nginx.exe)");
+
+        // 9. Existing Technique and Name
+        let (id, name, title) = enrich_mitre_threat("test.exe", "", "custom", Some("T1055"), Some("Process Injection"));
+        assert_eq!(id, "T1055");
+        assert_eq!(name, "Process Injection");
+        assert_eq!(title, "[T1055] Process Injection");
+    }
+
+    #[tokio::test]
+    async fn test_get_threats_idle() {
+        let state = DashboardState::new(None, None);
+        let resp = get_threats(State(state)).await.0;
+        assert_eq!(resp, json!([]));
     }
 }
 

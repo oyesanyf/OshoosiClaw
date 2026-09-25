@@ -201,9 +201,12 @@
                 <!-- Main Grid -->
                 <div class="main-grid">
                     <div class="card glass shadow-glow threat-timeline">
-                        <div class="card-header">
+                        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                             <h3>Live Threat Timeline</h3>
-                            <button class="btn-text">View All</button>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <button class="btn-text" id="toggle-all-threats-btn" onclick="toggleAllThreats()" style="font-size:12px; cursor:pointer;">Expand All</button>
+                                <button class="btn-text" id="view-all-threats-btn" onclick="navigateToThreats()" style="font-size:12px; cursor:pointer; font-weight:600;">View All</button>
+                            </div>
                         </div>
                         <div class="card-body">
                             <div id="threat-list" class="timeline-list">
@@ -213,10 +216,11 @@
                     </div>
 
                     <div class="card glass shadow-glow activity-feed">
-                        <div class="card-header">
+                        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                             <h3>Recent Activity</h3>
+                            <button class="btn-text" id="toggle-activity-feed-btn" onclick="toggleActivityPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
                         </div>
-                        <div class="card-body">
+                        <div class="card-body" id="activity-feed-body">
                             <div id="activity-feed" class="feed-list">
                                 <p class="placeholder-text">Waiting for activity data...</p>
                             </div>
@@ -228,8 +232,9 @@
             <!-- Threats View -->
             <div id="threats-view" class="view-content">
                 <div class="card glass shadow-glow">
-                    <div class="card-header">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h3>Identified Threats & Vulnerabilities</h3>
+                        <button class="btn-text" id="toggle-all-threats-view-btn" onclick="toggleAllThreatsView()" style="font-size:12px; cursor:pointer;">Expand All</button>
                     </div>
                     <div class="card-body">
                         <div id="threats-data-list" class="timeline-list">

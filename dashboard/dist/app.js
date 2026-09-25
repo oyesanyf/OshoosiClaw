@@ -282,6 +282,7 @@ function setupNav() {
             } else if (view === 'threats') {
                 document.getElementById('threats-view').classList.add('active');
                 viewTitle.innerText = "Threat Intelligence";
+                renderThreatsView(state.threats);
             } else if (view === 'mesh') {
                 document.getElementById('mesh-view').classList.add('active');
                 viewTitle.innerText = "Mesh Network";
@@ -340,6 +341,20 @@ function setupNav() {
             state.current_view = view;
         });
     });
+
+    function handleHash() {
+        const hash = window.location.hash.replace(/^#/, '');
+        if (hash) {
+            const target = document.querySelector(`.nav-item[data-view="${hash}"]`);
+            if (target) {
+                target.click();
+            }
+        }
+    }
+    window.addEventListener('hashchange', handleHash);
+    if (window.location.hash) {
+        handleHash();
+    }
 }
 
 /**
@@ -642,6 +657,50 @@ function renderDetectionStats(stats) {
 }
 
 /**
+ * Format threat title with MITRE technique badge and descriptive title
+ */
+function formatThreatTitle(t) {
+    if (t.display_title) {
+        const m = t.display_title.match(/^\[(.*?)\]\s*(.*)$/);
+        if (m) {
+            const techId = m[1];
+            const rest = m[2];
+            return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('${techId.split('/')[0].trim()}'); else { window.location.hash='#mitre'; }">${escapeHtml(techId)}</span> <span>${escapeHtml(rest)}</span>`;
+        }
+        return escapeHtml(t.display_title);
+    }
+    if (t.mitre_technique) {
+        const name = t.mitre_technique_name || t.type || 'Threat';
+        return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('${t.mitre_technique}'); else { window.location.hash='#mitre'; }">${escapeHtml(t.mitre_technique)}</span> <span>${escapeHtml(name)}</span>`;
+    }
+    // Fallback heuristics if API didn't return display_title
+    const reason = (t.reason || '').toLowerCase();
+    const proc = t.type || t.process_name || 'System';
+    if (reason.includes('sandboxsurface') || reason.includes('high-risk privilege') || proc.toLowerCase().includes('whoami')) {
+        return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1033'); else { window.location.hash='#mitre'; }">T1033</span> <span>System Owner/User Discovery (Elevated Probe)</span>`;
+    }
+    if (reason.includes('anti_dbg') || reason.includes('debugger')) {
+        return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1622'); else { window.location.hash='#mitre'; }">T1622</span> <span>Debugger Evasion (${escapeHtml(proc)})</span>`;
+    }
+    if (reason.includes('mutex')) {
+        return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1027'); else { window.location.hash='#mitre'; }">T1027</span> <span>Obfuscated Files: Mutex Lock (${escapeHtml(proc)})</span>`;
+    }
+    if (reason.includes('intelligent correlation')) {
+        return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1082'); else { window.location.hash='#mitre'; }">T1082</span> <span>System Discovery (Heuristic Anomaly)</span>`;
+    }
+    if (proc.toLowerCase().endsWith('.rbf')) {
+        return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1547'); else { window.location.hash='#mitre'; }">T1547</span> <span>Installer Rollback Binary (${escapeHtml(proc)})</span>`;
+    }
+    if (proc.toLowerCase().includes('mcp-cli')) {
+        return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1059'); else { window.location.hash='#mitre'; }">T1059</span> <span>Command & Scripting Interpreter (${escapeHtml(proc)})</span>`;
+    }
+    if (proc.toLowerCase().includes('inv') || proc.toLowerCase().includes('smbios') || proc.toLowerCase().includes('update')) {
+        return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1082'); else { window.location.hash='#mitre'; }">T1082</span> <span>System Information Discovery (${escapeHtml(proc)})</span>`;
+    }
+    return `<span>${escapeHtml(proc)}</span>`;
+}
+
+/**
  * Render threat timeline items
  */
 function renderThreats(threats) {
@@ -669,7 +728,9 @@ function renderThreats(threats) {
         return (t.type && t.type.toLowerCase().includes(q)) || 
                (t.id && t.id.toLowerCase().includes(q)) ||
                (t.file_path && t.file_path.toLowerCase().includes(q)) ||
-               (t.reason && t.reason.toLowerCase().includes(q));
+               (t.reason && t.reason.toLowerCase().includes(q)) ||
+               (t.display_title && t.display_title.toLowerCase().includes(q)) ||
+               (t.mitre_technique && t.mitre_technique.toLowerCase().includes(q));
     });
 
     if (filtered.length === 0) {
@@ -691,16 +752,20 @@ function renderThreats(threats) {
         const severity = maxConfidence > 0.8 ? 'CRITICAL' : (maxConfidence > 0.6 ? 'HIGH' : 'MEDIUM');
         const badgeClass = maxConfidence > 0.8 ? 'red' : (maxConfidence > 0.6 ? 'blue' : 'blue');
         const borderClass = maxConfidence > 0.8 ? 'threat-high' : (maxConfidence > 0.6 ? 'threat-medium' : 'threat-low');
+        const isExpanded = state.expandedDetails.has(t.id);
         
         return `
         <div class="timeline-item ${borderClass}">
-            <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
+            <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red); cursor:pointer;" onclick="toggleGroupDetails('${t.id}')">
                 <i data-lucide="shield-alert"></i>
             </div>
             <div class="item-info">
-                <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
-                    <span>${t.type} ${groupThreats.length > 1 ? `<span style="font-size:10px; color:var(--text-muted); margin-left:4px;">(${groupThreats.length} events)</span>` : ''}</span>
-                    <span class="badge ${badgeClass}">${severity}</span>
+                <div class="item-title" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="toggleGroupDetails('${t.id}')">
+                    <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px;">${formatThreatTitle(t)} ${groupThreats.length > 1 ? `<span style="font-size:10px; color:var(--text-muted); margin-left:4px;">(${groupThreats.length} events)</span>` : ''}</div>
+                    <div style="display:flex; align-items:center; gap:6px;">
+                        <span class="badge ${badgeClass}">${severity}</span>
+                        <i data-lucide="${isExpanded ? 'chevron-up' : 'chevron-down'}" style="width:14px; height:14px; color:var(--text-muted); cursor:pointer;"></i>
+                    </div>
                 </div>
                 <div class="item-meta">
                     <span><i data-lucide="crosshair"></i> ${(maxConfidence * 100).toFixed(0)}% Confidence</span>
@@ -710,11 +775,15 @@ function renderThreats(threats) {
                 <div class="item-actions">
                     <button class="action-btn" onclick="markFalsePositive('${t.id}')">Flag FP</button>
                     <button class="action-btn primary" onclick="markTruePositive('${t.id}')">Confirm</button>
-                    <button class="action-btn" onclick="toggleGroupDetails('${t.id}')" style="margin-left:auto;">Details</button>
+                    <button class="action-btn" onclick="toggleGroupDetails('${t.id}')" style="margin-left:auto; display:flex; align-items:center; gap:4px;">
+                        <span>${isExpanded ? 'Hide Details' : 'Details'}</span>
+                        <i data-lucide="${isExpanded ? 'chevron-up' : 'chevron-down'}" style="width:12px; height:12px;"></i>
+                    </button>
                 </div>
-                <div id="group-details-${t.id}" style="display:none; margin-top:12px; padding:10px; background:rgba(0,0,0,0.2); border-radius:8px; font-size:11px; color:var(--text-muted);">
+                <div id="group-details-${t.id}" style="display:${isExpanded ? 'block' : 'none'}; margin-top:12px; padding:10px; background:rgba(0,0,0,0.2); border-radius:8px; font-size:11px; color:var(--text-muted);">
                     ${Array.from(new Set(groupThreats.map(gt => gt.reason || 'Anomalous behavior'))).join('; ')}
                     <div style="margin-top:4px; opacity:0.7;">Source Node: ${t.source_node}</div>
+                    ${t.mitre_technique ? `<div style="margin-top:8px;"><button class="btn-text" style="font-size:11px; padding:3px 10px; background:rgba(0,210,255,0.1); border:1px solid rgba(0,210,255,0.3); border-radius:5px; color:var(--accent-blue); cursor:pointer;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('${t.mitre_technique}'); else navigateToMitre();">Inspect ${t.mitre_technique} in ATT&CK Matrix &rarr;</button></div>` : ''}
                 </div>
             </div>
         </div>
@@ -751,17 +820,28 @@ function renderActivity(activity) {
     // Performance: Only show latest 20 items
     const limitedActivity = items.slice(0, 20);
 
-    list.innerHTML = limitedActivity.map(item => `
-        <div class="feed-item">
+    list.innerHTML = limitedActivity.map((item, idx) => {
+        const isExpanded = state.expandedDetails.has('act-' + idx);
+        return `
+        <div class="feed-item" style="cursor:pointer;" onclick="toggleActivityItem(${idx})">
             <div class="item-info">
-                <div class="item-title" style="font-size:13px">${escapeHtml(item.summary)}</div>
+                <div class="item-title" style="font-size:13px; display:flex; justify-content:space-between; align-items:center;">
+                    <span>${escapeHtml(item.summary)}</span>
+                    <i data-lucide="${isExpanded ? 'chevron-up' : 'chevron-down'}" style="width:12px; height:12px; color:var(--text-muted); shrink:0; margin-left:8px;"></i>
+                </div>
                 <div class="item-meta">
                     <span>${escapeHtml(item.type)}</span>
                     <span>${formatTimestamp(item.timestamp)}</span>
                 </div>
+                <div id="activity-details-${idx}" style="display:${isExpanded ? 'block' : 'none'}; margin-top:8px; padding:8px 10px; background:rgba(0,0,0,0.25); border-radius:6px; font-size:11px; color:var(--text-muted); font-family:monospace;">
+                    <div>Event Channel: <strong style="color:var(--accent-blue);">${escapeHtml(item.type)}</strong></div>
+                    <div>Recorded: ${escapeHtml(item.timestamp)}</div>
+                    <div>Status: <span style="color:var(--accent-green);">Audited & DAG Verified</span></div>
+                </div>
             </div>
         </div>
-    `).join('');
+    `}).join('');
+    lucide.createIcons();
 }
 
 /**
@@ -805,29 +885,34 @@ function renderThreatsView(threats) {
         const severity = maxConfidence > 0.8 ? 'CRITICAL' : (maxConfidence > 0.6 ? 'HIGH' : 'MEDIUM');
         const badgeClass = maxConfidence > 0.8 ? 'red' : 'blue';
         const borderClass = maxConfidence > 0.8 ? 'threat-high' : 'threat-medium';
+        const isExpanded = state.expandedDetails.has('full-' + t.id);
 
         return `
         <div class="timeline-item ${borderClass}" style="flex-direction: column; gap: 12px;">
             <div style="display: flex; gap: 16px;">
-                <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red);">
+                <div class="item-icon" style="background-color: rgba(255, 77, 77, 0.1); color: var(--accent-red); cursor:pointer;" onclick="toggleGroupDetails('full-${t.id}')">
                     <i data-lucide="shield-alert"></i>
                 </div>
                 <div class="item-info">
-                    <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
-                        <span>${t.type} (${groupThreats.length} events)</span>
-                        <span class="badge ${badgeClass}">${severity}</span>
+                    <div class="item-title" style="display:flex; justify-content:space-between; align-items:center; cursor:pointer;" onclick="toggleGroupDetails('full-${t.id}')">
+                        <div style="display:flex; align-items:center; flex-wrap:wrap; gap:4px;">${formatThreatTitle(t)} ${groupThreats.length > 1 ? `<span style="font-size:10px; color:var(--text-muted); margin-left:4px;">(${groupThreats.length} events)</span>` : ''}</div>
+                        <div style="display:flex; align-items:center; gap:6px;">
+                            <span class="badge ${badgeClass}">${severity}</span>
+                            <i data-lucide="${isExpanded ? 'chevron-up' : 'chevron-down'}" style="width:14px; height:14px; color:var(--text-muted); cursor:pointer;"></i>
+                        </div>
                     </div>
                     <div class="item-meta">
                         <span><i data-lucide="crosshair"></i> ${(maxConfidence * 100).toFixed(0)}% Confidence</span>
                         <span><i data-lucide="clock"></i> ${formatTimestamp(t.timestamp)}</span>
                     </div>
-                    <div style="font-size: 11px; color: var(--accent-blue); margin-top: 4px; cursor:pointer;" onclick="toggleGroupDetails('full-${t.id}')">
-                        <i data-lucide="info" style="width:10px; height:10px; vertical-align:middle;"></i> Toggle Forensic Details
+                    <div style="font-size: 11px; color: var(--accent-blue); margin-top: 4px; cursor:pointer; display:flex; align-items:center; gap:4px;" onclick="toggleGroupDetails('full-${t.id}')">
+                        <i data-lucide="${isExpanded ? 'chevron-up' : 'info'}" style="width:10px; height:10px; vertical-align:middle;"></i>
+                        <span>${isExpanded ? 'Hide Forensic Details' : 'Toggle Forensic Details'}</span>
                     </div>
                 </div>
             </div>
             
-            <div id="group-details-full-${t.id}" style="display: ${state.expandedDetails.has('full-' + t.id) ? 'flex' : 'none'}; flex-direction: column; gap: 10px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 10px;">
+            <div id="group-details-full-${t.id}" style="display: ${isExpanded ? 'flex' : 'none'}; flex-direction: column; gap: 10px; padding: 12px; background: rgba(0,0,0,0.2); border-radius: 10px;">
                 ${t.entropy ? `
                     <div class="entropy-gauge">
                         <div style="display:flex; justify-content:space-between; font-size:10px; color:var(--text-muted); margin-bottom:4px;">
@@ -2871,9 +2956,79 @@ window.toggleGroupDetails = function(id) {
     }
     const el = document.getElementById(`group-details-${id}`);
     if (el) {
-        el.style.display = state.expandedDetails.has(id) ? 'flex' : 'none';
-        lucide.createIcons();
+        el.style.display = state.expandedDetails.has(id) ? (id.startsWith('full-') ? 'flex' : 'block') : 'none';
     }
+    if (id.startsWith('full-')) {
+        renderThreatsView(state.threats);
+    } else {
+        renderThreats(state.threats);
+    }
+    if (window.lucide) lucide.createIcons();
+};
+
+window.toggleActivityItem = function(idx) {
+    const key = 'act-' + idx;
+    if (state.expandedDetails.has(key)) {
+        state.expandedDetails.delete(key);
+    } else {
+        state.expandedDetails.add(key);
+    }
+    const el = document.getElementById(`activity-details-${idx}`);
+    if (el) {
+        el.style.display = state.expandedDetails.has(key) ? 'block' : 'none';
+        if (window.lucide) lucide.createIcons();
+    }
+};
+
+window.toggleAllThreats = function() {
+    const threats = state.threats || [];
+    if (threats.length === 0) return;
+    const allExpanded = threats.every(t => state.expandedDetails.has(t.id));
+    threats.forEach(t => {
+        if (allExpanded) {
+            state.expandedDetails.delete(t.id);
+        } else {
+            state.expandedDetails.add(t.id);
+        }
+    });
+    const btn = document.getElementById('toggle-all-threats-btn');
+    if (btn) btn.innerText = allExpanded ? 'Expand All' : 'Collapse All';
+    renderThreats(state.threats);
+};
+
+window.toggleAllThreatsView = function() {
+    const threats = state.threats || [];
+    if (threats.length === 0) return;
+    const allExpanded = threats.every(t => state.expandedDetails.has('full-' + t.id));
+    threats.forEach(t => {
+        if (allExpanded) {
+            state.expandedDetails.delete('full-' + t.id);
+        } else {
+            state.expandedDetails.add('full-' + t.id);
+        }
+    });
+    const btn = document.getElementById('toggle-all-threats-view-btn');
+    if (btn) btn.innerText = allExpanded ? 'Expand All' : 'Collapse All';
+    renderThreatsView(state.threats);
+};
+
+window.navigateToThreats = function() {
+    const nav = document.querySelector('a[data-view="threats"]');
+    if (nav) {
+        nav.click();
+    } else {
+        window.location.hash = '#threats';
+    }
+    window.scrollTo({ top: 0, behavior: 'smooth' });
+};
+
+window.toggleActivityPanel = function() {
+    const body = document.getElementById('activity-feed-body') || document.getElementById('activity-feed');
+    const btn = document.getElementById('toggle-activity-feed-btn');
+    if (!body) return;
+    const isHidden = body.style.display === 'none';
+    body.style.display = isHidden ? 'block' : 'none';
+    if (btn) btn.innerText = isHidden ? 'Collapse' : 'Expand';
 };
 
 window.toggleMalwareDetails = function(id) {
@@ -2885,7 +3040,7 @@ window.toggleMalwareDetails = function(id) {
     const el = document.getElementById(`malware-details-${id}`);
     if (el) {
         el.style.display = state.expandedDetails.has(id) ? 'flex' : 'none';
-        lucide.createIcons();
+        if (window.lucide) lucide.createIcons();
     }
 };
 
