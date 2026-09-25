@@ -753,12 +753,15 @@ mod tests {
 
     #[tokio::test]
     async fn test_memory_inspection_voter_filtering() {
-        use osoosi_types::HostEventSource;
+        use osoosi_types::{HostEventSource, TelemetryControllerInterface};
         use serde_json::json;
 
         let memory = Arc::new(osoosi_memory::MemoryStore::new(":memory:").expect("memory store"));
         let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
-        let voter = MemoryInspectionVoter { memory, adaptive };
+        let voter = MemoryInspectionVoter {
+            memory: memory.clone(),
+            adaptive: adaptive.clone(),
+        };
         assert!(voter.is_heavy());
 
         // Event ID 3 (Network) returns None immediately without running inspection
@@ -893,6 +896,52 @@ mod tests {
             causal_parent: None,
         };
         assert!(voter.vote(&ev_target_pid_sys).await.is_none());
+
+        // Non-existent PID reaches spawn_blocking / pe_inspector, which fails gracefully and returns None within timeout
+        let ev_non_existent = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 1, // ProcessCreate
+            timestamp: chrono::Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "ProcessId": 99999999,
+                "Image": r"C:\Windows\System32\cmd.exe"
+            }),
+            causal_parent: None,
+        };
+        assert!(voter.vote(&ev_non_existent).await.is_none());
+
+        // Consensus integration test: PolicyEngine skips MemoryInspectionVoter when TelemetryController is in SILENT mode
+        let mut policy = osoosi_policy::PolicyEngine::new(memory.clone(), osoosi_types::PolicyConfig::default());
+        policy.telemetry_controller = Some(adaptive.clone());
+        policy.add_voter(Box::new(MemoryInspectionVoter {
+            memory: memory.clone(),
+            adaptive: adaptive.clone(),
+        })).await;
+
+        *adaptive.current_mode.write().unwrap() = osoosi_types::TelemetryMode::Silent;
+        assert!(adaptive.is_silent_mode());
+
+        let ev_silent = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: chrono::Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "ProcessId": 99999999,
+                "Image": r"C:\Windows\System32\cmd.exe"
+            }),
+            causal_parent: None,
+        };
+        // Under SILENT mode, MemoryInspectionVoter is skipped by engine consensus loop because is_heavy() == true
+        let verdict = policy.scan_event(&ev_silent).await;
+        assert!(verdict.is_none());
+
+        // Restoring normal mode allows voter to participate
+        *adaptive.current_mode.write().unwrap() = osoosi_types::TelemetryMode::Normal;
+        assert!(!adaptive.is_silent_mode());
+        let verdict_normal = policy.scan_event(&ev_silent).await;
+        assert!(verdict_normal.is_none());
     }
 }
 
