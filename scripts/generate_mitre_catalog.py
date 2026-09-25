@@ -866,9 +866,23 @@ def build_catalog():
 
     if os.path.exists("dashboard/dist"):
         import shutil
-        shutil.copy2(OUTPUT_FILE, DASHBOARD_OUTPUT_FILE)
+        try:
+            shutil.copy2(OUTPUT_FILE, DASHBOARD_OUTPUT_FILE)
+        except Exception:
+            try:
+                with open(OUTPUT_FILE, "r", encoding="utf-8") as rf, open(DASHBOARD_OUTPUT_FILE, "w", encoding="utf-8") as wf:
+                    wf.write(rf.read())
+            except Exception as e:
+                print(f"Warning copying catalog to dashboard/dist: {e}")
         if os.path.exists(CONFIG_STIX_FILE):
-            shutil.copy2(CONFIG_STIX_FILE, DASHBOARD_STIX_FILE)
+            try:
+                shutil.copy2(CONFIG_STIX_FILE, DASHBOARD_STIX_FILE)
+            except Exception:
+                try:
+                    with open(CONFIG_STIX_FILE, "rb") as rf, open(DASHBOARD_STIX_FILE, "wb") as wf:
+                        wf.write(rf.read())
+                except Exception as e:
+                    print(f"Note: Could not overwrite {DASHBOARD_STIX_FILE}: {e}")
         print("Copied catalog and STIX bundle to dashboard/dist/")
 
     file_size_mb = os.path.getsize(OUTPUT_FILE) / (1024 * 1024)
