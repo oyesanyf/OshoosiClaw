@@ -1,16 +1,23 @@
 use axum::{
+    body::Body,
     extract::ConnectInfo,
     extract::{Path, Query, State},
-    http::HeaderMap,
+    http::{HeaderMap, Method, Request, StatusCode, Uri},
+    response::{IntoResponse, Response},
     routing::{get, post},
     Json, Router,
 };
 use serde::Deserialize;
 use serde_json::{json, Value};
+use std::convert::Infallible;
+use std::future::Future;
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::pin::Pin;
 use std::sync::Arc;
+use std::task::{Context, Poll};
 use std::time::Duration;
+use tower::Service;
 use tower_http::services::{ServeDir, ServeFile};
 use tracing::{info, warn};
 use osoosi_behavioral::{
@@ -169,6 +176,221 @@ async fn dashboard_health() -> Json<Value> {
     Json(json!({"ok": true, "service": "osoosi-dashboard"}))
 }
 
+/// Helper to percent-decode URL paths without external dependencies.
+pub fn percent_decode(input: &str) -> Option<String> {
+    let mut bytes = Vec::with_capacity(input.len());
+    let mut iter = input.bytes();
+    while let Some(b) = iter.next() {
+        if b == b'%' {
+            let h1 = iter.next()?;
+            let h2 = iter.next()?;
+            let hex_str = [h1, h2];
+            let s = std::str::from_utf8(&hex_str).ok()?;
+            let val = u8::from_str_radix(s, 16).ok()?;
+            bytes.push(val);
+        } else {
+            bytes.push(b);
+        }
+    }
+    String::from_utf8(bytes).ok()
+}
+
+/// Check if a string ends with a standard static web asset extension.
+pub fn has_static_extension_str(s: &str) -> bool {
+    let ext = s.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
+    matches!(
+        ext.as_str(),
+        "js" | "mjs" | "css" | "png" | "jpg" | "jpeg" | "gif" | "svg" | "ico"
+            | "woff" | "woff2" | "ttf" | "eot" | "map" | "wasm" | "json" | "webp"
+            | "webmanifest" | "txt" | "xml"
+    )
+}
+
+/// Check if a path has a static file extension.
+pub fn has_static_extension(path: &std::path::Path) -> bool {
+    let Some(ext) = path.extension().and_then(|e| e.to_str()) else {
+        return false;
+    };
+    has_static_extension_str(ext)
+}
+
+/// Sanitize and validate a URI path for safe Windows filesystem lookup.
+/// Returns `None` if the path contains illegal characters (`:`, `*`, `?`, `"`, `<`, `>`, `|`, `\`, control chars),
+/// path traversal sequences (`.` or `..`), trailing spaces/dots, or reserved DOS device names.
+pub fn sanitize_relative_path(path: &str) -> Option<PathBuf> {
+    let decoded = percent_decode(path)?;
+    if decoded.contains('\\') || decoded.contains('\0') {
+        return None;
+    }
+
+    let trimmed = decoded.trim_matches('/');
+    if trimmed.is_empty() {
+        return None;
+    }
+
+    let mut rel_path = PathBuf::new();
+    for seg in trimmed.split('/') {
+        if seg.is_empty() {
+            continue;
+        }
+        if seg == "." || seg == ".." {
+            return None;
+        }
+        if seg.ends_with('.') || seg.ends_with(' ') {
+            return None;
+        }
+        for c in seg.chars() {
+            if matches!(c, '<' | '>' | ':' | '"' | '|' | '?' | '*') || (c as u32) < 32 {
+                return None;
+            }
+        }
+        let stem = seg.split('.').next().unwrap_or(seg);
+        let stem_upper = stem.to_ascii_uppercase();
+        if matches!(
+            stem_upper.as_str(),
+            "CON" | "PRN" | "AUX" | "NUL"
+                | "COM1" | "COM2" | "COM3" | "COM4" | "COM5" | "COM6" | "COM7" | "COM8" | "COM9"
+                | "LPT1" | "LPT2" | "LPT3" | "LPT4" | "LPT5" | "LPT6" | "LPT7" | "LPT8" | "LPT9"
+        ) {
+            return None;
+        }
+        rel_path.push(seg);
+    }
+
+    if rel_path.as_os_str().is_empty() {
+        return None;
+    }
+
+    if !rel_path.components().all(|c| matches!(c, std::path::Component::Normal(_))) {
+        return None;
+    }
+
+    Some(rel_path)
+}
+
+fn rewrite_uri_path<B>(req: &mut Request<B>, new_path: &'static str) {
+    let mut parts = req.uri().clone().into_parts();
+    parts.path_and_query = Some(axum::http::uri::PathAndQuery::from_static(new_path));
+    if let Ok(new_uri) = Uri::from_parts(parts) {
+        *req.uri_mut() = new_uri;
+    }
+}
+
+/// Safe static file and SPA fallback service.
+/// Prevents Windows OS error 123 (ERROR_INVALID_NAME) by intercepting and validating URI paths
+/// before passing to `ServeDir`. Safely serves existing assets, 404s missing static assets,
+/// returns 404 JSON for unmatched `/api` endpoints, and falls back to `index.html` for SPA routes.
+#[derive(Clone)]
+pub struct SafeServeDir {
+    asset_dir: PathBuf,
+    index_html: Option<PathBuf>,
+    serve_dir: ServeDir,
+}
+
+impl SafeServeDir {
+    pub fn new(asset_dir: PathBuf) -> Self {
+        let index = asset_dir.join("index.html");
+        let index_html = if index.is_file() { Some(index) } else { None };
+        let serve_dir = ServeDir::new(&asset_dir);
+        Self {
+            asset_dir,
+            index_html,
+            serve_dir,
+        }
+    }
+}
+
+impl Service<Request<Body>> for SafeServeDir {
+    type Response = Response;
+    type Error = Infallible;
+    type Future = Pin<Box<dyn Future<Output = Result<Self::Response, Self::Error>> + Send>>;
+
+    fn poll_ready(&mut self, cx: &mut Context<'_>) -> Poll<Result<(), Self::Error>> {
+        <ServeDir as Service<Request<Body>>>::poll_ready(&mut self.serve_dir, cx).map_err(|e| match e {})
+    }
+
+    fn call(&mut self, mut req: Request<Body>) -> Self::Future {
+        let mut serve_dir = self.serve_dir.clone();
+        let asset_dir = self.asset_dir.clone();
+        let index_html = self.index_html.clone();
+
+        Box::pin(async move {
+            let path = req.uri().path().to_string();
+
+            // 1. Unmatched API routes must return 404 JSON, never static assets or index.html
+            if path.starts_with("/api/") || path.starts_with("/skyrl/") || path == "/health" {
+                return Ok(Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .header(axum::http::header::CONTENT_TYPE, "application/json")
+                    .body(Body::from(r#"{"error":"endpoint not found"}"#))
+                    .unwrap());
+            }
+
+            // 2. Only GET and HEAD methods are valid for static file serving and SPA fallback
+            if req.method() != Method::GET && req.method() != Method::HEAD {
+                return Ok(Response::builder()
+                    .status(StatusCode::METHOD_NOT_ALLOWED)
+                    .body(Body::empty())
+                    .unwrap());
+            }
+
+            // 3. Root path / or /index.html
+            if path == "/" || path == "/index.html" || path.is_empty() {
+                if let Some(ref _idx) = index_html {
+                    rewrite_uri_path(&mut req, "/index.html");
+                    let resp = serve_dir.call(req).await.into_response();
+                    return Ok(resp);
+                } else {
+                    return Ok(Response::builder()
+                        .status(StatusCode::NOT_FOUND)
+                        .body(Body::from("Dashboard assets not found"))
+                        .unwrap());
+                }
+            }
+
+            // 4. Sanitize and validate path components for Windows filesystem safety
+            let safe_rel_path = sanitize_relative_path(&path);
+            match safe_rel_path {
+                Some(rel_path) => {
+                    let candidate = asset_dir.join(&rel_path);
+                    if candidate.is_file() {
+                        let resp = serve_dir.call(req).await.into_response();
+                        Ok(resp)
+                    } else if has_static_extension(&rel_path) {
+                        Ok(Response::builder()
+                            .status(StatusCode::NOT_FOUND)
+                            .body(Body::from("Asset not found"))
+                            .unwrap())
+                    } else if let Some(ref _idx) = index_html {
+                        rewrite_uri_path(&mut req, "/index.html");
+                        let resp = serve_dir.call(req).await.into_response();
+                        Ok(resp)
+                    } else {
+                        Ok(Response::builder()
+                            .status(StatusCode::NOT_FOUND)
+                            .body(Body::from("Route not found"))
+                            .unwrap())
+                    }
+                }
+                None => {
+                    // Invalid Windows path characters detected (colons ':', '*', '?', etc.) or traversal '..'
+                    // NEVER pass to ServeDir on Windows!
+                    if !has_static_extension_str(&path) && index_html.is_some() {
+                        rewrite_uri_path(&mut req, "/index.html");
+                        let resp = serve_dir.call(req).await.into_response();
+                        Ok(resp)
+                    } else {
+                        Ok(Response::builder()
+                            .status(StatusCode::NOT_FOUND)
+                            .body(Body::from("Not found"))
+                            .unwrap())
+                    }
+                }
+            }
+        })
+    }
+}
+
 fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
     let index_html = asset_path.join("index.html");
     let api = Router::new()
@@ -271,15 +493,16 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/mitre/stix/update", post(post_mitre_stix_update))
         .with_state(state);
 
+    let safe_serve = SafeServeDir::new(asset_path);
     if index_html.is_file() {
         Router::new()
             .merge(api)
             .route_service("/", ServeFile::new(index_html))
-            .fallback_service(ServeDir::new(asset_path))
+            .fallback_service(safe_serve)
     } else {
         Router::new()
             .merge(api)
-            .fallback_service(ServeDir::new(asset_path))
+            .fallback_service(safe_serve)
     }
 }
 
@@ -3278,6 +3501,164 @@ mod tests {
         let state = DashboardState::new(None, None);
         let resp = get_threats(State(state)).await.0;
         assert_eq!(resp, json!([]));
+    }
+
+    #[test]
+    fn test_sanitize_relative_path() {
+        // Valid paths
+        assert_eq!(
+            sanitize_relative_path("style.css"),
+            Some(PathBuf::from("style.css"))
+        );
+        assert_eq!(
+            sanitize_relative_path("/app.js"),
+            Some(PathBuf::from("app.js"))
+        );
+        assert_eq!(
+            sanitize_relative_path("/assets/vendor/icons.svg"),
+            Some(PathBuf::from("assets").join("vendor").join("icons.svg"))
+        );
+
+        // Windows illegal characters: colons (DID IDs, drives, streams)
+        assert_eq!(sanitize_relative_path("/devices/did:osoosi:local"), None);
+        assert_eq!(sanitize_relative_path("did:osoosi:peer_1234"), None);
+        assert_eq!(sanitize_relative_path("/C:/Windows/cmd.exe"), None);
+
+        // Windows illegal characters: * ? " < > | \ control chars
+        assert_eq!(sanitize_relative_path("/foo*bar.js"), None);
+        assert_eq!(sanitize_relative_path("/foo?bar.js"), None);
+        assert_eq!(sanitize_relative_path("/foo\"bar.js"), None);
+        assert_eq!(sanitize_relative_path("/foo<bar.js"), None);
+        assert_eq!(sanitize_relative_path("/foo>bar.js"), None);
+        assert_eq!(sanitize_relative_path("/foo|bar.js"), None);
+        assert_eq!(sanitize_relative_path("/foo\\bar.js"), None);
+        assert_eq!(sanitize_relative_path("/foo\0bar.js"), None);
+
+        // Path traversal sequences
+        assert_eq!(sanitize_relative_path("/../secret.txt"), None);
+        assert_eq!(sanitize_relative_path("/../../windows/system32"), None);
+        assert_eq!(sanitize_relative_path("/././test.js"), None);
+        assert_eq!(sanitize_relative_path(".."), None);
+        assert_eq!(sanitize_relative_path("."), None);
+
+        // Windows reserved device names (stem match, case-insensitive)
+        assert_eq!(sanitize_relative_path("con.txt"), None);
+        assert_eq!(sanitize_relative_path("aux.json"), None);
+        assert_eq!(sanitize_relative_path("nul"), None);
+        assert_eq!(sanitize_relative_path("COM1.dat"), None);
+        assert_eq!(sanitize_relative_path("LPT2"), None);
+        assert_eq!(sanitize_relative_path("prn"), None);
+
+        // Windows trailing dots or spaces
+        assert_eq!(sanitize_relative_path("test."), None);
+        assert_eq!(sanitize_relative_path("test "), None);
+        assert_eq!(sanitize_relative_path("/folder /file.js"), None);
+    }
+
+    #[test]
+    fn test_has_static_extension() {
+        assert!(has_static_extension(std::path::Path::new("app.js")));
+        assert!(has_static_extension(std::path::Path::new("style.css")));
+        assert!(has_static_extension(std::path::Path::new("favicon.ico")));
+        assert!(has_static_extension(std::path::Path::new("image.png")));
+        assert!(has_static_extension(std::path::Path::new("catalog.json")));
+
+        assert!(!has_static_extension(std::path::Path::new("threats")));
+        assert!(!has_static_extension(std::path::Path::new("quarantine")));
+        assert!(!has_static_extension(std::path::Path::new("did:osoosi:local")));
+        assert!(!has_static_extension(std::path::Path::new("T1059.001")));
+    }
+
+    #[tokio::test]
+    async fn test_safe_serve_dir_router_spa_and_sanitization() {
+        use tower::ServiceExt;
+
+        let temp_dir = std::env::temp_dir().join(format!("test_oshoosi_dash_{}", rand::random::<u64>()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let index_content = "<!DOCTYPE html><html><body><h1>Oshoosi Dashboard Test</h1></body></html>";
+        let css_content = "body { background: #000; }";
+        std::fs::write(temp_dir.join("index.html"), index_content).unwrap();
+        std::fs::write(temp_dir.join("style.css"), css_content).unwrap();
+
+        let state = DashboardState::new(None, None);
+        let app = dashboard_router(state, temp_dir.clone());
+
+        // 1. Root / serves index.html
+        let req = axum::http::Request::builder()
+            .uri("/")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("Oshoosi Dashboard Test"));
+
+        // 2. Existing static file style.css returns 200 OK
+        let req = axum::http::Request::builder()
+            .uri("/style.css")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("background: #000"));
+
+        // 3. Clean SPA route /threats falls back to index.html
+        let req = axum::http::Request::builder()
+            .uri("/threats")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("Oshoosi Dashboard Test"));
+
+        // 4. SPA route with colons / DID (e.g. /devices/did:osoosi:local)
+        // Must fall back to index.html WITHOUT causing Windows OS error 123!
+        let req = axum::http::Request::builder()
+            .uri("/devices/did:osoosi:local")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::OK);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains("Oshoosi Dashboard Test"));
+
+        // 5. Missing static asset /missing.css returns 404 cleanly, never serving index.html
+        let req = axum::http::Request::builder()
+            .uri("/missing.css")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::NOT_FOUND);
+
+        // 6. Unmatched API endpoint returns 404 JSON, never index.html
+        let req = axum::http::Request::builder()
+            .uri("/api/devices/did:osoosi:unknown")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::NOT_FOUND);
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        assert!(String::from_utf8_lossy(&body).contains(r#"{"error":"endpoint not found"}"#));
+
+        // 7. POST to static route returns 405 Method Not Allowed
+        let req = axum::http::Request::builder()
+            .uri("/threats")
+            .method(axum::http::Method::POST)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let res = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(res.status(), axum::http::StatusCode::METHOD_NOT_ALLOWED);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
 

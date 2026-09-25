@@ -1868,6 +1868,8 @@ pub fn create_file_filter(debug: bool) -> EnvFilter {
         .add_directive("libp2p_kad=error".parse().expect("static directive"))
         .add_directive("libp2p_gossipsub=error".parse().expect("static directive"))
         .add_directive("regalloc2=warn".parse().expect("static directive"))
+        .add_directive("tower_http::services::fs::serve_dir=off".parse().expect("static directive"))
+        .add_directive("tower_http=warn".parse().expect("static directive"))
 }
 
 pub fn create_console_filter(debug: bool) -> EnvFilter {
@@ -1894,6 +1896,8 @@ pub fn create_console_filter(debug: bool) -> EnvFilter {
         .add_directive("wasmtime=warn".parse().expect("static directive"))
         .add_directive("wasmtime_wasi=warn".parse().expect("static directive"))
         .add_directive("regalloc2=warn".parse().expect("static directive"))
+        .add_directive("tower_http::services::fs::serve_dir=off".parse().expect("static directive"))
+        .add_directive("tower_http=warn".parse().expect("static directive"))
 }
 
 fn run_yara_sanitizer() {
@@ -2696,6 +2700,68 @@ mod tests {
         assert!(
             output.contains("Detailed diagnostic trace"),
             "Core debug logs must appear when debug is active"
+        );
+    }
+
+    #[test]
+    fn test_file_filter_silences_tower_http_serve_dir() {
+        let log_buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = BufferWriter(log_buffer.clone());
+
+        let layer = fmt::Layer::default()
+            .with_writer(writer)
+            .with_ansi(false)
+            .with_filter(create_file_filter(false));
+
+        let subscriber = tracing_subscriber::registry().with(layer);
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::error!(
+                target: "tower_http::services::fs::serve_dir",
+                "Failed to read file error=The filename, directory name, or volume label syntax is incorrect. (os error 123)"
+            );
+            tracing::info!(target: "osoosi_core", "Telemetry heartbeat normal");
+        });
+
+        let output = String::from_utf8(log_buffer.lock().unwrap().clone()).expect("valid utf8");
+        assert!(
+            !output.contains("os error 123"),
+            "tower_http serve_dir error must be silenced by file_filter"
+        );
+        assert!(
+            output.contains("Telemetry heartbeat normal"),
+            "Normal application INFO logs must be captured by file_filter"
+        );
+    }
+
+    #[test]
+    fn test_console_filter_silences_tower_http_serve_dir() {
+        let log_buffer = Arc::new(Mutex::new(Vec::new()));
+        let writer = BufferWriter(log_buffer.clone());
+
+        let layer = fmt::Layer::default()
+            .with_writer(writer)
+            .with_ansi(false)
+            .with_filter(create_console_filter(false));
+
+        let subscriber = tracing_subscriber::registry().with(layer);
+
+        tracing::subscriber::with_default(subscriber, || {
+            tracing::error!(
+                target: "tower_http::services::fs::serve_dir",
+                "Failed to read file error=The filename, directory name, or volume label syntax is incorrect. (os error 123)"
+            );
+            tracing::warn!(target: "osoosi_core", "System firewall warning");
+        });
+
+        let output = String::from_utf8(log_buffer.lock().unwrap().clone()).expect("valid utf8");
+        assert!(
+            !output.contains("os error 123"),
+            "tower_http serve_dir error must be silenced by console_filter"
+        );
+        assert!(
+            output.contains("System firewall warning"),
+            "Standard WARN logs must pass through console_filter"
         );
     }
 

@@ -81,6 +81,7 @@ goblin = "0.9"
 magika = "1"
 ort = { version = "=2.0.0-rc.10", default-features = false, features = ["load-dynamic", "download-binaries", "copy-dylibs"] }
 axum = { version = "0.7", features = ["macros"] }
+tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 libc = "0.2"
 nostr-sdk = "0.33"
