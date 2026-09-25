@@ -1640,6 +1640,8 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
     };
     let file_filter = EnvFilter::from_default_env()
         .add_directive(file_level.into())
+        .add_directive("nostr_relay_pool=off".parse().expect("static directive"))
+        .add_directive("nostr=error".parse().expect("static directive"))
         .add_directive("h2=warn".parse().expect("static directive"))
         .add_directive("hyper=warn".parse().expect("static directive"))
         .add_directive("rustls=warn".parse().expect("static directive"))
@@ -1663,6 +1665,8 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
     };
     let console_filter = EnvFilter::from_default_env()
         .add_directive(console_level.into())
+        .add_directive("nostr_relay_pool=off".parse().expect("static directive"))
+        .add_directive("nostr=error".parse().expect("static directive"))
         .add_directive("h2=error".parse().expect("static directive"))
         .add_directive("hyper=error".parse().expect("static directive"))
         .add_directive("rustls=error".parse().expect("static directive"))
