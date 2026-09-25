@@ -168,17 +168,18 @@
                 </div>
                 
                 <!-- Detection Engine Stats -->
-                <div class="card glass shadow-glow mb-4">
+                <div class="card glass shadow-glow mb-4" id="detection-engines-card">
                     <div class="card-header">
                         <div style="display:flex; align-items:center; gap:10px;">
                             <h3>Policy Detection Engines</h3>
                             <span class="badge blue" style="font-size:11px;"><i data-lucide="shield-check" style="width:12px;height:12px;display:inline;vertical-align:middle;margin-right:3px;"></i>MITRE ATLAS™ Verified</span>
                         </div>
-                        <div class="header-actions">
+                        <div class="header-actions" style="display:flex; align-items:center; gap:8px;">
                             <span class="badge purple">Consensus Quorum: 0.70</span>
+                            <button class="btn-text" id="toggle-engines-btn" onclick="toggleEnginesPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
                         </div>
                     </div>
-                    <div class="card-body">
+                    <div class="card-body" id="detection-engines-body">
                         <div id="detection-engines-grid" class="detection-grid">
                             <p class="placeholder-text">Initializing detection engines...</p>
                         </div>
@@ -189,11 +190,12 @@
                 <div class="card glass shadow-glow mb-4" style="min-height: 250px; margin-bottom: 24px;">
                     <div class="card-header">
                         <h3>OpenTelemetry: Event Ingestion (Last Hour)</h3>
-                        <div class="header-actions">
+                        <div class="header-actions" style="display:flex; align-items:center; gap:8px;">
                             <span class="badge blue">Live Metrics</span>
+                            <button class="btn-text" id="toggle-telemetry-btn" onclick="toggleTelemetryPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
                         </div>
                     </div>
-                    <div class="card-body" style="height: 180px;">
+                    <div class="card-body" id="telemetry-chart-body" style="height: 180px;">
                         <canvas id="telemetry-chart"></canvas>
                     </div>
                 </div>
@@ -201,11 +203,14 @@
                 <!-- Main Grid -->
                 <div class="main-grid">
                     <div class="card glass shadow-glow threat-timeline">
-                        <div class="card-header">
+                        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                             <h3>Live Threat Timeline</h3>
-                            <button class="btn-text" id="view-all-threats-btn" onclick="document.querySelector('a[data-view=\'threats\']')?.click()">View All</button>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <button class="btn-text" id="toggle-all-threats-btn" onclick="toggleAllThreats()" style="font-size:12px; cursor:pointer;">Expand All</button>
+                                <button class="btn-text" id="view-all-threats-btn" onclick="navigateToThreats()" style="font-size:12px; cursor:pointer; font-weight:600;">View All</button>
+                            </div>
                         </div>
-                        <div class="card-body">
+                        <div class="card-body" id="threat-timeline-body">
                             <div id="threat-list" class="timeline-list">
                                 <p class="placeholder-text">Waiting for threat data...</p>
                             </div>
@@ -213,10 +218,14 @@
                     </div>
 
                     <div class="card glass shadow-glow activity-feed">
-                        <div class="card-header">
+                        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                             <h3>Recent Activity</h3>
+                            <div style="display:flex; align-items:center; gap:8px;">
+                                <button class="btn-text" id="toggle-all-activity-btn" onclick="toggleAllActivityItems()" style="font-size:12px; cursor:pointer;">Expand All</button>
+                                <button class="btn-text" id="toggle-activity-feed-btn" onclick="toggleActivityPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
+                            </div>
                         </div>
-                        <div class="card-body">
+                        <div class="card-body" id="activity-feed-body">
                             <div id="activity-feed" class="feed-list">
                                 <p class="placeholder-text">Waiting for activity data...</p>
                             </div>
@@ -228,8 +237,9 @@
             <!-- Threats View -->
             <div id="threats-view" class="view-content">
                 <div class="card glass shadow-glow">
-                    <div class="card-header">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h3>Identified Threats & Vulnerabilities</h3>
+                        <button class="btn-text" id="toggle-all-threats-view-btn" onclick="toggleAllThreatsView()" style="font-size:12px; cursor:pointer;">Expand All</button>
                     </div>
                     <div class="card-body">
                         <div id="threats-data-list" class="timeline-list">
@@ -239,10 +249,11 @@
                 </div>
                 <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 24px;">
                     <div class="card glass shadow-glow">
-                        <div class="card-header">
+                        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                             <h3>Proactive Policy Suppression</h3>
+                            <button class="btn-text" id="toggle-suppression-btn" onclick="toggleSuppressionPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
                         </div>
-                        <div class="card-body">
+                        <div class="card-body" id="suppression-body">
                             <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">Manually suppress future detections for a specific process or file hash (False Positive).</p>
                             <div style="display: flex; flex-direction: column; gap: 12px;">
                                 <div>
@@ -259,10 +270,11 @@
                     </div>
 
                     <div class="card glass shadow-glow">
-                        <div class="card-header">
+                        <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                             <h3>Manual Threat Reporting</h3>
+                            <button class="btn-text" id="toggle-manual-tp-btn" onclick="toggleManualTpPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
                         </div>
-                        <div class="card-body">
+                        <div class="card-body" id="manual-tp-body">
                             <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 16px;">Manually report a process as a confirmed threat to trigger Morphic Entanglement (True Positive).</p>
                             <div style="display: flex; flex-direction: column; gap: 12px;">
                                 <div>
@@ -297,10 +309,11 @@
                     </div>
                 </div>
                 <div class="card glass shadow-glow mt-4">
-                    <div class="card-header">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h3>Peer Actions</h3>
+                        <button class="btn-text" id="toggle-mesh-panel-btn" onclick="toggleMeshPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
                     </div>
-                    <div class="card-body">
+                    <div class="card-body" id="mesh-panel-body">
                         <div id="mesh-data-list" class="timeline-list">
                             <p class="placeholder-text">Waiting for mesh data...</p>
                         </div>
@@ -331,10 +344,11 @@
                     </div>
                 </div>
                 <div class="card glass shadow-glow mt-4">
-                    <div class="card-header">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h3>Inbound Gossip Mesh Feed</h3>
+                        <button class="btn-text" id="toggle-gossip-panel-btn" onclick="toggleGossipPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
                     </div>
-                    <div class="card-body">
+                    <div class="card-body" id="gossip-panel-body">
                         <div id="gossip-feed-list" class="timeline-list">
                             <p class="placeholder-text">Listening for P2P gossip...</p>
                         </div>
@@ -344,6 +358,7 @@
 
             <!-- Malware Scanner View -->
             <div id="malware-view" class="view-content">
+                <div id="scanner-view" style="display:none;"></div>
                 <div class="stats-grid">
                     <div class="stat-card glass shadow-glow">
                         <div class="stat-icon-wrapper purple">
@@ -383,13 +398,14 @@
                     </div>
                 </div>
                 <div class="card glass shadow-glow mt-4">
-                    <div class="card-header">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h3>Recent Detections</h3>
-                        <div class="header-actions">
+                        <div class="header-actions" style="display:flex; align-items:center; gap:8px;">
                             <button class="btn-text" onclick="triggerMalwareScan()"><i data-lucide="play" style="width:14px; margin-right:4px;"></i> Trigger Scan</button>
+                            <button class="btn-text" id="toggle-malware-panel-btn" onclick="toggleMalwarePanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
                         </div>
                     </div>
-                    <div class="card-body">
+                    <div class="card-body" id="malware-panel-body">
                         <div id="malware-data-list" class="timeline-list">
                             <p class="placeholder-text">Waiting for malware scan data...</p>
                         </div>
@@ -400,10 +416,11 @@
             <!-- Repair Engine View -->
             <div id="repair-view" class="view-content">
                 <div class="card glass shadow-glow">
-                    <div class="card-header">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h3>System Patch & Repair Status</h3>
+                        <button class="btn-text" id="toggle-repair-panel-btn" onclick="toggleRepairPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
                     </div>
-                    <div class="card-body">
+                    <div class="card-body" id="repair-panel-body">
                         <div class="repair-status-container" id="repair-data">
                             <p class="placeholder-text">Waiting for repair status...</p>
                         </div>
@@ -512,20 +529,28 @@
                     <p class="placeholder-text">Loading zone security summary...</p>
                 </div>
                 <div class="card glass shadow-glow mt-4">
-                    <div class="card-header">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h3>Zone-Wide Security Recommendations</h3>
-                        <button id="btn-auto-remediate-all" class="btn-primary btn-sm flex items-center gap-2" onclick="autoRemediateAllGaps(this)"><i data-lucide="zap"></i> Auto-Configure All Settings</button>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <button id="btn-auto-remediate-all" class="btn-primary btn-sm flex items-center gap-2" onclick="autoRemediateAllGaps(this)"><i data-lucide="zap"></i> Auto-Configure All Settings</button>
+                            <button class="btn-text" id="toggle-zone-rec-btn" onclick="toggleZoneRecPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
+                        </div>
                     </div>
-                    <div id="zone-recommendations" class="card-body feed-list">
-                        <p class="placeholder-text">No recommendations at this time.</p>
+                    <div id="zone-rec-body" class="card-body feed-list">
+                        <div id="zone-recommendations">
+                            <p class="placeholder-text">No recommendations at this time.</p>
+                        </div>
                     </div>
                 </div>
                 <div id="zone-nodes-container" class="card glass shadow-glow mt-4">
-                    <div class="card-header">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h3>Active Zone Nodes & Hardware Attestation Cluster</h3>
+                        <button class="btn-text" id="toggle-zone-nodes-btn" onclick="toggleZoneNodesPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
                     </div>
-                    <div id="zone-nodes-list" class="card-body timeline-list">
-                        <p class="placeholder-text">Loading active zone nodes...</p>
+                    <div id="zone-nodes-body" class="card-body">
+                        <div id="zone-nodes-list" class="timeline-list">
+                            <p class="placeholder-text">Loading active zone nodes...</p>
+                        </div>
                     </div>
                 </div>
             </div>
@@ -533,10 +558,11 @@
             <!-- Approval Queue View -->
             <div id="approvals-view" class="view-content">
                 <div class="card glass shadow-glow">
-                    <div class="card-header">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h3>Action Approval Queue</h3>
+                        <button class="btn-text" id="toggle-approvals-btn" onclick="toggleApprovalsPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
                     </div>
-                    <div class="card-body">
+                    <div class="card-body" id="approvals-body">
                         <div id="approval-list" class="timeline-list">
                             <p class="placeholder-text">Checking for pending actions...</p>
                         </div>
@@ -546,13 +572,14 @@
             <!-- Forensic Story View -->
             <div id="story-view" class="view-content">
                 <div class="card glass shadow-glow">
-                    <div class="card-header">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h3>Forensic Storytelling (OpenTelemetry Trace)</h3>
-                        <div class="header-actions">
+                        <div class="header-actions" style="display:flex; align-items:center; gap:8px;">
                             <button class="btn-text" id="refresh-story"><i data-lucide="refresh-cw" style="width:14px; margin-right:4px;"></i> Regenerate Narrative</button>
+                            <button class="btn-text" id="toggle-story-panel-btn" onclick="toggleStoryPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
                         </div>
                     </div>
-                    <div class="card-body">
+                    <div class="card-body" id="story-panel-body">
                         <div id="story-container" class="forensic-narrative" style="font-family: 'Outfit', sans-serif; line-height: 1.6; color: var(--text-header); min-height: 200px;">
                             <p class="placeholder-text">Click 'Regenerate Narrative' to synthesize the latest forensic evidence into a story.</p>
                         </div>

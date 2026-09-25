@@ -487,6 +487,21 @@ async function updateDashboard() {
 
         // Ensure collapsed panels retain their display state across polling updates
         if (state.collapsedPanels && state.collapsedPanels.size > 0) {
+            const panelButtonMap = {
+                'detection-engines-body': 'toggle-engines-btn',
+                'telemetry-chart-body': 'toggle-telemetry-btn',
+                'activity-feed-body': 'toggle-activity-feed-btn',
+                'zone-rec-body': 'toggle-zone-rec-btn',
+                'zone-nodes-body': 'toggle-zone-nodes-btn',
+                'approvals-body': 'toggle-approvals-btn',
+                'suppression-body': 'toggle-suppression-btn',
+                'manual-tp-body': 'toggle-manual-tp-btn',
+                'mesh-panel-body': 'toggle-mesh-panel-btn',
+                'gossip-panel-body': 'toggle-gossip-panel-btn',
+                'malware-panel-body': 'toggle-malware-panel-btn',
+                'repair-panel-body': 'toggle-repair-panel-btn',
+                'story-panel-body': 'toggle-story-panel-btn'
+            };
             state.collapsedPanels.forEach(panelId => {
                 const el = document.getElementById(panelId) || 
                            (panelId === 'zone-rec-body' ? document.getElementById('zone-recommendations') : null) || 
@@ -494,6 +509,13 @@ async function updateDashboard() {
                            (panelId === 'activity-feed-body' ? document.getElementById('activity-feed') : null);
                 if (el && el.style.display !== 'none') {
                     el.style.display = 'none';
+                }
+                const btnId = panelButtonMap[panelId];
+                if (btnId) {
+                    const btn = document.getElementById(btnId);
+                    if (btn && btn.innerText !== 'Expand') {
+                        btn.innerText = 'Expand';
+                    }
                 }
             });
         }
@@ -811,6 +833,12 @@ function renderThreats(threats) {
         </div>
     `}).join('');
     
+    const toggleAllBtn = document.getElementById('toggle-all-threats-btn');
+    if (toggleAllBtn && displayThreats.length > 0) {
+        const allExp = displayThreats.every(t => state.expandedDetails.has(t.id));
+        toggleAllBtn.innerText = allExp ? 'Collapse All' : 'Expand All';
+    }
+
     lucide.createIcons();
 }
 
@@ -988,6 +1016,11 @@ function renderThreatsView(threats) {
             </div>
         </div>
     `}).join('');
+    const toggleAllViewBtn = document.getElementById('toggle-all-threats-view-btn');
+    if (toggleAllViewBtn && filtered.length > 0) {
+        const allExp = filtered.every(t => state.expandedDetails.has('full-' + t.id));
+        toggleAllViewBtn.innerText = allExp ? 'Collapse All' : 'Expand All';
+    }
     lucide.createIcons();
 }
 
@@ -3097,19 +3130,33 @@ function togglePanel(panelId, btnId, defaultOpenText = 'Collapse', defaultClosed
 }
 window.togglePanel = togglePanel;
 
-window.toggleEnginesPanel = function() { togglePanel('detection-engines-body', 'toggle-engines-btn'); };
-window.toggleTelemetryPanel = function() { togglePanel('telemetry-chart-body', 'toggle-telemetry-btn'); };
-window.toggleActivityPanel = function() { togglePanel('activity-feed-body', 'toggle-activity-feed-btn'); };
-window.toggleZoneRecPanel = function() { togglePanel('zone-rec-body', 'toggle-zone-rec-btn'); };
-window.toggleZoneNodesPanel = function() { togglePanel('zone-nodes-body', 'toggle-zone-nodes-btn'); };
-window.toggleApprovalsPanel = function() { togglePanel('approvals-body', 'toggle-approvals-btn'); };
-window.toggleSuppressionPanel = function() { togglePanel('suppression-body', 'toggle-suppression-btn'); };
-window.toggleManualTpPanel = function() { togglePanel('manual-tp-body', 'toggle-manual-tp-btn'); };
-window.toggleMeshPanel = function() { togglePanel('mesh-panel-body', 'toggle-mesh-panel-btn'); };
-window.toggleGossipPanel = function() { togglePanel('gossip-panel-body', 'toggle-gossip-panel-btn'); };
-window.toggleMalwarePanel = function() { togglePanel('malware-panel-body', 'toggle-malware-panel-btn'); };
-window.toggleRepairPanel = function() { togglePanel('repair-panel-body', 'toggle-repair-panel-btn'); };
-window.toggleStoryPanel = function() { togglePanel('story-panel-body', 'toggle-story-panel-btn'); };
+function toggleEnginesPanel() { togglePanel('detection-engines-body', 'toggle-engines-btn'); }
+function toggleTelemetryPanel() { togglePanel('telemetry-chart-body', 'toggle-telemetry-btn'); }
+function toggleActivityPanel() { togglePanel('activity-feed-body', 'toggle-activity-feed-btn'); }
+function toggleZoneRecPanel() { togglePanel('zone-rec-body', 'toggle-zone-rec-btn'); }
+function toggleZoneNodesPanel() { togglePanel('zone-nodes-body', 'toggle-zone-nodes-btn'); }
+function toggleApprovalsPanel() { togglePanel('approvals-body', 'toggle-approvals-btn'); }
+function toggleSuppressionPanel() { togglePanel('suppression-body', 'toggle-suppression-btn'); }
+function toggleManualTpPanel() { togglePanel('manual-tp-body', 'toggle-manual-tp-btn'); }
+function toggleMeshPanel() { togglePanel('mesh-panel-body', 'toggle-mesh-panel-btn'); }
+function toggleGossipPanel() { togglePanel('gossip-panel-body', 'toggle-gossip-panel-btn'); }
+function toggleMalwarePanel() { togglePanel('malware-panel-body', 'toggle-malware-panel-btn'); }
+function toggleRepairPanel() { togglePanel('repair-panel-body', 'toggle-repair-panel-btn'); }
+function toggleStoryPanel() { togglePanel('story-panel-body', 'toggle-story-panel-btn'); }
+
+window.toggleEnginesPanel = toggleEnginesPanel;
+window.toggleTelemetryPanel = toggleTelemetryPanel;
+window.toggleActivityPanel = toggleActivityPanel;
+window.toggleZoneRecPanel = toggleZoneRecPanel;
+window.toggleZoneNodesPanel = toggleZoneNodesPanel;
+window.toggleApprovalsPanel = toggleApprovalsPanel;
+window.toggleSuppressionPanel = toggleSuppressionPanel;
+window.toggleManualTpPanel = toggleManualTpPanel;
+window.toggleMeshPanel = toggleMeshPanel;
+window.toggleGossipPanel = toggleGossipPanel;
+window.toggleMalwarePanel = toggleMalwarePanel;
+window.toggleRepairPanel = toggleRepairPanel;
+window.toggleStoryPanel = toggleStoryPanel;
 
 window.toggleAllActivityItems = function() {
     let items = (state.activity && state.activity.length > 0) ? state.activity : [
