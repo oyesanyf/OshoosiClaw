@@ -566,17 +566,25 @@ fn enrich_mitre_threat(
     existing_tech: Option<&str>,
     existing_name: Option<&str>,
 ) -> (String, String, String) {
-    if let (Some(t), Some(n)) = (existing_tech, existing_name) {
-        if !t.is_empty() && !n.is_empty() {
+    if let Some(t) = existing_tech.filter(|s| !s.is_empty()) {
+        if let Some(n) = existing_name.filter(|s| !s.is_empty()) {
             return (t.to_string(), n.to_string(), format!("[{}] {}", t, n));
+        } else if t.contains(" - ") {
+            let mut parts = t.splitn(2, " - ");
+            let tech_id = parts.next().unwrap_or(t).trim();
+            let tech_name = parts.next().unwrap_or("").trim();
+            return (tech_id.to_string(), tech_name.to_string(), format!("[{}] {}", tech_id, tech_name));
+        } else {
+            let name = if !process_name.is_empty() { process_name } else { t };
+            return (t.to_string(), name.to_string(), format!("[{}] {}", t, name));
         }
     }
     let r_lower = reason.to_lowercase();
     let p_lower = process_name.to_lowercase();
 
-    let (tech_id, tech_name, display_title) = if r_lower.contains("sandboxsurface") || r_lower.contains("high-risk privilege") || r_lower.contains("whoami") {
+    let (tech_id, tech_name, display_title) = if r_lower.contains("sandboxsurface") || r_lower.contains("high-risk privilege") || r_lower.contains("whoami") || p_lower.contains("whoami") {
         ("T1033", "System Owner/User Discovery", "[T1033] System Owner/User Discovery (Elevated Probe)".to_string())
-    } else if r_lower.contains("anti_dbg") || r_lower.contains("debuggercheck") || r_lower.contains("debuggerexception") {
+    } else if r_lower.contains("anti_dbg") || r_lower.contains("debuggercheck") || r_lower.contains("debuggerexception") || r_lower.contains("debugger") {
         let target = if !process_name.is_empty() { process_name } else { "Binary" };
         ("T1622", "Debugger Evasion", format!("[T1622] Debugger Evasion ({})", target))
     } else if r_lower.contains("win_mutex") || r_lower.contains("mutex") {
@@ -596,7 +604,12 @@ fn enrich_mitre_threat(
     } else if !cve_id.is_empty() {
         ("T1190", "Exploit Public-Facing Application", format!("[{}] Vulnerability Trigger ({})", cve_id, if !process_name.is_empty() { process_name } else { "Target" }))
     } else {
-        ("T1082", "System Information Discovery", if !process_name.is_empty() { format!("[T1082] Discovery ({})", process_name) } else { "[T1082] System Discovery".to_string() })
+        let target = if !process_name.is_empty() && !process_name.eq_ignore_ascii_case("threat") && !process_name.eq_ignore_ascii_case("unknown") {
+            format!(" ({})", process_name)
+        } else {
+            String::new()
+        };
+        ("T1082", "System Information Discovery", format!("[T1082] System Discovery{}", target))
     };
     (tech_id.to_string(), tech_name.to_string(), display_title)
 }
@@ -723,6 +736,7 @@ async fn get_threats(State(state): State<DashboardState>) -> Json<Value> {
                             "timestamp": obj.get("timestamp"),
                             "details": format!("{} from {}", process_name, obj.get("source_node").and_then(|v| v.as_str()).unwrap_or("?")),
                             "source_node": obj.get("source_node"),
+                            "file_path": obj.get("file_path").or(obj.get("image_path")),
                             "hash_blake3": obj.get("hash_blake3"),
                             "reason": reason,
                             "entropy": obj.get("entropy"),
@@ -3240,6 +3254,23 @@ mod tests {
         assert_eq!(id, "T1055");
         assert_eq!(name, "Process Injection");
         assert_eq!(title, "[T1055] Process Injection");
+
+        // 10. Existing Combined Technique String without separate name
+        let (id, name, title) = enrich_mitre_threat("test.exe", "", "custom", Some("T1055 - Process Injection"), None);
+        assert_eq!(id, "T1055");
+        assert_eq!(name, "Process Injection");
+        assert_eq!(title, "[T1055] Process Injection");
+
+        // 11. Generic "Threat" or "unknown" name suppressed in fallback
+        let (id, name, title) = enrich_mitre_threat("Threat", "", "", None, None);
+        assert_eq!(id, "T1082");
+        assert_eq!(name, "System Information Discovery");
+        assert_eq!(title, "[T1082] System Discovery");
+
+        let (id, name, title) = enrich_mitre_threat("unknown", "", "", None, None);
+        assert_eq!(id, "T1082");
+        assert_eq!(name, "System Information Discovery");
+        assert_eq!(title, "[T1082] System Discovery");
     }
 
     #[tokio::test]

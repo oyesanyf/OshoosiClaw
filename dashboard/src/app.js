@@ -15,6 +15,7 @@ const state = {
     otelNetwork: null,
     telemetryChart: null,
     expandedDetails: new Set(),
+    collapsedPanels: new Set(),
     lastThreatsHash: '',
     lastActivityHash: '',
     gossip_count: 0,
@@ -337,7 +338,9 @@ function setupNav() {
                 viewTitle.innerText = item.querySelector('span').innerText;
             }
             
-            
+            if (window.location.hash !== '#' + view) {
+                history.pushState ? history.pushState(null, null, '#' + view) : (window.location.hash = '#' + view);
+            }
             state.current_view = view;
         });
     });
@@ -346,7 +349,7 @@ function setupNav() {
         const hash = window.location.hash.replace(/^#/, '');
         if (hash) {
             const target = document.querySelector(`.nav-item[data-view="${hash}"]`);
-            if (target) {
+            if (target && !target.classList.contains('active')) {
                 target.click();
             }
         }
@@ -480,6 +483,19 @@ async function updateDashboard() {
         }
         if (state.current_view === 'mitre') {
             renderMitreView();
+        }
+
+        // Ensure collapsed panels retain their display state across polling updates
+        if (state.collapsedPanels && state.collapsedPanels.size > 0) {
+            state.collapsedPanels.forEach(panelId => {
+                const el = document.getElementById(panelId) || 
+                           (panelId === 'zone-rec-body' ? document.getElementById('zone-recommendations') : null) || 
+                           (panelId === 'zone-nodes-body' ? document.getElementById('zone-nodes-list') : null) ||
+                           (panelId === 'activity-feed-body' ? document.getElementById('activity-feed') : null);
+                if (el && el.style.display !== 'none') {
+                    el.style.display = 'none';
+                }
+            });
         }
 
         // Update global indicator
@@ -665,39 +681,45 @@ function formatThreatTitle(t) {
         if (m) {
             const techId = m[1];
             const rest = m[2];
-            return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('${techId.split('/')[0].trim()}'); else { window.location.hash='#mitre'; }">${escapeHtml(techId)}</span> <span>${escapeHtml(rest)}</span>`;
+            const clickTech = (t.mitre_technique && (t.mitre_technique.startsWith('T') || t.mitre_technique.startsWith('AML'))) ? t.mitre_technique : techId.split('/')[0].trim();
+            return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('${clickTech}'); else { window.location.hash='#mitre'; }">${escapeHtml(techId)}</span> <span>${escapeHtml(rest)}</span>`;
         }
         return escapeHtml(t.display_title);
     }
     if (t.mitre_technique) {
-        const name = t.mitre_technique_name || t.type || 'Threat';
+        const rawName = t.mitre_technique_name || t.type || '';
+        const name = (rawName && !rawName.toLowerCase().includes('threat') && !rawName.toLowerCase().includes('unknown')) ? rawName : 'System Discovery';
         return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('${t.mitre_technique}'); else { window.location.hash='#mitre'; }">${escapeHtml(t.mitre_technique)}</span> <span>${escapeHtml(name)}</span>`;
     }
     // Fallback heuristics if API didn't return display_title
     const reason = (t.reason || '').toLowerCase();
-    const proc = t.type || t.process_name || 'System';
-    if (reason.includes('sandboxsurface') || reason.includes('high-risk privilege') || proc.toLowerCase().includes('whoami')) {
+    const rawProc = t.type || t.process_name || '';
+    const proc = (rawProc.toLowerCase() === 'threat' || rawProc.toLowerCase() === 'unknown' || rawProc.toLowerCase() === 'system') ? '' : rawProc;
+    if (reason.includes('sandboxsurface') || reason.includes('high-risk privilege') || (proc && proc.toLowerCase().includes('whoami'))) {
         return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1033'); else { window.location.hash='#mitre'; }">T1033</span> <span>System Owner/User Discovery (Elevated Probe)</span>`;
     }
     if (reason.includes('anti_dbg') || reason.includes('debugger')) {
-        return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1622'); else { window.location.hash='#mitre'; }">T1622</span> <span>Debugger Evasion (${escapeHtml(proc)})</span>`;
+        const target = proc || 'Binary';
+        return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1622'); else { window.location.hash='#mitre'; }">T1622</span> <span>Debugger Evasion (${escapeHtml(target)})</span>`;
     }
     if (reason.includes('mutex')) {
-        return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1027'); else { window.location.hash='#mitre'; }">T1027</span> <span>Obfuscated Files: Mutex Lock (${escapeHtml(proc)})</span>`;
+        const target = proc || 'Binary';
+        return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1027'); else { window.location.hash='#mitre'; }">T1027</span> <span>Obfuscated Files: Mutex Lock (${escapeHtml(target)})</span>`;
     }
-    if (reason.includes('intelligent correlation')) {
+    if (reason.includes('intelligent correlation') || reason.includes('suspicion score')) {
         return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1082'); else { window.location.hash='#mitre'; }">T1082</span> <span>System Discovery (Heuristic Anomaly)</span>`;
     }
-    if (proc.toLowerCase().endsWith('.rbf')) {
+    if (proc && proc.toLowerCase().endsWith('.rbf')) {
         return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1547'); else { window.location.hash='#mitre'; }">T1547</span> <span>Installer Rollback Binary (${escapeHtml(proc)})</span>`;
     }
-    if (proc.toLowerCase().includes('mcp-cli')) {
+    if (proc && (proc.toLowerCase().includes('mcp-cli') || proc.toLowerCase().includes('powershell') || proc.toLowerCase().includes('cmd.exe'))) {
         return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1059'); else { window.location.hash='#mitre'; }">T1059</span> <span>Command & Scripting Interpreter (${escapeHtml(proc)})</span>`;
     }
-    if (proc.toLowerCase().includes('inv') || proc.toLowerCase().includes('smbios') || proc.toLowerCase().includes('update')) {
+    if (proc && (proc.toLowerCase().includes('inv') || proc.toLowerCase().includes('smbios') || proc.toLowerCase().includes('update'))) {
         return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1082'); else { window.location.hash='#mitre'; }">T1082</span> <span>System Information Discovery (${escapeHtml(proc)})</span>`;
     }
-    return `<span>${escapeHtml(proc)}</span>`;
+    const label = proc ? `System Discovery (${escapeHtml(proc)})` : 'System Information Discovery';
+    return `<span class="badge blue" style="cursor:pointer; font-weight:700; margin-right:6px;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('T1082'); else { window.location.hash='#mitre'; }">T1082</span> <span>${label}</span>`;
 }
 
 /**
@@ -740,8 +762,8 @@ function renderThreats(threats) {
 
     const groups = {};
     const sourceToRender = state.searchQuery ? filtered : displayThreats; sourceToRender.forEach(t => {
-        // Variation is defined by Type + Source only; reasons are listed inside
-        const key = `${t.type}-${t.source_node || 'Unknown'}`;
+        // Variation is defined by Display Title/Type + Source only; reasons are listed inside
+        const key = `${t.display_title || t.type || 'Threat'}-${t.source_node || 'Unknown'}`;
         if (!groups[key]) groups[key] = [];
         groups[key].push(t);
     });
@@ -841,6 +863,13 @@ function renderActivity(activity) {
             </div>
         </div>
     `}).join('');
+
+    const toggleAllBtn = document.getElementById('toggle-all-activity-btn');
+    if (toggleAllBtn && limitedActivity.length > 0) {
+        const allExp = limitedActivity.every((_, i) => state.expandedDetails.has('act-' + i));
+        toggleAllBtn.innerText = allExp ? 'Collapse All' : 'Expand All';
+    }
+
     lucide.createIcons();
 }
 
@@ -872,9 +901,26 @@ function renderThreatsView(threats) {
         return;
     }
 
+    const filtered = threats.filter(t => {
+        if (!state.searchQuery) return true;
+        const q = state.searchQuery;
+        return (t.type && t.type.toLowerCase().includes(q)) || 
+               (t.id && t.id.toLowerCase().includes(q)) ||
+               (t.file_path && t.file_path.toLowerCase().includes(q)) ||
+               (t.reason && t.reason.toLowerCase().includes(q)) ||
+               (t.display_title && t.display_title.toLowerCase().includes(q)) ||
+               (t.mitre_technique && t.mitre_technique.toLowerCase().includes(q));
+    });
+
+    if (filtered.length === 0) {
+        list.innerHTML = '<p class="placeholder-text">No matches found for "' + escapeHtml(state.searchQuery) + '".</p>';
+        return;
+    }
+
     const groups = {};
-    threats.forEach(t => {
-        const key = `${t.type}-${t.source_node || 'Unknown'}`;
+    const sourceToRender = state.searchQuery ? filtered : threats;
+    sourceToRender.forEach(t => {
+        const key = `${t.display_title || t.type || 'Threat'}-${t.source_node || 'Unknown'}`;
         if (!groups[key]) groups[key] = [];
         groups[key].push(t);
     });
@@ -931,6 +977,7 @@ function renderThreatsView(threats) {
                     </div>
                 `).join('')}
                 ${t.file_path ? `<div style="font-size:11px; color:var(--text-muted); opacity: 0.8;">Path: ${t.file_path}</div>` : ''}
+                ${t.mitre_technique ? `<div style="margin-top:4px;"><button class="btn-text" style="font-size:11px; padding:3px 10px; background:rgba(0,210,255,0.1); border:1px solid rgba(0,210,255,0.3); border-radius:5px; color:var(--accent-blue); cursor:pointer;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('${t.mitre_technique}'); else window.location.hash='#mitre';">Inspect ${t.mitre_technique} in ATT&CK Matrix &rarr;</button></div>` : ''}
             </div>
 
             <div class="item-actions" style="grid-template-columns: 1fr 1fr 1fr; display: grid; gap: 8px;">
@@ -2750,10 +2797,13 @@ async function renderZoneView() {
             containerDiv.id = 'zone-nodes-container';
             containerDiv.className = 'card glass shadow-glow mt-4';
             containerDiv.innerHTML = `
-                <div class="card-header">
+                <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                     <h3>Active Zone Nodes & Hardware Attestation Cluster</h3>
+                    <button class="btn-text" id="toggle-zone-nodes-btn" onclick="toggleZoneNodesPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
                 </div>
-                <div id="zone-nodes-list" class="card-body timeline-list"></div>
+                <div id="zone-nodes-body" class="card-body">
+                    <div id="zone-nodes-list" class="timeline-list"></div>
+                </div>
             `;
             zoneView.appendChild(containerDiv);
             nodesList = document.getElementById('zone-nodes-list');
@@ -3022,13 +3072,71 @@ window.navigateToThreats = function() {
     window.scrollTo({ top: 0, behavior: 'smooth' });
 };
 
-window.toggleActivityPanel = function() {
-    const body = document.getElementById('activity-feed-body') || document.getElementById('activity-feed');
-    const btn = document.getElementById('toggle-activity-feed-btn');
-    if (!body) return;
-    const isHidden = body.style.display === 'none';
-    body.style.display = isHidden ? 'block' : 'none';
-    if (btn) btn.innerText = isHidden ? 'Collapse' : 'Expand';
+/**
+ * Unified Helper to toggle panel collapsible state
+ */
+function togglePanel(panelId, btnId, defaultOpenText = 'Collapse', defaultClosedText = 'Expand') {
+    if (!state.collapsedPanels) state.collapsedPanels = new Set();
+    const el = document.getElementById(panelId) || 
+               (panelId === 'zone-rec-body' ? document.getElementById('zone-recommendations') : null) || 
+               (panelId === 'zone-nodes-body' ? document.getElementById('zone-nodes-list') : null) ||
+               (panelId === 'activity-feed-body' ? document.getElementById('activity-feed') : null);
+    const btn = document.getElementById(btnId);
+    if (!el) return;
+
+    const isCollapsed = state.collapsedPanels.has(panelId);
+    if (isCollapsed) {
+        state.collapsedPanels.delete(panelId);
+        el.style.display = 'block';
+        if (btn) btn.innerText = defaultOpenText;
+    } else {
+        state.collapsedPanels.add(panelId);
+        el.style.display = 'none';
+        if (btn) btn.innerText = defaultClosedText;
+    }
+}
+window.togglePanel = togglePanel;
+
+window.toggleEnginesPanel = function() { togglePanel('detection-engines-body', 'toggle-engines-btn'); };
+window.toggleTelemetryPanel = function() { togglePanel('telemetry-chart-body', 'toggle-telemetry-btn'); };
+window.toggleActivityPanel = function() { togglePanel('activity-feed-body', 'toggle-activity-feed-btn'); };
+window.toggleZoneRecPanel = function() { togglePanel('zone-rec-body', 'toggle-zone-rec-btn'); };
+window.toggleZoneNodesPanel = function() { togglePanel('zone-nodes-body', 'toggle-zone-nodes-btn'); };
+window.toggleApprovalsPanel = function() { togglePanel('approvals-body', 'toggle-approvals-btn'); };
+window.toggleSuppressionPanel = function() { togglePanel('suppression-body', 'toggle-suppression-btn'); };
+window.toggleManualTpPanel = function() { togglePanel('manual-tp-body', 'toggle-manual-tp-btn'); };
+window.toggleMeshPanel = function() { togglePanel('mesh-panel-body', 'toggle-mesh-panel-btn'); };
+window.toggleGossipPanel = function() { togglePanel('gossip-panel-body', 'toggle-gossip-panel-btn'); };
+window.toggleMalwarePanel = function() { togglePanel('malware-panel-body', 'toggle-malware-panel-btn'); };
+window.toggleRepairPanel = function() { togglePanel('repair-panel-body', 'toggle-repair-panel-btn'); };
+window.toggleStoryPanel = function() { togglePanel('story-panel-body', 'toggle-story-panel-btn'); };
+
+window.toggleAllActivityItems = function() {
+    let items = (state.activity && state.activity.length > 0) ? state.activity : [
+        { summary: "Telemetry Ingestion Pipeline active: Sysmon & WFP stream verified" },
+        { summary: "Consensus Heartbeat established with peer DESKTOP-4MJ7SCN" },
+        { summary: "Merkle Chain DAG cryptographic integrity verified" }
+    ];
+    const count = Math.min(items.length, 20);
+    if (count === 0) return;
+    let allExpanded = true;
+    for (let i = 0; i < count; i++) {
+        if (!state.expandedDetails.has('act-' + i)) {
+            allExpanded = false;
+            break;
+        }
+    }
+    for (let i = 0; i < count; i++) {
+        const key = 'act-' + i;
+        if (allExpanded) {
+            state.expandedDetails.delete(key);
+        } else {
+            state.expandedDetails.add(key);
+        }
+    }
+    const btn = document.getElementById('toggle-all-activity-btn');
+    if (btn) btn.innerText = allExpanded ? 'Expand All' : 'Collapse All';
+    renderActivity(state.activity);
 };
 
 window.toggleMalwareDetails = function(id) {
@@ -4219,8 +4327,20 @@ function applyMitreFiltersAndRender() {
 }
 
 async function openMitreTechniqueModalById(techId) {
-    if (!mitreDataCache) return;
-    let tech = (mitreDataCache.techniques || []).find(t => t.id.toLowerCase() === techId.toLowerCase());
+    if (!mitreDataCache) {
+        try {
+            const res = await fetch(`${API_BASE}/mitre/matrix`);
+            if (res.ok) {
+                mitreDataCache = await res.json();
+            }
+        } catch (e) {
+            console.warn('Matrix cache fetch failed:', e);
+        }
+        if (!mitreDataCache && typeof getBuiltInMitreData === 'function') {
+            mitreDataCache = getBuiltInMitreData();
+        }
+    }
+    let tech = (mitreDataCache?.techniques || []).find(t => t.id.toLowerCase() === techId.toLowerCase());
     
     // Attempt detailed fetch
     try {
@@ -4237,7 +4357,10 @@ async function openMitreTechniqueModalById(techId) {
         console.warn('API technique detail fetch failed, using cached:', e);
     }
 
-    if (!tech) return;
+    if (!tech) {
+        window.location.hash = '#mitre';
+        return;
+    }
 
     const modal = document.getElementById('mitre-technique-modal');
     if (!modal) return;
@@ -4390,6 +4513,14 @@ async function openMitreTechniqueModalById(techId) {
     if (window.lucide) window.lucide.createIcons();
 }
 window.openMitreTechniqueModalById = openMitreTechniqueModalById;
+window.navigateToMitre = function() {
+    const nav = document.querySelector('a[data-view="mitre"]');
+    if (nav) {
+        nav.click();
+    } else {
+        window.location.hash = '#mitre';
+    }
+};
 
 function getBuiltInMitreData() {
     return {
@@ -4424,6 +4555,9 @@ function getBuiltInMitreData() {
             { id: "TA0040", name: "Impact", description: "Disrupting or destroying data" }
         ],
         techniques: [
+            { id: "T1033", name: "System Owner/User Discovery", tactic_id: "TA0007", tactic_name: "Discovery", description: "Adversaries may attempt to identify the primary user, currently logged-in user, or elevate privilege probe contexts.", platforms: ["Windows", "Linux", "macOS"], data_sources: ["Process Creation", "Command Execution"], mitigations: ["M1047: Audit & Security Logging"], groups: ["APT29", "Volt Typhoon"], detection_mechanisms: ["Sysmon Event 1", "Behavioral ML"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["Whoami Or Elevated User Discovery Probe"], is_atlas: false, subtechniques: [] },
+            { id: "T1622", name: "Debugger Evasion", tactic_id: "TA0005", tactic_name: "Defense Evasion", description: "Adversaries may employ anti-debugging checks or exception traps to detect and bypass defensive analysis environments.", platforms: ["Windows", "Linux"], data_sources: ["Process: Process Access", "Thread Context"], mitigations: ["M1038: Execution Prevention"], groups: ["Lazarus Group", "BlackCat"], detection_mechanisms: ["Anti-Debug Trap Monitor", "YARA-X Scanner"], voter: "MemoryInspectionVoter", consensus_action: "Isolate", sigma_rules: ["Debugger Check Or Anti-Debugging API Invocation"], is_atlas: false, subtechniques: [] },
+            { id: "T1027", name: "Obfuscated Files or Information: Mutex Lock", tactic_id: "TA0005", tactic_name: "Defense Evasion", description: "Adversaries may obfuscate executable payloads or maintain mutex locks to coordinate evasive execution.", platforms: ["Windows"], data_sources: ["Kernel Mutex Objects", "File Modification"], mitigations: ["M1022: Restrict Permissions"], groups: ["FIN7", "APT28"], detection_mechanisms: ["WinMutex Engine", "Sysmon Event 1"], voter: "SigmaVoter", consensus_action: "Alert", sigma_rules: ["Suspicious Named Mutex Lock Active"], is_atlas: false, subtechniques: [] },
             { id: "AML.T0043", name: "Adversarial Prompt Injection / Tool-Argument Injection", tactic_id: "TA0002", tactic_name: "Execution", description: "Adversaries craft malicious prompt inputs or jailbreak sequences that manipulate an autonomous LLM agent into executing arbitrary downstream shell commands, unauthorized sub-processes, or abusing tool arguments.", platforms: ["AI Agent", "LLM Runtime", "Python", "Node.js"], data_sources: ["Process: Process Creation (Sysmon Event 1)", "Command: Scriptblock Execution (Windows PowerShell 4104)", "AI Agent Tool-Execution Telemetry"], mitigations: ["AML.M0015: User Prompt Sanitization & Invariant Enforcement", "AML.M0016: Restrict Tool / Subprocess Execution Privileges"], groups: ["Lazarus Group", "Scattered Spider", "Volt Typhoon"], detection_mechanisms: ["OpenỌ̀ṣọ́ọ̀sì AiSecurityAuditVoter", "Process: Process Creation (Sysmon Event 1)"], voter: "AiSecurityAuditVoter", consensus_action: "Tarpit", sigma_rules: ["AI Agent Shell Injection Attempt", "Tool Argument Traversal Pattern"], is_atlas: true, subtechniques: [] },
             { id: "AML.T0044", name: "AI Tool Path Traversal / Insecure Output Handling", tactic_id: "TA0002", tactic_name: "Execution", description: "Adversaries supply crafted path traversal sequences into LLM agent tool parameters, tricking the autonomous agent into reading or overwriting sensitive host resources outside its workspace boundary.", platforms: ["AI Agent", "LLM Runtime", "FileSystem"], data_sources: ["File: File Access / Modification (Sysmon Event 11)", "Process: Process Creation (Sysmon Event 1)", "Kernel DACL Boundary Violations"], mitigations: ["AML.M0016: Restrict Tool / Subprocess Execution Privileges", "AML.M0018: Isolate AI Agent Runtime & State"], groups: ["APT29", "Volt Typhoon"], detection_mechanisms: ["OpenỌ̀ṣọ́ọ̀sì AiSecurityAuditVoter", "File: File Modification (Sysmon Event 11)"], voter: "AiSecurityAuditVoter", consensus_action: "Tarpit", sigma_rules: ["AI Tool Workspace Path Traversal"], is_atlas: true, subtechniques: [] },
             { id: "AML.T0048", name: "Agent Memory & State Poisoning", tactic_id: "TA0003", tactic_name: "Persistence", description: "Adversaries tamper with long-term agent state, persistent memory stores, or policy configuration files (.agents/memory.md, osoosi.toml) to introduce persistent backdoor instructions that survive restarts and session resets.", platforms: ["AI Agent", "Vector Database", "Memory Store"], data_sources: ["File: File Modification (Sysmon Event 11)", "Registry: Key Value Tampering (Sysmon Event 13)", "Differential Privacy & Merkle Audit Trail"], mitigations: ["AML.M0018: Isolate AI Agent Runtime & State", "AML.M0015: User Prompt Sanitization & Invariant Enforcement"], groups: ["APT28", "Midnight Blizzard", "Sandworm Team"], detection_mechanisms: ["OpenỌ̀ṣọ́ọ̀sì AiSecurityAuditVoter", "File: File Modification (Sysmon Event 11)"], voter: "AiSecurityAuditVoter", consensus_action: "Isolate", sigma_rules: ["Agent State File Unauthorized Modification"], is_atlas: true, subtechniques: [] },
