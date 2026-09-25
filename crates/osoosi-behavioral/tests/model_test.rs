@@ -3,12 +3,23 @@ use osoosi_behavioral::llm_engine::{SecureBertAnalyzer, Gemma4Analyzer};
 
 #[tokio::test]
 async fn test_load_models() {
-    // Set the ORT_DYLIB_PATH environment variable so that ONNX Runtime can find onnxruntime.dll in target directory
+    // Set the ORT_DYLIB_PATH environment variable so that ONNX Runtime can find onnxruntime.dll
     let workspace_dir = Path::new("d:/harfile/OshoosiClaw");
-    let target_debug_dll = workspace_dir.join("target/x86_64-pc-windows-msvc/debug/onnxruntime.dll");
-    if target_debug_dll.exists() {
-        std::env::set_var("ORT_DYLIB_PATH", target_debug_dll.to_str().unwrap());
-        println!("Set ORT_DYLIB_PATH to {:?}", target_debug_dll);
+    let candidates = [
+        workspace_dir.join("target/debug/onnxruntime.dll"),
+        workspace_dir.join("target/release/onnxruntime.dll"),
+        workspace_dir.join("onnxruntime.dll"),
+        workspace_dir.join("bin/onnxruntime.dll"),
+        workspace_dir.join("target/x86_64-pc-windows-msvc/debug/onnxruntime.dll"),
+    ];
+    if std::env::var("ORT_DYLIB_PATH").is_err() {
+        for candidate in &candidates {
+            if candidate.exists() {
+                std::env::set_var("ORT_DYLIB_PATH", candidate.to_str().unwrap());
+                println!("Set ORT_DYLIB_PATH to {:?}", candidate);
+                break;
+            }
+        }
     }
 
     // Initialize ORT
