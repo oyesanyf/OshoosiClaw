@@ -1652,6 +1652,7 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
         .add_directive("wasmtime_wasi=warn".parse().expect("static directive"))
         .add_directive("tokenizers=error".parse().expect("static directive"))
         .add_directive("libp2p_kad=error".parse().expect("static directive"))
+        .add_directive("libp2p_gossipsub=error".parse().expect("static directive"))
         .add_directive("regalloc2=warn".parse().expect("static directive"));
 
     // Console Filter: WARN by default to prevent system freezes/I/O bottleneck
@@ -1667,6 +1668,7 @@ fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::W
         .add_directive("rustls=error".parse().expect("static directive"))
         .add_directive("tokenizers=error".parse().expect("static directive"))
         .add_directive("libp2p_kad=error".parse().expect("static directive"))
+        .add_directive("libp2p_gossipsub=error".parse().expect("static directive"))
         .add_directive("cranelift_codegen=warn".parse().expect("static directive"))
         .add_directive("cranelift_wasm=warn".parse().expect("static directive"))
         .add_directive("wasmtime_cranelift=warn".parse().expect("static directive"))

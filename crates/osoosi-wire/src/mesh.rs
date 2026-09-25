@@ -53,6 +53,7 @@ pub struct MeshNode {
     pub zone: String,
     pub memory: Arc<osoosi_memory::MemoryStore>,
     pub dial_semaphore: Arc<tokio::sync::Semaphore>,
+    pub last_audit_proof: Option<String>,
 }
 
 impl MeshNode {
@@ -309,6 +310,7 @@ impl MeshNode {
             zone,
             memory,
             dial_semaphore: Arc::new(tokio::sync::Semaphore::new(16)),
+            last_audit_proof: None,
         })
     }
 
@@ -409,11 +411,21 @@ impl MeshNode {
     fn publish_gossip_json<T: Serialize>(&mut self, topic: &gossipsub::IdentTopic, value: &T) {
         match serde_json::to_string(value) {
             Ok(j) => {
-                let _ = self
+                if let Err(e) = self
                     .swarm
                     .behaviour_mut()
                     .gossipsub
-                    .publish(topic.clone(), j.as_bytes());
+                    .publish(topic.clone(), j.as_bytes())
+                {
+                    match e {
+                        libp2p::gossipsub::PublishError::Duplicate => {
+                            tracing::trace!("[mesh] duplicate gossip message suppressed on {}", topic);
+                        }
+                        other => {
+                            tracing::debug!("[mesh] gossip publish non-fatal: {}", other);
+                        }
+                    }
+                }
             }
             Err(e) => warn!("[mesh] gossip message JSON serialization failed: {}", e),
         }
@@ -561,6 +573,11 @@ impl MeshNode {
                         self.publish_gossip_json(&topic, &sig);
                     }
                     MeshCommand::BroadcastAuditProof(proof) => {
+                        if self.last_audit_proof.as_ref() == Some(&proof) {
+                            // Merkle root has not changed; skip redundant publish to avoid gossip noise
+                            continue;
+                        }
+                        self.last_audit_proof = Some(proof.clone());
                         let _ = self.swarm.behaviour_mut().gossipsub.publish(self.audit_proof_topic.clone(), proof.as_bytes());
                     }
                     MeshCommand::DialPeer(pid, addr) => {
