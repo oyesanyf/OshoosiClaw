@@ -40,7 +40,14 @@ const state = {
     selectedLogFile: 'osoosi.log',
     logTailCount: 200,
     logSearchQuery: '',
-    logFiles: []
+    logFiles: [],
+    // Autonomy defense policy state
+    autonomy: {
+        mode: 'audit',
+        auto_quarantine_malware: false,
+        action_confidence_threshold: 0.80,
+        quarantine_confidence_threshold: 0.95
+    }
 };
 
 let updateInterval = null;
@@ -71,6 +78,7 @@ function startApp() {
     renderGossipView();
     renderZoneView();
     renderApprovalsView();
+    fetchAutonomySettings();
     renderStoryView();
     renderSkyrlView();
     renderMitreView();
@@ -2996,6 +3004,7 @@ window.autoRemediateAllGaps = async function(triggerBtn) {
  * Render Approval Queue
  */
 async function renderApprovalsView() {
+    fetchAutonomySettings();
     const approvals = await fetchAPI('/pending-actions');
     const list = document.getElementById('approval-list');
     if (!list) return;
@@ -3054,6 +3063,227 @@ window.rejectAction = async function(id) {
         body: JSON.stringify({ threat_id: id })
     });
     if (res.ok) renderApprovalsView();
+};
+
+/**
+ * Fetch and update Autonomy Defense Policy Settings
+ */
+async function fetchAutonomySettings() {
+    try {
+        const data = await fetchAPI('/settings/autonomy');
+        if (!data) return;
+
+        state.autonomy = {
+            mode: data.mode || 'audit',
+            mode_label: data.mode_label || 'Audit / Monitor',
+            mode_description: data.mode_description || '',
+            auto_quarantine_malware: !!data.auto_quarantine_malware,
+            action_confidence_threshold: typeof data.action_confidence_threshold === 'number' ? data.action_confidence_threshold : 0.80,
+            quarantine_confidence_threshold: typeof data.quarantine_confidence_threshold === 'number' ? data.quarantine_confidence_threshold : 0.95,
+            auto_approve_reputation_threshold: typeof data.auto_approve_reputation_threshold === 'number' ? data.auto_approve_reputation_threshold : 0.40,
+            auto_replace_malware_binaries: data.auto_replace_malware_binaries !== false,
+            quarantine_path: data.quarantine_path || './quarantine'
+        };
+
+        const mode = (state.autonomy.mode || 'audit').toLowerCase();
+
+        // 1. Update top header badge
+        const topDot = document.getElementById('defense-mode-indicator-dot');
+        const topText = document.getElementById('defense-mode-top-text');
+        if (topDot && topText) {
+            if (mode === 'audit') {
+                topDot.style.background = '#38bdf8';
+                topText.style.color = '#38bdf8';
+                topText.innerText = 'MODE: AUDIT 🛡️';
+            } else if (mode === 'active') {
+                topDot.style.background = '#10b981';
+                topText.style.color = '#10b981';
+                topText.innerText = 'MODE: ACTIVE ENFORCEMENT ⚡';
+            } else if (mode === 'lockdown') {
+                topDot.style.background = '#ef4444';
+                topText.style.color = '#ef4444';
+                topText.innerText = 'MODE: STRICT LOCKDOWN 🚨';
+            } else {
+                topDot.style.background = '#f59e0b';
+                topText.style.color = '#f59e0b';
+                topText.innerText = 'MODE: CUSTOM ⚙️';
+            }
+        }
+
+        // 2. Update badge in Approvals View card header
+        const currentBadge = document.getElementById('autonomy-current-badge');
+        if (currentBadge) {
+            currentBadge.className = 'badge';
+            if (mode === 'audit') {
+                currentBadge.classList.add('blue');
+                currentBadge.innerText = 'MODE: AUDIT';
+            } else if (mode === 'active') {
+                currentBadge.classList.add('green');
+                currentBadge.innerText = 'MODE: ACTIVE ENFORCEMENT';
+            } else if (mode === 'lockdown') {
+                currentBadge.classList.add('red');
+                currentBadge.innerText = 'MODE: STRICT LOCKDOWN';
+            } else {
+                currentBadge.classList.add('orange');
+                currentBadge.innerText = 'MODE: CUSTOM';
+            }
+        }
+
+        // 3. Highlight active preset card
+        const cardAudit = document.getElementById('preset-audit-card');
+        const cardActive = document.getElementById('preset-active-card');
+        const cardLockdown = document.getElementById('preset-lockdown-card');
+
+        if (cardAudit) {
+            if (mode === 'audit') {
+                cardAudit.style.border = '2px solid #38bdf8';
+                cardAudit.style.background = 'rgba(56, 189, 248, 0.08)';
+                cardAudit.style.boxShadow = '0 0 16px rgba(56, 189, 248, 0.15)';
+            } else {
+                cardAudit.style.border = '1px solid var(--glass-border)';
+                cardAudit.style.background = 'transparent';
+                cardAudit.style.boxShadow = 'none';
+            }
+        }
+
+        if (cardActive) {
+            if (mode === 'active') {
+                cardActive.style.border = '2px solid #10b981';
+                cardActive.style.background = 'rgba(16, 185, 129, 0.08)';
+                cardActive.style.boxShadow = '0 0 16px rgba(16, 185, 129, 0.15)';
+            } else {
+                cardActive.style.border = '1px solid var(--glass-border)';
+                cardActive.style.background = 'transparent';
+                cardActive.style.boxShadow = 'none';
+            }
+        }
+
+        if (cardLockdown) {
+            if (mode === 'lockdown') {
+                cardLockdown.style.border = '2px solid #ef4444';
+                cardLockdown.style.background = 'rgba(239, 68, 68, 0.08)';
+                cardLockdown.style.boxShadow = '0 0 16px rgba(239, 68, 68, 0.15)';
+            } else {
+                cardLockdown.style.border = '1px solid var(--glass-border)';
+                cardLockdown.style.background = 'transparent';
+                cardLockdown.style.boxShadow = 'none';
+            }
+        }
+
+        // 4. Update form controls
+        const chkQuarantine = document.getElementById('autonomy-auto-quarantine');
+        if (chkQuarantine) chkQuarantine.checked = state.autonomy.auto_quarantine_malware;
+
+        const chkReplace = document.getElementById('autonomy-auto-replace');
+        if (chkReplace) chkReplace.checked = state.autonomy.auto_replace_malware_binaries;
+
+        const actionSlider = document.getElementById('autonomy-action-slider');
+        const actionVal = document.getElementById('autonomy-action-val');
+        if (actionSlider) actionSlider.value = state.autonomy.action_confidence_threshold;
+        if (actionVal) actionVal.innerText = state.autonomy.action_confidence_threshold.toFixed(2);
+
+        const quarSlider = document.getElementById('autonomy-quarantine-slider');
+        const quarVal = document.getElementById('autonomy-quarantine-val');
+        if (quarSlider) quarSlider.value = state.autonomy.quarantine_confidence_threshold;
+        if (quarVal) quarVal.innerText = state.autonomy.quarantine_confidence_threshold.toFixed(2);
+
+    } catch (e) {
+        console.error('Failed to load autonomy settings:', e);
+    }
+}
+
+window.applyAutonomyPreset = async function(presetName) {
+    try {
+        const res = await fetch(`${API_BASE}/settings/autonomy`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ mode: presetName })
+        });
+        const data = await res.json();
+        if (data.status === 'success' || data.mode) {
+            if (typeof showSkyrlToast === 'function') {
+                showSkyrlToast(`Autonomy defense policy preset switched to: ${presetName.toUpperCase()}`, 'success');
+            }
+            await fetchAutonomySettings();
+            const statusEl = document.getElementById('autonomy-save-status');
+            if (statusEl) {
+                statusEl.style.color = 'var(--accent-green)';
+                statusEl.innerText = `Preset ${presetName.toUpperCase()} activated & signed ✓`;
+                setTimeout(() => { if (statusEl) statusEl.innerText = ''; }, 3500);
+            }
+        } else {
+            if (typeof showSkyrlToast === 'function') {
+                showSkyrlToast(`Failed to activate preset: ${data.message || 'Unknown error'}`, 'error');
+            }
+        }
+    } catch (e) {
+        console.error('Failed to apply autonomy preset:', e);
+        if (typeof showSkyrlToast === 'function') {
+            showSkyrlToast(`Preset error: ${e.message}`, 'error');
+        }
+    }
+};
+
+window.saveCustomAutonomySettings = async function() {
+    try {
+        const autoQuarantine = document.getElementById('autonomy-auto-quarantine')?.checked ?? false;
+        const autoReplace = document.getElementById('autonomy-auto-replace')?.checked ?? true;
+        const actionSlider = document.getElementById('autonomy-action-slider');
+        const quarSlider = document.getElementById('autonomy-quarantine-slider');
+
+        const actionThreshold = actionSlider ? parseFloat(actionSlider.value) : 0.80;
+        const quarThreshold = quarSlider ? parseFloat(quarSlider.value) : 0.95;
+
+        const payload = {
+            auto_quarantine_malware: autoQuarantine,
+            auto_replace_malware_binaries: autoReplace,
+            action_confidence_threshold: actionThreshold,
+            quarantine_confidence_threshold: quarThreshold
+        };
+
+        const res = await fetch(`${API_BASE}/settings/autonomy`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+        const data = await res.json();
+        if (data.status === 'success' || data.mode) {
+            if (typeof showSkyrlToast === 'function') {
+                showSkyrlToast('Autonomous defense policy successfully updated and cryptographically signed.', 'success');
+            }
+            await fetchAutonomySettings();
+            const statusEl = document.getElementById('autonomy-save-status');
+            if (statusEl) {
+                statusEl.style.color = 'var(--accent-green)';
+                statusEl.innerText = 'Policy changes saved & signed ✓';
+                setTimeout(() => { if (statusEl) statusEl.innerText = ''; }, 3500);
+            }
+        } else {
+            if (typeof showSkyrlToast === 'function') {
+                showSkyrlToast(`Save failed: ${data.message || 'Unknown error'}`, 'error');
+            }
+        }
+    } catch (e) {
+        console.error('Failed to save autonomy settings:', e);
+        if (typeof showSkyrlToast === 'function') {
+            showSkyrlToast(`Save error: ${e.message}`, 'error');
+        }
+    }
+};
+
+window.navigateToApprovalsSettings = function() {
+    const nav = document.querySelector('a[data-view="approvals"]');
+    if (nav) {
+        nav.click();
+    } else {
+        window.location.hash = '#approvals';
+    }
+    setTimeout(() => {
+        const card = document.getElementById('autonomy-settings-card');
+        if (card) {
+            card.scrollIntoView({ behavior: 'smooth', block: 'start' });
+        }
+    }, 100);
 };
 
 window.markFalsePositive = async function(threatId) {

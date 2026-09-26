@@ -110,6 +110,10 @@
                         <i data-lucide="search"></i>
                         <input type="text" id="search-input" placeholder="Search threats, files, or nodes...">
                     </div>
+                    <button id="defense-mode-top-btn" class="icon-btn glass" title="EDR Defense Policy Mode (Click to configure)" onclick="navigateToApprovalsSettings()" style="background: rgba(13, 17, 23, 0.7); border: 1px solid var(--glass-border); padding: 6px 12px; border-radius: 10px; display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                        <span id="defense-mode-indicator-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #38bdf8; display: inline-block;"></span>
+                        <span id="defense-mode-top-text" style="font-weight: 600; color: #38bdf8;">MODE: AUDIT 🛡️</span>
+                    </button>
                     <button id="admin-settings-top-btn" class="icon-btn glass" title="Admin Security Settings" style="background: rgba(13, 17, 23, 0.7); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 8px 12px; border-radius: 10px; display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
                         <i data-lucide="shield" style="width: 16px; height: 16px; color: var(--accent-blue);"></i>
                         <span>Admin</span>
@@ -969,6 +973,131 @@
 
             <!-- Approval Queue View -->
             <div id="approvals-view" class="view-content">
+                <!-- Autonomous Defense & Enforcement Policy Card -->
+                <div class="card glass shadow-glow" id="autonomy-settings-card" style="margin-bottom: 24px;">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                        <div style="display:flex; align-items:center; gap:12px;">
+                            <h3>Autonomous Defense &amp; Enforcement Policy</h3>
+                            <span class="badge blue" id="autonomy-current-badge">MODE: AUDIT</span>
+                        </div>
+                    </div>
+                    <div class="card-body" id="autonomy-settings-body">
+                        <p style="font-size: 13px; color: var(--text-muted); margin-bottom: 20px; line-height: 1.5;">
+                            Select an operational posture or fine-tune confidence gates for automated response actions (process termination, WFP network containment, and quarantine).
+                        </p>
+
+                        <!-- Preset Modes Selector Grid (3 columns) -->
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 16px; margin-bottom: 24px;">
+                            <!-- Audit Card -->
+                            <div class="card glass" id="preset-audit-card" style="padding: 16px; border-radius: 12px; border: 1px solid var(--glass-border); display: flex; flex-direction: column; justify-content: space-between; transition: all 0.2s ease;">
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <h4 style="margin: 0; font-size: 15px; font-weight: 600;">🛡️ Audit / Monitor Mode</h4>
+                                        <span class="badge blue" style="font-size: 11px;">Safe / Non-Intrusive</span>
+                                    </div>
+                                    <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4; margin-bottom: 12px;">
+                                        Telemetry, Sigma rules, and YARA-X detections are logged and alerted. Zero automated process termination or quarantine. Actions require analyst sign-off.
+                                    </p>
+                                    <div style="font-size: 12px; font-weight: 500; color: var(--accent-blue); margin-bottom: 14px;">
+                                        Action Threshold: 0.80 · Quarantine: OFF
+                                    </div>
+                                </div>
+                                <button class="btn-text" id="btn-select-audit" onclick="applyAutonomyPreset('audit')" style="width: 100%; padding: 8px; border: 1px solid var(--accent-blue); border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;">Activate Audit Mode</button>
+                            </div>
+
+                            <!-- Active Enforcement Card -->
+                            <div class="card glass" id="preset-active-card" style="padding: 16px; border-radius: 12px; border: 1px solid var(--glass-border); display: flex; flex-direction: column; justify-content: space-between; transition: all 0.2s ease;">
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <h4 style="margin: 0; font-size: 15px; font-weight: 600;">⚡ Active Enforcement</h4>
+                                        <span class="badge green" style="font-size: 11px;">Armed / Autonomous</span>
+                                    </div>
+                                    <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4; margin-bottom: 12px;">
+                                        High-speed autonomous containment. High-confidence malware and memory injections are automatically killed, quarantined, and isolated via WFP.
+                                    </p>
+                                    <div style="font-size: 12px; font-weight: 500; color: var(--accent-green); margin-bottom: 14px;">
+                                        Action Threshold: 0.50 · Quarantine: ON
+                                    </div>
+                                </div>
+                                <button class="btn-text" id="btn-select-active" onclick="applyAutonomyPreset('active')" style="width: 100%; padding: 8px; border: 1px solid var(--accent-green); border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;">Activate Active Mode</button>
+                            </div>
+
+                            <!-- Strict Lockdown Card -->
+                            <div class="card glass" id="preset-lockdown-card" style="padding: 16px; border-radius: 12px; border: 1px solid var(--glass-border); display: flex; flex-direction: column; justify-content: space-between; transition: all 0.2s ease;">
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 8px;">
+                                        <h4 style="margin: 0; font-size: 15px; font-weight: 600;">🚨 Strict Lockdown</h4>
+                                        <span class="badge red" style="font-size: 11px;">Incident Response</span>
+                                    </div>
+                                    <p style="font-size: 12px; color: var(--text-muted); line-height: 1.4; margin-bottom: 12px;">
+                                        Aggressive zero-trust lockdown for red-team pentests or active compromise. Low-threshold behavioral anomalies trigger immediate process kill.
+                                    </p>
+                                    <div style="font-size: 12px; font-weight: 500; color: #ef4444; margin-bottom: 14px;">
+                                        Action Threshold: 0.35 · Quarantine: ON
+                                    </div>
+                                </div>
+                                <button class="btn-text" id="btn-select-lockdown" onclick="applyAutonomyPreset('lockdown')" style="width: 100%; padding: 8px; border: 1px solid #ef4444; border-radius: 8px; font-size: 12px; font-weight: 600; cursor: pointer;">Activate Lockdown</button>
+                            </div>
+                        </div>
+
+                        <!-- Custom Configuration Sliders & Toggles Panel -->
+                        <div class="glass" style="padding: 18px; border-radius: 12px; border: 1px solid var(--glass-border); background: rgba(13, 17, 23, 0.4);">
+                            <h4 style="margin: 0 0 16px 0; font-size: 14px; font-weight: 600; color: var(--text-primary); display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="sliders" style="width: 16px; height: 16px; color: var(--accent-blue);"></i> Fine-Tune Defense Thresholds &amp; Gates
+                            </h4>
+
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 16px;">
+                                <!-- Toggle 1: Auto-Quarantine -->
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <input type="checkbox" id="autonomy-auto-quarantine" style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent-blue);">
+                                    <label for="autonomy-auto-quarantine" style="font-size: 13px; font-weight: 500; cursor: pointer;">Auto-Quarantine Detected Malware Files</label>
+                                </div>
+
+                                <!-- Toggle 2: Auto-Replace Binaries -->
+                                <div style="display: flex; align-items: center; gap: 12px;">
+                                    <input type="checkbox" id="autonomy-auto-replace" style="width: 18px; height: 18px; cursor: pointer; accent-color: var(--accent-blue);">
+                                    <label for="autonomy-auto-replace" style="font-size: 13px; font-weight: 500; cursor: pointer;">Auto-Replace Compromised Binaries from Trusted Hash Store</label>
+                                </div>
+                            </div>
+
+                            <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 20px; margin-bottom: 20px;">
+                                <!-- Slider 1: Action Confidence -->
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                        <label for="autonomy-action-slider" style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">Active Action Threshold (Process Kill / Containment):</label>
+                                        <span id="autonomy-action-val" style="font-size: 13px; font-weight: 700; color: var(--accent-blue);">0.80</span>
+                                    </div>
+                                    <input type="range" id="autonomy-action-slider" min="0.10" max="1.00" step="0.05" value="0.80" style="width: 100%; cursor: pointer;" oninput="document.getElementById('autonomy-action-val').innerText = parseFloat(this.value).toFixed(2)">
+                                    <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); margin-top: 2px;">
+                                        <span>0.10 (Aggressive)</span>
+                                        <span>0.50 (Balanced)</span>
+                                        <span>1.00 (Strict Audit)</span>
+                                    </div>
+                                </div>
+
+                                <!-- Slider 2: Quarantine Confidence -->
+                                <div>
+                                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                        <label for="autonomy-quarantine-slider" style="font-size: 12px; font-weight: 600; color: var(--text-secondary);">Malware Quarantine Confidence Threshold:</label>
+                                        <span id="autonomy-quarantine-val" style="font-size: 13px; font-weight: 700; color: var(--accent-blue);">0.95</span>
+                                    </div>
+                                    <input type="range" id="autonomy-quarantine-slider" min="0.10" max="1.00" step="0.05" value="0.95" style="width: 100%; cursor: pointer;" oninput="document.getElementById('autonomy-quarantine-val').innerText = parseFloat(this.value).toFixed(2)">
+                                    <div style="display: flex; justify-content: space-between; font-size: 10px; color: var(--text-muted); margin-top: 2px;">
+                                        <span>0.10 (Immediate)</span>
+                                        <span>0.80 (Standard)</span>
+                                        <span>0.95 (High Certainty)</span>
+                                    </div>
+                                </div>
+                            </div>
+
+                            <div style="display: flex; align-items: center; gap: 16px; flex-wrap: wrap;">
+                                <button class="btn-text" id="btn-save-autonomy" onclick="saveCustomAutonomySettings()" style="background:var(--accent-blue); color:var(--bg-dark); font-weight:600; padding:8px 20px; border-radius:8px; cursor: pointer;">Save Policy Changes</button>
+                                <span id="autonomy-save-status" style="font-size: 12px; font-weight: 500;"></span>
+                            </div>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card glass shadow-glow">
                     <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h3>Action Approval Queue</h3>

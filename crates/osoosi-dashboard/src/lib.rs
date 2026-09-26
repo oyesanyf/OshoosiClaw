@@ -662,6 +662,14 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/pending-actions", get(get_pending_actions))
         .route("/api/approve-action", post(post_approve_action))
         .route("/api/reject-action", post(post_reject_action))
+        .route(
+            "/api/settings/autonomy",
+            get(get_autonomy_settings).post(post_autonomy_settings),
+        )
+        .route(
+            "/settings/autonomy",
+            get(get_autonomy_settings).post(post_autonomy_settings),
+        )
         .route("/api/blocking/rules", get(get_blocking_rules))
         .route("/api/blocking/rules", post(post_blocking_rule))
         .route("/api/blocking/rules/unlock", post(post_blocking_unlock))
@@ -1490,6 +1498,100 @@ async fn post_reject_action(
         },
         None => Json(json!({ "status": "fail", "msg": "backend not active" })),
     }
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AutonomySettingsPayload {
+    pub mode: Option<String>,
+    pub auto_quarantine_malware: Option<bool>,
+    pub action_confidence_threshold: Option<f32>,
+    pub quarantine_confidence_threshold: Option<f32>,
+    pub auto_approve_reputation_threshold: Option<f32>,
+    pub auto_replace_malware_binaries: Option<bool>,
+}
+
+async fn get_autonomy_settings(State(_state): State<DashboardState>) -> Json<Value> {
+    let cfg = osoosi_types::load_autonomy_config();
+    let mode = cfg.current_mode();
+    Json(json!({
+        "mode": mode.as_str(),
+        "mode_label": mode.label(),
+        "mode_description": mode.description(),
+        "auto_quarantine_malware": cfg.auto_quarantine_malware,
+        "action_confidence_threshold": cfg.action_confidence_threshold,
+        "quarantine_confidence_threshold": cfg.quarantine_confidence_threshold,
+        "auto_approve_reputation_threshold": cfg.auto_approve_reputation_threshold,
+        "auto_replace_malware_binaries": cfg.auto_replace_malware_binaries,
+        "quarantine_path": cfg.quarantine_path,
+    }))
+}
+
+async fn post_autonomy_settings(
+    State(state): State<DashboardState>,
+    Json(payload): Json<AutonomySettingsPayload>,
+) -> Json<Value> {
+    let mut cfg = osoosi_types::load_autonomy_config();
+
+    if let Some(ref m) = payload.mode {
+        cfg.apply_preset(m);
+    }
+
+    if let Some(v) = payload.auto_quarantine_malware {
+        cfg.auto_quarantine_malware = v;
+    }
+    if let Some(v) = payload.action_confidence_threshold {
+        cfg.action_confidence_threshold = v.clamp(0.0, 1.0);
+    }
+    if let Some(v) = payload.quarantine_confidence_threshold {
+        cfg.quarantine_confidence_threshold = v.clamp(0.0, 1.0);
+    }
+    if let Some(v) = payload.auto_approve_reputation_threshold {
+        cfg.auto_approve_reputation_threshold = v.clamp(0.0, 1.0);
+    }
+    if let Some(v) = payload.auto_replace_malware_binaries {
+        cfg.auto_replace_malware_binaries = v;
+    }
+
+    if let Err(e) = osoosi_types::save_autonomy_config(&cfg) {
+        warn!("Failed to persist autonomy configuration: {}", e);
+        return Json(json!({
+            "status": "error",
+            "message": format!("Failed to save configuration: {}", e),
+        }));
+    }
+
+    // Re-sign critical configuration files with cryptographic integrity manager
+    osoosi_core::config_integrity::sign_all_critical_configs();
+
+    let mode = cfg.current_mode();
+    let mode_str = mode.as_str();
+
+    if let Some(ref orch) = state.backend {
+        orch.audit().log(
+            "AUTONOMY_MODE_UPDATED",
+            json!({
+                "mode": mode_str,
+                "auto_quarantine": cfg.auto_quarantine_malware,
+                "action_threshold": cfg.action_confidence_threshold,
+                "quarantine_threshold": cfg.quarantine_confidence_threshold,
+                "auto_approve_threshold": cfg.auto_approve_reputation_threshold,
+                "auto_replace": cfg.auto_replace_malware_binaries,
+            }),
+        );
+    }
+
+    Json(json!({
+        "status": "success",
+        "mode": mode_str,
+        "mode_label": mode.label(),
+        "mode_description": mode.description(),
+        "auto_quarantine_malware": cfg.auto_quarantine_malware,
+        "action_confidence_threshold": cfg.action_confidence_threshold,
+        "quarantine_confidence_threshold": cfg.quarantine_confidence_threshold,
+        "auto_approve_reputation_threshold": cfg.auto_approve_reputation_threshold,
+        "auto_replace_malware_binaries": cfg.auto_replace_malware_binaries,
+        "quarantine_path": cfg.quarantine_path,
+    }))
 }
 
 async fn get_consensus(State(state): State<DashboardState>) -> Json<Value> {
@@ -4666,6 +4768,59 @@ mod tests {
         };
         let view_raw_resp = get_log_view(State(state.clone()), Query(bad_raw_q)).await;
         assert_eq!(view_raw_resp.status(), axum::http::StatusCode::BAD_REQUEST);
+    }
+
+    #[tokio::test]
+    async fn test_autonomy_settings_get_and_post() {
+        let unique_id = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .unwrap()
+            .as_nanos();
+        let temp_dir = std::env::temp_dir().join(format!("osoosi_dash_test_{}", unique_id));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let temp_config = temp_dir.join("osoosi.toml");
+        std::fs::write(&temp_config, "[autonomy]\nauto_quarantine_malware = false\naction_confidence_threshold = 0.80\n").unwrap();
+        std::env::set_var("OSOOSI_CONFIG", &temp_config);
+
+        let state = DashboardState::new(None, None);
+
+        // Test GET /api/settings/autonomy
+        let get_res = get_autonomy_settings(State(state.clone())).await.0;
+        assert!(get_res.get("mode").is_some());
+        assert!(get_res.get("auto_quarantine_malware").is_some());
+        assert!(get_res.get("action_confidence_threshold").is_some());
+
+        // Test POST /api/settings/autonomy with mode preset
+        let post_payload = AutonomySettingsPayload {
+            mode: Some("active".to_string()),
+            auto_quarantine_malware: None,
+            action_confidence_threshold: None,
+            quarantine_confidence_threshold: None,
+            auto_approve_reputation_threshold: None,
+            auto_replace_malware_binaries: None,
+        };
+        let post_res = post_autonomy_settings(State(state.clone()), Json(post_payload)).await.0;
+        assert_eq!(post_res["status"], "success");
+        assert_eq!(post_res["mode"], "active");
+        assert_eq!(post_res["auto_quarantine_malware"], true);
+        assert!((post_res["action_confidence_threshold"].as_f64().unwrap() - 0.50).abs() < 1e-3);
+
+        // Test POST with custom overrides
+        let custom_payload = AutonomySettingsPayload {
+            mode: None,
+            auto_quarantine_malware: Some(false),
+            action_confidence_threshold: Some(0.85),
+            quarantine_confidence_threshold: Some(0.90),
+            auto_approve_reputation_threshold: Some(0.45),
+            auto_replace_malware_binaries: Some(true),
+        };
+        let custom_res = post_autonomy_settings(State(state.clone()), Json(custom_payload)).await.0;
+        assert_eq!(custom_res["status"], "success");
+        assert_eq!(custom_res["auto_quarantine_malware"], false);
+        assert!((custom_res["action_confidence_threshold"].as_f64().unwrap() - 0.85).abs() < 1e-3);
+
+        std::env::remove_var("OSOOSI_CONFIG");
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
 

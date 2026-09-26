@@ -298,6 +298,252 @@ impl Default for AutonomyConfig {
     }
 }
 
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+pub enum AutonomyMode {
+    Audit,
+    Active,
+    Lockdown,
+    Custom,
+}
+
+impl AutonomyMode {
+    pub fn as_str(&self) -> &'static str {
+        match self {
+            AutonomyMode::Audit => "audit",
+            AutonomyMode::Active => "active",
+            AutonomyMode::Lockdown => "lockdown",
+            AutonomyMode::Custom => "custom",
+        }
+    }
+
+    pub fn label(&self) -> &'static str {
+        match self {
+            AutonomyMode::Audit => "Audit / Monitor",
+            AutonomyMode::Active => "Active Autonomous Prevention",
+            AutonomyMode::Lockdown => "Strict Zero-Trust Lockdown",
+            AutonomyMode::Custom => "Custom Configuration",
+        }
+    }
+
+    pub fn description(&self) -> &'static str {
+        match self {
+            AutonomyMode::Audit => {
+                "Telemetry, Sigma rules, and YARA-X detections are logged and alerted. Zero automated process termination or quarantine. Actions require analyst sign-off."
+            }
+            AutonomyMode::Active => {
+                "High-speed autonomous containment. High-confidence malware and memory injections are automatically killed, quarantined, and isolated via WFP."
+            }
+            AutonomyMode::Lockdown => {
+                "Aggressive zero-trust lockdown for red-team pentests or active compromise. Low-threshold behavioral anomalies trigger immediate process kill."
+            }
+            AutonomyMode::Custom => {
+                "Customized confidence thresholds and autonomous response parameters configured by administrator."
+            }
+        }
+    }
+}
+
+impl AutonomyConfig {
+    pub fn current_mode(&self) -> AutonomyMode {
+        if !self.auto_quarantine_malware && (self.action_confidence_threshold - 0.80).abs() < 0.05 {
+            AutonomyMode::Audit
+        } else if self.auto_quarantine_malware && (self.action_confidence_threshold - 0.50).abs() < 0.05 {
+            AutonomyMode::Active
+        } else if self.auto_quarantine_malware && (self.action_confidence_threshold - 0.35).abs() < 0.05 {
+            AutonomyMode::Lockdown
+        } else {
+            AutonomyMode::Custom
+        }
+    }
+
+    pub fn apply_preset(&mut self, mode: &str) {
+        match mode.to_ascii_lowercase().as_str() {
+            "audit" | "monitor" => {
+                self.auto_quarantine_malware = false;
+                self.action_confidence_threshold = 0.80;
+                self.quarantine_confidence_threshold = 0.95;
+            }
+            "active" | "armed" | "enforce" => {
+                self.auto_quarantine_malware = true;
+                self.action_confidence_threshold = 0.50;
+                self.quarantine_confidence_threshold = 0.80;
+            }
+            "lockdown" | "strict" => {
+                self.auto_quarantine_malware = true;
+                self.action_confidence_threshold = 0.35;
+                self.quarantine_confidence_threshold = 0.60;
+            }
+            _ => {}
+        }
+    }
+}
+
+/// Helper to update [autonomy] section within TOML content, preserving comments and formatting.
+pub fn update_autonomy_content(content: &str, cfg: &AutonomyConfig) -> String {
+    let mut lines: Vec<String> = Vec::new();
+    let mut in_autonomy = false;
+    let mut found_autonomy = false;
+
+    let mut set_auto_approve = false;
+    let mut set_auto_quarantine = false;
+    let mut set_quarantine_conf = false;
+    let mut set_action_conf = false;
+    let mut set_auto_replace = false;
+
+    let append_missing = |target_lines: &mut Vec<String>,
+                          set_auto_approve: &mut bool,
+                          set_auto_quarantine: &mut bool,
+                          set_quarantine_conf: &mut bool,
+                          set_action_conf: &mut bool,
+                          set_auto_replace: &mut bool| {
+        if !*set_auto_approve {
+            target_lines.push(format!("auto_approve_reputation_threshold = {:.2}", cfg.auto_approve_reputation_threshold));
+            *set_auto_approve = true;
+        }
+        if !*set_auto_quarantine {
+            target_lines.push(format!("auto_quarantine_malware = {}", cfg.auto_quarantine_malware));
+            *set_auto_quarantine = true;
+        }
+        if !*set_quarantine_conf {
+            target_lines.push(format!("quarantine_confidence_threshold = {:.2}", cfg.quarantine_confidence_threshold));
+            *set_quarantine_conf = true;
+        }
+        if !*set_action_conf {
+            target_lines.push(format!("action_confidence_threshold = {:.2}", cfg.action_confidence_threshold));
+            *set_action_conf = true;
+        }
+        if !*set_auto_replace {
+            target_lines.push(format!("auto_replace_malware_binaries = {}", cfg.auto_replace_malware_binaries));
+            *set_auto_replace = true;
+        }
+    };
+
+    let has_crlf = content.contains("\r\n");
+
+    for line in content.lines() {
+        let trimmed = line.trim();
+
+        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+            if in_autonomy {
+                append_missing(
+                    &mut lines,
+                    &mut set_auto_approve,
+                    &mut set_auto_quarantine,
+                    &mut set_quarantine_conf,
+                    &mut set_action_conf,
+                    &mut set_auto_replace,
+                );
+                in_autonomy = false;
+            }
+
+            if trimmed == "[autonomy]" {
+                in_autonomy = true;
+                found_autonomy = true;
+                lines.push(line.to_string());
+                continue;
+            }
+        }
+
+        if in_autonomy {
+            // Check for key = value (ignore comments)
+            if !trimmed.starts_with('#') {
+                if let Some((key, _)) = trimmed.split_once('=') {
+                    let key = key.trim();
+                    let indent = line.chars().take_while(|c| c.is_whitespace()).collect::<String>();
+                    match key {
+                        "auto_quarantine_malware" => {
+                            lines.push(format!("{}auto_quarantine_malware = {}", indent, cfg.auto_quarantine_malware));
+                            set_auto_quarantine = true;
+                            continue;
+                        }
+                        "quarantine_confidence_threshold" => {
+                            lines.push(format!("{}quarantine_confidence_threshold = {:.2}", indent, cfg.quarantine_confidence_threshold));
+                            set_quarantine_conf = true;
+                            continue;
+                        }
+                        "action_confidence_threshold" => {
+                            lines.push(format!("{}action_confidence_threshold = {:.2}", indent, cfg.action_confidence_threshold));
+                            set_action_conf = true;
+                            continue;
+                        }
+                        "auto_approve_reputation_threshold" => {
+                            lines.push(format!("{}auto_approve_reputation_threshold = {:.2}", indent, cfg.auto_approve_reputation_threshold));
+                            set_auto_approve = true;
+                            continue;
+                        }
+                        "auto_replace_malware_binaries" => {
+                            lines.push(format!("{}auto_replace_malware_binaries = {}", indent, cfg.auto_replace_malware_binaries));
+                            set_auto_replace = true;
+                            continue;
+                        }
+                        _ => {}
+                    }
+                }
+            }
+        }
+
+        lines.push(line.to_string());
+    }
+
+    if in_autonomy {
+        append_missing(
+            &mut lines,
+            &mut set_auto_approve,
+            &mut set_auto_quarantine,
+            &mut set_quarantine_conf,
+            &mut set_action_conf,
+            &mut set_auto_replace,
+        );
+    }
+
+    if !found_autonomy {
+        if !lines.is_empty() && !lines.last().map(|s| s.is_empty()).unwrap_or(false) {
+            lines.push(String::new());
+        }
+        lines.push("[autonomy]".to_string());
+        append_missing(
+            &mut lines,
+            &mut set_auto_approve,
+            &mut set_auto_quarantine,
+            &mut set_quarantine_conf,
+            &mut set_action_conf,
+            &mut set_auto_replace,
+        );
+    }
+
+    let separator = if has_crlf { "\r\n" } else { "\n" };
+    let mut res = lines.join(separator);
+    if content.ends_with('\n') {
+        res.push_str(separator);
+    }
+    res
+}
+
+/// Save autonomy config to a specific path (modifying in-place or creating).
+pub fn save_autonomy_config_to_path(cfg: &AutonomyConfig, path: &std::path::Path) -> anyhow::Result<()> {
+    let content = if path.exists() {
+        std::fs::read_to_string(path)?
+    } else {
+        String::new()
+    };
+
+    let updated = update_autonomy_content(&content, cfg);
+    if let Some(parent) = path.parent() {
+        if !parent.as_os_str().is_empty() && !parent.exists() {
+            std::fs::create_dir_all(parent)?;
+        }
+    }
+    std::fs::write(path, updated)?;
+    Ok(())
+}
+
+/// Save autonomy config to the resolved configuration file (defaults to osoosi.toml).
+pub fn save_autonomy_config(cfg: &AutonomyConfig) -> anyhow::Result<()> {
+    let path = resolve_config_path().unwrap_or_else(|| PathBuf::from("osoosi.toml"));
+    save_autonomy_config_to_path(cfg, &path)
+}
+
+
 /// Partial wire config for loading from file (peer rules only; listen_addr etc. from env/args).
 #[derive(Debug, Deserialize, Default)]
 struct WireConfigPartial {
@@ -1884,3 +2130,103 @@ pub struct OsoosiConfig {
     pub exporter: ExporterConfig,
     pub wire: WireConfig,
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_autonomy_mode_and_presets() {
+        let mut cfg = AutonomyConfig::default();
+        // default is auto_quarantine: false, action_threshold: 0.80 -> Audit
+        assert_eq!(cfg.current_mode(), AutonomyMode::Audit);
+        assert_eq!(cfg.current_mode().as_str(), "audit");
+
+        cfg.apply_preset("active");
+        assert!(cfg.auto_quarantine_malware);
+        assert!((cfg.action_confidence_threshold - 0.50).abs() < 1e-4);
+        assert!((cfg.quarantine_confidence_threshold - 0.80).abs() < 1e-4);
+        assert_eq!(cfg.current_mode(), AutonomyMode::Active);
+        assert_eq!(cfg.current_mode().as_str(), "active");
+
+        cfg.apply_preset("lockdown");
+        assert!(cfg.auto_quarantine_malware);
+        assert!((cfg.action_confidence_threshold - 0.35).abs() < 1e-4);
+        assert!((cfg.quarantine_confidence_threshold - 0.60).abs() < 1e-4);
+        assert_eq!(cfg.current_mode(), AutonomyMode::Lockdown);
+        assert_eq!(cfg.current_mode().as_str(), "lockdown");
+
+        cfg.apply_preset("audit");
+        assert!(!cfg.auto_quarantine_malware);
+        assert!((cfg.action_confidence_threshold - 0.80).abs() < 1e-4);
+        assert!((cfg.quarantine_confidence_threshold - 0.95).abs() < 1e-4);
+        assert_eq!(cfg.current_mode(), AutonomyMode::Audit);
+
+        // Custom mode
+        cfg.action_confidence_threshold = 0.22;
+        assert_eq!(cfg.current_mode(), AutonomyMode::Custom);
+        assert_eq!(cfg.current_mode().as_str(), "custom");
+    }
+
+    #[test]
+    fn test_save_autonomy_config() {
+        let temp_dir = std::env::temp_dir().join(format!("osoosi_test_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let config_file = temp_dir.join("osoosi.toml");
+
+        let initial_toml = r#"
+# Global AI configuration
+[ai]
+enabled = true
+
+[autonomy]
+# Reputation threshold
+auto_approve_reputation_threshold = 0.40
+auto_quarantine_malware = false
+quarantine_confidence_threshold = 0.95
+action_confidence_threshold = 0.80
+auto_replace_malware_binaries = true
+quarantine_path = "./quarantine"
+
+[runtime]
+db_path = "./test.db"
+"#;
+        std::fs::write(&config_file, initial_toml).unwrap();
+
+        let mut cfg = AutonomyConfig::default();
+        cfg.apply_preset("active");
+        cfg.auto_approve_reputation_threshold = 0.65;
+        cfg.auto_replace_malware_binaries = false;
+
+        save_autonomy_config_to_path(&cfg, &config_file).unwrap();
+
+        let read_back = std::fs::read_to_string(&config_file).unwrap();
+        // Preserved [ai] and [runtime]
+        assert!(read_back.contains("[ai]"));
+        assert!(read_back.contains("enabled = true"));
+        assert!(read_back.contains("[runtime]"));
+        assert!(read_back.contains("db_path = \"./test.db\""));
+        assert!(read_back.contains("# Reputation threshold"));
+
+        // Updated autonomy values
+        assert!(read_back.contains("auto_quarantine_malware = true"));
+        assert!(read_back.contains("action_confidence_threshold = 0.50"));
+        assert!(read_back.contains("quarantine_confidence_threshold = 0.80"));
+        assert!(read_back.contains("auto_approve_reputation_threshold = 0.65"));
+        assert!(read_back.contains("auto_replace_malware_binaries = false"));
+
+        // Also test save_autonomy_config via OSOOSI_CONFIG env var
+        std::env::set_var("OSOOSI_CONFIG", &config_file);
+        let mut cfg_lockdown = AutonomyConfig::default();
+        cfg_lockdown.apply_preset("lockdown");
+        save_autonomy_config(&cfg_lockdown).unwrap();
+        std::env::remove_var("OSOOSI_CONFIG");
+
+        let final_content = std::fs::read_to_string(&config_file).unwrap();
+        assert!(final_content.contains("action_confidence_threshold = 0.35"));
+        assert!(final_content.contains("quarantine_confidence_threshold = 0.60"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+}
+
