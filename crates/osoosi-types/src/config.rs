@@ -357,7 +357,7 @@ impl AutonomyConfig {
     }
 
     pub fn apply_preset(&mut self, mode: &str) {
-        match mode.to_ascii_lowercase().as_str() {
+        match mode.trim().to_ascii_lowercase().as_str() {
             "audit" | "monitor" => {
                 self.auto_quarantine_malware = false;
                 self.action_confidence_threshold = 0.80;
@@ -423,7 +423,22 @@ pub fn update_autonomy_content(content: &str, cfg: &AutonomyConfig) -> String {
     for line in content.lines() {
         let trimmed = line.trim();
 
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        // Check if this line is a table header (e.g. `[section]` or `[[section]]` or `[section] # comment`)
+        let code_without_comment = if let Some(idx) = trimmed.find('#') {
+            trimmed[..idx].trim()
+        } else {
+            trimmed
+        };
+
+        if code_without_comment.starts_with('[') && code_without_comment.ends_with(']') {
+            let inner = code_without_comment[1..code_without_comment.len() - 1].trim();
+            // Handle array of tables [[table]]
+            let table_name = if inner.starts_with('[') && inner.ends_with(']') {
+                inner[1..inner.len() - 1].trim()
+            } else {
+                inner
+            };
+
             if in_autonomy {
                 append_missing(
                     &mut lines,
@@ -436,7 +451,7 @@ pub fn update_autonomy_content(content: &str, cfg: &AutonomyConfig) -> String {
                 in_autonomy = false;
             }
 
-            if trimmed == "[autonomy]" {
+            if table_name.eq_ignore_ascii_case("autonomy") {
                 in_autonomy = true;
                 found_autonomy = true;
                 lines.push(line.to_string());
@@ -445,34 +460,40 @@ pub fn update_autonomy_content(content: &str, cfg: &AutonomyConfig) -> String {
         }
 
         if in_autonomy {
-            // Check for key = value (ignore comments)
+            // Check for key = value (ignore comment-only lines)
             if !trimmed.starts_with('#') {
-                if let Some((key, _)) = trimmed.split_once('=') {
+                if let Some((key, val_part)) = trimmed.split_once('=') {
                     let key = key.trim();
                     let indent = line.chars().take_while(|c| c.is_whitespace()).collect::<String>();
+                    let inline_comment = if let Some(c_idx) = val_part.find('#') {
+                        format!(" {}", val_part[c_idx..].trim_end())
+                    } else {
+                        String::new()
+                    };
+
                     match key {
                         "auto_quarantine_malware" => {
-                            lines.push(format!("{}auto_quarantine_malware = {}", indent, cfg.auto_quarantine_malware));
+                            lines.push(format!("{}auto_quarantine_malware = {}{}", indent, cfg.auto_quarantine_malware, inline_comment));
                             set_auto_quarantine = true;
                             continue;
                         }
                         "quarantine_confidence_threshold" => {
-                            lines.push(format!("{}quarantine_confidence_threshold = {:.2}", indent, cfg.quarantine_confidence_threshold));
+                            lines.push(format!("{}quarantine_confidence_threshold = {:.2}{}", indent, cfg.quarantine_confidence_threshold, inline_comment));
                             set_quarantine_conf = true;
                             continue;
                         }
                         "action_confidence_threshold" => {
-                            lines.push(format!("{}action_confidence_threshold = {:.2}", indent, cfg.action_confidence_threshold));
+                            lines.push(format!("{}action_confidence_threshold = {:.2}{}", indent, cfg.action_confidence_threshold, inline_comment));
                             set_action_conf = true;
                             continue;
                         }
                         "auto_approve_reputation_threshold" => {
-                            lines.push(format!("{}auto_approve_reputation_threshold = {:.2}", indent, cfg.auto_approve_reputation_threshold));
+                            lines.push(format!("{}auto_approve_reputation_threshold = {:.2}{}", indent, cfg.auto_approve_reputation_threshold, inline_comment));
                             set_auto_approve = true;
                             continue;
                         }
                         "auto_replace_malware_binaries" => {
-                            lines.push(format!("{}auto_replace_malware_binaries = {}", indent, cfg.auto_replace_malware_binaries));
+                            lines.push(format!("{}auto_replace_malware_binaries = {}{}", indent, cfg.auto_replace_malware_binaries, inline_comment));
                             set_auto_replace = true;
                             continue;
                         }
@@ -513,7 +534,7 @@ pub fn update_autonomy_content(content: &str, cfg: &AutonomyConfig) -> String {
 
     let separator = if has_crlf { "\r\n" } else { "\n" };
     let mut res = lines.join(separator);
-    if content.ends_with('\n') {
+    if content.is_empty() || content.ends_with('\n') {
         res.push_str(separator);
     }
     res
@@ -539,7 +560,16 @@ pub fn save_autonomy_config_to_path(cfg: &AutonomyConfig, path: &std::path::Path
 
 /// Save autonomy config to the resolved configuration file (defaults to osoosi.toml).
 pub fn save_autonomy_config(cfg: &AutonomyConfig) -> anyhow::Result<()> {
-    let path = resolve_config_path().unwrap_or_else(|| PathBuf::from("osoosi.toml"));
+    let path = if let Ok(p) = std::env::var("OSOOSI_CONFIG") {
+        let trimmed = p.trim();
+        if !trimmed.is_empty() {
+            PathBuf::from(trimmed)
+        } else {
+            resolve_config_path().unwrap_or_else(|| PathBuf::from("osoosi.toml"))
+        }
+    } else {
+        resolve_config_path().unwrap_or_else(|| PathBuf::from("osoosi.toml"))
+    };
     save_autonomy_config_to_path(cfg, &path)
 }
 
@@ -2227,6 +2257,52 @@ db_path = "./test.db"
         assert!(final_content.contains("quarantine_confidence_threshold = 0.60"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_update_autonomy_content_edge_cases() {
+        // 1. Whitespace in table headers and inline comments
+        let complex_toml = r#"
+# Heading
+[ autonomy ] # Main Autonomy Settings
+auto_quarantine_malware = false # Disable by default for non-intrusive mode
+quarantine_confidence_threshold = 0.95
+action_confidence_threshold = 0.80 # Action threshold
+auto_approve_reputation_threshold = 0.40
+auto_replace_malware_binaries = true
+quarantine_path = "./quarantine"
+
+[ runtime ] # Secondary section
+db_path = "./db.sqlite"
+"#;
+        let mut cfg = AutonomyConfig::default();
+        cfg.apply_preset("  ACTIVE  \n");
+        assert_eq!(cfg.current_mode(), AutonomyMode::Active);
+
+        let updated = update_autonomy_content(complex_toml, &cfg);
+        // Ensure no duplicate [autonomy] was added
+        assert_eq!(updated.matches("autonomy").count(), 1);
+        // Ensure inline comments on key lines are preserved
+        assert!(updated.contains("auto_quarantine_malware = true # Disable by default for non-intrusive mode"));
+        assert!(updated.contains("action_confidence_threshold = 0.50 # Action threshold"));
+        // Ensure subsequent section is preserved intact
+        assert!(updated.contains("[ runtime ] # Secondary section"));
+        assert!(updated.contains("db_path = \"./db.sqlite\""));
+
+        // 2. Empty content initialization
+        let empty_updated = update_autonomy_content("", &cfg);
+        assert!(empty_updated.starts_with("[autonomy]\n"));
+        assert!(empty_updated.ends_with('\n'));
+        assert!(empty_updated.contains("auto_quarantine_malware = true"));
+        assert!(empty_updated.contains("action_confidence_threshold = 0.50"));
+
+        // 3. Verify CRLF preservation
+        let crlf_toml = "[autonomy]\r\nauto_quarantine_malware = false\r\n";
+        let crlf_updated = update_autonomy_content(crlf_toml, &cfg);
+        assert!(crlf_updated.contains("\r\n"));
+        // Ensure no lone LF without preceding CR
+        let without_crlf = crlf_updated.replace("\r\n", "");
+        assert!(!without_crlf.contains('\n'));
     }
 }
 

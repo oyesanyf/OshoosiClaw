@@ -1540,13 +1540,19 @@ async fn post_autonomy_settings(
         cfg.auto_quarantine_malware = v;
     }
     if let Some(v) = payload.action_confidence_threshold {
-        cfg.action_confidence_threshold = v.clamp(0.0, 1.0);
+        if v.is_finite() {
+            cfg.action_confidence_threshold = v.clamp(0.0, 1.0);
+        }
     }
     if let Some(v) = payload.quarantine_confidence_threshold {
-        cfg.quarantine_confidence_threshold = v.clamp(0.0, 1.0);
+        if v.is_finite() {
+            cfg.quarantine_confidence_threshold = v.clamp(0.0, 1.0);
+        }
     }
     if let Some(v) = payload.auto_approve_reputation_threshold {
-        cfg.auto_approve_reputation_threshold = v.clamp(0.0, 1.0);
+        if v.is_finite() {
+            cfg.auto_approve_reputation_threshold = v.clamp(0.0, 1.0);
+        }
     }
     if let Some(v) = payload.auto_replace_malware_binaries {
         cfg.auto_replace_malware_binaries = v;
@@ -1562,6 +1568,21 @@ async fn post_autonomy_settings(
 
     // Re-sign critical configuration files with cryptographic integrity manager
     osoosi_core::config_integrity::sign_all_critical_configs();
+    let saved_path = if let Ok(p) = std::env::var("OSOOSI_CONFIG") {
+        let trimmed = p.trim();
+        if !trimmed.is_empty() {
+            Some(PathBuf::from(trimmed))
+        } else {
+            osoosi_types::resolve_config_path()
+        }
+    } else {
+        osoosi_types::resolve_config_path()
+    };
+    if let Some(ref p) = saved_path {
+        if p.exists() {
+            let _ = osoosi_core::config_integrity::sign_config_file(p);
+        }
+    }
 
     let mode = cfg.current_mode();
     let mode_str = mode.as_str();
@@ -4817,7 +4838,26 @@ mod tests {
         let custom_res = post_autonomy_settings(State(state.clone()), Json(custom_payload)).await.0;
         assert_eq!(custom_res["status"], "success");
         assert_eq!(custom_res["auto_quarantine_malware"], false);
-        assert!((custom_res["action_confidence_threshold"].as_f64().unwrap() - 0.85).abs() < 1e-3);
+        // Verify that cryptographic signature was generated for the active config file
+        let sig_file = temp_dir.join("osoosi.toml.sign");
+        assert!(sig_file.exists(), "Signature file must exist after saving autonomy settings");
+        let is_valid = osoosi_core::config_integrity::verify_config_integrity(&temp_config).unwrap();
+        assert!(is_valid, "Cryptographic integrity check must pass on newly saved config");
+
+        // Test POST with non-finite / invalid float values to verify safety
+        let nan_payload = AutonomySettingsPayload {
+            mode: None,
+            auto_quarantine_malware: None,
+            action_confidence_threshold: Some(f32::NAN),
+            quarantine_confidence_threshold: Some(f32::INFINITY),
+            auto_approve_reputation_threshold: None,
+            auto_replace_malware_binaries: None,
+        };
+        let nan_res = post_autonomy_settings(State(state.clone()), Json(nan_payload)).await.0;
+        assert_eq!(nan_res["status"], "success");
+        // NaN/Infinity should be ignored, preserving previous valid thresholds
+        assert!((nan_res["action_confidence_threshold"].as_f64().unwrap() - 0.85).abs() < 1e-3);
+        assert!((nan_res["quarantine_confidence_threshold"].as_f64().unwrap() - 0.90).abs() < 1e-3);
 
         std::env::remove_var("OSOOSI_CONFIG");
         let _ = std::fs::remove_dir_all(&temp_dir);

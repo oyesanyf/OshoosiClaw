@@ -3193,6 +3193,12 @@ async function fetchAutonomySettings() {
 }
 
 window.applyAutonomyPreset = async function(presetName) {
+    const btn = document.getElementById(`btn-select-${presetName}`);
+    const origText = btn ? btn.innerText : '';
+    if (btn) {
+        btn.disabled = true;
+        btn.innerText = 'Activating...';
+    }
     try {
         const res = await fetch(`${API_BASE}/settings/autonomy`, {
             method: 'POST',
@@ -3221,10 +3227,20 @@ window.applyAutonomyPreset = async function(presetName) {
         if (typeof showSkyrlToast === 'function') {
             showSkyrlToast(`Preset error: ${e.message}`, 'error');
         }
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerText = origText;
+        }
     }
 };
 
 window.saveCustomAutonomySettings = async function() {
+    const saveBtn = document.getElementById('btn-save-autonomy');
+    if (saveBtn) {
+        saveBtn.disabled = true;
+        saveBtn.innerText = 'Saving & Signing...';
+    }
     try {
         const autoQuarantine = document.getElementById('autonomy-auto-quarantine')?.checked ?? false;
         const autoReplace = document.getElementById('autonomy-auto-replace')?.checked ?? true;
@@ -3267,6 +3283,11 @@ window.saveCustomAutonomySettings = async function() {
         console.error('Failed to save autonomy settings:', e);
         if (typeof showSkyrlToast === 'function') {
             showSkyrlToast(`Save error: ${e.message}`, 'error');
+        }
+    } finally {
+        if (saveBtn) {
+            saveBtn.disabled = false;
+            saveBtn.innerText = 'Save Policy Changes';
         }
     }
 };

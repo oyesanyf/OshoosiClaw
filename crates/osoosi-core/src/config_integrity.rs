@@ -146,6 +146,20 @@ pub fn verify_all_critical_configs() -> Vec<String> {
         }
     }
 
+    if let Some(resolved) = osoosi_types::resolve_config_path() {
+        if resolved.exists() && resolved != Path::new("osoosi.toml") {
+            match verify_config_integrity(&resolved) {
+                Ok(true) => {}
+                Ok(false) => {
+                    tampered.push(resolved.display().to_string());
+                }
+                Err(e) => {
+                    warn!("Could not verify {:?}: {}", resolved, e);
+                }
+            }
+        }
+    }
+
     tampered
 }
 
@@ -164,6 +178,14 @@ pub fn sign_all_critical_configs() {
         if path.exists() {
             if let Err(e) = sign_config_file(path) {
                 warn!("Could not sign {:?}: {}", path, e);
+            }
+        }
+    }
+
+    if let Some(resolved) = osoosi_types::resolve_config_path() {
+        if resolved.exists() && resolved != Path::new("osoosi.toml") {
+            if let Err(e) = sign_config_file(&resolved) {
+                warn!("Could not sign resolved config {:?}: {}", resolved, e);
             }
         }
     }
