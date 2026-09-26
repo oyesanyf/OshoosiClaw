@@ -57,7 +57,7 @@ pub mod log_retention;
 pub const CONSENSUS_LOG_TARGET: &str = "osoosi_core::consensus";
 
 use osoosi_audit::AuditTrail;
-use osoosi_memory::MemoryStore;
+pub use osoosi_memory::MemoryStore;
 use osoosi_policy::{PolicyEngine, ThreatFeedFetcher};
 use osoosi_runtime::DeceptionManager;
 use osoosi_types::{
@@ -1409,6 +1409,11 @@ impl EdrOrchestrator {
     ) -> anyhow::Result<Vec<String>> {
         let log_dir = osoosi_types::resolve_log_directory();
         crate::log_retention::LogRetentionManager::read_log_tail(&log_dir, filename, max_lines, search)
+    }
+
+    /// Access the LogRetentionManager instance.
+    pub fn get_log_retention_manager(&self) -> crate::log_retention::LogRetentionManager {
+        crate::log_retention::LogRetentionManager
     }
 
     /// Runs log retention and rotation maintenance immediately.

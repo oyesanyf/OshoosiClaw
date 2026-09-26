@@ -3553,6 +3553,8 @@ pub struct LogViewQuery {
     pub file: Option<String>,
     pub tail: Option<usize>,
     pub search: Option<String>,
+    pub raw: Option<bool>,
+    pub format: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -3574,69 +3576,88 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
     let mut items = Vec::new();
     let mut seen = std::collections::HashSet::new();
 
-    if let Some(orch) = &state.backend {
-        // 1. Historical threats from memory store
-        if let Ok(threats) = orch.memory().get_recent_threats(1000) {
-            for t in threats {
-                let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let timestamp = t.get("timestamp").and_then(|v| v.as_str()).unwrap_or("").to_string();
-                let cve_id = t.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
-                let proc_name = t.get("process_name").and_then(|v| v.as_str()).map(|s| s.to_string());
-                let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("");
-                let conf = t.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.8);
-                let file_path = t.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
-
-                let (tech_id, tech_name, _) = enrich_mitre_threat(
-                    proc_name.as_deref().unwrap_or(""),
-                    cve_id,
-                    reason,
-                    None,
-                    None,
-                );
-
-                let severity = if conf >= 0.85 {
-                    "critical".to_string()
-                } else if conf >= 0.70 {
-                    "high".to_string()
-                } else if conf >= 0.50 {
-                    "medium".to_string()
-                } else {
-                    "low".to_string()
-                };
-
-                let summary = if !reason.is_empty() {
-                    if let Some(ref p) = proc_name {
-                        format!("{}: {}", p, reason)
-                    } else {
-                        reason.to_string()
-                    }
-                } else if !cve_id.is_empty() {
-                    format!("CVE Vulnerability Trigger: {}", cve_id)
-                } else {
-                    format!("Threat in {}", proc_name.as_deref().unwrap_or(file_path))
-                };
-
-                let status = "ALERTED".to_string();
-
-                let key = format!("{}:{}:{}", timestamp, "threat", summary);
-                if seen.insert(key) {
-                    items.push(HistoryItem {
-                        id,
-                        timestamp,
-                        category: "threat".to_string(),
-                        event_type: "THREAT_DETECTED".to_string(),
-                        process_name: proc_name,
-                        mitre_technique: Some(tech_id),
-                        mitre_technique_name: Some(tech_name),
-                        severity,
-                        status,
-                        summary,
-                        details: t,
-                    });
-                }
-            }
+    // 1. Historical threats from memory store or on-disk SQLite database
+    let threats: Vec<Value> = if let Some(orch) = &state.backend {
+        orch.memory().get_recent_threats(1000).unwrap_or_default()
+    } else {
+        let runtime_cfg = osoosi_types::load_runtime_config();
+        let db_path = std::path::Path::new(&runtime_cfg.db_path);
+        if db_path.exists() {
+            osoosi_core::MemoryStore::new(&runtime_cfg.db_path)
+                .and_then(|m| m.get_recent_threats(1000))
+                .unwrap_or_default()
+        } else {
+            Vec::new()
         }
+    };
 
+    for t in threats {
+        let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let timestamp = t.get("timestamp")
+            .and_then(|v| v.as_str())
+            .filter(|s| !s.is_empty())
+            .map(|s| s.to_string())
+            .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
+        let cve_id = t.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
+        let proc_name = t.get("process_name").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+        let conf = t.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.8);
+        let file_path = t.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+
+        let existing_tech = t.get("mitre_technique").and_then(|v| v.as_str());
+        let existing_name = t.get("mitre_technique_name").and_then(|v| v.as_str());
+
+        let (tech_id, tech_name, _) = enrich_mitre_threat(
+            proc_name.as_deref().unwrap_or(""),
+            cve_id,
+            reason,
+            existing_tech,
+            existing_name,
+        );
+
+        let severity = if conf >= 0.85 {
+            "critical".to_string()
+        } else if conf >= 0.70 {
+            "high".to_string()
+        } else if conf >= 0.50 {
+            "medium".to_string()
+        } else {
+            "low".to_string()
+        };
+
+        let summary = if !reason.is_empty() {
+            if let Some(ref p) = proc_name {
+                format!("{}: {}", p, reason)
+            } else {
+                reason.to_string()
+            }
+        } else if !cve_id.is_empty() {
+            format!("CVE Vulnerability Trigger: {}", cve_id)
+        } else {
+            format!("Threat in {}", proc_name.as_deref().unwrap_or(file_path))
+        };
+
+        let status = "ALERTED".to_string();
+
+        let key = format!("{}:{}:{}", timestamp, "threat", summary);
+        if seen.insert(key) {
+            items.push(HistoryItem {
+                id,
+                timestamp,
+                category: "threat".to_string(),
+                event_type: "THREAT_DETECTED".to_string(),
+                process_name: proc_name,
+                mitre_technique: if tech_id.is_empty() { None } else { Some(tech_id) },
+                mitre_technique_name: if tech_name.is_empty() { None } else { Some(tech_name) },
+                severity,
+                status,
+                summary,
+                details: t,
+            });
+        }
+    }
+
+    if let Some(orch) = &state.backend {
         // 2. Audit Trail Merkle entries
         for (idx, entry) in orch.audit().entries().into_iter().enumerate() {
             let timestamp = entry.timestamp.to_rfc3339();
@@ -3923,10 +3944,21 @@ async fn export_history(
 }
 
 fn escape_csv(val: &str) -> String {
-    if val.contains(',') || val.contains('"') || val.contains('\n') || val.contains('\r') {
-        format!("\"{}\"", val.replace('"', "\"\""))
+    let sanitized = if val.starts_with('=')
+        || val.starts_with('+')
+        || val.starts_with('-')
+        || val.starts_with('@')
+        || val.starts_with('\t')
+    {
+        format!("'{}", val)
     } else {
         val.to_string()
+    };
+
+    if sanitized.contains(',') || sanitized.contains('"') || sanitized.contains('\n') || sanitized.contains('\r') {
+        format!("\"{}\"", sanitized.replace('"', "\"\""))
+    } else {
+        sanitized
     }
 }
 
@@ -3956,15 +3988,30 @@ async fn get_log_view(
         }
     };
 
+    let is_raw = q.raw == Some(true)
+        || q.format.as_deref() == Some("raw")
+        || q.format.as_deref() == Some("text");
+
     match res {
-        Ok(lines) => (
-            StatusCode::OK,
-            Json(json!({
-                "file": file,
-                "lines": lines,
-                "count": lines.len()
-            })),
-        ).into_response(),
+        Ok(lines) => {
+            if is_raw {
+                let mut headers = HeaderMap::new();
+                headers.insert(
+                    axum::http::header::CONTENT_TYPE,
+                    "text/plain; charset=utf-8".parse().unwrap(),
+                );
+                (StatusCode::OK, headers, lines.join("\n")).into_response()
+            } else {
+                (
+                    StatusCode::OK,
+                    Json(json!({
+                        "file": file,
+                        "lines": lines,
+                        "count": lines.len()
+                    })),
+                ).into_response()
+            }
+        }
         Err(e) => (
             StatusCode::BAD_REQUEST,
             Json(json!({
@@ -4555,7 +4602,7 @@ mod tests {
         assert_eq!(res["limit"], 10);
         assert!(res["items"].as_array().is_some());
 
-        // Test GET /api/history/export
+        // Test GET /api/history/export with CSV
         let exp_q = HistoryQuery {
             category: Some("all".to_string()),
             severity: None,
@@ -4564,8 +4611,27 @@ mod tests {
             limit: None,
             format: Some("csv".to_string()),
         };
-        let resp = export_history(State(state.clone()), Query(exp_q)).await;
-        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let csv_resp = export_history(State(state.clone()), Query(exp_q)).await;
+        assert_eq!(csv_resp.status(), axum::http::StatusCode::OK);
+
+        // Test GET /api/history/export with JSON format
+        let json_exp_q = HistoryQuery {
+            category: Some("all".to_string()),
+            severity: None,
+            search: None,
+            page: None,
+            limit: None,
+            format: Some("json".to_string()),
+        };
+        let json_resp = export_history(State(state.clone()), Query(json_exp_q)).await;
+        assert_eq!(json_resp.status(), axum::http::StatusCode::OK);
+
+        // Test CSV formula injection protection in escape_csv
+        assert_eq!(escape_csv("=1+1"), "'=1+1");
+        assert_eq!(escape_csv("+2+2"), "'+2+2");
+        assert_eq!(escape_csv("@cmd"), "'@cmd");
+        assert_eq!(escape_csv("=1+1,comma"), "\"'=1+1,comma\"");
+        assert_eq!(escape_csv("clean,string"), "\"clean,string\"");
     }
 
     #[tokio::test]
@@ -4581,9 +4647,22 @@ mod tests {
             file: Some("../sensitive.txt".to_string()),
             tail: Some(50),
             search: None,
+            raw: None,
+            format: None,
         };
         let view_resp = get_log_view(State(state.clone()), Query(bad_q)).await;
         assert_eq!(view_resp.status(), axum::http::StatusCode::BAD_REQUEST);
+
+        // Test GET /api/logs/view with raw=true query flag on bad path still rejected
+        let bad_raw_q = LogViewQuery {
+            file: Some("../sensitive.txt".to_string()),
+            tail: Some(50),
+            search: None,
+            raw: Some(true),
+            format: None,
+        };
+        let view_raw_resp = get_log_view(State(state.clone()), Query(bad_raw_q)).await;
+        assert_eq!(view_raw_resp.status(), axum::http::StatusCode::BAD_REQUEST);
     }
 }
 

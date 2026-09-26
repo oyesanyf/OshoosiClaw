@@ -5063,6 +5063,19 @@ async function renderHistoryView(page = 1) {
             const proc = item.process_name || 'System';
             const catBadge = `<span style="text-transform: uppercase; font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; background: rgba(255,255,255,0.06); color: var(--text-muted);">${item.category || 'system'}</span>`;
 
+            const dObj = item.details || {};
+            const argsVal = dObj.arguments || dObj.command_line || dObj.args || dObj.cmd || '—';
+            const hashVal = dObj.hash_blake3 || dObj.hash || dObj.sha256 || dObj.file_hash || '—';
+            const sourceVal = dObj.source_node || dObj.node_id || dObj.peer_id || 'Local Node';
+            let votersVal = 'Autonomous Consensus';
+            if (dObj.voters) {
+                votersVal = Array.isArray(dObj.voters) ? dObj.voters.join(', ') : JSON.stringify(dObj.voters);
+            } else if (dObj.consensus_voters) {
+                votersVal = Array.isArray(dObj.consensus_voters) ? dObj.consensus_voters.join(', ') : String(dObj.consensus_voters);
+            } else if (dObj.action) {
+                votersVal = `Enforced (${dObj.action})`;
+            }
+
             html += `
                 <tr style="border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.15s ease;" onmouseover="this.style.background='rgba(255,255,255,0.02)'" onmouseout="this.style.background='transparent'">
                     <td style="padding: 10px 16px; font-family: monospace; font-size: 11px; color: var(--text-muted);">${displayTime}</td>
@@ -5088,12 +5101,34 @@ async function renderHistoryView(page = 1) {
                     </td>
                 </tr>
                 <tr id="hist-detail-${idx}" style="display: none; background: rgba(0,0,0,0.35);">
-                    <td colspan="9" style="padding: 12px 16px; border-bottom: 1px solid var(--glass-border);">
-                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
-                            <div style="font-size: 12px; font-weight: 600; color: var(--accent-blue);">Forensic Evidence Record &amp; Raw Telemetry:</div>
-                            <button onclick="toggleHistoryDetail('${idx}')" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 11px;">Close</button>
+                    <td colspan="9" style="padding: 14px 18px; border-bottom: 1px solid var(--glass-border);">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                            <div style="font-size: 13px; font-weight: 600; color: var(--accent-blue); display: flex; align-items: center; gap: 6px;">
+                                <i data-lucide="shield" style="width: 14px; height: 14px;"></i>
+                                <span>Forensic Evidence &amp; Autonomous Audit Record</span>
+                            </div>
+                            <button onclick="toggleHistoryDetail('${idx}')" style="background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: var(--text-muted); border-radius: 4px; padding: 2px 8px; cursor: pointer; font-size: 11px;">Close</button>
                         </div>
-                        <pre style="margin: 0; padding: 10px; background: rgba(0,0,0,0.5); border-radius: 6px; font-family: 'Consolas', monospace; font-size: 11px; color: #a6accd; max-height: 200px; overflow-y: auto;">${escapeHtml(JSON.stringify(item.details || {}, null, 2))}</pre>
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-bottom: 12px; background: rgba(0,0,0,0.3); padding: 10px 14px; border-radius: 8px; border: 1px solid var(--glass-border);">
+                            <div>
+                                <div style="font-size: 10px; text-transform: uppercase; color: var(--text-muted); font-weight: 600; letter-spacing: 0.5px; margin-bottom: 3px;">Command Arguments</div>
+                                <div style="font-family: monospace; font-size: 11px; color: #fff; word-break: break-all;">${escapeHtml(String(argsVal))}</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 10px; text-transform: uppercase; color: var(--text-muted); font-weight: 600; letter-spacing: 0.5px; margin-bottom: 3px;">Process / File Hash</div>
+                                <div style="font-family: monospace; font-size: 11px; color: var(--accent-blue); word-break: break-all;">${escapeHtml(String(hashVal))}</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 10px; text-transform: uppercase; color: var(--text-muted); font-weight: 600; letter-spacing: 0.5px; margin-bottom: 3px;">Source / Origin Node</div>
+                                <div style="font-family: monospace; font-size: 11px; color: #fff; word-break: break-all;">${escapeHtml(String(sourceVal))}</div>
+                            </div>
+                            <div>
+                                <div style="font-size: 10px; text-transform: uppercase; color: var(--text-muted); font-weight: 600; letter-spacing: 0.5px; margin-bottom: 3px;">Consensus Voters / Action</div>
+                                <div style="font-family: monospace; font-size: 11px; color: var(--accent-green); word-break: break-all;">${escapeHtml(String(votersVal))}</div>
+                            </div>
+                        </div>
+                        <div style="font-size: 11px; color: var(--text-muted); margin-bottom: 4px; font-weight: 500;">Raw Telemetry Payload:</div>
+                        <pre style="margin: 0; padding: 10px; background: rgba(0,0,0,0.5); border-radius: 6px; font-family: 'Consolas', monospace; font-size: 11px; color: #a6accd; max-height: 200px; overflow-y: auto;">${escapeHtml(JSON.stringify(dObj, null, 2))}</pre>
                     </td>
                 </tr>
             `;
