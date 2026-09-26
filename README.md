@@ -25,6 +25,7 @@
   <a href="#-mitre-attck--atlas-enterprise-framework">MITRE ATT&CK & ATLAS</a> •
   <a href="#-p2p-wire-mesh-stix-synchronization">Wire STIX Sync</a> •
   <a href="#-high-throughput-p2p-mesh--consensus-stability">Mesh Stability</a> •
+  <a href="#-interactive-webui-visual-gallery">Visual Tour</a> •
   <a href="#-cli-reference">CLI Reference</a>
 </p>
 
@@ -33,6 +34,27 @@
 > **Ọ̀ṣọ́ọ̀sì** *(oh-SHAW-aw-see)* is the Yoruba Orisha of the Hunt, Tracking, and Justice. In the Yoruba cosmological tradition, Ọ̀ṣọ́ọ̀sì is the divine tracker who **never misses his mark** — the archer whose arrow always finds its target. He is invoked for precision, the relentless pursuit of wrongdoers, and the swift delivery of justice.
 >
 > This is the spirit of this project: an autonomous security agent that **hunts threats with unerring accuracy**, **tracks adversaries across the mesh**, and **delivers swift, proportionate justice** through quarantine, isolation, and deception. Like Ọ̀ṣọ́ọ̀sì, it is both patient *(observing context, reasoning before action)* and decisive *(acting with confidence when the target is clear)*.
+
+---
+
+## 📸 Interactive WebUI Visual Gallery
+
+OpenỌ̀ṣọ́ọ̀sì features an integrated, real-time security operations dashboard (`http://127.0.0.1:3030/` or `http://oshoosi.duckdns.org:3030/`). Full high-resolution screenshots and detailed architecture descriptions are available in the **[Visual Screenshots Gallery](docs/screenshots/README.md)**.
+
+| View | Screenshot Preview | Description |
+|---|---|---|
+| **Detection Overview** (`#dashboard`) | [01_dashboard.png](docs/screenshots/01_dashboard.png) | 25-card Detection Engine grid with voter weights, live telemetry charts, and system status counters. |
+| **Threat Intelligence** (`#threats`) | [02_threats.png](docs/screenshots/02_threats.png) | Granular threat list with MITRE technique numbers (`[T1033]`, `[T1622]`), confidence scores, and instant isolation actions. |
+| **ATT&CK® + ATLAS™ Matrix** (`#mitre`) | [03_mitre_matrix.png](docs/screenshots/03_mitre_matrix.png) | 15-column heatmap matrix visualizer across 26,381 STIX objects, 323 techniques, 79 mitigations, and 177 APT profiles. |
+| **Technique Inspector** (`#mitre-modal`) | [04_mitre_inspector.png](docs/screenshots/04_mitre_inspector.png) | Deep-dive modal showing telemetry sources (Sysmon 1, Security 4688), correlated Sigma rules, and APT threat groups. |
+| **Zone Gateway & RoT** (`#zone`) | [05_zone_gateway.png](docs/screenshots/05_zone_gateway.png) | 100% Security Score posture, TPM 2.0 hardware attestation, and sub-millisecond node cluster telemetry. |
+| **Action Approvals** (`#approvals`) | [06_approvals.png](docs/screenshots/06_approvals.png) | Autonomous response triage mode, Byzantine consensus quorum (0.70 threshold), and instant containment policy. |
+| **Attack Graph** (`#process-map`) | [07_process_map.png](docs/screenshots/07_process_map.png) | Force-directed graph canvas mapping relationships (`executes`, `monitors`, `guards`, `mesh sync`) across protected subsystems. |
+| **P2P Wire Mesh** (`#mesh`) | [08_mesh_network.png](docs/screenshots/08_mesh_network.png) | libp2p GossipSub v1.2 cluster status, peer reputation scoring, and round-trip ping latencies. |
+| **Forensic History** (`#history`) | [09_forensic_history.png](docs/screenshots/09_forensic_history.png) | Permanent tamper-evident event ledger indexing 110,400+ events with multi-criteria filtering and CSV export. |
+| **Inbound Gossip Feed** (`#gossip`) | [10_gossip_feed.png](docs/screenshots/10_gossip_feed.png) | Cryptographic P2P threat broadcast feed with decentralized analyst feedback and consensus voting. |
+
+*Explore the complete guided walkthrough in the **[docs/screenshots/README.md](docs/screenshots/README.md)** guide.*
 
 ---
 
