@@ -1613,12 +1613,17 @@ impl ThreatVoter for SigmaVoter {
         let mut max_confidence = 0.0f32;
         
         for rule in matches {
-            reason.push_str(&format!("[{}] ", rule.title));
+            let tags_str = if !rule.tags.is_empty() {
+                format!(" Tags: [{}]", rule.tags.join(", "))
+            } else {
+                String::new()
+            };
+            reason.push_str(&format!("[{}{}] ", rule.title, tags_str));
             let conf = match rule.level.as_deref() {
                 Some("critical") => 0.98,
                 Some("high") => 0.85,
-                Some("medium") => 0.50,
-                _ => 0.30,
+                Some("medium") => 0.65,
+                _ => 0.50,
             };
             max_confidence = max_confidence.max(conf);
         }

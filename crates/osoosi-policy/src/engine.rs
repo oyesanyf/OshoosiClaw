@@ -542,22 +542,20 @@ impl PolicyEngine {
             return None;
         }
 
-        // NEW: Known-Good Bypass (NSRL + Analyst False Positives)
-        // If the binary is in the NSRL (National Software Reference Library) or has been manually 
-        // marked as a false positive, we bypass the consensus engine entirely to save CPU and stop log spam.
+        // NEW: Known-Good Bypass (Analyst False Positives)
+        // If the binary has been explicitly marked as a false positive by an analyst,
+        // we bypass the consensus engine entirely to save CPU and stop log spam.
         if let Some(h) = preferred_hash_from_event(event) {
-            let is_nsrl = self.memory.is_nsrl_known_good(&h).unwrap_or(false);
             let proc_name = process_name_from_event(event);
             let is_fp = self.memory.is_false_positive_pattern(proc_name.as_deref(), Some(&h)).unwrap_or(false);
             
-            if is_nsrl || is_fp {
+            if is_fp {
                 debug!(
                     target: CONSENSUS_LOG_TARGET,
                     path = %image_path,
                     hash = %h,
-                    is_nsrl,
                     is_fp,
-                    "[CONSENSUS] round bypassed (Known-Good match)"
+                    "[CONSENSUS] round bypassed (Analyst False-Positive match)"
                 );
                 return None;
             }
@@ -592,6 +590,7 @@ impl PolicyEngine {
         let mut vote_count: u32 = 0;
         let mut is_threat = false;
         let mut vetoed = false;
+        let mut nsrl_vetoed = false;
         let mut otx_voted = false;
         let mut evidence_votes: Vec<EvidenceVote> = Vec::new();
         const OTX_VOTER: &str = "OTX-C2";
@@ -645,13 +644,17 @@ impl PolicyEngine {
         for (vname, res_opt) in results {
             if let Some(res) = res_opt {
                 if res.weight < 0.0 {
+                    if vname == "NSRL-Veto" {
+                        nsrl_vetoed = true;
+                    } else {
+                        vetoed = true;
+                    }
                     debug!(
                         target: CONSENSUS_LOG_TARGET,
                         voter = %vname,
                         reason = %res.reason,
                         "[CONSENSUS] veto — detection blocked"
                     );
-                    vetoed = true;
                     signature.add_reason(format!("Veto [{}]: {}", vname, res.reason));
                     // We don't break immediately here because we already ran them all, 
                     // but we mark as vetoed.
@@ -691,7 +694,12 @@ impl PolicyEngine {
             }
         }
 
-        if vetoed {
+        // Active behavioral threats (Sigma, memory, live network) override NSRL static known-good
+        let has_behavioral_or_active_threat = evidence_votes.iter().any(|v| {
+            matches!(v.class, EvidenceClass::Behavior | EvidenceClass::Memory | EvidenceClass::LiveNetwork)
+        });
+
+        if vetoed || (nsrl_vetoed && !has_behavioral_or_active_threat) {
             debug!(target: CONSENSUS_LOG_TARGET, "[CONSENSUS] round aborted (veto)");
             return None;
         }

@@ -430,3 +430,47 @@ impl GossipFeedItem {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use ed25519_dalek::SigningKey;
+    use rand::rngs::OsRng;
+
+    #[test]
+    fn test_threat_signature_sign_and_verify_json_roundtrip() {
+        let mut csprng = OsRng;
+        let signing_key = SigningKey::generate(&mut csprng);
+
+        let mut sig = ThreatSignature::new("did:key:z6MkuTestNode123".to_string());
+        sig.process_name = Some("systeminfo.exe".to_string());
+        sig.hash_blake3 = Some("abc123hash".to_string());
+        sig.confidence = 0.85;
+        sig.mitre_technique = Some("T1082".to_string());
+        sig.mitre_technique_name = Some("System Information Discovery".to_string());
+        sig.mitre_tactic = Some("Discovery".to_string());
+        sig.recommended_action = ResponseAction::Alert;
+        sig.reason = Some("Pentest discovery probe detected".to_string());
+
+        assert!(!sig.verify());
+
+        sig.sign(&signing_key).expect("signing must succeed");
+        assert!(sig.verify(), "verify must succeed before JSON serialization");
+
+        // Simulate wire transit: serialize to JSON bytes, then deserialize on peer
+        let wire_bytes = serde_json::to_vec(&sig).expect("serialize to JSON");
+        let peer_sig: ThreatSignature = serde_json::from_slice(&wire_bytes).expect("deserialize from JSON");
+
+        assert!(peer_sig.verify(), "verify must succeed after JSON wire roundtrip");
+        assert_eq!(peer_sig.id, sig.id);
+        assert_eq!(peer_sig.source_node, sig.source_node);
+        assert_eq!(peer_sig.process_name, sig.process_name);
+        assert_eq!(peer_sig.mitre_technique, sig.mitre_technique);
+
+        let feed_item = GossipFeedItem::from_threat(&peer_sig, "MESH_THREAT_RECEIVED");
+        assert_eq!(feed_item.event_type, "MESH_THREAT_RECEIVED");
+        assert_eq!(feed_item.process_name.as_deref(), Some("systeminfo.exe"));
+        assert_eq!(feed_item.mitre_technique.as_deref(), Some("T1082"));
+        assert!(feed_item.is_threat);
+    }
+}

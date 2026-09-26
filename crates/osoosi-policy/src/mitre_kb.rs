@@ -692,7 +692,20 @@ pub fn get_static_techniques() -> Vec<MitreTechnique> {
             data_sources: vec!["Process: Process Creation".into(), "Command: Command Execution".into()],
             mitigations: vec!["M1047: Audit & Security Logging".into()],
             groups: vec!["APT29".into(), "APT28".into(), "Lazarus Group".into(), "Volt Typhoon".into(), "BlackCat".into()],
-            detection_mechanisms: vec!["Sysmon Event 1 (systeminfo / whoami / hostname)".into(), "Sigma Rule: Discovery Commands".into()],
+            detection_mechanisms: vec!["Sysmon Event 1 (systeminfo / hostname)".into(), "Sigma Rule: Discovery Commands".into()],
+            subtechniques: vec![],
+            ..Default::default()
+        },
+        MitreTechnique {
+            id: "T1033".into(),
+            name: "System Owner/User Discovery".into(),
+            tactic_id: "TA0007".into(),
+            tactic_name: "Discovery".into(),
+            description: "Adversaries may attempt to identify the primary user, currently logged in user, prior user, or whether the user is an administrator.".into(),
+            data_sources: vec!["Process: Process Creation".into(), "Command: Command Execution".into()],
+            mitigations: vec!["M1047: Audit & Security Logging".into()],
+            groups: vec!["APT29".into(), "APT28".into(), "Lazarus Group".into(), "Wizard Spider".into()],
+            detection_mechanisms: vec!["Sysmon Event 1 (whoami)".into(), "Sigma Rule: Whoami Execution".into()],
             subtechniques: vec![],
             ..Default::default()
         },
@@ -1630,8 +1643,11 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
     }
 
     // Keyword heuristics if no explicit ID found
-    if text_lower.contains("systeminfo") || text_lower.contains("whoami") {
+    if text_lower.contains("systeminfo") {
         return lookup_technique("T1082").map(|t| (t.tactic_name, t.id, t.name));
+    }
+    if text_lower.contains("whoami") {
+        return lookup_technique("T1033").map(|t| (t.tactic_name, t.id, t.name));
     }
     if text_lower.contains("powershell") || text_lower.contains("pwsh") {
         return lookup_technique("T1059").map(|t| (t.tactic_name, "T1059.001".into(), "Command and Scripting Interpreter: PowerShell".into()));
@@ -1725,6 +1741,35 @@ pub fn infer_mitre_from_event(
                 "Discovery".into(),
                 "T1087.001".into(),
                 "Account Discovery: Local Accounts".into(),
+            ));
+        }
+
+        // Discovery: System Owner/User Discovery (T1033)
+        if img_lower.ends_with("whoami.exe")
+            || img_lower == "whoami"
+            || cmd_lower.contains("whoami")
+        {
+            return Some((
+                "Discovery".into(),
+                "T1033".into(),
+                "System Owner/User Discovery".into(),
+            ));
+        }
+
+        // Credential Access: OS Credential Dumping (T1003.001)
+        if img_lower.contains("mimikatz")
+            || img_lower.contains("procdump")
+            || img_lower.contains("nanodump")
+            || cmd_lower.contains("mimikatz")
+            || cmd_lower.contains("procdump")
+            || cmd_lower.contains("comsvcs.dll")
+            || cmd_lower.contains("minidump")
+            || cmd_lower.contains("nanodump")
+        {
+            return Some((
+                "Credential Access".into(),
+                "T1003.001".into(),
+                "OS Credential Dumping: LSASS Memory".into(),
             ));
         }
 
@@ -2017,6 +2062,20 @@ mod tests {
         assert_eq!(tac, "Discovery");
         assert_eq!(tech, "T1082");
 
+        // whoami.exe -> T1033
+        let (tac, tech, name) = infer_mitre_from_event(1, "whoami.exe", "whoami /priv")
+            .expect("infer T1033");
+        assert_eq!(tac, "Discovery");
+        assert_eq!(tech, "T1033");
+        assert_eq!(name, "System Owner/User Discovery");
+
+        // mimikatz / lsass credential dumping -> T1003.001
+        let (tac, tech, name) = infer_mitre_from_event(1, "mimikatz.exe", "sekurlsa::logonpasswords")
+            .expect("infer T1003.001");
+        assert_eq!(tac, "Credential Access");
+        assert_eq!(tech, "T1003.001");
+        assert_eq!(name, "OS Credential Dumping: LSASS Memory");
+
         // Sysmon Event 8 -> T1055.001
         let (tac, tech, _) = infer_mitre_from_event(8, "injector.exe", "")
             .expect("infer T1055.001");
@@ -2030,6 +2089,11 @@ mod tests {
             .expect("extract T1082");
         assert_eq!(res.1, "T1082");
         assert_eq!(res.0, "Discovery");
+
+        let whoami_res = extract_mitre_from_text("Sigma rule match: attack.t1033 whoami priv discovery")
+            .expect("extract T1033");
+        assert_eq!(whoami_res.1, "T1033");
+        assert_eq!(whoami_res.0, "Discovery");
 
         // Subtechnique precision test
         let sub_res = extract_mitre_from_text("Rule attack.t1059.001 powershell execution")

@@ -20,6 +20,8 @@ pub struct SigmaRule {
     pub description: Option<String>,
     pub level: Option<String>,
     pub status: Option<String>,
+    #[serde(default)]
+    pub tags: Vec<String>,
     pub logsource: LogSource,
     pub detection: Detection,
 }
@@ -37,14 +39,17 @@ pub struct Detection {
     pub selections: HashMap<String, Selection>,
     pub condition: String,
     pub falsepositives: Option<Vec<String>>,
+    pub timeframe: Option<String>,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 #[serde(untagged)]
 pub enum Selection {
     List(Vec<String>),
+    ListOfMaps(Vec<HashMap<String, serde_yaml::Value>>),
     Map(HashMap<String, serde_yaml::Value>),
     Keywords(Vec<String>),
+    Other(serde_yaml::Value),
 }
 
 #[derive(Debug, Clone)]
@@ -74,7 +79,7 @@ pub struct CompiledRule {
 
 #[derive(Debug, Clone)]
 pub struct SelectionCompiled {
-    pub field_criteria: Vec<FieldCriterion>,
+    pub map_alternatives: Vec<Vec<FieldCriterion>>,
     pub keywords: Vec<FieldPattern>,
 }
 
@@ -145,9 +150,9 @@ impl SigmaEngine {
         let mut selection_keys = Vec::new();
 
         for (id, sel) in &rule.detection.selections {
-            if id == "condition" || id == "falsepositives" { continue; }
+            if id == "condition" || id == "falsepositives" || id == "timeframe" { continue; }
             selection_keys.push(id.clone());
-            let mut field_criteria = Vec::new();
+            let mut map_alternatives = Vec::new();
             let mut keywords = Vec::new();
 
             match sel {
@@ -162,18 +167,36 @@ impl SigmaEngine {
                     }
                 }
                 Selection::Map(m) => {
+                    let mut group = Vec::new();
                     for (key, val) in m {
                         let (field, modifiers) = self.parse_field_key(key);
                         let patterns = self.parse_field_value(val, &modifiers)?;
-                        field_criteria.push(FieldCriterion {
+                        group.push(FieldCriterion {
                             field: field.to_string(),
                             patterns,
                             is_all: modifiers.contains(&"all"),
                         });
                     }
+                    map_alternatives.push(group);
                 }
+                Selection::ListOfMaps(list) => {
+                    for m in list {
+                        let mut group = Vec::new();
+                        for (key, val) in m {
+                            let (field, modifiers) = self.parse_field_key(key);
+                            let patterns = self.parse_field_value(val, &modifiers)?;
+                            group.push(FieldCriterion {
+                                field: field.to_string(),
+                                patterns,
+                                is_all: modifiers.contains(&"all"),
+                            });
+                        }
+                        map_alternatives.push(group);
+                    }
+                }
+                Selection::Other(_) => {}
             }
-            selections.insert(id.clone(), SelectionCompiled { field_criteria, keywords });
+            selections.insert(id.clone(), SelectionCompiled { map_alternatives, keywords });
         }
 
         let transpiled = self.transpile_sigma_condition(&rule.detection.condition, &selection_keys);
@@ -230,10 +253,22 @@ impl SigmaEngine {
             serde_yaml::Value::String(s) => {
                 patterns.push(self.parse_string_pattern(s, modifiers, is_cased));
             }
+            serde_yaml::Value::Number(n) => {
+                patterns.push(self.parse_string_pattern(&n.to_string(), modifiers, is_cased));
+            }
+            serde_yaml::Value::Bool(b) => {
+                patterns.push(self.parse_string_pattern(&b.to_string(), modifiers, is_cased));
+            }
             serde_yaml::Value::Sequence(seq) => {
                 for item in seq {
                     if let Some(s) = item.as_str() {
                         patterns.push(self.parse_string_pattern(s, modifiers, is_cased));
+                    } else if let Some(n) = item.as_i64() {
+                        patterns.push(self.parse_string_pattern(&n.to_string(), modifiers, is_cased));
+                    } else if let Some(n) = item.as_u64() {
+                        patterns.push(self.parse_string_pattern(&n.to_string(), modifiers, is_cased));
+                    } else if let Some(b) = item.as_bool() {
+                        patterns.push(self.parse_string_pattern(&b.to_string(), modifiers, is_cased));
                     }
                 }
             }
@@ -359,24 +394,33 @@ impl SigmaEngine {
         for kw in &sel.keywords {
             if self.matches_any_field(event, kw) { return true; }
         }
-        if sel.field_criteria.is_empty() && sel.keywords.is_empty() { return false; }
-        if sel.field_criteria.is_empty() { return false; }
+        if sel.map_alternatives.is_empty() && sel.keywords.is_empty() { return false; }
+        if sel.map_alternatives.is_empty() { return false; }
 
-        for criterion in &sel.field_criteria {
-            let field_val = event.data.get(&criterion.field).and_then(|v| v.as_str());
-            let matched = match field_val {
-                Some(v) => {
-                    if criterion.is_all {
-                        criterion.patterns.iter().all(|p| self.match_pattern(v, p))
-                    } else {
-                        criterion.patterns.iter().any(|p| self.match_pattern(v, p))
+        for group in &sel.map_alternatives {
+            let mut group_matched = true;
+            for criterion in group {
+                let field_val = get_event_field_value(event, &criterion.field);
+                let matched = match field_val {
+                    Some(ref v) => {
+                        if criterion.is_all {
+                            criterion.patterns.iter().all(|p| self.match_pattern(v, p))
+                        } else {
+                            criterion.patterns.iter().any(|p| self.match_pattern(v, p))
+                        }
                     }
+                    None => criterion.patterns.iter().any(|p| matches!(p, FieldPattern::Null)),
+                };
+                if !matched {
+                    group_matched = false;
+                    break;
                 }
-                None => criterion.patterns.iter().any(|p| matches!(p, FieldPattern::Null)),
-            };
-            if !matched { return false; }
+            }
+            if group_matched {
+                return true;
+            }
         }
-        true
+        false
     }
 
     fn matches_any_field(&self, event: &HostSecurityEvent, pattern: &FieldPattern) -> bool {
@@ -407,5 +451,181 @@ impl SigmaEngine {
             FieldPattern::Null => false,
             FieldPattern::NotNull => true,
         }
+    }
+}
+
+pub fn get_event_field_value(event: &HostSecurityEvent, field: &str) -> Option<String> {
+    let field_lower = field.to_ascii_lowercase();
+
+    // 1. Special case: EventID / event_id
+    if field_lower == "eventid" || field_lower == "event_id" {
+        return Some(event.event_id.to_string());
+    }
+
+    // 2. Special case: Channel
+    if field_lower == "channel" {
+        if let Some(ch) = event.data.get("Channel").and_then(|v| v.as_str()) {
+            return Some(ch.to_string());
+        }
+        let provider = event.data.get("ProviderName").and_then(|v| v.as_str()).unwrap_or("");
+        if provider.to_lowercase().contains("sysmon")
+            || event.source == osoosi_types::HostEventSource::WindowsEventLog
+        {
+            return Some("Microsoft-Windows-Sysmon/Operational".to_string());
+        }
+    }
+
+    // 3. Direct lookup in event.data
+    if let Some(val) = event.data.get(field) {
+        if let Some(s) = value_to_string(val) {
+            return Some(s);
+        }
+    }
+
+    // 4. Case-insensitive lookup in event.data
+    if let Some(obj) = event.data.as_object() {
+        for (k, v) in obj {
+            if k.eq_ignore_ascii_case(field) {
+                if let Some(s) = value_to_string(v) {
+                    return Some(s);
+                }
+            }
+        }
+    }
+
+    // 5. Special fallback mappings for standard process creation fields
+    if field_lower == "originalfilename" || field_lower == "original_file_name" {
+        if let Some(img) = event.data.get("Image").and_then(|v| v.as_str()) {
+            if let Some(fname) = std::path::Path::new(img).file_name().and_then(|n| n.to_str()) {
+                return Some(fname.to_string());
+            }
+        }
+    }
+
+    None
+}
+
+fn value_to_string(val: &serde_json::Value) -> Option<String> {
+    match val {
+        serde_json::Value::String(s) => Some(s.clone()),
+        serde_json::Value::Number(n) => Some(n.to_string()),
+        serde_json::Value::Bool(b) => Some(b.to_string()),
+        _ => None,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use osoosi_types::HostEventSource;
+
+    #[test]
+    fn test_sysmon_systeminfo_sigma_rule_evaluation() {
+        let yaml_rule = r#"
+title: Suspicious Execution of Systeminfo
+id: 072cd776-d1c7-58e2-3eac-b49412c39e82
+status: test
+description: Detects usage of the "systeminfo" command to retrieve information
+tags:
+    - attack.discovery
+    - attack.t1082
+    - sysmon
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    process_creation:
+        EventID: 1
+        Channel: Microsoft-Windows-Sysmon/Operational
+    selection:
+        - Image|endswith: \systeminfo.exe
+        - OriginalFileName: sysinfo.exe
+    condition: process_creation and selection
+level: low
+ruletype: Sigma
+"#;
+
+        let rule: SigmaRule = serde_yaml::from_str(yaml_rule).expect("Must deserialize SigmaRule");
+        assert_eq!(rule.tags, vec!["attack.discovery", "attack.t1082", "sysmon"]);
+
+        let mut engine = SigmaEngine::new();
+        let compiled = engine.compile_rule(rule).expect("Must compile rule");
+        engine.global_rules.push(compiled);
+
+        let event = HostSecurityEvent {
+            event_id: 1,
+            timestamp: Utc::now(),
+            source: HostEventSource::WindowsEventLog,
+            computer: "DESKTOP-TEST".to_string(),
+            data: serde_json::json!({
+                "Image": "C:\\Windows\\System32\\systeminfo.exe",
+                "CommandLine": "systeminfo",
+                "ProviderName": "Microsoft-Windows-Sysmon",
+            }),
+            causal_parent: None,
+        };
+
+        let matches = engine.check(&event);
+        assert_eq!(matches.len(), 1, "Sysmon systeminfo execution rule must match");
+        assert_eq!(matches[0].title, "Suspicious Execution of Systeminfo");
+        assert!(matches[0].tags.contains(&"attack.t1082".to_string()));
+    }
+
+    #[test]
+    fn test_sysmon_whoami_priv_sigma_rule_evaluation() {
+        let yaml_rule = r#"
+title: Security Privileges Enumeration Via Whoami.EXE
+id: 50445625-a1e8-d511-8687-4343f2ce9a3e
+status: test
+description: Detects a whoami.exe executed with the /priv command line flag
+tags:
+    - attack.privilege-escalation
+    - attack.discovery
+    - attack.t1033
+    - sysmon
+logsource:
+    category: process_creation
+    product: windows
+detection:
+    process_creation:
+        EventID: 1
+        Channel: Microsoft-Windows-Sysmon/Operational
+    selection_img:
+        - Image|endswith: \whoami.exe
+        - OriginalFileName: whoami.exe
+    selection_cli:
+        CommandLine|contains:
+            - ' /priv'
+            - ' -priv'
+    condition: process_creation and (all of selection_*)
+level: high
+ruletype: Sigma
+"#;
+
+        let rule: SigmaRule = serde_yaml::from_str(yaml_rule).expect("Must deserialize SigmaRule");
+        assert_eq!(rule.tags, vec!["attack.privilege-escalation", "attack.discovery", "attack.t1033", "sysmon"]);
+
+        let mut engine = SigmaEngine::new();
+        let compiled = engine.compile_rule(rule).expect("Must compile rule");
+        engine.global_rules.push(compiled);
+
+        let event = HostSecurityEvent {
+            event_id: 1,
+            timestamp: Utc::now(),
+            source: HostEventSource::WindowsEventLog,
+            computer: "DESKTOP-TEST".to_string(),
+            data: serde_json::json!({
+                "Image": "C:\\Windows\\System32\\whoami.exe",
+                "CommandLine": "whoami /priv",
+                "ProviderName": "Microsoft-Windows-Sysmon",
+            }),
+            causal_parent: None,
+        };
+
+        let matches = engine.check(&event);
+        assert_eq!(matches.len(), 1, "Sysmon whoami /priv rule must match");
+        assert_eq!(matches[0].title, "Security Privileges Enumeration Via Whoami.EXE");
+        assert!(matches[0].tags.contains(&"attack.t1033".to_string()));
     }
 }

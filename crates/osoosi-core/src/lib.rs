@@ -3395,7 +3395,7 @@ impl EdrOrchestrator {
                     let pii_classifier = self.pii_classifier.clone();
                     let file_path = target_filename.to_string();
                     let computer = event.computer.clone();
-                    let mesh_tx_inner = self.mesh_command_tx.clone();
+                    let self_inner = self.clone();
                     self.adaptive.spawn_adaptive(ResourceCategory::IO, Priority::Normal, async move {
                         if let Ok(results) = pii_classifier.analyze_file(&file_path).await {
                             if !results.is_empty() {
@@ -3403,9 +3403,7 @@ impl EdrOrchestrator {
                                 let mut sig = osoosi_types::ThreatSignature::new(computer);
                                 sig.confidence = 0.6;
                                 sig.add_reason(format!("PII Classifier found {} sensitive entities in file creation", results.len()));
-                                if let Some(ref tx) = *mesh_tx_inner.lock().await {
-                                    let _ = tx.send(osoosi_wire::MeshCommand::Broadcast(sig)).await;
-                                }
+                                self_inner.broadcast_threat_to_mesh(sig).await;
                             }
                         }
                     });
@@ -4471,6 +4469,64 @@ impl EdrOrchestrator {
                         confidence: conf,
                         severity,
                         action,
+                        status: "ACTIVE".to_string(),
+                        hash_blake3: hash,
+                        is_threat: true,
+                    });
+
+                    if items.len() >= limit {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 2.5 Backfill from persistent MemoryStore threats if buffer + audit still has capacity
+        if items.len() < limit {
+            if let Ok(threats) = self.memory.get_recent_threats(limit) {
+                let mut seen_ids: std::collections::HashSet<String> = items.iter().map(|i| i.id.clone()).collect();
+                for t in threats {
+                    let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    if id.is_empty() || seen_ids.contains(&id) {
+                        continue;
+                    }
+                    seen_ids.insert(id.clone());
+
+                    let proc = t.get("process_name").and_then(|v| v.as_str()).map(String::from);
+                    let hash = t.get("hash_blake3").and_then(|v| v.as_str()).map(String::from);
+                    let source = t.get("source_node").and_then(|v| v.as_str()).unwrap_or("peer").to_string();
+                    let conf = t.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.8) as f32;
+                    let ts = t.get("timestamp").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                    let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+
+                    let (tactic, tech, tech_name) = osoosi_policy::mitre_kb::extract_mitre_from_text(reason)
+                        .map(|(tac, tec, nam)| (Some(tac), Some(tec), Some(nam)))
+                        .unwrap_or((None, None, None));
+
+                    let tech_badge = tech.as_deref().map(|s| format!("[{}] ", s)).unwrap_or_default();
+                    let summary = format!("Peer Threat: {}{} (Active)", tech_badge, proc.as_deref().unwrap_or("Security Alert"));
+
+                    let severity = if conf >= 0.85 {
+                        "CRITICAL".to_string()
+                    } else if conf >= 0.60 {
+                        "HIGH".to_string()
+                    } else {
+                        "MEDIUM".to_string()
+                    };
+
+                    items.push(osoosi_types::GossipFeedItem {
+                        id,
+                        event_type: "MESH_THREAT_RECEIVED".to_string(),
+                        timestamp: if ts.is_empty() { chrono::Utc::now().to_rfc3339() } else { ts },
+                        summary,
+                        source_node: source,
+                        process_name: proc,
+                        mitre_technique: tech,
+                        mitre_technique_name: tech_name,
+                        mitre_tactic: tactic,
+                        confidence: conf,
+                        severity,
+                        action: Some("Alert".to_string()),
                         status: "ACTIVE".to_string(),
                         hash_blake3: hash,
                         is_threat: true,
@@ -5635,14 +5691,40 @@ impl EdrOrchestrator {
             }
         });
 
-        // Process peer threats: store in memory, add to model
+        // Process peer threats: store in memory, add to model, update gossip feed and audit trail
         let memory_peer = self.memory.clone();
         let model_peer = self.threat_model.clone();
+        let self_threat = self.clone();
         tokio::spawn(async move {
             while let Some(sig) = peer_threat_rx.recv().await {
                 if let Err(e) = memory_peer.log_threat(&sig) {
                     error!("Failed to store peer threat: {}", e);
                 }
+                if let Some(ref hash) = sig.hash_blake3 {
+                    memory_peer.mark_hash_known_malicious(hash);
+                }
+                self_threat.record_gossip_threat(&sig, "MESH_THREAT_RECEIVED");
+
+                let proc = sig.process_name.clone().unwrap_or_else(|| "Unknown".to_string());
+                let tech = sig.mitre_technique.clone().unwrap_or_else(|| "T1082".to_string());
+                let action = format!("{:?}", sig.recommended_action);
+
+                self_threat.audit.log(
+                    "MESH_THREAT_RECEIVED",
+                    serde_json::json!({
+                        "source_node": sig.source_node,
+                        "threat_id": sig.id,
+                        "confidence": sig.confidence,
+                        "process_name": sig.process_name,
+                        "mitre_technique": sig.mitre_technique,
+                        "mitre_technique_name": sig.mitre_technique_name,
+                        "mitre_tactic": sig.mitre_tactic,
+                        "reason": sig.reason,
+                        "action": action,
+                        "summary": format!("Peer Threat [{}]: {} ({}) via {}", tech, proc, action, sig.source_node),
+                    }),
+                );
+
                 let mut model = model_peer.write().await;
                 model.add_training_sample(&sig);
                 if sig.confidence >= 0.8 {
@@ -5892,7 +5974,6 @@ impl EdrOrchestrator {
             .and_then(|s| s.parse().ok())
             .unwrap_or(3600);
 
-        let mesh_tx = self.mesh_command_tx.clone();
         let memory = self.memory.clone();
         let orch = self.clone();
 
@@ -5903,10 +5984,10 @@ impl EdrOrchestrator {
                 interval_timer.tick().await;
                 let guard_inner = guard.clone();
                 let memory_inner = memory.clone();
-                let mesh_tx_inner = mesh_tx.clone();
                 let orch_inner = orch.clone();
+                let adaptive_inner = orch.adaptive.clone();
                 
-                orch_inner.adaptive.spawn_adaptive(ResourceCategory::IO, Priority::Low, async move {
+                adaptive_inner.spawn_adaptive(ResourceCategory::IO, Priority::Low, async move {
                     info!("BrowserGuard: Periodic sweep running...");
                     let threats = guard_inner.run_sweep().await;
                     for threat in threats {
@@ -5916,9 +5997,7 @@ impl EdrOrchestrator {
 
                         // 2. Broadcast to mesh if high confidence
                         if threat.confidence > 0.8 {
-                            if let Some(ref tx) = *mesh_tx_inner.lock().await {
-                                let _ = tx.send(osoosi_wire::MeshCommand::Broadcast(threat)).await;
-                            }
+                            orch_inner.broadcast_threat_to_mesh(threat).await;
                         }
                     }
                 });
