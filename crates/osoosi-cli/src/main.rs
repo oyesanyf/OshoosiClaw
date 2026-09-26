@@ -2389,6 +2389,22 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
     Ok(())
 }
 
+fn get_ollama_bin() -> std::path::PathBuf {
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(local_app_data) = std::env::var("LOCALAPPDATA") {
+            let candidate = std::path::Path::new(&local_app_data)
+                .join("Programs")
+                .join("Ollama")
+                .join("ollama.exe");
+            if candidate.exists() {
+                return candidate;
+            }
+        }
+    }
+    std::path::PathBuf::from("ollama")
+}
+
 async fn ensure_ollama_model() {
     let ai = osoosi_types::config::load_ai_config();
     let preferred = ai.reasoning_model.clone();
@@ -2406,7 +2422,7 @@ async fn ensure_ollama_model() {
 
     info!("Ollama detected. Ensuring a local reasoning model is available...");
     
-    let list_fut = tokio::process::Command::new("ollama")
+    let list_fut = tokio::process::Command::new(get_ollama_bin())
         .arg("list")
         .output();
     
@@ -2419,7 +2435,7 @@ async fn ensure_ollama_model() {
         let f_model = ai.foundation_sec_model.clone();
         if !list_stdout.contains(&f_model) {
             info!("Pulling Cisco Foundation-Sec-8B model: '{}'...", f_model);
-            let pull_fut = tokio::process::Command::new("ollama")
+            let pull_fut = tokio::process::Command::new(get_ollama_bin())
                 .args(["pull", &f_model])
                 .status();
             let _ = tokio::time::timeout(std::time::Duration::from_secs(600), pull_fut).await;
@@ -2440,7 +2456,7 @@ async fn ensure_ollama_model() {
 
     if selected.is_none() {
         for model in &candidates {
-            let pull_fut = tokio::process::Command::new("ollama")
+            let pull_fut = tokio::process::Command::new(get_ollama_bin())
                 .args(["pull", model])
                 .status();
                 
@@ -2499,13 +2515,25 @@ async fn ensure_ollama_model() {
 }
 
 async fn ollama_available() -> bool {
-    let check_fut = tokio::process::Command::new("ollama")
+    if let Ok(Ok(resp)) = tokio::time::timeout(
+        std::time::Duration::from_millis(500),
+        reqwest::get("http://127.0.0.1:11434/api/version"),
+    )
+    .await
+    {
+        if resp.status().is_success() {
+            return true;
+        }
+    }
+
+    let bin = get_ollama_bin();
+    let check_fut = tokio::process::Command::new(&bin)
         .arg("--version")
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
         .status();
-        
-    match tokio::time::timeout(std::time::Duration::from_secs(10), check_fut).await {
+
+    match tokio::time::timeout(std::time::Duration::from_secs(3), check_fut).await {
         Ok(Ok(status)) => status.success(),
         _ => false,
     }
@@ -2533,10 +2561,18 @@ async fn install_ollama_best_effort() {
                 "--accept-source-agreements",
             ])
             .status();
-            
+
         match tokio::time::timeout(std::time::Duration::from_secs(600), winget_fut).await {
             Ok(Ok(status)) if status.success() => info!("Ollama installed with winget."),
-            Ok(Ok(status)) => warn!("winget Ollama install exited with status {}.", status),
+            Ok(Ok(status)) => {
+                let code = status.code().unwrap_or(0);
+                // 0x8a15002b = -1978335189 (APPGATE_SOURCE_NO_UPDATE / already installed and up to date)
+                if code == -1978335189 || code == 0x8a15002b_u32 as i32 {
+                    info!("Ollama is already installed and up to date (winget status 0x8a15002b).");
+                } else {
+                    warn!("winget Ollama install exited with status {}.", status);
+                }
+            }
             Ok(Err(e)) => warn!(
                 "winget not available or failed to start for Ollama install: {}",
                 e
@@ -2550,7 +2586,7 @@ async fn install_ollama_best_effort() {
         let brew_fut = tokio::process::Command::new("brew")
             .args(["install", "ollama"])
             .status();
-            
+
         match tokio::time::timeout(std::time::Duration::from_secs(600), brew_fut).await {
             Ok(Ok(status)) if status.success() => info!("Ollama installed with Homebrew."),
             Ok(Ok(status)) => warn!("brew Ollama install exited with status {}.", status),
@@ -2567,7 +2603,7 @@ async fn install_ollama_best_effort() {
         let shell_fut = tokio::process::Command::new("sh")
             .args(["-c", "curl -fsSL https://ollama.com/install.sh | sh"])
             .status();
-            
+
         match tokio::time::timeout(std::time::Duration::from_secs(600), shell_fut).await {
             Ok(Ok(status)) if status.success() => {
                 info!("Ollama installed with official Linux installer.")
@@ -2836,5 +2872,18 @@ mod tests {
             }
             _ => panic!("Expected Commands::UpdateStix from alias update-mitre"),
         }
+    }
+
+    #[test]
+    fn test_get_ollama_bin_resolution() {
+        let bin = get_ollama_bin();
+        assert!(!bin.as_os_str().is_empty());
+    }
+
+    #[test]
+    fn test_winget_already_installed_exit_code() {
+        let code = 0x8a15002b_u32 as i32;
+        assert_eq!(code, -1978335189);
+        assert!(code == -1978335189 || code == 0x8a15002b_u32 as i32);
     }
 }
