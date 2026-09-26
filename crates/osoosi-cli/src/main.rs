@@ -18,15 +18,22 @@ async fn import_nsrl_with_fallback(
     nist_path: &Path,
     fetcher: &ThreatFeedFetcher,
 ) {
-    match mem.import_nsrl_from_nist_rds_sqlite(nist_path) {
-        Ok(added) => {
+    let mem_clone = mem.clone();
+    let nist_path_buf = nist_path.to_path_buf();
+    let res = tokio::task::spawn_blocking(move || {
+        mem_clone.import_nsrl_from_nist_rds_sqlite(&nist_path_buf)
+    })
+    .await;
+
+    match res {
+        Ok(Ok(added)) => {
             let total = mem.nsrl_record_count().unwrap_or(0);
             info!(
                 "[NSRL] Fast bulk import from {:?}: {} new rows (nsrl total ~{}).",
                 nist_path, added, total
             );
         }
-        Err(e) => {
+        Ok(Err(e)) => {
             warn!(
                 "[NSRL] Fast SQL import failed ({}); falling back to row-by-row load (high RAM).",
                 e
@@ -41,6 +48,9 @@ async fn import_nsrl_with_fallback(
                 }
                 Err(e2) => error!("[NSRL] Fallback read failed: {}", e2),
             }
+        }
+        Err(join_err) => {
+            error!("[NSRL] spawn_blocking task failed: {}", join_err);
         }
     }
 }

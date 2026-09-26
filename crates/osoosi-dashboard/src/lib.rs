@@ -575,6 +575,7 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
     let index_html = asset_path.join("index.html");
     let api = Router::new()
         .route("/health", get(dashboard_health))
+        .route("/api/health", get(dashboard_health))
         .route("/skyrl/v1/generate", post(post_skyrl_generate))
         .route("/skyrl/v1/step", post(post_skyrl_step))
         .route("/skyrl/v1/train", post(post_skyrl_train))
