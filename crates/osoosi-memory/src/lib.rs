@@ -1045,6 +1045,9 @@ impl MemoryStore {
              ON CONFLICT(id) DO UPDATE SET
                 confidence = MAX(threats.confidence, excluded.confidence),
                 detected_at = excluded.detected_at,
+                cve_id = COALESCE(excluded.cve_id, threats.cve_id),
+                hash_blake3 = COALESCE(excluded.hash_blake3, threats.hash_blake3),
+                file_path = COALESCE(excluded.file_path, threats.file_path),
                 reason = COALESCE(excluded.reason, threats.reason),
                 process_name = COALESCE(excluded.process_name, threats.process_name),
                 source_node = excluded.source_node,
@@ -1620,5 +1623,50 @@ mod tests {
         assert_eq!(threats.len(), 1);
         let conf = threats[0]["confidence"].as_f64().unwrap();
         assert!((conf - 0.95).abs() < 1e-4);
+
+        // Third insert with identical ID, lower confidence, and enriched hash_blake3/cve_id
+        sig.confidence = 0.20;
+        sig.hash_blake3 = Some("blake3_hash_test_123".to_string());
+        sig.cve_id = Some("CVE-2026-9999".to_string());
+        assert!(mem.log_threat(&sig).is_ok());
+
+        // Verify MAX confidence preserved (0.95, not lowered to 0.20) and enriched fields retained
+        let threats_updated = mem.get_recent_threats(10).unwrap();
+        assert_eq!(threats_updated.len(), 1);
+        let conf_preserved = threats_updated[0]["confidence"].as_f64().unwrap();
+        assert!((conf_preserved - 0.95).abs() < 1e-4);
+        assert_eq!(threats_updated[0]["hash_blake3"].as_str().unwrap(), "blake3_hash_test_123");
+        assert_eq!(threats_updated[0]["cve_id"].as_str().unwrap(), "CVE-2026-9999");
+    }
+
+    #[test]
+    fn test_log_threat_concurrent_burst() {
+        use std::sync::Arc;
+        let mem = Arc::new(MemoryStore::new(":memory:").unwrap());
+        let mut handles = Vec::new();
+
+        for i in 0..20 {
+            let mem_clone = mem.clone();
+            handles.push(std::thread::spawn(move || {
+                for j in 0..25 {
+                    let mut sig = ThreatSignature::new(format!("node-{}", i));
+                    sig.id = "concurrent-threat-uuid".to_string();
+                    sig.process_name = Some("powershell.exe".to_string());
+                    sig.confidence = (j as f32) / 25.0;
+                    sig.reason = Some(format!("Thread {} iteration {}", i, j));
+                    assert!(mem_clone.log_threat(&sig).is_ok());
+                }
+            }));
+        }
+
+        for h in handles {
+            h.join().unwrap();
+        }
+
+        let threats = mem.get_recent_threats(10).unwrap();
+        assert_eq!(threats.len(), 1);
+        let conf = threats[0]["confidence"].as_f64().unwrap();
+        // High confidence (24/25 = 0.96) must be preserved
+        assert!(conf >= 0.96 - 1e-4);
     }
 }

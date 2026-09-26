@@ -126,16 +126,9 @@ impl NostrMeshOrchestrator {
                 if let RelayPoolNotification::Event { event, .. } = notification {
                     if event.kind == KIND_EDR_ALERT {
                         if let Ok(sig) = serde_json::from_str::<ThreatSignature>(&event.content) {
-                            let now = std::time::Instant::now();
-                            if let Some(prev) = seen.get(&sig.id) {
-                                if now.duration_since(*prev).as_secs() < 3600 {
-                                    debug!("BitChat: Suppressed duplicate Nostr threat {} from relay pool", sig.id);
-                                    continue;
-                                }
-                            }
-                            seen.insert(sig.id.clone(), now);
-                            if seen.len() > 1000 {
-                                seen.retain(|_, time| now.duration_since(*time).as_secs() < 7200);
+                            if !Self::check_and_record_threat_map(&seen, &sig.id) {
+                                debug!("BitChat: Suppressed duplicate Nostr threat {} from relay pool", sig.id);
+                                continue;
                             }
                             info!("Received threat from Nostr mesh: {}", sig.id);
                             callback(sig);
@@ -144,6 +137,39 @@ impl NostrMeshOrchestrator {
                 }
             }
         });
+    }
+
+    /// Check whether a threat has been recently seen. If new (or seen > 3600s ago),
+    /// records the threat and returns true (should process). If seen within 3600s, returns false (suppress).
+    /// Uses DashMap entry API to guarantee atomic check-and-insert under multi-threaded concurrency.
+    pub fn check_and_record_threat(&self, id: &str) -> bool {
+        Self::check_and_record_threat_map(&self.seen_threats, id)
+    }
+
+    /// Helper for checking and recording threat against an Arc/shared DashMap instance.
+    pub fn check_and_record_threat_map(
+        seen: &dashmap::DashMap<String, std::time::Instant>,
+        id: &str,
+    ) -> bool {
+        let now = std::time::Instant::now();
+        let mut is_new = false;
+        seen.entry(id.to_string())
+            .and_modify(|prev| {
+                if now.duration_since(*prev).as_secs() >= 3600 {
+                    *prev = now;
+                    is_new = true;
+                }
+            })
+            .or_insert_with(|| {
+                is_new = true;
+                now
+            });
+
+        if is_new && seen.len() > 1000 {
+            seen.retain(|_, time| now.duration_since(*time).as_secs() < 7200);
+        }
+
+        is_new
     }
 
     /// Pulse: Heartbeat for node discovery.
@@ -176,6 +202,7 @@ impl NostrMeshOrchestrator {
 #[cfg(test)]
 mod tests {
     use super::*;
+    use std::sync::atomic::{AtomicUsize, Ordering};
 
     #[tokio::test]
     async fn test_broadcast_threat_no_relays_returns_ok() {
@@ -190,5 +217,53 @@ mod tests {
         let orch = NostrMeshOrchestrator::new(None, 1.0).await.expect("Failed to create orchestrator");
         let res = orch.send_heartbeat("node-123").await;
         assert!(res.is_ok(), "send_heartbeat with no relays must return Ok(()) without error");
+    }
+
+    #[tokio::test]
+    async fn test_nostr_threat_deduplication_lifecycle() {
+        let orch = NostrMeshOrchestrator::new(None, 1.0).await.expect("Failed to create orchestrator");
+
+        // First occurrence must be accepted
+        assert!(orch.check_and_record_threat("threat-uuid-alpha"));
+
+        // Immediate duplicate must be suppressed
+        assert!(!orch.check_and_record_threat("threat-uuid-alpha"));
+
+        // Distinct ID must be accepted
+        assert!(orch.check_and_record_threat("threat-uuid-beta"));
+
+        // Duplicate of second ID must also be suppressed
+        assert!(!orch.check_and_record_threat("threat-uuid-beta"));
+    }
+
+    #[tokio::test]
+    async fn test_nostr_threat_concurrent_burst_deduplication() {
+        let orch = Arc::new(NostrMeshOrchestrator::new(None, 1.0).await.expect("Failed to create orchestrator"));
+        let accepted_count = Arc::new(AtomicUsize::new(0));
+        let mut handles = Vec::new();
+
+        // 20 concurrent tasks simulating 4-20 relay sockets pushing the exact same threat 25 times each (500 total)
+        for _ in 0..20 {
+            let orch_clone = orch.clone();
+            let count_clone = accepted_count.clone();
+            handles.push(tokio::spawn(async move {
+                for _ in 0..25 {
+                    if orch_clone.check_and_record_threat("concurrent-nostr-threat-uuid") {
+                        count_clone.fetch_add(1, Ordering::SeqCst);
+                    }
+                }
+            }));
+        }
+
+        for h in handles {
+            h.await.unwrap();
+        }
+
+        // Exactly ONE occurrence across all 500 concurrent attempts must be accepted
+        assert_eq!(
+            accepted_count.load(Ordering::SeqCst),
+            1,
+            "Exactly 1 of 500 concurrent events must pass deduplication"
+        );
     }
 }
