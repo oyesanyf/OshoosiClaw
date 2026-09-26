@@ -1498,7 +1498,11 @@ impl EdrOrchestrator {
                             );
                             // Persist mesh threat so it shows in the dashboard
                             if let Err(e) = orch_sig.memory.log_threat(&sig) {
-                                error!("Failed to persist mesh threat: {}", e);
+                                if e.to_string().contains("UNIQUE constraint") {
+                                    debug!("Mesh threat {} already persisted: {}", sig.id, e);
+                                } else {
+                                    error!("Failed to persist mesh threat: {}", e);
+                                }
                             }
                             // Mark malicious hashes in Bloom filter for fast-path blocking
                             if let Some(ref hash) = sig.hash_blake3 {
@@ -1791,7 +1795,11 @@ impl EdrOrchestrator {
             tokio::spawn(async move {
                 info!("BitChat: Decentralized threat received via Nostr relay: {:?} ({})", sig.reason, sig.source_node);
                 if let Err(e) = orch.memory.log_threat(&sig) {
-                    error!("Failed to persist Nostr threat: {}", e);
+                    if e.to_string().contains("UNIQUE constraint") {
+                        debug!("Nostr threat {} already persisted: {}", sig.id, e);
+                    } else {
+                        error!("Failed to persist Nostr threat: {}", e);
+                    }
                 }
                 if let Some(ref hash) = sig.hash_blake3 {
                     orch.memory.mark_hash_known_malicious(hash);
@@ -5698,7 +5706,11 @@ impl EdrOrchestrator {
         tokio::spawn(async move {
             while let Some(sig) = peer_threat_rx.recv().await {
                 if let Err(e) = memory_peer.log_threat(&sig) {
-                    error!("Failed to store peer threat: {}", e);
+                    if e.to_string().contains("UNIQUE constraint") {
+                        debug!("Peer threat {} already stored: {}", sig.id, e);
+                    } else {
+                        error!("Failed to store peer threat: {}", e);
+                    }
                 }
                 if let Some(ref hash) = sig.hash_blake3 {
                     memory_peer.mark_hash_known_malicious(hash);

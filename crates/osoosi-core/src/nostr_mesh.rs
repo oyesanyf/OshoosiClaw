@@ -36,6 +36,7 @@ pub struct NostrMeshOrchestrator {
     client: Arc<RwLock<Client>>,
     keys: Keys,
     privacy: MalchelaPrivacy,
+    seen_threats: Arc<dashmap::DashMap<String, std::time::Instant>>,
 }
 
 impl NostrMeshOrchestrator {
@@ -54,6 +55,7 @@ impl NostrMeshOrchestrator {
             client: Arc::new(RwLock::new(client)),
             keys,
             privacy: MalchelaPrivacy { epsilon },
+            seen_threats: Arc::new(dashmap::DashMap::new()),
         })
     }
 
@@ -113,6 +115,7 @@ impl NostrMeshOrchestrator {
         let _ = client.subscribe(vec![filter], None).await;
 
         let client_clone = self.client.clone();
+        let seen = self.seen_threats.clone();
         tokio::spawn(async move {
             let mut notifications = {
                 let c = client_clone.read().await;
@@ -123,6 +126,17 @@ impl NostrMeshOrchestrator {
                 if let RelayPoolNotification::Event { event, .. } = notification {
                     if event.kind == KIND_EDR_ALERT {
                         if let Ok(sig) = serde_json::from_str::<ThreatSignature>(&event.content) {
+                            let now = std::time::Instant::now();
+                            if let Some(prev) = seen.get(&sig.id) {
+                                if now.duration_since(*prev).as_secs() < 3600 {
+                                    debug!("BitChat: Suppressed duplicate Nostr threat {} from relay pool", sig.id);
+                                    continue;
+                                }
+                            }
+                            seen.insert(sig.id.clone(), now);
+                            if seen.len() > 1000 {
+                                seen.retain(|_, time| now.duration_since(*time).as_secs() < 7200);
+                            }
                             info!("Received threat from Nostr mesh: {}", sig.id);
                             callback(sig);
                         }

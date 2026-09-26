@@ -1041,7 +1041,15 @@ impl MemoryStore {
         let conn = self.conn.lock();
         conn.execute(
             "INSERT INTO threats (id, cve_id, hash_blake3, process_name, confidence, detected_at, source_node, file_path, reason, parent_process, version)
-             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)",
+             VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10, ?11)
+             ON CONFLICT(id) DO UPDATE SET
+                confidence = MAX(threats.confidence, excluded.confidence),
+                detected_at = excluded.detected_at,
+                reason = COALESCE(excluded.reason, threats.reason),
+                process_name = COALESCE(excluded.process_name, threats.process_name),
+                source_node = excluded.source_node,
+                parent_process = COALESCE(excluded.parent_process, threats.parent_process),
+                version = COALESCE(excluded.version, threats.version)",
             params![
                 sig.id,
                 sig.cve_id,
@@ -1588,5 +1596,29 @@ mod tests {
         let mem = MemoryStore::new(":memory:").unwrap();
         assert!(!mem.is_nsrl_known_good("").unwrap());
         assert!(!mem.is_nsrl_known_good("   ").unwrap());
+    }
+
+    #[test]
+    fn test_log_threat_idempotent() {
+        let mem = MemoryStore::new(":memory:").unwrap();
+        let mut sig = ThreatSignature::new("test-source".to_string());
+        sig.id = "test-threat-uuid-1".to_string();
+        sig.process_name = Some("powershell.exe".to_string());
+        sig.confidence = 0.5;
+        sig.reason = Some("Suspicious execution".to_string());
+
+        // First insert
+        assert!(mem.log_threat(&sig).is_ok());
+
+        // Second insert with identical ID and higher confidence
+        sig.confidence = 0.95;
+        sig.reason = Some("Confirmed execution".to_string());
+        assert!(mem.log_threat(&sig).is_ok());
+
+        // Verify update
+        let threats = mem.get_recent_threats(10).unwrap();
+        assert_eq!(threats.len(), 1);
+        let conf = threats[0]["confidence"].as_f64().unwrap();
+        assert!((conf - 0.95).abs() < 1e-4);
     }
 }

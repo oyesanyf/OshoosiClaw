@@ -20,14 +20,15 @@ async fn import_nsrl_with_fallback(
 ) {
     let mem_clone = mem.clone();
     let nist_path_buf = nist_path.to_path_buf();
-    let res = tokio::task::spawn_blocking(move || {
-        mem_clone.import_nsrl_from_nist_rds_sqlite(&nist_path_buf)
+    let res = tokio::task::spawn_blocking(move || -> anyhow::Result<(u64, u64)> {
+        let added = mem_clone.import_nsrl_from_nist_rds_sqlite(&nist_path_buf)?;
+        let total = mem_clone.nsrl_record_count().unwrap_or(0);
+        Ok((added, total))
     })
     .await;
 
     match res {
-        Ok(Ok(added)) => {
-            let total = mem.nsrl_record_count().unwrap_or(0);
+        Ok(Ok((added, total))) => {
             info!(
                 "[NSRL] Fast bulk import from {:?}: {} new rows (nsrl total ~{}).",
                 nist_path, added, total
@@ -40,10 +41,20 @@ async fn import_nsrl_with_fallback(
             );
             match fetcher.import_nsrl_from_sqlite(nist_path).await {
                 Ok(records) => {
-                    if let Err(e2) = mem.upsert_nsrl_records(&records) {
-                        error!("[NSRL] Fallback upsert failed: {}", e2);
-                    } else {
-                        info!("[NSRL] Fallback: stored {} NSRL records.", records.len());
+                    let mem_clone2 = mem.clone();
+                    let count = records.len();
+                    let upsert_res = tokio::task::spawn_blocking(move || {
+                        mem_clone2.upsert_nsrl_records(&records)
+                    })
+                    .await;
+                    match upsert_res {
+                        Ok(Ok(())) => {
+                            info!("[NSRL] Fallback: stored {} NSRL records.", count);
+                        }
+                        Ok(Err(e2)) => error!("[NSRL] Fallback upsert failed: {}", e2),
+                        Err(join_err) => {
+                            error!("[NSRL] Fallback spawn_blocking task failed: {}", join_err)
+                        }
                     }
                 }
                 Err(e2) => error!("[NSRL] Fallback read failed: {}", e2),
