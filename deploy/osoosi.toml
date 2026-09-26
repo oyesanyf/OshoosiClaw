@@ -37,7 +37,10 @@ auto_replace_malware_binaries = true
 # Quarantine directory
 quarantine_path = "./quarantine"
 # Paths excluded from quarantine (cloud sync temp folders)
-quarantine_exclude_paths = [".tmp.driveupload", "Google Drive", "OneDrive", "Dropbox"]
+quarantine_exclude_paths = [
+    ".tmp.driveupload", "Google Drive", "OneDrive", "Dropbox",
+    "VSCode-win32-x64", "ModelFusion\\IDE\\VSCode-win32-x64", ".vscode"
+]
 
 [runtime]
 # SQLite database path for memory store
@@ -51,7 +54,8 @@ db_path = "./database/osoosi.db"
 # Static bootstrap peers (PeerId@Multiaddr)
 peers = []
 # Nostr Relays for decentralized threat intelligence sharing (BitChat style)
-nostr_relays = ["ws://localhost:8080"]
+# Set to custom active relays if available, e.g. ["wss://relay.damus.io"]
+nostr_relays = ["wss://relay.damus.io", "wss://nos.lol"]
 # Security: If true, allows fallback to public Nostr relays if private ones are offline.
 # WARNING: This may leak encrypted telemetry metadata to public servers.
 allow_public_relays = true
@@ -77,13 +81,29 @@ max_host_calls_per_session = 256
 # nvd_api_key = ""
 
 # Paths to exclude from ALL scanning (suppresses all voters)
-consensus_exclude_paths = ["D:\\harfile\\OshoosiClaw\\traps", "C:\\Windows\\Temp", "D:\\backup"]
+consensus_exclude_paths = [
+    "D:\\harfile\\OshoosiClaw\\traps", 
+    "C:\\Windows\\Temp", 
+    "D:\\backup",
+    "D:\\harfile\\ModelFusion\\IDE\\VSCode-win32-x64",
+    "VSCode-win32-x64"
+]
 
 # Path substrings to consider 'trusted' (caps confidence at 0.15)
-consensus_trusted_paths = ["\\OshoosiClaw\\target\\", "\\OshoosiClaw\\tools\\"]
+consensus_trusted_paths = [
+    "\\OshoosiClaw\\target\\", 
+    "\\OshoosiClaw\\tools\\",
+    "\\ModelFusion\\IDE\\VSCode-win32-x64\\",
+    "\\VSCode-win32-x64\\",
+    "\\.vscode\\"
+]
 
 # Process stems to suppress (caps confidence at 0.15)
-consensus_noisy_stems = ["git", "rustc", "cargo", "node", "python", "code", "cursor"]
+consensus_noisy_stems = [
+    "git", "rustc", "cargo", "node", "python", "code", "cursor",
+    "vulkan-1.dll", "msalruntime.dll", "msal-node-runtime.node", "vsda.node",
+    "win32-app-container-tokens", "win32-app-container-tokens.node"
+]
 
 # --- DYNAMIC TRUST LISTS ---
 # Binaries matching these will NEVER be autonomously blocked if they are signed (verified on-disk).
@@ -95,12 +115,17 @@ trusted_paths = [
     "\\.rustup\\", 
     "\\.cargo\\", 
     "\\program files\\git\\", 
-    "\\tools\\git\\"
+    "\\tools\\git\\",
+    "\\ModelFusion\\IDE\\VSCode-win32-x64\\",
+    "\\VSCode-win32-x64\\",
+    "\\.vscode\\"
 ]
 trusted_stems = [
     "Sysmon64.exe", "git.exe", "rustc.exe", "cargo.exe", "rustup.exe", "clippy-driver.exe", 
     "cargo-clippy.exe", "cargo-fmt.exe", "svchost.exe", "conhost.exe", 
-    "wermgr.exe", "wmic.exe", "where.exe", "wmiprvse.exe"
+    "wermgr.exe", "wmic.exe", "where.exe", "wmiprvse.exe",
+    "vulkan-1.dll", "msalruntime.dll", "msal-node-runtime.node", "vsda.node",
+    "win32-app-container-tokens", "win32-app-container-tokens.node"
 ]
 
 # Alert suppression period in seconds (10 minutes)

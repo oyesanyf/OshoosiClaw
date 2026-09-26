@@ -1,4 +1,4 @@
-# OpenỌ̀ṣọ́ọ̀sì Target-Side Installation Helper
+﻿# Opená»ŒÌ€á¹£á»Ìá»Ì€sÃ¬ Target-Side Installation Helper
 # 1. Install/Update Sysmon
 if (Test-Path "Sysmon64.exe") {
     echo "Installing Sysmon with security configuration..."
