@@ -487,9 +487,10 @@ impl ThreatVoter for BehavioralYaraVoter {
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         let json_bytes = serde_json::to_vec(event).ok()?;
         let rules = self.rules.clone();
-        let adaptive = self.adaptive.clone();
 
-        let res = adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
+        // Fast in-memory YARA-X scanning runs in microsecond scale; execute via spawn_blocking
+        // to avoid queuing on the restricted AI semaphore permit pool.
+        let res = tokio::task::spawn_blocking(move || {
             let mut scanner = yara_x::Scanner::new(&rules);
             if let Ok(results) = scanner.scan(&json_bytes) {
                 if let Some(primary) = results.matching_rules().next() {
@@ -675,6 +676,10 @@ pub struct BehavioralClassifierVoter {
 impl ThreatVoter for BehavioralClassifierVoter {
     fn name(&self) -> String {
         "BehavioralAI-Cortex".to_string()
+    }
+
+    fn is_heavy(&self) -> bool {
+        true
     }
 
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {

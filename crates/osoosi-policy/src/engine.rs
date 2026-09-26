@@ -629,7 +629,7 @@ impl PolicyEngine {
                 match res {
                     Ok(vote_opt) => (name, vote_opt),
                     Err(_elapsed) => {
-                        warn!(
+                        debug!(
                             target: CONSENSUS_LOG_TARGET,
                             voter = %name,
                             timeout_ms = VOTER_TIMEOUT.as_millis() as u64,
