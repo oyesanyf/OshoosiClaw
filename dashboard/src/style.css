@@ -555,6 +555,11 @@ body::before {
 .badge.blue { background: rgba(0, 210, 255, 0.15); color: var(--accent-blue); }
 .badge.red { background: rgba(255, 77, 77, 0.15); color: var(--accent-red); }
 .badge.green { background: rgba(0, 255, 127, 0.15); color: var(--accent-green); }
+.badge.purple { background: rgba(188, 140, 242, 0.15); color: var(--accent-purple); }
+.badge.orange { background: rgba(255, 159, 67, 0.15); color: var(--accent-orange); }
+.badge.yellow { background: rgba(255, 170, 0, 0.15); color: #ffaa00; }
+.badge.cyan { background: rgba(0, 210, 255, 0.15); color: #00d2ff; }
+.badge.gray { background: rgba(255, 255, 255, 0.08); color: var(--text-muted); }
 
 /* Views & Containers */
 .view-content {

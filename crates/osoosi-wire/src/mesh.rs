@@ -671,8 +671,18 @@ impl MeshNode {
                             continue;
                         }
                         if message.topic == self.threat_topic.hash() {
-                            if let Ok(sig) = serde_json::from_slice::<ThreatSignature>(&message.data) {
-                                if sig.verify() { on_threat(sig); }
+                            match serde_json::from_slice::<ThreatSignature>(&message.data) {
+                                Ok(sig) => {
+                                    if sig.verify() {
+                                        info!("[mesh] Validated threat gossip packet from {}: ID={} Proc={:?}", propagation_source, sig.id, sig.process_name);
+                                        on_threat(sig);
+                                    } else {
+                                        warn!("[mesh] Rejected unverified or unsigned threat gossip packet from {}", propagation_source);
+                                    }
+                                }
+                                Err(e) => {
+                                    warn!("[mesh] Failed to deserialize threat gossip from {}: {}", propagation_source, e);
+                                }
                             }
                         } else if message.topic == self.consensus_topic.hash() {
                             if let Ok(m) = serde_json::from_slice::<osoosi_types::PolicyConsensusMessage>(&message.data) {

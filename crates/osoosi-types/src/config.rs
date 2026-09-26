@@ -350,6 +350,9 @@ struct FileConfig {
     /// AlienVault OTX / NVD keys — see `load_external_api_config` and `resolve_*_api_key`.
     #[serde(default)]
     external_api: ExternalApiConfig,
+    /// Log retention and intelligent rotation configuration.
+    #[serde(default)]
+    pub log_retention: LogRetentionConfig,
 }
 
 /// Hex-patch agent config: auto-patch files when rules match.
@@ -1824,6 +1827,51 @@ pub fn load_policy_config() -> PolicyConfig {
         cfg.consensus_noisy_stems.extend(v.split(',').map(|s| s.trim().to_string()).filter(|s| !s.is_empty()));
     }
     cfg
+}
+
+/// Log retention and intelligent rotation configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct LogRetentionConfig {
+    #[serde(default = "default_max_log_days")]
+    pub max_log_days: u32, // default: 14
+    #[serde(default = "default_max_total_size_mb")]
+    pub max_total_size_mb: u64, // default: 500
+    #[serde(default = "default_max_single_file_size_mb")]
+    pub max_single_file_size_mb: u64, // default: 50
+}
+
+fn default_max_log_days() -> u32 {
+    14
+}
+
+fn default_max_total_size_mb() -> u64 {
+    500
+}
+
+fn default_max_single_file_size_mb() -> u64 {
+    50
+}
+
+impl Default for LogRetentionConfig {
+    fn default() -> Self {
+        Self {
+            max_log_days: default_max_log_days(),
+            max_total_size_mb: default_max_total_size_mb(),
+            max_single_file_size_mb: default_max_single_file_size_mb(),
+        }
+    }
+}
+
+/// Loads `[log_retention]` from `osoosi.toml` (if present), or returns defaults.
+pub fn load_log_retention_config() -> LogRetentionConfig {
+    if let Some(path) = resolve_config_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(fc) = toml::from_str::<FileConfig>(&content) {
+                return fc.log_retention;
+            }
+        }
+    }
+    LogRetentionConfig::default()
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]

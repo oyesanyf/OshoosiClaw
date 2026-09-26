@@ -581,6 +581,39 @@ fn test_attack_poisoned_threat_signature_unsigned_rejected() {
 }
 
 #[test]
+fn test_threat_signature_signed_and_verified_across_mesh() {
+    let tm = TrustManager::new(Arc::new(DummyExecutor)).unwrap();
+    let mut sig = ThreatSignature::new(tm.did().id.clone());
+    sig.process_name = Some("systeminfo.exe".to_string());
+    sig.mitre_technique = Some("T1082".to_string());
+    sig.mitre_technique_name = Some("System Information Discovery".to_string());
+    sig.mitre_tactic = Some("Discovery".to_string());
+    sig.confidence = 0.92;
+    sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+    sig.hash_blake3 = Some("d9b897931b6df3de856d6d135414f3b8b60381615cb38d61245b0a36bc4c0ce3".to_string());
+
+    // 1. Initially unsigned must fail verification
+    assert!(!sig.verify(), "Unsigned threat signature must fail verify()");
+
+    // 2. Cryptographically sign with TrustManager
+    tm.sign_threat(&mut sig).expect("Cryptographic signing must succeed");
+    assert!(sig.signature.is_some(), "Signature bytes must be present");
+    assert!(sig.public_key.is_some(), "Public key bytes must be present");
+
+    // 3. Receiving peer validates threat signature
+    assert!(sig.verify(), "Cryptographically signed threat signature must pass verify()");
+
+    // 4. Ensure GossipFeedItem can be constructed and preserves fields
+    let feed_item = osoosi_types::GossipFeedItem::from_threat(&sig, "MESH_THREAT_RECEIVED");
+    assert_eq!(feed_item.event_type, "MESH_THREAT_RECEIVED");
+    assert_eq!(feed_item.process_name.as_deref(), Some("systeminfo.exe"));
+    assert_eq!(feed_item.mitre_technique.as_deref(), Some("T1082"));
+    assert_eq!(feed_item.severity, "CRITICAL");
+    assert_eq!(feed_item.status, "ACTIVE");
+    assert!(feed_item.is_threat);
+}
+
+#[test]
 fn test_attack_malformed_gossip_packets_deserialization_safety() {
     // 1. Truncated / corrupt JSON on threat signature topic
     let corrupt_bytes = b"{\"id\":\"partial_json_without_closing_bracket";

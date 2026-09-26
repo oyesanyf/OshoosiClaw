@@ -136,6 +136,19 @@ impl TrustManager {
         hex::encode(signature.to_bytes())
     }
 
+    /// Sign a ThreatSignature using this node's ed25519 signing key.
+    pub fn sign_threat(&self, threat: &mut osoosi_types::ThreatSignature) -> anyhow::Result<()> {
+        if threat.source_node.is_empty() || threat.source_node == "local" {
+            threat.source_node = self.did.id.clone();
+        }
+        threat.sign(&self.signing_key)
+    }
+
+    /// Access the raw ed25519 signing key.
+    pub fn signing_key(&self) -> &SigningKey {
+        &self.signing_key
+    }
+
     pub fn did(&self) -> &NodeDID {
         &self.did
     }

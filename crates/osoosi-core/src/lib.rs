@@ -52,6 +52,7 @@ pub mod secured_executor;
 pub mod self_healing;
 pub mod voters;
 pub mod agent_egress;
+pub mod log_retention;
 
 pub const CONSENSUS_LOG_TARGET: &str = "osoosi_core::consensus";
 
@@ -495,6 +496,10 @@ pub struct EdrOrchestrator {
     last_telemetry_summary_count: Arc<std::sync::atomic::AtomicU64>,
     /// Total Gossip messages received from peers
     mesh_gossip_count_atomic: Arc<AtomicU32>,
+    /// Live Gossip Mesh Feed buffer (recent inbound and outbound peer intelligence)
+    mesh_gossip_feed: Arc<std::sync::RwLock<std::collections::VecDeque<osoosi_types::GossipFeedItem>>>,
+    /// Debouncer for mesh threat broadcasts (key -> last_broadcast_time)
+    mesh_broadcast_debouncer: Arc<dashmap::DashMap<String, Instant>>,
     /// Synthetic Canary Correlator: Tracking probe health and anti-blinding
     pub canary_correlator: Arc<tokio::sync::Mutex<osoosi_telemetry::canary::CanaryCorrelator>>,
 }
@@ -556,18 +561,15 @@ impl EdrOrchestrator {
                         info!("🕸️  [SPIDER-EYES] Analysis for {}: \n{}", process_name, analysis);
                         
                         // BROADCAST to mesh: Share the disassembly and intent report
-                        if let Some(ref tx) = *self.mesh_command_tx.lock().await {
-                            let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
-                            sig.id = format!("analysis-{}", uuid::Uuid::new_v4());
-                            sig.process_name = Some(process_name.clone());
-                            sig.hash_blake3 = Some(hash.clone());
-                            sig.confidence = 1.0;
-                            sig.add_reason(analysis);
-                            
-                            let msg = osoosi_wire::MeshCommand::Broadcast(sig);
-                            let _ = tx.send(msg).await;
-                            info!("🕸️  [MESH] Broadcasted binary analysis for {} to all spiders.", process_name);
-                        }
+                        let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
+                        sig.id = format!("analysis-{}", uuid::Uuid::new_v4());
+                        sig.process_name = Some(process_name.clone());
+                        sig.hash_blake3 = Some(hash.clone());
+                        sig.confidence = 1.0;
+                        sig.add_reason(analysis);
+                        
+                        self.broadcast_threat_to_mesh(sig).await;
+                        info!("🕸️  [MESH] Broadcasted binary analysis for {} to all spiders.", process_name);
                     }
                     Err(e) => {
                         warn!("🕸️  [SPIDER-EYES] Binary analysis failed for {}: {}", process_name, e);
@@ -1296,7 +1298,7 @@ impl EdrOrchestrator {
 
         let mesh_gossip_count_atomic = Arc::new(AtomicU32::new(0));
         
-        Ok(Self {
+        let orch = Self {
             memory,
             mesh_peer_count,
             start_time: Instant::now(),
@@ -1344,6 +1346,8 @@ impl EdrOrchestrator {
             behavioral_debouncer,
             spider_eyes,
             alert_suppression_cache: Arc::new(dashmap::DashMap::new()),
+            mesh_gossip_feed: Arc::new(std::sync::RwLock::new(std::collections::VecDeque::with_capacity(200))),
+            mesh_broadcast_debouncer: Arc::new(dashmap::DashMap::new()),
             nostr_mesh,
             mesh_gossip_count_atomic,
             telemetry_total_count: Arc::new(std::sync::atomic::AtomicU64::new(0)),
@@ -1355,7 +1359,17 @@ impl EdrOrchestrator {
                     osoosi_telemetry::canary::CanaryCorrelator::new(canary_alert_tx, 3),
                 ))
             },
-        })
+        };
+
+        // Start background log retention loop (hourly rotation and pruning)
+        let log_dir = osoosi_types::resolve_log_directory();
+        let log_cfg = osoosi_types::load_log_retention_config();
+        tokio::spawn(crate::log_retention::LogRetentionManager::start_retention_loop(
+            log_dir,
+            log_cfg,
+        ));
+
+        Ok(orch)
     }
 
     /// Register voters that require an Arc reference to the orchestrator (post-initialization).
@@ -1374,7 +1388,34 @@ impl EdrOrchestrator {
             if let Err(e) = self.memory.vacuum_and_prune(30) {
                 error!("Maintenance loop failed: {}", e);
             }
+            if let Err(e) = self.maintain_logs() {
+                error!("Maintenance log retention failed: {}", e);
+            }
         }
+    }
+
+    /// Lists all `.log` files in the resolved logs directory with metadata.
+    pub fn list_log_files(&self) -> Vec<serde_json::Value> {
+        let log_dir = osoosi_types::resolve_log_directory();
+        crate::log_retention::LogRetentionManager::list_log_files(&log_dir)
+    }
+
+    /// Reads tail lines from a specified log file, with optional search filtering.
+    pub fn read_log_tail(
+        &self,
+        filename: &str,
+        max_lines: usize,
+        search: Option<&str>,
+    ) -> anyhow::Result<Vec<String>> {
+        let log_dir = osoosi_types::resolve_log_directory();
+        crate::log_retention::LogRetentionManager::read_log_tail(&log_dir, filename, max_lines, search)
+    }
+
+    /// Runs log retention and rotation maintenance immediately.
+    pub fn maintain_logs(&self) -> anyhow::Result<crate::log_retention::LogMaintenanceSummary> {
+        let log_dir = osoosi_types::resolve_log_directory();
+        let log_cfg = osoosi_types::load_log_retention_config();
+        crate::log_retention::LogRetentionManager::maintain_logs(&log_dir, &log_cfg)
     }
 
     pub async fn start_p2p_loop(&self) -> anyhow::Result<Arc<osoosi_wire::JoinGate>> {
@@ -1458,12 +1499,29 @@ impl EdrOrchestrator {
                             if let Some(ref hash) = sig.hash_blake3 {
                                 orch_sig.memory.mark_hash_known_malicious(hash);
                             }
+                            // Store in live gossip feed buffer
+                            orch_sig.record_gossip_threat(&sig, "MESH_THREAT_RECEIVED");
+
+                            let proc = sig.process_name.clone().unwrap_or_else(|| "Unknown".to_string());
+                            let tech = sig.mitre_technique.clone().unwrap_or_else(|| "T1082".to_string());
+                            let action = format!("{:?}", sig.recommended_action);
+                            let summary = format!("Peer Threat [{}]: {} ({}) via {}", tech, proc, action, sig.source_node);
+
                             orch_sig.audit.log(
                                 "MESH_THREAT_RECEIVED",
                                 serde_json::json!({
                                     "source_node": sig.source_node,
                                     "threat_id": sig.id,
                                     "confidence": sig.confidence,
+                                    "process_name": sig.process_name,
+                                    "mitre_technique": sig.mitre_technique,
+                                    "mitre_technique_name": sig.mitre_technique_name,
+                                    "mitre_tactic": sig.mitre_tactic,
+                                    "reason": sig.reason,
+                                    "action": action,
+                                    "action_state": sig.action_state,
+                                    "hash": sig.hash_blake3,
+                                    "summary": summary,
                                 }),
                             );
                         },
@@ -1476,9 +1534,27 @@ impl EdrOrchestrator {
                                 let voter_id = vote.voter_id.clone();
                                 // DashMap: lock-free insert — no async lock needed
                                 orch_clone.policy_consensus
-                                    .entry(voter_id)
+                                    .entry(voter_id.clone())
                                     .or_default()
                                     .push(msg_clone);
+
+                                orch_clone.record_gossip_item(osoosi_types::GossipFeedItem {
+                                    id: uuid::Uuid::new_v4().to_string(),
+                                    event_type: "INTEL_BFT_CONSENSUS".to_string(),
+                                    timestamp: chrono::Utc::now().to_rfc3339(),
+                                    summary: format!("Policy Consensus vote: Voter {} -> {:?}", vote.voter_id, vote.status),
+                                    source_node: vote.voter_id.clone(),
+                                    process_name: None,
+                                    mitre_technique: None,
+                                    mitre_technique_name: None,
+                                    mitre_tactic: None,
+                                    confidence: 1.0,
+                                    severity: "INFO".to_string(),
+                                    action: Some("Consensus".to_string()),
+                                    status: "ACTIVE".to_string(),
+                                    hash_blake3: None,
+                                    is_threat: false,
+                                });
                             }
                         },
                         move |_shard| {
@@ -1491,6 +1567,23 @@ impl EdrOrchestrator {
                                 "Mesh Intel: Received global intelligence from {} — {}",
                                 intel.source_node, intel.summary
                             );
+                            orch_intel.record_gossip_item(osoosi_types::GossipFeedItem {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                event_type: "MESH_INTEL_RECEIVED".to_string(),
+                                timestamp: intel.timestamp.to_rfc3339(),
+                                summary: format!("Global Intel from {}: {}", intel.source_node, intel.summary),
+                                source_node: intel.source_node.clone(),
+                                process_name: None,
+                                mitre_technique: None,
+                                mitre_technique_name: None,
+                                mitre_tactic: None,
+                                confidence: intel.priority,
+                                severity: if intel.priority >= 0.8 { "CRITICAL".to_string() } else { "INFO".to_string() },
+                                action: Some("Intel".to_string()),
+                                status: "ACTIVE".to_string(),
+                                hash_blake3: None,
+                                is_threat: false,
+                            });
                             orch_intel.audit.log(
                                 "MESH_INTEL_RECEIVED",
                                 serde_json::json!({
@@ -1524,6 +1617,24 @@ impl EdrOrchestrator {
                             if sample.label == 0 {
                                 orch_sample.memory.mark_hash_known_malicious(&sample.file_hash);
                             }
+                            let hshort = &sample.file_hash[..sample.file_hash.len().min(8)];
+                            orch_sample.record_gossip_item(osoosi_types::GossipFeedItem {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                event_type: "MESH_SAMPLE_RECEIVED".to_string(),
+                                timestamp: sample.timestamp.to_rfc3339(),
+                                summary: format!("Malware Sample from {}: {} (label: {})", sample.source_node, hshort, sample.label),
+                                source_node: sample.source_node.clone(),
+                                process_name: None,
+                                mitre_technique: None,
+                                mitre_technique_name: None,
+                                mitre_tactic: None,
+                                confidence: 0.9,
+                                severity: if sample.label == 0 { "HIGH".to_string() } else { "INFO".to_string() },
+                                action: Some("MalwareSample".to_string()),
+                                status: "ACTIVE".to_string(),
+                                hash_blake3: Some(sample.file_hash.clone()),
+                                is_threat: sample.label == 0,
+                            });
                             orch_sample.audit.log(
                                 "MESH_SAMPLE_RECEIVED",
                                 serde_json::json!({
@@ -1536,6 +1647,23 @@ impl EdrOrchestrator {
                         },
                         move |tarpit_signal| {
                             g6.fetch_add(1, Ordering::Relaxed);
+                            orch_tarpit.record_gossip_item(osoosi_types::GossipFeedItem {
+                                id: uuid::Uuid::new_v4().to_string(),
+                                event_type: "MESH_TARPIT_APPLIED".to_string(),
+                                timestamp: chrono::Utc::now().to_rfc3339(),
+                                summary: format!("Mesh Tarpit: IP {} ({})", tarpit_signal.target_ip, tarpit_signal.attack_type),
+                                source_node: "mesh".to_string(),
+                                process_name: None,
+                                mitre_technique: None,
+                                mitre_technique_name: None,
+                                mitre_tactic: None,
+                                confidence: tarpit_signal.confidence,
+                                severity: "HIGH".to_string(),
+                                action: Some("Tarpit".to_string()),
+                                status: "ACTIVE".to_string(),
+                                hash_blake3: None,
+                                is_threat: true,
+                            });
                             // Tarpit Signal: Apply collaborative attacker IP block when peers warn
                             if tarpit_signal.confidence >= 0.5 {
                                 warn!(
@@ -2947,10 +3075,7 @@ impl EdrOrchestrator {
                 warn!("MILITARY-GUARD: Tactical threat detected! {}", sig.reason.as_deref().unwrap_or("Unknown"));
                 self.privacy.protect_signature(&mut sig);
                 
-                let tx_guard = self.mesh_command_tx.lock().await;
-                if let Some(ref tx_chan) = *tx_guard {
-                    let _ = tx_chan.send(MeshCommand::Broadcast(sig.clone())).await;
-                }
+                self.broadcast_threat_to_mesh(sig.clone()).await;
 
                 if sig.recommended_action == ResponseAction::Isolate {
                     if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()) {
@@ -2986,10 +3111,7 @@ impl EdrOrchestrator {
                             // Apply Merkle Proof and Differential Privacy noise
                             self.privacy.protect_signature(&mut sig);
 
-                            let tx_guard = self.mesh_command_tx.lock().await;
-                            if let Some(ref tx_chan) = *tx_guard {
-                                let _ = tx_chan.send(MeshCommand::Broadcast(sig)).await;
-                            }
+                            self.broadcast_threat_to_mesh(sig).await;
 
                             // Neutralize locally
                             let _ = self.blocking_manager.block_by_pid(source_pid as u32).await;
@@ -3137,10 +3259,7 @@ impl EdrOrchestrator {
             let _ = self.memory.log_threat(&signature);
             
             // Real-time Global Immunization: Broadcast threat to the P2P mesh
-            let tx_guard = self.mesh_command_tx.lock().await;
-            if let Some(ref tx_chan) = *tx_guard {
-                let _ = tx_chan.send(MeshCommand::Broadcast(signature.clone())).await;
-            }
+            self.broadcast_threat_to_mesh(signature.clone()).await;
 
             // Audit log for tamper-evidence
             self.audit.log(
@@ -3806,54 +3925,8 @@ impl EdrOrchestrator {
         }
 
         // 1. Aligned Messenger: Discerning what to share with the P2P Mesh
-        // Filter: Only gossip if confidence >= 0.85 OR if the file is unsigned.
-        // This avoids clogging the mesh with low-confidence noise or common false positives.
-        let should_broadcast = signature.confidence >= 0.85 || !signature.is_signed;
-        
-        if should_broadcast {
-            let tx_guard = self.mesh_command_tx.lock().await;
-            if let Some(ref tx) = *tx_guard {
-                // Anonymizer: Strip local file paths to protect node privacy.
-                // We ensure only the hash and process name are identifiable, never the directory structure.
-                let mut anonymized_sig = signature.clone();
-                if let Some(reason) = anonymized_sig.reason.as_mut() {
-                    *reason = self.anonymize_reason(reason);
-                }
-
-                // Military-Grade Hardening: Differential Privacy (DP) Broadcast
-                let dp_config = osoosi_dp::PrivacyConfig {
-                    epsilon: 0.8,
-                    min_samples: 3,
-                    sensitivity: 1.0,
-                };
-                
-                let _ = tx
-                    .send(MeshCommand::BroadcastNoisyThreat(
-                        anonymized_sig,
-                        dp_config,
-                    ))
-                    .await;
-
-                // Phase 3: Shadow Chain (Distributed Audit Ledger)
-                let proof = self.audit.root();
-                let _ = tx.try_send(MeshCommand::BroadcastAuditProof(proof));
-                
-                info!("[Messenger] High-confidence intel shared with mesh: {:?}", signature.process_name);
-            }
-
-            // BROADCAST VIA NOSTR (BitChat style)
-            let nostr = self.nostr_mesh.clone();
-            let sig_clone = signature.clone();
-            tokio::spawn(async move {
-                if let Err(e) = nostr.broadcast_threat(sig_clone).await {
-                    debug!("Failed to broadcast threat via Nostr relay: {}", e);
-                } else {
-                    debug!("BitChat: Threat broadcasted to global Nostr relays.");
-                }
-            });
-        } else {
-            debug!("[Messenger] Intelligence suppressed: Confidence ({:.2}) below threshold and binary is signed.", signature.confidence);
-        }
+        // 1. Aligned Messenger: Share verified intelligence with P2P Mesh & Nostr
+        self.broadcast_threat_to_mesh(signature.clone()).await;
 
         // Auto-generated YARA from high-confidence detections
         if signature.confidence >= 0.8 {
@@ -4261,6 +4334,338 @@ impl EdrOrchestrator {
 
     pub fn mesh_gossip_count(&self) -> u32 {
         self.mesh_gossip_count_atomic.load(Ordering::Relaxed)
+    }
+
+    /// Record an item into the live gossip feed ring buffer.
+    pub fn record_gossip_item(&self, item: osoosi_types::GossipFeedItem) {
+        if let Ok(mut buffer) = self.mesh_gossip_feed.write() {
+            if buffer.len() >= 200 {
+                buffer.pop_back();
+            }
+            buffer.push_front(item);
+        }
+    }
+
+    /// Record a ThreatSignature into the live gossip feed ring buffer.
+    pub fn record_gossip_threat(&self, sig: &osoosi_types::ThreatSignature, event_type: &str) {
+        let item = osoosi_types::GossipFeedItem::from_threat(sig, event_type);
+        self.record_gossip_item(item);
+    }
+
+    /// Retrieve live and persisted gossip mesh feed items with intelligent sorting and routine chatter pruning.
+    pub fn get_gossip_feed(&self, limit: usize) -> Vec<osoosi_types::GossipFeedItem> {
+        let mut items = Vec::new();
+
+        // 1. First get items from the in-memory live gossip ring buffer
+        if let Ok(buffer) = self.mesh_gossip_feed.read() {
+            for item in buffer.iter() {
+                items.push(item.clone());
+            }
+        }
+
+        // 2. If buffer has fewer items than limit (e.g. after fresh restart), backfill from audit entries
+        if items.len() < limit {
+            let audit_entries = self.audit.entries();
+            let mut seen_ids = std::collections::HashSet::new();
+            for item in &items {
+                seen_ids.insert(item.id.clone());
+            }
+
+            for entry in audit_entries.iter().rev() {
+                if entry.event_type.starts_with("MESH_") || entry.event_type == "THREAT_DETECTED" {
+                    let id = entry
+                        .data
+                        .get("threat_id")
+                        .or_else(|| entry.data.get("id"))
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string())
+                        .unwrap_or_else(|| format!("audit-{}", entry.timestamp.timestamp_micros()));
+
+                    if seen_ids.contains(&id) {
+                        continue;
+                    }
+                    seen_ids.insert(id.clone());
+
+                    let proc = entry
+                        .data
+                        .get("process_name")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let hash = entry
+                        .data
+                        .get("hash")
+                        .or_else(|| entry.data.get("hash_blake3"))
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let tech = entry
+                        .data
+                        .get("mitre_technique")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let tech_name = entry
+                        .data
+                        .get("mitre_technique_name")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let tactic = entry
+                        .data
+                        .get("mitre_tactic")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let action = entry
+                        .data
+                        .get("action")
+                        .and_then(|v| v.as_str())
+                        .map(String::from);
+                    let source = entry
+                        .data
+                        .get("source_node")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("peer")
+                        .to_string();
+                    let conf = entry
+                        .data
+                        .get("confidence")
+                        .and_then(|v| v.as_f64())
+                        .unwrap_or(0.8) as f32;
+
+                    let summary = entry
+                        .data
+                        .get("summary")
+                        .and_then(|v| v.as_str())
+                        .map(String::from)
+                        .unwrap_or_else(|| {
+                            let p = proc.as_deref().unwrap_or("Security Alert");
+                            let t = tech
+                                .as_deref()
+                                .map(|s| format!("[{}] ", s))
+                                .unwrap_or_default();
+                            format!("{}{}: {}", t, entry.event_type, p)
+                        });
+
+                    let severity = if conf >= 0.85 || action.as_deref() == Some("Isolate") {
+                        "CRITICAL".to_string()
+                    } else if conf >= 0.60 || action.as_deref() == Some("Tarpit") {
+                        "HIGH".to_string()
+                    } else if conf >= 0.40 {
+                        "MEDIUM".to_string()
+                    } else {
+                        "LOW".to_string()
+                    };
+
+                    items.push(osoosi_types::GossipFeedItem {
+                        id,
+                        event_type: entry.event_type.clone(),
+                        timestamp: entry.timestamp.to_rfc3339(),
+                        summary,
+                        source_node: source,
+                        process_name: proc,
+                        mitre_technique: tech,
+                        mitre_technique_name: tech_name,
+                        mitre_tactic: tactic,
+                        confidence: conf,
+                        severity,
+                        action,
+                        status: "ACTIVE".to_string(),
+                        hash_blake3: hash,
+                        is_threat: true,
+                    });
+
+                    if items.len() >= limit {
+                        break;
+                    }
+                }
+            }
+        }
+
+        // 3. Intelligent Sorting: Active threats first, then timestamp descending
+        items.sort_by(|a, b| {
+            let a_prio = if a.is_threat && a.status == "ACTIVE" { 1 } else { 0 };
+            let b_prio = if b.is_threat && b.status == "ACTIVE" { 1 } else { 0 };
+            b_prio.cmp(&a_prio).then_with(|| b.timestamp.cmp(&a.timestamp))
+        });
+
+        // 4. Prune/deduplicate routine stale heartbeats so active threats stand out
+        let mut deduplicated = Vec::new();
+        let mut seen_routine = std::collections::HashSet::new();
+
+        for item in items {
+            if item.event_type == "MESH_HEARTBEAT_ACK" || item.event_type == "CONSENSUS_CLOCK_SYNC" {
+                let key = format!("{}:{}", item.event_type, item.source_node);
+                if seen_routine.contains(&key) {
+                    continue;
+                }
+                seen_routine.insert(key);
+            }
+            deduplicated.push(item);
+            if deduplicated.len() >= limit {
+                break;
+            }
+        }
+
+        deduplicated
+    }
+
+    /// Mark a threat as false positive in the live gossip feed.
+    pub fn mark_gossip_false_positive(&self, threat_id: &str) {
+        if let Ok(mut buffer) = self.mesh_gossip_feed.write() {
+            for item in buffer.iter_mut() {
+                if item.id == threat_id
+                    || item.hash_blake3.as_deref() == Some(threat_id)
+                    || item.process_name.as_deref() == Some(threat_id)
+                {
+                    item.status = "FALSE_POSITIVE".to_string();
+                    item.severity = "LOW".to_string();
+                }
+            }
+        }
+    }
+
+    /// Mark a threat as remediated in the live gossip feed.
+    pub fn mark_gossip_remediated(&self, threat_id: &str) {
+        if let Ok(mut buffer) = self.mesh_gossip_feed.write() {
+            for item in buffer.iter_mut() {
+                if item.id == threat_id
+                    || item.hash_blake3.as_deref() == Some(threat_id)
+                    || item.process_name.as_deref() == Some(threat_id)
+                {
+                    item.status = "REMEDIATED".to_string();
+                }
+            }
+        }
+    }
+
+    /// Broadcast a detected threat to the P2P wire mesh and Nostr with debouncing and cryptographic signing.
+    pub async fn broadcast_threat_to_mesh(&self, mut sig: osoosi_types::ThreatSignature) {
+        // 1. Signal-to-noise ratio: Peer nodes must be alerted to serious threats
+        // (verified pentests, discovery probes T1082/T1033, credential dumping, injection, isolate/tarpit verdicts)
+        let is_serious_threat = sig.recommended_action == osoosi_types::ResponseAction::Isolate
+            || sig.recommended_action == osoosi_types::ResponseAction::Tarpit
+            || sig.recommended_action == osoosi_types::ResponseAction::GhostTarpit
+            || sig.confidence >= 0.65
+            || !sig.is_signed
+            || sig.mitre_technique.as_deref().map_or(false, |t| {
+                t.starts_with("T1082")
+                    || t.starts_with("T1033")
+                    || t.starts_with("T1003")
+                    || t.starts_with("T1055")
+                    || t.starts_with("T1059")
+                    || t.starts_with("T1490")
+                    || t.starts_with("T1547")
+                    || t.starts_with("T1071")
+            })
+            || sig.reason.as_deref().map_or(false, |r| {
+                let lr = r.to_lowercase();
+                lr.contains("sigma")
+                    || lr.contains("pentest")
+                    || lr.contains("discovery")
+                    || lr.contains("edrtest")
+                    || lr.contains("malware")
+                    || lr.contains("exploit")
+            });
+
+        if !is_serious_threat {
+            debug!(
+                "[Mesh] Threat suppressed from gossip broadcast (low signal-to-noise): {:?}",
+                sig.process_name
+            );
+            return;
+        }
+
+        // 2. Debouncing per process hash / threat category / MITRE technique
+        let debounce_key = format!(
+            "{}:{}:{}",
+            sig.hash_blake3.as_deref().unwrap_or("nohash"),
+            sig.process_name.as_deref().unwrap_or("unknown"),
+            sig.mitre_technique
+                .as_deref()
+                .unwrap_or(sig.reason.as_deref().unwrap_or("generic"))
+        );
+        let cooldown = std::time::Duration::from_secs(15);
+        if let Some(last) = self.mesh_broadcast_debouncer.get(&debounce_key) {
+            if last.elapsed() < cooldown {
+                debug!(
+                    "[Mesh] Threat broadcast debounced (within 15s cooldown): {}",
+                    debounce_key
+                );
+                return;
+            }
+        }
+        self.mesh_broadcast_debouncer
+            .insert(debounce_key, Instant::now());
+
+        // 3. Anonymizer & Differential Privacy
+        if let Some(reason) = sig.reason.as_mut() {
+            *reason = self.anonymize_reason(reason);
+        }
+        let dp_config = osoosi_dp::PrivacyConfig {
+            epsilon: 0.8,
+            min_samples: 3,
+            sensitivity: 1.0,
+        };
+        let dp = osoosi_dp::DifferentialPrivacy::new(dp_config.clone());
+        sig.confidence = (sig.confidence + dp.laplace_noise() as f32).clamp(0.05, 1.0);
+        sig.epsilon = Some(dp_config.epsilon as f32);
+
+        // 4. Ensure origin node ID is set to this node's DID
+        sig.source_node = self.trust.did().id.clone();
+
+        // 5. Cryptographic signature with ed25519 signing key
+        if let Err(e) = self.trust.sign_threat(&mut sig) {
+            error!(
+                "[Mesh] Failed to cryptographically sign ThreatSignature: {}",
+                e
+            );
+            return;
+        }
+
+        info!(
+            "[Mesh] Broadcasting cryptographically signed threat to mesh: ID={} Proc={:?} MITRE={:?} Conf={:.2}",
+            sig.id, sig.process_name, sig.mitre_technique, sig.confidence
+        );
+
+        // 6. Broadcast over Wire Mesh (GossipSub topic "osoosi-threats-{zone}")
+        let tx_guard = self.mesh_command_tx.lock().await;
+        if let Some(ref tx) = *tx_guard {
+            let _ = tx.send(osoosi_wire::MeshCommand::Broadcast(sig.clone())).await;
+            let proof = self.audit.root();
+            let _ = tx.try_send(osoosi_wire::MeshCommand::BroadcastAuditProof(proof));
+        }
+
+        // 7. Broadcast over Nostr (BitChat style)
+        let nostr = self.nostr_mesh.clone();
+        let sig_nostr = sig.clone();
+        tokio::spawn(async move {
+            if let Err(e) = nostr.broadcast_threat(sig_nostr).await {
+                debug!("Failed to broadcast threat via Nostr relay: {}", e);
+            }
+        });
+
+        // 8. Record in local live gossip buffer and audit trail
+        self.record_gossip_threat(&sig, "MESH_THREAT_BROADCAST");
+
+        let proc = sig.process_name.clone().unwrap_or_else(|| "Unknown".to_string());
+        let tech = sig.mitre_technique.clone().unwrap_or_else(|| "T1082".to_string());
+        let action = format!("{:?}", sig.recommended_action);
+        let summary = format!("Broadcast to Mesh: [{}] {} ({})", tech, proc, action);
+
+        self.audit.log(
+            "MESH_THREAT_BROADCAST",
+            serde_json::json!({
+                "source_node": sig.source_node,
+                "threat_id": sig.id,
+                "confidence": sig.confidence,
+                "process_name": sig.process_name,
+                "mitre_technique": sig.mitre_technique,
+                "mitre_technique_name": sig.mitre_technique_name,
+                "mitre_tactic": sig.mitre_tactic,
+                "reason": sig.reason,
+                "action": action,
+                "action_state": sig.action_state,
+                "hash": sig.hash_blake3,
+                "summary": summary,
+            }),
+        );
     }
 
     /// Get mesh topology (nodes and links) for dashboard visualization.

@@ -7,7 +7,7 @@ use axum::{
     routing::{get, post},
     Json, Router,
 };
-use serde::Deserialize;
+use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::convert::Infallible;
 use std::future::Future;
@@ -643,6 +643,7 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/behavioral/deep-dive", post(post_behavioral_deep_dive))
         .route("/api/consensus", get(get_consensus))
         .route("/api/mesh/broadcast", post(post_mesh_broadcast))
+        .route("/api/gossip", get(get_gossip))
         .route("/api/analyst/chat", get(get_analyst_chat))
         .route("/api/telemetry/timeseries", get(get_telemetry_timeseries))
         .route("/api/mesh/topology", get(get_mesh_topology))
@@ -671,6 +672,10 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/mitre/stix", get(get_mitre_stix))
         .route("/api/mitre/stix/status", get(get_mitre_stix_status))
         .route("/api/mitre/stix/update", post(post_mitre_stix_update))
+        .route("/api/history", get(get_history))
+        .route("/api/history/export", get(export_history))
+        .route("/api/logs/files", get(get_log_files))
+        .route("/api/logs/view", get(get_log_view))
         .with_state(state);
 
     let safe_serve = SafeServeDir::new(asset_path);
@@ -1754,6 +1759,12 @@ async fn post_manual_false_positive(
 ) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
+            if let Some(ref h) = req.hash {
+                orch.mark_gossip_false_positive(h);
+            }
+            if let Some(ref p) = req.process_name {
+                orch.mark_gossip_false_positive(p);
+            }
             let res = orch.memory().mark_false_positive(
                 req.process_name.as_deref(),
                 req.hash.as_deref(),
@@ -1799,6 +1810,7 @@ async fn post_quarantine_action(
 ) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
+            orch.mark_gossip_remediated(&req.file_path);
             let res = osoosi_core::quarantine::quarantine_file(&req.file_path);
             orch.audit().log(
                 "MALWARE_QUARANTINED",
@@ -1966,6 +1978,31 @@ async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
                                     format!("Threat: {}", proc)
                                 }
                             }
+                            "MESH_THREAT_RECEIVED" => {
+                                let proc = e.data.get("process_name").and_then(|v| v.as_str()).unwrap_or("Threat");
+                                let node = e.data.get("source_node").and_then(|v| v.as_str()).unwrap_or("peer");
+                                let tech = e.data.get("mitre_technique").and_then(|v| v.as_str()).map(|t| format!("[{}] ", t)).unwrap_or_default();
+                                format!("Peer Threat: {}{} via {}", tech, proc, node)
+                            }
+                            "MESH_THREAT_BROADCAST" => {
+                                let proc = e.data.get("process_name").and_then(|v| v.as_str()).unwrap_or("Threat");
+                                let tech = e.data.get("mitre_technique").and_then(|v| v.as_str()).map(|t| format!("[{}] ", t)).unwrap_or_default();
+                                format!("Mesh Broadcast: {}{}", tech, proc)
+                            }
+                            "MESH_INTEL_RECEIVED" => {
+                                let summ = e.data.get("summary").and_then(|v| v.as_str()).unwrap_or("Intel");
+                                let node = e.data.get("source_node").and_then(|v| v.as_str()).unwrap_or("peer");
+                                format!("Mesh Intel from {}: {}", node, summ)
+                            }
+                            "MESH_SAMPLE_RECEIVED" => {
+                                let hash = e.data.get("file_hash").and_then(|v| v.as_str()).unwrap_or("sample");
+                                let hshort = &hash[..hash.len().min(8)];
+                                format!("Malware sample received: {}", hshort)
+                            }
+                            "MESH_TARPIT_APPLIED" => {
+                                let ip = e.data.get("target_ip").and_then(|v| v.as_str()).unwrap_or("IP");
+                                format!("Mesh Tarpit applied: {}", ip)
+                            }
                             "TELEMETRY_INGESTED" => {
                                 let ev = e.data.get("event_id").and_then(|v| v.as_i64()).unwrap_or(0);
                                 format!("Event {} scanned", ev)
@@ -2010,11 +2047,16 @@ async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
                     }
                     seen_summaries.insert(summary.clone());
 
+                    let is_threat = e.event_type == "THREAT_DETECTED"
+                        || e.event_type == "BEHAVIORAL_ALERT"
+                        || e.event_type == "MESH_THREAT_RECEIVED"
+                        || e.event_type == "MESH_THREAT_BROADCAST";
+
                     let mut item = json!({
                         "type": e.event_type,
                         "timestamp": e.timestamp.to_rfc3339(),
                         "summary": summary,
-                        "is_threat": e.event_type == "THREAT_DETECTED" || e.event_type == "BEHAVIORAL_ALERT"
+                        "is_threat": is_threat
                     });
                     if let Some(obj) = item.as_object_mut() {
                         if e.event_type == "MALWARE_DETECTED" || e.event_type == "CLAMAV_CLEAN" || e.event_type == "BEHAVIORAL_ALERT" {
@@ -2025,9 +2067,27 @@ async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
                         if e.event_type == "CLAMAV_CLEAN" {
                             obj.insert("is_clamav_clean".to_string(), json!(true));
                         }
-                        if e.event_type == "THREAT_DETECTED" {
+                        if e.event_type == "THREAT_DETECTED" || e.event_type == "MESH_THREAT_RECEIVED" || e.event_type == "MESH_THREAT_BROADCAST" {
                             if let Some(fp) = e.data.get("image_path").or(e.data.get("file_path")).or(e.data.get("target_path")).and_then(|v| v.as_str()) {
                                 obj.insert("file_path".to_string(), json!(fp));
+                            }
+                            if let Some(proc) = e.data.get("process_name").and_then(|v| v.as_str()) {
+                                obj.insert("process_name".to_string(), json!(proc));
+                            }
+                            if let Some(tech) = e.data.get("mitre_technique").and_then(|v| v.as_str()) {
+                                obj.insert("mitre_technique".to_string(), json!(tech));
+                            }
+                            if let Some(tech_name) = e.data.get("mitre_technique_name").and_then(|v| v.as_str()) {
+                                obj.insert("mitre_technique_name".to_string(), json!(tech_name));
+                            }
+                            if let Some(tactic) = e.data.get("mitre_tactic").and_then(|v| v.as_str()) {
+                                obj.insert("mitre_tactic".to_string(), json!(tactic));
+                            }
+                            if let Some(node) = e.data.get("source_node").and_then(|v| v.as_str()) {
+                                obj.insert("source_node".to_string(), json!(node));
+                            }
+                            if let Some(act) = e.data.get("action").and_then(|v| v.as_str()) {
+                                obj.insert("action".to_string(), json!(act));
                             }
                             if let Some(cve) = e.data.get("cve_id").and_then(|v| v.as_str()) {
                                 obj.insert("cve_id".to_string(), json!(cve));
@@ -2039,6 +2099,16 @@ async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
                 .take(50)
                 .collect();
             Json(Value::Array(items))
+        }
+        None => Json(json!([])),
+    }
+}
+
+async fn get_gossip(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            let feed = orch.get_gossip_feed(50);
+            Json(serde_json::to_value(feed).unwrap_or_else(|_| json!([])))
         }
         None => Json(json!([])),
     }
@@ -2124,12 +2194,15 @@ async fn post_threat_false_positive(
     Path(threat_id): Path<String>,
 ) -> Json<Value> {
     match &state.backend {
-        Some(orch) => match orch.handle_false_positive(&threat_id).await {
-            Ok(_) => Json(
-                json!({"ok": true, "message": "Threat marked as false positive and remediated"}),
-            ),
-            Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
-        },
+        Some(orch) => {
+            orch.mark_gossip_false_positive(&threat_id);
+            match orch.handle_false_positive(&threat_id).await {
+                Ok(_) => Json(
+                    json!({"ok": true, "message": "Threat marked as false positive and remediated"}),
+                ),
+                Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+            }
+        }
         None => Json(json!({"ok": false, "error": "Backend not running"})),
     }
 }
@@ -2155,12 +2228,15 @@ async fn post_threat_confirm(
     Path(threat_id): Path<String>,
 ) -> Json<Value> {
     match &state.backend {
-        Some(orch) => match orch.handle_confirm_and_entangle(&threat_id).await {
-            Ok(_) => {
-                Json(json!({"ok": true, "message": "Threat confirmed and entangled in Morphic Hyper-Web"}))
+        Some(orch) => {
+            orch.mark_gossip_remediated(&threat_id);
+            match orch.handle_confirm_and_entangle(&threat_id).await {
+                Ok(_) => {
+                    Json(json!({"ok": true, "message": "Threat confirmed and entangled in Morphic Hyper-Web"}))
+                }
+                Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
             }
-            Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
-        },
+        }
         None => Json(json!({"ok": false, "error": "Backend not running"})),
     }
 }
@@ -3462,6 +3538,443 @@ async fn post_mitre_stix_update(
     )
 }
 
+#[derive(Debug, Deserialize)]
+pub struct HistoryQuery {
+    pub category: Option<String>, // "all", "threats", "actions", "gossip", "system"
+    pub severity: Option<String>, // "all", "critical", "high", "medium", "low"
+    pub search: Option<String>,
+    pub page: Option<usize>,
+    pub limit: Option<usize>,
+    pub format: Option<String>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct LogViewQuery {
+    pub file: Option<String>,
+    pub tail: Option<usize>,
+    pub search: Option<String>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HistoryItem {
+    pub id: String,
+    pub timestamp: String,
+    pub category: String, // "threat", "action", "gossip", "system"
+    pub event_type: String,
+    pub process_name: Option<String>,
+    pub mitre_technique: Option<String>,
+    pub mitre_technique_name: Option<String>,
+    pub severity: String, // "critical", "high", "medium", "low"
+    pub status: String,   // "BLOCKED", "ISOLATED", "ALERTED", "RESOLVED", "FALSE_POSITIVE"
+    pub summary: String,
+    pub details: Value,
+}
+
+fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
+    let mut items = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    if let Some(orch) = &state.backend {
+        // 1. Historical threats from memory store
+        if let Ok(threats) = orch.memory().get_recent_threats(1000) {
+            for t in threats {
+                let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let timestamp = t.get("timestamp").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                let cve_id = t.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
+                let proc_name = t.get("process_name").and_then(|v| v.as_str()).map(|s| s.to_string());
+                let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+                let conf = t.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.8);
+                let file_path = t.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+
+                let (tech_id, tech_name, _) = enrich_mitre_threat(
+                    proc_name.as_deref().unwrap_or(""),
+                    cve_id,
+                    reason,
+                    None,
+                    None,
+                );
+
+                let severity = if conf >= 0.85 {
+                    "critical".to_string()
+                } else if conf >= 0.70 {
+                    "high".to_string()
+                } else if conf >= 0.50 {
+                    "medium".to_string()
+                } else {
+                    "low".to_string()
+                };
+
+                let summary = if !reason.is_empty() {
+                    if let Some(ref p) = proc_name {
+                        format!("{}: {}", p, reason)
+                    } else {
+                        reason.to_string()
+                    }
+                } else if !cve_id.is_empty() {
+                    format!("CVE Vulnerability Trigger: {}", cve_id)
+                } else {
+                    format!("Threat in {}", proc_name.as_deref().unwrap_or(file_path))
+                };
+
+                let status = "ALERTED".to_string();
+
+                let key = format!("{}:{}:{}", timestamp, "threat", summary);
+                if seen.insert(key) {
+                    items.push(HistoryItem {
+                        id,
+                        timestamp,
+                        category: "threat".to_string(),
+                        event_type: "THREAT_DETECTED".to_string(),
+                        process_name: proc_name,
+                        mitre_technique: Some(tech_id),
+                        mitre_technique_name: Some(tech_name),
+                        severity,
+                        status,
+                        summary,
+                        details: t,
+                    });
+                }
+            }
+        }
+
+        // 2. Audit Trail Merkle entries
+        for (idx, entry) in orch.audit().entries().into_iter().enumerate() {
+            let timestamp = entry.timestamp.to_rfc3339();
+            let event_type = entry.event_type;
+            let d = entry.data;
+
+            let (category, severity, status) = match event_type.as_str() {
+                "THREAT_DETECTED" | "BEHAVIORAL_ALERT" => {
+                    let score = d.get("score").and_then(|v| v.as_f64()).unwrap_or(0.8);
+                    let sev = if score >= 0.85 { "critical" } else { "high" };
+                    ("threat", sev, "ALERTED")
+                }
+                "MALWARE_DETECTED" => ("threat", "critical", "ISOLATED"),
+                "CLAMAV_CLEAN" => ("system", "low", "RESOLVED"),
+                "RESPONSE_ACTION" | "KILL" | "ISOLATE" | "TARPIT" | "MORPHIC_ENTANGLEMENT" => {
+                    ("action", "high", "BLOCKED")
+                }
+                s if s.starts_with("MESH_") => {
+                    ("gossip", "medium", "ALERTED")
+                }
+                s if s.contains("REPAIR") || s.contains("HEAL") || s.contains("ROLLBACK") => {
+                    ("action", "medium", "RESOLVED")
+                }
+                _ => ("system", "low", "RESOLVED"),
+            };
+
+            let proc = d.get("process_name")
+                .or_else(|| d.get("process"))
+                .or_else(|| d.get("target_process"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_string());
+
+            let cve = d.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
+            let (tech_id, tech_name, _) = if let Some(t) = d.get("mitre_technique").and_then(|v| v.as_str()) {
+                let tn = d.get("mitre_technique_name").and_then(|v| v.as_str()).unwrap_or("Enterprise Technique");
+                (t.to_string(), tn.to_string(), String::new())
+            } else {
+                enrich_mitre_threat(proc.as_deref().unwrap_or(""), cve, "", None, None)
+            };
+
+            let summary = if let Some(s) = d.get("summary").and_then(|v| v.as_str()) {
+                s.to_string()
+            } else if let Some(m) = d.get("message").and_then(|v| v.as_str()) {
+                m.to_string()
+            } else {
+                match event_type.as_str() {
+                    "THREAT_DETECTED" => {
+                        format!("Threat: {}", proc.as_deref().unwrap_or("Unknown"))
+                    }
+                    "MALWARE_DETECTED" => {
+                        let fp = d.get("file_path").and_then(|v| v.as_str()).unwrap_or("unknown");
+                        format!("Malware detected: {}", fp)
+                    }
+                    "RESPONSE_ACTION" => {
+                        let t = d.get("type").or_else(|| d.get("action")).and_then(|v| v.as_str()).unwrap_or("Mitigation");
+                        format!("Action executed: {}", t)
+                    }
+                    _ => event_type.clone(),
+                }
+            };
+
+            let id = format!("audit-{}", idx);
+            let key = format!("{}:{}:{}", timestamp, category, summary);
+            if seen.insert(key) {
+                items.push(HistoryItem {
+                    id,
+                    timestamp,
+                    category: category.to_string(),
+                    event_type,
+                    process_name: proc,
+                    mitre_technique: if tech_id.is_empty() { None } else { Some(tech_id) },
+                    mitre_technique_name: if tech_name.is_empty() { None } else { Some(tech_name) },
+                    severity: severity.to_string(),
+                    status: status.to_string(),
+                    summary,
+                    details: d,
+                });
+            }
+        }
+
+        // 3. Mesh gossip events
+        for g in orch.get_gossip_feed(200) {
+            let key = format!("{}:{}:{}", g.timestamp, "gossip", g.summary);
+            if seen.insert(key) {
+                items.push(HistoryItem {
+                    id: g.id,
+                    timestamp: g.timestamp,
+                    category: "gossip".to_string(),
+                    event_type: g.event_type,
+                    process_name: g.process_name,
+                    mitre_technique: g.mitre_technique,
+                    mitre_technique_name: g.mitre_technique_name,
+                    severity: g.severity.to_lowercase(),
+                    status: g.status,
+                    summary: g.summary,
+                    details: json!({
+                        "source_node": g.source_node,
+                        "action": g.action,
+                        "confidence": g.confidence,
+                        "hash_blake3": g.hash_blake3,
+                        "mitre_tactic": g.mitre_tactic,
+                    }),
+                });
+            }
+        }
+    }
+
+    // Sort descending by timestamp
+    items.sort_by(|a, b| b.timestamp.cmp(&a.timestamp));
+    items
+}
+
+async fn get_history(
+    State(state): State<DashboardState>,
+    Query(q): Query<HistoryQuery>,
+) -> Json<Value> {
+    let all_items = collect_history_items(&state);
+
+    let threats_count = all_items.iter().filter(|i| i.category == "threat").count();
+    let actions_count = all_items.iter().filter(|i| i.category == "action").count();
+    let gossip_count = all_items.iter().filter(|i| i.category == "gossip").count();
+    let system_count = all_items.iter().filter(|i| i.category == "system").count();
+    let total_events = all_items.len();
+
+    let category_filter = q.category.as_deref().unwrap_or("all").trim().to_ascii_lowercase();
+    let severity_filter = q.severity.as_deref().unwrap_or("all").trim().to_ascii_lowercase();
+    let search_filter = q.search.as_deref().map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty());
+
+    let filtered: Vec<_> = all_items
+        .into_iter()
+        .filter(|item| {
+            if category_filter != "all" && !category_filter.is_empty() {
+                let matches_cat = match category_filter.as_str() {
+                    "threat" | "threats" => item.category == "threat",
+                    "action" | "actions" => item.category == "action",
+                    "gossip" => item.category == "gossip",
+                    "system" => item.category == "system",
+                    other => item.category.eq_ignore_ascii_case(other),
+                };
+                if !matches_cat {
+                    return false;
+                }
+            }
+
+            if severity_filter != "all" && !severity_filter.is_empty() {
+                if !item.severity.eq_ignore_ascii_case(&severity_filter) {
+                    return false;
+                }
+            }
+
+            if let Some(ref search) = search_filter {
+                let in_summary = item.summary.to_ascii_lowercase().contains(search);
+                let in_proc = item.process_name.as_deref().map(|p| p.to_ascii_lowercase().contains(search)).unwrap_or(false);
+                let in_tech = item.mitre_technique.as_deref().map(|t| t.to_ascii_lowercase().contains(search)).unwrap_or(false);
+                let in_tech_name = item.mitre_technique_name.as_deref().map(|n| n.to_ascii_lowercase().contains(search)).unwrap_or(false);
+                let in_id = item.id.to_ascii_lowercase().contains(search);
+                let in_event = item.event_type.to_ascii_lowercase().contains(search);
+                let in_details = item.details.to_string().to_ascii_lowercase().contains(search);
+
+                if !in_summary && !in_proc && !in_tech && !in_tech_name && !in_id && !in_event && !in_details {
+                    return false;
+                }
+            }
+
+            true
+        })
+        .collect();
+
+    let total_count = filtered.len();
+    let limit = q.limit.unwrap_or(50).clamp(1, 200);
+    let page = q.page.unwrap_or(1).max(1);
+    let total_pages = if total_count == 0 { 1 } else { (total_count + limit - 1) / limit };
+    let start = (page - 1) * limit;
+
+    let items: Vec<_> = filtered.into_iter().skip(start).take(limit).collect();
+
+    Json(json!({
+        "items": items,
+        "total_count": total_count,
+        "page": page,
+        "limit": limit,
+        "total_pages": total_pages,
+        "total_events": total_events,
+        "threats_count": threats_count,
+        "actions_count": actions_count,
+        "gossip_count": gossip_count,
+        "system_count": system_count,
+    }))
+}
+
+async fn export_history(
+    State(state): State<DashboardState>,
+    Query(q): Query<HistoryQuery>,
+) -> Response {
+    let all_items = collect_history_items(&state);
+
+    let category_filter = q.category.as_deref().unwrap_or("all").trim().to_ascii_lowercase();
+    let severity_filter = q.severity.as_deref().unwrap_or("all").trim().to_ascii_lowercase();
+    let search_filter = q.search.as_deref().map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty());
+
+    let filtered: Vec<_> = all_items
+        .into_iter()
+        .filter(|item| {
+            if category_filter != "all" && !category_filter.is_empty() {
+                let matches_cat = match category_filter.as_str() {
+                    "threat" | "threats" => item.category == "threat",
+                    "action" | "actions" => item.category == "action",
+                    "gossip" => item.category == "gossip",
+                    "system" => item.category == "system",
+                    other => item.category.eq_ignore_ascii_case(other),
+                };
+                if !matches_cat {
+                    return false;
+                }
+            }
+
+            if severity_filter != "all" && !severity_filter.is_empty() {
+                if !item.severity.eq_ignore_ascii_case(&severity_filter) {
+                    return false;
+                }
+            }
+
+            if let Some(ref search) = search_filter {
+                let in_summary = item.summary.to_ascii_lowercase().contains(search);
+                let in_proc = item.process_name.as_deref().map(|p| p.to_ascii_lowercase().contains(search)).unwrap_or(false);
+                let in_tech = item.mitre_technique.as_deref().map(|t| t.to_ascii_lowercase().contains(search)).unwrap_or(false);
+                let in_tech_name = item.mitre_technique_name.as_deref().map(|n| n.to_ascii_lowercase().contains(search)).unwrap_or(false);
+                let in_id = item.id.to_ascii_lowercase().contains(search);
+                let in_event = item.event_type.to_ascii_lowercase().contains(search);
+                let in_details = item.details.to_string().to_ascii_lowercase().contains(search);
+
+                if !in_summary && !in_proc && !in_tech && !in_tech_name && !in_id && !in_event && !in_details {
+                    return false;
+                }
+            }
+
+            true
+        })
+        .collect();
+
+    if q.format.as_deref() == Some("json") {
+        let mut headers = HeaderMap::new();
+        headers.insert(
+            axum::http::header::CONTENT_TYPE,
+            "application/json".parse().unwrap(),
+        );
+        headers.insert(
+            axum::http::header::CONTENT_DISPOSITION,
+            "attachment; filename=\"oshoosi_forensic_history.json\"".parse().unwrap(),
+        );
+        return (StatusCode::OK, headers, serde_json::to_string_pretty(&filtered).unwrap_or_default()).into_response();
+    }
+
+    // CSV format
+    let mut csv = String::from("id,timestamp,category,event_type,process_name,mitre_technique,mitre_technique_name,severity,status,summary\n");
+    for item in filtered {
+        let id_esc = escape_csv(&item.id);
+        let ts_esc = escape_csv(&item.timestamp);
+        let cat_esc = escape_csv(&item.category);
+        let ev_esc = escape_csv(&item.event_type);
+        let proc_esc = escape_csv(item.process_name.as_deref().unwrap_or(""));
+        let tech_esc = escape_csv(item.mitre_technique.as_deref().unwrap_or(""));
+        let tech_name_esc = escape_csv(item.mitre_technique_name.as_deref().unwrap_or(""));
+        let sev_esc = escape_csv(&item.severity);
+        let stat_esc = escape_csv(&item.status);
+        let summ_esc = escape_csv(&item.summary);
+
+        csv.push_str(&format!(
+            "{},{},{},{},{},{},{},{},{},{}\n",
+            id_esc, ts_esc, cat_esc, ev_esc, proc_esc, tech_esc, tech_name_esc, sev_esc, stat_esc, summ_esc
+        ));
+    }
+
+    let mut headers = HeaderMap::new();
+    headers.insert(
+        axum::http::header::CONTENT_TYPE,
+        "text/csv; charset=utf-8".parse().unwrap(),
+    );
+    headers.insert(
+        axum::http::header::CONTENT_DISPOSITION,
+        "attachment; filename=\"oshoosi_forensic_history.csv\"".parse().unwrap(),
+    );
+    (StatusCode::OK, headers, csv).into_response()
+}
+
+fn escape_csv(val: &str) -> String {
+    if val.contains(',') || val.contains('"') || val.contains('\n') || val.contains('\r') {
+        format!("\"{}\"", val.replace('"', "\"\""))
+    } else {
+        val.to_string()
+    }
+}
+
+async fn get_log_files(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => Json(json!(orch.list_log_files())),
+        None => {
+            let log_dir = osoosi_types::resolve_log_directory();
+            Json(json!(osoosi_core::log_retention::LogRetentionManager::list_log_files(&log_dir)))
+        }
+    }
+}
+
+async fn get_log_view(
+    State(state): State<DashboardState>,
+    Query(q): Query<LogViewQuery>,
+) -> Response {
+    let file = q.file.unwrap_or_else(|| "osoosi.log".to_string());
+    let tail = q.tail.unwrap_or(200);
+    let search = q.search.as_deref();
+
+    let res = match &state.backend {
+        Some(orch) => orch.read_log_tail(&file, tail, search),
+        None => {
+            let log_dir = osoosi_types::resolve_log_directory();
+            osoosi_core::log_retention::LogRetentionManager::read_log_tail(&log_dir, &file, tail, search)
+        }
+    };
+
+    match res {
+        Ok(lines) => (
+            StatusCode::OK,
+            Json(json!({
+                "file": file,
+                "lines": lines,
+                "count": lines.len()
+            })),
+        ).into_response(),
+        Err(e) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": e.to_string(),
+                "file": file
+            })),
+        ).into_response(),
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4022,6 +4535,55 @@ mod tests {
         let adapter_res = post_skyrl_adapter(State(state.clone()), Json(adapter_req)).await.0;
         assert_eq!(adapter_res["status"], "success");
         assert_eq!(adapter_res["active_lora_adapter"], "base-policy");
+    }
+
+    #[tokio::test]
+    async fn test_api_history_and_export() {
+        let state = DashboardState::new(None, None);
+
+        // Test GET /api/history returns valid json with pagination
+        let q = HistoryQuery {
+            category: None,
+            severity: None,
+            search: None,
+            page: Some(1),
+            limit: Some(10),
+            format: None,
+        };
+        let res = get_history(State(state.clone()), Query(q)).await.0;
+        assert_eq!(res["page"], 1);
+        assert_eq!(res["limit"], 10);
+        assert!(res["items"].as_array().is_some());
+
+        // Test GET /api/history/export
+        let exp_q = HistoryQuery {
+            category: Some("all".to_string()),
+            severity: None,
+            search: None,
+            page: None,
+            limit: None,
+            format: Some("csv".to_string()),
+        };
+        let resp = export_history(State(state.clone()), Query(exp_q)).await;
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+    }
+
+    #[tokio::test]
+    async fn test_api_logs_files_and_view() {
+        let state = DashboardState::new(None, None);
+
+        // Test GET /api/logs/files returns 200 array
+        let files_res = get_log_files(State(state.clone())).await.0;
+        assert!(files_res.as_array().is_some());
+
+        // Test GET /api/logs/view with traversal protection
+        let bad_q = LogViewQuery {
+            file: Some("../sensitive.txt".to_string()),
+            tail: Some(50),
+            search: None,
+        };
+        let view_resp = get_log_view(State(state.clone()), Query(bad_q)).await;
+        assert_eq!(view_resp.status(), axum::http::StatusCode::BAD_REQUEST);
     }
 }
 

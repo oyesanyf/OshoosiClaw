@@ -348,3 +348,85 @@ pub struct OtxIndicator {
     pub value: String,
     pub source: String,
 }
+
+/// A live gossip mesh feed item representing inbound or outbound peer intelligence.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
+pub struct GossipFeedItem {
+    pub id: String,
+    pub event_type: String,
+    pub timestamp: String,
+    pub summary: String,
+    pub source_node: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub process_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mitre_technique: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mitre_technique_name: Option<String>,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub mitre_tactic: Option<String>,
+    pub confidence: f32,
+    pub severity: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub action: Option<String>,
+    pub status: String,
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub hash_blake3: Option<String>,
+    pub is_threat: bool,
+}
+
+impl GossipFeedItem {
+    pub fn from_threat(sig: &ThreatSignature, event_type: &str) -> Self {
+        let action_str = format!("{:?}", sig.recommended_action);
+        let severity = if sig.recommended_action == ResponseAction::Isolate || sig.confidence >= 0.85 {
+            "CRITICAL".to_string()
+        } else if sig.recommended_action == ResponseAction::Tarpit
+            || sig.recommended_action == ResponseAction::GhostTarpit
+            || sig.confidence >= 0.65
+        {
+            "HIGH".to_string()
+        } else if sig.confidence >= 0.40 {
+            "MEDIUM".to_string()
+        } else {
+            "LOW".to_string()
+        };
+
+        let proc = sig.process_name.as_deref().unwrap_or("Unknown Process");
+        let tech_badge = sig
+            .mitre_technique
+            .as_deref()
+            .map(|t| format!("[{}] ", t))
+            .unwrap_or_default();
+        let summary = match event_type {
+            "MESH_THREAT_RECEIVED" => {
+                format!("Peer Threat: {}{} — Action: {}", tech_badge, proc, action_str)
+            }
+            "MESH_THREAT_BROADCAST" => {
+                format!("Broadcast to Mesh: {}{} — Action: {}", tech_badge, proc, action_str)
+            }
+            _ => format!("Threat Event: {}{} — Action: {}", tech_badge, proc, action_str),
+        };
+
+        Self {
+            id: sig.id.clone(),
+            event_type: event_type.to_string(),
+            timestamp: sig.detected_at.to_rfc3339(),
+            summary,
+            source_node: sig.source_node.clone(),
+            process_name: sig.process_name.clone(),
+            mitre_technique: sig.mitre_technique.clone(),
+            mitre_technique_name: sig.mitre_technique_name.clone(),
+            mitre_tactic: sig.mitre_tactic.clone(),
+            confidence: sig.confidence,
+            severity,
+            action: Some(action_str),
+            status: match sig.action_state {
+                ActionState::Executed => "REMEDIATED".to_string(),
+                ActionState::Rejected => "FALSE_POSITIVE".to_string(),
+                _ => "ACTIVE".to_string(),
+            },
+            hash_blake3: sig.hash_blake3.clone(),
+            is_threat: true,
+        }
+    }
+}

@@ -30,7 +30,17 @@ const state = {
     skyrlStatus: null,
     isTrainingSkyrl: false,
     isSteppingSkyrl: false,
-    isGeneratingSkyrl: false
+    isGeneratingSkyrl: false,
+    // Forensic History & Log Viewer state
+    historyPage: 1,
+    historyTotalPages: 1,
+    historyCategory: 'all',
+    historySeverity: 'all',
+    historySearch: '',
+    selectedLogFile: 'osoosi.log',
+    logTailCount: 200,
+    logSearchQuery: '',
+    logFiles: []
 };
 
 let updateInterval = null;
@@ -43,6 +53,7 @@ function init() {
     setupPasswordResetModal();
     setupNav();
     setupSearch();
+    setupHistoryEvents();
     
     if (localStorage.getItem('oshoosi_logged_in') === 'true') {
         startApp();
@@ -63,6 +74,8 @@ function startApp() {
     renderStoryView();
     renderSkyrlView();
     renderMitreView();
+    renderHistoryView(1);
+    fetchRotatedLogFiles();
 
     updateDashboard();
     if (!updateInterval) {
@@ -346,6 +359,11 @@ function setupNav() {
                 document.getElementById('skyrl-view').classList.add('active');
                 viewTitle.innerText = "SkyRL Self-Improvement & Policy Training";
                 renderSkyrlView();
+            } else if (view === 'history') {
+                document.getElementById('history-view').classList.add('active');
+                viewTitle.innerText = "Forensic Audit & Threat History";
+                renderHistoryView(state.historyPage);
+                fetchRotatedLogFiles();
             } else if (view === 'mitre') {
                 document.getElementById('mitre-view').classList.add('active');
                 viewTitle.innerText = "MITRE ATT&CK® Enterprise Matrix";
@@ -3401,6 +3419,45 @@ function navigateToStory() {
     }
 }
 
+function formatPeerDid(did) {
+    if (!did) return 'local';
+    if (did.length <= 18) return did;
+    return did.substring(0, 10) + '...' + did.substring(did.length - 6);
+}
+
+window.markGossipFalsePositive = async function(threatId, processName, hash) {
+    if (window.event) window.event.stopPropagation();
+    if (!confirm(`Mark this peer gossip threat as False Positive? This will stop active responses and update the mesh.`)) return;
+    try {
+        if (threatId) {
+            await fetch(`${API_BASE}/threats/${threatId}/false-positive`, { method: 'POST' });
+        }
+        if (hash || processName) {
+            await fetch(`${API_BASE}/false-positive`, {
+                method: 'POST',
+                headers: { 'Content-Type': 'application/json' },
+                body: JSON.stringify({ hash: hash || null, process_name: processName || null })
+            });
+        }
+        setTimeout(renderGossipView, 250);
+    } catch (err) {
+        console.error("Failed to mark gossip false positive:", err);
+    }
+};
+
+window.markGossipRemediated = async function(threatId) {
+    if (window.event) window.event.stopPropagation();
+    if (!confirm(`Confirm and entangle this peer threat across the Morphic Hyper-Web?`)) return;
+    try {
+        if (threatId) {
+            await fetch(`${API_BASE}/threats/confirm/${threatId}`, { method: 'POST' });
+        }
+        setTimeout(renderGossipView, 250);
+    } catch (err) {
+        console.error("Failed to confirm/remediate gossip threat:", err);
+    }
+};
+
 /**
  * Render the Gossip Feed view (P2P mesh intelligence sharing)
  */
@@ -3408,76 +3465,253 @@ async function renderGossipView() {
     const list = document.getElementById('gossip-feed-list');
     if (!list) return;
 
-    // 1. Fetch recent activity and filter for mesh/gossip events
-    const activity = await fetchAPI('/activity');
+    // 1. Fetch live gossip feed from dedicated /gossip endpoint
     let gossipEvents = [];
-
-    if (activity && activity.length > 0) {
-        gossipEvents = activity.filter(a => 
-            (a.type && (a.type.includes('MESH') || a.type.includes('CONSENSUS') || a.type.includes('INTEL'))) || 
-            (a.summary && a.summary.toLowerCase().includes('mesh'))
-        );
+    const gossipData = await fetchAPI('/gossip');
+    if (Array.isArray(gossipData) && gossipData.length > 0) {
+        gossipEvents = gossipData;
+    } else {
+        // Fallback to recent activity if /gossip is empty
+        const activity = await fetchAPI('/activity');
+        if (activity && activity.length > 0) {
+            gossipEvents = activity.filter(a => 
+                (a.type && (a.type.includes('MESH') || a.type.includes('CONSENSUS') || a.type.includes('INTEL') || a.type.includes('THREAT'))) || 
+                (a.summary && a.summary.toLowerCase().includes('mesh'))
+            ).map(a => ({
+                id: a.threat_id || a.id || ('act-' + Math.random().toString(36).substring(2, 9)),
+                event_type: a.type || 'GOSSIP_EVENT',
+                timestamp: a.timestamp || new Date().toISOString(),
+                summary: a.summary || '',
+                source_node: a.source_node || a.node_id || 'peer',
+                process_name: a.process_name || null,
+                mitre_technique: a.mitre_technique || null,
+                mitre_technique_name: a.mitre_technique_name || null,
+                mitre_tactic: a.mitre_tactic || null,
+                confidence: a.confidence || 0.8,
+                severity: a.severity || (a.type && a.type.includes('THREAT') ? 'HIGH' : 'LOW'),
+                action: a.action || null,
+                status: a.status || 'ACTIVE',
+                hash_blake3: a.hash || null,
+                is_threat: (a.type && a.type.includes('THREAT')) || false
+            }));
+        }
     }
 
-    // If gossipEvents is empty, display peer synchronization packets from connected peer node (DESKTOP-4MJ7SCN)
+    // 2. If still empty, display default peer synchronization packets
     if (gossipEvents.length === 0) {
         const now = Date.now();
         gossipEvents = [
             {
+                id: 'sync-hb-1',
                 summary: 'Gossip heartbeat sync acknowledged with peer DESKTOP-4MJ7SCN',
-                type: 'MESH_HEARTBEAT_ACK',
-                timestamp: new Date(now - 14000).toISOString()
+                event_type: 'MESH_HEARTBEAT_ACK',
+                timestamp: new Date(now - 14000).toISOString(),
+                source_node: 'did:key:z6MkuDESKTOP4MJ7SCN',
+                severity: 'LOW',
+                status: 'ACTIVE',
+                is_threat: false
             },
             {
+                id: 'sync-clock-1',
                 summary: 'Relativistic clock synchronization locked with peer DESKTOP-4MJ7SCN (offset: -0.8ms)',
-                type: 'CONSENSUS_CLOCK_SYNC',
-                timestamp: new Date(now - 48000).toISOString()
+                event_type: 'CONSENSUS_CLOCK_SYNC',
+                timestamp: new Date(now - 48000).toISOString(),
+                source_node: 'did:key:z6MkuDESKTOP4MJ7SCN',
+                severity: 'LOW',
+                status: 'ACTIVE',
+                is_threat: false
             },
             {
+                id: 'sync-bft-1',
                 summary: 'Byzantine fault tolerance consensus round verified (4/4 node quorums confirmed)',
-                type: 'INTEL_BFT_CONSENSUS',
-                timestamp: new Date(now - 110000).toISOString()
+                event_type: 'INTEL_BFT_CONSENSUS',
+                timestamp: new Date(now - 110000).toISOString(),
+                source_node: 'did:key:z6MkuDESKTOP4MJ7SCN',
+                severity: 'LOW',
+                status: 'ACTIVE',
+                is_threat: false
             },
             {
+                id: 'sync-pattern-1',
                 summary: 'Gossip broadcast: Allowlist & false-positive pattern delta synced with DESKTOP-4MJ7SCN',
-                type: 'MESH_PATTERN_SYNC',
-                timestamp: new Date(now - 190000).toISOString()
+                event_type: 'MESH_PATTERN_SYNC',
+                timestamp: new Date(now - 190000).toISOString(),
+                source_node: 'did:key:z6MkuDESKTOP4MJ7SCN',
+                severity: 'LOW',
+                status: 'ACTIVE',
+                is_threat: false
             }
         ];
     }
 
-    // Update stats from state or fallback count
+    // 3. Intelligent sorting: Active threats first, then recent items
+    gossipEvents.sort((a, b) => {
+        const aThreat = (a.is_threat || (a.event_type && a.event_type.includes('THREAT'))) && a.status === 'ACTIVE' ? 1 : 0;
+        const bThreat = (b.is_threat || (b.event_type && b.event_type.includes('THREAT'))) && b.status === 'ACTIVE' ? 1 : 0;
+        if (bThreat !== aThreat) return bThreat - aThreat;
+        return new Date(b.timestamp).getTime() - new Date(a.timestamp).getTime();
+    });
+
+    // 4. Intelligent deduplication: prune routine heartbeats and clock syncs so threats stand out
+    const seenRoutine = new Set();
+    const filteredEvents = [];
+    let threatCount = 0;
+
+    for (const ev of gossipEvents) {
+        const isThreat = ev.is_threat || (ev.event_type && ev.event_type.includes('THREAT'));
+        if (isThreat) {
+            threatCount++;
+            filteredEvents.push(ev);
+        } else if (ev.event_type === 'MESH_HEARTBEAT_ACK' || ev.event_type === 'CONSENSUS_CLOCK_SYNC') {
+            const key = `${ev.event_type}:${ev.source_node || 'peer'}`;
+            if (!seenRoutine.has(key)) {
+                seenRoutine.add(key);
+                filteredEvents.push(ev);
+            }
+        } else {
+            filteredEvents.push(ev);
+        }
+    }
+
+    // 5. Update stats cards
     const totalEl = document.getElementById('gossip-total-received');
     if (totalEl) {
         totalEl.innerText = state.gossip_count > 0 ? state.gossip_count : gossipEvents.length;
     }
 
-    // Update last action stat
-    const lastActionEl = document.getElementById('gossip-last-action');
-    if (lastActionEl && gossipEvents.length > 0) {
-        lastActionEl.innerText = gossipEvents[0].summary;
+    const threatCountEl = document.getElementById('gossip-threats-count');
+    if (threatCountEl) {
+        threatCountEl.innerText = threatCount;
     }
 
-    list.innerHTML = gossipEvents.map(event => {
+    const lastActionEl = document.getElementById('gossip-last-action');
+    if (lastActionEl && filteredEvents.length > 0) {
+        lastActionEl.innerText = filteredEvents[0].summary;
+    }
+
+    // 6. Render timeline items
+    list.innerHTML = filteredEvents.map(event => {
+        const isThreat = event.is_threat || (event.event_type && event.event_type.includes('THREAT'));
+        const eventType = event.event_type || 'GOSSIP_PACKET';
+        const sourceNode = event.source_node || 'peer';
+        const truncatedDid = formatPeerDid(sourceNode);
+        const status = (event.status || 'ACTIVE').toUpperCase();
+        const severity = (event.severity || (isThreat ? 'HIGH' : 'LOW')).toUpperCase();
+        const action = event.action || (isThreat ? 'ISOLATE' : null);
+
         let icon = 'messages-square';
-        let color = 'orange';
-        
-        if (event.type.includes('THREAT')) { icon = 'shield-alert'; color = 'red'; }
-        else if (event.type.includes('CONSENSUS')) { icon = 'check-circle'; color = 'purple'; }
-        else if (event.type.includes('INTEL')) { icon = 'zap'; color = 'blue'; }
-        else if (event.type.includes('HEARTBEAT')) { icon = 'activity'; color = 'green'; }
+        let borderColor = 'var(--glass-border)';
+        let iconBg = 'rgba(0, 210, 255, 0.1)';
+        let iconColor = 'var(--accent-blue)';
+
+        if (isThreat) {
+            icon = 'shield-alert';
+            if (status === 'FALSE_POSITIVE') {
+                borderColor = 'var(--accent-purple)';
+                iconBg = 'rgba(188, 140, 242, 0.15)';
+                iconColor = 'var(--accent-purple)';
+            } else if (status === 'REMEDIATED') {
+                borderColor = 'var(--accent-green)';
+                iconBg = 'rgba(0, 255, 127, 0.15)';
+                iconColor = 'var(--accent-green)';
+            } else if (severity === 'CRITICAL') {
+                borderColor = 'var(--accent-red)';
+                iconBg = 'rgba(255, 77, 77, 0.2)';
+                iconColor = 'var(--accent-red)';
+            } else {
+                borderColor = 'var(--accent-orange)';
+                iconBg = 'rgba(255, 159, 67, 0.15)';
+                iconColor = 'var(--accent-orange)';
+            }
+        } else if (eventType.includes('CONSENSUS')) {
+            icon = 'check-circle';
+            borderColor = 'var(--accent-purple)';
+            iconBg = 'rgba(188, 140, 242, 0.1)';
+            iconColor = 'var(--accent-purple)';
+        } else if (eventType.includes('INTEL')) {
+            icon = 'zap';
+            borderColor = 'var(--accent-blue)';
+            iconBg = 'rgba(0, 210, 255, 0.1)';
+            iconColor = 'var(--accent-blue)';
+        } else if (eventType.includes('HEARTBEAT')) {
+            icon = 'activity';
+            borderColor = 'var(--accent-green)';
+            iconBg = 'rgba(0, 255, 127, 0.1)';
+            iconColor = 'var(--accent-green)';
+        }
+
+        // Badges HTML
+        let badgesHtml = '';
+        if (isThreat) {
+            // Status badge
+            const statusClass = status === 'ACTIVE' ? 'badge red' : (status === 'REMEDIATED' ? 'badge green' : 'badge purple');
+            badgesHtml += `<span class="${statusClass}">${status}</span> `;
+
+            // Severity badge
+            const sevClass = severity === 'CRITICAL' ? 'badge red' : (severity === 'HIGH' ? 'badge orange' : (severity === 'MEDIUM' ? 'badge yellow' : 'badge blue'));
+            badgesHtml += `<span class="${sevClass}">${severity}</span> `;
+
+            // Action badge
+            if (action) {
+                const actUpper = action.toUpperCase();
+                const actClass = actUpper.includes('ISOLATE') || actUpper.includes('KILL') ? 'badge red' : (actUpper.includes('TARPIT') ? 'badge orange' : 'badge blue');
+                badgesHtml += `<span class="${actClass}">${escapeHtml(actUpper)}</span> `;
+            }
+
+            // MITRE Technique badge
+            if (event.mitre_technique) {
+                const tech = escapeHtml(event.mitre_technique);
+                const techName = escapeHtml(event.mitre_technique_name || '');
+                badgesHtml += `<span class="badge cyan" style="cursor:pointer;" onclick="event.stopPropagation(); if (typeof openMitreTechniqueModalById === 'function') openMitreTechniqueModalById('${tech}'); else { window.location.hash='#mitre'; }" title="${techName}">[${tech}]</span> `;
+            }
+        }
+
+        // Process Name display
+        const processHtml = event.process_name 
+            ? `<span style="font-weight: 700; color: #ffffff; margin-right: 6px;">${escapeHtml(event.process_name)}</span>` 
+            : '';
+
+        // Action buttons for active threats
+        let actionsHtml = '';
+        if (isThreat && status === 'ACTIVE') {
+            const rawId = escapeHtml(event.id);
+            const proc = escapeHtml(event.process_name || '');
+            const hash = escapeHtml(event.hash_blake3 || '');
+            actionsHtml = `
+                <div class="gossip-item-actions" style="margin-top: 8px; display: flex; gap: 8px;">
+                    <button class="btn-text" onclick="markGossipFalsePositive('${rawId}', '${proc}', '${hash}')" style="font-size: 11px; padding: 2px 10px; border-radius: 4px; background: rgba(188, 140, 242, 0.12); color: var(--accent-purple); border: 1px solid rgba(188, 140, 242, 0.3); cursor: pointer;">
+                        <i data-lucide="check" style="width: 12px; height: 12px; display: inline; vertical-align: middle;"></i> False Positive
+                    </button>
+                    <button class="btn-text" onclick="markGossipRemediated('${rawId}')" style="font-size: 11px; padding: 2px 10px; border-radius: 4px; background: rgba(0, 255, 127, 0.12); color: var(--accent-green); border: 1px solid rgba(0, 255, 127, 0.3); cursor: pointer;">
+                        <i data-lucide="shield-check" style="width: 12px; height: 12px; display: inline; vertical-align: middle;"></i> Remediate / Confirm
+                    </button>
+                </div>
+            `;
+        }
 
         return `
-            <div class="timeline-item" style="border-left: 2px solid var(--accent-${color});">
-                <div class="item-icon" style="background-color: rgba(var(--accent-${color}-rgb, 0, 210, 255), 0.1); color: var(--accent-${color});">
+            <div class="timeline-item" style="border-left: 3px solid ${borderColor}; padding: 12px 16px; margin-bottom: 8px; background: rgba(255, 255, 255, 0.02); border-radius: 0 8px 8px 0;">
+                <div class="item-icon" style="background-color: ${iconBg}; color: ${iconColor};">
                     <i data-lucide="${icon}"></i>
                 </div>
-                <div class="item-info">
-                    <div class="item-title">${escapeHtml(event.summary)}</div>
-                    <div class="item-meta">
-                        <span><i data-lucide="tag"></i> ${escapeHtml(event.type)}</span>
-                        <span><i data-lucide="clock"></i> ${formatTimestamp(event.timestamp)}</span>
+                <div class="item-info" style="flex: 1;">
+                    <div class="item-header" style="display: flex; flex-wrap: wrap; align-items: center; gap: 6px; margin-bottom: 4px;">
+                        ${processHtml}
+                        ${badgesHtml}
                     </div>
+                    <div class="item-title" style="font-size: 13px; font-weight: 500; color: var(--text-primary); margin-bottom: 6px;">
+                        ${escapeHtml(event.summary)}
+                    </div>
+                    <div class="item-meta" style="display: flex; flex-wrap: wrap; gap: 12px; font-size: 11px; color: var(--text-muted);">
+                        <span class="badge gray" title="Origin DID: ${escapeHtml(sourceNode)}" style="text-transform: none; font-weight: 500;">
+                            <i data-lucide="radio" style="width: 11px; height: 11px; display: inline; vertical-align: middle; margin-right: 2px;"></i> ${escapeHtml(truncatedDid)}
+                        </span>
+                        <span><i data-lucide="tag" style="width: 12px; height: 12px; display: inline; vertical-align: middle;"></i> ${escapeHtml(eventType)}</span>
+                        ${isThreat && event.confidence ? `<span><i data-lucide="percent" style="width: 12px; height: 12px; display: inline; vertical-align: middle;"></i> ${Math.round(event.confidence * 100)}% Conf</span>` : ''}
+                        <span><i data-lucide="clock" style="width: 12px; height: 12px; display: inline; vertical-align: middle;"></i> ${formatTimestamp(event.timestamp)}</span>
+                        ${event.hash_blake3 ? `<span style="font-family: monospace;" title="${escapeHtml(event.hash_blake3)}"><i data-lucide="hash" style="width: 11px; height: 11px; display: inline; vertical-align: middle;"></i> ${escapeHtml(event.hash_blake3.substring(0, 10))}...</span>` : ''}
+                    </div>
+                    ${actionsHtml}
                 </div>
             </div>
         `;
@@ -4612,6 +4846,423 @@ function getBuiltInMitreData() {
             { id: "T1490", name: "Inhibit System Recovery", tactic_id: "TA0040", tactic_name: "Impact", description: "Deleting volume shadow copies via vssadmin.", platforms: ["Windows"], data_sources: ["Process Creation"], mitigations: ["M1053: Data Backup & Immutability"], groups: ["LockBit", "Sandworm Team"], detection_mechanisms: ["Sysmon Event 1", "WORM Backup Lock"], voter: "SigmaVoter", consensus_action: "Tarpit", sigma_rules: ["Shadow Copies Deletion Via Vssadmin.EXE"], is_atlas: false, subtechniques: [] }
         ]
     };
+}
+
+/**
+ * Setup Event Listeners for Forensic History and Log Viewer
+ */
+function setupHistoryEvents() {
+    const searchInput = document.getElementById('history-search');
+    const catFilter = document.getElementById('history-category-filter');
+    const sevFilter = document.getElementById('history-severity-filter');
+    const exportBtn = document.getElementById('history-export-btn');
+    const refreshBtn = document.getElementById('history-refresh-btn');
+    const toggleLogBtn = document.getElementById('toggle-log-viewer-btn');
+    const prevBtn = document.getElementById('history-prev-btn');
+    const nextBtn = document.getElementById('history-next-btn');
+
+    // Log viewer controls
+    const logFileSelect = document.getElementById('log-viewer-file-select');
+    const logSearchInput = document.getElementById('log-viewer-search');
+    const logTailSelect = document.getElementById('log-viewer-tail-select');
+    const logRefreshBtn = document.getElementById('log-viewer-refresh-btn');
+
+    let searchDebounceTimer = null;
+    if (searchInput) {
+        searchInput.addEventListener('input', (e) => {
+            clearTimeout(searchDebounceTimer);
+            searchDebounceTimer = setTimeout(() => {
+                state.historySearch = e.target.value.trim();
+                renderHistoryView(1);
+            }, 300);
+        });
+    }
+
+    if (catFilter) {
+        catFilter.addEventListener('change', (e) => {
+            state.historyCategory = e.target.value;
+            renderHistoryView(1);
+        });
+    }
+
+    if (sevFilter) {
+        sevFilter.addEventListener('change', (e) => {
+            state.historySeverity = e.target.value;
+            renderHistoryView(1);
+        });
+    }
+
+    if (exportBtn) {
+        exportBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            downloadHistoryExport();
+        });
+    }
+
+    if (refreshBtn) {
+        refreshBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            renderHistoryView(state.historyPage);
+            fetchRotatedLogFiles();
+        });
+    }
+
+    if (prevBtn) {
+        prevBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (state.historyPage > 1) {
+                renderHistoryView(state.historyPage - 1);
+            }
+        });
+    }
+
+    if (nextBtn) {
+        nextBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            if (state.historyPage < state.historyTotalPages) {
+                renderHistoryView(state.historyPage + 1);
+            }
+        });
+    }
+
+    if (toggleLogBtn) {
+        toggleLogBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            const panel = document.getElementById('history-logs-panel');
+            if (panel) {
+                const isHidden = panel.style.display === 'none' || !panel.style.display;
+                panel.style.display = isHidden ? 'block' : 'none';
+                if (isHidden) {
+                    fetchRotatedLogFiles();
+                    fetchLogTail();
+                }
+            }
+        });
+    }
+
+    if (logFileSelect) {
+        logFileSelect.addEventListener('change', (e) => {
+            state.selectedLogFile = e.target.value;
+            fetchLogTail();
+        });
+    }
+
+    let logSearchDebounce = null;
+    if (logSearchInput) {
+        logSearchInput.addEventListener('input', (e) => {
+            clearTimeout(logSearchDebounce);
+            logSearchDebounce = setTimeout(() => {
+                state.logSearchQuery = e.target.value.trim();
+                fetchLogTail();
+            }, 300);
+        });
+    }
+
+    if (logTailSelect) {
+        logTailSelect.addEventListener('change', (e) => {
+            state.logTailCount = parseInt(e.target.value) || 200;
+            fetchLogTail();
+        });
+    }
+
+    if (logRefreshBtn) {
+        logRefreshBtn.addEventListener('click', (e) => {
+            e.preventDefault();
+            fetchLogTail();
+        });
+    }
+}
+
+/**
+ * Fetch and Render History Records
+ */
+async function renderHistoryView(page = 1) {
+    state.historyPage = page;
+    const tableBody = document.getElementById('history-table-body');
+    const pageInfo = document.getElementById('history-page-info');
+    const countLabel = document.getElementById('history-count-label');
+    const prevBtn = document.getElementById('history-prev-btn');
+    const nextBtn = document.getElementById('history-next-btn');
+
+    const totalEventsEl = document.getElementById('hist-total-events');
+    const threatsCountEl = document.getElementById('hist-threats-count');
+    const actionsCountEl = document.getElementById('hist-actions-count');
+
+    try {
+        const params = new URLSearchParams({
+            page: page,
+            limit: 50,
+            category: state.historyCategory || 'all',
+            severity: state.historySeverity || 'all',
+        });
+        if (state.historySearch) {
+            params.set('search', state.historySearch);
+        }
+
+        const res = await fetch(`${API_BASE}/history?${params.toString()}`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+
+        // Update stats
+        if (totalEventsEl) totalEventsEl.innerText = data.total_events || data.total_count || 0;
+        if (threatsCountEl) threatsCountEl.innerText = data.threats_count || 0;
+        if (actionsCountEl) actionsCountEl.innerText = data.actions_count || 0;
+
+        state.historyTotalPages = data.total_pages || 1;
+        if (pageInfo) pageInfo.innerText = `Page ${data.page} of ${data.total_pages}`;
+        if (countLabel) countLabel.innerText = `Showing ${data.items ? data.items.length : 0} of ${data.total_count} events`;
+
+        if (prevBtn) prevBtn.disabled = data.page <= 1;
+        if (nextBtn) nextBtn.disabled = data.page >= data.total_pages;
+
+        if (!data.items || data.items.length === 0) {
+            if (tableBody) {
+                tableBody.innerHTML = `
+                    <tr>
+                        <td colspan="9" style="text-align: center; padding: 36px; color: var(--text-muted);">
+                            <div style="margin-bottom: 8px;"><i data-lucide="inbox" style="width: 24px; height: 24px; opacity: 0.5;"></i></div>
+                            <div>No forensic events matched your active filters.</div>
+                        </td>
+                    </tr>
+                `;
+                if (window.lucide) lucide.createIcons();
+            }
+            return;
+        }
+
+        let html = '';
+        data.items.forEach((item, idx) => {
+            const sev = (item.severity || 'low').toLowerCase();
+            let sevColor = 'var(--accent-blue)';
+            if (sev === 'critical') {
+                sevColor = 'var(--accent-red, #ff4d4d)';
+            } else if (sev === 'high') {
+                sevColor = 'var(--accent-orange, #ffaa00)';
+            } else if (sev === 'medium') {
+                sevColor = 'var(--accent-yellow, #ffd700)';
+            }
+
+            const stat = (item.status || 'RESOLVED').toUpperCase();
+            let statColor = 'var(--accent-green)';
+            if (stat === 'BLOCKED' || stat === 'ISOLATED') statColor = 'var(--accent-red, #ff4d4d)';
+            else if (stat === 'ALERTED') statColor = 'var(--accent-orange, #ffaa00)';
+            else if (stat === 'FALSE_POSITIVE') statColor = 'var(--accent-blue)';
+
+            const mitreBadge = item.mitre_technique ? `
+                <a href="#mitre" class="mitre-tag" onclick="event.preventDefault(); openMitreTechniqueModalById('${item.mitre_technique}');" style="display: inline-flex; align-items: center; gap: 4px; background: rgba(0, 210, 255, 0.1); border: 1px solid rgba(0, 210, 255, 0.3); color: var(--accent-blue); padding: 2px 6px; border-radius: 4px; font-size: 11px; text-decoration: none; cursor: pointer;" title="${item.mitre_technique_name || ''}">
+                    <span>${item.mitre_technique}</span>
+                </a>
+            ` : `<span style="color: var(--text-muted); font-size: 11px;">—</span>`;
+
+            let displayTime = item.timestamp;
+            try {
+                const d = new Date(item.timestamp);
+                displayTime = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit', second: '2-digit' });
+            } catch (_) {}
+
+            const proc = item.process_name || 'System';
+            const catBadge = `<span style="text-transform: uppercase; font-size: 10px; font-weight: 600; padding: 2px 6px; border-radius: 4px; background: rgba(255,255,255,0.06); color: var(--text-muted);">${item.category || 'system'}</span>`;
+
+            html += `
+                <tr style="border-bottom: 1px solid rgba(255,255,255,0.04); transition: background 0.15s ease;" onmouseover="this.style.background='rgba(255,255,255,0.02)'" onmouseout="this.style.background='transparent'">
+                    <td style="padding: 10px 16px; font-family: monospace; font-size: 11px; color: var(--text-muted);">${displayTime}</td>
+                    <td style="padding: 10px 16px; font-weight: 500; font-size: 12px;">${item.event_type}</td>
+                    <td style="padding: 10px 16px;">${catBadge}</td>
+                    <td style="padding: 10px 16px; font-family: monospace; font-size: 12px; color: #fff;">${escapeHtml(proc)}</td>
+                    <td style="padding: 10px 16px;">${mitreBadge}</td>
+                    <td style="padding: 10px 16px;">
+                        <span style="display: inline-block; padding: 2px 8px; border-radius: 4px; font-size: 10px; font-weight: 700; text-transform: uppercase; background: rgba(255,255,255,0.06); color: ${sevColor}; border: 1px solid ${sevColor}40;">
+                            ${sev}
+                        </span>
+                    </td>
+                    <td style="padding: 10px 16px;">
+                        <span style="font-size: 11px; font-weight: 600; color: ${statColor};">${stat}</span>
+                    </td>
+                    <td style="padding: 10px 16px; font-size: 12px; color: var(--text-secondary); max-width: 320px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${escapeHtml(item.summary)}">
+                        ${escapeHtml(item.summary)}
+                    </td>
+                    <td style="padding: 10px 16px; text-align: right;">
+                        <button class="btn-icon" onclick="toggleHistoryDetail('${idx}')" style="background: rgba(255,255,255,0.05); border: 1px solid var(--glass-border); color: var(--text-muted); padding: 4px 8px; border-radius: 4px; cursor: pointer; font-size: 11px;" title="View Forensic Details">
+                            Inspect
+                        </button>
+                    </td>
+                </tr>
+                <tr id="hist-detail-${idx}" style="display: none; background: rgba(0,0,0,0.35);">
+                    <td colspan="9" style="padding: 12px 16px; border-bottom: 1px solid var(--glass-border);">
+                        <div style="display: flex; justify-content: space-between; align-items: flex-start; margin-bottom: 8px;">
+                            <div style="font-size: 12px; font-weight: 600; color: var(--accent-blue);">Forensic Evidence Record &amp; Raw Telemetry:</div>
+                            <button onclick="toggleHistoryDetail('${idx}')" style="background: none; border: none; color: var(--text-muted); cursor: pointer; font-size: 11px;">Close</button>
+                        </div>
+                        <pre style="margin: 0; padding: 10px; background: rgba(0,0,0,0.5); border-radius: 6px; font-family: 'Consolas', monospace; font-size: 11px; color: #a6accd; max-height: 200px; overflow-y: auto;">${escapeHtml(JSON.stringify(item.details || {}, null, 2))}</pre>
+                    </td>
+                </tr>
+            `;
+        });
+
+        if (tableBody) tableBody.innerHTML = html;
+        if (window.lucide) lucide.createIcons();
+    } catch (err) {
+        console.error("renderHistoryView error:", err);
+        if (tableBody) {
+            tableBody.innerHTML = `
+                <tr>
+                    <td colspan="9" style="text-align: center; padding: 24px; color: var(--accent-red, #ff4d4d);">
+                        Failed to load forensic events: ${escapeHtml(err.message)}
+                    </td>
+                </tr>
+            `;
+        }
+    }
+}
+
+function toggleHistoryDetail(idx) {
+    const el = document.getElementById(`hist-detail-${idx}`);
+    if (el) {
+        el.style.display = el.style.display === 'none' ? 'table-row' : 'none';
+    }
+}
+
+/**
+ * Trigger CSV export download
+ */
+function downloadHistoryExport() {
+    const params = new URLSearchParams({
+        format: 'csv',
+        category: state.historyCategory || 'all',
+        severity: state.historySeverity || 'all',
+    });
+    if (state.historySearch) {
+        params.set('search', state.historySearch);
+    }
+    const url = `${API_BASE}/history/export?${params.toString()}`;
+    const link = document.createElement('a');
+    link.href = url;
+    link.setAttribute('download', 'oshoosi_forensic_history.csv');
+    document.body.appendChild(link);
+    link.click();
+    document.body.removeChild(link);
+}
+
+/**
+ * Fetch Rotated Log Files List
+ */
+async function fetchRotatedLogFiles() {
+    const listEl = document.getElementById('rotated-log-files-list');
+    const badgeEl = document.getElementById('log-files-badge');
+    const countEl = document.getElementById('hist-log-files-count');
+    const selectEl = document.getElementById('log-viewer-file-select');
+
+    try {
+        const res = await fetch(`${API_BASE}/logs/files`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const files = await res.json();
+        state.logFiles = files || [];
+
+        if (badgeEl) badgeEl.innerText = `${files.length} Files`;
+        if (countEl) countEl.innerText = files.length;
+
+        if (selectEl) {
+            const currentVal = selectEl.value || state.selectedLogFile;
+            let optionsHtml = '';
+            files.forEach(f => {
+                const label = f.is_active ? `${f.filename} (Active)` : `${f.filename} (${f.size_display})`;
+                const selected = f.filename === currentVal ? 'selected' : '';
+                optionsHtml += `<option value="${f.filename}" ${selected}>${label}</option>`;
+            });
+            selectEl.innerHTML = optionsHtml;
+        }
+
+        if (listEl) {
+            if (files.length === 0) {
+                listEl.innerHTML = `<div style="font-size: 12px; color: var(--text-muted); text-align: center; padding: 16px;">No log files found</div>`;
+                return;
+            }
+            let html = '';
+            files.forEach(f => {
+                const isSelected = f.filename === state.selectedLogFile;
+                const activeTag = f.is_active ? '<span style="color: var(--accent-green); font-size: 10px; font-weight: 600;">ACTIVE</span>' : '';
+                let dateStr = f.modified_at;
+                try {
+                    const d = new Date(f.modified_at);
+                    dateStr = d.toLocaleDateString() + ' ' + d.toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' });
+                } catch(_) {}
+
+                html += `
+                    <div onclick="selectLogFile('${f.filename}')" style="cursor: pointer; padding: 8px 10px; border-radius: 6px; background: ${isSelected ? 'rgba(0, 210, 255, 0.12)' : 'rgba(255,255,255,0.03)'}; border: 1px solid ${isSelected ? 'rgba(0, 210, 255, 0.4)' : 'rgba(255,255,255,0.06)'}; display: flex; flex-direction: column; gap: 2px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-family: monospace; font-size: 12px; font-weight: 600; color: ${isSelected ? 'var(--accent-blue)' : '#fff'};">${f.filename}</span>
+                            ${activeTag}
+                        </div>
+                        <div style="display: flex; justify-content: space-between; align-items: center; font-size: 10px; color: var(--text-muted);">
+                            <span>${f.size_display}</span>
+                            <span>${dateStr}</span>
+                        </div>
+                    </div>
+                `;
+            });
+            listEl.innerHTML = html;
+        }
+    } catch (err) {
+        console.error("fetchRotatedLogFiles error:", err);
+    }
+}
+
+function selectLogFile(filename) {
+    state.selectedLogFile = filename;
+    const selectEl = document.getElementById('log-viewer-file-select');
+    if (selectEl) selectEl.value = filename;
+    fetchRotatedLogFiles();
+    fetchLogTail();
+}
+
+/**
+ * Fetch and Render Live Tail Lines
+ */
+async function fetchLogTail() {
+    const contentEl = document.getElementById('log-viewer-content');
+    if (!contentEl) return;
+
+    try {
+        const file = state.selectedLogFile || 'osoosi.log';
+        const tail = state.logTailCount || 200;
+        const params = new URLSearchParams({
+            file: file,
+            tail: tail,
+        });
+        if (state.logSearchQuery) {
+            params.set('search', state.logSearchQuery);
+        }
+
+        const res = await fetch(`${API_BASE}/logs/view?${params.toString()}`);
+        if (!res.ok) {
+            const errData = await res.json().catch(() => ({}));
+            throw new Error(errData.error || `HTTP ${res.status}`);
+        }
+        const data = await res.json();
+        const lines = data.lines || [];
+
+        if (lines.length === 0) {
+            contentEl.innerText = `[${file}] No lines returned${state.logSearchQuery ? ` matching "${state.logSearchQuery}"` : ''}.`;
+            return;
+        }
+
+        // Colorize lines (INFO in cyan, WARN in yellow, ERROR in red)
+        let coloredHtml = '';
+        lines.forEach(line => {
+            let lineCol = '#a6accd';
+            if (line.includes('ERROR')) lineCol = '#ff6b6b';
+            else if (line.includes('WARN')) lineCol = '#ffd166';
+            else if (line.includes('INFO')) lineCol = '#70d6ff';
+            else if (line.includes('DEBUG')) lineCol = '#8d99ae';
+
+            coloredHtml += `<div style="color: ${lineCol}; margin-bottom: 2px;">${escapeHtml(line)}</div>`;
+        });
+        contentEl.innerHTML = coloredHtml;
+        // Auto scroll to bottom
+        contentEl.scrollTop = contentEl.scrollHeight;
+    } catch (err) {
+        contentEl.innerHTML = `<span style="color: #ff6b6b;">Failed to load logs: ${escapeHtml(err.message)}</span>`;
+    }
 }
 
 

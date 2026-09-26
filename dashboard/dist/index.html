@@ -73,6 +73,10 @@
                     <i data-lucide="book-open"></i>
                     <span>Forensic Story</span>
                 </a>
+                <a href="#history" class="nav-item" data-view="history">
+                    <i data-lucide="history"></i>
+                    <span>Forensic History</span>
+                </a>
                 <a href="#" class="nav-item" data-view="skyrl">
                     <i data-lucide="brain-circuit"></i>
                     <span>RL Policy Training</span>
@@ -493,6 +497,15 @@
                         <div class="stat-info">
                             <span class="stat-label">Total Gossip Packets</span>
                             <span class="stat-value" id="gossip-total-received">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper red">
+                            <i data-lucide="shield-alert"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Peer Threats Propagated</span>
+                            <span class="stat-value" id="gossip-threats-count">0</span>
                         </div>
                     </div>
                     <div class="stat-card glass shadow-glow">
@@ -1281,6 +1294,189 @@
                     <div class="mitre-matrix-scroll-wrapper" style="overflow-x: auto; padding-bottom: 12px;">
                         <div id="mitre-matrix-container" class="mitre-matrix-container" style="display: flex; gap: 12px; min-width: 100%; width: max-content;">
                             <div class="placeholder-text" style="padding: 30px; text-align: center; width: 100%;">Loading MITRE ATT&CK Enterprise Matrix...</div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Forensic History View -->
+            <div id="history-view" class="view-content">
+                <div class="view-header-banner mb-4" style="margin-bottom: 20px;">
+                    <h3 style="font-size: 20px; font-weight: 700; color: #fff; margin-bottom: 6px;">Forensic Audit &amp; Threat History</h3>
+                    <p style="font-size: 13px; color: var(--text-muted); margin: 0;">Comprehensive, permanent log of all detected threats, autonomous actions, peer gossip, and system telemetry</p>
+                </div>
+
+                <!-- Stats Grid (4 cards) -->
+                <div class="stats-grid mb-4" style="margin-bottom: 20px;">
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper blue">
+                            <i data-lucide="database"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Total Historical Events</span>
+                            <span class="stat-value" id="hist-total-events">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper red">
+                            <i data-lucide="shield-alert"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Threats Logged</span>
+                            <span class="stat-value" id="hist-threats-count">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper orange">
+                            <i data-lucide="zap"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Actions Executed</span>
+                            <span class="stat-value" id="hist-actions-count">0</span>
+                        </div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-icon-wrapper green">
+                            <i data-lucide="file-text"></i>
+                        </div>
+                        <div class="stat-info">
+                            <span class="stat-label">Rotated Log Files</span>
+                            <span class="stat-value" id="hist-log-files-count">0</span>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Filter & Search Toolbar Card -->
+                <div class="card glass shadow-glow mb-4" style="padding: 16px 20px; margin-bottom: 20px;">
+                    <div style="display: flex; flex-wrap: wrap; gap: 14px; align-items: center; justify-content: space-between;">
+                        <div style="display: flex; flex-wrap: wrap; gap: 12px; align-items: center; flex: 1;">
+                            <div class="search-bar" style="width: 320px; background: rgba(0, 0, 0, 0.3);">
+                                <i data-lucide="search"></i>
+                                <input type="text" id="history-search" placeholder="Search historical events, processes, MITRE IDs, hashes...">
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <label for="history-category-filter" style="font-size: 12px; color: var(--text-muted); font-weight: 500;">Category:</label>
+                                <select id="history-category-filter" style="background: rgba(13, 17, 23, 0.8); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none; cursor: pointer;">
+                                    <option value="all">All Categories</option>
+                                    <option value="threats">Threats</option>
+                                    <option value="actions">Actions</option>
+                                    <option value="gossip">Gossip</option>
+                                    <option value="system">System</option>
+                                </select>
+                            </div>
+                            <div style="display: flex; align-items: center; gap: 8px;">
+                                <label for="history-severity-filter" style="font-size: 12px; color: var(--text-muted); font-weight: 500;">Severity:</label>
+                                <select id="history-severity-filter" style="background: rgba(13, 17, 23, 0.8); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 8px 12px; border-radius: 8px; font-size: 13px; outline: none; cursor: pointer;">
+                                    <option value="all">All Severities</option>
+                                    <option value="critical">Critical</option>
+                                    <option value="high">High</option>
+                                    <option value="medium">Medium</option>
+                                    <option value="low">Low</option>
+                                </select>
+                            </div>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <button id="history-export-btn" class="btn-primary" style="display: flex; align-items: center; gap: 6px; padding: 8px 14px; font-size: 13px; border-radius: 8px; cursor: pointer;">
+                                <i data-lucide="download" style="width: 15px; height: 15px;"></i>
+                                <span>Export CSV</span>
+                            </button>
+                            <button id="history-refresh-btn" class="btn-secondary" style="display: flex; align-items: center; gap: 6px; padding: 8px 14px; font-size: 13px; border-radius: 8px; background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: var(--text-primary); cursor: pointer;">
+                                <i data-lucide="rotate-cw" style="width: 15px; height: 15px;"></i>
+                                <span>Refresh</span>
+                            </button>
+                            <button id="toggle-log-viewer-btn" class="btn-secondary" style="display: flex; align-items: center; gap: 6px; padding: 8px 14px; font-size: 13px; border-radius: 8px; background: rgba(0, 210, 255, 0.1); border: 1px solid rgba(0, 210, 255, 0.3); color: var(--accent-blue); cursor: pointer;">
+                                <i data-lucide="terminal" style="width: 15px; height: 15px;"></i>
+                                <span>Log Viewer</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Log Rotation & Live Tail Panel (Collapsible) -->
+                <div id="history-logs-panel" class="card glass shadow-glow mb-4" style="display: none; padding: 18px; margin-bottom: 20px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 1px solid var(--glass-border); padding-bottom: 10px;">
+                        <div style="display: flex; align-items: center; gap: 10px;">
+                            <i data-lucide="file-code" style="color: var(--accent-blue); width: 18px; height: 18px;"></i>
+                            <h4 style="margin: 0; font-size: 15px; font-weight: 600;">Log Rotation Explorer &amp; Live Tail</h4>
+                            <span id="log-files-badge" style="background: rgba(0, 210, 255, 0.15); color: var(--accent-blue); padding: 2px 8px; border-radius: 12px; font-size: 11px;">0 Files</span>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <select id="log-viewer-file-select" style="background: rgba(13, 17, 23, 0.8); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 6px 12px; border-radius: 6px; font-size: 12px; outline: none; cursor: pointer;">
+                                <option value="osoosi.log">osoosi.log (Active)</option>
+                            </select>
+                            <div class="search-bar" style="width: 220px; background: rgba(0, 0, 0, 0.3); height: 32px;">
+                                <i data-lucide="search" style="width: 13px; height: 13px;"></i>
+                                <input type="text" id="log-viewer-search" placeholder="Filter lines..." style="font-size: 12px;">
+                            </div>
+                            <select id="log-viewer-tail-select" style="background: rgba(13, 17, 23, 0.8); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 6px 10px; border-radius: 6px; font-size: 12px; outline: none; cursor: pointer;">
+                                <option value="100">100 lines</option>
+                                <option value="200" selected>200 lines</option>
+                                <option value="500">500 lines</option>
+                                <option value="1000">1000 lines</option>
+                            </select>
+                            <button id="log-viewer-refresh-btn" style="background: rgba(255,255,255,0.06); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 6px 10px; border-radius: 6px; font-size: 12px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                                <i data-lucide="refresh-cw" style="width: 12px; height: 12px;"></i>
+                                <span>Tail</span>
+                            </button>
+                        </div>
+                    </div>
+
+                    <div style="display: grid; grid-template-columns: 280px 1fr; gap: 14px;">
+                        <!-- Rotated Log Files List -->
+                        <div style="background: rgba(0, 0, 0, 0.25); border: 1px solid var(--glass-border); border-radius: 8px; padding: 10px; max-height: 380px; overflow-y: auto;">
+                            <div style="font-size: 11px; text-transform: uppercase; color: var(--text-muted); font-weight: 600; margin-bottom: 8px; letter-spacing: 0.5px;">Rotated Log Files</div>
+                            <div id="rotated-log-files-list" style="display: flex; flex-direction: column; gap: 6px;">
+                                <div style="font-size: 12px; color: var(--text-muted); text-align: center; padding: 16px;">Scanning logs...</div>
+                            </div>
+                        </div>
+
+                        <!-- Live Terminal Viewer -->
+                        <div style="background: rgba(5, 7, 10, 0.95); border: 1px solid var(--glass-border); border-radius: 8px; padding: 12px; font-family: 'Consolas', 'Courier New', monospace; font-size: 12px; line-height: 1.5; color: #a6accd; max-height: 380px; overflow-y: auto; white-space: pre-wrap; word-break: break-all;" id="log-viewer-content">
+                            Loading log stream...
+                        </div>
+                    </div>
+                </div>
+
+                <!-- History Table Card -->
+                <div class="card glass shadow-glow">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <h3 style="font-size: 16px; font-weight: 600; margin: 0;">Permanent Forensic Event Trail</h3>
+                        <div style="font-size: 12px; color: var(--text-muted);" id="history-count-label">Showing 0 events</div>
+                    </div>
+                    <div class="card-body" style="padding: 0; overflow-x: auto;">
+                        <table class="data-table" style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;">
+                            <thead>
+                                <tr style="border-bottom: 1px solid var(--glass-border); background: rgba(255, 255, 255, 0.02); color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
+                                    <th style="padding: 12px 16px; width: 140px;">Timestamp</th>
+                                    <th style="padding: 12px 16px; width: 130px;">Event Type</th>
+                                    <th style="padding: 12px 16px; width: 100px;">Category</th>
+                                    <th style="padding: 12px 16px; width: 150px;">Process / Actor</th>
+                                    <th style="padding: 12px 16px; width: 160px;">MITRE Technique</th>
+                                    <th style="padding: 12px 16px; width: 100px;">Severity</th>
+                                    <th style="padding: 12px 16px; width: 110px;">Status</th>
+                                    <th style="padding: 12px 16px;">Summary</th>
+                                    <th style="padding: 12px 16px; width: 80px; text-align: right;">Evidence</th>
+                                </tr>
+                            </thead>
+                            <tbody id="history-table-body">
+                                <tr>
+                                    <td colspan="9" style="text-align: center; padding: 30px; color: var(--text-muted);">
+                                        Loading forensic history records...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                    <!-- Pagination Bar -->
+                    <div style="display: flex; justify-content: space-between; align-items: center; padding: 14px 20px; border-top: 1px solid var(--glass-border); background: rgba(0, 0, 0, 0.15);" id="history-pagination">
+                        <div style="font-size: 12px; color: var(--text-muted);" id="history-page-info">Page 1 of 1</div>
+                        <div style="display: flex; gap: 8px;">
+                            <button id="history-prev-btn" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;" disabled>
+                                &larr; Previous
+                            </button>
+                            <button id="history-next-btn" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;" disabled>
+                                Next &rarr;
+                            </button>
                         </div>
                     </div>
                 </div>
