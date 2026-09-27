@@ -1150,4 +1150,39 @@ mod tests {
         assert_eq!(sig3.mitre_tactic.as_deref(), Some("Persistence"));
         assert_eq!(sig3.recommended_action, ResponseAction::Isolate);
     }
+
+    #[tokio::test]
+    async fn test_voter_timeout_demoted_and_treated_as_abstain() {
+        struct TimedOutVoter;
+        #[async_trait]
+        impl ThreatVoter for TimedOutVoter {
+            fn name(&self) -> String {
+                "TimedOutVoter".to_string()
+            }
+            async fn vote(&self, _event: &HostSecurityEvent) -> Option<VoteResult> {
+                tokio::time::sleep(std::time::Duration::from_secs(60)).await;
+                Some(VoteResult {
+                    confidence: 0.99,
+                    reason: "Late detection".to_string(),
+                    weight: 1.0,
+                })
+            }
+        }
+
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory, config);
+        engine.add_voter(Box::new(TimedOutVoter)).await;
+
+        let event = make_event("C:\\Windows\\System32\\cmd.exe", "cmd.exe /c dir");
+
+        tokio::time::pause();
+        let scan_fut = tokio::spawn(async move {
+            engine.scan_event(&event).await
+        });
+        tokio::time::advance(std::time::Duration::from_secs(31)).await;
+        let res = scan_fut.await.unwrap();
+        assert!(res.is_none(), "Timed out voter should be treated as abstain");
+    }
 }
+
