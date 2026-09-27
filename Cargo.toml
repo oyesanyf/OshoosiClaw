@@ -60,6 +60,7 @@ iced-x86 = "1"
 tiquery = { git = "https://github.com/dwmetz/tiquery.git" }
 rand = "0.8"
 rand_distr = "0.4"
+fastrand = "2"
 zeroize = { version = "1", features = ["derive"] }
 wasmtime-wasi = "44.0"
 async-trait = "0.1"
@@ -119,7 +120,7 @@ windows = { version = "0.58", features = [
     "Win32_System_LibraryLoader", "Win32_Storage_FileSystem",
     "Win32_System_Memory", "Win32_System_Diagnostics_Debug",
     "Win32_Security_WinTrust", "Win32_Security_Cryptography",
-    "Win32_System_Pipes",
+    "Win32_System_Pipes", "Win32_System_Diagnostics_ToolHelp",
 ] }
 winapi = { version = "0.3", features = ["memoryapi", "processthreadsapi", "winnt", "handleapi"] }
 winreg = "0.52"

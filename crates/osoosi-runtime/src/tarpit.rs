@@ -1,14 +1,200 @@
-//! Resource Tarpit (Throttling malicious processes).
+//! Resource Tarpit (Throttling and Asymmetric Containment of malicious processes).
 //!
 //! Exerts computational pressure or delays to slow down attackers.
-//! On Windows, uses `SetPriorityClass` + `SetProcessWorkingSetSize` to throttle.
+//! On Windows, uses Toolhelp32 snapshots with `OpenThread`, `SuspendThread`, and `ResumeThread`
+//! combined with `SetPriorityClass` + `SetProcessWorkingSetSize` to throttle.
 //! Falls back to CPU-priority-only if memory throttle fails.
 
+use std::sync::atomic::{AtomicBool, Ordering};
+use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::time::sleep;
 use tracing::{info, warn};
 
-pub struct TarpitManager;
+static GLOBAL_TRAPS: OnceLock<Arc<dashmap::DashMap<u32, Arc<AtomicBool>>>> = OnceLock::new();
+
+fn get_global_traps() -> Arc<dashmap::DashMap<u32, Arc<AtomicBool>>> {
+    GLOBAL_TRAPS.get_or_init(|| Arc::new(dashmap::DashMap::new())).clone()
+}
+
+/// Active thread-level asymmetric tarpit engine.
+#[derive(Clone)]
+pub struct ActiveProcessTarpit {
+    pub active_traps: Arc<dashmap::DashMap<u32, Arc<AtomicBool>>>,
+}
+
+impl Default for ActiveProcessTarpit {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl ActiveProcessTarpit {
+    pub fn new() -> Self {
+        Self {
+            active_traps: get_global_traps(),
+        }
+    }
+
+    pub fn is_trapped(&self, pid: u32) -> bool {
+        self.active_traps
+            .get(&pid)
+            .map(|flag| flag.load(Ordering::Relaxed))
+            .unwrap_or(false)
+    }
+
+    pub fn release_pid(&self, pid: u32) {
+        if let Some((_, flag)) = self.active_traps.remove(&pid) {
+            flag.store(false, Ordering::SeqCst);
+            info!("ActiveProcessTarpit: Released PID {}", pid);
+        }
+    }
+
+    #[cfg(target_os = "windows")]
+    pub fn trap_pid(&self, pid: u32, interval: Duration, max_duration: Duration) {
+        #[derive(Clone, Copy)]
+        struct SendHandle(windows::Win32::Foundation::HANDLE);
+        unsafe impl Send for SendHandle {}
+        unsafe impl Sync for SendHandle {}
+
+        let run_flag = Arc::new(AtomicBool::new(true));
+        self.active_traps.insert(pid, run_flag.clone());
+        let traps = self.active_traps.clone();
+
+        tokio::spawn(async move {
+            info!("ActiveProcessTarpit: Starting asymmetric thread containment loop for PID {}", pid);
+            let start = tokio::time::Instant::now();
+
+            // Collect all threads belonging to pid using Toolhelp32 snapshot
+            let handles: Vec<SendHandle> = unsafe {
+                use windows::Win32::Foundation::CloseHandle;
+                use windows::Win32::System::Diagnostics::ToolHelp::{
+                    CreateToolhelp32Snapshot, Thread32First, Thread32Next, THREADENTRY32,
+                    TH32CS_SNAPTHREAD,
+                };
+                use windows::Win32::System::Threading::{
+                    OpenThread, THREAD_QUERY_INFORMATION, THREAD_SUSPEND_RESUME,
+                };
+
+                let mut list = Vec::new();
+                if let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) {
+                    let mut entry = THREADENTRY32 {
+                        dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+                        ..Default::default()
+                    };
+
+                    if Thread32First(snapshot, &mut entry).is_ok() {
+                        loop {
+                            if entry.th32OwnerProcessID == pid {
+                                match OpenThread(
+                                    THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION,
+                                    false,
+                                    entry.th32ThreadID,
+                                ) {
+                                    Ok(h) => list.push(SendHandle(h)),
+                                    Err(e) => {
+                                        warn!("ActiveProcessTarpit: OpenThread failed for TID {}: {}", entry.th32ThreadID, e);
+                                    }
+                                }
+                            }
+                            if Thread32Next(snapshot, &mut entry).is_err() {
+                                break;
+                            }
+                        }
+                    }
+                    let _ = CloseHandle(snapshot);
+                }
+                list
+            };
+
+            if handles.is_empty() {
+                warn!("ActiveProcessTarpit: No accessible threads found to trap for PID {}", pid);
+                traps.remove(&pid);
+                return;
+            }
+
+            info!(
+                "ActiveProcessTarpit: Intercepted and trapped {} thread(s) for PID {}",
+                handles.len(),
+                pid
+            );
+
+            let mut is_currently_suspended = false;
+            while run_flag.load(Ordering::Relaxed) && start.elapsed() < max_duration {
+                // Call SuspendThread(hThread) on each thread
+                for &h in &handles {
+                    unsafe {
+                        let _ = windows::Win32::System::Threading::SuspendThread(h.0);
+                    }
+                }
+                is_currently_suspended = true;
+
+                // Sleep for interval (chunked so release_pid can cancel promptly)
+                let sleep_chunk = Duration::from_millis(25);
+                let mut slept = Duration::ZERO;
+                while slept < interval && run_flag.load(Ordering::Relaxed) && start.elapsed() < max_duration {
+                    let step = sleep_chunk.min(interval - slept);
+                    tokio::time::sleep(step).await;
+                    slept += step;
+                }
+
+                if !run_flag.load(Ordering::Relaxed) || start.elapsed() >= max_duration {
+                    break;
+                }
+
+                // Briefly call ResumeThread(hThread) for 5-10ms for telemetry observation
+                for &h in &handles {
+                    unsafe {
+                        let _ = windows::Win32::System::Threading::ResumeThread(h.0);
+                    }
+                }
+                is_currently_suspended = false;
+
+                tokio::time::sleep(Duration::from_millis(8)).await;
+            }
+
+            // Ensure all threads are resumed upon loop exit
+            if is_currently_suspended {
+                for &h in &handles {
+                    unsafe {
+                        let _ = windows::Win32::System::Threading::ResumeThread(h.0);
+                    }
+                }
+            }
+
+            // Close all thread handles
+            for h in handles {
+                unsafe {
+                    let _ = windows::Win32::Foundation::CloseHandle(h.0);
+                }
+            }
+
+            traps.remove(&pid);
+            info!("ActiveProcessTarpit: Thread containment terminated and threads released for PID {}", pid);
+        });
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    pub fn trap_pid(&self, pid: u32, interval: Duration, max_duration: Duration) {
+        let run_flag = Arc::new(AtomicBool::new(true));
+        self.active_traps.insert(pid, run_flag.clone());
+        let traps = self.active_traps.clone();
+
+        tokio::spawn(async move {
+            info!("ActiveProcessTarpit (non-Windows fallback): Trapping PID {}", pid);
+            let start = tokio::time::Instant::now();
+            while run_flag.load(Ordering::Relaxed) && start.elapsed() < max_duration {
+                tokio::time::sleep(interval.min(Duration::from_millis(50))).await;
+            }
+            traps.remove(&pid);
+            info!("ActiveProcessTarpit (non-Windows fallback): Released PID {}", pid);
+        });
+    }
+}
+
+pub struct TarpitManager {
+    pub active_tarpit: ActiveProcessTarpit,
+}
 
 impl Default for TarpitManager {
     fn default() -> Self {
@@ -18,18 +204,24 @@ impl Default for TarpitManager {
 
 impl TarpitManager {
     pub fn new() -> Self {
-        Self
+        Self {
+            active_tarpit: ActiveProcessTarpit::new(),
+        }
+    }
+
+    pub fn active_tarpit(&self) -> &ActiveProcessTarpit {
+        &self.active_tarpit
     }
 
     /// Enter a "Tarpit" state for a specific process ID.
-    /// On Windows: drops the process to IDLE priority and shrinks its working set.
-    /// After `duration_secs`, restores normal priority.
+    /// Combines thread-level asymmetric suspension with process priority throttling.
+    /// After `duration_secs`, restores normal priority and releases threads.
     pub async fn apply_tarpit(&self, pid: u32, duration_secs: u64) {
         use sysinfo::{Pid, System};
 
         warn!(
-            "Applying Resource Tarpit to PID {}: Throttling to IDLE priority...",
-            pid
+            "Applying Active Tarpit & Priority Throttling to PID {} for {}s...",
+            pid, duration_secs
         );
 
         let mut s = System::new();
@@ -53,9 +245,18 @@ impl TarpitManager {
             let _ = Self::linux_throttle(pid, true).await;
         }
 
+        // Active thread-level asymmetric containment
+        self.active_tarpit.trap_pid(
+            pid,
+            Duration::from_millis(500),
+            Duration::from_secs(duration_secs),
+        );
+
         sleep(Duration::from_secs(duration_secs)).await;
 
         // Restore after tarpit window closes
+        self.active_tarpit.release_pid(pid);
+
         #[cfg(target_os = "windows")]
         {
             Self::windows_throttle(pid, false);
@@ -262,3 +463,54 @@ impl TarpitManager {
         warn!("Phantom Memory Flux is currently only implemented for Windows.");
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_active_process_tarpit_lifecycle() {
+        let tarpit = ActiveProcessTarpit::new();
+
+        #[cfg(target_os = "windows")]
+        {
+            // Spawn a dummy background process to trap
+            let mut child = std::process::Command::new("powershell.exe")
+                .args(["-NoProfile", "-NonInteractive", "-Command", "Start-Sleep -Seconds 30"])
+                .spawn()
+                .expect("Failed to spawn dummy child process for test");
+
+            let pid = child.id();
+            assert!(pid > 0);
+
+            // Give the child process a moment to initialize its primary thread
+            tokio::time::sleep(Duration::from_millis(300)).await;
+
+            // Trap PID
+            tarpit.trap_pid(pid, Duration::from_millis(50), Duration::from_secs(5));
+            assert!(tarpit.is_trapped(pid));
+
+            // Wait a little while containment runs
+            tokio::time::sleep(Duration::from_millis(200)).await;
+            assert!(tarpit.is_trapped(pid));
+
+            // Cleanly release
+            tarpit.release_pid(pid);
+            tokio::time::sleep(Duration::from_millis(100)).await;
+            assert!(!tarpit.is_trapped(pid));
+
+            // Kill child
+            let _ = child.kill();
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            let dummy_pid = 99999;
+            tarpit.trap_pid(dummy_pid, Duration::from_millis(50), Duration::from_millis(500));
+            assert!(tarpit.is_trapped(dummy_pid));
+            tarpit.release_pid(dummy_pid);
+            assert!(!tarpit.is_trapped(dummy_pid));
+        }
+    }
+}
+

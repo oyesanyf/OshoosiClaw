@@ -3476,7 +3476,7 @@
         "Windows Security 4688 (Process Creation)"
       ],
       "voter": "SigmaVoter",
-      "consensus_action": "Alert",
+      "consensus_action": "Isolate",
       "sigma_rules": [
         "Serv-U Exploitation CVE-2021-35211 by DEV-0322",
         "DarkGate - User Created Via Net.EXE",

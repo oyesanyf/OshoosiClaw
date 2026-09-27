@@ -140,14 +140,90 @@ fn is_trusted_operational_image(event: &osoosi_types::HostSecurityEvent, config:
 }
 
 /// A strict check to prevent OshoosiClaw from committing accidental suicide on the host OS.
-/// This acts as a global veto against autonomous blocks, separate from the general developer tool safelist.
+/// Protects core Windows infrastructure (PIDs 0, 1, 4, smss.exe, csrss.exe, wininit.exe,
+/// services.exe, lsass.exe, winlogon.exe, dwm.exe).
+/// Explicitly excludes administrative CLI tools / LOLBins (net.exe, net1.exe, powershell.exe,
+/// cmd.exe, wmic.exe, schtasks.exe, etc.) so malicious actions like T1136 or T1003 can be contained.
 fn is_system_critical(event: &osoosi_types::HostSecurityEvent) -> bool {
-    let image_path = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+    let pid = event
+        .data
+        .get("ProcessId")
+        .or_else(|| event.data.get("pid"))
+        .and_then(|v| {
+            v.as_u64().or_else(|| {
+                v.as_str().and_then(|s| {
+                    if s.starts_with("0x") || s.starts_with("0X") {
+                        u64::from_str_radix(&s[2..], 16).ok()
+                    } else {
+                        s.parse::<u64>().ok()
+                    }
+                })
+            })
+        })
+        .map(|v| v as u32);
+
+    // Core kernel & system init PIDs
+    if let Some(p) = pid {
+        if p == 0 || p == 1 || p == 4 {
+            return true;
+        }
+    }
+
+    let image_path = event
+        .data
+        .get("Image")
+        .or_else(|| event.data.get("NewProcessName"))
+        .and_then(|v| v.as_str())
+        .unwrap_or("");
     if image_path.is_empty() {
         return false;
     }
     let path_lc = image_path.to_lowercase();
-    
+    let filename = std::path::Path::new(&path_lc)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("");
+
+    // Administrative LOLBins must NEVER be shielded as system-critical when executing commands!
+    let is_admin_lolbin = matches!(
+        filename,
+        "net.exe"
+            | "net1.exe"
+            | "powershell.exe"
+            | "pwsh.exe"
+            | "cmd.exe"
+            | "wmic.exe"
+            | "schtasks.exe"
+            | "reg.exe"
+            | "vssadmin.exe"
+            | "wbadmin.exe"
+            | "bcdedit.exe"
+            | "rundll32.exe"
+            | "mshta.exe"
+            | "certutil.exe"
+            | "bitsadmin.exe"
+    );
+    if is_admin_lolbin {
+        return false;
+    }
+
+    // Explicitly protect true core Windows operating system infrastructure
+    let is_core_os_binary = matches!(
+        filename,
+        "smss.exe"
+            | "csrss.exe"
+            | "wininit.exe"
+            | "services.exe"
+            | "lsass.exe"
+            | "winlogon.exe"
+            | "dwm.exe"
+            | "ntoskrnl.exe"
+            | "system"
+    );
+    if is_core_os_binary {
+        return true;
+    }
+
     // Path Constraint: Must execute from core Windows directories.
     let is_critical_path = path_lc.contains("\\windows\\system32\\") || 
                           path_lc.contains("\\windows\\syswow64\\") ||
@@ -166,6 +242,142 @@ fn is_system_critical(event: &osoosi_types::HostSecurityEvent) -> bool {
         }
     }
     
+    false
+}
+
+/// Extract unauthorized account username from command lines executing T1136.001.
+pub fn extract_created_username(cmd: &str) -> Option<String> {
+    let cmd_clean = cmd.trim();
+    let cmd_lower = cmd_clean.to_lowercase();
+
+    // Check net / net1 user ... /add
+    let tokens: Vec<&str> = cmd_clean.split_whitespace().collect();
+    if let Some(user_idx) = tokens.iter().position(|&t| t.eq_ignore_ascii_case("user")) {
+        let is_net = user_idx > 0 && {
+            let prev = tokens[user_idx - 1].to_lowercase();
+            let prev_clean = prev.trim_matches(|c| c == '"' || c == '\'');
+            let prev_fn = std::path::Path::new(prev_clean)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or(prev_clean);
+            prev_fn == "net" || prev_fn == "net.exe" || prev_fn == "net1" || prev_fn == "net1.exe"
+        };
+        let has_add = tokens.iter().any(|&t| t.eq_ignore_ascii_case("/add") || t.eq_ignore_ascii_case("-add"));
+        if is_net && has_add {
+            for t in &tokens[user_idx + 1..] {
+                if t.starts_with('/') || t.starts_with('-') {
+                    continue;
+                }
+                let user = t.trim_matches(|c| c == '"' || c == '\'');
+                if !user.is_empty() {
+                    return Some(user.to_string());
+                }
+            }
+        }
+    }
+
+    // Check New-LocalUser -Name <username>
+    if cmd_lower.contains("new-localuser") {
+        for (i, &t) in tokens.iter().enumerate() {
+            if t.eq_ignore_ascii_case("-name") || t.eq_ignore_ascii_case("-n") {
+                if let Some(next) = tokens.get(i + 1) {
+                    let user = next.trim_matches(|c| c == '"' || c == '\'');
+                    if !user.is_empty() {
+                        return Some(user.to_string());
+                    }
+                }
+            }
+        }
+        if let Some(cmd_idx) = tokens.iter().position(|&t| t.to_lowercase().contains("new-localuser")) {
+            for t in &tokens[cmd_idx + 1..] {
+                if t.starts_with('-') || t.starts_with('/') {
+                    continue;
+                }
+                let user = t.trim_matches(|c| c == '"' || c == '\'');
+                if !user.is_empty() {
+                    return Some(user.to_string());
+                }
+            }
+        }
+    }
+
+    None
+}
+
+/// Helper to determine if a detected threat signature matches any cataloged attack pattern.
+fn is_mitre_catalog_attack(sig: &osoosi_types::ThreatSignature, event: &osoosi_types::HostSecurityEvent) -> bool {
+    if let Some(ref tech) = sig.mitre_technique {
+        if tech.starts_with('T') || tech.starts_with('t') {
+            return true;
+        }
+    }
+    if let Some(ref tac) = sig.mitre_tactic {
+        if !tac.is_empty() {
+            return true;
+        }
+    }
+    if let Some(ref reason) = sig.reason {
+        if reason.contains("T1") || reason.contains("attack.t") || reason.contains("AML.T") {
+            return true;
+        }
+    }
+    let cmd = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("");
+    let img = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+    if osoosi_policy::mitre_kb::infer_mitre_from_event(event.event_id as u32, img, cmd).is_some() {
+        return true;
+    }
+    false
+}
+
+/// Identify high-confidence destructive mutations that demand immediate containment/termination.
+fn is_destructive_mutation(sig: &osoosi_types::ThreatSignature, event: &osoosi_types::HostSecurityEvent) -> bool {
+    let cmd = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+    let img = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("").to_lowercase();
+    let reason = sig.reason.as_deref().unwrap_or("").to_lowercase();
+    let tech = sig.mitre_technique.as_deref().unwrap_or("");
+
+    // Unauthorized account creation (T1136)
+    if tech.starts_with("T1136") 
+        || ((cmd.contains("net user") || cmd.contains("net1 user")) && cmd.contains("/add"))
+        || cmd.contains("new-localuser")
+    {
+        return true;
+    }
+
+    // Shadow copy / backup deletion (T1490)
+    if tech.starts_with("T1490")
+        || cmd.contains("vssadmin delete shadows")
+        || cmd.contains("wbadmin delete catalog")
+        || cmd.contains("bcdedit") && cmd.contains("recoveryenabled no")
+    {
+        return true;
+    }
+
+    // Ransomware encryption (T1486)
+    if tech.starts_with("T1486") || reason.contains("ransomware") || reason.contains("encryption") {
+        return true;
+    }
+
+    // Credential dumping / LSASS dumping (T1003)
+    if tech.starts_with("T1003")
+        || cmd.contains("procdump")
+        || cmd.contains("comsvcs.dll")
+        || cmd.contains("minidump")
+        || img.contains("mimikatz")
+    {
+        return true;
+    }
+
+    // Process Hollowing / Remote Injection (T1055)
+    if tech.starts_with("T1055") || reason.contains("hollowing") || reason.contains("injection") {
+        return true;
+    }
+
+    // Defense Impairment (T1562)
+    if tech.starts_with("T1562") || (cmd.contains("sc stop") && cmd.contains("windefend")) || cmd.contains("disable-antivirus") {
+        return true;
+    }
+
     false
 }
 
@@ -3288,8 +3500,23 @@ impl EdrOrchestrator {
 
             // 2. Autonomous Remediation Logic (same confidence gate as deep pipeline)
             let autonomy = osoosi_types::load_autonomy_config();
+            let is_catalog_attack = is_mitre_catalog_attack(&signature, &event);
+            let is_destructive = is_destructive_mutation(&signature, &event);
+
             let effective_action = if signature.confidence >= autonomy.action_confidence_threshold {
                 signature.recommended_action
+            } else if is_catalog_attack {
+                warn!(
+                    "AUDIT OVERRIDE: Active MITRE catalog attack detected in fast path ({:?}: {:?}). Escalating from Audit to active containment!",
+                    signature.mitre_technique, signature.id
+                );
+                if is_destructive || signature.recommended_action == ResponseAction::Isolate {
+                    ResponseAction::Isolate
+                } else if signature.recommended_action == ResponseAction::GhostTarpit {
+                    ResponseAction::GhostTarpit
+                } else {
+                    ResponseAction::Tarpit
+                }
             } else {
                 info!(
                     "Fast-path threat confidence {:.2} below action threshold {:.2}: using Alert only",
@@ -3357,9 +3584,37 @@ impl EdrOrchestrator {
                                 }
                             });
                         }
+
+                        // Autonomous account rollback for T1136.001
+                        if let Some(cmd) = event.data.get("CommandLine").and_then(|v| v.as_str()) {
+                            if let Some(username) = extract_created_username(cmd) {
+                                warn!("Autonomous Account Rollback: Detected T1136.001 rogue account creation for user '{}'. Enqueueing deletion task.", username);
+                                self.trigger_account_rollback(username);
+                            }
+                        }
                     }
                 }
                 action => {
+                    // When applying Tarpit or GhostTarpit, immediately freeze process threads
+                    if matches!(action, ResponseAction::Tarpit | ResponseAction::GhostTarpit) {
+                        if let Some(pid) = event.data.get("ProcessId").and_then(|v| v.as_u64()) {
+                            warn!("Immediately freezing process threads via ActiveProcessTarpit for PID: {}", pid);
+                            let active_tarpit = osoosi_runtime::tarpit::ActiveProcessTarpit::new();
+                            let dur_secs = if action == ResponseAction::GhostTarpit { 120 } else { 60 };
+                            active_tarpit.trap_pid(
+                                pid as u32,
+                                std::time::Duration::from_millis(500),
+                                std::time::Duration::from_secs(dur_secs),
+                            );
+                        }
+                        if let Some(cmd) = event.data.get("CommandLine").and_then(|v| v.as_str()) {
+                            if let Some(username) = extract_created_username(cmd) {
+                                warn!("Autonomous Account Rollback: Detected T1136.001 rogue account creation for user '{}'. Enqueueing deletion task.", username);
+                                self.trigger_account_rollback(username);
+                            }
+                        }
+                    }
+
                     // Perform non-isolating actions (Tarpit, Deception, Alert)
                     let orch = self.clone();
                     let ev = event.clone();
@@ -3946,8 +4201,23 @@ impl EdrOrchestrator {
 
         // 2. Dispatch Active Response based on Decision Matrix
         let autonomy = osoosi_types::load_autonomy_config();
+        let is_catalog_attack = is_mitre_catalog_attack(&signature, &event);
+        let is_destructive = is_destructive_mutation(&signature, &event);
+
         let mut effective_action = if signature.confidence >= autonomy.action_confidence_threshold {
             signature.recommended_action
+        } else if is_catalog_attack {
+            warn!(
+                "AUDIT OVERRIDE: Active MITRE catalog attack detected in deep pipeline ({:?}: {:?}). Escalating from Audit to active containment!",
+                signature.mitre_technique, signature.id
+            );
+            if is_destructive || signature.recommended_action == ResponseAction::Isolate {
+                ResponseAction::Isolate
+            } else if signature.recommended_action == ResponseAction::GhostTarpit {
+                ResponseAction::GhostTarpit
+            } else {
+                ResponseAction::Tarpit
+            }
         } else {
             info!(
                 "Threat confidence {:.2} below action threshold {:.2}: downgrading to Alert",
@@ -3961,7 +4231,26 @@ impl EdrOrchestrator {
         {
             if effective_action != ResponseAction::Alert {
                 if let Some(file_path) = event.data.get("Image").and_then(|i| i.as_str()) {
-                    if crate::system_check::validate_windows_file_integrity(file_path).await {
+                    let file_lower = file_path.to_lowercase();
+                    let is_lolbin = file_lower.ends_with("net.exe")
+                        || file_lower.ends_with("net1.exe")
+                        || file_lower.ends_with("powershell.exe")
+                        || file_lower.ends_with("pwsh.exe")
+                        || file_lower.ends_with("cmd.exe")
+                        || file_lower.ends_with("wmic.exe")
+                        || file_lower.ends_with("schtasks.exe")
+                        || file_lower.ends_with("reg.exe")
+                        || file_lower.ends_with("vssadmin.exe");
+
+                    let is_threat = signature.mitre_technique.as_deref().map(|t| {
+                        t.starts_with("T1136") || t.starts_with("T1003") || t.starts_with("T1490") || t.starts_with("T1059") || t.starts_with("T1055")
+                    }).unwrap_or(false)
+                        || signature.reason.as_deref().map(|r| r.contains("T1136") || r.contains("T1003") || r.contains("T1490")).unwrap_or(false);
+
+                    // Administrative LOLBins executing active threat signatures cannot use SFC to veto mitigation!
+                    if is_lolbin && is_threat {
+                        warn!("SFC SAFETY BYPASS: Process {} is an administrative LOLBin executing threat {:?}. SFC override disallowed.", file_path, signature.id);
+                    } else if crate::system_check::validate_windows_file_integrity(file_path).await {
                         warn!("SFC SAFETY OVERRIDE: File {} verified as clean by Windows SFC. Downgrading action to Alert.", file_path);
                         effective_action = ResponseAction::Alert;
                     }
@@ -6022,6 +6311,43 @@ impl EdrOrchestrator {
         self.browser_guard.run_sweep().await
     }
 
+    /// Autonomous account deletion rollback for T1136.001 rogue account creation.
+    pub fn trigger_account_rollback(&self, username: String) {
+        let audit = self.audit.clone();
+        tokio::spawn(async move {
+            tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
+            #[cfg(target_os = "windows")]
+            {
+                let res = tokio::process::Command::new("net.exe")
+                    .args(["user", &username, "/delete"])
+                    .output()
+                    .await;
+                match res {
+                    Ok(output) if output.status.success() => {
+                        warn!("[AUTONOMOUS_ROLLBACK] Successfully removed unauthorized account created by T1136.001: {}", username);
+                        audit.log("AUTONOMOUS_ROLLBACK", serde_json::json!({
+                            "technique": "T1136.001",
+                            "user": username,
+                            "status": "success",
+                            "method": "net user /delete"
+                        }));
+                    }
+                    Ok(output) => {
+                        let err_msg = String::from_utf8_lossy(&output.stderr);
+                        warn!("[AUTONOMOUS_ROLLBACK] Failed or account already removed: {} - {}", username, err_msg.trim());
+                    }
+                    Err(e) => {
+                        warn!("[AUTONOMOUS_ROLLBACK] Command execution failed: {}", e);
+                    }
+                }
+            }
+            #[cfg(not(target_os = "windows"))]
+            {
+                warn!("[AUTONOMOUS_ROLLBACK] Rollback requested for user {}: (non-Windows platform)", username);
+            }
+        });
+    }
+
     /// Execute the recommended action for a threat.
     pub async fn perform_action(
         &self,
@@ -6044,16 +6370,27 @@ impl EdrOrchestrator {
             }
             ResponseAction::Tarpit => {
                 warn!(
-                    "Action: Applying Resource Tarpit to PID (confidence {:.2})",
+                    "Action: Applying Active Resource Tarpit to PID (confidence {:.2})",
                     signature.confidence
                 );
                 if let Some(pid) = event.data.get("ProcessId").and_then(|p| p.as_u64()) {
                     let tarpit = TarpitManager::new();
+                    // Freeze threads immediately
+                    tarpit.active_tarpit.trap_pid(
+                        pid as u32,
+                        std::time::Duration::from_millis(500),
+                        std::time::Duration::from_secs(60),
+                    );
                     tarpit.apply_tarpit(pid as u32, 60).await;
                     self.audit.log(
                         "RESPONSE_ACTION",
                         serde_json::json!({"type": "Tarpit", "pid": pid}),
                     );
+                }
+                if let Some(cmd) = event.data.get("CommandLine").and_then(|v| v.as_str()) {
+                    if let Some(username) = extract_created_username(cmd) {
+                        self.trigger_account_rollback(username);
+                    }
                 }
                 if let Some(msg) =
                     crate::otx_tarpit::try_apply_process_network_qostarpit(event, signature, action)
@@ -6068,14 +6405,25 @@ impl EdrOrchestrator {
             ResponseAction::GhostTarpit => {
                 let traps_path = &self.runtime_config.traps_path;
                 warn!(
-                    "Action: Multi-tier Response (Ghost + Tarpit) active (confidence {:.2})",
+                    "Action: Multi-tier Response (Ghost + Active Tarpit) active (confidence {:.2})",
                     signature.confidence
                 );
                 self.response.spawn_ghost_files(traps_path).await?;
                 if let Some(pid) = event.data.get("ProcessId").and_then(|p| p.as_u64()) {
                     let tarpit = TarpitManager::new();
+                    // Freeze threads immediately
+                    tarpit.active_tarpit.trap_pid(
+                        pid as u32,
+                        std::time::Duration::from_millis(500),
+                        std::time::Duration::from_secs(120),
+                    );
                     tarpit.apply_tarpit(pid as u32, 120).await;
                     self.audit.log("RESPONSE_ACTION", serde_json::json!({"type": "GhostTarpit", "pid": pid, "ghost_path": traps_path}));
+                }
+                if let Some(cmd) = event.data.get("CommandLine").and_then(|v| v.as_str()) {
+                    if let Some(username) = extract_created_username(cmd) {
+                        self.trigger_account_rollback(username);
+                    }
                 }
                 if crate::firewall::autoblock_enabled() {
                     let pid = event
@@ -6116,7 +6464,7 @@ impl EdrOrchestrator {
                     .log("RESPONSE_ACTION", serde_json::json!({"type": "Alert"}));
             }
             ResponseAction::Isolate => {
-                warn!("Action: Targeted Process Block (confidence {:.2}) — blocking process network; full host isolation skipped for safety", signature.confidence);
+                warn!("Action: Targeted Process Block & Termination (confidence {:.2})", signature.confidence);
                 self.audit.log("RESPONSE_ACTION", serde_json::json!({"type": "TargetedProcessBlock", "confidence": signature.confidence}));
 
                 if let Some(pid) = event
@@ -6126,6 +6474,16 @@ impl EdrOrchestrator {
                     .map(|v| v as u32)
                 {
                     let image = event.data.get("Image").and_then(|i| i.as_str());
+
+                    // Terminate the process tree immediately
+                    warn!("Terminating malicious process PID: {}", pid);
+                    if let Err(e) = self.remediation.kill_process_tree(pid) {
+                        warn!("Failed to terminate process PID {}: {}", pid, e);
+                    } else {
+                        info!("Successfully terminated process PID: {}", pid);
+                    }
+
+                    // Block network access via WFP
                     match crate::firewall::block_process_network(Some(pid), image) {
                         Ok(msg) => {
                             warn!("Targeted firewall block applied: {}", msg);
@@ -6140,6 +6498,14 @@ impl EdrOrchestrator {
                             );
                         }
                         Err(e) => warn!("Targeted firewall block failed: {}", e),
+                    }
+                }
+
+                // Rollback unauthorized accounts created by T1136.001
+                if let Some(cmd) = event.data.get("CommandLine").and_then(|v| v.as_str()) {
+                    if let Some(username) = extract_created_username(cmd) {
+                        warn!("Autonomous Account Rollback: Detected T1136.001 rogue account creation for user '{}'. Enqueueing deletion task.", username);
+                        self.trigger_account_rollback(username);
                     }
                 }
             }
@@ -6542,6 +6908,119 @@ mod tests {
             EdrOrchestrator::compute_suppression_key(&sig_colon),
             "unknown:cmd.exe:generic"
         );
+    }
+
+    fn make_test_event(data: serde_json::Value) -> osoosi_types::HostSecurityEvent {
+        osoosi_types::HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: chrono::Utc::now(),
+            computer: "TEST-PC".to_string(),
+            data,
+            causal_parent: None,
+        }
+    }
+
+    #[test]
+    fn test_is_system_critical_lolbin_exclusion() {
+        let lolbin_net = make_test_event(serde_json::json!({
+            "ProcessId": 1234,
+            "Image": r"C:\Windows\System32\net.exe",
+        }));
+        assert!(
+            !is_system_critical(&lolbin_net),
+            "net.exe must not be marked system critical"
+        );
+
+        let lolbin_ps = make_test_event(serde_json::json!({
+            "ProcessId": 1235,
+            "Image": r"C:\Windows\System32\powershell.exe",
+        }));
+        assert!(
+            !is_system_critical(&lolbin_ps),
+            "powershell.exe must not be marked system critical"
+        );
+
+        let lolbin_cmd = make_test_event(serde_json::json!({
+            "ProcessId": 1236,
+            "Image": r"C:\Windows\System32\cmd.exe",
+        }));
+        assert!(
+            !is_system_critical(&lolbin_cmd),
+            "cmd.exe must not be marked system critical"
+        );
+
+        // Core system infrastructure must be protected
+        let core_pid4 = make_test_event(serde_json::json!({
+            "ProcessId": 4,
+        }));
+        assert!(
+            is_system_critical(&core_pid4),
+            "PID 4 must be system critical"
+        );
+
+        let core_lsass = make_test_event(serde_json::json!({
+            "ProcessId": 5678,
+            "Image": r"C:\Windows\System32\lsass.exe",
+        }));
+        assert!(
+            is_system_critical(&core_lsass),
+            "lsass.exe must be system critical"
+        );
+
+        let core_csrss = make_test_event(serde_json::json!({
+            "ProcessId": 5679,
+            "Image": r"C:\Windows\System32\csrss.exe",
+        }));
+        assert!(
+            is_system_critical(&core_csrss),
+            "csrss.exe must be system critical"
+        );
+    }
+
+    #[test]
+    fn test_extract_created_username() {
+        assert_eq!(
+            extract_created_username("net user rogue_admin P@ssw0rd123 /add"),
+            Some("rogue_admin".to_string())
+        );
+        assert_eq!(
+            extract_created_username("net1.exe user \"backdoor_user\" Password! /add"),
+            Some("backdoor_user".to_string())
+        );
+        assert_eq!(
+            extract_created_username("New-LocalUser -Name backdoor -Password $pass"),
+            Some("backdoor".to_string())
+        );
+        assert_eq!(
+            extract_created_username("New-LocalUser -Name \"hacker_acc\""),
+            Some("hacker_acc".to_string())
+        );
+        assert_eq!(
+            extract_created_username("net user /delete rogue_admin"),
+            None
+        );
+        assert_eq!(
+            extract_created_username("whoami /all"),
+            None
+        );
+    }
+
+    #[test]
+    fn test_catalog_attack_and_destructive_detection() {
+        let mut sig = ThreatSignature::default();
+        sig.mitre_technique = Some("T1136.001".to_string());
+        let ev = make_test_event(serde_json::json!({
+            "CommandLine": "net user attacker P@ss /add",
+        }));
+
+        assert!(is_mitre_catalog_attack(&sig, &ev));
+        assert!(is_destructive_mutation(&sig, &ev));
+
+        let mut dump_sig = ThreatSignature::default();
+        dump_sig.mitre_technique = Some("T1003.001".to_string());
+        assert!(is_mitre_catalog_attack(&dump_sig, &ev));
+        assert!(is_destructive_mutation(&dump_sig, &ev));
     }
 }
 

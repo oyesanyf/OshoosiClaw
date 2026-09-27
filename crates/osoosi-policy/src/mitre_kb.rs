@@ -412,6 +412,23 @@ pub fn get_static_techniques() -> Vec<MitreTechnique> {
 
         // --- 5. Persistence (TA0003) ---
         MitreTechnique {
+            id: "T1136".into(),
+            name: "Create Account".into(),
+            tactic_id: "TA0003".into(),
+            tactic_name: "Persistence".into(),
+            description: "Adversaries may create an account to maintain access to victim systems.".into(),
+            data_sources: vec!["Sysmon Event 1 (Process Create)".into(), "Windows Security 4688".into()],
+            mitigations: vec!["M1026: Privileged Account Management".into()],
+            groups: vec!["Wizard Spider".into(), "APT29".into(), "LAPSUS$".into()],
+            detection_mechanisms: vec!["Sigma Rule Detection".into(), "Autonomous Account Rollback".into()],
+            subtechniques: vec![
+                MitreSubtechnique::new("T1136.001", "Local Account", "Adversaries may create a local account to maintain access to victim systems."),
+                MitreSubtechnique::new("T1136.002", "Domain Account", "Adversaries may create a domain account to maintain access to victim systems."),
+                MitreSubtechnique::new("T1136.003", "Cloud Account", "Adversaries may create a cloud account to maintain access to victim systems."),
+            ],
+            ..Default::default()
+        },
+        MitreTechnique {
             id: "T1547".into(),
             name: "Boot or Logon Autostart Execution".into(),
             tactic_id: "TA0003".into(),
@@ -1604,6 +1621,7 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
     let words = text_lower.split(|c: char| {
         c.is_whitespace() || c == ',' || c == ';' || c == ':' || c == '[' || c == ']' || c == '(' || c == ')' || c == '{' || c == '}' || c == '|' || c == '/' || c == '\\' || c == '"' || c == '\''
     });
+    let mut matches = Vec::new();
     for raw_word in words {
         let word = raw_word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_');
         let candidate = word
@@ -1614,7 +1632,7 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
         let cand_norm = candidate.replace(['-', '_'], ".");
         if cand_norm.starts_with("aml.t") {
             if let Some(tech) = lookup_technique(&cand_norm) {
-                return Some((tech.tactic_name, tech.id, tech.name));
+                matches.push((tech.tactic_name, tech.id, tech.name));
             }
         } else if candidate.starts_with('t') && candidate.len() >= 5 {
             let num_part = &candidate[1..5];
@@ -1622,12 +1640,21 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
                 if let Some(tech) = lookup_technique(candidate) {
                     // Check if candidate matched a specific subtechnique
                     if let Some(sub) = tech.subtechniques.iter().find(|s| s.id.eq_ignore_ascii_case(candidate)) {
-                        return Some((tech.tactic_name, sub.id.clone(), format!("{}: {}", tech.name, sub.name)));
+                        matches.push((tech.tactic_name, sub.id.clone(), format!("{}: {}", tech.name, sub.name)));
+                    } else {
+                        matches.push((tech.tactic_name, tech.id, tech.name));
                     }
-                    return Some((tech.tactic_name, tech.id, tech.name));
                 }
             }
         }
+    }
+
+    if !matches.is_empty() {
+        // Prioritize specific high-impact subtechniques like T1136.001 over generic execution like T1059.001
+        if let Some(pos) = matches.iter().position(|m| m.1.eq_ignore_ascii_case("T1136.001") || m.1.eq_ignore_ascii_case("T1136")) {
+            return Some(matches.remove(pos));
+        }
+        return Some(matches.remove(0));
     }
 
     // Check for tactic-level tags like attack.execution, attack.defense_evasion, etc.
@@ -1643,6 +1670,17 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
     }
 
     // Keyword heuristics if no explicit ID found
+    if ((text_lower.contains("net user") || text_lower.contains("net1 user")) && text_lower.contains("/add"))
+        || text_lower.contains("new-localuser")
+        || text_lower.contains("t1136.001")
+        || text_lower.contains("t1136")
+    {
+        return Some((
+            "Persistence".into(),
+            "T1136.001".into(),
+            "Create Account: Local Account".into(),
+        ));
+    }
     if text_lower.contains("systeminfo") {
         return lookup_technique("T1082").map(|t| (t.tactic_name, t.id, t.name));
     }
@@ -1676,6 +1714,16 @@ pub fn infer_mitre_from_event(
 
     // 1. Process Creation & Execution Commands (Sysmon Event ID 1)
     if event_id == 1 || event_id == 0 {
+        // Persistence: Create Account: Local Account (T1136.001)
+        if (cmd_lower.contains("net user") || cmd_lower.contains("net1 user")) && cmd_lower.contains("/add")
+            || cmd_lower.contains("new-localuser")
+        {
+            return Some((
+                "Persistence".into(),
+                "T1136.001".into(),
+                "Create Account: Local Account".into(),
+            ));
+        }
         // Impact: Inhibit System Recovery (T1490)
         if cmd_lower.contains("vssadmin delete shadows")
             || cmd_lower.contains("wbadmin delete catalog")
@@ -2081,6 +2129,19 @@ mod tests {
             .expect("infer T1055.001");
         assert_eq!(tac, "Privilege Escalation");
         assert_eq!(tech, "T1055.001");
+
+        // net user /add -> T1136.001
+        let (tac, tech, name) = infer_mitre_from_event(1, "net.exe", "net user attacker P@ss123 /add")
+            .expect("infer T1136.001");
+        assert_eq!(tac, "Persistence");
+        assert_eq!(tech, "T1136.001");
+        assert_eq!(name, "Create Account: Local Account");
+
+        // New-LocalUser -> T1136.001
+        let (tac, tech, _) = infer_mitre_from_event(1, "powershell.exe", "New-LocalUser -Name backdoor")
+            .expect("infer T1136.001");
+        assert_eq!(tac, "Persistence");
+        assert_eq!(tech, "T1136.001");
     }
 
     #[test]
@@ -2100,6 +2161,18 @@ mod tests {
             .expect("extract T1059.001");
         assert_eq!(sub_res.1, "T1059.001");
         assert_eq!(sub_res.0, "Execution");
+
+        // Prioritization test: attack.t1136.001 must take precedence over attack.t1059.001
+        let prio_res = extract_mitre_from_text("Alert: attack.t1059.001 attack.t1136.001 rogue user creation")
+            .expect("prioritize T1136.001");
+        assert_eq!(prio_res.1, "T1136.001");
+        assert_eq!(prio_res.0, "Persistence");
+
+        // Keyword heuristic test
+        let kw_res = extract_mitre_from_text("Unauthorized local account: net user rogue_admin /add")
+            .expect("extract from keyword heuristic");
+        assert_eq!(kw_res.1, "T1136.001");
+        assert_eq!(kw_res.0, "Persistence");
 
         // Tactic tag parsing
         let tac_res = extract_mitre_from_text("Alert tags: attack.privilege_escalation")

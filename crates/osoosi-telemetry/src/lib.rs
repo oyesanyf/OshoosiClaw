@@ -11,6 +11,7 @@ pub mod host_events;
 pub mod injector;
 pub mod native;
 pub mod linux_ebpf;
+pub mod hollowing;
 pub mod provisioning;
 
 pub use canary::*;
@@ -20,3 +21,4 @@ pub use hash::*;
 pub use host_events::*;
 pub use provisioning::*;
 pub use injector::*;
+pub use hollowing::*;
