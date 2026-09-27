@@ -1654,6 +1654,17 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
         if let Some(pos) = matches.iter().position(|m| m.1.eq_ignore_ascii_case("T1136.001") || m.1.eq_ignore_ascii_case("T1136")) {
             return Some(matches.remove(pos));
         }
+        // Also prioritize credential access T1003, process injection T1055, or impact T1490 over generic execution
+        if let Some(pos) = matches.iter().position(|m| {
+            let id = m.1.to_ascii_uppercase();
+            id.starts_with("T1003") || id.starts_with("T1055") || id.starts_with("T1490")
+        }) {
+            return Some(matches.remove(pos));
+        }
+        // Prioritize any specific non-T1059 technique over generic script execution T1059
+        if let Some(pos) = matches.iter().position(|m| !m.1.to_ascii_uppercase().starts_with("T1059")) {
+            return Some(matches.remove(pos));
+        }
         return Some(matches.remove(0));
     }
 
@@ -1712,8 +1723,8 @@ pub fn infer_mitre_from_event(
     let img_lower = image.to_lowercase();
     let cmd_lower = command_line.to_lowercase();
 
-    // 1. Process Creation & Execution Commands (Sysmon Event ID 1)
-    if event_id == 1 || event_id == 0 {
+    // 1. Process Creation & Execution Commands (Sysmon Event ID 1 / Windows Security 4688)
+    if event_id == 1 || event_id == 0 || event_id == 4688 {
         // Persistence: Create Account: Local Account (T1136.001)
         if (cmd_lower.contains("net user") || cmd_lower.contains("net1 user")) && cmd_lower.contains("/add")
             || cmd_lower.contains("new-localuser")

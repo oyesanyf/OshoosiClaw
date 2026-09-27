@@ -52,6 +52,14 @@ impl ActiveProcessTarpit {
 
     #[cfg(target_os = "windows")]
     pub fn trap_pid(&self, pid: u32, interval: Duration, max_duration: Duration) {
+        // Prevent duplicate concurrent trapping loops on the same PID
+        if let Some(existing) = self.active_traps.get(&pid) {
+            if existing.load(Ordering::Relaxed) {
+                info!("ActiveProcessTarpit: PID {} is already actively trapped", pid);
+                return;
+            }
+        }
+
         #[derive(Clone, Copy)]
         struct SendHandle(windows::Win32::Foundation::HANDLE);
         unsafe impl Send for SendHandle {}
@@ -157,7 +165,10 @@ impl ActiveProcessTarpit {
             if is_currently_suspended {
                 for &h in &handles {
                     unsafe {
-                        let _ = windows::Win32::System::Threading::ResumeThread(h.0);
+                        let mut count = windows::Win32::System::Threading::ResumeThread(h.0);
+                        while count > 1 && count != u32::MAX {
+                            count = windows::Win32::System::Threading::ResumeThread(h.0);
+                        }
                     }
                 }
             }
@@ -176,6 +187,12 @@ impl ActiveProcessTarpit {
 
     #[cfg(not(target_os = "windows"))]
     pub fn trap_pid(&self, pid: u32, interval: Duration, max_duration: Duration) {
+        if let Some(existing) = self.active_traps.get(&pid) {
+            if existing.load(Ordering::Relaxed) {
+                return;
+            }
+        }
+
         let run_flag = Arc::new(AtomicBool::new(true));
         self.active_traps.insert(pid, run_flag.clone());
         let traps = self.active_traps.clone();

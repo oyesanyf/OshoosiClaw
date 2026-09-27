@@ -21,6 +21,7 @@
   <a href="#-dns-telemetry-setup">DNS & Sysmon Setup</a> •
   <a href="#-two-host-mesh-consensus">Two-Host BFT Mesh</a> •
   <a href="#-rl-adaptive-controller">6-Pillar RL Controller</a> •
+  <a href="#-active-process--memory-tarpit-hollowing-containment">Active Tarpit & Hollowing</a> •
   <a href="#-adversarial-verification">Adversarial Testing</a> •
   <a href="#-synthetic-telemetry-canaries--anti-blinding-engine">Canary Anti-Blinding</a> •
   <a href="#-mitre-attck--atlas-enterprise-framework">MITRE ATT&CK & ATLAS</a> •
@@ -557,6 +558,55 @@ The built-in web dashboard provides an interactive **MITRE ATT&CK & ATLAS Matrix
   - Responsible consensus voter and autonomous response action.
 - **Search & Multi-Dimensional Filtering**: Search by keyword, technique ID, tactic, platform, or APT threat actor.
 - **Live STIX Status & Mesh Sync**: Displays real-time catalog metadata (`MITRE ATT&CK Enterprise + ATLAS v2026.09 (26,381 objects)`), Blake3 integrity hash, and provides an on-demand **Sync Wire Catalog** action triggering `POST /api/mitre/stix/update`.
+
+---
+
+<a id="-active-process--memory-tarpit-hollowing-containment"></a>
+## 🪤 Active Process & Memory Tarpit, Hollowing Interception & T1136 Containment
+
+To prevent adversaries and penetration testing automation (such as Atomic Red Team / `edr_tester.py`) from executing system-altering persistence, tampering, or process hollowing, OpenỌ̀ṣọ́ọ̀sì implements low-level thread interception, memory tampering defenses, differential privacy telemetry perturbation, and autonomous rollback across all 266 MITRE ATT&CK patterns:
+
+```
+                                  ADVERSARY TAMPERING INTERCEPTION
+                                  
+   Process Spawn Event              CREATE_SUSPENDED                Remote VirtualAllocEx / Write
+ [Sysmon 1 / Win 4688] ──────────► [0x00000004 Flag] ─────────────► [SetThreadContext Hijack]
+          │                                                               │
+          ▼                                                               ▼
+   Pattern Matching                                            CONFIRMED HOLLOWING (T1055)
+   (e.g. T1136.001 net user /add)                                        │
+          │                                                               ▼
+          ▼                                                   ActiveProcessTarpit::trap_pid
+   is_system_critical & LOLBin Disambiguation                [SuspendThread Asymmetric Sleep Loop]
+   (net.exe / powershell.exe NOT immune)                                 │
+          │                                                               ▼
+          ▼                                                    Instruction Pointer Frozen
+   Deploy Active Process Tarpit & Rollback                    (Zero CPU cycles to execute payload)
+   (Account Deleted: net user <name> /delete)                            │
+          │                                                               ▼
+          └──────────────────────────────────────────────────► Laplace Differential Privacy Noise
+                                                               [Privatized Incident Vector Broadcast]
+```
+
+### 1. Active Process Tarpit (Thread-Level Asymmetric Trapping)
+- **Low-Level Thread Interception**: Rather than merely lowering scheduling priority to `IDLE_PRIORITY_CLASS` (which allows fast command-line utilities like `net.exe` to complete in milliseconds), `ActiveProcessTarpit` takes snapshots of all executing threads (`CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD)`), opens thread handles via `OpenThread(THREAD_SUSPEND_RESUME)`, and invokes `SuspendThread`.
+- **Asymmetric Latency Cycles**: Offending threads are held frozen for an interval (default 500ms) with brief 10ms observation windows, starving attacker automation, spoiling timing attacks, and freezing execution before malicious mutations reach disk or the Windows Security Accounts Manager (SAM).
+- **Graceful Release & Cleanup**: If an analyst clears an alert or marks a false positive, `release_pid` cleanly unwinds thread suspensions and restores normal execution state.
+
+### 2. Process Hollowing & Remote Memory Injection Interception (`osoosi-telemetry`)
+- **`CREATE_SUSPENDED` Flag Interception**: Monitors process creation flags for `0x00000004` (`CREATE_SUSPENDED`), registering candidate containers in `ProcessHollowingDetector`.
+- **Correlated Memory Tampering**: Tracks subsequent remote memory writes (`WriteProcessMemory`, `NtWriteVirtualMemory`, Sysmon Event 8/10) and thread context redirection (`SetThreadContext`).
+- **Pre-Execution Trapping**: When a suspended process receives foreign memory writes or redirected entry points, the EDR trips `ActiveProcessTarpit` before the main thread can be resumed, preventing shellcode execution.
+
+### 3. Differential Privacy Telemetry Perturbation (`osoosi-dp`)
+- **Laplace Mechanism ($\Delta S / \epsilon$)**: Implements `LocalTelemetryNoiseEngine` using inverse CDF sampling over uniform randomness to inject calibrated noise into local telemetry counters:
+  $$\text{Noise} = -\frac{\Delta S}{\epsilon} \cdot \text{sgn}(u) \cdot \ln(1 - 2|u|), \quad u \in (-0.5, 0.5)$$
+- **Zero Host Leakage**: Security incident vectors, honeypot tripwire counts, and anomaly metrics are privatized before being shared across the P2P wire mesh or centralized aggregation backends, ensuring fleet-wide intelligence sharing without exposing internal host topologies or user identities.
+
+### 4. LOLBin Disambiguation & Autonomous Account Rollback (`T1136.001`)
+- **Eliminating the System Critical Double-Veto**: Refined `is_system_critical` and Windows SFC verification (`validate_file_safety_with_veto`) so that while core OS infrastructure (PIDs 0, 1, 4, `smss.exe`, `csrss.exe`, `services.exe`, `lsass.exe`) remains strictly protected against termination, administrative living-off-the-land binaries (`net.exe`, `net1.exe`, `powershell.exe`, `cmd.exe`, `wmic.exe`, `schtasks.exe`) executing high-risk adversarial TTPs are no longer immune to autonomous containment.
+- **Autonomous Rollback**: When unauthorized local account creation (`net user <name> /add` or `New-LocalUser -Name <name>`) is detected, the EDR traps the process and immediately dispatches an autonomous compensating rollback task (`net user <name> /delete` or `Remove-LocalUser -Name <name>`), logging the successful remediation in the forensic ledger.
+- **Audit-Mode Defense Guarantee**: Even when operating in `AutonomyMode::Audit`, detected MITRE catalog attacks (including all 266 technique patterns from `D:\harfile\edrtest\docs\MITRE_TECHNIQUES_CATALOG.md` covering persistence, credential dumping, ransomware encryption, shadow copy deletion, and process hollowing) automatically trigger active thread trapping and autonomous rollback, preventing host compromise during audit runs.
 
 ---
 

@@ -76,6 +76,49 @@ pub fn get_os_info() -> (String, String, bool) {
     (name, version, supported)
 }
 
+/// Check if a binary path is an administrative CLI tool / Living-off-the-Land Binary (LOLBin).
+/// These binaries are signed by Microsoft and valid, but are routinely abused to execute threats
+/// (e.g. net.exe creating rogue accounts, powershell.exe downloading beacons, vssadmin deleting shadows).
+pub fn is_administrative_lolbin(path: &str) -> bool {
+    let path_lc = path.to_ascii_lowercase();
+    let filename = std::path::Path::new(&path_lc)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&path_lc);
+    matches!(
+        filename,
+        "net.exe"
+            | "net1.exe"
+            | "powershell.exe"
+            | "pwsh.exe"
+            | "cmd.exe"
+            | "wmic.exe"
+            | "schtasks.exe"
+            | "reg.exe"
+            | "vssadmin.exe"
+            | "wbadmin.exe"
+            | "bcdedit.exe"
+            | "rundll32.exe"
+            | "mshta.exe"
+            | "certutil.exe"
+            | "bitsadmin.exe"
+    )
+}
+
+/// Double-veto check: returns true ONLY if the file is genuinely clean and safe to exempt from remediation.
+/// If the file is an administrative LOLBin and an active threat is detected (e.g. T1136, T1003),
+/// returns false so SFC cannot veto or downgrade the autonomous response.
+pub async fn validate_file_safety_with_veto(path: &str, has_active_threat: bool) -> bool {
+    if is_administrative_lolbin(path) && has_active_threat {
+        warn!(
+            "SFC DOUBLE-VETO: Binary {} is an administrative LOLBin executing active threat. SFC safety override disallowed.",
+            path
+        );
+        return false;
+    }
+    validate_windows_file_integrity(path).await
+}
+
 /// Runs SFC /SCANFILE on Windows to verify if a file is an untampered system file.
 /// Returns true if the file is verified clean by Microsoft's store.
 pub async fn validate_windows_file_integrity(path: &str) -> bool {
@@ -135,3 +178,4 @@ pub async fn validate_windows_file_integrity(path: &str) -> bool {
 
     false
 }
+
