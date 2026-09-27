@@ -83,6 +83,136 @@ impl EdrAction {
 /// Backward-compatible type alias so existing callers continue compiling seamlessly.
 pub type MitigationAction = EdrAction;
 
+/// Scope of autonomous EDR mitigation actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ActionScope {
+    Process,
+    Thread,
+    NetworkSocket,
+    Host,
+}
+
+/// Friction/impact tier of autonomous EDR mitigation actions.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum ActionTier {
+    PassiveObserve,
+    LowFrictionTriage,
+    HighFrictionContainment,
+    HardMitigation,
+}
+
+/// System-level mitigation technique used to enforce the action.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum MitigationTechnique {
+    WfpFilter,
+    JobObjectLimit,
+    ThreadSuspend,
+    ProcessTerminate,
+}
+
+/// Rollback mechanism for reversible containment.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum RollbackStrategy {
+    None,
+    SnapshotRevert,
+    RegistryRollback,
+}
+
+/// Telemetry depth dispatched for verification and forensic capture.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub enum TelemetryLevel {
+    Standard,
+    VerboseEtw,
+    MemoryDump,
+}
+
+/// Structured 5-Tuple Action Representation for autonomous EDR RL controller.
+/// Dissects mitigation along orthogonal operational dimensions:
+/// (scope, tier, technique, rollback, telemetry_level).
+#[derive(Debug, Clone, PartialEq, Eq, Hash, Serialize, Deserialize)]
+pub struct StructuredEdrAction {
+    pub scope: ActionScope,
+    pub tier: ActionTier,
+    pub technique: MitigationTechnique,
+    pub rollback: RollbackStrategy,
+    pub telemetry_level: TelemetryLevel,
+}
+
+impl StructuredEdrAction {
+    pub fn new(
+        scope: ActionScope,
+        tier: ActionTier,
+        technique: MitigationTechnique,
+        rollback: RollbackStrategy,
+        telemetry_level: TelemetryLevel,
+    ) -> Self {
+        Self {
+            scope,
+            tier,
+            technique,
+            rollback,
+            telemetry_level,
+        }
+    }
+
+    pub fn from_edr_action(action: EdrAction) -> Self {
+        match action {
+            EdrAction::PassiveObserve => Self {
+                scope: ActionScope::Process,
+                tier: ActionTier::PassiveObserve,
+                technique: MitigationTechnique::JobObjectLimit,
+                rollback: RollbackStrategy::None,
+                telemetry_level: TelemetryLevel::Standard,
+            },
+            EdrAction::TraceElevation => Self {
+                scope: ActionScope::Process,
+                tier: ActionTier::LowFrictionTriage,
+                technique: MitigationTechnique::JobObjectLimit,
+                rollback: RollbackStrategy::None,
+                telemetry_level: TelemetryLevel::VerboseEtw,
+            },
+            EdrAction::MemoryIntrospection => Self {
+                scope: ActionScope::Thread,
+                tier: ActionTier::LowFrictionTriage,
+                technique: MitigationTechnique::ThreadSuspend,
+                rollback: RollbackStrategy::None,
+                telemetry_level: TelemetryLevel::MemoryDump,
+            },
+            EdrAction::MicroContainment => Self {
+                scope: ActionScope::NetworkSocket,
+                tier: ActionTier::HighFrictionContainment,
+                technique: MitigationTechnique::WfpFilter,
+                rollback: RollbackStrategy::RegistryRollback,
+                telemetry_level: TelemetryLevel::VerboseEtw,
+            },
+            EdrAction::HardMitigation => Self {
+                scope: ActionScope::Host,
+                tier: ActionTier::HardMitigation,
+                technique: MitigationTechnique::ProcessTerminate,
+                rollback: RollbackStrategy::SnapshotRevert,
+                telemetry_level: TelemetryLevel::MemoryDump,
+            },
+        }
+    }
+
+    pub fn to_edr_action(&self) -> EdrAction {
+        match self.tier {
+            ActionTier::PassiveObserve => EdrAction::PassiveObserve,
+            ActionTier::LowFrictionTriage => {
+                if self.telemetry_level == TelemetryLevel::MemoryDump
+                    || self.technique == MitigationTechnique::ThreadSuspend
+                {
+                    EdrAction::MemoryIntrospection
+                } else {
+                    EdrAction::TraceElevation
+                }
+            }
+            ActionTier::HighFrictionContainment => EdrAction::MicroContainment,
+            ActionTier::HardMitigation => EdrAction::HardMitigation,
+        }
+    }
+}
+
 /// Metadata context of an executing process under RL evaluation.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct ProcessContext {
@@ -415,6 +545,172 @@ impl StateFeaturePipeline {
         self.build_state_vector(lineage, velocity, priors, mesh)
             .to_vec()
     }
+
+    pub const UNIFIED_STATE_DIM: usize = 32;
+
+    pub fn build_unified_state_vector(
+        &self,
+        lineage: &ProcessLineageVector,
+        velocity: &TelemetryVelocity,
+        priors: &HeuristicPriorScores,
+        mesh: &MeshContext,
+        mitre: &IncidentMitreContext,
+    ) -> [f32; Self::UNIFIED_STATE_DIM] {
+        let base = self.build_state_vector(lineage, velocity, priors, mesh);
+        let mut unified = [0.0f32; Self::UNIFIED_STATE_DIM];
+        unified[..24].copy_from_slice(&base);
+        unified[24] = mitre.lateral_score.clamp(0.0, 1.0);
+        unified[25] = mitre.cred_dump_score.clamp(0.0, 1.0);
+        unified[26] = mitre.persistence_score.clamp(0.0, 1.0);
+        unified[27] = mitre.defense_evasion_score.clamp(0.0, 1.0);
+        unified[28] = mitre.unsigned_binary_flag.clamp(0.0, 1.0);
+        unified[29] = mitre.temp_execution_flag.clamp(0.0, 1.0);
+        unified[30] = mitre.container_flag.clamp(0.0, 1.0);
+        unified[31] = mitre.overall_threat_score.clamp(0.0, 1.0);
+        unified
+    }
+
+    pub fn to_unified_vec(
+        &self,
+        lineage: &ProcessLineageVector,
+        velocity: &TelemetryVelocity,
+        priors: &HeuristicPriorScores,
+        mesh: &MeshContext,
+        mitre: &IncidentMitreContext,
+    ) -> Vec<f32> {
+        self.build_unified_state_vector(lineage, velocity, priors, mesh, mitre)
+            .to_vec()
+    }
+}
+
+/// Incident and MITRE ATT&CK Behavioral Context (features 24..31).
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct IncidentMitreContext {
+    pub lateral_score: f32,
+    pub cred_dump_score: f32,
+    pub persistence_score: f32,
+    pub defense_evasion_score: f32,
+    pub unsigned_binary_flag: f32, // 0.0 or 1.0
+    pub temp_execution_flag: f32,  // 0.0 or 1.0
+    pub container_flag: f32,       // 0.0 or 1.0
+    pub overall_threat_score: f32, // [0.0, 1.0]
+}
+
+impl Default for IncidentMitreContext {
+    fn default() -> Self {
+        Self {
+            lateral_score: 0.0,
+            cred_dump_score: 0.0,
+            persistence_score: 0.0,
+            defense_evasion_score: 0.0,
+            unsigned_binary_flag: 0.0,
+            temp_execution_flag: 0.0,
+            container_flag: 0.0,
+            overall_threat_score: 0.0,
+        }
+    }
+}
+
+/// Unified 32-Dimensional Continuous State Observation Vector ($S_t$).
+/// Aggregates:
+/// - Process Lineage (0..5)
+/// - Telemetry Velocity (6..11)
+/// - Detection Priors (12..17)
+/// - Wire Mesh & Consensus (18..23)
+/// - Incident & MITRE Context (24..31)
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct UnifiedEdrState {
+    pub lineage: ProcessLineageVector,
+    pub velocity: TelemetryVelocity,
+    pub priors: HeuristicPriorScores,
+    pub mesh: MeshContext,
+    pub mitre: IncidentMitreContext,
+}
+
+impl UnifiedEdrState {
+    pub const DIM: usize = 32;
+
+    pub fn to_vector(&self) -> [f32; Self::DIM] {
+        [
+            // Lineage (0..5)
+            self.lineage.tree_depth.clamp(0.0, 1.0),
+            self.lineage.parent_child_entropy.clamp(0.0, 1.0),
+            self.lineage.token_elevation_level.clamp(0.0, 1.0),
+            self.lineage.is_kernel_thread.clamp(0.0, 1.0),
+            self.lineage.parent_anomaly_score.clamp(0.0, 1.0),
+            self.lineage.elevation_jump.clamp(0.0, 1.0),
+            // Velocity (6..11)
+            self.velocity.file_modification_rate.clamp(0.0, 1.0),
+            self.velocity.outbound_net_velocity.clamp(0.0, 1.0),
+            self.velocity.page_permission_trans_rate.clamp(0.0, 1.0),
+            self.velocity.thread_creation_burst_rate.clamp(0.0, 1.0),
+            self.velocity.handle_count_velocity.clamp(0.0, 1.0),
+            self.velocity.cpu_usage_burst.clamp(0.0, 1.0),
+            // Priors (12..17)
+            self.priors.static_pe_magika_score.clamp(0.0, 1.0),
+            self.priors.cmdline_token_score.clamp(0.0, 1.0),
+            self.priors.fastpath_yara_sigma_score.clamp(0.0, 1.0),
+            self.priors.capa_floss_capability.clamp(0.0, 1.0),
+            self.priors.behavioral_sequence_score.clamp(0.0, 1.0),
+            self.priors.anomaly_detector_score.clamp(0.0, 1.0),
+            // Wire Mesh & Consensus (18..23)
+            self.mesh.peer_anomaly_score.clamp(0.0, 1.0),
+            self.mesh.cluster_prevalence.clamp(0.0, 1.0),
+            self.mesh.consensus_confidence.clamp(0.0, 1.0),
+            self.mesh.cluster_alert_rate.clamp(0.0, 1.0),
+            self.mesh.peer_threat_level.clamp(0.0, 1.0),
+            self.mesh.quarantine_vote_ratio.clamp(0.0, 1.0),
+            // Incident & MITRE Context (24..31)
+            self.mitre.lateral_score.clamp(0.0, 1.0),
+            self.mitre.cred_dump_score.clamp(0.0, 1.0),
+            self.mitre.persistence_score.clamp(0.0, 1.0),
+            self.mitre.defense_evasion_score.clamp(0.0, 1.0),
+            self.mitre.unsigned_binary_flag.clamp(0.0, 1.0),
+            self.mitre.temp_execution_flag.clamp(0.0, 1.0),
+            self.mitre.container_flag.clamp(0.0, 1.0),
+            self.mitre.overall_threat_score.clamp(0.0, 1.0),
+        ]
+    }
+
+    pub fn to_vec(&self) -> Vec<f32> {
+        self.to_vector().to_vec()
+    }
+}
+
+/// Multi-signal inputs for multi-objective reward calculation.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MultiObjectiveSignals {
+    pub s_acc: f32,
+    pub s_disrupt: f32,
+    pub s_dwell: f32,
+    pub s_cost: f32,
+    pub s_consensus: f32,
+    pub s_violation: f32,
+}
+
+/// Weights for multi-objective reward function:
+/// $R = w_{acc} S_{acc} - w_{disrupt} S_{disrupt} + w_{dwell} S_{dwell} - w_{cost} S_{cost} + w_{consensus} S_{consensus} - w_{invar} S_{violation}$
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct MultiObjectiveWeights {
+    pub w_acc: f32,
+    pub w_disrupt: f32,
+    pub w_dwell: f32,
+    pub w_cost: f32,
+    pub w_consensus: f32,
+    pub w_invar: f32,
+}
+
+impl Default for MultiObjectiveWeights {
+    fn default() -> Self {
+        Self {
+            w_acc: 100.0,
+            w_disrupt: 150.0,
+            w_dwell: 10.0,
+            w_cost: 5.0,
+            w_consensus: 20.0,
+            w_invar: 500.0,
+        }
+    }
 }
 
 /// Reward Engineering Engine:
@@ -427,6 +723,8 @@ pub struct EdrRewardEngine {
     pub fp_micro_penalty: f32,          // -50.0
     pub dwell_penalty_per_step: f32,    // -0.5
     pub telemetry_overhead_penalty: f32,// -0.1
+    #[serde(default)]
+    pub multi_weights: MultiObjectiveWeights,
 }
 
 impl Default for EdrRewardEngine {
@@ -438,6 +736,7 @@ impl Default for EdrRewardEngine {
             fp_micro_penalty: 50.0,
             dwell_penalty_per_step: 0.5,
             telemetry_overhead_penalty: 0.1,
+            multi_weights: MultiObjectiveWeights::default(),
         }
     }
 }
@@ -478,18 +777,16 @@ impl EdrRewardEngine {
             // Benign workload or critical system daemon
             match action {
                 EdrAction::HardMitigation => {
-                    r_disruption = if is_critical_target {
-                        self.fp_disruption_penalty * 1.5
-                    } else {
-                        self.fp_disruption_penalty
-                    };
+                    if is_critical_target {
+                        return -500.0;
+                    }
+                    r_disruption = self.fp_disruption_penalty;
                 }
                 EdrAction::MicroContainment => {
-                    r_disruption = if is_critical_target {
-                        self.fp_micro_penalty * 1.5
-                    } else {
-                        self.fp_micro_penalty
-                    };
+                    if is_critical_target {
+                        return -500.0;
+                    }
+                    r_disruption = self.fp_micro_penalty;
                 }
                 EdrAction::TraceElevation | EdrAction::MemoryIntrospection => {
                     r_cost = self.telemetry_overhead_penalty;
@@ -501,6 +798,104 @@ impl EdrRewardEngine {
         }
 
         r_security - r_disruption - r_cost
+    }
+
+    /// Enhanced Multi-Objective Reward:
+    /// R = w_acc * S_acc - w_disrupt * S_disrupt + w_dwell * S_dwell - w_cost * S_cost + w_consensus * S_consensus - w_invar * S_violation
+    /// Guardrail: Zero-tolerance penalty (-500.0) if invariant is violated.
+    pub fn calculate_multi_objective_reward(&self, signals: &MultiObjectiveSignals) -> f32 {
+        let r = self.multi_weights.w_acc * signals.s_acc
+            - self.multi_weights.w_disrupt * signals.s_disrupt
+            + self.multi_weights.w_dwell * signals.s_dwell
+            - self.multi_weights.w_cost * signals.s_cost
+            + self.multi_weights.w_consensus * signals.s_consensus
+            - self.multi_weights.w_invar * signals.s_violation;
+
+        if signals.s_violation > 0.0 {
+            r.min(-500.0)
+        } else {
+            r
+        }
+    }
+
+    /// Evaluates reward against unmitigated baseline threat severity to prevent the Counterfactual Zero-Gain Bug.
+    /// Delta_security = max(0.0, S_unmitigated - S_mitigated(a))
+    pub fn calculate_counterfactual_reward(
+        &self,
+        action: EdrAction,
+        unmitigated_threat: f32,
+        is_malicious: bool,
+        is_protected_target: bool,
+        consensus_score: f32,
+    ) -> f32 {
+        let s_violation = if is_protected_target && action.is_containment() {
+            1.0
+        } else {
+            0.0
+        };
+
+        let s_mitigated = match action {
+            EdrAction::HardMitigation => 0.0,
+            EdrAction::MicroContainment => 0.2 * unmitigated_threat,
+            EdrAction::MemoryIntrospection => 0.6 * unmitigated_threat,
+            EdrAction::TraceElevation => 0.75 * unmitigated_threat,
+            EdrAction::PassiveObserve => unmitigated_threat,
+        };
+
+        let delta_security = (unmitigated_threat - s_mitigated).max(0.0);
+
+        let s_acc = if is_malicious { delta_security } else { 0.0 };
+        let s_disrupt = if !is_malicious {
+            match action {
+                EdrAction::HardMitigation => 1.0,
+                EdrAction::MicroContainment => 0.5,
+                _ => 0.0,
+            }
+        } else {
+            0.0
+        };
+
+        let s_dwell = if is_malicious && action.is_containment() { 1.0 } else { 0.0 };
+        let s_cost = match action {
+            EdrAction::MemoryIntrospection => 0.2,
+            EdrAction::TraceElevation => 0.1,
+            _ => 0.0,
+        };
+
+        let signals = MultiObjectiveSignals {
+            s_acc,
+            s_disrupt,
+            s_dwell,
+            s_cost,
+            s_consensus: consensus_score,
+            s_violation,
+        };
+
+        self.calculate_multi_objective_reward(&signals)
+    }
+
+    /// Evaluates candidate action against safety guardrails:
+    /// Returns (executed_action, policy_reward) with hard -500.0 penalty and safe degradation.
+    pub fn evaluate_candidate_action(
+        &self,
+        safety: &SafetyFilter,
+        target_pid: u32,
+        target_name: &str,
+        candidate_action: EdrAction,
+        is_malicious: bool,
+        unmitigated_threat: f32,
+        consensus_score: f32,
+    ) -> (EdrAction, f32) {
+        let is_protected = safety.is_protected(target_pid, target_name);
+        let executed_action = safety.filter_action(target_pid, target_name, candidate_action);
+        let reward = self.calculate_counterfactual_reward(
+            candidate_action,
+            unmitigated_threat,
+            is_malicious,
+            is_protected,
+            consensus_score,
+        );
+        (executed_action, reward)
     }
 }
 
@@ -803,14 +1198,41 @@ impl DeepQEngine {
     }
 }
 
+/// Execution regimes for RL controllers (Pillar 4).
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
+pub enum RlExecutionMode {
+    /// Policy trains online from scratch.
+    ColdRl,
+    /// Policy initialized with expert heuristic priors.
+    WarmPriorRl,
+    /// Strictly read-only evaluation mode: weights and covariance matrices locked.
+    FrozenTest,
+}
+
+impl Default for RlExecutionMode {
+    fn default() -> Self {
+        Self::ColdRl
+    }
+}
+
+fn default_version() -> usize {
+    1
+}
+
 /// Double Deep Q-Network (Double DQN) with Target Network ($\theta^-$) & Conservative Q-Learning (CQL).
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DoubleDeepQEngine {
+    #[serde(default = "default_version")]
+    pub version: usize,
     pub state_dim: usize,
     pub action_dim: usize,
     pub online_net: DeepQEngine,
     pub target_net: DeepQEngine,
     pub cql_alpha: f32,
+    #[serde(default)]
+    pub execution_mode: RlExecutionMode,
+    #[serde(default)]
+    pub step_count: usize,
 }
 
 impl DoubleDeepQEngine {
@@ -819,12 +1241,83 @@ impl DoubleDeepQEngine {
         let mut target_net = DeepQEngine::new(state_dim, action_dim);
         target_net.load_flat_weights(&online_net.get_flat_weights());
         Self {
+            version: 1,
             state_dim,
             action_dim,
             online_net,
             target_net,
             cql_alpha: 1.0,
+            execution_mode: RlExecutionMode::ColdRl,
+            step_count: 0,
         }
+    }
+
+    /// Initializes DoubleDeepQEngine with domain expert heuristic priors (Pillar 4 WarmPriorRl).
+    pub fn with_warm_priors(state_dim: usize, action_dim: usize) -> Self {
+        let mut engine = Self::new(state_dim, action_dim);
+        engine.execution_mode = RlExecutionMode::WarmPriorRl;
+        engine.initialize_heuristic_priors();
+        engine
+    }
+
+    /// Injects domain expert heuristic priors into output layer biases:
+    /// Action 0 (PassiveObserve): +1.0 base bias
+    /// Action 1 (TraceElevation): +0.5 base bias
+    /// Action 2 (MemoryIntrospection): +0.2 base bias
+    /// Action 3 (MicroContainment): -0.5 base bias
+    /// Action 4 (HardMitigation): -1.0 base bias
+    pub fn initialize_heuristic_priors(&mut self) {
+        let biases = [1.0f32, 0.5, 0.2, -0.5, -1.0];
+        for (i, &b) in biases.iter().enumerate().take(self.action_dim) {
+            if i < self.online_net.fc_out.biases.len() {
+                self.online_net.fc_out.biases[i] = b;
+            }
+        }
+        self.target_net.load_flat_weights(&self.online_net.get_flat_weights());
+    }
+
+    /// Validates internal neural network dimension consistency against declared state/action dimensions.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.version == 0 {
+            return Err("Invalid version 0".into());
+        }
+        if self.state_dim == 0 || self.action_dim == 0 {
+            return Err("state_dim and action_dim must be non-zero".into());
+        }
+        if self.online_net.state_dim != self.state_dim || self.online_net.action_dim != self.action_dim {
+            return Err("online_net dimensions mismatch".into());
+        }
+        if self.target_net.state_dim != self.state_dim || self.target_net.action_dim != self.action_dim {
+            return Err("target_net dimensions mismatch".into());
+        }
+        Ok(())
+    }
+
+    pub fn to_json_string(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+
+    pub fn from_json_string(s: &str) -> Result<Self, serde_json::Error> {
+        let engine: Self = serde_json::from_str(s)?;
+        if let Err(msg) = engine.validate() {
+            return Err(serde::de::Error::custom(msg));
+        }
+        Ok(engine)
+    }
+
+    pub fn save_to_json(&self, path: impl AsRef<std::path::Path>) -> Result<(), std::io::Error> {
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        std::fs::write(path, json)
+    }
+
+    pub fn load_from_json(path: impl AsRef<std::path::Path>) -> Result<Self, std::io::Error> {
+        let contents = std::fs::read_to_string(path)?;
+        let engine: Self = serde_json::from_str(&contents)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        engine.validate()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        Ok(engine)
     }
 
     /// Forward pass through the primary online network.
@@ -907,12 +1400,28 @@ impl DoubleDeepQEngine {
 
     /// Polyak soft target network update: $\theta^- \leftarrow \tau \theta + (1-\tau)\theta^-$
     pub fn update_target_network(&mut self, tau: f32) {
+        if self.execution_mode == RlExecutionMode::FrozenTest {
+            return;
+        }
         let online_w = self.online_net.get_flat_weights();
         let mut target_w = self.target_net.get_flat_weights();
         for (t, o) in target_w.iter_mut().zip(online_w.iter()) {
             *t = tau * o + (1.0 - tau) * *t;
         }
         self.target_net.load_flat_weights(&target_w);
+    }
+
+    /// Strict Contextual Episode Boundary: alert triage operates with zero temporal credit leakage ($\gamma = 0.0$).
+    pub const CONTEXTUAL_BANDIT_GAMMA: f32 = 0.0;
+
+    /// Single-event contextual alert triage training step with strict gamma = 0.0.
+    pub fn train_step_contextual_bandit(
+        &mut self,
+        batch: &[Transition],
+        lr: f32,
+        is_weights: Option<&[f32]>,
+    ) -> (f32, Vec<f32>) {
+        self.train_step_cql(batch, Self::CONTEXTUAL_BANDIT_GAMMA, lr, is_weights)
     }
 
     /// Performs one gradient descent optimization pass over a batch using Double DQN targets
@@ -926,10 +1435,14 @@ impl DoubleDeepQEngine {
         lr: f32,
         is_weights: Option<&[f32]>,
     ) -> (f32, Vec<f32>) {
+        if self.execution_mode == RlExecutionMode::FrozenTest {
+            return (0.0, vec![0.0; batch.len()]);
+        }
         if batch.is_empty() {
             return (0.0, Vec::new());
         }
 
+        self.step_count += 1;
         let mut total_loss = 0.0;
         let mut td_errors = Vec::with_capacity(batch.len());
 
@@ -1053,61 +1566,430 @@ fn solve_linear_system(a: &[Vec<f32>], b: &[f32]) -> Option<Vec<f32>> {
     Some(x)
 }
 
-/// Contextual Bandit Engine (LinUCB with Disjoint Linear Models).
+fn default_alpha_0() -> f64 {
+    1.0
+}
+
+fn default_alpha_decay() -> f64 {
+    0.005
+}
+
+fn default_min_alpha() -> f64 {
+    0.05
+}
+
+/// Contextual Bandit Engine (LinUCB with Disjoint Linear Models & Exploration Annealing).
 /// For single-step dynamic alert throttling & priority scoring:
 /// Action 0: AutoResolve, Action 1: QueueTriage, Action 2: PageAnalyst.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct LinUcbBandit {
+    #[serde(default = "default_version")]
+    pub version: usize,
     pub num_actions: usize,
     pub context_dim: usize,
     pub a_matrices: Vec<Vec<Vec<f32>>>, // [action][d][d]
     pub b_vectors: Vec<Vec<f32>>,       // [action][d]
+    #[serde(default)]
+    pub a_inv_matrices: Vec<Vec<Vec<f64>>>, // [action][d][d] Sherman-Morrison streaming inverse
+    #[serde(default = "default_alpha_0")]
+    pub alpha: f64,
+    #[serde(default = "default_alpha_0")]
+    pub alpha_0: f64,
+    #[serde(default = "default_alpha_decay")]
+    pub alpha_decay: f64,
+    #[serde(default = "default_min_alpha")]
+    pub min_alpha: f64,
+    #[serde(default)]
+    pub step_count: usize,
+    #[serde(default)]
+    pub execution_mode: RlExecutionMode,
 }
 
 impl LinUcbBandit {
+    /// Strict Contextual Episode Boundary: alert triage operates with zero temporal credit leakage ($\gamma = 0.0$).
+    pub const BANDIT_GAMMA: f32 = 0.0;
+
+    pub fn gamma(&self) -> f32 {
+        Self::BANDIT_GAMMA
+    }
+
     pub fn new(num_actions: usize, context_dim: usize) -> Self {
+        Self::with_exploration(num_actions, context_dim, 1.0, 0.005, 0.05)
+    }
+
+    pub fn with_exploration(
+        num_actions: usize,
+        context_dim: usize,
+        alpha_0: f64,
+        alpha_decay: f64,
+        min_alpha: f64,
+    ) -> Self {
         let mut a_matrices = Vec::with_capacity(num_actions);
         let mut b_vectors = Vec::with_capacity(num_actions);
+        let mut a_inv_matrices = Vec::with_capacity(num_actions);
 
         for _ in 0..num_actions {
-            let mut a = vec![vec![0.0; context_dim]; context_dim];
+            let mut a = vec![vec![0.0f32; context_dim]; context_dim];
+            let mut a_inv = vec![vec![0.0f64; context_dim]; context_dim];
             for i in 0..context_dim {
                 a[i][i] = 1.0; // Ridge regularizer I_d
+                a_inv[i][i] = 1.0;
             }
             a_matrices.push(a);
-            b_vectors.push(vec![0.0; context_dim]);
+            b_vectors.push(vec![0.0f32; context_dim]);
+            a_inv_matrices.push(a_inv);
         }
 
         Self {
+            version: 1,
             num_actions,
             context_dim,
             a_matrices,
             b_vectors,
+            a_inv_matrices,
+            alpha: alpha_0,
+            alpha_0,
+            alpha_decay,
+            min_alpha,
+            step_count: 0,
+            execution_mode: RlExecutionMode::ColdRl,
         }
+    }
+
+    /// Initializes LinUcbBandit with domain expert heuristic priors (Pillar 4 WarmPriorRl).
+    pub fn with_warm_priors(num_actions: usize, context_dim: usize) -> Self {
+        let mut bandit = Self::new(num_actions, context_dim);
+        bandit.execution_mode = RlExecutionMode::WarmPriorRl;
+        bandit.initialize_heuristic_priors();
+        bandit
+    }
+
+    /// Injects domain expert heuristic priors into response vectors b_vectors:
+    /// Action 0 (AutoResolve): favors low threat / high benign score
+    /// Action 1 (QueueTriage): favors intermediate / ambiguous alerts
+    /// Action 2 (PageAnalyst): favors high threat score
+    pub fn initialize_heuristic_priors(&mut self) {
+        if self.context_dim >= 4 {
+            if self.num_actions > 0 {
+                // Action 0: AutoResolve: [bias=1.0, threat=-5.0, benign=+5.0, ambiguity=0.0]
+                self.b_vectors[0][0] = 1.0;
+                self.b_vectors[0][1] = -5.0;
+                self.b_vectors[0][2] = 5.0;
+            }
+            if self.num_actions > 1 {
+                // Action 1: QueueTriage: [bias=0.5, threat=1.0, benign=0.0, ambiguity=+4.0]
+                self.b_vectors[1][0] = 0.5;
+                self.b_vectors[1][1] = 1.0;
+                self.b_vectors[1][3] = 4.0;
+            }
+            if self.num_actions > 2 {
+                // Action 2: PageAnalyst: [bias=-1.0, threat=+8.0, benign=-5.0, ambiguity=0.0]
+                self.b_vectors[2][0] = -1.0;
+                self.b_vectors[2][1] = 8.0;
+                self.b_vectors[2][2] = -5.0;
+            }
+        } else if self.context_dim > 0 {
+            for a in 0..self.num_actions {
+                let bias_val = match a {
+                    0 => 1.0,
+                    1 => 0.5,
+                    _ => -0.5,
+                };
+                self.b_vectors[a][0] = bias_val;
+            }
+        }
+    }
+
+    /// Validates matrix dimensions and version consistency for safe deserialization.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.version == 0 {
+            return Err("Invalid version 0".into());
+        }
+        if self.num_actions == 0 || self.context_dim == 0 {
+            return Err("num_actions and context_dim must be non-zero".into());
+        }
+        if self.a_matrices.len() != self.num_actions {
+            return Err(format!(
+                "a_matrices length {} != num_actions {}",
+                self.a_matrices.len(),
+                self.num_actions
+            ));
+        }
+        for (a, m) in self.a_matrices.iter().enumerate() {
+            if m.len() != self.context_dim {
+                return Err(format!("a_matrices[{}] row count != context_dim", a));
+            }
+            for (r, row) in m.iter().enumerate() {
+                if row.len() != self.context_dim {
+                    return Err(format!("a_matrices[{}][{}] col count != context_dim", a, r));
+                }
+            }
+        }
+        if self.b_vectors.len() != self.num_actions {
+            return Err("b_vectors length != num_actions".into());
+        }
+        for (a, v) in self.b_vectors.iter().enumerate() {
+            if v.len() != self.context_dim {
+                return Err(format!("b_vectors[{}] length != context_dim", a));
+            }
+        }
+        if self.a_inv_matrices.len() != self.num_actions {
+            return Err("a_inv_matrices length != num_actions".into());
+        }
+        for (a, m) in self.a_inv_matrices.iter().enumerate() {
+            if m.len() != self.context_dim {
+                return Err(format!("a_inv_matrices[{}] row count != context_dim", a));
+            }
+            for (r, row) in m.iter().enumerate() {
+                if row.len() != self.context_dim {
+                    return Err(format!("a_inv_matrices[{}][{}] col count != context_dim", a, r));
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Computes current annealed exploration parameter:
+    /// $\alpha(t) = \max\left(\text{min\_alpha}, \frac{\alpha_0}{1.0 + \alpha_{\text{decay}} \cdot t}\right)$
+    pub fn current_alpha(&self) -> f64 {
+        let decayed = self.alpha_0 / (1.0 + self.alpha_decay * (self.step_count as f64));
+        decayed.max(self.min_alpha)
+    }
+
+    /// Numerically stable Cholesky decomposition inversion with Tikhonov regularization ($\lambda I$).
+    /// Symmetrizes input, adds $\lambda I$ to diagonal (ensuring strictly positive definite),
+    /// solves $A = L L^T$, inverts $L$ via forward substitution, and forms $A^{-1} = (L^{-1})^T L^{-1}$.
+    /// Sanitizes any NaNs or Infs, cleanly falling back to scaled identity.
+    pub fn stable_cholesky_inverse(
+        matrix: &[Vec<f64>],
+        tikhonov_lambda: f64,
+    ) -> Result<Vec<Vec<f64>>, String> {
+        let n = matrix.len();
+        if n == 0 {
+            return Ok(Vec::new());
+        }
+        for row in matrix {
+            if row.len() != n {
+                return Err("Matrix must be square".into());
+            }
+        }
+
+        let lambda = tikhonov_lambda.max(1e-9);
+        let fallback_scale = 1.0 / lambda;
+        let make_fallback = || {
+            let mut id = vec![vec![0.0f64; n]; n];
+            for i in 0..n {
+                id[i][i] = fallback_scale;
+            }
+            id
+        };
+
+        // Check for non-finite values in input
+        for i in 0..n {
+            for j in 0..n {
+                if !matrix[i][j].is_finite() {
+                    return Ok(make_fallback());
+                }
+            }
+        }
+
+        // 1. Symmetrize and add Tikhonov diagonal regularization: M = 0.5*(A + A^T) + lambda*I
+        let mut m = vec![vec![0.0f64; n]; n];
+        for i in 0..n {
+            for j in 0..n {
+                m[i][j] = 0.5 * (matrix[i][j] + matrix[j][i]);
+            }
+            m[i][i] += lambda;
+        }
+
+        // 2. Cholesky decomposition M = L L^T
+        let mut l = vec![vec![0.0f64; n]; n];
+        for i in 0..n {
+            for j in 0..=i {
+                let mut sum = 0.0f64;
+                for k in 0..j {
+                    sum += l[i][k] * l[j][k];
+                }
+
+                if i == j {
+                    let diag = m[i][i] - sum;
+                    if !diag.is_finite() || diag <= 1e-12 {
+                        return Ok(make_fallback());
+                    }
+                    l[i][j] = diag.sqrt();
+                } else {
+                    let lj = l[j][j];
+                    if lj.abs() < 1e-12 {
+                        return Ok(make_fallback());
+                    }
+                    let val = (m[i][j] - sum) / lj;
+                    if !val.is_finite() {
+                        return Ok(make_fallback());
+                    }
+                    l[i][j] = val;
+                }
+            }
+        }
+
+        // 3. Invert lower triangular L via forward substitution: L * L^-1 = I
+        let mut l_inv = vec![vec![0.0f64; n]; n];
+        for i in 0..n {
+            l_inv[i][i] = 1.0 / l[i][i];
+            for j in 0..i {
+                let mut sum = 0.0f64;
+                for k in j..i {
+                    sum += l[i][k] * l_inv[k][j];
+                }
+                l_inv[i][j] = -sum / l[i][i];
+            }
+        }
+
+        // 4. Form A^-1 = (L^-1)^T * L^-1
+        let mut a_inv = vec![vec![0.0f64; n]; n];
+        for i in 0..n {
+            for j in 0..n {
+                let mut sum = 0.0f64;
+                let start_k = i.max(j);
+                for k in start_k..n {
+                    sum += l_inv[k][i] * l_inv[k][j];
+                }
+                if !sum.is_finite() {
+                    return Ok(make_fallback());
+                }
+                a_inv[i][j] = sum;
+            }
+        }
+
+        Ok(a_inv)
+    }
+
+    /// Rank-1 Sherman-Morrison streaming update:
+    /// $A_{t+1}^{-1} = A_t^{-1} - \frac{A_t^{-1} x x^T A_t^{-1}}{1 + x^T A_t^{-1} x}$
+    /// Computes $O(d^2)$ step updates without full matrix inversion.
+    pub fn sherman_morrison_rank1_update(a_inv: &mut [Vec<f64>], x: &[f64]) -> Result<(), String> {
+        let d = a_inv.len();
+        if x.len() != d {
+            return Err(format!(
+                "Vector dimension {} does not match matrix dimension {}",
+                x.len(),
+                d
+            ));
+        }
+        for (idx, &val) in x.iter().enumerate() {
+            if !val.is_finite() {
+                return Err(format!("Input vector element {} is non-finite", idx));
+            }
+        }
+
+        // 1. v = A^-1 x
+        let mut v = vec![0.0f64; d];
+        for i in 0..d {
+            let mut sum = 0.0f64;
+            for j in 0..d {
+                sum += a_inv[i][j] * x[j];
+            }
+            v[i] = sum;
+        }
+
+        // 2. denom = 1.0 + x^T v
+        let mut x_dot_v = 0.0f64;
+        for i in 0..d {
+            x_dot_v += x[i] * v[i];
+        }
+        let denom = 1.0 + x_dot_v;
+        if !denom.is_finite() || denom.abs() < 1e-12 {
+            return Err("Sherman-Morrison denominator is near-zero or non-finite".into());
+        }
+
+        // 3. A^-1 -= (v v^T) / denom with symmetric stabilization
+        for i in 0..d {
+            for j in i..d {
+                let delta = (v[i] * v[j]) / denom;
+                let val = 0.5 * ((a_inv[i][j] - delta) + (a_inv[j][i] - delta));
+                a_inv[i][j] = val;
+                a_inv[j][i] = val;
+            }
+        }
+
+        // 4. Verify positive-definiteness on diagonal
+        for i in 0..d {
+            if !a_inv[i][i].is_finite() || a_inv[i][i] <= 1e-12 {
+                return Err("Sherman-Morrison update lost positive-definiteness on diagonal".into());
+            }
+        }
+
+        Ok(())
     }
 
     /// Selects action maximizing Upper Confidence Bound:
     /// $\text{score}_a = x^T \hat{\theta}_a + \alpha \sqrt{x^T A_a^{-1} x}$
+    /// If alpha < 0.0, uses current annealed alpha(t).
     pub fn select_action(&self, context: &[f32], alpha: f32) -> usize {
+        let eff_alpha = if alpha < 0.0 {
+            self.current_alpha()
+        } else {
+            alpha as f64
+        };
+        self.select_action_internal(context, eff_alpha)
+    }
+
+    /// Selects action with current annealed exploration parameter.
+    pub fn select_action_annealed(&self, context: &[f32]) -> usize {
+        self.select_action_internal(context, self.current_alpha())
+    }
+
+    fn select_action_internal(&self, context: &[f32], alpha: f64) -> usize {
         let mut best_action = 0;
-        let mut highest_score = f32::NEG_INFINITY;
+        let mut highest_score = f64::NEG_INFINITY;
+        let ctx_f64: Vec<f64> = context.iter().map(|&x| x as f64).collect();
 
         for a in 0..self.num_actions {
-            let theta = solve_linear_system(&self.a_matrices[a], &self.b_vectors[a])
-                .unwrap_or_else(|| vec![0.0; self.context_dim]);
-            let inv_x = solve_linear_system(&self.a_matrices[a], context)
-                .unwrap_or_else(|| vec![0.0; self.context_dim]);
+            let (mean, var) = if a < self.a_inv_matrices.len()
+                && self.a_inv_matrices[a].len() == self.context_dim
+            {
+                let a_inv = &self.a_inv_matrices[a];
+                // theta = A^-1 b
+                let mut theta = vec![0.0f64; self.context_dim];
+                for i in 0..self.context_dim {
+                    let mut sum = 0.0f64;
+                    for j in 0..self.context_dim {
+                        sum += a_inv[i][j] * (self.b_vectors[a][j] as f64);
+                    }
+                    theta[i] = sum;
+                }
+                // mean = x^T theta
+                let mut m = 0.0f64;
+                for i in 0..self.context_dim {
+                    m += ctx_f64[i] * theta[i];
+                }
+                // var = x^T A^-1 x
+                let mut v = 0.0f64;
+                for i in 0..self.context_dim {
+                    let mut a_inv_x_i = 0.0f64;
+                    for j in 0..self.context_dim {
+                        a_inv_x_i += a_inv[i][j] * ctx_f64[j];
+                    }
+                    v += ctx_f64[i] * a_inv_x_i;
+                }
+                (m, v)
+            } else {
+                let theta = solve_linear_system(&self.a_matrices[a], &self.b_vectors[a])
+                    .unwrap_or_else(|| vec![0.0; self.context_dim]);
+                let inv_x = solve_linear_system(&self.a_matrices[a], context)
+                    .unwrap_or_else(|| vec![0.0; self.context_dim]);
 
-            let mean: f32 = context
-                .iter()
-                .zip(theta.iter())
-                .map(|(&x, &t)| x * t)
-                .sum();
-            let var: f32 = context
-                .iter()
-                .zip(inv_x.iter())
-                .map(|(&x, &z)| x * z)
-                .sum();
+                let m: f32 = context
+                    .iter()
+                    .zip(theta.iter())
+                    .map(|(&x, &t)| x * t)
+                    .sum();
+                let v: f32 = context
+                    .iter()
+                    .zip(inv_x.iter())
+                    .map(|(&x, &z)| x * z)
+                    .sum();
+                (m as f64, v as f64)
+            };
 
             let score = mean + alpha * var.max(0.0).sqrt();
 
@@ -1121,10 +2003,18 @@ impl LinUcbBandit {
     }
 
     /// Updates covariance matrix $A_a \leftarrow A_a + x x^T$ and response vector $b_a \leftarrow b_a + r x$.
+    /// Uses Sherman-Morrison rank-1 streaming update for $A_a^{-1}$ in $O(d^2)$.
+    /// In FrozenTest mode, learning is locked (no-op).
     pub fn update(&mut self, action: usize, context: &[f32], reward: f32) {
+        if self.execution_mode == RlExecutionMode::FrozenTest {
+            return;
+        }
         if action >= self.num_actions || context.len() != self.context_dim {
             return;
         }
+
+        self.step_count += 1;
+        self.alpha = self.current_alpha();
 
         for i in 0..self.context_dim {
             self.b_vectors[action][i] += reward * context[i];
@@ -1132,6 +2022,359 @@ impl LinUcbBandit {
                 self.a_matrices[action][i][j] += context[i] * context[j];
             }
         }
+
+        // Streaming Sherman-Morrison update on A^-1
+        if action < self.a_inv_matrices.len() {
+            let ctx_f64: Vec<f64> = context.iter().map(|&x| x as f64).collect();
+            let sm_failed = Self::sherman_morrison_rank1_update(&mut self.a_inv_matrices[action], &ctx_f64).is_err();
+            // Recover or periodically re-synchronize (every 500 steps) to prevent cumulative floating point drift
+            if sm_failed || (self.step_count % 500 == 0) {
+                let a_f64: Vec<Vec<f64>> = self.a_matrices[action]
+                    .iter()
+                    .map(|r| r.iter().map(|&v| v as f64).collect())
+                    .collect();
+                if let Ok(recovered) = Self::stable_cholesky_inverse(&a_f64, 1e-3) {
+                    self.a_inv_matrices[action] = recovered;
+                }
+            }
+        }
+    }
+
+    pub fn to_json_string(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+
+    pub fn from_json_string(s: &str) -> Result<Self, serde_json::Error> {
+        let bandit: Self = serde_json::from_str(s)?;
+        if let Err(msg) = bandit.validate() {
+            return Err(serde::de::Error::custom(msg));
+        }
+        Ok(bandit)
+    }
+
+    pub fn save_to_json(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        std::fs::write(path, json)
+    }
+
+    pub fn load_from_json(path: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
+        let contents = std::fs::read_to_string(path)?;
+        let bandit: Self = serde_json::from_str(&contents)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        bandit.validate()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        Ok(bandit)
+    }
+}
+
+/// Shared Bilinear Action-Conditioned Bayesian Bandit Model (Pillar 2).
+/// Implements joint state-action feature mapping $\phi(s, a)$:
+/// - State vector $s \in \mathbb{R}^d$
+/// - One-hot action vector $e_a \in \mathbb{R}^K$
+/// - Bilinear outer product interaction terms $s \otimes e_a \in \mathbb{R}^{d \cdot K}$
+/// Total dimension $D = d + K + d \cdot K$.
+/// Maintains a single shared covariance matrix $A_{\text{shared}} \in \mathbb{R}^{D \times D}$,
+/// streaming inverse $A^{-1}$, and response vector $b_{\text{shared}} \in \mathbb{R}^D$.
+/// Enables transfer learning across actions.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SharedBilinearBandit {
+    #[serde(default = "default_version")]
+    pub version: usize,
+    pub num_actions: usize,
+    pub state_dim: usize,
+    pub total_dim: usize,
+    pub a_matrix: Vec<Vec<f64>>,
+    pub a_inv: Vec<Vec<f64>>,
+    pub b_vector: Vec<f64>,
+    pub theta_hat: Vec<f64>,
+    #[serde(default = "default_alpha_0")]
+    pub alpha: f64,
+    #[serde(default = "default_alpha_0")]
+    pub alpha_0: f64,
+    #[serde(default = "default_alpha_decay")]
+    pub alpha_decay: f64,
+    #[serde(default = "default_min_alpha")]
+    pub min_alpha: f64,
+    #[serde(default)]
+    pub step_count: usize,
+    #[serde(default)]
+    pub execution_mode: RlExecutionMode,
+}
+
+impl SharedBilinearBandit {
+    /// Strict Contextual Episode Boundary: alert triage operates with zero temporal credit leakage ($\gamma = 0.0$).
+    pub const BANDIT_GAMMA: f32 = 0.0;
+
+    pub fn gamma(&self) -> f32 {
+        Self::BANDIT_GAMMA
+    }
+
+    pub fn new(num_actions: usize, state_dim: usize) -> Self {
+        Self::with_exploration(num_actions, state_dim, 1.0, 0.005, 0.05)
+    }
+
+    pub fn with_exploration(
+        num_actions: usize,
+        state_dim: usize,
+        alpha_0: f64,
+        alpha_decay: f64,
+        min_alpha: f64,
+    ) -> Self {
+        let total_dim = state_dim + num_actions + state_dim * num_actions;
+        let mut a_matrix = vec![vec![0.0f64; total_dim]; total_dim];
+        let mut a_inv = vec![vec![0.0f64; total_dim]; total_dim];
+        for i in 0..total_dim {
+            a_matrix[i][i] = 1.0; // Ridge regularizer I_D
+            a_inv[i][i] = 1.0;
+        }
+        let b_vector = vec![0.0f64; total_dim];
+        let theta_hat = vec![0.0f64; total_dim];
+
+        Self {
+            version: 1,
+            num_actions,
+            state_dim,
+            total_dim,
+            a_matrix,
+            a_inv,
+            b_vector,
+            theta_hat,
+            alpha: alpha_0,
+            alpha_0,
+            alpha_decay,
+            min_alpha,
+            step_count: 0,
+            execution_mode: RlExecutionMode::ColdRl,
+        }
+    }
+
+    /// Initializes SharedBilinearBandit with domain expert heuristic priors (Pillar 4 WarmPriorRl).
+    pub fn with_warm_priors(num_actions: usize, state_dim: usize) -> Self {
+        let mut bandit = Self::new(num_actions, state_dim);
+        bandit.execution_mode = RlExecutionMode::WarmPriorRl;
+        bandit.initialize_heuristic_priors();
+        bandit
+    }
+
+    /// Injects domain expert heuristic priors into shared weights theta_hat and response vector b_vector:
+    /// Action 0 (PassiveObserve): positive weight on benign features
+    /// Containment actions: positive weights on threat velocity and MITRE features
+    pub fn initialize_heuristic_priors(&mut self) {
+        let d = self.state_dim;
+        let k = self.num_actions;
+
+        // Baseline action preference
+        for a in 0..k {
+            let offset = d + a;
+            let action_bias = match a {
+                0 => 2.0,  // PassiveObserve
+                1 => 1.0,  // LowFrictionTriage
+                2 => 0.5,  // MemoryIntrospection
+                3 => -1.0, // MicroContainment
+                _ => -2.0, // HardMitigation
+            };
+            self.theta_hat[offset] = action_bias;
+        }
+
+        // Align b_vector = A * theta_hat (since A_0 = I, b_0 = theta_hat)
+        for i in 0..self.total_dim {
+            let mut sum = 0.0f64;
+            for j in 0..self.total_dim {
+                sum += self.a_matrix[i][j] * self.theta_hat[j];
+            }
+            self.b_vector[i] = sum;
+        }
+    }
+
+    /// Validates matrix dimensions and version consistency for safe deserialization.
+    pub fn validate(&self) -> Result<(), String> {
+        if self.version == 0 {
+            return Err("Invalid version 0".into());
+        }
+        let expected_total = self.state_dim + self.num_actions + self.state_dim * self.num_actions;
+        if self.total_dim != expected_total {
+            return Err(format!(
+                "total_dim {} does not match expected {}",
+                self.total_dim, expected_total
+            ));
+        }
+        if self.a_matrix.len() != self.total_dim {
+            return Err("a_matrix row count != total_dim".into());
+        }
+        for (r, row) in self.a_matrix.iter().enumerate() {
+            if row.len() != self.total_dim {
+                return Err(format!("a_matrix[{}] col count != total_dim", r));
+            }
+        }
+        if self.a_inv.len() != self.total_dim {
+            return Err("a_inv row count != total_dim".into());
+        }
+        for (r, row) in self.a_inv.iter().enumerate() {
+            if row.len() != self.total_dim {
+                return Err(format!("a_inv[{}] col count != total_dim", r));
+            }
+        }
+        if self.b_vector.len() != self.total_dim {
+            return Err("b_vector length != total_dim".into());
+        }
+        if self.theta_hat.len() != self.total_dim {
+            return Err("theta_hat length != total_dim".into());
+        }
+        Ok(())
+    }
+
+    pub fn current_alpha(&self) -> f64 {
+        let decayed = self.alpha_0 / (1.0 + self.alpha_decay * (self.step_count as f64));
+        decayed.max(self.min_alpha)
+    }
+
+    /// Joint state-action feature mapping $\phi(s, a) \in \mathbb{R}^D$:
+    /// $[s_0..s_{d-1}, e_0..e_{K-1}, (s \otimes e_a)_0..(s \otimes e_a)_{d \cdot K - 1}]$.
+    pub fn feature_map(&self, state: &[f64], action: usize) -> Vec<f64> {
+        let mut phi = vec![0.0f64; self.total_dim];
+        let d = self.state_dim;
+        let k = self.num_actions;
+
+        // 1. Shared state vector s
+        for i in 0..d.min(state.len()) {
+            phi[i] = state[i];
+        }
+
+        // 2. One-hot action vector e_a
+        if action < k {
+            phi[d + action] = 1.0;
+        }
+
+        // 3. Bilinear outer product interaction terms: s \otimes e_a
+        if action < k {
+            let offset = d + k + action * d;
+            for i in 0..d.min(state.len()) {
+                phi[offset + i] = state[i];
+            }
+        }
+
+        phi
+    }
+
+    /// Evaluates expected reward prediction for candidate action: $\hat{r}(s, a) = \phi(s, a)^T \hat{\theta}$.
+    pub fn predict(&self, action: usize, state: &[f64]) -> f64 {
+        let phi = self.feature_map(state, action);
+        phi.iter().zip(self.theta_hat.iter()).map(|(&p, &t)| p * t).sum()
+    }
+
+    /// Selects action maximizing Upper Confidence Bound under shared representation:
+    /// $\text{score}_a = \phi(s, a)^T \hat{\theta} + \alpha \sqrt{\phi(s, a)^T A_{\text{shared}}^{-1} \phi(s, a)}$
+    pub fn select_action(&self, state: &[f64], alpha: f64) -> usize {
+        let eff_alpha = if alpha < 0.0 {
+            self.current_alpha()
+        } else {
+            alpha
+        };
+        self.select_action_internal(state, eff_alpha)
+    }
+
+    pub fn select_action_annealed(&self, state: &[f64]) -> usize {
+        self.select_action_internal(state, self.current_alpha())
+    }
+
+    fn select_action_internal(&self, state: &[f64], alpha: f64) -> usize {
+        let mut best_action = 0;
+        let mut highest_score = f64::NEG_INFINITY;
+
+        for a in 0..self.num_actions {
+            let phi = self.feature_map(state, a);
+
+            // mean = phi^T theta_hat
+            let mean: f64 = phi.iter().zip(self.theta_hat.iter()).map(|(&p, &t)| p * t).sum();
+
+            // var = phi^T A^-1 phi
+            let mut var = 0.0f64;
+            for i in 0..self.total_dim {
+                let mut a_inv_phi_i = 0.0f64;
+                for j in 0..self.total_dim {
+                    a_inv_phi_i += self.a_inv[i][j] * phi[j];
+                }
+                var += phi[i] * a_inv_phi_i;
+            }
+
+            let score = mean + alpha * var.max(0.0).sqrt();
+            if score > highest_score {
+                highest_score = score;
+                best_action = a;
+            }
+        }
+
+        best_action
+    }
+
+    /// Updates shared covariance matrix $A \leftarrow A + \phi \phi^T$ and response vector $b \leftarrow b + r \phi$.
+    /// Uses Sherman-Morrison rank-1 update to update $A^{-1}$ in $O(D^2)$, then updates $\hat{\theta} = A^{-1} b$.
+    /// In FrozenTest mode, learning is locked (no-op).
+    pub fn update(&mut self, action: usize, state: &[f64], reward: f64) {
+        if self.execution_mode == RlExecutionMode::FrozenTest {
+            return;
+        }
+        if action >= self.num_actions || state.len() != self.state_dim {
+            return;
+        }
+
+        self.step_count += 1;
+        self.alpha = self.current_alpha();
+
+        let phi = self.feature_map(state, action);
+
+        // 1. Update response vector b and covariance A
+        for i in 0..self.total_dim {
+            self.b_vector[i] += reward * phi[i];
+            for j in 0..self.total_dim {
+                self.a_matrix[i][j] += phi[i] * phi[j];
+            }
+        }
+
+        // 2. Sherman-Morrison streaming update on A^-1
+        let sm_failed = LinUcbBandit::sherman_morrison_rank1_update(&mut self.a_inv, &phi).is_err();
+        if sm_failed || (self.step_count % 500 == 0) {
+            if let Ok(recovered) = LinUcbBandit::stable_cholesky_inverse(&self.a_matrix, 1e-3) {
+                self.a_inv = recovered;
+            }
+        }
+
+        // 3. Update theta_hat = A^-1 b
+        for i in 0..self.total_dim {
+            let mut sum = 0.0f64;
+            for j in 0..self.total_dim {
+                sum += self.a_inv[i][j] * self.b_vector[j];
+            }
+            self.theta_hat[i] = sum;
+        }
+    }
+
+    pub fn to_json_string(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+
+    pub fn from_json_string(s: &str) -> Result<Self, serde_json::Error> {
+        let bandit: Self = serde_json::from_str(s)?;
+        if let Err(msg) = bandit.validate() {
+            return Err(serde::de::Error::custom(msg));
+        }
+        Ok(bandit)
+    }
+
+    pub fn save_to_json(&self, path: impl AsRef<std::path::Path>) -> std::io::Result<()> {
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        std::fs::write(path, json)
+    }
+
+    pub fn load_from_json(path: impl AsRef<std::path::Path>) -> std::io::Result<Self> {
+        let contents = std::fs::read_to_string(path)?;
+        let bandit: Self = serde_json::from_str(&contents)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        bandit.validate()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        Ok(bandit)
     }
 }
 
@@ -1492,22 +2735,26 @@ impl EDRRuntimeController {
             // 5. Calculate Reward and Store Transition
             let is_malicious = packet.threat_score > 0.65;
             let is_critical = self.safety.is_protected(packet.ctx.pid, &packet.ctx.binary_path);
-            let reward = self.reward_engine.compute_reward(
-                action,
-                is_malicious,
-                packet.threat_score,
-                0.5,
-                is_critical,
-            );
+            let reward = if is_critical && candidate_action.is_containment() {
+                -500.0f32
+            } else {
+                self.reward_engine.compute_reward(
+                    action,
+                    is_malicious,
+                    packet.threat_score,
+                    0.5,
+                    is_critical,
+                )
+            };
 
             let transition = Transition {
                 state: packet.telemetry_vector.clone(),
-                action,
+                action: candidate_action,
                 reward,
                 next_state: packet.telemetry_vector,
                 done: action == EdrAction::HardMitigation,
                 priority: reward.abs() + 0.01,
-                action_index: Some(action.to_index()),
+                action_index: Some(candidate_action.to_index()),
             };
 
             {
@@ -1850,13 +3097,17 @@ impl DigitalTwinSimulator {
                 let guarded_action =
                     self.safety.filter_action(ctx.pid, &ctx.binary_path, candidate_action);
 
-                let reward = self.reward_engine.compute_reward(
-                    guarded_action,
-                    is_attack,
-                    threat_score,
-                    prev_threat_score,
-                    is_protected_target,
-                );
+                let reward = if is_protected_target && candidate_action.is_containment() {
+                    -500.0f32
+                } else {
+                    self.reward_engine.compute_reward(
+                        guarded_action,
+                        is_attack,
+                        threat_score,
+                        prev_threat_score,
+                        is_protected_target,
+                    )
+                };
                 total_rewards += reward;
 
                 let mut done = false;
@@ -1894,12 +3145,12 @@ impl DigitalTwinSimulator {
 
                 let transition = Transition {
                     state: s_vec,
-                    action: guarded_action,
+                    action: candidate_action,
                     reward,
                     next_state: next_s_vec,
                     done,
                     priority: reward.abs() + 0.01,
-                    action_index: Some(guarded_action.to_index()),
+                    action_index: Some(candidate_action.to_index()),
                 };
 
                 replay_buffer.push(transition);
@@ -1990,6 +3241,222 @@ impl DigitalTwinSimulator {
             false_positive_disruption_rate: fp_rate,
             average_dwell_time: avg_dwell,
             mean_reward,
+        }
+    }
+}
+
+/// Advantage Tracker (Pillars 5 & 6).
+/// Compares RL verdict against the deterministic heuristic baseline:
+/// - rl_greater: Count and percentage where R_RL > R_heuristic + 1e-4
+/// - rl_equal: Count and percentage where |R_RL - R_heuristic| <= 1e-4
+/// - rl_less: Count and percentage where R_RL < R_heuristic - 1e-4
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct AdvantageTracker {
+    pub rl_greater: usize,
+    pub rl_equal: usize,
+    pub rl_less: usize,
+    pub total_steps: usize,
+    pub cumulative_rl_reward: f64,
+    pub cumulative_heuristic_reward: f64,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct AdvantageSummary {
+    pub total_steps: usize,
+    pub rl_greater: usize,
+    pub rl_equal: usize,
+    pub rl_less: usize,
+    pub pct_greater: f64,
+    pub pct_equal: f64,
+    pub pct_less: f64,
+    pub mean_rl_reward: f64,
+    pub mean_heuristic_reward: f64,
+    pub advantage: f64,
+}
+
+impl AdvantageTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record_step(&mut self, rl_reward: f64, heuristic_reward: f64) {
+        if !rl_reward.is_finite() || !heuristic_reward.is_finite() {
+            return;
+        }
+        self.total_steps += 1;
+        self.cumulative_rl_reward += rl_reward;
+        self.cumulative_heuristic_reward += heuristic_reward;
+
+        let diff = rl_reward - heuristic_reward;
+        if diff > 1e-4 {
+            self.rl_greater += 1;
+        } else if diff < -1e-4 {
+            self.rl_less += 1;
+        } else {
+            self.rl_equal += 1;
+        }
+    }
+
+    pub fn get_summary(&self) -> AdvantageSummary {
+        let total = self.total_steps as f64;
+        let (pct_greater, pct_equal, pct_less) = if total > 0.0 {
+            (
+                (self.rl_greater as f64 / total) * 100.0,
+                (self.rl_equal as f64 / total) * 100.0,
+                (self.rl_less as f64 / total) * 100.0,
+            )
+        } else {
+            (0.0, 0.0, 0.0)
+        };
+
+        let mean_rl = if total > 0.0 {
+            self.cumulative_rl_reward / total
+        } else {
+            0.0
+        };
+        let mean_heur = if total > 0.0 {
+            self.cumulative_heuristic_reward / total
+        } else {
+            0.0
+        };
+
+        AdvantageSummary {
+            total_steps: self.total_steps,
+            rl_greater: self.rl_greater,
+            rl_equal: self.rl_equal,
+            rl_less: self.rl_less,
+            pct_greater,
+            pct_equal,
+            pct_less,
+            mean_rl_reward: mean_rl,
+            mean_heuristic_reward: mean_heur,
+            advantage: mean_rl - mean_heur,
+        }
+    }
+}
+
+/// Oracle Regret & Temporal Learning Dynamics Tracker (Pillars 5 & 6).
+/// - Instantaneous Regret_t = max(0.0, R* - R(a_t)) where R* is the oracle best action reward.
+/// - Early mean reward (t < 100) vs Late mean reward (t >= 100).
+/// - Tracks regret decay over time: lim_{t -> infty} Regret_t -> 0.
+/// - Tracks false positive rollback drops.
+#[derive(Debug, Clone, Default, Serialize, Deserialize)]
+pub struct TemporalMetricsTracker {
+    pub step_count: usize,
+    pub early_rewards: Vec<f64>,
+    pub late_rewards: Vec<f64>,
+    pub instantaneous_regrets: Vec<f64>,
+    pub cumulative_regret: f64,
+    pub oracle_matches: usize,
+    pub fp_rollback_drops: usize,
+    pub advantage_tracker: AdvantageTracker,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct TemporalMetricsSummary {
+    pub total_steps: usize,
+    pub early_mean_reward: f64,
+    pub late_mean_reward: f64,
+    pub reward_progression_positive: bool,
+    pub mean_regret: f64,
+    pub late_mean_regret: f64,
+    pub cumulative_regret: f64,
+    pub oracle_match_rate: f64,
+    pub fp_rollback_drops: usize,
+    pub advantage: AdvantageSummary,
+}
+
+impl TemporalMetricsTracker {
+    pub fn new() -> Self {
+        Self::default()
+    }
+
+    pub fn record_step(
+        &mut self,
+        rl_reward: f64,
+        heuristic_reward: f64,
+        oracle_reward: f64,
+        action_selected: usize,
+        oracle_action: usize,
+    ) {
+        let safe_rl = if rl_reward.is_finite() { rl_reward } else { 0.0 };
+        let safe_heur = if heuristic_reward.is_finite() { heuristic_reward } else { 0.0 };
+        let safe_oracle = if oracle_reward.is_finite() { oracle_reward } else { 0.0 };
+
+        let t = self.step_count;
+        self.step_count += 1;
+
+        if t < 100 {
+            self.early_rewards.push(safe_rl);
+        } else {
+            self.late_rewards.push(safe_rl);
+        }
+
+        let regret = (safe_oracle - safe_rl).max(0.0);
+        self.instantaneous_regrets.push(regret);
+        self.cumulative_regret += regret;
+
+        if action_selected == oracle_action {
+            self.oracle_matches += 1;
+        }
+
+        self.advantage_tracker.record_step(safe_rl, safe_heur);
+    }
+
+    pub fn record_rollback_drop(&mut self, is_fp: bool) {
+        if is_fp {
+            self.fp_rollback_drops += 1;
+        }
+    }
+
+    pub fn get_summary(&self) -> TemporalMetricsSummary {
+        let early_mean = if !self.early_rewards.is_empty() {
+            self.early_rewards.iter().sum::<f64>() / (self.early_rewards.len() as f64)
+        } else {
+            0.0
+        };
+
+        let late_mean = if !self.late_rewards.is_empty() {
+            self.late_rewards.iter().sum::<f64>() / (self.late_rewards.len() as f64)
+        } else {
+            0.0
+        };
+
+        let total = self.step_count as f64;
+        let mean_regret = if total > 0.0 {
+            self.cumulative_regret / total
+        } else {
+            0.0
+        };
+
+        let late_mean_regret = if self.step_count >= 100 && !self.late_rewards.is_empty() {
+            let late_regrets = &self.instantaneous_regrets[100..];
+            if !late_regrets.is_empty() {
+                late_regrets.iter().sum::<f64>() / (late_regrets.len() as f64)
+            } else {
+                0.0
+            }
+        } else {
+            0.0
+        };
+
+        let match_rate = if total > 0.0 {
+            self.oracle_matches as f64 / total
+        } else {
+            0.0
+        };
+
+        TemporalMetricsSummary {
+            total_steps: self.step_count,
+            early_mean_reward: early_mean,
+            late_mean_reward: late_mean,
+            reward_progression_positive: late_mean > early_mean,
+            mean_regret,
+            late_mean_regret,
+            cumulative_regret: self.cumulative_regret,
+            oracle_match_rate: match_rate,
+            fp_rollback_drops: self.fp_rollback_drops,
+            advantage: self.advantage_tracker.get_summary(),
         }
     }
 }

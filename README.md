@@ -11,7 +11,7 @@
   <a href="#-mitre-attck--atlas-enterprise-framework"><img src="https://img.shields.io/badge/MITRE%20ATT%26CK%20%26%20ATLAS-26%2C381%20Objects-blueviolet?style=for-the-badge" alt="MITRE"/></a>
   <a href="#-mesh-networking"><img src="https://img.shields.io/badge/Wire-ML--KEM--768%20PQC-blueviolet?style=for-the-badge" alt="PQC"/></a>
   <a href="#-architecture"><img src="https://img.shields.io/badge/Hardware-TPM%202.0%20Silicon-blue?style=for-the-badge" alt="TPM 2.0"/></a>
-  <a href="#-adversarial-verification"><img src="https://img.shields.io/badge/Adversarial%20%26%20Security%20Tests-127%2F127%20Passed-brightgreen?style=for-the-badge" alt="Tests"/></a>
+  <a href="#-adversarial-verification"><img src="https://img.shields.io/badge/Adversarial%20%26%20Security%20Tests-148%2B%20Passed-brightgreen?style=for-the-badge" alt="Tests"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"/></a>
 </p>
 
@@ -20,6 +20,7 @@
   <a href="#-architecture">Architecture</a> •
   <a href="#-dns-telemetry-setup">DNS & Sysmon Setup</a> •
   <a href="#-two-host-mesh-consensus">Two-Host BFT Mesh</a> •
+  <a href="#-rl-adaptive-controller">6-Pillar RL Controller</a> •
   <a href="#-adversarial-verification">Adversarial Testing</a> •
   <a href="#-synthetic-telemetry-canaries--anti-blinding-engine">Canary Anti-Blinding</a> •
   <a href="#-mitre-attck--atlas-enterprise-framework">MITRE ATT&CK & ATLAS</a> •
@@ -281,10 +282,116 @@ OshoosiClaw supports multi-node clustering and edge deployments down to a strict
 
 ---
 
-<a id="-adversarial-verification"></a>
-## ⚡ Adversarial & Comprehensive Verification (127/127 Tests Passed)
+<a id="-rl-adaptive-controller"></a>
+## 🧠 6-Pillar Reinforcement Learning Adaptive Controller
 
-OshoosiClaw includes 127 automated adversarial attack simulation and security verification tests evaluating host, peer, telemetry anti-blinding, policy engine sandbox, MITRE ATLAS voters, and in-memory evasion resilience:
+OshoosiClaw incorporates an autonomous **6-Pillar Reinforcement Learning Adaptive Controller** (`osoosi-behavioral::rl_engine`) designed for real-time endpoint mitigation, contextual alert prioritization, and self-improving threat response. The architecture provides mathematical stability, continuous risk feedback, and hard OS safety invariants:
+
+```mermaid
+graph TD
+    subgraph P1["Pillar 1: Algorithmic & Stability"]
+        ANN["Exploration Annealing<br/>α(t) = max(α_min, α_0 / (1 + α_decay t))"]
+        CHOL["Tikhonov Cholesky Inversion<br/>(L^-1)^T L^-1"]
+        SM["Sherman-Morrison O(d²)<br/>Rank-1 Streaming Update"]
+        CSG["Counterfactual Security Gain<br/>Δ_security = max(0, S_unmit - S_mit)"]
+        CBOUND["Strict Contextual Boundary<br/>γ = 0.0 (No Temporal Leak)"]
+    end
+
+    subgraph P2["Pillar 2: State & Action Space"]
+        REP["Shared Bilinear Model<br/>φ(s, a) = [s, e_a, s ⊗ e_a]"]
+        DIM32["Unified 32-D State Vector<br/>Lineage (6) + Velocity (6) + Priors (6) + Mesh (6) + MITRE (8)"]
+        ACT5["Structured 5-Tuple Action<br/>(Scope, Tier, Technique, Rollback, Telemetry)"]
+    end
+
+    subgraph P3["Pillar 3: Multi-Signal Reward & Safety"]
+        MSR["Multi-Signal Reward Function<br/>R = w_acc S_acc - w_disrupt S_disrupt + w_dwell S_dwell - w_cost S_cost + w_cons S_cons - w_invar S_violation"]
+        INVAR["Zero OS Destabilization Invariant<br/>Zero-Tolerance -500.0 Penalty & Safe Degradation (PIDs 0, 1, 4)"]
+    end
+
+    subgraph P4["Pillar 4: Scientific Regimes & Persistence"]
+        REG["3 Clean Execution Regimes<br/>ColdRl | WarmPriorRl | FrozenTest"]
+        SER["JSON & Bincode Checkpoint Engine<br/>Dimension & Invertibility Validation"]
+    end
+
+    subgraph P5["Pillar 5: Transparent Attribution & Advantage"]
+        ADV["Direct Advantage Counting<br/>R_RL > R_heur | R_RL == R_heur | R_RL < R_heur"]
+        REGRET["Oracle Counterfactual Regret<br/>Regret_t = max(0, R* - R(a_t))"]
+    end
+
+    subgraph P6["Pillar 6: Temporal Learning Dynamics"]
+        DYN["Progression & Asymptotic Convergence<br/>R_late > R_early | lim_{t→∞} Regret_t → 0 | Rollback Drop"]
+    end
+
+    P1 --> P2 --> P3 --> P4 --> P5 --> P6
+```
+
+### Pillar 1: Algorithmic Fixes & Numerical Stability
+- **Exploration Annealing $\alpha(t)$**: Contextual bandit exploration follows a monotonically decaying schedule:
+  $$\alpha(t) = \max\left(\alpha_{\min}, \frac{\alpha_0}{1 + \alpha_{\text{decay}} t}\right)$$
+  *(default $\alpha_0 = 1.0$, $\alpha_{\text{decay}} = 0.005$, $\alpha_{\min} = 0.05$)*, ensuring aggressive early hypothesis testing followed by asymptotic convergence to exploitation without freezing exploration.
+- **Tikhonov-Regularized Cholesky Inversion**: When inverting empirical covariance matrices $A$, regularized Cholesky decomposition $M = \frac{1}{2}(A + A^T) + \lambda I$ solves $L L^T = M$ and inverts the lower triangular factor via forward substitution $L L^{-1} = I$, producing $A^{-1} = (L^{-1})^T L^{-1}$. Any non-finite inputs (NaNs/Infinities) or degenerate rank collapses are safely sanitized, falling back to scaled identity without panic.
+- **Sherman-Morrison Rank-1 Streaming Updates**: Streaming updates to $A^{-1}$ are computed in $O(d^2)$ via:
+  $$A_{t+1}^{-1} = A_t^{-1} - \frac{A_t^{-1} x x^T A_t^{-1}}{1 + x^T A_t^{-1} x}$$
+  eliminating $O(d^3)$ full matrix inversion bottlenecks during high-throughput event processing. Periodic re-synchronization (every 500 steps) eliminates accumulated floating-point drift.
+- **Counterfactual Security Gain**: Eliminates the "zero-gain" bias where containment actions received static rewards regardless of threat severity. Security gain is computed counterfactually against the unmitigated baseline threat severity $\Delta_{\text{security}} = \max(0.0, S_{\text{unmitigated}} - S_{\text{mitigated}}(a))$, rewarding actions in proportion to the risk eliminated.
+- **Strict $\gamma = 0.0$ Contextual Boundaries**: Single-step alert triage and prioritization enforce $\gamma = 0.0$ to prevent temporal credit leakage across unrelated security events.
+
+### Pillar 2: State & Action Representation
+- **Shared Bilinear Bayesian Reward Model**: Implements cross-action transfer learning via joint state-action feature mapping:
+  $$\phi(s, a) = [s_0 \dots s_{d-1}, e_0 \dots e_{K-1}, (s \otimes e_a)_0 \dots (s \otimes e_a)_{d \cdot K - 1}] \in \mathbb{R}^D$$
+  where $D = d + K + d \cdot K$. Information learned from observing outcomes on one action propagates through shared parameter vector $\hat{\theta} = A^{-1} b$, accelerating convergence across sparse action spaces.
+- **Unified 32-D EDR State Vector**: Normalizes and concatenates host, telemetry, detection priors, and mesh indicators into a unified 32-dimensional continuous feature space:
+  - **Process Lineage (0..5)**: Tree depth, parent-child entropy, token elevation, kernel thread flag, parent anomaly score, privilege escalation jump.
+  - **Telemetry Velocity (6..11)**: File modification rate $df/dt$, outbound network velocity $dn/dt$, page permission transition rate (PAGE_RW $\to$ PAGE_RWX), thread burst rate, handle duplication rate, CPU burst.
+  - **Detection Priors (12..17)**: Static PE/Magika score, command-line token classifier, fast-path YARA/Sigma score, CAPA/FLOSS capability flag, behavioral sequence score, isolation forest anomaly score.
+  - **Wire Mesh & Consensus (18..23)**: Peer anomaly score, cluster prevalence (10-min window), BFT consensus confidence, cluster alert velocity, peer threat rating, mesh quarantine vote ratio.
+  - **Incident & MITRE ATT&CK Context (24..31)**: Lateral movement, credential dumping, persistence, defense evasion scores, unsigned binary flag, temp directory execution flag, container flag, overall threat score.
+- **Structured 5-Tuple Action Space**: Dissects actions along 5 orthogonal operational dimensions: `StructuredEdrAction { scope, tier, technique, rollback, telemetry_level }`:
+  - `PassiveObserve`: `(Process, PassiveObserve, JobObjectLimit, None, Standard)`
+  - `TraceElevation`: `(Process, LowFrictionTriage, JobObjectLimit, None, VerboseEtw)`
+  - `MemoryIntrospection`: `(Thread, LowFrictionTriage, ThreadSuspend, None, MemoryDump)`
+  - `MicroContainment`: `(NetworkSocket, HighFrictionContainment, WfpFilter, RegistryRollback, VerboseEtw)`
+  - `HardMitigation`: `(Host, HardMitigation, ProcessTerminate, SnapshotRevert, MemoryDump)`
+
+### Pillar 3: Multi-Signal Reward & Safety Guardrails
+- **Multi-Signal Reward Formulation**:
+  $$R = w_{\text{acc}} S_{\text{acc}} - w_{\text{disrupt}} S_{\text{disrupt}} + w_{\text{dwell}} S_{\text{dwell}} - w_{\text{cost}} S_{\text{cost}} + w_{\text{consensus}} S_{\text{consensus}} - w_{\text{invar}} S_{\text{violation}}$$
+  - $w_{\text{acc}} = 100.0$: Reward for counterfactual security risk reduction.
+  - $w_{\text{disrupt}} = 150.0$: Penalty for disruptive false-positive containment actions.
+  - $w_{\text{dwell}} = 10.0$: Reward for minimizing attacker dwell time on the host.
+  - $w_{\text{cost}} = 5.0$: Telemetry and forensic capture overhead penalty.
+  - $w_{\text{consensus}} = 20.0$: Alignment bonus with BFT mesh consensus verdicts.
+  - $w_{\text{invar}} = 500.0$: Severe penalty for OS destabilization invariant violations.
+- **Zero OS Destabilization Invariant**:
+  - Deterministic `SafetyFilter` strictly blocks containment actions targeting critical system PIDs (PID 0 System Idle, PID 1 init/systemd/launchd, PID 4 NT Kernel) and protected OS binaries (`smss.exe`, `csrss.exe`, `wininit.exe`, `services.exe`, `lsass.exe`, `winlogon.exe`, `fontdrvhost.exe`, `dwm.exe`).
+  - If the RL model selects `HardMitigation` or `MicroContainment` against a protected target, the action is **safely degraded** to non-destructive `MemoryIntrospection` and the policy is penalized with an unyielding **$-500.0$ penalty**.
+
+### Pillar 4: Scientific Rigor & Checkpoint Persistence
+- **Three Clean Execution Regimes**:
+  - `ColdRl`: Policy trains online from scratch, establishing empirical baselines.
+  - `WarmPriorRl`: Policy is pre-loaded with expert heuristic priors (biasing benign telemetry toward passive observation and critical indicators toward prompt triage), accelerating safe deployment in production.
+  - `FrozenTest`: Strictly read-only evaluation mode. Neural weights and covariance matrices are locked; all learning updates (`update`, `train_step_cql`, `update_target_network`) are bypassed to prevent evaluation data leakage.
+- **Robust Serialization & Dimension Validation**: Checkpoints serialize to JSON and Bincode with schema versioning (`version >= 1`). On deserialization, `validate()` verifies matrix squareness, row/column counts against declared state/action dimensions, and non-zero dimensions to protect against corrupted checkpoints.
+
+### Pillar 5: Transparent Attribution & Advantage
+- **Direct Advantage Counting (`AdvantageTracker`)**: Continuously tallies comparative performance against deterministic heuristic baselines:
+  - $R_{\text{RL}} > R_{\text{heuristic}} + 10^{-4}$ (RL Advantage win rate %)
+  - $|R_{\text{RL}} - R_{\text{heuristic}}| \le 10^{-4}$ (Verdicts identical %)
+  - $R_{\text{RL}} < R_{\text{heuristic}} - 10^{-4}$ (Heuristic win rate %)
+  - Reports cumulative advantage $\text{Advantage} = \bar{R}_{\text{RL}} - \bar{R}_{\text{heuristic}}$.
+- **Oracle Counterfactual Regret**: Measures instantaneous policy regret against the counterfactual optimal oracle action: $\text{Regret}_t = \max(0.0, R^* - R(a_t))$, providing an objective benchmark of decision quality.
+
+### Pillar 6: Temporal Learning Dynamics
+- **Early vs. Late Reward Progression**: Tracks early mean rewards ($t < 100$) versus late mean rewards ($t \ge 100$), mathematically verifying learning progression: $R_{\text{late}} > R_{\text{early}}$.
+- **Asymptotic Regret Decay**: Proves policy convergence through monotonically decaying regret: $\lim_{t \to \infty} \text{Regret}_t \to 0$.
+- **False-Positive Rollback Drops**: Tracks rollback strategies executed for false positives to monitor mitigation reversibility and friction reduction.
+
+---
+
+<a id="-adversarial-verification"></a>
+## ⚡ Adversarial & Comprehensive Verification (148+ Tests Passed)
+
+OshoosiClaw includes 148+ automated adversarial attack simulation and security verification tests evaluating host, peer, telemetry anti-blinding, policy engine sandbox, MITRE ATLAS voters, in-memory evasion resilience, and the 6-pillar RL adaptive controller:
 
 ```powershell
 # 1. Attestation, Nonce Replay & TPM Quote Tampering (26 tests)
@@ -310,6 +417,9 @@ cargo test -p osoosi-dashboard
 
 # 8. MITRE Typing, Taint Flow & Configuration Integrity (12 tests)
 cargo test -p osoosi-types
+
+# 9. RL Adaptive Controller, Contextual Bandits & Safety Guardrails (21 tests)
+cargo test -p osoosi-behavioral --test rl_tests
 ```
 
 ---
@@ -1103,6 +1213,7 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 
 Recent hardening efforts have focused on agent resilience and production stability:
 
+- **6-Pillar Reinforcement Learning Adaptive Controller**: Complete autonomous EDR RL engine (`osoosi-behavioral::rl_engine`) implementing exploration annealing ($\alpha(t) = \max(\alpha_{\min}, \frac{\alpha_0}{1 + \alpha_{\text{decay}} t})$), Tikhonov-regularized Cholesky inversion, Sherman-Morrison rank-1 streaming updates, counterfactual security gain, strict $\gamma=0$ contextual boundaries, shared bilinear Bayesian reward model ($s \otimes e_a$), unified 32-D state representation, multi-signal reward engineering with zero OS destabilization invariants (-500.0 penalty and safe degradation for protected PIDs 0, 1, 4), 3 execution regimes (`ColdRl`, `WarmPriorRl`, `FrozenTest`), advantage counting, and temporal regret decay dynamics.
 - **Authoritative MITRE ATT&CK + ATLAS STIX 2.1 Integration**: Complete 26,381-object STIX bundle uniting Enterprise ATT&CK (v19.2) and MITRE ATLAS (v2026.09) with 854 unified techniques and 4,334 correlated Sigma rules.
 - **P2P Wire Mesh STIX Synchronization (`osoosi-wire`)**: Distributed GossipSub topic `osoosi-stix-sync-v1` with Blake3 hash validation and zero-downtime hot-reloading.
 - **AI Threat Detectors & Autonomous Consensus Defenses**: Multi-voter consensus integration for `AiSecurityAuditVoter` and `AgenticVoter` detecting tool injection, runtime memory tampering, jailbreaks, and prompt exfiltration.
