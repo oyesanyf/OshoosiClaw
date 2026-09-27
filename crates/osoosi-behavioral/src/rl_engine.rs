@@ -1897,25 +1897,33 @@ impl LinUcbBandit {
             x_dot_v += x[i] * v[i];
         }
         let denom = 1.0 + x_dot_v;
-        if !denom.is_finite() || denom.abs() < 1e-12 {
-            return Err("Sherman-Morrison denominator is near-zero or non-finite".into());
+        if !denom.is_finite() || denom <= 1e-12 {
+            return Err("Sherman-Morrison denominator is near-zero, non-finite, or non-positive".into());
         }
 
-        // 3. A^-1 -= (v v^T) / denom with symmetric stabilization
+        // 3. Compute update into temporary buffer to ensure transactional safety
+        let mut updated = vec![vec![0.0f64; d]; d];
         for i in 0..d {
             for j in i..d {
                 let delta = (v[i] * v[j]) / denom;
                 let val = 0.5 * ((a_inv[i][j] - delta) + (a_inv[j][i] - delta));
-                a_inv[i][j] = val;
-                a_inv[j][i] = val;
+                if !val.is_finite() {
+                    return Err("Sherman-Morrison update produced non-finite entry".into());
+                }
+                updated[i][j] = val;
+                updated[j][i] = val;
             }
         }
 
-        // 4. Verify positive-definiteness on diagonal
+        // 4. Verify positive-definiteness on diagonal before mutating in-place
         for i in 0..d {
-            if !a_inv[i][i].is_finite() || a_inv[i][i] <= 1e-12 {
+            if updated[i][i] <= 1e-12 {
                 return Err("Sherman-Morrison update lost positive-definiteness on diagonal".into());
             }
+        }
+
+        for i in 0..d {
+            a_inv[i].copy_from_slice(&updated[i]);
         }
 
         Ok(())

@@ -1047,9 +1047,18 @@ fn test_sherman_morrison_drift_and_collinear_stress() {
         }
     }
 
-    // Verify non-finite vector rejection
-    let nan_vec = vec![f64::NAN, 1.0, 0.5, 0.2];
-    assert!(LinUcbBandit::sherman_morrison_rank1_update(&mut bilinear.a_inv, &nan_vec).is_err());
+    // Verify non-finite vector rejection on matching dimension
+    let mut nan_vec = vec![0.5f64; bilinear.total_dim];
+    nan_vec[0] = f64::NAN;
+    let res_nan = LinUcbBandit::sherman_morrison_rank1_update(&mut bilinear.a_inv, &nan_vec);
+    assert!(res_nan.is_err());
+    assert!(res_nan.unwrap_err().contains("non-finite"));
+
+    // Also verify dimension mismatch rejection
+    let mismatch_vec = vec![1.0, 0.5];
+    let res_mismatch = LinUcbBandit::sherman_morrison_rank1_update(&mut bilinear.a_inv, &mismatch_vec);
+    assert!(res_mismatch.is_err());
+    assert!(res_mismatch.unwrap_err().contains("does not match matrix dimension"));
 }
 
 #[test]
