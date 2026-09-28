@@ -78,6 +78,42 @@ pub fn get_process_name(pid: u32) -> String {
                 }
             }
         }
+
+        // Secondary Win32 fallback for elevated/protected processes where OpenProcess is refused:
+        // Use CreateToolhelp32Snapshot which does not require opening individual process handles
+        use windows::Win32::System::Diagnostics::ToolHelp::{
+            CreateToolhelp32Snapshot, Process32First, Process32Next, PROCESSENTRY32,
+            TH32CS_SNAPPROCESS,
+        };
+        if let Ok(snapshot) = unsafe { CreateToolhelp32Snapshot(TH32CS_SNAPPROCESS, 0) } {
+            let mut entry = PROCESSENTRY32 {
+                dwSize: std::mem::size_of::<PROCESSENTRY32>() as u32,
+                ..Default::default()
+            };
+            unsafe {
+                if Process32First(snapshot, &mut entry).is_ok() {
+                    loop {
+                        if entry.th32ProcessID == pid {
+                            let name: String = entry
+                                .szExeFile
+                                .iter()
+                                .take_while(|&&c| c != 0)
+                                .map(|&c| c as u8 as char)
+                                .collect();
+                            let _ = CloseHandle(snapshot);
+                            if !name.is_empty() {
+                                return name;
+                            }
+                            break;
+                        }
+                        if Process32Next(snapshot, &mut entry).is_err() {
+                            break;
+                        }
+                    }
+                }
+                let _ = CloseHandle(snapshot);
+            }
+        }
     }
 
     let mut s = sysinfo::System::new();
@@ -192,6 +228,60 @@ impl ActiveProcessTarpit {
         unsafe impl Send for SendHandle {}
         unsafe impl Sync for SendHandle {}
 
+        // Collect all threads belonging to pid using Toolhelp32 snapshot
+        let handles: Vec<SendHandle> = unsafe {
+            use windows::Win32::Foundation::CloseHandle;
+            use windows::Win32::System::Diagnostics::ToolHelp::{
+                CreateToolhelp32Snapshot, Thread32First, Thread32Next, THREADENTRY32,
+                TH32CS_SNAPTHREAD,
+            };
+            use windows::Win32::System::Threading::{
+                OpenThread, THREAD_QUERY_INFORMATION, THREAD_SUSPEND_RESUME,
+            };
+
+            let mut list = Vec::new();
+            if let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) {
+                let mut entry = THREADENTRY32 {
+                    dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
+                    ..Default::default()
+                };
+
+                if Thread32First(snapshot, &mut entry).is_ok() {
+                    loop {
+                        if entry.th32OwnerProcessID == pid {
+                            match OpenThread(
+                                THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION,
+                                false,
+                                entry.th32ThreadID,
+                            ) {
+                                Ok(h) => list.push(SendHandle(h)),
+                                Err(e) => {
+                                    trace!(
+                                        "ActiveProcessTarpit: OpenThread failed for TID {} in PID {} ({}): {}",
+                                        entry.th32ThreadID, pid, proc_name, e
+                                    );
+                                }
+                            }
+                        }
+                        if Thread32Next(snapshot, &mut entry).is_err() {
+                            break;
+                        }
+                    }
+                }
+                let _ = CloseHandle(snapshot);
+            }
+            list
+        };
+
+        if handles.is_empty() {
+            warn!(
+                "ActiveProcessTarpit: No accessible threads found to trap for PID {} ({})",
+                pid, proc_name
+            );
+            mark_pid_inaccessible(pid);
+            return;
+        }
+
         let run_flag = Arc::new(AtomicBool::new(true));
         self.active_traps.insert(pid, run_flag.clone());
         let traps = self.active_traps.clone();
@@ -199,72 +289,10 @@ impl ActiveProcessTarpit {
 
         tokio::spawn(async move {
             info!(
-                "ActiveProcessTarpit: Starting asymmetric thread containment loop for PID {} ({})",
-                pid, proc_name_clone
+                "ActiveProcessTarpit: Starting asymmetric thread containment loop for PID {} ({}) ({} thread(s) trapped)",
+                pid, proc_name_clone, handles.len()
             );
             let start = tokio::time::Instant::now();
-
-            // Collect all threads belonging to pid using Toolhelp32 snapshot
-            let handles: Vec<SendHandle> = unsafe {
-                use windows::Win32::Foundation::CloseHandle;
-                use windows::Win32::System::Diagnostics::ToolHelp::{
-                    CreateToolhelp32Snapshot, Thread32First, Thread32Next, THREADENTRY32,
-                    TH32CS_SNAPTHREAD,
-                };
-                use windows::Win32::System::Threading::{
-                    OpenThread, THREAD_QUERY_INFORMATION, THREAD_SUSPEND_RESUME,
-                };
-
-                let mut list = Vec::new();
-                if let Ok(snapshot) = CreateToolhelp32Snapshot(TH32CS_SNAPTHREAD, 0) {
-                    let mut entry = THREADENTRY32 {
-                        dwSize: std::mem::size_of::<THREADENTRY32>() as u32,
-                        ..Default::default()
-                    };
-
-                    if Thread32First(snapshot, &mut entry).is_ok() {
-                        loop {
-                            if entry.th32OwnerProcessID == pid {
-                                match OpenThread(
-                                    THREAD_SUSPEND_RESUME | THREAD_QUERY_INFORMATION,
-                                    false,
-                                    entry.th32ThreadID,
-                                ) {
-                                    Ok(h) => list.push(SendHandle(h)),
-                                    Err(e) => {
-                                        trace!(
-                                            "ActiveProcessTarpit: OpenThread failed for TID {} in PID {} ({}): {}",
-                                            entry.th32ThreadID, pid, proc_name_clone, e
-                                        );
-                                    }
-                                }
-                            }
-                            if Thread32Next(snapshot, &mut entry).is_err() {
-                                break;
-                            }
-                        }
-                    }
-                    let _ = CloseHandle(snapshot);
-                }
-                list
-            };
-
-            if handles.is_empty() {
-                warn!(
-                    "ActiveProcessTarpit: No accessible threads found to trap for PID {} ({})",
-                    pid, proc_name_clone
-                );
-                mark_pid_inaccessible(pid);
-                traps.remove(&pid);
-                return;
-            }
-
-            info!(
-                "ActiveProcessTarpit: Intercepted and trapped {} thread(s) for PID {} ({})",
-                handles.len(),
-                pid,
-                proc_name_clone
-            );
 
             let mut is_currently_suspended = false;
             while run_flag.load(Ordering::Relaxed) && start.elapsed() < max_duration {
@@ -430,6 +458,11 @@ impl TarpitManager {
             Duration::from_secs(duration_secs),
         );
 
+        // If neither throttle nor thread containment could be applied (e.g. inaccessible/exited), return promptly
+        if !throttle_applied && !self.active_tarpit.is_trapped(pid) {
+            return;
+        }
+
         sleep(Duration::from_secs(duration_secs)).await;
 
         // Restore after tarpit window closes
@@ -461,7 +494,7 @@ impl TarpitManager {
     /// Windows: Use native Win32 API to set IDLE priority and shrink working set.
     #[cfg(target_os = "windows")]
     fn windows_throttle(pid: u32, throttle: bool, proc_name: &str) -> bool {
-        if is_pid_inaccessible_cooldown(pid) {
+        if throttle && is_pid_inaccessible_cooldown(pid) {
             return false;
         }
         if pid <= 4 || pid == std::process::id() {

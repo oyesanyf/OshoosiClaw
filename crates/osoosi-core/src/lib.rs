@@ -161,8 +161,8 @@ pub fn extract_raw_event_pid(event: &osoosi_types::HostSecurityEvent) -> Option<
             v.as_u64().map(|n| n as u32).or_else(|| {
                 v.as_str().and_then(|s| {
                     let s_clean = s.trim();
-                    if s_clean.starts_with("0x") || s_clean.starts_with("0X") {
-                        u32::from_str_radix(&s_clean[2..], 16).ok()
+                    if let Some(hex) = s_clean.strip_prefix("0x").or_else(|| s_clean.strip_prefix("0X")) {
+                        u32::from_str_radix(hex, 16).ok()
                     } else {
                         s_clean.parse::<u32>().ok()
                     }
@@ -185,7 +185,7 @@ pub fn extract_event_pid(event: &osoosi_types::HostSecurityEvent) -> Option<u32>
 
 /// Check if a process ID or image corresponds to a known security provider or EDR instrumentation.
 pub fn is_security_provider_process(pid: u32, image_name: &str) -> bool {
-    if pid == 0 || pid == 1 || pid == 4 || (pid > 0 && pid == std::process::id()) {
+    if pid > 0 && pid == std::process::id() {
         return true;
     }
     let lower_img = image_name.to_lowercase();
@@ -211,7 +211,7 @@ pub fn is_security_provider_process(pid: u32, image_name: &str) -> bool {
     }
 
     // If image_name is empty or unknown, attempt process name lookup via runtime if pid is non-zero
-    if (filename.is_empty() || filename == "unknown") && pid > 0 {
+    if (filename.is_empty() || filename == "unknown") && pid > 4 {
         let proc_name = osoosi_runtime::tarpit::get_process_name(pid).to_lowercase();
         let proc_fn = std::path::Path::new(&proc_name)
             .file_name()
@@ -310,27 +310,25 @@ pub fn is_system_critical(event: &osoosi_types::HostSecurityEvent) -> bool {
             | "msmpeng.exe"
             | "securityhealthservice.exe"
     );
-    if is_core_os_binary && (is_critical_path || is_security_provider_process(pid, filename)) {
+    if is_core_os_binary && (is_critical_path || is_security_provider_process(pid, filename) || filename == "system" || filename == "ntoskrnl.exe") {
         return true;
     }
 
-    if is_critical_path {
-        // Digital signature check via win_trust or get_pe_metadata
-        let path = std::path::Path::new(image_path);
-        if crate::win_trust::is_trusted_signed_binary(path) {
-            return true;
-        }
-        if let Some(metadata) = osoosi_types::get_pe_metadata(path) {
-            let product = metadata.product_name.to_lowercase();
-            let publisher = metadata.publisher.as_deref().unwrap_or("").to_lowercase();
-            let is_microsoft = product.contains("microsoft")
-                || product.contains("windows")
-                || publisher.contains("microsoft")
-                || publisher.contains("windows");
+    // Digital signature check via win_trust or get_pe_metadata
+    let path = std::path::Path::new(image_path);
+    if crate::win_trust::is_trusted_signed_binary(path) {
+        return true;
+    }
+    if let Some(metadata) = osoosi_types::get_pe_metadata(path) {
+        let product = metadata.product_name.to_lowercase();
+        let publisher = metadata.publisher.as_deref().unwrap_or("").to_lowercase();
+        let is_microsoft = product.contains("microsoft")
+            || product.contains("windows")
+            || publisher.contains("microsoft")
+            || publisher.contains("windows");
 
-            if metadata.is_signed && is_microsoft {
-                return true;
-            }
+        if metadata.is_signed && is_microsoft {
+            return true;
         }
     }
 
@@ -4010,20 +4008,30 @@ impl EdrOrchestrator {
                         if is_system_critical(&event) {
                             warn!(
                                 "[SECURITY SAFEGUARD] Fast-path Tarpit skipped for PID {:?}: SYSTEM CRITICAL or Security Provider binary. Containment refused.",
-                                extract_event_pid(&event)
+                                extract_raw_event_pid(&event)
                             );
                             return Ok(());
                         }
 
                         if let Some(pid) = extract_event_pid(&event) {
-                            warn!("Immediately freezing process threads via ActiveProcessTarpit for PID: {}", pid);
-                            let active_tarpit = osoosi_runtime::tarpit::ActiveProcessTarpit::new();
-                            let dur_secs = if action == ResponseAction::GhostTarpit { 120 } else { 60 };
-                            active_tarpit.trap_pid(
-                                pid,
-                                std::time::Duration::from_millis(500),
-                                std::time::Duration::from_secs(dur_secs),
-                            );
+                            let now = std::time::Instant::now();
+                            let debounced = if let Some(last) = RECENT_TARPITTED_PIDS.get(&pid) {
+                                now.duration_since(*last) < std::time::Duration::from_secs(60)
+                            } else {
+                                false
+                            };
+
+                            if !debounced {
+                                RECENT_TARPITTED_PIDS.insert(pid, now);
+                                warn!("Immediately freezing process threads via ActiveProcessTarpit for PID: {}", pid);
+                                let active_tarpit = osoosi_runtime::tarpit::ActiveProcessTarpit::new();
+                                let dur_secs = if action == ResponseAction::GhostTarpit { 120 } else { 60 };
+                                active_tarpit.trap_pid(
+                                    pid,
+                                    std::time::Duration::from_millis(500),
+                                    std::time::Duration::from_secs(dur_secs),
+                                );
+                            }
                         }
                         if let Some(cmd) = event.data.get("CommandLine")
                             .or_else(|| event.data.get("command_line"))
@@ -7553,9 +7561,23 @@ mod tests {
         assert!(is_security_provider_process(8888, "Sysmon.exe"));
         assert!(is_security_provider_process(8888, "osoosi.exe"));
         assert!(is_security_provider_process(8888, "msmpeng.exe"));
-        assert!(is_security_provider_process(4, "anything"));
         assert!(is_security_provider_process(std::process::id(), "anything"));
         assert!(!is_security_provider_process(9999, "powershell.exe"));
+        assert!(!is_security_provider_process(0, "malware.exe"));
+        assert!(!is_security_provider_process(0, ""));
+
+        // Critical guard: Threat events lacking PID must NEVER be shielded as system critical!
+        let ev_malware_no_pid = make_test_event(serde_json::json!({
+            "Image": r"C:\Windows\Temp\malware.exe",
+        }));
+        assert!(!is_system_critical(&ev_malware_no_pid), "Malware without PID must NOT be system critical");
+
+        let ev_empty = make_test_event(serde_json::json!({}));
+        assert!(!is_system_critical(&ev_empty), "Empty event must NOT be system critical");
+
+        // System/Kernel pseudo processes
+        let ev_sys_img = make_test_event(serde_json::json!({"Image": "System"}));
+        assert!(is_system_critical(&ev_sys_img), "System pseudo-process must be system critical");
 
         // 2. extract_event_pid ignores LoggingProcessId and extracts ProcessId from EventData
         let ev_with_logging_pid = make_test_event(serde_json::json!({
@@ -7593,6 +7615,11 @@ mod tests {
         assert_eq!(extract_event_pid(&ev_tgt), Some(3333));
         let ev_pid = make_test_event(serde_json::json!({"pid": "0x1122"}));
         assert_eq!(extract_event_pid(&ev_pid), Some(0x1122));
+
+        // Hex zero edge case
+        let ev_hex_zero = make_test_event(serde_json::json!({"ProcessId": "0x0"}));
+        assert_eq!(extract_raw_event_pid(&ev_hex_zero), Some(0));
+        assert_eq!(extract_event_pid(&ev_hex_zero), None);
     }
 
     #[test]
