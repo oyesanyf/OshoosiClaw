@@ -47,7 +47,8 @@ const state = {
         auto_quarantine_malware: false,
         action_confidence_threshold: 0.80,
         quarantine_confidence_threshold: 0.95
-    }
+    },
+    supervisorStatus: null
 };
 
 let updateInterval = null;
@@ -84,6 +85,8 @@ function startApp() {
     renderMitreView();
     renderHistoryView(1);
     fetchRotatedLogFiles();
+    fetchSupervisorStatus();
+    setInterval(fetchSupervisorStatus, 5000);
 
     updateDashboard();
     if (!updateInterval) {
@@ -5550,5 +5553,160 @@ async function fetchLogTail() {
         contentEl.innerHTML = `<span style="color: #ff6b6b;">Failed to load logs: ${escapeHtml(err.message)}</span>`;
     }
 }
+
+/**
+ * Cognitive Fusion Supervisor Agent - Out-of-band evidence fusion & self-healing watchdog
+ */
+let supervisorModalOpen = false;
+
+async function fetchSupervisorStatus() {
+    try {
+        const data = await fetchAPI('/supervisor/status');
+        if (!data) return;
+
+        state.supervisorStatus = data;
+
+        // Determine regime color and badge
+        let regimeColor = '#10b981'; // Green (Optimal)
+        let regimeBadgeClass = 'green';
+        if (data.regime === 'SelfTuning') {
+            regimeColor = '#eab308'; // Yellow
+            regimeBadgeClass = 'yellow';
+        } else if (data.regime === 'SelfHealing') {
+            regimeColor = '#f97316'; // Orange
+            regimeBadgeClass = 'orange';
+        } else if (data.regime === 'Emergency') {
+            regimeColor = '#ef4444'; // Red
+            regimeBadgeClass = 'red';
+        }
+
+        // Update header badge
+        const topText = document.getElementById('supervisor-top-text');
+        const topDot = document.getElementById('supervisor-indicator-dot');
+        if (topText) {
+            topText.innerText = `SUPERVISOR: ${Math.round(data.health_score)}% 🧠`;
+            topText.style.color = regimeColor;
+        }
+        if (topDot) {
+            topDot.style.background = regimeColor;
+        }
+
+        // Populate modal elements if open
+        renderSupervisorModal(data, regimeColor, regimeBadgeClass);
+    } catch (err) {
+        console.warn('Error fetching supervisor status:', err);
+    }
+}
+
+function renderSupervisorModal(data, regimeColor, regimeBadgeClass) {
+    if (!data) return;
+
+    const modalScore = document.getElementById('supervisor-modal-score');
+    if (modalScore) {
+        modalScore.innerText = `${data.health_score.toFixed(1)} / 100`;
+        modalScore.style.color = regimeColor || '#10b981';
+    }
+
+    const modalRegime = document.getElementById('supervisor-modal-regime');
+    if (modalRegime) {
+        modalRegime.innerText = (data.regime || 'OPTIMAL').toUpperCase();
+        modalRegime.className = `badge ${regimeBadgeClass || 'green'}`;
+        modalRegime.style.color = regimeColor || '#10b981';
+        modalRegime.style.borderColor = regimeColor || '#10b981';
+    }
+
+    const modalConflict = document.getElementById('supervisor-modal-conflict');
+    if (modalConflict) {
+        const isHigh = data.conflict_metric > 0.50;
+        modalConflict.innerText = `${data.conflict_metric.toFixed(3)} ${isHigh ? '⚠️ High (Possible Pipeline Blinding)' : '✅ Nominal'}`;
+        modalConflict.style.color = isHigh ? '#ef4444' : '#38bdf8';
+    }
+
+    const sensorsGrid = document.getElementById('supervisor-sensors-grid');
+    if (sensorsGrid && Array.isArray(data.sensors)) {
+        sensorsGrid.innerHTML = data.sensors.map(s => {
+            const pct = Math.round(s.health_score * 100);
+            let barColor = '#10b981';
+            if (pct < 40) barColor = '#ef4444';
+            else if (pct < 70) barColor = '#f97316';
+            else if (pct < 85) barColor = '#eab308';
+
+            return `
+                <div style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--glass-border); border-radius: 10px; padding: 12px 14px;">
+                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                        <span style="font-weight: 600; font-size: 13px; color: var(--text-header);">${escapeHtml(s.name)}</span>
+                        <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700; color: ${barColor};">${pct}%</span>
+                    </div>
+                    <div style="background: rgba(255,255,255,0.08); border-radius: 4px; height: 6px; width: 100%; overflow: hidden; margin-bottom: 8px;">
+                        <div style="background: ${barColor}; height: 100%; width: ${pct}%;"></div>
+                    </div>
+                    <div style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">
+                        ${escapeHtml(s.details)}
+                    </div>
+                    <div style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; color: var(--text-muted);">
+                        <span>Reading: <strong>${s.raw_value.toFixed(1)} ${escapeHtml(s.unit)}</strong></span>
+                        <span>Confidence: <strong>${Math.round(s.confidence * 100)}%</strong></span>
+                    </div>
+                </div>
+            `;
+        }).join('');
+    }
+
+    const invariantsList = document.getElementById('supervisor-invariants-list');
+    if (invariantsList) {
+        const pass = data.invariants_passing;
+        const icon = pass ? '✅' : '❌';
+        const color = pass ? '#10b981' : '#ef4444';
+        invariantsList.innerHTML = `
+            <div style="display: flex; align-items: center; gap: 8px;"><span>${icon}</span> <span style="color: ${color};">Zero-Harm Invariant:</span> <span>Core Windows OS infrastructure (PIDs 0, 1, 4) strictly protected.</span></div>
+            <div style="display: flex; align-items: center; gap: 8px;"><span>${icon}</span> <span style="color: ${color};">Non-Destructive Invariant:</span> <span>Security telemetry binaries (sysmon64.exe, osoosi.exe, msmpeng.exe) zero-tamper integrity.</span></div>
+            <div style="display: flex; align-items: center; gap: 8px;"><span>${icon}</span> <span style="color: ${color};">Consensus Quorum Invariant:</span> <span>Multi-detector policy voters active with Byzantine quorum agreement.</span></div>
+            <div style="display: flex; align-items: center; gap: 8px;"><span>${icon}</span> <span style="color: ${color};">RL Stability Invariant:</span> <span>Covariance condition number bounded and exploration decay monotonic.</span></div>
+        `;
+    }
+
+    const diagText = document.getElementById('supervisor-diagnostic-text');
+    if (diagText) {
+        diagText.innerText = data.diagnostic_narrative || 'Nominal supervisor operations.';
+    }
+}
+
+function openSupervisorModal() {
+    supervisorModalOpen = true;
+    const modal = document.getElementById('supervisor-modal');
+    if (modal) {
+        modal.style.display = 'flex';
+        if (state.supervisorStatus) {
+            renderSupervisorModal(state.supervisorStatus);
+        }
+        fetchSupervisorStatus();
+        if (window.lucide) {
+            window.lucide.createIcons();
+        }
+    }
+}
+
+function closeSupervisorModal() {
+    supervisorModalOpen = false;
+    const modal = document.getElementById('supervisor-modal');
+    if (modal) {
+        modal.style.display = 'none';
+    }
+}
+
+window.openSupervisorModal = openSupervisorModal;
+window.closeSupervisorModal = closeSupervisorModal;
+
+// Auto-wire modal background click
+document.addEventListener('DOMContentLoaded', () => {
+    const supModal = document.getElementById('supervisor-modal');
+    if (supModal) {
+        supModal.addEventListener('click', (e) => {
+            if (e.target === supModal) {
+                closeSupervisorModal();
+            }
+        });
+    }
+});
 
 

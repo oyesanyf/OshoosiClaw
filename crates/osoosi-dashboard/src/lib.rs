@@ -674,6 +674,8 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/blocking/rules", post(post_blocking_rule))
         .route("/api/blocking/rules/unlock", post(post_blocking_unlock))
         .route("/api/detection-stats", get(get_detection_stats))
+        .route("/api/supervisor/status", get(get_supervisor_status))
+        .route("/supervisor/status", get(get_supervisor_status))
         .route("/api/mitre/matrix", get(get_mitre_matrix))
         .route("/api/mitre/coverage", get(get_mitre_coverage))
         .route("/api/mitre/techniques", get(get_mitre_techniques))
@@ -756,6 +758,38 @@ async fn get_detection_stats(State(state): State<DashboardState>) -> Json<Value>
         Some(orch) => Json(orch.detection_stats().await),
         None => Json(json!({})),
     }
+}
+
+async fn get_supervisor_status(State(state): State<DashboardState>) -> impl IntoResponse {
+    let status = match &state.backend {
+        Some(orch) => orch.supervisor.get_status(),
+        None => {
+            let mut fusion = osoosi_core::supervisor::MultiSensorFusionEngine::new();
+            let readings = fusion.evaluate_sensors(None, None);
+            let (health_score, conflict_metric) = fusion.fuse_dempster_shafer(&readings);
+            let regime = osoosi_core::supervisor::MultiSensorFusionEngine::map_regime(health_score);
+            let diagnostic_narrative = osoosi_core::supervisor::SupervisorDiagnosticEngine::synthesize(
+                regime.clone(),
+                health_score,
+                conflict_metric,
+                &readings,
+                0,
+                true,
+            );
+            osoosi_core::supervisor::SupervisorStatus {
+                regime,
+                health_score,
+                conflict_metric,
+                sensors: readings,
+                reaped_traps_total: 0,
+                invariants_passing: true,
+                diagnostic_narrative,
+                last_evaluated_at: chrono::Utc::now(),
+                uptime_seconds: 0,
+            }
+        }
+    };
+    Json(status)
 }
 
 pub async fn start_dashboard_with_backend(
@@ -4861,6 +4895,38 @@ mod tests {
 
         std::env::remove_var("OSOOSI_CONFIG");
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_api_supervisor_status() {
+        let state = DashboardState::new(None, None);
+        let resp = get_supervisor_status(State(state)).await.into_response();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        let json_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert!(json_val.get("regime").is_some());
+        assert!(json_val.get("health_score").is_some());
+        assert!(json_val.get("conflict_metric").is_some());
+        assert!(json_val.get("sensors").is_some());
+        assert!(json_val.get("reaped_traps_total").is_some());
+        assert!(json_val.get("invariants_passing").is_some());
+        assert!(json_val.get("diagnostic_narrative").is_some());
+        assert!(json_val.get("last_evaluated_at").is_some());
+        assert!(json_val.get("uptime_seconds").is_some());
+
+        let sensors = json_val["sensors"].as_array().expect("sensors must be an array");
+        assert_eq!(sensors.len(), 5);
+        for s in sensors {
+            assert!(s.get("sensor_id").is_some());
+            assert!(s.get("name").is_some());
+            assert!(s.get("raw_value").is_some());
+            assert!(s.get("unit").is_some());
+            assert!(s.get("health_score").is_some());
+            assert!(s.get("confidence").is_some());
+            assert!(s.get("details").is_some());
+        }
     }
 }
 

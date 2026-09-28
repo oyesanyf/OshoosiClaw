@@ -53,6 +53,7 @@ pub mod self_healing;
 pub mod voters;
 pub mod agent_egress;
 pub mod log_retention;
+pub mod supervisor;
 
 pub const CONSENSUS_LOG_TARGET: &str = "osoosi_core::consensus";
 
@@ -1057,6 +1058,8 @@ pub struct EdrOrchestrator {
     pub hollowing_detector: Arc<osoosi_telemetry::hollowing::ProcessHollowingDetector>,
     /// Immutable baseline of pre-existing accounts captured at startup to prevent Confused Deputy rollback attacks.
     pub preexisting_accounts: Arc<std::collections::HashSet<String>>,
+    /// Cognitive Fusion Supervisor Agent (Dempster-Shafer multi-sensor watchdog)
+    pub supervisor: Arc<supervisor::CognitiveFusionSupervisor>,
 }
 
 impl EdrOrchestrator {
@@ -1856,6 +1859,10 @@ impl EdrOrchestrator {
         let preexisting_accounts = Arc::new(query_system_accounts());
         info!("Account Security Guardrail: Baselined {} pre-existing/protected accounts.", preexisting_accounts.len());
         
+        let supervisor = Arc::new(supervisor::CognitiveFusionSupervisor::new());
+        let active_tarpit = osoosi_runtime::tarpit::ActiveProcessTarpit::new();
+        supervisor.clone().start(memory.clone(), active_tarpit);
+
         let orch = Self {
             memory,
             mesh_peer_count,
@@ -1919,6 +1926,7 @@ impl EdrOrchestrator {
             },
             hollowing_detector: Arc::new(osoosi_telemetry::hollowing::ProcessHollowingDetector::new()),
             preexisting_accounts,
+            supervisor,
         };
 
         // Start background log retention loop (hourly rotation and pruning)
