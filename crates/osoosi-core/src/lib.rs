@@ -244,6 +244,41 @@ fn is_system_critical(event: &osoosi_types::HostSecurityEvent) -> bool {
     false
 }
 
+/// Helper to tokenize a command line string respecting single, double, and backtick quotes.
+pub fn split_cmd_tokens(cmd: &str) -> Vec<String> {
+    let mut tokens = Vec::new();
+    let mut current = String::new();
+    let mut quote_char: Option<char> = None;
+
+    for c in cmd.chars() {
+        match quote_char {
+            Some(q) => {
+                if c == q {
+                    quote_char = None;
+                } else {
+                    current.push(c);
+                }
+            }
+            None => {
+                if c == '"' || c == '\'' || c == '`' {
+                    quote_char = Some(c);
+                } else if c.is_whitespace() {
+                    if !current.is_empty() {
+                        tokens.push(current);
+                        current = String::new();
+                    }
+                } else {
+                    current.push(c);
+                }
+            }
+        }
+    }
+    if !current.is_empty() {
+        tokens.push(current);
+    }
+    tokens
+}
+
 /// Extract unauthorized account username from command lines executing T1136.001.
 pub fn extract_created_username(cmd: &str) -> Option<String> {
     let cmd_clean = cmd.trim();
@@ -251,13 +286,13 @@ pub fn extract_created_username(cmd: &str) -> Option<String> {
         return None;
     }
 
-    let raw_tokens: Vec<&str> = cmd_clean.split_whitespace().collect();
+    let raw_tokens = split_cmd_tokens(cmd_clean);
     if raw_tokens.is_empty() {
         return None;
     }
 
     let tokens: Vec<String> = raw_tokens
-        .iter()
+        .into_iter()
         .map(|t| t.trim_matches(|c| c == '"' || c == '\'' || c == '`').to_string())
         .collect();
 
@@ -457,16 +492,33 @@ pub fn get_account_containment_net_args<'a>(username: &'a str) -> [&'a str; 3] {
     ["user", username, "/active:no"]
 }
 
+/// Helper to escape single quotes for safe embedding in PowerShell single-quoted literals.
+pub fn escape_powershell_arg(arg: &str) -> String {
+    arg.replace('\'', "''")
+}
+
 /// Helper to get non-destructive account disabling command for PowerShell.
 /// Strictly non-destructive: uses `Disable-LocalUser` rather than `Remove-LocalUser`.
+/// Safely escapes single quotes to prevent injection and syntax errors.
 pub fn get_account_containment_powershell_cmd(username: &str) -> String {
-    format!("Disable-LocalUser -Name '{}' -ErrorAction SilentlyContinue", username)
+    let clean = escape_powershell_arg(username);
+    format!("Disable-LocalUser -Name '{}' -ErrorAction SilentlyContinue", clean)
 }
 
 /// Helper to check whether account containment is allowed against a given baseline.
+/// Strictly refuses empty usernames, CLI flags (/ or -), command separators, control characters, protected accounts, and pre-existing baseline accounts.
 pub fn is_account_containment_allowed(username: &str, baseline: &std::collections::HashSet<String>) -> bool {
     let clean = username.trim().to_ascii_lowercase();
-    if clean.is_empty() {
+    if clean.is_empty()
+        || clean.starts_with('/')
+        || clean.starts_with('-')
+        || clean.contains('\0')
+        || clean.contains('\r')
+        || clean.contains('\n')
+        || clean.contains(';')
+        || clean.contains('&')
+        || clean.contains('|')
+    {
         return false;
     }
     !is_protected_system_account(&clean) && !baseline.contains(&clean)
@@ -6589,16 +6641,15 @@ impl EdrOrchestrator {
     /// Strictly non-destructive: disables/locks down the account (/active:no, Disable-LocalUser)
     /// preserving forensic evidence, SIDs, and user data rather than deleting it.
     pub fn trigger_account_rollback(&self, username: String) {
-        let user_clean = username.trim().to_ascii_lowercase();
-        if is_protected_system_account(&user_clean) || self.preexisting_accounts.contains(&user_clean) {
+        if !self.is_account_containment_allowed(&username) {
             warn!(
-                "[SECURITY GUARDRAIL] Autonomous account containment REFUSED for user '{}'. Account is in the protected/pre-existing baseline! Confused deputy attack thwarted.",
+                "[SECURITY GUARDRAIL] Autonomous account containment REFUSED for user '{}'. Account is protected, pre-existing, or invalid! Confused deputy attack thwarted.",
                 username
             );
             self.audit.log("CONFUSED_DEPUTY_ATTACK_PREVENTED", serde_json::json!({
                 "technique": "T1136.001",
                 "target_user": username,
-                "reason": "Target account is in the protected system safelist or pre-existing baseline",
+                "reason": "Target account is in the protected system safelist, pre-existing baseline, or contains invalid/prohibited characters",
                 "action": "containment_refused"
             }));
             return;
@@ -6607,16 +6658,15 @@ impl EdrOrchestrator {
         let audit = self.audit.clone();
         let preexisting = self.preexisting_accounts.clone();
         tokio::spawn(async move {
-            let user_clean = username.trim().to_ascii_lowercase();
-            if is_protected_system_account(&user_clean) || preexisting.contains(&user_clean) {
+            if !is_account_containment_allowed(&username, &preexisting) {
                 warn!(
-                    "[SECURITY GUARDRAIL] Autonomous account containment REFUSED for user '{}'. Account is in the protected/pre-existing baseline! Confused deputy attack thwarted.",
+                    "[SECURITY GUARDRAIL] Autonomous account containment REFUSED for user '{}'. Account is protected, pre-existing, or invalid (inner check)!",
                     username
                 );
                 audit.log("CONFUSED_DEPUTY_ATTACK_PREVENTED", serde_json::json!({
                     "technique": "T1136.001",
                     "target_user": username,
-                    "reason": "Target account is in the protected system safelist or pre-existing baseline (inner check)",
+                    "reason": "Target account is in the protected system safelist, pre-existing baseline, or contains invalid/prohibited characters (inner check)",
                     "action": "containment_refused"
                 }));
                 return;
@@ -6625,19 +6675,22 @@ impl EdrOrchestrator {
             tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
             #[cfg(target_os = "windows")]
             {
+                const CREATE_NO_WINDOW: u32 = 0x08000000;
+
                 // Step 1: Check if user exists before attempting lockdown
-                let check_res = tokio::process::Command::new("net.exe")
-                    .args(["user", &username])
-                    .output()
-                    .await;
+                let mut cmd_net = tokio::process::Command::new("net.exe");
+                cmd_net.args(["user", &username]);
+                cmd_net.creation_flags(CREATE_NO_WINDOW);
+                let check_res = cmd_net.output().await;
 
                 let user_exists = match check_res {
                     Ok(ref out) if out.status.success() => true,
                     _ => {
-                        let ps_check = tokio::process::Command::new("powershell.exe")
-                            .args(["-NoProfile", "-NonInteractive", "-Command", &format!("Get-LocalUser -Name '{}'", username)])
-                            .output()
-                            .await;
+                        let clean_ps = escape_powershell_arg(&username);
+                        let mut cmd_ps = tokio::process::Command::new("powershell.exe");
+                        cmd_ps.args(["-NoProfile", "-NonInteractive", "-Command", &format!("Get-LocalUser -Name '{}'", clean_ps)]);
+                        cmd_ps.creation_flags(CREATE_NO_WINDOW);
+                        let ps_check = cmd_ps.output().await;
                         matches!(ps_check, Ok(ref out) if out.status.success())
                     }
                 };
@@ -6649,10 +6702,10 @@ impl EdrOrchestrator {
 
                 // Step 2: Non-destructive account disabling / lockdown (strictly never deletion)
                 let net_args = get_account_containment_net_args(&username);
-                let res = tokio::process::Command::new("net.exe")
-                    .args(net_args)
-                    .output()
-                    .await;
+                let mut cmd_dis_net = tokio::process::Command::new("net.exe");
+                cmd_dis_net.args(net_args);
+                cmd_dis_net.creation_flags(CREATE_NO_WINDOW);
+                let res = cmd_dis_net.output().await;
                 let mut disabled = match res {
                     Ok(output) if output.status.success() => true,
                     _ => false,
@@ -6661,10 +6714,10 @@ impl EdrOrchestrator {
                 // Fallback to PowerShell Disable-LocalUser if net.exe failed
                 if !disabled {
                     let ps_cmd = get_account_containment_powershell_cmd(&username);
-                    let ps_dis = tokio::process::Command::new("powershell.exe")
-                        .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
-                        .output()
-                        .await;
+                    let mut cmd_dis_ps = tokio::process::Command::new("powershell.exe");
+                    cmd_dis_ps.args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd]);
+                    cmd_dis_ps.creation_flags(CREATE_NO_WINDOW);
+                    let ps_dis = cmd_dis_ps.output().await;
                     if let Ok(out) = ps_dis {
                         if out.status.success() {
                             disabled = true;
@@ -6682,11 +6735,23 @@ impl EdrOrchestrator {
                     }));
                 } else {
                     warn!("[NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT] Failed to disable unauthorized account '{}'", username);
+                    audit.log(NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_EVENT, serde_json::json!({
+                        "technique": "T1136.001",
+                        "user": username,
+                        "status": "containment_failed",
+                        "method": NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_METHOD
+                    }));
                 }
             }
             #[cfg(not(target_os = "windows"))]
             {
                 warn!("[NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT] Non-destructive account containment requested for user {}: (non-Windows platform)", username);
+                audit.log(NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_EVENT, serde_json::json!({
+                    "technique": "T1136.001",
+                    "user": username,
+                    "status": NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_STATUS,
+                    "method": "simulated_non_windows"
+                }));
             }
         });
     }
@@ -7344,12 +7409,36 @@ mod tests {
             Some("backdoor_user".to_string())
         );
         assert_eq!(
+            extract_created_username("net user \"Rogue Admin\" /add"),
+            Some("Rogue Admin".to_string())
+        );
+        assert_eq!(
+            extract_created_username("net user \"Rogue Admin\" Pa$$w0rd /add"),
+            Some("Rogue Admin".to_string())
+        );
+        assert_eq!(
+            extract_created_username("net user /add attacker"),
+            Some("attacker".to_string())
+        );
+        assert_eq!(
+            extract_created_username("net user /add /domain domain_attacker"),
+            Some("domain_attacker".to_string())
+        );
+        assert_eq!(
             extract_created_username("New-LocalUser -Name backdoor -Password $pass"),
             Some("backdoor".to_string())
         );
         assert_eq!(
             extract_created_username("New-LocalUser -Name \"hacker_acc\""),
             Some("hacker_acc".to_string())
+        );
+        assert_eq!(
+            extract_created_username("New-LocalUser -Name 'Backdoor Space' -Password $pass"),
+            Some("Backdoor Space".to_string())
+        );
+        assert_eq!(
+            extract_created_username("New-LocalUser -Name:\"Colon Rogue\""),
+            Some("Colon Rogue".to_string())
         );
         assert_eq!(
             extract_created_username("net user /delete rogue_admin"),
@@ -7418,6 +7507,19 @@ mod tests {
             "Containment command must NEVER include Remove-LocalUser"
         );
 
+        // Escaping single quotes in PowerShell commands
+        let ps_quote_cmd = get_account_containment_powershell_cmd("rogue'user");
+        assert_eq!(
+            ps_quote_cmd,
+            "Disable-LocalUser -Name 'rogue''user' -ErrorAction SilentlyContinue"
+        );
+        let ps_injection_cmd = get_account_containment_powershell_cmd("evil'; calc.exe; #");
+        assert_eq!(
+            ps_injection_cmd,
+            "Disable-LocalUser -Name 'evil''; calc.exe; #' -ErrorAction SilentlyContinue"
+        );
+        assert!(ps_injection_cmd.contains("''"));
+
         // Audit constants verification
         assert_eq!(
             NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_EVENT,
@@ -7464,11 +7566,34 @@ mod tests {
         assert!(!is_account_containment_allowed("Owner", &baseline));
         assert!(!is_account_containment_allowed("WDAGUtilityAccount", &baseline));
 
-        // Verifies that "mallory_hacker" is allowed for non-destructive containment disabling if not in the baseline
+        // Empty and whitespace strings are rejected
+        assert!(!is_account_rollback_allowed("", &baseline));
+        assert!(!is_account_rollback_allowed("   ", &baseline));
+        assert!(!is_account_containment_allowed("", &baseline));
+        assert!(!is_account_containment_allowed("   ", &baseline));
+
+        // CLI switch flags are strictly rejected
+        assert!(!is_account_containment_allowed("/delete", &baseline));
+        assert!(!is_account_containment_allowed("/add", &baseline));
+        assert!(!is_account_containment_allowed("/domain", &baseline));
+        assert!(!is_account_containment_allowed("--force", &baseline));
+        assert!(!is_account_containment_allowed("-help", &baseline));
+
+        // Control characters and command separators are strictly rejected
+        assert!(!is_account_containment_allowed("bad\0user", &baseline));
+        assert!(!is_account_containment_allowed("bad\nuser", &baseline));
+        assert!(!is_account_containment_allowed("bad\ruser", &baseline));
+        assert!(!is_account_containment_allowed("evil'; calc.exe; #", &baseline));
+        assert!(!is_account_containment_allowed("user&calc", &baseline));
+        assert!(!is_account_containment_allowed("user|calc", &baseline));
+
+        // Verifies that rogue accounts are allowed for non-destructive containment disabling if not in the baseline
         assert!(is_account_rollback_allowed("mallory_hacker", &baseline));
         assert!(is_account_rollback_allowed("T1136.001_RogueUser", &baseline));
         assert!(is_account_containment_allowed("mallory_hacker", &baseline));
         assert!(is_account_containment_allowed("T1136.001_RogueUser", &baseline));
+        assert!(is_account_containment_allowed("Rogue Admin", &baseline));
+        assert!(is_account_containment_allowed("rogue'name", &baseline));
     }
 }
 
