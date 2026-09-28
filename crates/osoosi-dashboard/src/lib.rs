@@ -765,7 +765,7 @@ async fn get_supervisor_status(State(state): State<DashboardState>) -> impl Into
         Some(orch) => orch.supervisor.get_status(),
         None => {
             let mut fusion = osoosi_core::supervisor::MultiSensorFusionEngine::new();
-            let readings = fusion.evaluate_sensors(None, None);
+            let readings = fusion.evaluate_sensors(None, None, None);
             let (health_score, conflict_metric) = fusion.fuse_dempster_shafer(&readings);
             let regime = osoosi_core::supervisor::MultiSensorFusionEngine::map_regime(health_score);
             let diagnostic_narrative = osoosi_core::supervisor::SupervisorDiagnosticEngine::synthesize(

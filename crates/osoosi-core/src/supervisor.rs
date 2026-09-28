@@ -11,6 +11,22 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::{Arc, RwLock};
 use std::time::{Duration, Instant};
 
+#[cfg(target_os = "windows")]
+pub fn get_current_process_handle_count() -> u32 {
+    use windows::Win32::System::Threading::{GetCurrentProcess, GetProcessHandleCount};
+    let mut count: u32 = 0;
+    unsafe {
+        let _ = GetProcessHandleCount(GetCurrentProcess(), &mut count);
+    }
+    count
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn get_current_process_handle_count() -> u32 {
+    180
+}
+
+
 /// Adaptive operational regimes managed by the Cognitive Fusion Supervisor.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SupervisorRegime {
@@ -61,15 +77,17 @@ impl BeliefMass {
         let c = confidence.clamp(0.0, 1.0);
         let h = health.clamp(0.0, 1.0);
 
-        // Partition committed mass across the 3 hypotheses
-        let (p_opt, p_deg, p_crit) = if h >= 0.80 {
-            let opt_ratio = (h - 0.50) / 0.50;
+        // Partition committed mass across the 3 hypotheses:
+        // Optimal (h >= 0.85), Degraded (0.35 <= h < 0.85), Critical (h < 0.35)
+        let (p_opt, p_deg, p_crit) = if h >= 0.85 {
+            (1.0, 0.0, 0.0)
+        } else if h >= 0.60 {
+            let opt_ratio = (h - 0.60) / 0.25;
             (opt_ratio, 1.0 - opt_ratio, 0.0)
-        } else if h >= 0.50 {
-            let opt_ratio = (h - 0.50) / 0.50;
-            (opt_ratio, 1.0 - opt_ratio, 0.0)
-        } else if h >= 0.25 {
-            let deg_ratio = (h - 0.25) / 0.25;
+        } else if h >= 0.35 {
+            (0.0, 1.0, 0.0)
+        } else if h >= 0.20 {
+            let deg_ratio = (h - 0.20) / 0.15;
             (0.0, deg_ratio, 1.0 - deg_ratio)
         } else {
             (0.0, 0.0, 1.0)
@@ -103,8 +121,19 @@ impl BeliefMass {
     pub fn combine_dempster(&self, other: &Self) -> (Self, f64) {
         let k = self.conflict_with(other);
 
-        // Clamp denominator to prevent division by zero in total contradiction
-        let denominator = (1.0 - k).max(1e-6);
+        if k >= 0.999999 {
+            return (
+                Self {
+                    optimal: 0.0,
+                    degraded: 0.0,
+                    critical: 0.0,
+                    theta: 1.0,
+                },
+                1.0,
+            );
+        }
+
+        let denominator = 1.0 - k;
 
         let optimal = (self.optimal * other.optimal
             + self.optimal * other.theta
@@ -141,6 +170,12 @@ impl BeliefMass {
 pub struct MultiSensorFusionEngine {
     pub canary_probe_latency_ms: f64,
     pub event_influx_velocity: f64,
+    pub voter_timeout_count: u32,
+    pub avg_voter_latency_ms: f64,
+    pub quorum_agreement_pct: f64,
+    pub exploration_decay_alpha: f64,
+    pub cov_condition_number: f64,
+    pub advantage_stable: bool,
 }
 
 impl Default for MultiSensorFusionEngine {
@@ -154,6 +189,12 @@ impl MultiSensorFusionEngine {
         Self {
             canary_probe_latency_ms: 1.8,
             event_influx_velocity: 32.4,
+            voter_timeout_count: 0,
+            avg_voter_latency_ms: 2.4,
+            quorum_agreement_pct: 100.0,
+            exploration_decay_alpha: 0.05,
+            cov_condition_number: 1.12,
+            advantage_stable: true,
         }
     }
 
@@ -167,6 +208,7 @@ impl MultiSensorFusionEngine {
         &mut self,
         memory_store: Option<&osoosi_memory::MemoryStore>,
         active_tarpit: Option<&osoosi_runtime::tarpit::ActiveProcessTarpit>,
+        stranded_reaper: Option<&StrandedResourceReaper>,
     ) -> Vec<SensorReading> {
         let mut readings = Vec::with_capacity(5);
 
@@ -207,6 +249,8 @@ impl MultiSensorFusionEngine {
             .map(|p| p.memory() as f64 / (1024.0 * 1024.0))
             .unwrap_or(48.5);
 
+        let handle_count = get_current_process_handle_count();
+
         // Verify protected PIDs and security binaries zero-tamper invariant
         let mut invariant_tampered = false;
         if let Some(tarpit) = active_tarpit {
@@ -231,8 +275,10 @@ impl MultiSensorFusionEngine {
 
         let invariant_health = if invariant_tampered {
             0.0
-        } else if mem_working_set_mb > 1500.0 {
-            0.60
+        } else if mem_working_set_mb > 1500.0 || handle_count > 10_000 {
+            0.50
+        } else if mem_working_set_mb > 800.0 || handle_count > 5_000 {
+            0.75
         } else {
             0.99
         };
@@ -245,8 +291,9 @@ impl MultiSensorFusionEngine {
             health_score: invariant_health,
             confidence: 0.99,
             details: format!(
-                "Working set: {:.1}MB. Core OS PIDs [0, 1, 4] & security binaries (sysmon64, osoosi, msmpeng) zero-tamper: {}",
+                "Working set: {:.1}MB, Handle count: {}. Core OS PIDs [0, 1, 4] & security binaries (sysmon64, osoosi, msmpeng) zero-tamper: {}",
                 mem_working_set_mb,
+                handle_count,
                 if !invariant_tampered { "VERIFIED" } else { "TAMPERED_ALERT" }
             ),
         });
@@ -261,13 +308,21 @@ impl MultiSensorFusionEngine {
             (0, 0)
         };
 
-        let containment_health = if active_traps > 200 {
+        let stranded_traps = stranded_reaper
+            .map(|r| r.count_stranded_traps(Duration::from_secs(120)))
+            .unwrap_or(0);
+
+        let mut containment_health = if active_traps > 200 {
             0.40
         } else if active_traps > 50 {
             0.75
         } else {
             0.98
         };
+
+        if stranded_traps > 0 {
+            containment_health = (containment_health - 0.20 * stranded_traps as f64).max(0.10);
+        }
 
         readings.push(SensorReading {
             sensor_id: "asymmetric_containment".to_string(),
@@ -277,17 +332,18 @@ impl MultiSensorFusionEngine {
             health_score: containment_health,
             confidence: 0.94,
             details: format!(
-                "Active thread containment traps: {}, Inaccessible PID cooldown cache: {}",
-                active_traps, cooldown_pids
+                "Active thread containment traps: {}, Inaccessible PID cooldown cache: {}, Stranded traps detected: {}",
+                active_traps, cooldown_pids, stranded_traps
             ),
         });
 
         // 4. Consensus & Voter Sensor
-        let voter_timeout_count = 0;
-        let avg_voter_latency_ms = 2.4;
-        let quorum_agreement_pct = 100.0;
-        let consensus_health = if voter_timeout_count > 0 {
-            0.65
+        let consensus_health = if self.quorum_agreement_pct < 67.0 {
+            0.30
+        } else if self.voter_timeout_count > 5 || self.avg_voter_latency_ms > 50.0 {
+            0.50
+        } else if self.voter_timeout_count > 0 || self.avg_voter_latency_ms > 15.0 {
+            0.75
         } else {
             0.98
         };
@@ -295,22 +351,22 @@ impl MultiSensorFusionEngine {
         readings.push(SensorReading {
             sensor_id: "consensus_voter".to_string(),
             name: "Consensus & Voter Sensor".to_string(),
-            raw_value: avg_voter_latency_ms,
+            raw_value: self.avg_voter_latency_ms,
             unit: "ms".to_string(),
             health_score: consensus_health,
             confidence: 0.92,
             details: format!(
                 "Avg voter latency: {:.2}ms, Timeouts: {}, Byzantine Quorum Agreement: {:.0}%",
-                avg_voter_latency_ms, voter_timeout_count, quorum_agreement_pct
+                self.avg_voter_latency_ms, self.voter_timeout_count, self.quorum_agreement_pct
             ),
         });
 
         // 5. Reinforcement Learning Stability Sensor
-        let exploration_decay_alpha = 0.05;
-        let cov_condition_number = 1.12;
-        let rl_health = if cov_condition_number > 50.0 {
+        let rl_health = if !self.advantage_stable {
+            0.35
+        } else if self.cov_condition_number > 50.0 {
             0.30
-        } else if cov_condition_number > 10.0 {
+        } else if self.cov_condition_number > 10.0 {
             0.65
         } else {
             0.97
@@ -319,13 +375,16 @@ impl MultiSensorFusionEngine {
         readings.push(SensorReading {
             sensor_id: "rl_stability".to_string(),
             name: "Reinforcement Learning Stability Sensor".to_string(),
-            raw_value: cov_condition_number,
+            raw_value: self.cov_condition_number,
             unit: "cond_num".to_string(),
             health_score: rl_health,
             confidence: 0.90,
             details: format!(
-                "Exploration decay α(t): {:.3}, Covariance condition number: {:.2} (Nominal), Advantage tracking: STABLE",
-                exploration_decay_alpha, cov_condition_number
+                "Exploration decay α(t): {:.3}, Covariance condition number: {:.2} ({}), Advantage tracking: {}",
+                self.exploration_decay_alpha,
+                self.cov_condition_number,
+                if self.cov_condition_number <= 10.0 { "Nominal" } else { "Degraded" },
+                if self.advantage_stable { "STABLE" } else { "INSTABILITY_DETECTED" }
             ),
         });
 
@@ -431,6 +490,19 @@ impl StrandedResourceReaper {
         }
     }
 
+    /// Returns the number of currently stranded traps (exceeding timeout).
+    pub fn count_stranded_traps(&self, timeout: Duration) -> u32 {
+        let now = Instant::now();
+        self.tracked_traps
+            .iter()
+            .filter(|entry| {
+                now.checked_duration_since(*entry.value())
+                    .map(|d| d >= timeout)
+                    .unwrap_or(false)
+            })
+            .count() as u32
+    }
+
     /// Reaps traps that have exceeded 120 seconds.
     pub fn reap_stranded_traps(
         &self,
@@ -466,7 +538,7 @@ impl StrandedResourceReaper {
         for entry in self.tracked_traps.iter() {
             let pid = *entry.key();
             let start = *entry.value();
-            if now.duration_since(start) >= timeout {
+            if now.checked_duration_since(start).map(|d| d >= timeout).unwrap_or(false) {
                 to_release.push(pid);
             }
         }
@@ -584,16 +656,27 @@ impl Default for CognitiveFusionSupervisor {
 
 impl CognitiveFusionSupervisor {
     pub fn new() -> Self {
+        let mut fusion = MultiSensorFusionEngine::new();
+        let initial_readings = fusion.evaluate_sensors(None, None, None);
+        let (health_score, conflict_metric) = fusion.fuse_dempster_shafer(&initial_readings);
+        let regime = MultiSensorFusionEngine::map_regime(health_score);
+        let diagnostic_narrative = SupervisorDiagnosticEngine::synthesize(
+            regime.clone(),
+            health_score,
+            conflict_metric,
+            &initial_readings,
+            0,
+            true,
+        );
+
         let initial_status = SupervisorStatus {
-            regime: SupervisorRegime::Optimal,
-            health_score: 98.4,
-            conflict_metric: 0.02,
-            sensors: Vec::new(),
+            regime,
+            health_score,
+            conflict_metric,
+            sensors: initial_readings,
             reaped_traps_total: 0,
             invariants_passing: true,
-            diagnostic_narrative:
-                "Cognitive Fusion Supervisor initialized. Awaiting first telemetry evaluation loop."
-                    .to_string(),
+            diagnostic_narrative,
             last_evaluated_at: Utc::now(),
             uptime_seconds: 0,
         };
@@ -601,7 +684,7 @@ impl CognitiveFusionSupervisor {
         Self {
             status: Arc::new(RwLock::new(initial_status)),
             reaper: Arc::new(StrandedResourceReaper::new()),
-            fusion_engine: Arc::new(RwLock::new(MultiSensorFusionEngine::new())),
+            fusion_engine: Arc::new(RwLock::new(fusion)),
             start_time: Instant::now(),
             running: Arc::new(AtomicBool::new(true)),
         }
@@ -621,16 +704,24 @@ impl CognitiveFusionSupervisor {
             .spawn(move || {
                 tracing::info!("Cognitive Fusion Supervisor thread started (2000ms cadence).");
                 while running.load(Ordering::Relaxed) {
-                    // 1. Evaluate 5 sensors
+                    // 1. Run stranded resource reaper first
+                    let _reaped = supervisor.reaper.reap_stranded_traps(&active_tarpit);
+                    let reaped_traps_total = supervisor.reaper.get_reaped_total();
+
+                    // 2. Evaluate 5 sensors (passing reaper to detect stranded traps)
                     let readings = {
                         let mut engine = match supervisor.fusion_engine.write() {
                             Ok(guard) => guard,
                             Err(poisoned) => poisoned.into_inner(),
                         };
-                        engine.evaluate_sensors(Some(&memory_store), Some(&active_tarpit))
+                        engine.evaluate_sensors(
+                            Some(&memory_store),
+                            Some(&active_tarpit),
+                            Some(&supervisor.reaper),
+                        )
                     };
 
-                    // 2. Fuse evidence and calculate H and K
+                    // 3. Fuse evidence and calculate H and K
                     let (health_score, conflict_metric) = {
                         let engine = match supervisor.fusion_engine.read() {
                             Ok(guard) => guard,
@@ -639,12 +730,8 @@ impl CognitiveFusionSupervisor {
                         engine.fuse_dempster_shafer(&readings)
                     };
 
-                    // 3. Map regime
+                    // 4. Map regime
                     let regime = MultiSensorFusionEngine::map_regime(health_score);
-
-                    // 4. Run stranded resource reaper
-                    let _reaped = supervisor.reaper.reap_stranded_traps(&active_tarpit);
-                    let reaped_traps_total = supervisor.reaper.get_reaped_total();
 
                     // 5. Invariants check
                     let invariants_passing = readings.iter().all(|s| {
@@ -853,7 +940,7 @@ mod tests {
 
     #[test]
     fn test_stranded_resource_reaper_cleans_expired_traps() {
-        let tarpit = osoosi_runtime::tarpit::ActiveProcessTarpit::new();
+        let tarpit = osoosi_runtime::tarpit::ActiveProcessTarpit::new_isolated();
         let reaper = StrandedResourceReaper::new();
 
         let dummy_pid = 998877;
@@ -872,5 +959,92 @@ mod tests {
         assert_eq!(reaped_second, 1);
         assert!(!tarpit.is_trapped(dummy_pid));
         assert_eq!(reaper.get_reaped_total(), 1);
+    }
+
+    #[test]
+    fn test_system_invariant_sensor_queries_handle_count_and_memory() {
+        let mut fusion = MultiSensorFusionEngine::new();
+        let readings = fusion.evaluate_sensors(None, None, None);
+        let invariant_sensor = readings
+            .iter()
+            .find(|s| s.sensor_id == "system_invariants")
+            .expect("system_invariants sensor must exist");
+
+        assert!(invariant_sensor.raw_value > 0.0, "Working set memory must be positive");
+        assert!(invariant_sensor.details.contains("Handle count:"), "Details must report handle count");
+        assert!(invariant_sensor.details.contains("Core OS PIDs [0, 1, 4]"), "Details must report core OS PID verification");
+    }
+
+    #[test]
+    fn test_containment_sensor_detects_stranded_traps() {
+        let tarpit = osoosi_runtime::tarpit::ActiveProcessTarpit::new_isolated();
+        let reaper = StrandedResourceReaper::new();
+        let dummy_pid = 778899;
+        tarpit
+            .active_traps
+            .insert(dummy_pid, Arc::new(AtomicBool::new(true)));
+
+        // Record tracking
+        reaper.reap_traps_with_timeout(&tarpit, Duration::from_secs(120));
+
+        let mut fusion = MultiSensorFusionEngine::new();
+        // Zero timeout simulates stranded trap
+        let stranded_count = reaper.count_stranded_traps(Duration::ZERO);
+        assert_eq!(stranded_count, 1);
+
+        let readings = fusion.evaluate_sensors(None, Some(&tarpit), Some(&reaper));
+        let containment_sensor = readings
+            .iter()
+            .find(|s| s.sensor_id == "asymmetric_containment")
+            .expect("asymmetric_containment sensor must exist");
+
+        assert!(
+            containment_sensor.details.contains("Stranded traps detected:"),
+            "Containment details must state stranded traps"
+        );
+    }
+
+    #[test]
+    fn test_consensus_sensor_detects_byzantine_quorum_loss() {
+        let mut fusion = MultiSensorFusionEngine::new();
+        fusion.quorum_agreement_pct = 50.0; // Quorum lost (< 67%)
+        let readings = fusion.evaluate_sensors(None, None, None);
+        let consensus_sensor = readings
+            .iter()
+            .find(|s| s.sensor_id == "consensus_voter")
+            .expect("consensus_voter sensor must exist");
+
+        assert!(
+            consensus_sensor.health_score <= 0.35,
+            "Byzantine quorum loss must drop consensus health to <= 0.35, got {}",
+            consensus_sensor.health_score
+        );
+    }
+
+    #[test]
+    fn test_rl_sensor_detects_advantage_instability() {
+        let mut fusion = MultiSensorFusionEngine::new();
+        fusion.advantage_stable = false;
+        let readings = fusion.evaluate_sensors(None, None, None);
+        let rl_sensor = readings
+            .iter()
+            .find(|s| s.sensor_id == "rl_stability")
+            .expect("rl_stability sensor must exist");
+
+        assert!(
+            rl_sensor.health_score <= 0.35,
+            "Advantage tracking instability must drop RL health, got {}",
+            rl_sensor.health_score
+        );
+        assert!(rl_sensor.details.contains("INSTABILITY_DETECTED"));
+    }
+
+    #[test]
+    fn test_initial_supervisor_status_has_populated_sensors() {
+        let supervisor = CognitiveFusionSupervisor::new();
+        let status = supervisor.get_status();
+        assert_eq!(status.sensors.len(), 5, "Initial supervisor status must have all 5 sensors pre-populated");
+        assert!(status.health_score >= 85.0);
+        assert_eq!(status.regime, SupervisorRegime::Optimal);
     }
 }

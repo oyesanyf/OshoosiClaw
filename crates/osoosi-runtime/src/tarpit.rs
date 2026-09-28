@@ -183,6 +183,13 @@ impl ActiveProcessTarpit {
         }
     }
 
+    /// Creates an isolated tarpit instance not bound to the process-global trap registry (for tests and sub-orchestrators).
+    pub fn new_isolated() -> Self {
+        Self {
+            active_traps: Arc::new(dashmap::DashMap::new()),
+        }
+    }
+
     pub fn is_trapped(&self, pid: u32) -> bool {
         self.active_traps
             .get(&pid)

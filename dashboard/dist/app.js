@@ -5697,7 +5697,7 @@ function closeSupervisorModal() {
 window.openSupervisorModal = openSupervisorModal;
 window.closeSupervisorModal = closeSupervisorModal;
 
-// Auto-wire modal background click
+// Auto-wire modal background click and Escape key dismissal
 document.addEventListener('DOMContentLoaded', () => {
     const supModal = document.getElementById('supervisor-modal');
     if (supModal) {
@@ -5707,6 +5707,11 @@ document.addEventListener('DOMContentLoaded', () => {
             }
         });
     }
+    document.addEventListener('keydown', (e) => {
+        if (e.key === 'Escape' && supervisorModalOpen) {
+            closeSupervisorModal();
+        }
+    });
 });
 
 
