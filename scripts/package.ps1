@@ -90,6 +90,9 @@ if (Test-Path "osoosi.toml") {
 } elseif (Test-Path "osoosi.toml.example") {
     Copy-Item "osoosi.toml.example" -Destination (Join-Path $DeployDir "osoosi.toml") -Force
 }
+if (Test-Path "osoosi.toml.sign") {
+    Copy-Item "osoosi.toml.sign" -Destination $DeployDir -Force
+}
 
 if (Test-Path "config") {
     Copy-Item "config\*" -Destination (Join-Path $DeployDir "config") -Recurse -Force
