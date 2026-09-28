@@ -530,20 +530,40 @@ impl WindowsEventReader {
             }
         }
 
-        // If ProcessId is not found in EventData, check <Execution ProcessID="..." /> and parse as integer
-        if !data.contains_key("ProcessId") {
-            if let Some(exec_pid_str) = Self::extract_tag_attribute(xml, "Execution", "ProcessID")
-                .or_else(|| Self::extract_tag_attribute(xml, "Execution", "ProcessId"))
-            {
-                let trimmed = exec_pid_str.trim();
-                let parsed = if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
-                    u64::from_str_radix(hex, 16).ok()
-                } else {
-                    trimmed.parse::<u64>().ok()
-                };
-                if let Some(pid) = parsed {
-                    data.insert("ProcessId".to_string(), serde_json::json!(pid));
-                }
+        // Parse <Execution ProcessID="..." ThreadID="..." /> metadata from System header
+        if let Some(exec_pid_str) = Self::extract_tag_attribute(xml, "Execution", "ProcessID")
+            .or_else(|| Self::extract_tag_attribute(xml, "Execution", "ProcessId"))
+        {
+            let trimmed = exec_pid_str.trim();
+            let parsed = if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+                u64::from_str_radix(hex, 16).ok()
+            } else {
+                trimmed.parse::<u64>().ok()
+            };
+            if let Some(pid) = parsed {
+                data.insert("LoggingProcessId".to_string(), serde_json::json!(pid));
+                data.insert("ProviderProcessId".to_string(), serde_json::json!(pid));
+            }
+        }
+
+        if let Some(exec_tid_str) = Self::extract_tag_attribute(xml, "Execution", "ThreadID")
+            .or_else(|| Self::extract_tag_attribute(xml, "Execution", "ThreadId"))
+        {
+            let trimmed = exec_tid_str.trim();
+            let parsed = if let Some(hex) = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")) {
+                u64::from_str_radix(hex, 16).ok()
+            } else {
+                trimmed.parse::<u64>().ok()
+            };
+            if let Some(tid) = parsed {
+                data.insert("LoggingThreadId".to_string(), serde_json::json!(tid));
+            }
+        }
+
+        // For Windows DNS-Client event 3008 ONLY:
+        if event_id == 3008 && !data.contains_key("ProcessId") {
+            if let Some(log_pid) = data.get("LoggingProcessId").cloned() {
+                data.insert("ProcessId".to_string(), log_pid);
             }
         }
 
@@ -991,6 +1011,42 @@ mod windows_tests {
             event.data.get("QueryResults").and_then(|v| v.as_str()),
             Some("192.0.2.53;")
         );
+    }
+
+    #[tokio::test]
+    async fn parses_sysmon_execution_pid_isolated_from_event_process_id() {
+        let xml_with_data_pid = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Microsoft-Windows-Sysmon"/>
+    <EventID>1</EventID>
+    <Execution ProcessID="6580" ThreadID="1234"/>
+  </System>
+  <EventData>
+    <Data Name="Image">C:\Windows\System32\calc.exe</Data>
+    <Data Name="ProcessId">9999</Data>
+  </EventData>
+</Event>"#;
+        let event = WindowsEventReader::parse_xml(xml_with_data_pid).expect("Sysmon event should parse");
+        assert_eq!(event.data.get("ProcessId").and_then(|v| v.as_u64()), Some(9999));
+        assert_eq!(event.data.get("LoggingProcessId").and_then(|v| v.as_u64()), Some(6580));
+        assert_eq!(event.data.get("ProviderProcessId").and_then(|v| v.as_u64()), Some(6580));
+        assert_eq!(event.data.get("LoggingThreadId").and_then(|v| v.as_u64()), Some(1234));
+
+        let xml_without_data_pid = r#"<Event xmlns="http://schemas.microsoft.com/win/2004/08/events/event">
+  <System>
+    <Provider Name="Microsoft-Windows-Sysmon"/>
+    <EventID>25</EventID>
+    <Execution ProcessID="6580" ThreadID="1234"/>
+  </System>
+  <EventData>
+    <Data Name="Type">ProcessTampering</Data>
+  </EventData>
+</Event>"#;
+        let event2 = WindowsEventReader::parse_xml(xml_without_data_pid).expect("Sysmon event should parse");
+        assert_eq!(event2.data.get("ProcessId"), None);
+        assert_eq!(event2.data.get("LoggingProcessId").and_then(|v| v.as_u64()), Some(6580));
+        assert_eq!(event2.data.get("ProviderProcessId").and_then(|v| v.as_u64()), Some(6580));
+        assert_eq!(event2.data.get("LoggingThreadId").and_then(|v| v.as_u64()), Some(1234));
     }
 }
 

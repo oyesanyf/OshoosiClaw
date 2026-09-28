@@ -9,12 +9,123 @@ use std::sync::atomic::{AtomicBool, Ordering};
 use std::sync::{Arc, OnceLock};
 use std::time::Duration;
 use tokio::time::sleep;
-use tracing::{info, warn};
+use tracing::{info, trace, warn};
 
 static GLOBAL_TRAPS: OnceLock<Arc<dashmap::DashMap<u32, Arc<AtomicBool>>>> = OnceLock::new();
 
 fn get_global_traps() -> Arc<dashmap::DashMap<u32, Arc<AtomicBool>>> {
     GLOBAL_TRAPS.get_or_init(|| Arc::new(dashmap::DashMap::new())).clone()
+}
+
+static INACCESSIBLE_PIDS: OnceLock<Arc<dashmap::DashMap<u32, tokio::time::Instant>>> = OnceLock::new();
+
+pub fn get_inaccessible_pids() -> Arc<dashmap::DashMap<u32, tokio::time::Instant>> {
+    INACCESSIBLE_PIDS.get_or_init(|| Arc::new(dashmap::DashMap::new())).clone()
+}
+
+pub fn is_pid_inaccessible_cooldown(pid: u32) -> bool {
+    let map = get_inaccessible_pids();
+    if let Some(entry) = map.get(&pid) {
+        if entry.elapsed() < Duration::from_secs(60) {
+            return true;
+        } else {
+            drop(entry);
+            map.remove(&pid);
+        }
+    }
+    false
+}
+
+pub fn mark_pid_inaccessible(pid: u32) {
+    let map = get_inaccessible_pids();
+    map.insert(pid, tokio::time::Instant::now());
+}
+
+/// Query the process name for a given PID.
+/// On Windows, queries process image info or falls back to sysinfo.
+pub fn get_process_name(pid: u32) -> String {
+    if pid == 0 {
+        return "System Idle Process".to_string();
+    }
+    if pid == 4 {
+        return "System".to_string();
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{
+            OpenProcess, QueryFullProcessImageNameW, PROCESS_NAME_FORMAT,
+            PROCESS_QUERY_LIMITED_INFORMATION,
+        };
+
+        if let Ok(handle) = unsafe { OpenProcess(PROCESS_QUERY_LIMITED_INFORMATION, false, pid) } {
+            let mut buf = [0u16; 1024];
+            let mut size = buf.len() as u32;
+            let success = unsafe {
+                QueryFullProcessImageNameW(
+                    handle,
+                    PROCESS_NAME_FORMAT(0),
+                    windows::core::PWSTR(buf.as_mut_ptr()),
+                    &mut size,
+                )
+            };
+            let _ = unsafe { CloseHandle(handle) };
+            if success.is_ok() && size > 0 {
+                let full_path = String::from_utf16_lossy(&buf[..size as usize]);
+                if let Some(filename) = std::path::Path::new(&full_path).file_name().and_then(|n| n.to_str()) {
+                    return filename.to_string();
+                }
+            }
+        }
+    }
+
+    let mut s = sysinfo::System::new();
+    let target_pid = sysinfo::Pid::from(pid as usize);
+    s.refresh_process(target_pid);
+    if let Some(process) = s.process(target_pid) {
+        let name = process.name().to_string();
+        if !name.is_empty() {
+            return name;
+        }
+    }
+
+    "unknown".to_string()
+}
+
+pub fn is_protected_system_or_security_process(pid: u32, proc_name: &str) -> bool {
+    if pid <= 4 || pid == std::process::id() {
+        return true;
+    }
+    let lower = proc_name.to_lowercase();
+    let fn_only = std::path::Path::new(&lower)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(lower.as_str());
+
+    matches!(
+        fn_only,
+        "sysmon.exe"
+            | "sysmon64.exe"
+            | "osoosi.exe"
+            | "oshoosi.exe"
+            | "msmpeng.exe"
+            | "securityhealthservice.exe"
+            | "nissrv.exe"
+            | "senseir.exe"
+            | "sensendr.exe"
+            | "mpcmdrun.exe"
+            | "csrss.exe"
+            | "lsass.exe"
+            | "services.exe"
+            | "smss.exe"
+            | "wininit.exe"
+            | "winlogon.exe"
+            | "dwm.exe"
+            | "svchost.exe"
+            | "system"
+            | "ntoskrnl.exe"
+    )
 }
 
 /// Active thread-level asymmetric tarpit engine.
@@ -46,16 +157,32 @@ impl ActiveProcessTarpit {
     pub fn release_pid(&self, pid: u32) {
         if let Some((_, flag)) = self.active_traps.remove(&pid) {
             flag.store(false, Ordering::SeqCst);
-            info!("ActiveProcessTarpit: Released PID {}", pid);
+            let proc_name = get_process_name(pid);
+            info!("ActiveProcessTarpit: Released PID {} ({})", pid, proc_name);
         }
     }
 
     #[cfg(target_os = "windows")]
     pub fn trap_pid(&self, pid: u32, interval: Duration, max_duration: Duration) {
+        if is_pid_inaccessible_cooldown(pid) {
+            return;
+        }
+        if pid <= 4 || pid == std::process::id() {
+            return;
+        }
+        let proc_name = get_process_name(pid);
+        if is_protected_system_or_security_process(pid, &proc_name) {
+            warn!(
+                "[SECURITY SAFEGUARD] Tarpit refused for PID {} ({}): Protected system or security instrumentation binary.",
+                pid, proc_name
+            );
+            return;
+        }
+
         // Prevent duplicate concurrent trapping loops on the same PID
         if let Some(existing) = self.active_traps.get(&pid) {
             if existing.load(Ordering::Relaxed) {
-                info!("ActiveProcessTarpit: PID {} is already actively trapped", pid);
+                info!("ActiveProcessTarpit: PID {} ({}) is already actively trapped", pid, proc_name);
                 return;
             }
         }
@@ -68,9 +195,13 @@ impl ActiveProcessTarpit {
         let run_flag = Arc::new(AtomicBool::new(true));
         self.active_traps.insert(pid, run_flag.clone());
         let traps = self.active_traps.clone();
+        let proc_name_clone = proc_name.clone();
 
         tokio::spawn(async move {
-            info!("ActiveProcessTarpit: Starting asymmetric thread containment loop for PID {}", pid);
+            info!(
+                "ActiveProcessTarpit: Starting asymmetric thread containment loop for PID {} ({})",
+                pid, proc_name_clone
+            );
             let start = tokio::time::Instant::now();
 
             // Collect all threads belonging to pid using Toolhelp32 snapshot
@@ -101,7 +232,10 @@ impl ActiveProcessTarpit {
                                 ) {
                                     Ok(h) => list.push(SendHandle(h)),
                                     Err(e) => {
-                                        warn!("ActiveProcessTarpit: OpenThread failed for TID {}: {}", entry.th32ThreadID, e);
+                                        trace!(
+                                            "ActiveProcessTarpit: OpenThread failed for TID {} in PID {} ({}): {}",
+                                            entry.th32ThreadID, pid, proc_name_clone, e
+                                        );
                                     }
                                 }
                             }
@@ -116,15 +250,20 @@ impl ActiveProcessTarpit {
             };
 
             if handles.is_empty() {
-                warn!("ActiveProcessTarpit: No accessible threads found to trap for PID {}", pid);
+                warn!(
+                    "ActiveProcessTarpit: No accessible threads found to trap for PID {} ({})",
+                    pid, proc_name_clone
+                );
+                mark_pid_inaccessible(pid);
                 traps.remove(&pid);
                 return;
             }
 
             info!(
-                "ActiveProcessTarpit: Intercepted and trapped {} thread(s) for PID {}",
+                "ActiveProcessTarpit: Intercepted and trapped {} thread(s) for PID {} ({})",
                 handles.len(),
-                pid
+                pid,
+                proc_name_clone
             );
 
             let mut is_currently_suspended = false;
@@ -181,12 +320,30 @@ impl ActiveProcessTarpit {
             }
 
             traps.remove(&pid);
-            info!("ActiveProcessTarpit: Thread containment terminated and threads released for PID {}", pid);
+            info!(
+                "ActiveProcessTarpit: Thread containment terminated and threads released for PID {} ({})",
+                pid, proc_name_clone
+            );
         });
     }
 
     #[cfg(not(target_os = "windows"))]
     pub fn trap_pid(&self, pid: u32, interval: Duration, max_duration: Duration) {
+        if is_pid_inaccessible_cooldown(pid) {
+            return;
+        }
+        if pid <= 4 || pid == std::process::id() {
+            return;
+        }
+        let proc_name = get_process_name(pid);
+        if is_protected_system_or_security_process(pid, &proc_name) {
+            warn!(
+                "[SECURITY SAFEGUARD] Tarpit refused for PID {} ({}): Protected system or security instrumentation binary.",
+                pid, proc_name
+            );
+            return;
+        }
+
         if let Some(existing) = self.active_traps.get(&pid) {
             if existing.load(Ordering::Relaxed) {
                 return;
@@ -196,15 +353,16 @@ impl ActiveProcessTarpit {
         let run_flag = Arc::new(AtomicBool::new(true));
         self.active_traps.insert(pid, run_flag.clone());
         let traps = self.active_traps.clone();
+        let proc_name_clone = proc_name.clone();
 
         tokio::spawn(async move {
-            info!("ActiveProcessTarpit (non-Windows fallback): Trapping PID {}", pid);
+            info!("ActiveProcessTarpit (non-Windows fallback): Trapping PID {} ({})", pid, proc_name_clone);
             let start = tokio::time::Instant::now();
             while run_flag.load(Ordering::Relaxed) && start.elapsed() < max_duration {
                 tokio::time::sleep(interval.min(Duration::from_millis(50))).await;
             }
             traps.remove(&pid);
-            info!("ActiveProcessTarpit (non-Windows fallback): Released PID {}", pid);
+            info!("ActiveProcessTarpit (non-Windows fallback): Released PID {} ({})", pid, proc_name_clone);
         });
     }
 }
@@ -234,33 +392,36 @@ impl TarpitManager {
     /// Combines thread-level asymmetric suspension with process priority throttling.
     /// After `duration_secs`, restores normal priority and releases threads.
     pub async fn apply_tarpit(&self, pid: u32, duration_secs: u64) {
-        use sysinfo::{Pid, System};
+        if is_pid_inaccessible_cooldown(pid) {
+            return;
+        }
+        if pid <= 4 || pid == std::process::id() {
+            return;
+        }
+
+        let proc_name = get_process_name(pid);
+        if is_protected_system_or_security_process(pid, &proc_name) {
+            warn!(
+                "[SECURITY SAFEGUARD] Tarpit refused for PID {} ({}): Protected system or security instrumentation binary.",
+                pid, proc_name
+            );
+            return;
+        }
 
         warn!(
-            "Applying Active Tarpit & Priority Throttling to PID {} for {}s...",
-            pid, duration_secs
+            "Applying Active Tarpit & Priority Throttling to PID {} ({}) for {}s...",
+            pid, proc_name, duration_secs
         );
-
-        let mut s = System::new();
-        let target_pid = Pid::from(pid as usize);
-        s.refresh_process(target_pid);
-        if let Some(process) = s.process(target_pid) {
-            let pname = process.name();
-            info!("Throttling process: {} (PID {})", pname, pid);
-        } else {
-            warn!("Tarpit: PID {} not found in process list — may have exited.", pid);
-        }
 
         // Platform-specific priority throttle
         #[cfg(target_os = "windows")]
-        {
-            Self::windows_throttle(pid, true);
-        }
+        let throttle_applied = Self::windows_throttle(pid, true, &proc_name);
 
         #[cfg(target_os = "linux")]
-        {
-            let _ = Self::linux_throttle(pid, true).await;
-        }
+        let throttle_applied = Self::linux_throttle(pid, true, &proc_name).await.is_ok();
+
+        #[cfg(not(any(target_os = "windows", target_os = "linux")))]
+        let throttle_applied = false;
 
         // Active thread-level asymmetric containment
         self.active_tarpit.trap_pid(
@@ -276,20 +437,44 @@ impl TarpitManager {
 
         #[cfg(target_os = "windows")]
         {
-            Self::windows_throttle(pid, false);
+            if throttle_applied {
+                Self::windows_throttle(pid, false, &proc_name);
+                warn!(
+                    "Tarpit duration window closed for PID {} ({}). Priority restored.",
+                    pid, proc_name
+                );
+            }
         }
 
         #[cfg(target_os = "linux")]
         {
-            let _ = Self::linux_throttle(pid, false).await;
+            if throttle_applied {
+                let _ = Self::linux_throttle(pid, false, &proc_name).await;
+                warn!(
+                    "Tarpit duration window closed for PID {} ({}). Priority restored.",
+                    pid, proc_name
+                );
+            }
         }
-
-        warn!("Tarpit duration window closed for PID {}. Priority restored.", pid);
     }
 
     /// Windows: Use native Win32 API to set IDLE priority and shrink working set.
     #[cfg(target_os = "windows")]
-    fn windows_throttle(pid: u32, throttle: bool) {
+    fn windows_throttle(pid: u32, throttle: bool, proc_name: &str) -> bool {
+        if is_pid_inaccessible_cooldown(pid) {
+            return false;
+        }
+        if pid <= 4 || pid == std::process::id() {
+            return false;
+        }
+        if is_protected_system_or_security_process(pid, proc_name) {
+            warn!(
+                "[SECURITY SAFEGUARD] Tarpit refused for PID {} ({}): Protected system or security instrumentation binary.",
+                pid, proc_name
+            );
+            return false;
+        }
+
         use windows::Win32::Foundation::CloseHandle;
         use windows::Win32::System::Threading::{
             OpenProcess, SetPriorityClass,
@@ -309,37 +494,45 @@ impl TarpitManager {
                 };
 
                 let action = if throttle { "IDLE" } else { "NORMAL" };
+                let mut success = false;
 
                 unsafe {
                     if let Err(e) = SetPriorityClass(h, priority) {
-                        warn!("Tarpit: SetPriorityClass({}) failed for PID {}: {}", action, pid, e);
+                        warn!("Tarpit: SetPriorityClass({}) failed for PID {} ({}): {}", action, pid, proc_name, e);
                     } else {
-                        info!("Tarpit: PID {} priority set to {}", pid, action);
+                        info!("Tarpit: PID {} ({}) priority set to {}", pid, proc_name, action);
+                        success = true;
                     }
 
                     // Shrink working set to force paging (aggressive throttle)
-                    if throttle {
+                    if throttle && success {
                         use windows::Win32::System::Memory::{SetProcessWorkingSetSizeEx, QUOTA_LIMITS_HARDWS_MIN_DISABLE};
                         // SIZE_T(-1) tells Windows to trim the working set
                         let _ = SetProcessWorkingSetSizeEx(h, usize::MAX, usize::MAX, QUOTA_LIMITS_HARDWS_MIN_DISABLE);
-                        info!("Tarpit: PID {} working set trimmed (memory pressure applied)", pid);
+                        info!("Tarpit: PID {} ({}) working set trimmed (memory pressure applied)", pid, proc_name);
                     }
 
                     let _ = CloseHandle(h);
                 }
+                success
             }
             Err(e) => {
+                let err_code = e.code().0 as u32;
+                if err_code == 0x80070005 || err_code == 5 {
+                    mark_pid_inaccessible(pid);
+                }
                 warn!(
-                    "Tarpit: Cannot open PID {} for throttle ({}). Process may have exited or requires elevation.",
-                    pid, e
+                    "Tarpit: Cannot open PID {} ({}) for throttle ({}). Process may have exited or requires elevation.",
+                    pid, proc_name, e
                 );
+                false
             }
         }
     }
 
     /// Linux: Use `renice` to set the process to lowest priority.
     #[cfg(target_os = "linux")]
-    async fn linux_throttle(pid: u32, throttle: bool) -> anyhow::Result<()> {
+    async fn linux_throttle(pid: u32, throttle: bool, proc_name: &str) -> anyhow::Result<()> {
         use tokio::process::Command;
         use tokio::time::{timeout, Duration};
 
@@ -350,13 +543,13 @@ impl TarpitManager {
 
         match timeout(Duration::from_secs(10), renice_fut).await {
             Ok(Ok(s)) if s.success() => {
-                info!("Tarpit: PID {} renice set to {}", pid, nice_val);
+                info!("Tarpit: PID {} ({}) renice set to {}", pid, proc_name, nice_val);
             }
             Ok(Ok(s)) => {
-                warn!("Tarpit: renice for PID {} exited with {:?}", pid, s.code());
+                warn!("Tarpit: renice for PID {} ({}) exited with {:?}", pid, proc_name, s.code());
             }
             _ => {
-                warn!("Tarpit: Failed to renice PID {} (timed out or failed)", pid);
+                warn!("Tarpit: Failed to renice PID {} ({}) (timed out or failed)", pid, proc_name);
             }
         }
         
@@ -528,6 +721,24 @@ mod tests {
             tarpit.release_pid(dummy_pid);
             assert!(!tarpit.is_trapped(dummy_pid));
         }
+    }
+
+    #[tokio::test]
+    async fn test_safeguards_and_inaccessible_cooldown() {
+        assert!(is_protected_system_or_security_process(4, "System"));
+        assert!(is_protected_system_or_security_process(1234, "sysmon64.exe"));
+        assert!(is_protected_system_or_security_process(1235, "Sysmon.exe"));
+        assert!(is_protected_system_or_security_process(1236, "msmpeng.exe"));
+        assert!(is_protected_system_or_security_process(1237, "osoosi.exe"));
+        assert!(is_protected_system_or_security_process(std::process::id(), "anything.exe"));
+        assert!(!is_protected_system_or_security_process(9999, "curl.exe"));
+
+        let tarpit = ActiveProcessTarpit::new();
+        tarpit.trap_pid(4, Duration::from_millis(50), Duration::from_secs(5));
+        assert!(!tarpit.is_trapped(4));
+
+        mark_pid_inaccessible(98765);
+        assert!(is_pid_inaccessible_cooldown(98765));
     }
 }
 
