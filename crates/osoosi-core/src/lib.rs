@@ -326,6 +326,157 @@ pub fn extract_created_username(cmd: &str) -> Option<String> {
     None
 }
 
+/// Known protected Windows system, administrative, and service accounts safelist
+pub const PROTECTED_SYSTEM_ACCOUNTS: &[&str] = &[
+    "administrator",
+    "admin",
+    "guest",
+    "defaultaccount",
+    "wdagutilityaccount",
+    "owner",
+    "system",
+    "localsystem",
+    "localservice",
+    "networkservice",
+    "trustedinstaller",
+    "iusr",
+    "iis_iusrs",
+    "all application packages",
+    "everyone",
+];
+
+/// Checks if a username corresponds to a protected Windows system/service account or active user.
+pub fn is_protected_system_account(username: &str) -> bool {
+    let clean = username.trim().to_ascii_lowercase();
+    if clean.is_empty() {
+        return false;
+    }
+
+    if PROTECTED_SYSTEM_ACCOUNTS.contains(&clean.as_str()) {
+        return true;
+    }
+
+    for env_var in ["USERNAME", "USER", "LOGNAME"] {
+        if let Ok(val) = std::env::var(env_var) {
+            let env_clean = val.trim().to_ascii_lowercase();
+            if !env_clean.is_empty() && clean == env_clean {
+                return true;
+            }
+        }
+    }
+
+    false
+}
+
+/// Baseline pre-existing accounts and protected accounts to prevent Confused Deputy rollback attacks.
+pub fn query_system_accounts() -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+
+    // 1. Insert all hardcoded protected accounts
+    for acc in PROTECTED_SYSTEM_ACCOUNTS {
+        set.insert(acc.to_string());
+    }
+
+    // 2. Insert active logged-in user from environment
+    for env_var in ["USERNAME", "USER", "LOGNAME"] {
+        if let Ok(val) = std::env::var(env_var) {
+            let val_clean = val.trim().to_ascii_lowercase();
+            if !val_clean.is_empty() {
+                set.insert(val_clean);
+            }
+        }
+    }
+
+    // 3. On Windows, discover all pre-existing local accounts
+    #[cfg(target_os = "windows")]
+    {
+        use std::os::windows::process::CommandExt;
+        const CREATE_NO_WINDOW: u32 = 0x08000000;
+
+        let mut discovered = false;
+        if let Ok(output) = std::process::Command::new("powershell.exe")
+            .args(["-NoProfile", "-NonInteractive", "-Command", "Get-LocalUser | Select-Object -ExpandProperty Name"])
+            .creation_flags(CREATE_NO_WINDOW)
+            .output()
+        {
+            if output.status.success() {
+                let stdout = String::from_utf8_lossy(&output.stdout);
+                for line in stdout.lines() {
+                    let user = line.trim().to_ascii_lowercase();
+                    if !user.is_empty() {
+                        set.insert(user);
+                        discovered = true;
+                    }
+                }
+            }
+        }
+
+        // Fallback to net.exe user if powershell failed or yielded nothing
+        if !discovered {
+            if let Ok(output) = std::process::Command::new("net.exe")
+                .args(["user"])
+                .creation_flags(CREATE_NO_WINDOW)
+                .output()
+            {
+                if output.status.success() {
+                    let stdout = String::from_utf8_lossy(&output.stdout);
+                    let mut capturing = false;
+                    for line in stdout.lines() {
+                        let trimmed = line.trim();
+                        if trimmed.starts_with("---") {
+                            capturing = true;
+                            continue;
+                        }
+                        if capturing {
+                            if trimmed.is_empty() || trimmed.starts_with("The command completed") {
+                                continue;
+                            }
+                            for user in trimmed.split_whitespace() {
+                                let user_clean = user.trim().to_ascii_lowercase();
+                                if !user_clean.is_empty() {
+                                    set.insert(user_clean);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    set
+}
+
+pub const NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_EVENT: &str = "NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT";
+pub const NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_STATUS: &str = "contained_disabled_non_destructive";
+pub const NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_METHOD: &str = "net user /active:no or Disable-LocalUser";
+
+/// Helper to get non-destructive account disabling arguments for net.exe.
+/// Strictly non-destructive: uses `/active:no` rather than `/delete`.
+pub fn get_account_containment_net_args<'a>(username: &'a str) -> [&'a str; 3] {
+    ["user", username, "/active:no"]
+}
+
+/// Helper to get non-destructive account disabling command for PowerShell.
+/// Strictly non-destructive: uses `Disable-LocalUser` rather than `Remove-LocalUser`.
+pub fn get_account_containment_powershell_cmd(username: &str) -> String {
+    format!("Disable-LocalUser -Name '{}' -ErrorAction SilentlyContinue", username)
+}
+
+/// Helper to check whether account containment is allowed against a given baseline.
+pub fn is_account_containment_allowed(username: &str, baseline: &std::collections::HashSet<String>) -> bool {
+    let clean = username.trim().to_ascii_lowercase();
+    if clean.is_empty() {
+        return false;
+    }
+    !is_protected_system_account(&clean) && !baseline.contains(&clean)
+}
+
+/// Helper to check whether account rollback is allowed against a given baseline (alias to is_account_containment_allowed).
+pub fn is_account_rollback_allowed(username: &str, baseline: &std::collections::HashSet<String>) -> bool {
+    is_account_containment_allowed(username, baseline)
+}
+
 /// Helper to determine if a detected threat signature matches any cataloged attack pattern.
 fn is_mitre_catalog_attack(sig: &osoosi_types::ThreatSignature, event: &osoosi_types::HostSecurityEvent) -> bool {
     if let Some(ref tech) = sig.mitre_technique {
@@ -761,6 +912,8 @@ pub struct EdrOrchestrator {
     pub canary_correlator: Arc<tokio::sync::Mutex<osoosi_telemetry::canary::CanaryCorrelator>>,
     /// Process Hollowing Interception Detector
     pub hollowing_detector: Arc<osoosi_telemetry::hollowing::ProcessHollowingDetector>,
+    /// Immutable baseline of pre-existing accounts captured at startup to prevent Confused Deputy rollback attacks.
+    pub preexisting_accounts: Arc<std::collections::HashSet<String>>,
 }
 
 impl EdrOrchestrator {
@@ -1556,6 +1709,9 @@ impl EdrOrchestrator {
         let military = Arc::new(military::MilitaryGuard::new());
 
         let mesh_gossip_count_atomic = Arc::new(AtomicU32::new(0));
+
+        let preexisting_accounts = Arc::new(query_system_accounts());
+        info!("Account Security Guardrail: Baselined {} pre-existing/protected accounts.", preexisting_accounts.len());
         
         let orch = Self {
             memory,
@@ -1619,6 +1775,7 @@ impl EdrOrchestrator {
                 ))
             },
             hollowing_detector: Arc::new(osoosi_telemetry::hollowing::ProcessHollowingDetector::new()),
+            preexisting_accounts,
         };
 
         // Start background log retention loop (hourly rotation and pruning)
@@ -3689,14 +3846,14 @@ impl EdrOrchestrator {
                             });
                         }
 
-                        // Autonomous account rollback for T1136.001
+                        // Autonomous non-destructive account containment for T1136.001
                         if let Some(cmd) = event.data.get("CommandLine")
                             .or_else(|| event.data.get("command_line"))
                             .or_else(|| event.data.get("cmdline"))
                             .and_then(|v| v.as_str())
                         {
                             if let Some(username) = extract_created_username(cmd) {
-                                warn!("Autonomous Account Rollback: Detected T1136.001 rogue account creation for user '{}'. Enqueueing deletion task.", username);
+                                warn!("Non-Destructive Account Containment: Detected T1136.001 rogue account creation for user '{}'. Enqueueing account disable task.", username);
                                 self.trigger_account_rollback(username);
                             }
                         }
@@ -3721,7 +3878,7 @@ impl EdrOrchestrator {
                             .and_then(|v| v.as_str())
                         {
                             if let Some(username) = extract_created_username(cmd) {
-                                warn!("Autonomous Account Rollback: Detected T1136.001 rogue account creation for user '{}'. Enqueueing deletion task.", username);
+                                warn!("Non-Destructive Account Containment: Detected T1136.001 rogue account creation for user '{}'. Enqueueing account disable task.", username);
                                 self.trigger_account_rollback(username);
                             }
                         }
@@ -6411,15 +6568,64 @@ impl EdrOrchestrator {
         self.browser_guard.run_sweep().await
     }
 
-    /// Autonomous account deletion rollback for T1136.001 rogue account creation.
-    /// Autonomous account deletion rollback for T1136.001 rogue account creation.
+    /// Check whether account rollback is permitted for the given user against baseline and protected safelist.
+    pub fn is_account_rollback_allowed(&self, username: &str) -> bool {
+        is_account_rollback_allowed(username, &self.preexisting_accounts)
+    }
+
+    /// Check whether account containment is permitted for the given user against baseline and protected safelist.
+    pub fn is_account_containment_allowed(&self, username: &str) -> bool {
+        is_account_containment_allowed(username, &self.preexisting_accounts)
+    }
+
+    /// Autonomous non-destructive account containment for T1136.001 rogue account creation.
+    /// Strictly non-destructive: disables/locks down the account (/active:no, Disable-LocalUser)
+    /// preserving forensic evidence, SIDs, and user data rather than deleting it.
+    pub fn trigger_account_containment(&self, username: String) {
+        self.trigger_account_rollback(username);
+    }
+
+    /// Autonomous non-destructive account containment rollback for T1136.001 rogue account creation.
+    /// Strictly non-destructive: disables/locks down the account (/active:no, Disable-LocalUser)
+    /// preserving forensic evidence, SIDs, and user data rather than deleting it.
     pub fn trigger_account_rollback(&self, username: String) {
+        let user_clean = username.trim().to_ascii_lowercase();
+        if is_protected_system_account(&user_clean) || self.preexisting_accounts.contains(&user_clean) {
+            warn!(
+                "[SECURITY GUARDRAIL] Autonomous account containment REFUSED for user '{}'. Account is in the protected/pre-existing baseline! Confused deputy attack thwarted.",
+                username
+            );
+            self.audit.log("CONFUSED_DEPUTY_ATTACK_PREVENTED", serde_json::json!({
+                "technique": "T1136.001",
+                "target_user": username,
+                "reason": "Target account is in the protected system safelist or pre-existing baseline",
+                "action": "containment_refused"
+            }));
+            return;
+        }
+
         let audit = self.audit.clone();
+        let preexisting = self.preexisting_accounts.clone();
         tokio::spawn(async move {
+            let user_clean = username.trim().to_ascii_lowercase();
+            if is_protected_system_account(&user_clean) || preexisting.contains(&user_clean) {
+                warn!(
+                    "[SECURITY GUARDRAIL] Autonomous account containment REFUSED for user '{}'. Account is in the protected/pre-existing baseline! Confused deputy attack thwarted.",
+                    username
+                );
+                audit.log("CONFUSED_DEPUTY_ATTACK_PREVENTED", serde_json::json!({
+                    "technique": "T1136.001",
+                    "target_user": username,
+                    "reason": "Target account is in the protected system safelist or pre-existing baseline (inner check)",
+                    "action": "containment_refused"
+                }));
+                return;
+            }
+
             tokio::time::sleep(tokio::time::Duration::from_millis(300)).await;
             #[cfg(target_os = "windows")]
             {
-                // Step 1: Check if user exists before attempting deletion
+                // Step 1: Check if user exists before attempting lockdown
                 let check_res = tokio::process::Command::new("net.exe")
                     .args(["user", &username])
                     .output()
@@ -6437,48 +6643,50 @@ impl EdrOrchestrator {
                 };
 
                 if !user_exists {
-                    info!("[AUTONOMOUS_ROLLBACK] User account '{}' does not exist in local database (threat mitigated before creation).", username);
+                    info!("[NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT] User account '{}' does not exist in local database (threat mitigated before creation).", username);
                     return;
                 }
 
-                // Step 2: Delete unauthorized account
+                // Step 2: Non-destructive account disabling / lockdown (strictly never deletion)
+                let net_args = get_account_containment_net_args(&username);
                 let res = tokio::process::Command::new("net.exe")
-                    .args(["user", &username, "/delete"])
+                    .args(net_args)
                     .output()
                     .await;
-                let mut deleted = match res {
+                let mut disabled = match res {
                     Ok(output) if output.status.success() => true,
                     _ => false,
                 };
 
-                // Fallback to PowerShell Remove-LocalUser if net.exe failed
-                if !deleted {
-                    let ps_del = tokio::process::Command::new("powershell.exe")
-                        .args(["-NoProfile", "-NonInteractive", "-Command", &format!("Remove-LocalUser -Name '{}' -ErrorAction Stop", username)])
+                // Fallback to PowerShell Disable-LocalUser if net.exe failed
+                if !disabled {
+                    let ps_cmd = get_account_containment_powershell_cmd(&username);
+                    let ps_dis = tokio::process::Command::new("powershell.exe")
+                        .args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd])
                         .output()
                         .await;
-                    if let Ok(out) = ps_del {
+                    if let Ok(out) = ps_dis {
                         if out.status.success() {
-                            deleted = true;
+                            disabled = true;
                         }
                     }
                 }
 
-                if deleted {
-                    warn!("[AUTONOMOUS_ROLLBACK] Successfully removed unauthorized account created by T1136.001: {}", username);
-                    audit.log("AUTONOMOUS_ROLLBACK", serde_json::json!({
+                if disabled {
+                    warn!("[NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT] Successfully disabled unauthorized account created by T1136.001: {}", username);
+                    audit.log(NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_EVENT, serde_json::json!({
                         "technique": "T1136.001",
                         "user": username,
-                        "status": "success",
-                        "method": "net user /delete or Remove-LocalUser"
+                        "status": NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_STATUS,
+                        "method": NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_METHOD
                     }));
                 } else {
-                    warn!("[AUTONOMOUS_ROLLBACK] Failed to delete unauthorized account '{}'", username);
+                    warn!("[NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT] Failed to disable unauthorized account '{}'", username);
                 }
             }
             #[cfg(not(target_os = "windows"))]
             {
-                warn!("[AUTONOMOUS_ROLLBACK] Rollback requested for user {}: (non-Windows platform)", username);
+                warn!("[NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT] Non-destructive account containment requested for user {}: (non-Windows platform)", username);
             }
         });
     }
@@ -6643,14 +6851,14 @@ impl EdrOrchestrator {
                     }
                 }
 
-                // Rollback unauthorized accounts created by T1136.001
+                // Contain unauthorized accounts created by T1136.001 (strictly non-destructive)
                 if let Some(cmd) = event.data.get("CommandLine")
                     .or_else(|| event.data.get("command_line"))
                     .or_else(|| event.data.get("cmdline"))
                     .and_then(|v| v.as_str())
                 {
                     if let Some(username) = extract_created_username(cmd) {
-                        warn!("Autonomous Account Rollback: Detected T1136.001 rogue account creation for user '{}'. Enqueueing deletion task.", username);
+                        warn!("Non-Destructive Account Containment: Detected T1136.001 rogue account creation for user '{}'. Enqueueing account disable task.", username);
                         self.trigger_account_rollback(username);
                     }
                 }
@@ -7168,6 +7376,99 @@ mod tests {
         dump_sig.mitre_technique = Some("T1003.001".to_string());
         assert!(is_mitre_catalog_attack(&dump_sig, &ev));
         assert!(is_destructive_mutation(&dump_sig, &ev));
+    }
+
+    #[test]
+    fn test_is_protected_system_account() {
+        assert!(is_protected_system_account("Administrator"));
+        assert!(is_protected_system_account("guest"));
+        assert!(is_protected_system_account("DefaultAccount"));
+        assert!(is_protected_system_account("Owner"));
+        assert!(is_protected_system_account("WDAGUtilityAccount"));
+
+        let env_user = std::env::var("USERNAME")
+            .or_else(|_| std::env::var("USER"))
+            .unwrap_or_else(|_| {
+                std::env::set_var("USERNAME", "mock_active_user");
+                "mock_active_user".to_string()
+            });
+        assert!(is_protected_system_account(&env_user));
+
+        assert!(!is_protected_system_account("T1136.001_RogueUser"));
+    }
+
+    #[test]
+    fn test_non_destructive_account_containment_commands() {
+        // Net.exe command generation: must strictly disable account via /active:no, NEVER /delete
+        let net_args = get_account_containment_net_args("rogue_admin");
+        assert_eq!(net_args, ["user", "rogue_admin", "/active:no"]);
+        assert!(
+            !net_args.contains(&"/delete"),
+            "Containment command must NEVER include /delete"
+        );
+
+        // PowerShell command generation: must strictly disable account via Disable-LocalUser, NEVER Remove-LocalUser
+        let ps_cmd = get_account_containment_powershell_cmd("rogue_admin");
+        assert_eq!(
+            ps_cmd,
+            "Disable-LocalUser -Name 'rogue_admin' -ErrorAction SilentlyContinue"
+        );
+        assert!(
+            !ps_cmd.contains("Remove-LocalUser"),
+            "Containment command must NEVER include Remove-LocalUser"
+        );
+
+        // Audit constants verification
+        assert_eq!(
+            NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_EVENT,
+            "NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT"
+        );
+        assert_eq!(
+            NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_STATUS,
+            "contained_disabled_non_destructive"
+        );
+        assert_eq!(
+            NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT_METHOD,
+            "net user /active:no or Disable-LocalUser"
+        );
+    }
+
+    #[test]
+    fn test_rollback_refuses_protected_and_preexisting() {
+        let mut baseline = std::collections::HashSet::new();
+        baseline.insert("alice".to_string());
+        baseline.insert("bob".to_string());
+        baseline.insert("administrator".to_string());
+
+        // Verifies that attempting containment/rollback for "Alice" or "administrator" is rejected and cannot proceed
+        assert!(!is_account_rollback_allowed("Alice", &baseline));
+        assert!(!is_account_rollback_allowed("alice", &baseline));
+        assert!(!is_account_rollback_allowed("administrator", &baseline));
+        assert!(!is_account_rollback_allowed("Administrator", &baseline));
+        assert!(!is_account_rollback_allowed("bob", &baseline));
+
+        assert!(!is_account_containment_allowed("Alice", &baseline));
+        assert!(!is_account_containment_allowed("alice", &baseline));
+        assert!(!is_account_containment_allowed("administrator", &baseline));
+        assert!(!is_account_containment_allowed("Administrator", &baseline));
+        assert!(!is_account_containment_allowed("bob", &baseline));
+
+        // Built-in protected accounts are rejected even if not in explicit baseline map
+        assert!(!is_account_rollback_allowed("guest", &baseline));
+        assert!(!is_account_rollback_allowed("DefaultAccount", &baseline));
+        assert!(!is_account_rollback_allowed("Owner", &baseline));
+        assert!(!is_account_rollback_allowed("WDAGUtilityAccount", &baseline));
+
+        assert!(!is_account_containment_allowed("guest", &baseline));
+        assert!(!is_account_containment_allowed("DefaultAccount", &baseline));
+        assert!(!is_account_containment_allowed("Owner", &baseline));
+        assert!(!is_account_containment_allowed("WDAGUtilityAccount", &baseline));
+
+        // Verifies that "mallory_hacker" is allowed for non-destructive containment disabling if not in the baseline
+        assert!(is_account_rollback_allowed("mallory_hacker", &baseline));
+        assert!(is_account_rollback_allowed("T1136.001_RogueUser", &baseline));
+        assert!(is_account_containment_allowed("mallory_hacker", &baseline));
+        assert!(is_account_containment_allowed("T1136.001_RogueUser", &baseline));
     }
 }
 

@@ -581,8 +581,8 @@ To prevent adversaries and penetration testing automation (such as Atomic Red Te
    (net.exe / powershell.exe NOT immune)                                 │
           │                                                               ▼
           ▼                                                    Instruction Pointer Frozen
-   Deploy Active Process Tarpit & Rollback                    (Zero CPU cycles to execute payload)
-   (Account Deleted: net user <name> /delete)                            │
+   Deploy Active Process Tarpit & Containment                    (Zero CPU cycles to execute payload)
+   (Account Disabled: net user <name> /active:no)                            │
           │                                                               ▼
           └──────────────────────────────────────────────────► Laplace Differential Privacy Noise
                                                                [Privatized Incident Vector Broadcast]
@@ -603,9 +603,9 @@ To prevent adversaries and penetration testing automation (such as Atomic Red Te
   $$\text{Noise} = -\frac{\Delta S}{\epsilon} \cdot \text{sgn}(u) \cdot \ln(1 - 2|u|), \quad u \in (-0.5, 0.5)$$
 - **Zero Host Leakage**: Security incident vectors, honeypot tripwire counts, and anomaly metrics are privatized before being shared across the P2P wire mesh or centralized aggregation backends, ensuring fleet-wide intelligence sharing without exposing internal host topologies or user identities.
 
-### 4. LOLBin Disambiguation & Autonomous Account Rollback (`T1136.001`)
+### 4. LOLBin Disambiguation & Autonomous Non-Destructive Account Containment (`T1136.001`)
 - **Eliminating the System Critical Double-Veto**: Refined `is_system_critical` and Windows SFC verification (`validate_file_safety_with_veto`) so that while core OS infrastructure (PIDs 0, 1, 4, `smss.exe`, `csrss.exe`, `services.exe`, `lsass.exe`) remains strictly protected against termination, administrative living-off-the-land binaries (`net.exe`, `net1.exe`, `powershell.exe`, `cmd.exe`, `wmic.exe`, `schtasks.exe`) executing high-risk adversarial TTPs are no longer immune to autonomous containment.
-- **Autonomous Rollback**: When unauthorized local account creation (`net user <name> /add` or `New-LocalUser -Name <name>`) is detected, the EDR traps the process and immediately dispatches an autonomous compensating rollback task (`net user <name> /delete` or `Remove-LocalUser -Name <name>`), logging the successful remediation in the forensic ledger.
+- **Autonomous Non-Destructive Containment**: When unauthorized local account creation (`net user <name> /add` or `New-LocalUser -Name <name>`) is detected, the EDR traps the process and immediately dispatches an autonomous non-destructive containment task (`net user <name> /active:no` or `Disable-LocalUser -Name <name> -ErrorAction SilentlyContinue`), logging the successful remediation in the forensic ledger.
 - **Audit-Mode Defense Guarantee**: Even when operating in `AutonomyMode::Audit`, detected MITRE catalog attacks (including all 266 technique patterns from `D:\harfile\edrtest\docs\MITRE_TECHNIQUES_CATALOG.md` covering persistence, credential dumping, ransomware encryption, shadow copy deletion, and process hollowing) automatically trigger active thread trapping and autonomous rollback, preventing host compromise during audit runs.
 
 ---
