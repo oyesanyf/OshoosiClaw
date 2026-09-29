@@ -68,7 +68,7 @@ impl SystemResourceSummary {
     /// Determines hardware tier according to available CPU threads, RAM, and GPU VRAM,
     /// enforcing ModelFusion available-memory laws to prevent runtime OOM aborts.
     pub fn determine_tier(&self) -> HardwareTier {
-        let has_runtime_metrics = self.free_ram_gb > 0.0 || self.free_vram_mb > 0;
+        let has_runtime_metrics = self.free_ram_gb > 0.0;
 
         if has_runtime_metrics && self.free_ram_gb < 4.0 && self.free_vram_mb < 2_000 {
             return HardwareTier::Tier1Constrained;
@@ -876,5 +876,37 @@ mod tests {
             disks: vec![],
         };
         assert_eq!(mock_enterprise.determine_tier(), HardwareTier::Tier4Enterprise);
+
+        // Mock test with 0.0 free RAM and non-zero free VRAM (<2000MB) must NOT trigger Tier 1 OOM fallback
+        let mock_with_vram = SystemResourceSummary {
+            cpu_name: "AMD EPYC".into(),
+            logical_cores: 64,
+            total_ram_gb: 128.0,
+            free_ram_gb: 0.0,
+            gpu_name: "NVIDIA RTX 4090".into(),
+            total_vram_mb: 24576,
+            free_vram_mb: 1500,
+            has_gpu: true,
+            free_disk_gb: 500.0,
+            total_disk_gb: 2000.0,
+            disks: vec![],
+        };
+        assert_eq!(mock_with_vram.determine_tier(), HardwareTier::Tier4Enterprise);
+
+        // Mock test for Tier 3 with 0.0 free RAM and non-zero free VRAM (<4000MB) must NOT cap at Tier 2
+        let mock_tier3_vram = SystemResourceSummary {
+            cpu_name: "AMD Ryzen 9".into(),
+            logical_cores: 24,
+            total_ram_gb: 32.0,
+            free_ram_gb: 0.0,
+            gpu_name: "RTX 3070".into(),
+            total_vram_mb: 8000,
+            free_vram_mb: 3500,
+            has_gpu: true,
+            free_disk_gb: 500.0,
+            total_disk_gb: 1024.0,
+            disks: vec![],
+        };
+        assert_eq!(mock_tier3_vram.determine_tier(), HardwareTier::Tier3HighPerf);
     }
 }
