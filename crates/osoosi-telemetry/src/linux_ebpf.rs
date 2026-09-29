@@ -97,7 +97,11 @@ pub fn parse_process_event(bytes: &[u8]) -> Option<HostSecurityEvent> {
     let args = String::from_utf8_lossy(&event.args[..args_len]).trim().to_string();
 
     let command_line = if !args.is_empty() {
-        format!("{} {}", filename, args)
+        if !filename.is_empty() {
+            format!("{} {}", filename, args)
+        } else {
+            format!("{} {}", comm, args)
+        }
     } else if !filename.is_empty() {
         filename.clone()
     } else {
@@ -109,7 +113,7 @@ pub fn parse_process_event(bytes: &[u8]) -> Option<HostSecurityEvent> {
             let mut map = serde_json::Map::new();
             map.insert("ProcessId".to_string(), serde_json::json!(event.pid));
             map.insert("ParentProcessId".to_string(), serde_json::json!(event.ppid));
-            map.insert("Image".to_string(), serde_json::json!(filename));
+            map.insert("Image".to_string(), serde_json::json!(if !filename.is_empty() { &filename } else { &comm }));
             map.insert("CommandLine".to_string(), serde_json::json!(command_line));
             map.insert("User".to_string(), serde_json::json!(event.uid.to_string()));
             map.insert("Gid".to_string(), serde_json::json!(event.gid));
@@ -127,7 +131,10 @@ pub fn parse_process_event(bytes: &[u8]) -> Option<HostSecurityEvent> {
         OSOOSI_EBPF_EVENT_LSM_BLOCK => {
             let mut map = serde_json::Map::new();
             map.insert("ProcessId".to_string(), serde_json::json!(event.pid));
-            map.insert("Image".to_string(), serde_json::json!(filename));
+            map.insert(
+                "Image".to_string(),
+                serde_json::json!(if !filename.is_empty() { filename } else { comm }),
+            );
             map.insert("CommandLine".to_string(), serde_json::json!(command_line));
             map.insert(
                 "Reason".to_string(),
@@ -178,6 +185,7 @@ pub fn parse_network_event(bytes: &[u8]) -> Option<HostSecurityEvent> {
 
     let mut data = serde_json::Map::new();
     data.insert("ProcessId".to_string(), serde_json::json!(event.pid));
+    data.insert("Image".to_string(), serde_json::json!(""));
     data.insert("DestinationIp".to_string(), serde_json::json!(dest_ip));
     data.insert("DestinationPort".to_string(), serde_json::json!(dest_port));
     data.insert("SourcePort".to_string(), serde_json::json!(event.sport));
@@ -217,15 +225,34 @@ impl EbpfTelemetryEngine {
 
         info!("🚀 [LINUX-EBPF] Starting Oshoosi eBPF Telemetry Engine with Ring-Buffer & LSM...");
 
-        let ebpf_path =
-            std::env::var("OSOOSI_EBPF_OBJECT").unwrap_or_else(|_| "osoosi-ebpf.o".to_string());
-        let bytes = match std::fs::read(&ebpf_path) {
-            Ok(b) => b,
-            Err(_) => {
-                warn!(
-                    "eBPF object not found at {}. Linux eBPF telemetry disabled.",
-                    ebpf_path
-                );
+        let candidate_paths = if let Ok(custom) = std::env::var("OSOOSI_EBPF_OBJECT") {
+            vec![std::path::PathBuf::from(custom)]
+        } else {
+            vec![
+                std::path::PathBuf::from("osoosi-ebpf.o"),
+                std::path::PathBuf::from("ebpf/bin/osoosi-ebpf.o"),
+                std::path::PathBuf::from("/usr/lib/osoosi/osoosi-ebpf.o"),
+                std::path::PathBuf::from("/etc/osoosi/osoosi-ebpf.o"),
+            ]
+        };
+
+        let mut bytes_opt = None;
+        let mut loaded_path = std::path::PathBuf::new();
+        for p in candidate_paths {
+            if let Ok(b) = std::fs::read(&p) {
+                loaded_path = p;
+                bytes_opt = Some(b);
+                break;
+            }
+        }
+
+        let bytes = match bytes_opt {
+            Some(b) => {
+                info!("eBPF object successfully loaded from {:?}", loaded_path);
+                b
+            }
+            None => {
+                warn!("eBPF object not found in candidate locations. Linux eBPF telemetry disabled.");
                 return Ok(());
             }
         };
@@ -237,18 +264,24 @@ impl EbpfTelemetryEngine {
         self.attach_tracepoint(&mut bpf, "handle_process_exit", "sched", "sched_process_exit")?;
         self.attach_tracepoint(&mut bpf, "handle_connect", "syscalls", "sys_enter_connect")?;
 
-        let process_ring: RingBuf<MapData> =
-            RingBuf::try_from(bpf.take_map("process_ring").or_else(|| bpf.take_map("PROCESS_RING")).unwrap())?;
-        let network_ring: RingBuf<MapData> =
-            RingBuf::try_from(bpf.take_map("network_ring").or_else(|| bpf.take_map("NETWORK_RING")).unwrap())?;
+        let process_map = bpf.take_map("process_ring")
+            .or_else(|| bpf.take_map("PROCESS_RING"))
+            .ok_or_else(|| anyhow::anyhow!("Required eBPF ringbuffer map 'process_ring' not found"))?;
+        let process_ring: RingBuf<MapData> = RingBuf::try_from(process_map)?;
+
+        let network_map = bpf.take_map("network_ring")
+            .or_else(|| bpf.take_map("NETWORK_RING"))
+            .ok_or_else(|| anyhow::anyhow!("Required eBPF ringbuffer map 'network_ring' not found"))?;
+        let network_ring: RingBuf<MapData> = RingBuf::try_from(network_map)?;
 
         let tx = self.tx.clone();
         let shutdown = self.shutdown.clone();
 
+        let mut process_fd = tokio::io::unix::AsyncFd::new(process_ring)?;
+        let mut network_fd = tokio::io::unix::AsyncFd::new(network_ring)?;
+
         tokio::spawn(async move {
             let _bpf = bpf; // Keep alive
-            let mut process_fd = tokio::io::unix::AsyncFd::new(process_ring).unwrap();
-            let mut network_fd = tokio::io::unix::AsyncFd::new(network_ring).unwrap();
 
             loop {
                 if shutdown.load(Ordering::Relaxed) {
@@ -289,7 +322,9 @@ impl EbpfTelemetryEngine {
         category: &str,
         name: &str,
     ) -> anyhow::Result<()> {
-        let prog: &mut aya::programs::TracePoint = bpf.program_mut(prog_name).unwrap().try_into()?;
+        let prog_mut = bpf.program_mut(prog_name)
+            .ok_or_else(|| anyhow::anyhow!("eBPF program '{}' not found in object", prog_name))?;
+        let prog: &mut aya::programs::TracePoint = prog_mut.try_into()?;
         prog.load()?;
         prog.attach(category, name)?;
         Ok(())

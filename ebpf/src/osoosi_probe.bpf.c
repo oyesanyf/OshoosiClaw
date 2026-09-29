@@ -153,6 +153,10 @@ int handle_connect(struct trace_event_raw_sys_enter_connect *ctx) {
         return 0;
     }
 
+    if (family == 10 && ctx->addrlen < 28) {
+        return 0;
+    }
+
     event = bpf_ringbuf_reserve(&network_ring, sizeof(*event), 0);
     if (!event) {
         return 0;
@@ -190,7 +194,7 @@ struct linux_binprm {
 // Hook 4: Linux Security Module (LSM) Pre-Operation Execution Block
 // Intercepts binary launch and returns -EPERM before the process can execute!
 SEC("lsm/bprm_check_security")
-int BPF_PROG(test_bprm_check, struct linux_binprm *bprm) {
+int BPF_PROG(osoosi_bprm_check, struct linux_binprm *bprm) {
     char filename[OSOOSI_PATH_LEN] = {0};
 
     if (!bprm) {

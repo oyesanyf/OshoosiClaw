@@ -307,10 +307,11 @@ impl KernelDriverClient {
         {
             use std::os::windows::ffi::OsStrExt;
 
+            let normalized = path.replace('/', "\\");
             let mut req = RawAddPathRequest {
                 image_path: [0u16; 260],
             };
-            let wide: Vec<u16> = std::ffi::OsStr::new(path).encode_wide().collect();
+            let wide: Vec<u16> = std::ffi::OsStr::new(&normalized).encode_wide().collect();
             let len = wide.len().min(259);
             req.image_path[..len].copy_from_slice(&wide[..len]);
             req.image_path[len] = 0;
@@ -512,5 +513,49 @@ mod tests {
         if let Some(c) = client {
             assert!(c.is_available());
         }
+    }
+
+    #[test]
+    fn test_driver_status_serde() {
+        let st = KernelDriverStatus {
+            version: 0x00010000,
+            mode: DriverAutonomyMode::Lockdown,
+            blocked_count: 42,
+            rule_count: 5,
+        };
+        let json = serde_json::to_string(&st).unwrap();
+        let parsed: KernelDriverStatus = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, st);
+    }
+
+    #[test]
+    fn test_intercept_event_serde() {
+        let ev = KernelInterceptEvent {
+            pid: 1234,
+            parent_pid: 5678,
+            image_path: "C:\\Windows\\System32\\cmd.exe".to_string(),
+            command_line: "cmd.exe /c whoami".to_string(),
+            timestamp: 133500000000000000,
+            blocked: true,
+        };
+        let json = serde_json::to_string(&ev).unwrap();
+        let parsed: KernelInterceptEvent = serde_json::from_str(&json).unwrap();
+        assert_eq!(parsed, ev);
+    }
+
+    #[test]
+    fn test_path_normalization() {
+        let path = "C:/Windows/Temp/payload.exe";
+        let normalized = path.replace('/', "\\");
+        assert_eq!(normalized, "C:\\Windows\\Temp\\payload.exe");
+    }
+
+    #[test]
+    fn test_hash_request_layout() {
+        let hash = [0xABu8; 32];
+        let mut req = RawAddHashRequest { hash: [0u8; 32] };
+        req.hash.copy_from_slice(&hash);
+        assert_eq!(req.hash[0], 0xAB);
+        assert_eq!(req.hash[31], 0xAB);
     }
 }

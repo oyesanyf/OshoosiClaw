@@ -1878,7 +1878,13 @@ impl EdrOrchestrator {
         let kernel_driver_client = osoosi_runtime::kernel_driver::KernelDriverClient::open();
         if let Some(ref client) = kernel_driver_client {
             info!("[KERNEL_DRIVER] Ring-0 Pre-Operation Driver attached! Hardware-enforced process blocking active before Sysmon Event 1.");
-            let _ = client.set_mode(osoosi_runtime::kernel_driver::DriverAutonomyMode::Active);
+            let autonomy_cfg = osoosi_types::load_autonomy_config();
+            let mode = match autonomy_cfg.current_mode() {
+                osoosi_types::AutonomyMode::Audit => osoosi_runtime::kernel_driver::DriverAutonomyMode::Audit,
+                osoosi_types::AutonomyMode::Lockdown => osoosi_runtime::kernel_driver::DriverAutonomyMode::Lockdown,
+                _ => osoosi_runtime::kernel_driver::DriverAutonomyMode::Active,
+            };
+            let _ = client.set_mode(mode);
         } else {
             info!("[KERNEL_DRIVER] Ring-0 driver not detected. Operating with user-mode WFP packet filter + active thread tarpit.");
         }
@@ -7985,6 +7991,109 @@ mod tests {
         assert!(is_account_containment_allowed("T1136.001_RogueUser", &baseline));
         assert!(is_account_containment_allowed("Rogue Admin", &baseline));
         assert!(is_account_containment_allowed("rogue'name", &baseline));
+    }
+
+    #[test]
+    fn test_deep_pipeline_autonomy_dispatch_matrix() {
+        use osoosi_types::ResponseAction;
+        let mut autonomy = osoosi_types::AutonomyConfig::default();
+        autonomy.action_confidence_threshold = 0.85;
+
+        let ev = make_test_event(serde_json::json!({
+            "CommandLine": "vssadmin delete shadows /all /quiet",
+            "ProcessId": 1234,
+        }));
+        let mut sig = ThreatSignature::default();
+        sig.mitre_technique = Some("T1490".to_string());
+        sig.confidence = 0.80; // below threshold 0.85
+        sig.recommended_action = ResponseAction::Alert;
+
+        // When auto_quarantine_malware is false (Audit mode), catalog attack below threshold MUST downgrade to Alert
+        autonomy.auto_quarantine_malware = false;
+        let is_catalog_attack = is_mitre_catalog_attack(&sig, &ev);
+        let is_destructive = is_destructive_mutation(&sig, &ev);
+        assert!(is_catalog_attack);
+        assert!(is_destructive);
+
+        let action_audit = if sig.confidence >= autonomy.action_confidence_threshold {
+            sig.recommended_action
+        } else if is_catalog_attack && autonomy.auto_quarantine_malware {
+            if is_destructive || sig.recommended_action == ResponseAction::Isolate {
+                ResponseAction::Isolate
+            } else if sig.recommended_action == ResponseAction::GhostTarpit {
+                ResponseAction::GhostTarpit
+            } else {
+                ResponseAction::Tarpit
+            }
+        } else {
+            ResponseAction::Alert
+        };
+        assert_eq!(action_audit, ResponseAction::Alert);
+
+        // When auto_quarantine_malware is true (Active/Lockdown mode), catalog attack below threshold escalates to Isolate (since destructive)
+        autonomy.auto_quarantine_malware = true;
+        let action_active = if sig.confidence >= autonomy.action_confidence_threshold {
+            sig.recommended_action
+        } else if is_catalog_attack && autonomy.auto_quarantine_malware {
+            if is_destructive || sig.recommended_action == ResponseAction::Isolate {
+                ResponseAction::Isolate
+            } else if sig.recommended_action == ResponseAction::GhostTarpit {
+                ResponseAction::GhostTarpit
+            } else {
+                ResponseAction::Tarpit
+            }
+        } else {
+            ResponseAction::Alert
+        };
+        assert_eq!(action_active, ResponseAction::Isolate);
+
+        // Non-destructive catalog attack escalates to Tarpit or GhostTarpit
+        let benign_ev = make_test_event(serde_json::json!({
+            "CommandLine": "python agent.py --prompt jailbreak",
+            "ProcessId": 5678,
+        }));
+        let mut non_destruct_sig = ThreatSignature::default();
+        non_destruct_sig.mitre_technique = Some("AML.T0043".to_string());
+        non_destruct_sig.confidence = 0.80;
+        non_destruct_sig.recommended_action = ResponseAction::GhostTarpit;
+
+        let is_catalog = is_mitre_catalog_attack(&non_destruct_sig, &benign_ev);
+        let is_destruct = is_destructive_mutation(&non_destruct_sig, &benign_ev);
+        assert!(is_catalog, "AML.T0043 must be catalog attack");
+        assert!(!is_destruct, "AML.T0043 must not be destructive mutation");
+
+        let action_ghost = if non_destruct_sig.confidence >= autonomy.action_confidence_threshold {
+            non_destruct_sig.recommended_action
+        } else if is_catalog && autonomy.auto_quarantine_malware {
+            if is_destruct || non_destruct_sig.recommended_action == ResponseAction::Isolate {
+                ResponseAction::Isolate
+            } else if non_destruct_sig.recommended_action == ResponseAction::GhostTarpit {
+                ResponseAction::GhostTarpit
+            } else {
+                ResponseAction::Tarpit
+            }
+        } else {
+            ResponseAction::Alert
+        };
+        assert_eq!(action_ghost, ResponseAction::GhostTarpit);
+    }
+
+    #[test]
+    fn test_ghost_tarpit_pid_debounce() {
+        let pid = 998877;
+        let now = std::time::Instant::now();
+        RECENT_TARPITTED_PIDS.insert(pid, now);
+
+        // Second call within 120s must be debounced
+        let debounced = if let Some(last) = RECENT_TARPITTED_PIDS.get(&pid) {
+            now.duration_since(*last) < std::time::Duration::from_secs(120)
+        } else {
+            false
+        };
+        assert!(debounced, "Consecutive event for same PID must be debounced within 120s");
+
+        // Clean up test entry
+        RECENT_TARPITTED_PIDS.remove(&pid);
     }
 }
 

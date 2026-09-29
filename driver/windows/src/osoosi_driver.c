@@ -76,6 +76,7 @@ VOID OsoosiCreateProcessNotifyRoutine(
 static VOID OsoosiClearRulesLocked(VOID);
 static BOOLEAN OsoosiIsCriticalSystemImage(_In_ PCUNICODE_STRING ImageFileName);
 static BOOLEAN OsoosiIsPathBlockedLocked(_In_ PCUNICODE_STRING ImageFileName);
+static BOOLEAN OsoosiIsHashBlockedLocked(_In_reads_(32) const UCHAR* Hash);
 
 NTSTATUS DriverEntry(
     _In_ PDRIVER_OBJECT DriverObject,
@@ -239,6 +240,13 @@ NTSTATUS OsoosiDeviceControl(
         // Ensure null-termination within buffer
         pReq->image_path[OSOOSI_MAX_PATH - 1] = L'\0';
 
+        // Normalize forward slashes to backslashes
+        for (ULONG k = 0; k < OSOOSI_MAX_PATH && pReq->image_path[k] != L'\0'; ++k) {
+            if (pReq->image_path[k] == L'/') {
+                pReq->image_path[k] = L'\\';
+            }
+        }
+
         POSOOSI_PATH_RULE rule = (POSOOSI_PATH_RULE)ExAllocatePoolWithTag(
             NonPagedPoolNx,
             sizeof(OSOOSI_PATH_RULE),
@@ -357,21 +365,49 @@ static VOID OsoosiClearRulesLocked(VOID) {
     g_State.RuleCount = 0;
 }
 
+static WCHAR OsoosiToUpper(WCHAR c) {
+    if (c >= L'a' && c <= L'z') {
+        return c - (L'a' - L'A');
+    }
+    return c;
+}
+
+static BOOLEAN OsoosiContainsSubstrInsensitive(
+    _In_reads_(haystackLen) PCWSTR haystack,
+    _In_ ULONG haystackLen,
+    _In_reads_(needleLen) PCWSTR needle,
+    _In_ ULONG needleLen
+) {
+    if (haystack == NULL || needle == NULL || needleLen == 0 || haystackLen < needleLen) {
+        return FALSE;
+    }
+
+    ULONG maxStart = haystackLen - needleLen;
+    for (ULONG i = 0; i <= maxStart; ++i) {
+        BOOLEAN match = TRUE;
+        for (ULONG j = 0; j < needleLen; ++j) {
+            if (OsoosiToUpper(haystack[i + j]) != OsoosiToUpper(needle[j])) {
+                match = FALSE;
+                break;
+            }
+        }
+        if (match) {
+            return TRUE;
+        }
+    }
+    return FALSE;
+}
+
 static BOOLEAN OsoosiIsCriticalSystemImage(_In_ PCUNICODE_STRING ImageFileName) {
     if (ImageFileName == NULL || ImageFileName->Buffer == NULL || ImageFileName->Length == 0) {
         return FALSE;
     }
 
-    for (ULONG i = 0; i < sizeof(g_ProtectedImages) / sizeof(g_ProtectedImages[0]); ++i) {
-        UNICODE_STRING protectedStr;
-        RtlInitUnicodeString(&protectedStr, g_ProtectedImages[i]);
-        if (FsRtlIsNameInExpression(&protectedStr, (PUNICODE_STRING)ImageFileName, TRUE, NULL)) {
-            return TRUE;
-        }
+    ULONG imgChars = ImageFileName->Length / sizeof(WCHAR);
 
-        // Substring / suffix match
-        PWCHAR found = wcsstr(ImageFileName->Buffer, g_ProtectedImages[i]);
-        if (found != NULL) {
+    for (ULONG i = 0; i < sizeof(g_ProtectedImages) / sizeof(g_ProtectedImages[0]); ++i) {
+        ULONG protLen = (ULONG)wcslen(g_ProtectedImages[i]);
+        if (OsoosiContainsSubstrInsensitive(ImageFileName->Buffer, imgChars, g_ProtectedImages[i], protLen)) {
             return TRUE;
         }
     }
@@ -384,15 +420,42 @@ static BOOLEAN OsoosiIsPathBlockedLocked(_In_ PCUNICODE_STRING ImageFileName) {
         return FALSE;
     }
 
+    ULONG imgChars = ImageFileName->Length / sizeof(WCHAR);
+
     PLIST_ENTRY curr = g_State.PathRuleList.Flink;
     while (curr != &g_State.PathRuleList) {
         POSOOSI_PATH_RULE rule = CONTAINING_RECORD(curr, OSOOSI_PATH_RULE, ListEntry);
         if (rule->Length > 0) {
-            // Case-insensitive comparison or substring match
-            PWCHAR found = wcsstr(ImageFileName->Buffer, rule->Path);
-            if (found != NULL) {
+            PCWSTR checkPath = rule->Path;
+            ULONG checkLen = rule->Length;
+
+            // If rule has a DOS drive prefix (e.g., "C:\..."), strip the drive letter and colon
+            // because kernel ImageFileName is an NT device path (e.g., "\Device\HarddiskVolume3\...")
+            if (checkLen >= 2 && checkPath[1] == L':') {
+                checkPath += 2;
+                checkLen -= 2;
+            }
+
+            if (checkLen > 0 && OsoosiContainsSubstrInsensitive(ImageFileName->Buffer, imgChars, checkPath, checkLen)) {
                 return TRUE;
             }
+        }
+        curr = curr->Flink;
+    }
+
+    return FALSE;
+}
+
+static BOOLEAN OsoosiIsHashBlockedLocked(_In_reads_(32) const UCHAR* Hash) {
+    if (Hash == NULL) {
+        return FALSE;
+    }
+
+    PLIST_ENTRY curr = g_State.HashRuleList.Flink;
+    while (curr != &g_State.HashRuleList) {
+        POSOOSI_HASH_RULE rule = CONTAINING_RECORD(curr, OSOOSI_HASH_RULE, ListEntry);
+        if (RtlCompareMemory(rule->Hash, Hash, OSOOSI_HASH_SIZE) == OSOOSI_HASH_SIZE) {
+            return TRUE;
         }
         curr = curr->Flink;
     }

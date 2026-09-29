@@ -223,9 +223,25 @@ pub enum DriverAction {
     /// Queries driver version, active mode, and blocked process count
     Status,
     /// Instructs or sets up driver service via Windows Service Control Manager
-    Install,
+    Install {
+        /// Optional path to custom osoosi_driver.sys binary
+        #[arg(long)]
+        path: Option<String>,
+    },
     /// Stops and deletes driver service
     Uninstall,
+    /// Add an executable path to the kernel blocklist for hardware-enforced pre-exec blocking
+    AddRule {
+        /// Absolute or relative path to the executable to block
+        path: String,
+    },
+    /// Set driver autonomy mode (Audit, Active, Lockdown)
+    SetMode {
+        /// Target mode: audit, active, or lockdown
+        mode: String,
+    },
+    /// Flush all in-memory kernel blocking rules
+    ClearRules,
 }
 
 #[derive(Subcommand, Clone)]
@@ -1874,14 +1890,25 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
                 }
             }
         }
-        DriverAction::Install => {
+        DriverAction::Install { path } => {
             #[cfg(windows)]
             {
                 info!("Installing Oshoosi Ring-0 Kernel Driver service...");
-                let mut driver_path = std::path::PathBuf::from("driver\\windows\\osoosi_driver.sys");
-                if !driver_path.exists() {
-                    driver_path = std::path::PathBuf::from("C:\\Program Files\\OshoosiClaw\\driver\\osoosi_driver.sys");
-                }
+                let driver_path = if let Some(p) = path {
+                    std::path::PathBuf::from(p)
+                } else {
+                    let default_dev = std::path::PathBuf::from("driver\\windows\\osoosi_driver.sys");
+                    if default_dev.exists() {
+                        default_dev
+                    } else {
+                        let installed = std::path::PathBuf::from("C:\\Program Files\\OshoosiClaw\\driver\\windows\\osoosi_driver.sys");
+                        if installed.exists() {
+                            installed
+                        } else {
+                            std::path::PathBuf::from("C:\\Program Files\\OshoosiClaw\\driver\\osoosi_driver.sys")
+                        }
+                    }
+                };
                 println!("Registering kernel service 'OsoosiDriver' pointing to {:?}...", driver_path);
                 let create_status = std::process::Command::new("sc.exe")
                     .args([
@@ -1920,6 +1947,7 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
             }
             #[cfg(not(windows))]
             {
+                let _ = path;
                 println!("Driver installation is only supported on Windows.");
             }
         }
@@ -1942,6 +1970,49 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
             #[cfg(not(windows))]
             {
                 println!("Driver uninstallation is only supported on Windows.");
+            }
+        }
+        DriverAction::AddRule { path } => {
+            let client = osoosi_runtime::kernel_driver::KernelDriverClient::open();
+            match client {
+                Some(kd) => match kd.add_blocked_path(&path) {
+                    Ok(()) => println!("Successfully added pre-exec block rule for path: {}", path),
+                    Err(e) => eprintln!("Failed to add kernel rule: {}", e),
+                },
+                None => {
+                    eprintln!("Kernel driver not accessible. Ensure driver service is installed and running.");
+                }
+            }
+        }
+        DriverAction::SetMode { mode } => {
+            let client = osoosi_runtime::kernel_driver::KernelDriverClient::open();
+            match client {
+                Some(kd) => {
+                    let d_mode = match mode.to_ascii_lowercase().as_str() {
+                        "audit" | "0" => osoosi_runtime::kernel_driver::DriverAutonomyMode::Audit,
+                        "lockdown" | "2" => osoosi_runtime::kernel_driver::DriverAutonomyMode::Lockdown,
+                        _ => osoosi_runtime::kernel_driver::DriverAutonomyMode::Active,
+                    };
+                    match kd.set_mode(d_mode) {
+                        Ok(()) => println!("Kernel driver autonomy mode successfully set to: {}", d_mode),
+                        Err(e) => eprintln!("Failed to set driver mode: {}", e),
+                    }
+                }
+                None => {
+                    eprintln!("Kernel driver not accessible. Ensure driver service is installed and running.");
+                }
+            }
+        }
+        DriverAction::ClearRules => {
+            let client = osoosi_runtime::kernel_driver::KernelDriverClient::open();
+            match client {
+                Some(kd) => match kd.clear_rules() {
+                    Ok(()) => println!("Successfully flushed all in-memory kernel blocking rules."),
+                    Err(e) => eprintln!("Failed to flush kernel rules: {}", e),
+                },
+                None => {
+                    eprintln!("Kernel driver not accessible. Ensure driver service is installed and running.");
+                }
             }
         }
     }
@@ -3022,14 +3093,44 @@ mod tests {
 
         let cli_install = Cli::try_parse_from(["osoosi", "driver", "install"]).unwrap();
         match cli_install.command {
-            Some(Commands::Driver { action: DriverAction::Install }) => {}
+            Some(Commands::Driver { action: DriverAction::Install { path: None } }) => {}
             _ => panic!("Expected Commands::Driver with Install"),
+        }
+
+        let cli_install_custom = Cli::try_parse_from(["osoosi", "driver", "install", "--path", "C:\\test\\osoosi_driver.sys"]).unwrap();
+        match cli_install_custom.command {
+            Some(Commands::Driver { action: DriverAction::Install { path: Some(p) } }) => {
+                assert_eq!(p, "C:\\test\\osoosi_driver.sys");
+            }
+            _ => panic!("Expected Commands::Driver with Install path"),
         }
 
         let cli_uninstall = Cli::try_parse_from(["osoosi", "driver", "uninstall"]).unwrap();
         match cli_uninstall.command {
             Some(Commands::Driver { action: DriverAction::Uninstall }) => {}
             _ => panic!("Expected Commands::Driver with Uninstall"),
+        }
+
+        let cli_add_rule = Cli::try_parse_from(["osoosi", "driver", "add-rule", "C:\\malware.exe"]).unwrap();
+        match cli_add_rule.command {
+            Some(Commands::Driver { action: DriverAction::AddRule { path } }) => {
+                assert_eq!(path, "C:\\malware.exe");
+            }
+            _ => panic!("Expected Commands::Driver with AddRule"),
+        }
+
+        let cli_set_mode = Cli::try_parse_from(["osoosi", "driver", "set-mode", "lockdown"]).unwrap();
+        match cli_set_mode.command {
+            Some(Commands::Driver { action: DriverAction::SetMode { mode } }) => {
+                assert_eq!(mode, "lockdown");
+            }
+            _ => panic!("Expected Commands::Driver with SetMode"),
+        }
+
+        let cli_clear = Cli::try_parse_from(["osoosi", "driver", "clear-rules"]).unwrap();
+        match cli_clear.command {
+            Some(Commands::Driver { action: DriverAction::ClearRules }) => {}
+            _ => panic!("Expected Commands::Driver with ClearRules"),
         }
     }
 }
