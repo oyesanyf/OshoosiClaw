@@ -65,18 +65,37 @@ impl HardwareTier {
 }
 
 impl SystemResourceSummary {
-    /// Determines hardware tier according to available CPU threads, RAM, and GPU VRAM.
+    /// Determines hardware tier according to available CPU threads, RAM, and GPU VRAM,
+    /// enforcing ModelFusion available-memory laws to prevent runtime OOM aborts.
     pub fn determine_tier(&self) -> HardwareTier {
-        if (self.total_ram_gb >= 64.0 || self.logical_cores >= 32)
+        let has_runtime_metrics = self.free_ram_gb > 0.0 || self.free_vram_mb > 0;
+
+        if has_runtime_metrics && self.free_ram_gb < 4.0 && self.free_vram_mb < 2_000 {
+            return HardwareTier::Tier1Constrained;
+        }
+
+        let base_tier = if (self.total_ram_gb >= 64.0 || self.logical_cores >= 32)
             && (self.total_ram_gb >= 48.0 || self.total_vram_mb >= 16_000)
+            && (self.free_ram_gb >= 12.0 || self.free_ram_gb == 0.0)
         {
             HardwareTier::Tier4Enterprise
-        } else if self.total_ram_gb >= 32.0 || self.total_vram_mb >= 8_000 {
+        } else if (self.total_ram_gb >= 32.0 || self.total_vram_mb >= 8_000)
+            && (self.free_ram_gb >= 8.0 || self.free_ram_gb == 0.0)
+        {
             HardwareTier::Tier3HighPerf
         } else if self.total_ram_gb >= 12.0 || self.total_vram_mb >= 4_000 {
             HardwareTier::Tier2MidRange
         } else {
             HardwareTier::Tier1Constrained
+        };
+
+        if has_runtime_metrics && self.free_ram_gb < 8.0 && self.free_vram_mb < 4_000 {
+            match base_tier {
+                HardwareTier::Tier4Enterprise | HardwareTier::Tier3HighPerf => HardwareTier::Tier2MidRange,
+                other => other,
+            }
+        } else {
+            base_tier
         }
     }
 }
@@ -790,5 +809,72 @@ mod tests {
 
         let res_invalid = query_installed_ollama_models("http://127.0.0.1:99999/invalid").await;
         assert!(res_invalid.is_empty());
+    }
+
+    #[test]
+    fn test_determine_tier_respects_free_ram_oom_guardrail() {
+        // High total resources (normally Tier 4), but very low free memory -> falls back to Tier 1
+        let low_mem = SystemResourceSummary {
+            cpu_name: "AMD EPYC".into(),
+            logical_cores: 64,
+            total_ram_gb: 128.0,
+            free_ram_gb: 2.5,
+            gpu_name: "NVIDIA RTX 4090".into(),
+            total_vram_mb: 24576,
+            free_vram_mb: 1000,
+            has_gpu: true,
+            free_disk_gb: 500.0,
+            total_disk_gb: 2000.0,
+            disks: vec![],
+        };
+        assert_eq!(low_mem.determine_tier(), HardwareTier::Tier1Constrained);
+
+        // High total resources (normally Tier 4), but constrained memory (<8GB RAM, <4GB VRAM) -> capped at Tier 2
+        let mid_mem = SystemResourceSummary {
+            cpu_name: "AMD EPYC".into(),
+            logical_cores: 64,
+            total_ram_gb: 128.0,
+            free_ram_gb: 6.0,
+            gpu_name: "NVIDIA RTX 4090".into(),
+            total_vram_mb: 24576,
+            free_vram_mb: 3000,
+            has_gpu: true,
+            free_disk_gb: 500.0,
+            total_disk_gb: 2000.0,
+            disks: vec![],
+        };
+        assert_eq!(mid_mem.determine_tier(), HardwareTier::Tier2MidRange);
+
+        // High total resources with adequate free RAM and VRAM -> Tier 4 Enterprise
+        let ample_mem = SystemResourceSummary {
+            cpu_name: "AMD EPYC".into(),
+            logical_cores: 64,
+            total_ram_gb: 128.0,
+            free_ram_gb: 64.0,
+            gpu_name: "NVIDIA RTX 4090".into(),
+            total_vram_mb: 24576,
+            free_vram_mb: 20000,
+            has_gpu: true,
+            free_disk_gb: 500.0,
+            total_disk_gb: 2000.0,
+            disks: vec![],
+        };
+        assert_eq!(ample_mem.determine_tier(), HardwareTier::Tier4Enterprise);
+
+        // Mock test with 0.0 free RAM preserves capacity tiering
+        let mock_enterprise = SystemResourceSummary {
+            cpu_name: "AMD EPYC".into(),
+            logical_cores: 64,
+            total_ram_gb: 128.0,
+            free_ram_gb: 0.0,
+            gpu_name: "NVIDIA RTX 4090".into(),
+            total_vram_mb: 24576,
+            free_vram_mb: 0,
+            has_gpu: true,
+            free_disk_gb: 500.0,
+            total_disk_gb: 2000.0,
+            disks: vec![],
+        };
+        assert_eq!(mock_enterprise.determine_tier(), HardwareTier::Tier4Enterprise);
     }
 }

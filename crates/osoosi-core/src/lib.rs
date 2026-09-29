@@ -1634,7 +1634,7 @@ impl EdrOrchestrator {
         let spider_eyes = Arc::new(osoosi_behavioral::SpiderEyes::new(
             &gemma_dir.to_string_lossy()
         ));
-        let gemma_cortex = if gemma_dir.exists() {
+        let gemma_cortex = if gemma_dir.exists() || osoosi_types::config::load_ai_config().enabled {
             match std::panic::catch_unwind(std::panic::AssertUnwindSafe(|| {
                 osoosi_behavioral::Gemma4Analyzer::new(&gemma_dir)
             })) {

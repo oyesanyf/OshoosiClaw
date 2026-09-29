@@ -525,10 +525,23 @@ impl Gemma4Analyzer {
         }
 
         // Priority 4: Ollama API (The "add back Ollama" request)
-        info!("Engaging Ollama reasoning fallback at {} with model {}...", ai_cfg.reasoning_url, ai_cfg.reasoning_model);
+        let res = crate::hardware_selection::get_system_resources();
+        let installed = crate::hardware_selection::query_installed_ollama_models_sync(&ai_cfg.reasoning_url);
+        let opt = crate::hardware_selection::select_optimal_models(
+            &res,
+            &installed,
+            &ai_cfg.reasoning_model,
+            &ai_cfg.foundation_sec_model,
+        );
+        let selected_fast_model = if !opt.fast_model.is_empty() {
+            opt.fast_model
+        } else {
+            ai_cfg.reasoning_model.clone()
+        };
+        info!("Engaging Ollama reasoning fallback at {} with hardware-selected fast model {}...", ai_cfg.reasoning_url, selected_fast_model);
         Ok(Self::Ollama {
             client: reqwest::Client::new(),
-            model: ai_cfg.reasoning_model,
+            model: selected_fast_model,
             endpoint: ai_cfg.reasoning_url,
         })
 
