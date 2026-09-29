@@ -5669,6 +5669,47 @@ function renderSupervisorModal(data, regimeColor, regimeBadgeClass) {
     if (diagText) {
         diagText.innerText = data.diagnostic_narrative || 'Nominal supervisor operations.';
     }
+
+    // Render Hardware-Aware AI Model Router
+    if (data.hardware_selection) {
+        const hw = data.hardware_selection;
+        const tierBadge = document.getElementById('hw-tier-badge');
+        if (tierBadge) {
+            tierBadge.innerText = hw.hardware_tier_label || 'ENTERPRISE / HIGH-THROUGHPUT';
+        }
+        const cpuProfile = document.getElementById('hw-cpu-profile');
+        if (cpuProfile) {
+            cpuProfile.innerText = `${hw.cpu_cores} Cores | High-Throughput`;
+        }
+        const ramProfile = document.getElementById('hw-ram-profile');
+        if (ramProfile) {
+            ramProfile.innerText = `${hw.total_ram_gb.toFixed(1)} GB RAM (${hw.free_ram_gb.toFixed(1)} GB Free)`;
+        }
+        const gpuProfile = document.getElementById('hw-gpu-profile');
+        if (gpuProfile) {
+            gpuProfile.innerText = hw.gpu_vram_mb > 0 ? `GPU Active (${hw.gpu_vram_mb} MB VRAM)` : 'Standard CPU Execution';
+        }
+        const devBadge = document.getElementById('hw-device-badge');
+        if (devBadge) {
+            devBadge.innerText = hw.recommended_device || 'Hybrid GPU/CPU Offload';
+        }
+        const fastBadge = document.getElementById('hw-fast-model-badge');
+        if (fastBadge) {
+            fastBadge.innerText = hw.fast_model || 'deepseek-r1:1.5b';
+        }
+        const deepBadge = document.getElementById('hw-deep-model-badge');
+        if (deepBadge) {
+            deepBadge.innerText = hw.deep_model || 'deepseek-r1:32b';
+        }
+        const rationaleText = document.getElementById('hw-rationale-text');
+        if (rationaleText) {
+            rationaleText.innerText = hw.rationale || 'Selected optimal models matching available hardware profile.';
+        }
+    }
+
+    if (window.lucide) {
+        window.lucide.createIcons();
+    }
 }
 
 function openSupervisorModal() {

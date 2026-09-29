@@ -60,6 +60,7 @@ pub struct SupervisorStatus {
     pub diagnostic_narrative: String,
     pub last_evaluated_at: DateTime<Utc>,
     pub uptime_seconds: u64,
+    pub hardware_selection: Option<osoosi_behavioral::hardware_selection::OptimalModelSelection>,
 }
 
 /// Dempster-Shafer Basic Belief Assignment (BBA) over frame Θ = {Optimal, Degraded, Critical}.
@@ -204,13 +205,14 @@ impl MultiSensorFusionEngine {
     /// 3. Asymmetric Containment Sensor
     /// 4. Consensus & Voter Sensor
     /// 5. Reinforcement Learning Stability Sensor
+    /// 6. Hardware Resource & Compute Tier Sensor
     pub fn evaluate_sensors(
         &mut self,
         memory_store: Option<&osoosi_memory::MemoryStore>,
         active_tarpit: Option<&osoosi_runtime::tarpit::ActiveProcessTarpit>,
         stranded_reaper: Option<&StrandedResourceReaper>,
     ) -> Vec<SensorReading> {
-        let mut readings = Vec::with_capacity(5);
+        let mut readings = Vec::with_capacity(6);
 
         // 1. Telemetry & Canary Sensor
         let (canary_latency, token_loss, influx_vel) = if memory_store.is_some() {
@@ -385,6 +387,48 @@ impl MultiSensorFusionEngine {
                 self.cov_condition_number,
                 if self.cov_condition_number <= 10.0 { "Nominal" } else { "Degraded" },
                 if self.advantage_stable { "STABLE" } else { "INSTABILITY_DETECTED" }
+            ),
+        });
+
+        // 6. Hardware Resource & Compute Tier Sensor
+        let hw_res = osoosi_behavioral::hardware_selection::get_system_resources();
+        let hw_tier = hw_res.determine_tier();
+        let ram_free_pct = if hw_res.total_ram_gb > 0.0 {
+            (hw_res.free_ram_gb / hw_res.total_ram_gb) * 100.0
+        } else {
+            100.0
+        };
+        let vram_free_pct = if hw_res.has_gpu && hw_res.total_vram_mb > 0 {
+            (hw_res.free_vram_mb as f64 / hw_res.total_vram_mb as f64) * 100.0
+        } else {
+            100.0
+        };
+
+        let hw_health = if ram_free_pct < 5.0 || (hw_res.has_gpu && vram_free_pct < 5.0) {
+            0.40
+        } else if ram_free_pct < 15.0 || (hw_res.has_gpu && vram_free_pct < 15.0) {
+            0.75
+        } else {
+            0.99
+        };
+
+        readings.push(SensorReading {
+            sensor_id: "hardware_resource_sensor".to_string(),
+            name: "Hardware Resource & Compute Sensor".to_string(),
+            raw_value: ram_free_pct,
+            unit: "%_free_ram".to_string(),
+            health_score: hw_health,
+            confidence: 0.98,
+            details: format!(
+                "CPU: {} ({} threads), RAM: {:.1}/{:.1} GB ({:.1}% free), GPU: {} ({} MB VRAM), Active Tier: {}",
+                hw_res.cpu_name,
+                hw_res.logical_cores,
+                hw_res.free_ram_gb,
+                hw_res.total_ram_gb,
+                ram_free_pct,
+                hw_res.gpu_name,
+                hw_res.total_vram_mb,
+                hw_tier.label()
             ),
         });
 
@@ -575,6 +619,7 @@ impl SupervisorDiagnosticEngine {
         sensors: &[SensorReading],
         reaped_traps_total: u64,
         invariants_passing: bool,
+        hardware_selection: Option<&osoosi_behavioral::hardware_selection::OptimalModelSelection>,
     ) -> String {
         let regime_desc = match regime {
             SupervisorRegime::Optimal => {
@@ -626,15 +671,25 @@ impl SupervisorDiagnosticEngine {
             })
             .unwrap_or_default();
 
+        let hw_info = if let Some(hw) = hardware_selection {
+            format!(
+                "\nHardware AI Routing: Tier {} [{}] -> Fast: [{}] | Deep: [{}] via {}.",
+                hw.hardware_tier_label, hw.rationale, hw.fast_model, hw.deep_model, hw.recommended_device
+            )
+        } else {
+            String::new()
+        };
+
         format!(
-            "Regime: {:?} (Health: {:.1}%). {}{}\nInvariants: {}. Total reaped traps: {}.{}",
+            "Regime: {:?} (Health: {:.1}%). {}{}\nInvariants: {}. Total reaped traps: {}.{}{}",
             regime,
             health_score,
             regime_desc,
             conflict_status,
             invariant_status,
             reaped_traps_total,
-            lowest_sensor_info
+            lowest_sensor_info,
+            hw_info
         )
     }
 }
@@ -660,6 +715,14 @@ impl CognitiveFusionSupervisor {
         let initial_readings = fusion.evaluate_sensors(None, None, None);
         let (health_score, conflict_metric) = fusion.fuse_dempster_shafer(&initial_readings);
         let regime = MultiSensorFusionEngine::map_regime(health_score);
+        let hw_res = osoosi_behavioral::hardware_selection::get_system_resources();
+        let ai_cfg = osoosi_types::config::load_ai_config();
+        let initial_hw = Some(osoosi_behavioral::hardware_selection::select_optimal_models(
+            &hw_res,
+            &[],
+            &ai_cfg.reasoning_model,
+            &ai_cfg.foundation_sec_model,
+        ));
         let diagnostic_narrative = SupervisorDiagnosticEngine::synthesize(
             regime.clone(),
             health_score,
@@ -667,6 +730,7 @@ impl CognitiveFusionSupervisor {
             &initial_readings,
             0,
             true,
+            initial_hw.as_ref(),
         );
 
         let initial_status = SupervisorStatus {
@@ -679,6 +743,7 @@ impl CognitiveFusionSupervisor {
             diagnostic_narrative,
             last_evaluated_at: Utc::now(),
             uptime_seconds: 0,
+            hardware_selection: initial_hw,
         };
 
         Self {
@@ -703,12 +768,22 @@ impl CognitiveFusionSupervisor {
             .name("osoosi-supervisor".to_string())
             .spawn(move || {
                 tracing::info!("Cognitive Fusion Supervisor thread started (2000ms cadence).");
+                let mut loop_count: u64 = 0;
+                let mut cached_installed_models: Vec<String> = Vec::new();
+                let ai_cfg = osoosi_types::config::load_ai_config();
+
                 while running.load(Ordering::Relaxed) {
+                    // Periodically probe installed Ollama models (every 10 loops = 20s)
+                    if loop_count % 10 == 0 {
+                        cached_installed_models = osoosi_behavioral::hardware_selection::query_installed_ollama_models_sync(&ai_cfg.reasoning_url);
+                    }
+                    loop_count = loop_count.wrapping_add(1);
+
                     // 1. Run stranded resource reaper first
                     let _reaped = supervisor.reaper.reap_stranded_traps(&active_tarpit);
                     let reaped_traps_total = supervisor.reaper.get_reaped_total();
 
-                    // 2. Evaluate 5 sensors (passing reaper to detect stranded traps)
+                    // 2. Evaluate 6 sensors (passing reaper to detect stranded traps)
                     let readings = {
                         let mut engine = match supervisor.fusion_engine.write() {
                             Ok(guard) => guard,
@@ -738,7 +813,16 @@ impl CognitiveFusionSupervisor {
                         s.sensor_id != "system_invariants" || s.health_score > 0.0
                     });
 
-                    // 6. Generate diagnostic narrative
+                    // 6. Hardware-aware model selection
+                    let hw_res = osoosi_behavioral::hardware_selection::get_system_resources();
+                    let hardware_selection = Some(osoosi_behavioral::hardware_selection::select_optimal_models(
+                        &hw_res,
+                        &cached_installed_models,
+                        &ai_cfg.reasoning_model,
+                        &ai_cfg.foundation_sec_model,
+                    ));
+
+                    // 7. Generate diagnostic narrative
                     let diagnostic_narrative = SupervisorDiagnosticEngine::synthesize(
                         regime.clone(),
                         health_score,
@@ -746,11 +830,12 @@ impl CognitiveFusionSupervisor {
                         &readings,
                         reaped_traps_total,
                         invariants_passing,
+                        hardware_selection.as_ref(),
                     );
 
                     let uptime_seconds = supervisor.start_time.elapsed().as_secs();
 
-                    // 7. Update internal status
+                    // 8. Update internal status
                     {
                         if let Ok(mut status_lock) = supervisor.status.write() {
                             *status_lock = SupervisorStatus {
@@ -763,6 +848,7 @@ impl CognitiveFusionSupervisor {
                                 diagnostic_narrative,
                                 last_evaluated_at: Utc::now(),
                                 uptime_seconds,
+                                hardware_selection,
                             };
                         }
                     }
@@ -1043,8 +1129,24 @@ mod tests {
     fn test_initial_supervisor_status_has_populated_sensors() {
         let supervisor = CognitiveFusionSupervisor::new();
         let status = supervisor.get_status();
-        assert_eq!(status.sensors.len(), 5, "Initial supervisor status must have all 5 sensors pre-populated");
+        assert_eq!(status.sensors.len(), 6, "Initial supervisor status must have all 6 sensors pre-populated");
+        assert!(status.hardware_selection.is_some(), "Initial status must include hardware_selection");
         assert!(status.health_score >= 85.0);
         assert_eq!(status.regime, SupervisorRegime::Optimal);
+    }
+
+    #[test]
+    fn test_hardware_resource_sensor_evaluates_system() {
+        let mut fusion = MultiSensorFusionEngine::new();
+        let readings = fusion.evaluate_sensors(None, None, None);
+        let hw_sensor = readings
+            .iter()
+            .find(|s| s.sensor_id == "hardware_resource_sensor")
+            .expect("hardware_resource_sensor must exist in sensor readings");
+
+        assert!(hw_sensor.health_score > 0.0);
+        assert!(hw_sensor.confidence >= 0.95);
+        assert!(hw_sensor.details.contains("CPU:"));
+        assert!(hw_sensor.details.contains("Active Tier:"));
     }
 }

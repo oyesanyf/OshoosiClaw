@@ -1772,9 +1772,67 @@
                 </div>
             </div>
 
-            <!-- 5-Sensor Evidence Breakdown Grid -->
+            <!-- Hardware-Aware AI Model Router -->
+            <div style="background: rgba(0, 0, 0, 0.35); border: 1px solid var(--glass-border); border-radius: 12px; padding: 18px; margin-bottom: 22px;">
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 14px; border-bottom: 1px solid rgba(255, 255, 255, 0.06); padding-bottom: 10px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <i data-lucide="cpu" style="width: 18px; height: 18px; color: #38bdf8;"></i>
+                        <h4 style="font-size: 13px; text-transform: uppercase; color: var(--text-header); letter-spacing: 0.5px; font-weight: 700; margin: 0;">
+                            Hardware-Aware AI Model Router
+                        </h4>
+                    </div>
+                    <span id="hw-tier-badge" class="badge purple" style="font-size: 11px; padding: 4px 10px; border-radius: 6px; font-weight: 700; letter-spacing: 0.5px;">
+                        ENTERPRISE / HIGH-THROUGHPUT
+                    </span>
+                </div>
+
+                <!-- System Compute Profile Grid -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 14px; font-size: 12px;">
+                    <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px;">
+                        <div style="color: var(--text-muted); font-size: 11px; margin-bottom: 4px;">Host Compute</div>
+                        <div id="hw-cpu-profile" style="color: var(--text-primary); font-weight: 600;">72 Threads | Dual Xeon</div>
+                    </div>
+                    <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px;">
+                        <div style="color: var(--text-muted); font-size: 11px; margin-bottom: 4px;">System Memory</div>
+                        <div id="hw-ram-profile" style="color: var(--text-primary); font-weight: 600;">223.7 GB RAM</div>
+                    </div>
+                    <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px;">
+                        <div style="color: var(--text-muted); font-size: 11px; margin-bottom: 4px;">Dedicated Accelerator</div>
+                        <div id="hw-gpu-profile" style="color: var(--text-primary); font-weight: 600;">Quadro RTX 4000 (8192 MB)</div>
+                    </div>
+                    <div style="background: rgba(255, 255, 255, 0.03); border: 1px solid rgba(255, 255, 255, 0.05); border-radius: 8px; padding: 10px;">
+                        <div style="color: var(--text-muted); font-size: 11px; margin-bottom: 4px;">Execution Mode</div>
+                        <span id="hw-device-badge" class="badge cyan" style="font-size: 11px; padding: 2px 8px; border-radius: 4px; font-weight: 600;">Hybrid GPU/CPU Offload</span>
+                    </div>
+                </div>
+
+                <!-- Active AI Model Pair Routing -->
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap: 12px; margin-bottom: 12px;">
+                    <div style="background: rgba(16, 185, 129, 0.06); border: 1px solid rgba(16, 185, 129, 0.2); border-radius: 8px; padding: 10px 12px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-size: 11px; text-transform: uppercase; color: #10b981; font-weight: 700;">Fast-Path Model (Triage)</span>
+                            <span id="hw-fast-model-badge" class="badge green" style="font-size: 11px; font-family: 'JetBrains Mono', monospace;">deepseek-r1:1.5b</span>
+                        </div>
+                        <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Real-Time Event Triage &amp; Token Filter</div>
+                    </div>
+                    <div style="background: rgba(168, 85, 247, 0.06); border: 1px solid rgba(168, 85, 247, 0.2); border-radius: 8px; padding: 10px 12px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-size: 11px; text-transform: uppercase; color: #a855f7; font-weight: 700;">Deep Forensic Model</span>
+                            <span id="hw-deep-model-badge" class="badge purple" style="font-size: 11px; font-family: 'JetBrains Mono', monospace;">deepseek-r1:32b</span>
+                        </div>
+                        <div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">Causal Attack Graph Synthesis &amp; Defense Planner</div>
+                    </div>
+                </div>
+
+                <!-- Selection Rationale -->
+                <div id="hw-rationale-text" style="font-size: 12px; color: var(--text-muted); line-height: 1.5; font-style: italic; background: rgba(0, 0, 0, 0.2); border-radius: 6px; padding: 8px 12px;">
+                    Profiling hardware topology and selecting optimal models...
+                </div>
+            </div>
+
+            <!-- Multi-Sensor Evidence Breakdown Grid -->
             <div style="margin-bottom: 22px;">
-                <h4 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 10px; font-weight: 700;">5-Sensor Evidence Breakdown</h4>
+                <h4 style="font-size: 12px; text-transform: uppercase; color: var(--text-muted); letter-spacing: 0.5px; margin-bottom: 10px; font-weight: 700;">Multi-Sensor Evidence Breakdown</h4>
                 <div id="supervisor-sensors-grid" style="display: grid; grid-template-columns: repeat(auto-fit, minmax(340px, 1fr)); gap: 12px;">
                     <!-- Populated dynamically by app.js -->
                 </div>

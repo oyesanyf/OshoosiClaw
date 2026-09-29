@@ -1189,6 +1189,10 @@ impl Clone for FoundationSecAnalyzer {
 
 impl FoundationSecAnalyzer {
     pub fn new(model_dir: &Path) -> Result<Self> {
+        Self::new_with_hardware(model_dir, None)
+    }
+
+    pub fn new_with_hardware(model_dir: &Path, model_override: Option<&str>) -> Result<Self> {
         let ai_cfg = osoosi_types::config::load_ai_config();
         if !ai_cfg.enabled {
             anyhow::bail!("AI features are disabled in config.");
@@ -1198,10 +1202,28 @@ impl FoundationSecAnalyzer {
         
         // Priority 1: Ollama API if enabled and URL is configured
         if ai_cfg.foundation_sec_enabled {
-            info!("Trying Foundation-Sec Ollama API at {} with model {}...", ai_cfg.reasoning_url, ai_cfg.foundation_sec_model);
+            let model_name = if let Some(m) = model_override {
+                m.to_string()
+            } else {
+                let res = crate::hardware_selection::get_system_resources();
+                let installed = crate::hardware_selection::query_installed_ollama_models_sync(&ai_cfg.reasoning_url);
+                let opt = crate::hardware_selection::select_optimal_models(
+                    &res,
+                    &installed,
+                    &ai_cfg.reasoning_model,
+                    &ai_cfg.foundation_sec_model,
+                );
+                if !opt.deep_model.is_empty() {
+                    opt.deep_model
+                } else {
+                    ai_cfg.foundation_sec_model.clone()
+                }
+            };
+
+            info!("Trying Foundation-Sec Ollama API at {} with model {}...", ai_cfg.reasoning_url, model_name);
             return Ok(Self::Ollama {
                 client: reqwest::Client::new(),
-                model: ai_cfg.foundation_sec_model.clone(),
+                model: model_name,
                 endpoint: ai_cfg.reasoning_url.clone(),
             });
         }

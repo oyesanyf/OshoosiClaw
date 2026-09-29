@@ -13,6 +13,7 @@ pub mod ebpf_monitor;
 pub mod consensus;
 pub mod feedback;
 pub mod forensics;
+pub mod hardware_selection;
 pub mod llm_engine;
 mod log_reader;
 mod process_tree;
@@ -22,6 +23,12 @@ pub mod rl_engine;
 pub mod skyrl;
 pub mod spider_eyes;
 pub mod yara_analyzer;
+
+pub use hardware_selection::{
+    detect_live_resources, get_system_resources, query_installed_ollama_models,
+    query_installed_ollama_models_sync, query_system_resources, DiskResourceInfo,
+    HardwareTier, OptimalModelSelection, SystemResourceSummary,
+};
 
 pub use agentic_arbitrator::{
     AgentTrajectoryTracker, AgenticArbitrator, AgenticToolValidator, AgenticVerdict,
