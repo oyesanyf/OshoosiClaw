@@ -3114,7 +3114,7 @@ async function fetchBlockingRules() {
                     <td style="padding: 12px 16px;"><span class="badge" style="font-family: monospace; font-size: 11px;" title="${escapeHtml(hashVal || rule.path)}">${escapeHtml(displayHash)}</span></td>
                     <td style="padding: 12px 16px;"><span class="badge green">📡 Broadcast to Mesh</span></td>
                     <td style="padding: 12px 16px; text-align: right;">
-                        <button class="btn-text" style="color:var(--accent-red); cursor:pointer;" onclick="unlockRule('${encodeURIComponent(rule.path)}')">Unlock / Remove</button>
+                        <button class="btn-text" style="color:var(--accent-red); cursor:pointer;" onclick="unlockRule('${encodeURIComponent(rule.path).replace(/'/g, '%27')}')">Unlock / Remove</button>
                     </td>
                 </tr>
             `;

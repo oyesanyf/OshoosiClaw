@@ -11,32 +11,35 @@ pub struct BlockingManager {
 
 impl BlockingManager {
     pub fn new(provisioner: Arc<AgentProvisioner>) -> Self {
-        let mut manager = Self {
-            rules: RwLock::new(Vec::new()),
+        let rules = Self::load_rules_sync().unwrap_or_default();
+        Self {
+            rules: RwLock::new(rules),
             provisioner,
-        };
-        let _ = manager.load_rules();
-        manager
+        }
     }
 
-    fn load_rules(&mut self) -> anyhow::Result<()> {
+    fn load_rules_sync() -> anyhow::Result<Vec<BlockingRule>> {
         let path = osoosi_types::resolve_base_dir().join("blocking_rules.json");
         if path.exists() {
             let data = std::fs::read_to_string(&path)?;
             let rules: Vec<BlockingRule> = serde_json::from_str(&data)?;
-            let mut guard = self.rules.blocking_write();
-            *guard = rules;
-            info!("BlockingManager: Loaded {} persistent rules from {:?}.", guard.len(), path);
+            info!("BlockingManager: Loaded {} persistent rules from {:?}.", rules.len(), path);
+            Ok(rules)
+        } else {
+            Ok(Vec::new())
         }
-        Ok(())
     }
 
-    async fn save_rules(&self) -> anyhow::Result<()> {
-        let rules = self.rules.read().await;
-        let data = serde_json::to_string_pretty(&*rules)?;
+    fn save_rules_internal(rules: &[BlockingRule]) -> anyhow::Result<()> {
+        let data = serde_json::to_string_pretty(rules)?;
         let path = osoosi_types::resolve_base_dir().join("blocking_rules.json");
         std::fs::write(path, data)?;
         Ok(())
+    }
+
+    pub async fn save_rules(&self) -> anyhow::Result<()> {
+        let rules = self.rules.read().await;
+        Self::save_rules_internal(&rules)
     }
 
     pub async fn add_rule(&self, rule: BlockingRule) -> anyhow::Result<()> {
@@ -47,7 +50,7 @@ impl BlockingManager {
             .any(|r| r.path == rule.path && r.kind == rule.kind)
         {
             rules.push(rule);
-            let _ = self.save_rules().await;
+            let _ = Self::save_rules_internal(&rules);
             #[cfg(target_os = "windows")]
             self.provisioner.apply_blocking_rules(&rules).await?;
         }
@@ -60,6 +63,7 @@ impl BlockingManager {
         let original_len = rules.len();
         rules.retain(|r| r.path != path);
         if rules.len() < original_len {
+            let _ = Self::save_rules_internal(&rules);
             #[cfg(target_os = "windows")]
             self.provisioner.apply_blocking_rules(&rules).await?;
         }
@@ -89,5 +93,63 @@ impl BlockingManager {
         }
 
         Ok(())
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use osoosi_types::{async_trait, BlockingKind, BlockingRule, SecuredExecutor};
+    use std::path::Path;
+    use std::process::{Command, Output};
+
+    struct MockTestExecutor;
+
+    #[async_trait]
+    impl SecuredExecutor for MockTestExecutor {
+        async fn execute(&self, _cmd: Command) -> anyhow::Result<Output> {
+            #[cfg(windows)]
+            use std::os::windows::process::ExitStatusExt;
+            #[cfg(unix)]
+            use std::os::unix::process::ExitStatusExt;
+
+            Ok(Output {
+                status: ExitStatusExt::from_raw(0),
+                stdout: Vec::new(),
+                stderr: Vec::new(),
+            })
+        }
+
+        async fn download(&self, _url: &str, _dest: &Path, _resume: bool) -> anyhow::Result<()> {
+            Ok(())
+        }
+    }
+
+    #[tokio::test]
+    async fn test_blocking_manager_add_and_remove_rule() {
+        let executor = Arc::new(MockTestExecutor);
+        let provisioner = Arc::new(AgentProvisioner::new(executor));
+        let manager = BlockingManager::new(provisioner);
+
+        let test_rule = BlockingRule {
+            path: r"C:\test\sample_malware.exe".to_string(),
+            kind: BlockingKind::Executable,
+        };
+
+        // Ensure add_rule completes without async deadlock
+        let res = manager.add_rule(test_rule.clone()).await;
+        assert!(res.is_ok(), "add_rule failed: {:?}", res.err());
+
+        // Verify rule is stored
+        let rules = manager.get_rules().await;
+        assert!(rules.iter().any(|r| r.path == test_rule.path));
+
+        // Test removing rule
+        let rem_res = manager.remove_rule(&test_rule.path).await;
+        assert!(rem_res.is_ok(), "remove_rule failed: {:?}", rem_res.err());
+
+        // Verify rule is removed
+        let rules_after = manager.get_rules().await;
+        assert!(!rules_after.iter().any(|r| r.path == test_rule.path));
     }
 }

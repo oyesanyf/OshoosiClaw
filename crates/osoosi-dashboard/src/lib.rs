@@ -2092,26 +2092,32 @@ async fn post_blocking_rule(
     State(state): State<DashboardState>,
     Json(req): Json<BlockingRuleRequest>,
 ) -> Json<Value> {
+    let trimmed_path = req.path.trim();
+    if trimmed_path.is_empty() {
+        return Json(json!({ "ok": false, "error": "Target path cannot be empty" }));
+    }
+
     // 1. Compute/validate the BLAKE3 hash
     let computed_hash = if let Some(ref h) = req.hash {
         let trimmed = h.trim();
-        if !trimmed.is_empty() {
-            trimmed.to_string()
-        } else if std::path::Path::new(&req.path).is_file() {
-            match std::fs::read(&req.path) {
+        let stripped = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")).unwrap_or(trimmed);
+        if !stripped.is_empty() {
+            stripped.to_lowercase()
+        } else if std::path::Path::new(trimmed_path).is_file() {
+            match std::fs::read(trimmed_path) {
                 Ok(bytes) => blake3::hash(&bytes).to_hex().to_string(),
-                Err(_) => blake3::hash(req.path.trim().as_bytes()).to_hex().to_string(),
+                Err(_) => blake3::hash(trimmed_path.as_bytes()).to_hex().to_string(),
             }
         } else {
-            blake3::hash(req.path.trim().as_bytes()).to_hex().to_string()
+            blake3::hash(trimmed_path.as_bytes()).to_hex().to_string()
         }
-    } else if std::path::Path::new(&req.path).is_file() {
-        match std::fs::read(&req.path) {
+    } else if std::path::Path::new(trimmed_path).is_file() {
+        match std::fs::read(trimmed_path) {
             Ok(bytes) => blake3::hash(&bytes).to_hex().to_string(),
-            Err(_) => blake3::hash(req.path.trim().as_bytes()).to_hex().to_string(),
+            Err(_) => blake3::hash(trimmed_path.as_bytes()).to_hex().to_string(),
         }
     } else {
-        blake3::hash(req.path.trim().as_bytes()).to_hex().to_string()
+        blake3::hash(trimmed_path.as_bytes()).to_hex().to_string()
     };
 
     let kind = match req.kind.to_lowercase().as_str() {
@@ -2120,7 +2126,7 @@ async fn post_blocking_rule(
         _ => return Json(json!({ "ok": false, "error": "Invalid blocking kind" })),
     };
     let rule = osoosi_types::BlockingRule {
-        path: req.path.clone(),
+        path: trimmed_path.to_string(),
         kind,
     };
 
@@ -2135,8 +2141,9 @@ async fn post_blocking_rule(
 
             // Sync to Ring-0 kernel driver if connected
             if let Some(ref kd) = *orch.kernel_driver.read() {
-                let _ = kd.add_blocked_path(&req.path);
-                if let Ok(hash_bytes) = hex::decode(&computed_hash) {
+                let _ = kd.add_blocked_path(trimmed_path);
+                let hex_str = computed_hash.strip_prefix("0x").or_else(|| computed_hash.strip_prefix("0X")).unwrap_or(&computed_hash);
+                if let Ok(hash_bytes) = hex::decode(hex_str) {
                     if hash_bytes.len() == 32 {
                         let mut arr = [0u8; 32];
                         arr.copy_from_slice(&hash_bytes);
@@ -2149,12 +2156,12 @@ async fn post_blocking_rule(
             if should_broadcast {
                 let mut sig = osoosi_types::ThreatSignature::new(orch.trust.did().to_string());
                 sig.id = uuid::Uuid::new_v4().to_string();
-                sig.process_name = Some(req.path.clone());
+                sig.process_name = Some(trimmed_path.to_string());
                 sig.hash_blake3 = Some(computed_hash.clone());
                 sig.confidence = 1.0;
                 sig.recommended_action = osoosi_types::ResponseAction::Isolate;
                 sig.mitre_technique = Some("T1204".to_string());
-                sig.reason = Some(format!("Operator Blocklist Rule: {}", req.path));
+                sig.reason = Some(format!("Operator Blocklist Rule: {}", trimmed_path));
                 sig.detected_at = chrono::Utc::now();
                 sig.is_signed = true;
 
@@ -2163,7 +2170,7 @@ async fn post_blocking_rule(
                 orch.audit.log(
                     "BLOCKLIST_RULE_BROADCAST_TO_MESH",
                     serde_json::json!({
-                        "path": req.path,
+                        "path": trimmed_path,
                         "hash": computed_hash,
                         "kind": req.kind,
                         "broadcast": true,
@@ -2174,7 +2181,7 @@ async fn post_blocking_rule(
 
             Json(json!({
                 "ok": true,
-                "path": req.path,
+                "path": trimmed_path,
                 "hash": computed_hash,
                 "broadcast": should_broadcast,
                 "message": if should_broadcast {
@@ -2191,7 +2198,7 @@ async fn post_blocking_rule(
             }
             Json(json!({
                 "ok": true,
-                "path": req.path,
+                "path": trimmed_path,
                 "hash": computed_hash,
                 "broadcast": should_broadcast,
                 "message": if should_broadcast {
@@ -2208,14 +2215,18 @@ async fn post_blocking_unlock(
     State(state): State<DashboardState>,
     Json(req): Json<UnlockRequest>,
 ) -> Json<Value> {
+    let trimmed_path = req.path.trim();
+    if trimmed_path.is_empty() {
+        return Json(json!({ "ok": false, "error": "Path cannot be empty" }));
+    }
     match &state.backend {
-        Some(orch) => match orch.blocking_manager.remove_rule(&req.path).await {
+        Some(orch) => match orch.blocking_manager.remove_rule(trimmed_path).await {
             Ok(_) => Json(json!({ "ok": true, "message": "Blocking rule removed (unlocked)" })),
             Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
         },
         None => {
             let mut rules = state.mock_blocking_rules.write().await;
-            rules.retain(|r| r.path != req.path);
+            rules.retain(|r| r.path != trimmed_path && r.path != req.path);
             Json(json!({ "ok": true, "message": "Blocking rule removed (unlocked)" }))
         }
     }
@@ -5094,7 +5105,37 @@ mod tests {
     async fn test_blocking_rule_api_and_mesh_broadcast() {
         let state = DashboardState::new(None, None);
 
-        // 1. Post blocking rule with broadcast: true
+        // 0. Test empty path rejection
+        let empty_req = BlockingRuleRequest {
+            path: "   ".to_string(),
+            kind: "executable".to_string(),
+            hash: None,
+            broadcast: Some(false),
+        };
+        let empty_res = post_blocking_rule(State(state.clone()), Json(empty_req)).await.0;
+        assert_eq!(empty_res["ok"], false);
+        assert_eq!(empty_res["error"], "Target path cannot be empty");
+
+        let empty_unlock = UnlockRequest {
+            path: "   ".to_string(),
+        };
+        let empty_unlock_res = post_blocking_unlock(State(state.clone()), Json(empty_unlock)).await.0;
+        assert_eq!(empty_unlock_res["ok"], false);
+        assert_eq!(empty_unlock_res["error"], "Path cannot be empty");
+
+        // 1. Post blocking rule with broadcast: true and 0x prefix normalization
+        let hex_req = BlockingRuleRequest {
+            path: r"C:\Windows\Temp\test0x.exe".to_string(),
+            kind: "executable".to_string(),
+            hash: Some("0x1122334455667788990011223344556677889900112233445566778899001122".to_string()),
+            broadcast: Some(true),
+        };
+        let hex_res = post_blocking_rule(State(state.clone()), Json(hex_req)).await.0;
+        assert_eq!(hex_res["ok"], true);
+        assert_eq!(hex_res["hash"], "1122334455667788990011223344556677889900112233445566778899001122");
+        let _ = post_blocking_unlock(State(state.clone()), Json(UnlockRequest { path: r"C:\Windows\Temp\test0x.exe".to_string() })).await;
+
+        // 2. Post standard blocking rule with broadcast: true
         let rule_req = BlockingRuleRequest {
             path: r"C:\Windows\Temp\mimikatz.exe".to_string(),
             kind: "executable".to_string(),
