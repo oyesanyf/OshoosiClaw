@@ -1670,13 +1670,13 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
 
     // Check for tactic-level tags like attack.execution, attack.defense_evasion, etc.
     // Require explicit tag prefix so ordinary words like 'execution' in reasons don't trigger.
-    let words = text_lower.split(|c: char| !c.is_alphanumeric() && c != '.' && c != '_');
+    let words = text_lower.split(|c: char| !c.is_alphanumeric() && c != '.' && c != '_' && c != '-');
     for word in words {
         if let Some(candidate) = word.strip_prefix("attack.")
             .or_else(|| word.strip_prefix("tactic."))
             .or_else(|| word.strip_prefix("atlas."))
         {
-            let normalized = candidate.replace('_', " ");
+            let normalized = candidate.replace(['_', '-'], " ");
             if let Some(tac) = lookup_tactic(&normalized) {
                 // For generic execution tactic tag without specific technique ID, prefer T1059 over ATLAS AML.T0011
                 if tac.id == "TA0002" {
@@ -2206,9 +2206,21 @@ mod tests {
         assert_eq!(exec_tac.1, "T1059");
         assert_eq!(exec_tac.0, "Execution");
 
-        // Bare words like 'execution' without tag prefix MUST NOT extract AML.T0011 or any tactic
+        // Hyphenated tactic tags like attack.defense-evasion and attack.privilege-escalation must extract properly
+        let de_res = extract_mitre_from_text("Alert tags: attack.defense-evasion")
+            .expect("extract defense evasion");
+        assert_eq!(de_res.0, "Defense Evasion");
+
+        let c2_res = extract_mitre_from_text("Alert tags: attack.command-and-control")
+            .expect("extract command and control");
+        assert_eq!(c2_res.0, "Command and Control");
+
+        // Bare words like 'execution' or 'defense-evasion' without tag prefix MUST NOT extract AML.T0011 or any tactic
         let bare_exec = extract_mitre_from_text("Normal process execution completed successfully");
         assert!(bare_exec.is_none(), "Bare word 'execution' must not extract MITRE technique");
+
+        let bare_de = extract_mitre_from_text("Routine defense-evasion checking in logs");
+        assert!(bare_de.is_none(), "Bare hyphenated words must not extract MITRE technique without prefix");
     }
 
     #[test]

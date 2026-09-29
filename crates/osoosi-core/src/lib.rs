@@ -648,12 +648,12 @@ fn is_critical_security_attack(sig: &osoosi_types::ThreatSignature, event: &osoo
     }
 
     // Confirmed ransomware / system recovery inhibition
-    if tech_id == "T1486" || tech_id == "T1490" || tech_id == "T1489" {
+    if tech_id.starts_with("T1486") || tech_id.starts_with("T1490") || tech_id.starts_with("T1489") {
         return true;
     }
 
     // Confirmed AI agent jailbreak/injection with high confidence
-    if tech_id == "AML.T0043" || tech_id == "AML.T0048" || tech_id == "AML.T0040" {
+    if tech_id.starts_with("AML.T0043") || tech_id.starts_with("AML.T0048") || tech_id.starts_with("AML.T0040") {
         return true;
     }
 
@@ -4729,11 +4729,25 @@ impl EdrOrchestrator {
 
         let mut effective_action = if signature.confidence >= autonomy.action_confidence_threshold {
             signature.recommended_action
-        } else if is_catalog_attack {
-            warn!(
-                "AUDIT OVERRIDE: Active MITRE catalog attack detected in deep pipeline ({:?}: {:?}). Escalating from Audit to active containment!",
-                signature.mitre_technique, signature.id
-            );
+        } else if is_catalog_attack && autonomy.auto_quarantine_malware {
+            // Only escalate if Active/Lockdown mode is armed (auto_quarantine_malware = true)
+            // Debounce deep-pipeline warning log to avoid console spam
+            static DEEP_PATH_WARN_DEBOUNCE: std::sync::LazyLock<dashmap::DashMap<String, std::time::Instant>> =
+                std::sync::LazyLock::new(dashmap::DashMap::new);
+
+            let tech_key = signature.mitre_technique.clone().unwrap_or_else(|| "UNKNOWN".to_string());
+            let now = std::time::Instant::now();
+            let should_log = match DEEP_PATH_WARN_DEBOUNCE.get(&tech_key) {
+                Some(last) => now.duration_since(*last) > std::time::Duration::from_secs(30),
+                None => true,
+            };
+            if should_log {
+                DEEP_PATH_WARN_DEBOUNCE.insert(tech_key, now);
+                warn!(
+                    "CRITICAL ATTACK DETECTED: Active MITRE catalog attack detected in deep pipeline ({:?}: {:?}, conf: {:.2}). Escalating to active containment!",
+                    signature.mitre_technique, signature.id, signature.confidence
+                );
+            }
             if is_destructive || signature.recommended_action == ResponseAction::Isolate {
                 ResponseAction::Isolate
             } else if signature.recommended_action == ResponseAction::GhostTarpit {
@@ -4742,7 +4756,7 @@ impl EdrOrchestrator {
                 ResponseAction::Tarpit
             }
         } else {
-            info!(
+            debug!(
                 "Threat confidence {:.2} below action threshold {:.2}: downgrading to Alert",
                 signature.confidence, autonomy.action_confidence_threshold
             );
@@ -7041,12 +7055,8 @@ impl EdrOrchestrator {
             }
             ResponseAction::GhostTarpit => {
                 let traps_path = &self.runtime_config.traps_path;
-                warn!(
-                    "Action: Multi-tier Response (Ghost + Active Tarpit) active (confidence {:.2})",
-                    signature.confidence
-                );
                 if is_system_critical(event) {
-                    warn!(
+                    debug!(
                         "[SECURITY SAFEGUARD] Tarpit refused: Event targets a SYSTEM CRITICAL or Security Provider binary. Containment skipped."
                     );
                     return Ok(());
@@ -7063,11 +7073,15 @@ impl EdrOrchestrator {
 
                     if !debounced {
                         RECENT_TARPITTED_PIDS.insert(pid, now);
+                        warn!(
+                            "Action: Multi-tier Response (Ghost + Active Tarpit) active for PID {} (confidence {:.2})",
+                            pid, signature.confidence
+                        );
                         let tarpit = TarpitManager::new();
                         tarpit.apply_tarpit(pid, 120).await;
                         self.audit.log("RESPONSE_ACTION", serde_json::json!({"type": "GhostTarpit", "pid": pid, "ghost_path": traps_path}));
                     } else {
-                        warn!("GhostTarpit thread containment skipped for PID {}: already tarpitted recently (debounce active)", pid);
+                        debug!("GhostTarpit thread containment skipped for PID {}: already tarpitted recently (debounce active)", pid);
                     }
                 }
                 if let Some(cmd) = event.data.get("CommandLine")
@@ -7824,6 +7838,24 @@ mod tests {
         disc_sig.mitre_technique = Some("T1082".to_string());
         disc_sig.confidence = 0.50;
         assert!(!is_critical_security_attack(&disc_sig, &benign_ev));
+
+        // Critical attacks: subtechnique recognition and confidence boundary
+        let mut aml_inj_sig = ThreatSignature::default();
+        aml_inj_sig.mitre_technique = Some("AML.T0043.001".to_string());
+        aml_inj_sig.confidence = 0.85;
+        assert!(is_critical_security_attack(&aml_inj_sig, &benign_ev));
+
+        // Low-confidence critical technique (< 0.75) must NOT escalate
+        let mut low_conf_aml = ThreatSignature::default();
+        low_conf_aml.mitre_technique = Some("AML.T0043".to_string());
+        low_conf_aml.confidence = 0.70;
+        assert!(!is_critical_security_attack(&low_conf_aml, &benign_ev));
+
+        // Ransomware recovery inhibition subtechnique
+        let mut recov_sig = ThreatSignature::default();
+        recov_sig.mitre_technique = Some("T1490.001".to_string());
+        recov_sig.confidence = 0.80;
+        assert!(is_critical_security_attack(&recov_sig, &benign_ev));
     }
 
     #[test]

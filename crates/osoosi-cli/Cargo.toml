@@ -16,6 +16,7 @@ osoosi-dashboard = { path = "../osoosi-dashboard" }
 osoosi-types = { path = "../osoosi-types" }
 osoosi-model = { path = "../osoosi-model" }
 osoosi-wire = { path = "../osoosi-wire" }
+osoosi-runtime = { path = "../osoosi-runtime" }
 blake3 = { workspace = true }
 candle-core = { workspace = true }
 clap = { workspace = true }

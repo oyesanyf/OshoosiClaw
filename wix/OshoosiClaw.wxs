@@ -54,6 +54,17 @@
                         </Component>
                     </Directory>
                 </Directory>
+
+                <Directory Id="DriverDir" Name="driver">
+                    <Directory Id="DriverWindowsDir" Name="windows">
+                        <Component Id="DriverComponents" Guid="a6598c21-4f18-4e89-9a2c-f67e2a96f130" Bitness="always64">
+                            <File Id="DriverInf" Source="driver\windows\osoosi_driver.inf" KeyPath="yes" />
+                            <File Id="DriverReadme" Source="driver\windows\README.md" />
+                            <File Id="DriverIoctlHeader" Source="driver\windows\include\osoosi_driver_ioctl.h" />
+                            <File Id="DriverSource" Source="driver\windows\src\osoosi_driver.c" />
+                        </Component>
+                    </Directory>
+                </Directory>
             </Directory>
         </StandardDirectory>
 
@@ -64,6 +75,7 @@
             <ComponentRef Id="ConfigSig" />
             <ComponentRef Id="ConfigFiles" />
             <ComponentRef Id="DashboardAssets" />
+            <ComponentRef Id="DriverComponents" />
         </Feature>
     </Package>
 </Wix>

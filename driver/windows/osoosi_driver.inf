@@ -1,0 +1,53 @@
+;
+; OshoosiClaw Windows Ring-0 Process Interception & EDR Kernel Driver INF
+;
+
+[Version]
+Signature   = "$WINDOWS NT$"
+Class       = "ActivityMonitor"
+ClassGuid   = {b85645dc-95db-438c-b4b6-4d30ad2f379a}
+Provider    = %ProviderString%
+DriverVer   = 09/29/2026,1.0.0.0
+CatalogFile = osoosi_driver.cat
+PnpLockDown = 1
+
+[DestinationDirs]
+DefaultDestDir          = 12    ; %windir%\system32\drivers
+OsoosiDriver.DriverFiles = 12
+
+[SourceDisksNames]
+1 = %DiskId1%,,,""
+
+[SourceDisksFiles]
+osoosi_driver.sys = 1,,
+
+[DefaultInstall.NTamd64]
+OptionDesc          = %ServiceDescription%
+CopyFiles           = OsoosiDriver.DriverFiles
+
+[DefaultInstall.NTamd64.Services]
+AddService          = %ServiceName%,,OsoosiDriver_Service_Inst
+
+[DefaultUninstall.NTamd64]
+DelFiles            = OsoosiDriver.DriverFiles
+
+[DefaultUninstall.NTamd64.Services]
+DelService          = %ServiceName%,0x200
+
+[OsoosiDriver.DriverFiles]
+osoosi_driver.sys,,,0x00000040 ; COPYFLG_OVERWRITE_OLDER_ONLY
+
+[OsoosiDriver_Service_Inst]
+DisplayName         = %ServiceName%
+Description         = %ServiceDescription%
+ServiceBinary       = %12%\osoosi_driver.sys
+ServiceType         = 1                  ; SERVICE_KERNEL_DRIVER
+StartType           = 3                  ; SERVICE_DEMAND_START
+ErrorControl        = 1                  ; SERVICE_ERROR_NORMAL
+LoadOrderGroup      = "FSFilter Activity Monitor"
+
+[Strings]
+ProviderString      = "Oshoosi Security Inc."
+ServiceName         = "OsoosiDriver"
+ServiceDescription  = "OshoosiClaw Ring-0 Pre-Operation Process Blocking Filter Driver"
+DiskId1             = "Oshoosi Driver Installation Disk"

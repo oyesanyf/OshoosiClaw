@@ -211,6 +211,21 @@ enum Commands {
         #[arg(long, help = "Broadcast updated STIX manifest across P2P wire mesh")]
         broadcast: bool,
     },
+    /// Windows Ring-0 Kernel Driver management and status
+    Driver {
+        #[command(subcommand)]
+        action: DriverAction,
+    },
+}
+
+#[derive(Subcommand, Clone)]
+pub enum DriverAction {
+    /// Queries driver version, active mode, and blocked process count
+    Status,
+    /// Instructs or sets up driver service via Windows Service Control Manager
+    Install,
+    /// Stops and deletes driver service
+    Uninstall,
 }
 
 #[derive(Subcommand, Clone)]
@@ -986,6 +1001,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Some(Commands::UpdateStix { force, broadcast }) => {
             handle_update_stix(force, broadcast).await?;
+        }
+        Some(Commands::Driver { action }) => {
+            handle_driver_command(action).await?;
         }
         None => {
             if !cli.grant_access {
@@ -1820,6 +1838,113 @@ async fn handle_update_stix(force: bool, broadcast: bool) -> anyhow::Result<()> 
     }
     println!("✓ Configurations and MITRE catalog cryptographically sealed.\n");
 
+    Ok(())
+}
+
+async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
+    match action {
+        DriverAction::Status => {
+            let client = osoosi_runtime::kernel_driver::KernelDriverClient::open();
+            match client {
+                Some(kd) => match kd.get_status() {
+                    Ok(st) => {
+                        println!("====================================================");
+                        println!(" OshoosiClaw Ring-0 Kernel Driver Status");
+                        println!("====================================================");
+                        println!("  Driver Version : 0x{:08X}", st.version);
+                        println!("  Autonomy Mode  : {}", st.mode);
+                        println!("  Blocked Count  : {}", st.blocked_count);
+                        println!("  Rule Count     : {}", st.rule_count);
+                        println!("  Device Path    : {}", osoosi_runtime::kernel_driver::OSOOSI_USER_DEVICE_NAME);
+                        println!("  Operational    : Yes (Pre-exec blocking active)");
+                        println!("====================================================");
+                    }
+                    Err(e) => {
+                        eprintln!("Error querying driver status: {}", e);
+                    }
+                },
+                None => {
+                    println!("====================================================");
+                    println!(" OshoosiClaw Ring-0 Kernel Driver: NOT CONNECTED");
+                    println!("====================================================");
+                    println!("  Device '{}' is not accessible or driver service is not running.", osoosi_runtime::kernel_driver::OSOOSI_USER_DEVICE_NAME);
+                    println!("  User-mode WFP packet filter + active thread tarpit operating as defense-in-depth.");
+                    println!("  Run 'osoosi driver install' as Administrator to configure the service.");
+                    println!("====================================================");
+                }
+            }
+        }
+        DriverAction::Install => {
+            #[cfg(windows)]
+            {
+                info!("Installing Oshoosi Ring-0 Kernel Driver service...");
+                let mut driver_path = std::path::PathBuf::from("driver\\windows\\osoosi_driver.sys");
+                if !driver_path.exists() {
+                    driver_path = std::path::PathBuf::from("C:\\Program Files\\OshoosiClaw\\driver\\osoosi_driver.sys");
+                }
+                println!("Registering kernel service 'OsoosiDriver' pointing to {:?}...", driver_path);
+                let create_status = std::process::Command::new("sc.exe")
+                    .args([
+                        "create",
+                        "OsoosiDriver",
+                        "type=",
+                        "kernel",
+                        "binPath=",
+                        &driver_path.to_string_lossy(),
+                        "start=",
+                        "demand",
+                    ])
+                    .status();
+
+                match create_status {
+                    Ok(s) if s.success() => {
+                        info!("Driver service successfully created. Starting driver...");
+                        let _ = std::process::Command::new("sc.exe")
+                            .args(["start", "OsoosiDriver"])
+                            .status();
+                        println!("OshoosiDriver service registered and start requested.");
+                    }
+                    Ok(s) => {
+                        warn!("sc create exited with status: {}. Attempting to start in case service already exists...", s);
+                        let start_status = std::process::Command::new("sc.exe")
+                            .args(["start", "OsoosiDriver"])
+                            .status();
+                        match start_status {
+                            Ok(st) if st.success() => println!("OsoosiDriver service started successfully."),
+                            Ok(st) => eprintln!("Failed to start OsoosiDriver service: exit code {}", st),
+                            Err(e) => eprintln!("Failed to execute sc.exe start: {}", e),
+                        }
+                    }
+                    Err(e) => eprintln!("Failed to execute sc.exe create: {}", e),
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                println!("Driver installation is only supported on Windows.");
+            }
+        }
+        DriverAction::Uninstall => {
+            #[cfg(windows)]
+            {
+                info!("Stopping and removing Oshoosi Ring-0 Kernel Driver service...");
+                let _ = std::process::Command::new("sc.exe")
+                    .args(["stop", "OsoosiDriver"])
+                    .status();
+                let del_status = std::process::Command::new("sc.exe")
+                    .args(["delete", "OsoosiDriver"])
+                    .status();
+                match del_status {
+                    Ok(s) if s.success() => println!("OsoosiDriver service successfully removed."),
+                    Ok(s) => eprintln!("sc delete exited with status: {}", s),
+                    Err(e) => eprintln!("Failed to execute sc delete: {}", e),
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                println!("Driver uninstallation is only supported on Windows.");
+            }
+        }
+    }
     Ok(())
 }
 
@@ -2885,5 +3010,26 @@ mod tests {
         let code = 0x8a15002b_u32 as i32;
         assert_eq!(code, -1978335189);
         assert!(code == -1978335189 || code == 0x8a15002b_u32 as i32);
+    }
+
+    #[test]
+    fn test_driver_cli_parsing() {
+        let cli_status = Cli::try_parse_from(["osoosi", "driver", "status"]).unwrap();
+        match cli_status.command {
+            Some(Commands::Driver { action: DriverAction::Status }) => {}
+            _ => panic!("Expected Commands::Driver with Status"),
+        }
+
+        let cli_install = Cli::try_parse_from(["osoosi", "driver", "install"]).unwrap();
+        match cli_install.command {
+            Some(Commands::Driver { action: DriverAction::Install }) => {}
+            _ => panic!("Expected Commands::Driver with Install"),
+        }
+
+        let cli_uninstall = Cli::try_parse_from(["osoosi", "driver", "uninstall"]).unwrap();
+        match cli_uninstall.command {
+            Some(Commands::Driver { action: DriverAction::Uninstall }) => {}
+            _ => panic!("Expected Commands::Driver with Uninstall"),
+        }
     }
 }

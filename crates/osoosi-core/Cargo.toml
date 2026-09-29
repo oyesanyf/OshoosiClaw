@@ -59,6 +59,7 @@ hostname = { workspace = true }
 rayon = { workspace = true }
 smoltcp = { workspace = true }
 managed = { workspace = true }
+parking_lot = "0.12"
 
 uuid = { workspace = true, features = ["v4", "serde"] }
 dirs = { workspace = true }
