@@ -621,40 +621,50 @@ pub fn is_account_rollback_allowed(username: &str, baseline: &std::collections::
     is_account_containment_allowed(username, baseline)
 }
 
-/// Helper to determine if a detected threat signature matches any cataloged attack pattern.
-fn is_mitre_catalog_attack(sig: &osoosi_types::ThreatSignature, event: &osoosi_types::HostSecurityEvent) -> bool {
-    if let Some(ref tech) = sig.mitre_technique {
-        let tech_upper = tech.to_ascii_uppercase();
-        if tech_upper.starts_with('T') {
-            return true;
-        }
-    }
-    if let Some(ref tac) = sig.mitre_tactic {
-        if !tac.is_empty() {
-            return true;
-        }
-    }
-    if let Some(ref reason) = sig.reason {
-        let reason_upper = reason.to_ascii_uppercase();
-        if reason_upper.contains("T1") || reason_upper.contains("ATTACK.T") || reason_upper.contains("AML.T") {
-            return true;
-        }
-    }
-    let cmd = event.data.get("CommandLine")
-        .or_else(|| event.data.get("command_line"))
-        .or_else(|| event.data.get("cmdline"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    let img = event.data.get("Image")
-        .or_else(|| event.data.get("NewProcessName"))
-        .or_else(|| event.data.get("image"))
-        .or_else(|| event.data.get("ImagePath"))
-        .and_then(|v| v.as_str())
-        .unwrap_or("");
-    if osoosi_policy::mitre_kb::infer_mitre_from_event(event.event_id as u32, img, cmd).is_some() {
+/// Identify confirmed, high-severity critical attacks that warrant fast-path containment.
+/// Generic user execution (AML.T0011, T1204), routine scripts (T1059), and discovery (T1082, T1033)
+/// must NEVER trigger an Audit Override!
+fn is_critical_security_attack(sig: &osoosi_types::ThreatSignature, event: &osoosi_types::HostSecurityEvent) -> bool {
+    // High-severity destructive mutations (ransomware, shadow copies, boot config)
+    if is_destructive_mutation(sig, event) {
         return true;
     }
+
+    // Exclude low-confidence threats (< 0.75) from automatic containment escalation
+    if sig.confidence < 0.75 {
+        return false;
+    }
+
+    let tech_id = sig.mitre_technique.as_deref().unwrap_or("").to_ascii_uppercase();
+
+    // Confirmed credential dumping
+    if tech_id.starts_with("T1003") {
+        return true;
+    }
+
+    // Confirmed process injection / hollowing
+    if tech_id.starts_with("T1055") {
+        return true;
+    }
+
+    // Confirmed ransomware / system recovery inhibition
+    if tech_id == "T1486" || tech_id == "T1490" || tech_id == "T1489" {
+        return true;
+    }
+
+    // Confirmed AI agent jailbreak/injection with high confidence
+    if tech_id == "AML.T0043" || tech_id == "AML.T0048" || tech_id == "AML.T0040" {
+        return true;
+    }
+
     false
+}
+
+/// Helper to determine if a detected threat signature matches any cataloged attack pattern.
+/// Delegates to is_critical_security_attack to prevent low-severity or routine execution false positives.
+#[inline]
+fn is_mitre_catalog_attack(sig: &osoosi_types::ThreatSignature, event: &osoosi_types::HostSecurityEvent) -> bool {
+    is_critical_security_attack(sig, event)
 }
 
 /// Identify high-confidence destructive mutations that demand immediate containment/termination.
@@ -1060,6 +1070,8 @@ pub struct EdrOrchestrator {
     pub preexisting_accounts: Arc<std::collections::HashSet<String>>,
     /// Cognitive Fusion Supervisor Agent (Dempster-Shafer multi-sensor watchdog)
     pub supervisor: Arc<supervisor::CognitiveFusionSupervisor>,
+    /// Hardware-enforced Ring-0 Windows Driver client for pre-operation process blocking.
+    pub kernel_driver: Arc<parking_lot::RwLock<Option<osoosi_runtime::kernel_driver::KernelDriverClient>>>,
 }
 
 impl EdrOrchestrator {
@@ -1863,6 +1875,56 @@ impl EdrOrchestrator {
         let active_tarpit = osoosi_runtime::tarpit::ActiveProcessTarpit::new();
         supervisor.clone().start(memory.clone(), active_tarpit);
 
+        let kernel_driver_client = osoosi_runtime::kernel_driver::KernelDriverClient::open();
+        if let Some(ref client) = kernel_driver_client {
+            info!("[KERNEL_DRIVER] Ring-0 Pre-Operation Driver attached! Hardware-enforced process blocking active before Sysmon Event 1.");
+            let _ = client.set_mode(osoosi_runtime::kernel_driver::DriverAutonomyMode::Active);
+        } else {
+            info!("[KERNEL_DRIVER] Ring-0 driver not detected. Operating with user-mode WFP packet filter + active thread tarpit.");
+        }
+        let kernel_driver = Arc::new(parking_lot::RwLock::new(kernel_driver_client));
+
+        // Background task: drain driver interception events and feed into memory and audit trail
+        {
+            let kd_bg = kernel_driver.clone();
+            let memory_bg = memory.clone();
+            let audit_bg = audit.clone();
+            tokio::spawn(async move {
+                let mut interval = tokio::time::interval(std::time::Duration::from_millis(500));
+                loop {
+                    interval.tick().await;
+                    let events_opt = {
+                        let lock = kd_bg.read();
+                        if let Some(ref kd) = *lock {
+                            kd.poll_interceptions().ok()
+                        } else {
+                            None
+                        }
+                    };
+                    if let Some(events) = events_opt {
+                        for ev in events {
+                            warn!(
+                                "[KERNEL_DRIVER] Intercepted process spawn PID: {} Image: {} (Blocked: {})",
+                                ev.pid, ev.image_path, ev.blocked
+                            );
+                            let _ = memory_bg.log_threat_event("KERNEL_DRIVER_PRE_EXEC_BLOCK", ev.pid, ev.parent_pid);
+                            audit_bg.log(
+                                "KERNEL_DRIVER_INTERCEPTION",
+                                serde_json::json!({
+                                    "pid": ev.pid,
+                                    "parent_pid": ev.parent_pid,
+                                    "image_path": ev.image_path,
+                                    "command_line": ev.command_line,
+                                    "blocked": ev.blocked,
+                                    "timestamp": ev.timestamp,
+                                }),
+                            );
+                        }
+                    }
+                }
+            });
+        }
+
         let orch = Self {
             memory,
             mesh_peer_count,
@@ -1927,6 +1989,7 @@ impl EdrOrchestrator {
             hollowing_detector: Arc::new(osoosi_telemetry::hollowing::ProcessHollowingDetector::new()),
             preexisting_accounts,
             supervisor,
+            kernel_driver,
         };
 
         // Start background log retention loop (hourly rotation and pruning)
@@ -3015,6 +3078,9 @@ impl EdrOrchestrator {
                                         kind: osoosi_types::BlockingKind::Executable,
                                     };
                                     let _ = orchestrator.blocking_manager.add_rule(rule).await;
+                                    if let Some(ref kd) = *orchestrator.kernel_driver.read() {
+                                        let _ = kd.add_blocked_path(&result.file_path);
+                                    }
 
                                     // 2. Physical Quarantine
                                     if let Err(e) = crate::quarantine::quarantine_file(&result.file_path) {
@@ -3905,16 +3971,30 @@ impl EdrOrchestrator {
 
             // 2. Autonomous Remediation Logic (same confidence gate as deep pipeline)
             let autonomy = osoosi_types::load_autonomy_config();
-            let is_catalog_attack = is_mitre_catalog_attack(&signature, &event);
+            let is_critical_attack = is_critical_security_attack(&signature, &event);
             let is_destructive = is_destructive_mutation(&signature, &event);
 
             let effective_action = if signature.confidence >= autonomy.action_confidence_threshold {
                 signature.recommended_action
-            } else if is_catalog_attack {
-                warn!(
-                    "AUDIT OVERRIDE: Active MITRE catalog attack detected in fast path ({:?}: {:?}). Escalating from Audit to active containment!",
-                    signature.mitre_technique, signature.id
-                );
+            } else if is_critical_attack && autonomy.auto_quarantine_malware {
+                // Only escalate if Active/Lockdown mode is armed (auto_quarantine_malware = true)
+                // Debounce fast-path warning log to avoid console spam
+                static FAST_PATH_WARN_DEBOUNCE: std::sync::LazyLock<dashmap::DashMap<String, std::time::Instant>> =
+                    std::sync::LazyLock::new(dashmap::DashMap::new);
+
+                let tech_key = signature.mitre_technique.clone().unwrap_or_else(|| "UNKNOWN".to_string());
+                let now = std::time::Instant::now();
+                let should_log = match FAST_PATH_WARN_DEBOUNCE.get(&tech_key) {
+                    Some(last) => now.duration_since(*last) > std::time::Duration::from_secs(30),
+                    None => true,
+                };
+                if should_log {
+                    FAST_PATH_WARN_DEBOUNCE.insert(tech_key, now);
+                    warn!(
+                        "CRITICAL ATTACK DETECTED: High-severity technique detected in fast path ({:?}: {:?}, conf: {:.2}). Escalating to active containment!",
+                        signature.mitre_technique, signature.id, signature.confidence
+                    );
+                }
                 if is_destructive || signature.recommended_action == ResponseAction::Isolate {
                     ResponseAction::Isolate
                 } else if signature.recommended_action == ResponseAction::GhostTarpit {
@@ -3923,7 +4003,7 @@ impl EdrOrchestrator {
                     ResponseAction::Tarpit
                 }
             } else {
-                info!(
+                debug!(
                     "Fast-path threat confidence {:.2} below action threshold {:.2}: using Alert only",
                     signature.confidence,
                     autonomy.action_confidence_threshold
@@ -3975,6 +4055,11 @@ impl EdrOrchestrator {
                                 error!("Failed to apply autonomous block: {}", e);
                             }
                         });
+
+                        // Apply Ring-0 kernel driver block
+                        if let Some(ref kd) = *self.kernel_driver.read() {
+                            let _ = kd.add_blocked_path(image);
+                        }
 
                         // Immediate termination + self-healing rollback
                         if let Some(pid) = extract_event_pid(&event) {
@@ -6873,6 +6958,16 @@ impl EdrOrchestrator {
         });
     }
 
+    /// Execute the recommended action for a threat, synchronizing with Ring-0 driver and response mitigations.
+    pub async fn execute_response_action(
+        &self,
+        event: &osoosi_types::HostSecurityEvent,
+        signature: &osoosi_types::ThreatSignature,
+        action: osoosi_types::ResponseAction,
+    ) -> anyhow::Result<()> {
+        self.perform_action(event, signature, action).await
+    }
+
     /// Execute the recommended action for a threat.
     pub async fn perform_action(
         &self,
@@ -6895,25 +6990,26 @@ impl EdrOrchestrator {
             }
             ResponseAction::Tarpit => {
                 if is_system_critical(event) {
-                    warn!(
+                    debug!(
                         "[SECURITY SAFEGUARD] Tarpit refused: Event targets a SYSTEM CRITICAL or Security Provider binary. Containment skipped."
                     );
                     return Ok(());
                 }
 
-                warn!(
-                    "Action: Applying Active Resource Tarpit to PID (confidence {:.2})",
-                    signature.confidence
-                );
                 if let Some(pid) = extract_event_pid(event) {
                     let now = std::time::Instant::now();
                     if let Some(last) = RECENT_TARPITTED_PIDS.get(&pid) {
                         if now.duration_since(*last) < std::time::Duration::from_secs(60) {
-                            warn!("Tarpit skipped for PID {}: already tarpitted recently (debounce active)", pid);
+                            debug!("Tarpit skipped for PID {}: already tarpitted recently (debounce active)", pid);
                             return Ok(());
                         }
                     }
                     RECENT_TARPITTED_PIDS.insert(pid, now);
+
+                    warn!(
+                        "Action: Applying Active Resource Tarpit to PID {} (confidence {:.2})",
+                        pid, signature.confidence
+                    );
 
                     let tarpit = TarpitManager::new();
                     tarpit.apply_tarpit(pid, 60).await;
@@ -6921,6 +7017,8 @@ impl EdrOrchestrator {
                         "RESPONSE_ACTION",
                         serde_json::json!({"type": "Tarpit", "pid": pid}),
                     );
+                } else {
+                    debug!("Tarpit requested but no PID extracted from event");
                 }
                 if let Some(cmd) = event.data.get("CommandLine")
                     .or_else(|| event.data.get("command_line"))
@@ -7053,6 +7151,13 @@ impl EdrOrchestrator {
                             );
                         }
                         Err(e) => warn!("Targeted firewall block failed: {}", e),
+                    }
+
+                    // Add image to Ring-0 kernel driver blocklist
+                    if let Some(img) = image {
+                        if let Some(ref kd) = *self.kernel_driver.read() {
+                            let _ = kd.add_blocked_path(img);
+                        }
                     }
                 }
 
@@ -7690,13 +7795,35 @@ mod tests {
             "CommandLine": "net user attacker P@ss /add",
         }));
 
+        assert!(is_critical_security_attack(&sig, &ev));
         assert!(is_mitre_catalog_attack(&sig, &ev));
         assert!(is_destructive_mutation(&sig, &ev));
 
         let mut dump_sig = ThreatSignature::default();
         dump_sig.mitre_technique = Some("T1003.001".to_string());
+        assert!(is_critical_security_attack(&dump_sig, &ev));
         assert!(is_mitre_catalog_attack(&dump_sig, &ev));
         assert!(is_destructive_mutation(&dump_sig, &ev));
+
+        // False-positive prevention: low confidence routine execution/discovery must NOT trigger critical attack
+        let benign_ev = make_test_event(serde_json::json!({
+            "CommandLine": "systeminfo",
+        }));
+        let mut aml_exec_sig = ThreatSignature::default();
+        aml_exec_sig.mitre_technique = Some("AML.T0011".to_string());
+        aml_exec_sig.confidence = 0.53;
+        assert!(!is_critical_security_attack(&aml_exec_sig, &benign_ev));
+        assert!(!is_destructive_mutation(&aml_exec_sig, &benign_ev));
+
+        let mut script_sig = ThreatSignature::default();
+        script_sig.mitre_technique = Some("T1059.001".to_string());
+        script_sig.confidence = 0.60;
+        assert!(!is_critical_security_attack(&script_sig, &benign_ev));
+
+        let mut disc_sig = ThreatSignature::default();
+        disc_sig.mitre_technique = Some("T1082".to_string());
+        disc_sig.confidence = 0.50;
+        assert!(!is_critical_security_attack(&disc_sig, &benign_ev));
     }
 
     #[test]

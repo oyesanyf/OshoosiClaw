@@ -1669,13 +1669,23 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
     }
 
     // Check for tactic-level tags like attack.execution, attack.defense_evasion, etc.
-    let tactic_words = text_lower.split(|c: char| !c.is_alphanumeric() && c != '.' && c != '_');
-    for word in tactic_words {
-        let candidate = word.strip_prefix("attack.").unwrap_or(word);
-        let normalized = candidate.replace('_', " ");
-        if let Some(tac) = lookup_tactic(&normalized) {
-            if let Some(first_tech) = get_all_techniques().into_iter().find(|t| t.tactic_id == tac.id) {
-                return Some((tac.name, first_tech.id, first_tech.name));
+    // Require explicit tag prefix so ordinary words like 'execution' in reasons don't trigger.
+    let words = text_lower.split(|c: char| !c.is_alphanumeric() && c != '.' && c != '_');
+    for word in words {
+        if let Some(candidate) = word.strip_prefix("attack.")
+            .or_else(|| word.strip_prefix("tactic."))
+            .or_else(|| word.strip_prefix("atlas."))
+        {
+            let normalized = candidate.replace('_', " ");
+            if let Some(tac) = lookup_tactic(&normalized) {
+                // For generic execution tactic tag without specific technique ID, prefer T1059 over ATLAS AML.T0011
+                if tac.id == "TA0002" {
+                    return Some(("Execution".into(), "T1059".into(), "Command and Scripting Interpreter".into()));
+                }
+                // Prefer traditional Enterprise ATT&CK technique over ATLAS for generic tactic tags
+                if let Some(first_tech) = get_all_techniques().into_iter().find(|t| t.tactic_id == tac.id && !t.id.starts_with("AML.")) {
+                    return Some((tac.name, first_tech.id, first_tech.name));
+                }
             }
         }
     }
@@ -2189,6 +2199,16 @@ mod tests {
         let tac_res = extract_mitre_from_text("Alert tags: attack.privilege_escalation")
             .expect("extract privilege escalation");
         assert_eq!(tac_res.0, "Privilege Escalation");
+
+        // Explicit execution tactic tag gives T1059, not AML.T0011
+        let exec_tac = extract_mitre_from_text("Alert tags: attack.execution")
+            .expect("extract execution tactic");
+        assert_eq!(exec_tac.1, "T1059");
+        assert_eq!(exec_tac.0, "Execution");
+
+        // Bare words like 'execution' without tag prefix MUST NOT extract AML.T0011 or any tactic
+        let bare_exec = extract_mitre_from_text("Normal process execution completed successfully");
+        assert!(bare_exec.is_none(), "Bare word 'execution' must not extract MITRE technique");
     }
 
     #[test]
