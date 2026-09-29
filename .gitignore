@@ -23,6 +23,7 @@
 *.wixpdb
 *.msi
 !OshoosiClaw.msi
+!deploy/OshoosiClaw.msi
 
 # ---------- IDE ----------
 .vscode/
@@ -95,7 +96,8 @@ error_core.log
 # ---------- Deployment Packages ----------
 *.zip
 /osoosi_deploy/
-/deploy/
+/deploy/*
+!/deploy/OshoosiClaw.msi
 
 # ---------- Temp / Misc ----------
 /tmp/
