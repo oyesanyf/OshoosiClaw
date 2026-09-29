@@ -9,15 +9,17 @@
   <a href="#-features"><img src="https://img.shields.io/badge/Security%20Grade-100%25%20A%2B-emerald?style=for-the-badge" alt="Grade"/></a>
   <a href="#-features"><img src="https://img.shields.io/badge/Engine-Rust%20🦀-orange?style=for-the-badge" alt="Rust"/></a>
   <a href="#-mitre-attck--atlas-enterprise-framework"><img src="https://img.shields.io/badge/MITRE%20ATT%26CK%20%26%20ATLAS-26%2C381%20Objects-blueviolet?style=for-the-badge" alt="MITRE"/></a>
+  <a href="#-ring-0-windows-driver--linux-ebpf-parity"><img src="https://img.shields.io/badge/Ring--0%20Driver-Pre--Exec%20Blocking%20%26%20eBPF-red?style=for-the-badge" alt="Ring-0 Driver & eBPF"/></a>
   <a href="#-mesh-networking"><img src="https://img.shields.io/badge/Wire-ML--KEM--768%20PQC-blueviolet?style=for-the-badge" alt="PQC"/></a>
   <a href="#-architecture"><img src="https://img.shields.io/badge/Hardware-TPM%202.0%20Silicon-blue?style=for-the-badge" alt="TPM 2.0"/></a>
-  <a href="#-adversarial-verification"><img src="https://img.shields.io/badge/Adversarial%20%26%20Security%20Tests-148%2B%20Passed-brightgreen?style=for-the-badge" alt="Tests"/></a>
+  <a href="#-adversarial-verification"><img src="https://img.shields.io/badge/Adversarial%20%26%20Security%20Tests-205%2B%20Passed-brightgreen?style=for-the-badge" alt="Tests"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"/></a>
 </p>
 
 <p align="center">
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-architecture">Architecture</a> •
+  <a href="#-ring-0-windows-driver--linux-ebpf-parity">Ring-0 Driver & eBPF</a> •
   <a href="#-dns-telemetry-setup">DNS & Sysmon Setup</a> •
   <a href="#-two-host-mesh-consensus">Two-Host BFT Mesh</a> •
   <a href="#-rl-adaptive-controller">6-Pillar RL Controller</a> •
@@ -36,6 +38,150 @@
 > **Ọ̀ṣọ́ọ̀sì** *(oh-SHAW-aw-see)* is the Yoruba Orisha of the Hunt, Tracking, and Justice. In the Yoruba cosmological tradition, Ọ̀ṣọ́ọ̀sì is the divine tracker who **never misses his mark** — the archer whose arrow always finds its target. He is invoked for precision, the relentless pursuit of wrongdoers, and the swift delivery of justice.
 >
 > This is the spirit of this project: an autonomous security agent that **hunts threats with unerring accuracy**, **tracks adversaries across the mesh**, and **delivers swift, proportionate justice** through quarantine, isolation, and deception. Like Ọ̀ṣọ́ọ̀sì, it is both patient *(observing context, reasoning before action)* and decisive *(acting with confidence when the target is clear)*.
+
+---
+
+<a id="-ring-0-windows-driver--linux-ebpf-parity"></a>
+<a id="ring-0-windows-driver--linux-ebpf-parity"></a>
+## 🛡️ Native Ring-0 Windows Driver & Linux eBPF Parity
+
+### The Architectural Paradigm Shift: Pre-Operation Blocking vs. Post-Execution Telemetry
+
+Traditional endpoint security and user-mode EDR agents operate **reactively** (post-execution). When an adversary executes malicious code:
+1. The kernel allocates the target process address space and initializes the Process Environment Block (PEB).
+2. The initial process thread begins instruction execution in user space.
+3. Auxiliary telemetry subsystems (such as Microsoft Sysmon Event 1 or ETW providers) generate notification events **asynchronously** milliseconds or seconds after execution has already started.
+4. User-mode API hooks (e.g., in `ntdll.dll`) can be trivially bypassed via direct system calls (`SysWhispers`, `Hell's Gate`), unhooking (`VirtualProtect`), or early in-memory ransomware encryption before user-mode analysis completes.
+
+**OpenỌ̀ṣọ́ọ̀sì fundamentally eliminates this vulnerability window** through hardware-enforced, kernel-space **pre-operation blocking**:
+- **Windows Ring-0 Driver (`driver/windows/`)**: Hooks `PsSetCreateProcessNotifyRoutineEx`. The driver callback executes synchronously *inside the kernel's process creation routine* before process handles are returned to user mode and before the primary thread executes its first CPU instruction. By setting `CreateInfo->CreationStatus = STATUS_ACCESS_DENIED` (`0xC0000022`), the OS kernel aborts process instantiation immediately.
+- **Linux eBPF LSM Parity (`ebpf/`)**: Hooks the kernel's BPF Linux Security Module hook `bprm_check_security` (`osoosi_bprm_check`). When a binary path or hash matches the kernel-space BPF hash map, the hook instantly returns `-EACCES` (`-EPERM`), preventing binary mapping and execution entirely without requiring third-party out-of-tree kernel modules.
+
+```mermaid
+sequenceDiagram
+    autonumber
+    participant A as Adversary / Process Caller
+    participant K as OS Kernel (NTOSKRNL / Linux VFS)
+    participant D as OpenỌ̀ṣọ́ọ̀sì Kernel Subsystem (Ring-0 / BPF LSM)
+    participant E as Traditional User-Mode EDR (Sysmon ETW)
+    participant M as Malicious Binary Payload
+
+    rect rgb(255, 235, 235)
+        Note over A,E: TRADITIONAL USER-MODE EDR (POST-EXECUTION GAP)
+        A->>K: NtCreateUserProcess("ransomware.exe")
+        K->>M: Allocates PEB & Launches Initial Thread
+        M->>M: Executes malicious shellcode / Encrypts files
+        K-->>E: Asynchronous Sysmon Event 1 (Process Create)
+        E->>E: User-mode analysis & detection delay
+        Note over M: Damage inflicted BEFORE EDR can react
+    end
+
+    rect rgb(235, 255, 235)
+        Note over A,D: OPENỌ̀ṢỌ́Ọ̀SÌ HARDWARE-ENFORCED PRE-OPERATION BLOCKING
+        A->>K: NtCreateUserProcess("ransomware.exe")
+        K->>D: Synchronous Kernel Intercept (PsSetCreateProcessNotifyRoutineEx / LSM bprm_check_security)
+        D->>D: Sub-microsecond Spinlock Path & SHA-256 Rule Match
+        D-->>K: Set CreationStatus = STATUS_ACCESS_DENIED (0xC0000022) / -EACCES
+        K-->>A: NTSTATUS 0xC0000022 (Access Denied)
+        Note over M: Zero CPU instructions executed in user space! PEB discarded.
+        D->>D: Enqueue Intercept Event in Circular Ring Buffer
+    end
+```
+
+---
+
+### Windows Ring-0 Kernel Driver (`driver/windows/`)
+
+The Windows Ring-0 driver (`osoosi_driver.sys`) is a high-performance native kernel-mode filter driver engineered in C/NTDDK:
+
+- **Synchronous Pre-Operation Interception**: Registered via `PsSetCreateProcessNotifyRoutineEx(OsoosiCreateProcessNotifyRoutine, FALSE)`. When process creation is initiated, the kernel invokes the routine with a `PPS_CREATE_NOTIFY_INFO` structure. Setting `CreateInfo->CreationStatus = STATUS_ACCESS_DENIED` (`0xC0000022`) forces the kernel to close the handle and terminate initialization before the Process Environment Block (PEB) or initial thread can be instantiated.
+- **Kernel BSOD Prevention & Memory Safety**: Implements strict length-bounded case-insensitive comparison (`OsoosiContainsSubstrInsensitive`). Unlike standard C runtime string functions that risk kernel page faults when reading non-null-terminated kernel `UNICODE_STRING` buffers, all string operations are strictly bounded by `haystackLen` and `needleLen`.
+- **Path Normalization**: Device file names supplied by the kernel to `CreateInfo->ImageFileName` use NT device path format (e.g., `\Device\HarddiskVolume3\Windows\System32\...`). The driver automatically strips DOS drive prefixes (`[A-Za-z]:`) from incoming user-space block rules to guarantee flawless substring matching against raw NT kernel device namespaces.
+- **Core OS Immunity & Self-Defense**: Hardcoded kernel-level protections guarantee zero system destabilization. System process PIDs (0, 4) and critical core infrastructure binaries are immune to blocking:
+  - `smss.exe`, `csrss.exe`, `wininit.exe`, `services.exe`, `lsass.exe`
+  - `sysmon64.exe`, `sysmon.exe`, `msmpeng.exe`, `osoosi.exe`
+- **Fast Spinlock Circular Ring Queue**: Intercepted event metadata (PID, Parent PID, Image Path, Command Line, Timestamp, Blocked status) is buffered into a 256-slot non-paged pool circular ring buffer protected by `KeAcquireInStackQueuedSpinLock` and drained asynchronously by the user-mode agent via `IOCTL_OSOOSI_POLL_INTERCEPTIONS`.
+- **IOCTL Control Interface (`\\.\OsoosiDriver`)**: Zero-latency buffered communication supporting:
+  - `IOCTL_OSOOSI_GET_STATUS`: Driver version, active autonomy mode, blocked process counter, and active rule count.
+  - `IOCTL_OSOOSI_SET_MODE`: Dynamic switching across `Audit`, `Active`, and `Lockdown`.
+  - `IOCTL_OSOOSI_ADD_BLOCK_PATH`: In-kernel binary path blocklist registration.
+  - `IOCTL_OSOOSI_ADD_BLOCK_HASH`: In-kernel SHA-256 binary hash blocklist registration.
+  - `IOCTL_OSOOSI_CLEAR_RULES`: Atomic flushing of in-kernel rule lists.
+  - `IOCTL_OSOOSI_POLL_INTERCEPTIONS`: User-mode polling of ring queue events.
+
+---
+
+### Linux eBPF Parity (`ebpf/`)
+
+On Linux endpoints, OpenỌ̀ṣọ́ọ̀sì achieves parity with Ring-0 Windows enforcement through modern **eBPF Ring Buffers** and the **BPF Linux Security Module (LSM)**:
+
+- **LSM Hook (`osoosi_bprm_check`)**: Attaches directly to the Linux kernel's `lsm/bprm_check_security` interface. When `execve()` or `execveat()` is called, the kernel passes `struct linux_binprm *bprm`. The probe queries the in-kernel `blocked_paths` BPF hash map (`BPF_MAP_TYPE_HASH`). If a match occurs, the LSM hook immediately returns `-EACCES` (`-EPERM`), terminating execution before binary pages are mapped into memory.
+- **Zero-Drop Ring Buffer Telemetry**: High-throughput `BPF_MAP_TYPE_RINGBUF` maps (`process_ring`, `network_ring`) stream sub-millisecond telemetry directly into user space:
+  - `sched_process_exec`: Process creation (PID, PPID, UID, GID, comm, executable path, timestamp).
+  - `sched_process_exit`: Process termination and exit status.
+  - `sys_enter_connect` / `inet_sock_set_state`: Outbound network socket initiation (AF_INET, AF_INET6, destination IP, port).
+- **Aya Rust Integration & Multi-Path Discovery**: The user-space orchestrator (`crates/osoosi-telemetry/src/linux_ebpf.rs`) loads and attaches bytecode dynamically using the pure-Rust Aya eBPF library. Multi-path candidate discovery checks:
+  1. `$env:OSOOSI_EBPF_OBJECT` (Custom override)
+  2. `osoosi-ebpf.o` (Working directory)
+  3. `ebpf/bin/osoosi-ebpf.o` (Development tree)
+  4. `/usr/lib/osoosi/osoosi-ebpf.o` (FHS package directory)
+  5. `/etc/osoosi/osoosi-ebpf.o` (System configuration directory)
+  If eBPF facilities or BTF are unavailable, error propagation is completely panic-free, gracefully degrading to user-mode telemetry.
+
+---
+
+### User-Mode Orchestrator & Defense-in-Depth Fallback
+
+The OpenỌ̀ṣọ́ọ̀sì runtime orchestrator (`crates/osoosi-runtime/src/kernel_driver.rs`) maintains continuous synchronization with the kernel:
+
+1. **Autonomy Mode Synchronization**:
+   - `Audit` (`0`): Kernel driver monitors and logs all process creations to the ring buffer without blocking.
+   - `Active` (`1`): Kernel driver enforces pre-operation blocking on all matched rules (`STATUS_ACCESS_DENIED` / `-EACCES`).
+   - `Lockdown` (`2`): Strictest posture; all unverified or high-risk execution attempts are blocked by the kernel.
+2. **Graceful Fallback**: If the Ring-0 kernel driver or eBPF LSM is not installed or the endpoint lacks elevated driver-load privileges, OpenỌ̀ṣọ́ọ̀sì automatically and seamlessly falls back to defense-in-depth user-mode containment:
+   - **WFP (Windows Filtering Platform)**: Outbound packet inspection and network quarantine.
+   - **Active Process Hollowing & Thread Tarpitting**: Microsecond process suspension and memory fence isolation.
+   - **Job Object Sandboxing**: Resource and token restrictions.
+
+---
+
+### CLI Management Commands
+
+OpenỌ̀ṣọ́ọ̀sì exposes a dedicated `osoosi driver` subcommand suite for kernel driver administration:
+
+| Command | Description | Privilege |
+|:---|:---|:---|
+| `osoosi driver status` | Query driver connection, active mode, version, and blocked process counts. | User / Admin |
+| `osoosi driver install [--path <PATH>]` | Register and start `OsoosiDriver` service via Windows Service Control Manager (SCM). | Administrator |
+| `osoosi driver uninstall` | Stop and delete `OsoosiDriver` service via SCM. | Administrator |
+| `osoosi driver add-rule <PATH>` | Add executable path to kernel blocklist for hardware-enforced pre-exec blocking. | Administrator |
+| `osoosi driver set-mode <MODE>` | Dynamically switch kernel driver mode (`audit`, `active`, `lockdown`). | Administrator |
+| `osoosi driver clear-rules` | Flush all in-memory kernel blocking rules. | Administrator |
+
+#### Terminal Usage Examples
+
+```powershell
+# 1. Query kernel driver operational status
+.\osoosi.exe driver status
+
+# 2. Register and start the Ring-0 driver service (Administrator)
+.\osoosi.exe driver install
+# Or specify a custom driver binary location:
+.\osoosi.exe driver install --path "C:\Program Files\OshoosiClaw\driver\windows\osoosi_driver.sys"
+
+# 3. Add an executable to the kernel pre-operation blocklist
+.\osoosi.exe driver add-rule "C:\Users\Public\mimikatz.exe"
+
+# 4. Dynamically switch kernel driver autonomy mode
+.\osoosi.exe driver set-mode lockdown
+.\osoosi.exe driver set-mode active
+
+# 5. Flush all in-kernel blocking rules
+.\osoosi.exe driver clear-rules
+
+# 6. Stop and uninstall the kernel driver service
+.\osoosi.exe driver uninstall
+```
 
 ---
 
@@ -912,6 +1058,18 @@ OshoosiClaw agents form a **decentralized P2P mesh** using libp2p Gossipsub:
 
 Global flags (may appear **before or after** the subcommand): `--debug` / `-d`, `--no-ai`, `--grant-access`.
 
+| Subcommand | Function | Key Flags / Arguments |
+|:---|:---|:---|
+| `start` | Launch the autonomous EDR security loop | `--debug`, `--no-dashboard`, `--sandbox`, `--wsl` |
+| `driver` | Ring-0 Windows driver management & rule synchronization | `status`, `install`, `uninstall`, `add-rule`, `set-mode`, `clear-rules` |
+| `grant-access` | One-time automated endpoint provisioning pipeline | — |
+| `sandbox` | NVIDIA OpenShell installation and status helper | `install`, `status` |
+| `agent` | Launch autonomous LLM reasoning agent | — |
+| `trust` | Decentralized Identity (DID) & certificate management | `who-am-i`, `init-ca`, `issue` |
+| `story` | Generate forensic attack narrative from Merkle Audit Trail | — |
+| `status` | Agent health, detection engine, and NSRL status check | — |
+| `update-stix` | Synchronize MITRE ATT&CK & ATLAS STIX 2.1 catalog | `--force`, `--broadcast` |
+
 ### `start` — Launch the Autonomous Security Loop
 
 ```powershell
@@ -1039,6 +1197,41 @@ Synchronizes the authoritative MITRE ATT&CK Enterprise (v19.2) and MITRE ATLAS (
 |:-----|:--------|
 | `--force` | Force re-download and re-generation even if local Blake3 checksum matches upstream. |
 | `--broadcast` | Explicitly broadcasts the updated STIX manifest over the P2P wire mesh gossip topic (`osoosi-stix-sync-v1`). |
+
+### `driver` — Ring-0 Windows Driver & Kernel Control
+
+Manage the native Windows Ring-0 kernel filter driver (`osoosi_driver.sys`) for hardware-enforced pre-operation process execution blocking before Sysmon Event 1 fires and before PEB/thread initialization.
+
+| Subcommand | Arguments / Flags | Description | Privilege |
+|:---|:---|:---|:---|
+| `driver status` | — | Query driver version, active autonomy mode, rule count, and blocked process counter. | User / Admin |
+| `driver install` | `[--path <PATH>]` | Register and start `OsoosiDriver` service via Windows Service Control Manager (SCM). | Administrator |
+| `driver uninstall` | — | Stop and remove the `OsoosiDriver` kernel service. | Administrator |
+| `driver add-rule` | `<PATH>` | Add an executable path to the kernel blocklist for hardware-enforced pre-exec blocking. | Administrator |
+| `driver set-mode` | `<MODE>` | Dynamically switch driver autonomy mode (`audit`, `active`, `lockdown`). | Administrator |
+| `driver clear-rules` | — | Flush all in-memory kernel blocking rules. | Administrator |
+
+```powershell
+# Check driver connection and statistics
+.\osoosi.exe driver status
+
+# Install driver service using default or custom path (Administrator)
+.\osoosi.exe driver install
+.\osoosi.exe driver install --path "driver\windows\osoosi_driver.sys"
+
+# Add binary to kernel pre-operation blocklist
+.\osoosi.exe driver add-rule "C:\Users\Public\mimikatz.exe"
+
+# Switch driver mode between audit (log-only), active (block), and lockdown
+.\osoosi.exe driver set-mode lockdown
+.\osoosi.exe driver set-mode active
+
+# Flush all kernel rules
+.\osoosi.exe driver clear-rules
+
+# Stop and delete driver service
+.\osoosi.exe driver uninstall
+```
 
 ### MITRE ATT&CK & ATLAS Catalog Generator
 

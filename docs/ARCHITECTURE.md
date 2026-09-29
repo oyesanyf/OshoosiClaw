@@ -11,42 +11,57 @@ OshoosiClaw follows a **modular monolith** pattern — 20 specialized Rust crate
 ## Core Data Flow
 
 ```
-                    ┌─────────────────────────┐
-                    │   Sysmon Kernel Driver   │ ← Pre-existing, signed by Microsoft
-                    │   (ETW Event Producer)   │
-                    └───────────┬─────────────┘
-                                │ All 25+ Event IDs
-                                ▼
-┌───────────────────────────────────────────────────────────────────┐
-│                    osoosi-telemetry                                │
-│  ┌─────────────────┐  ┌──────────────┐  ┌──────────────────────┐ │
-│  │ Host Event       │  │ File Watcher │  │ Provisioner          │ │
-│  │ Reader (ETW)     │  │ (FIM + Hash) │  │ (Sysmon/ClamAV/etc) │ │
-│  └────────┬────────┘  └──────┬───────┘  └──────────────────────┘ │
-└───────────┼──────────────────┼───────────────────────────────────┘
-            │                  │
-            ▼                  ▼
-┌───────────────────────────────────────────────────────────────────┐
-│                    osoosi-core (EdrOrchestrator)                   │
-│                                                                   │
-│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌────────────┐  │
-│  │ NSRL     │    │ Policy   │    │ Threat   │    │ Behavioral │  │
-│  │ Fast-Path│───▶│ Engine   │───▶│ Model    │───▶│ Classifier │  │
-│  │ (3-tier) │    │ (Sigma)  │    │ (EMBER)  │    │ (AI)       │  │
-│  └──────────┘    └──────────┘    └──────────┘    └────────────┘  │
-│       │               │              │                │           │
-│       ▼               ▼              ▼                ▼           │
-│  ┌────────────────────────────────────────────────────────────┐   │
-│  │     CAPA → FLOSS → HollowsHunter → Hayabusa → Chainsaw     │   │
-│  │              (Deep Forensic Analysis Pipeline)              │   │
-│  └────────────────────────────────────────────────────────────┘   │
-│       │                                                           │
-│       ▼                                                           │
-│  ┌──────────────┐  ┌──────────────┐  ┌──────────────────────┐   │
-│  │ Audit Trail  │  │ Mesh         │  │ Active Response      │   │
-│  │ (Merkle Log) │  │ (Broadcast)  │  │ (Quarantine/Tarpit)  │   │
-│  └──────────────┘  └──────────────┘  └──────────────────────┘   │
-└───────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────┐
+│                   KERNEL-LEVEL INTERCEPTION LAYER                      │
+│                                                                        │
+│   ┌───────────────────────────────┐  ┌──────────────────────────────┐ │
+│   │   Windows Ring-0 Driver       │  │    Linux eBPF + LSM Probe    │ │
+│   │   (osoosi_driver.sys)         │  │    (osoosi_probe.bpf.c)      │ │
+│   │   • PsSetCreateProcessNotify  │  │    • lsm/bprm_check_security │ │
+│   │     RoutineEx (Pre-Exec Block)│  │      (Pre-Exec Reject -EPERM)│ │
+│   │   • STATUS_ACCESS_DENIED      │  │    • process_ring (RingBuf)  │ │
+│   │   • Spinlock Ring Queue       │  │    • network_ring (RingBuf)  │ │
+│   │   • IOCTL (\\.\OsoosiDriver)  │  │    • Hash Map (blocked_paths)│ │
+│   └───────────────┬───────────────┘  └──────────────┬───────────────┘ │
+│                   │                                 │                 │
+│   ┌───────────────▼───────────────┐                 │                 │
+│   │    Sysmon Kernel Driver (ETW) │                 │                 │
+│   │    (25+ Host Security Events) │                 │                 │
+│   └───────────────┬───────────────┘                 │                 │
+└───────────────────┼─────────────────────────────────┼─────────────────┘
+                    │                                 │
+                    ▼                                 ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                          osoosi-telemetry                              │
+│  ┌───────────────────────┐  ┌─────────────────┐  ┌──────────────────┐ │
+│  │ Host Event Reader     │  │ eBPF Aya Engine │  │ File Watcher     │ │
+│  │ (ETW / Sysmon 1-25)   │  │ (AsyncFd Ring)  │  │ (FIM + SHA-256)  │ │
+│  └───────────┬───────────┘  └────────┬────────┘  └────────┬─────────┘ │
+└──────────────┼───────────────────────┼────────────────────┼───────────┘
+               │                       │                    │
+               ▼                       ▼                    ▼
+┌────────────────────────────────────────────────────────────────────────┐
+│                       osoosi-core (EdrOrchestrator)                    │
+│                                                                        │
+│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌────────────┐       │
+│  │ NSRL     │    │ Policy   │    │ Threat   │    │ Behavioral │       │
+│  │ Fast-Path│───▶│ Engine   │───▶│ Model    │───▶│ Classifier │       │
+│  │ (3-tier) │    │ (Sigma)  │    │ (EMBER)  │    │ (AI)       │       │
+│  └──────────┘    └──────────┘    └──────────┘    └────────────┘       │
+│       │               │              │                │                │
+│       ▼               ▼              ▼                ▼                │
+│  ┌─────────────────────────────────────────────────────────────────┐   │
+│  │      CAPA → FLOSS → HollowsHunter → Hayabusa → Chainsaw         │   │
+│  │               (Deep Forensic Analysis Pipeline)                 │   │
+│  └─────────────────────────────────────────────────────────────────┘   │
+│       │                                                                │
+│       ▼                                                                │
+│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────────┐    │
+│  │ Audit Trail  │  │ Mesh         │  │ Active Response Orchestr. │    │
+│  │ (Merkle Log) │  │ (Broadcast)  │  │ • Kernel Rule Sync (IOCTL)│    │
+│  │              │  │              │  │ • Quarantine / Tarpit     │    │
+│  └──────────────┘  └──────────────┘  └───────────────────────────┘    │
+└────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Detection Tiers
@@ -149,9 +164,29 @@ CyberShield provides real-time resource anomaly monitoring and process mitigatio
 - **Authoritative STIX 2.1 Bundle**: 26,381 objects uniting MITRE ATT&CK Enterprise (v19.2) and MITRE ATLAS (v2026.09), correlated with 4,334 production Sigma rules.
 - **GossipSub Channel (`osoosi-stix-sync-v1`)**: Peer-to-peer distribution of cryptographic `StixManifest` with Blake3 checksum and verified object count.
 - **Zero-Downtime Hot-Reloading**: In-memory catalog replacement without daemon restart or telemetry interruption.
-- **Dual-Target Parity**: Strict synchronization across development (`dashboard/src/`) and production (`dashboard/dist/`) directories.
 
+### 11. Native Ring-0 Windows Driver & Linux eBPF Parity (Hardware-Enforced Pre-Exec Blocking)
 
+OpenỌ̀ṣọ́ọ̀sì eliminates the post-execution telemetry gap of traditional user-mode EDRs through hardware-enforced, kernel-space pre-operation blocking on both Windows and Linux endpoints.
+
+#### Windows Ring-0 Kernel Driver (`driver/windows/`):
+- **Synchronous Process Interception (`PsSetCreateProcessNotifyRoutineEx`)**: Hooks kernel process creation synchronously before PEB creation and before the initial process thread executes any user-mode code. By assigning `CreateInfo->CreationStatus = STATUS_ACCESS_DENIED` (`0xC0000022`), process instantiation is aborted inside `ntoskrnl`.
+- **BSOD Prevention & Bounded String Operations**: Standard null-terminated string functions cause kernel bugchecks (BSOD) when scanning non-null-terminated `UNICODE_STRING` buffers. The driver uses `OsoosiContainsSubstrInsensitive`, strictly bounding memory operations by buffer lengths.
+- **Path Normalization**: Automatically strips DOS drive prefixes (`[A-Za-z]:`) to ensure exact substring matching against raw NT kernel device namespaces (`\Device\HarddiskVolumeX\...`).
+- **Core OS Immunity Whitelist**: Hardcoded protections immune to blocking: PIDs 0, 4, `smss.exe`, `csrss.exe`, `wininit.exe`, `services.exe`, `lsass.exe`, `sysmon64.exe`, `sysmon.exe`, `msmpeng.exe`, `osoosi.exe`.
+- **Fast Spinlock Circular Queue**: Buffered 256-slot non-paged pool ring queue protected by `KeAcquireInStackQueuedSpinLock`, drained asynchronously via `IOCTL_OSOOSI_POLL_INTERCEPTIONS`.
+- **IOCTL Control Interface (`\\.\OsoosiDriver`)**: Sub-microsecond path and SHA-256 hash rule updates from user-space orchestrator.
+
+#### Linux eBPF Parity Subsystem (`ebpf/` & `crates/osoosi-telemetry/src/linux_ebpf.rs`):
+- **LSM Pre-Execution Blocking (`osoosi_bprm_check`)**: Hooks `lsm/bprm_check_security`. When `execve()` or `execveat()` is called, the probe checks the kernel-space `blocked_paths` BPF hash map (`BPF_MAP_TYPE_HASH`). If matched, it immediately returns `-EACCES` (`-EPERM`), terminating execution before ELF binary headers or pages are mapped into memory.
+- **Zero-Drop Ring Buffers (`BPF_MAP_TYPE_RINGBUF`)**: 256 KB memory maps streaming process creation (`sched_process_exec`), exit (`sched_process_exit`), and network connects (`sys_enter_connect` / `inet_sock_set_state`).
+- **Aya Pure-Rust Loader & Multi-Path Discovery**: Dynamically resolves eBPF object bytecode across `$env:OSOOSI_EBPF_OBJECT`, `osoosi-ebpf.o`, `ebpf/bin/osoosi-ebpf.o`, `/usr/lib/osoosi/osoosi-ebpf.o`, and `/etc/osoosi/osoosi-ebpf.o` with panic-free error propagation.
+- **Tokio AsyncFd Event Streaming**: Integrates ring buffer descriptors into Tokio's asynchronous reactor, streaming events without CPU spinning.
+
+#### User-Space Orchestrator Synchronization (`crates/osoosi-runtime/src/kernel_driver.rs`):
+- **Autonomy Mode Synchronization**: Dynamically synchronizes active autonomy modes (`Audit`, `Active`, `Lockdown`) with the kernel driver and eBPF maps.
+- **Graceful Defense-in-Depth Fallback**: If the kernel driver is not loaded, the orchestrator automatically degrades to user-mode WFP (Windows Filtering Platform) network filtering, active thread tarpitting, and Job Object sandboxing.
+- **CLI Management**: Full administrative control via `osoosi driver status`, `install`, `uninstall`, `add-rule`, `set-mode`, and `clear-rules`.
 
 ## Response Matrix
 
