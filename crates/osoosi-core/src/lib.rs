@@ -943,7 +943,7 @@ fn try_build_behavioral_yara_voter(adaptive: Arc<crate::adaptive::TelemetryContr
 #[derive(Clone)]
 pub struct EdrOrchestrator {
     /// Memory: Local persistence
-    memory: Arc<MemoryStore>,
+    pub memory: Arc<MemoryStore>,
     /// Mesh peer count (updated when peers are approved)
     mesh_peer_count: Arc<AtomicU32>,
     /// Start time for uptime calculation
@@ -957,9 +957,9 @@ pub struct EdrOrchestrator {
     /// Runtime: Active Response (Ghost/Tarpit)
     response: Arc<DeceptionManager>,
     /// Audit: Tamper-evident Merkle Logchain
-    audit: Arc<AuditTrail>,
+    pub audit: Arc<AuditTrail>,
     /// Trust: Identity and Attestation
-    trust: Arc<TrustManager>,
+    pub trust: Arc<TrustManager>,
     watcher: Arc<tokio::sync::Mutex<osoosi_telemetry::FileWatcher>>,
     /// Receiver for file system events. Taken by the monitor loop.
     file_event_rx: Arc<

@@ -5881,6 +5881,7 @@ dependencies = [
  "axum",
  "blake3",
  "chrono",
+ "hex",
  "osoosi-behavioral",
  "osoosi-core",
  "osoosi-policy",
@@ -5894,6 +5895,7 @@ dependencies = [
  "tower",
  "tower-http 0.5.2",
  "tracing",
+ "uuid",
 ]
 
 [[package]]

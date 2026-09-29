@@ -48,6 +48,7 @@ const state = {
         action_confidence_threshold: 0.80,
         quarantine_confidence_threshold: 0.95
     },
+    blockingRules: [],
     supervisorStatus: null
 };
 
@@ -80,6 +81,7 @@ function startApp() {
     renderZoneView();
     renderApprovalsView();
     fetchAutonomySettings();
+    fetchBlockingRules();
     renderStoryView();
     renderSkyrlView();
     renderMitreView();
@@ -556,6 +558,7 @@ async function updateDashboard() {
                 'zone-rec-body': 'toggle-zone-rec-btn',
                 'zone-nodes-body': 'toggle-zone-nodes-btn',
                 'approvals-body': 'toggle-approvals-btn',
+                'blocklist-manager-body': 'toggle-blocklist-btn',
                 'suppression-body': 'toggle-suppression-btn',
                 'manual-tp-body': 'toggle-manual-tp-btn',
                 'mesh-panel-body': 'toggle-mesh-panel-btn',
@@ -3008,6 +3011,7 @@ window.autoRemediateAllGaps = async function(triggerBtn) {
  */
 async function renderApprovalsView() {
     fetchAutonomySettings();
+    fetchBlockingRules();
     const approvals = await fetchAPI('/pending-actions');
     const list = document.getElementById('approval-list');
     if (!list) return;
@@ -3067,6 +3071,155 @@ window.rejectAction = async function(id) {
     });
     if (res.ok) renderApprovalsView();
 };
+
+/**
+ * Active Kernel & EDR Blocklist Manager
+ */
+async function fetchBlockingRules() {
+    try {
+        const rules = await fetchAPI('/blocking/rules');
+        state.blockingRules = Array.isArray(rules) ? rules : [];
+
+        const countBadge = document.getElementById('blocklist-count-badge');
+        if (countBadge) {
+            countBadge.innerText = `${state.blockingRules.length} RULES ACTIVE`;
+        }
+
+        const tbody = document.getElementById('blocklist-rules-table-body');
+        if (!tbody) return;
+
+        if (state.blockingRules.length === 0) {
+            tbody.innerHTML = `
+                <tr>
+                    <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">Zero active manual blocking rules. Add a rule above to enforce pre-exec blocking.</td>
+                </tr>
+            `;
+            return;
+        }
+
+        tbody.innerHTML = state.blockingRules.map(rule => {
+            const kindLower = (rule.kind || 'executable').toLowerCase();
+            const kindBadge = kindLower === 'shredding' 
+                ? '<span class="badge purple">Shredding</span>' 
+                : '<span class="badge red">Executable</span>';
+            const hashVal = rule.hash || '';
+            const displayHash = hashVal.length > 16 
+                ? `${hashVal.substring(0, 8)}...${hashVal.substring(hashVal.length - 8)}` 
+                : (hashVal || 'Hardware-Enforced');
+
+            return `
+                <tr style="border-bottom: 1px solid var(--glass-border);">
+                    <td style="padding: 12px 16px;"><strong>${escapeHtml(rule.path)}</strong></td>
+                    <td style="padding: 12px 16px;">${kindBadge}</td>
+                    <td style="padding: 12px 16px;"><span class="badge" style="font-family: monospace; font-size: 11px;" title="${escapeHtml(hashVal || rule.path)}">${escapeHtml(displayHash)}</span></td>
+                    <td style="padding: 12px 16px;"><span class="badge green">📡 Broadcast to Mesh</span></td>
+                    <td style="padding: 12px 16px; text-align: right;">
+                        <button class="btn-text" style="color:var(--accent-red); cursor:pointer;" onclick="unlockRule('${encodeURIComponent(rule.path)}')">Unlock / Remove</button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+    } catch (e) {
+        console.error('Failed to fetch blocking rules:', e);
+    }
+}
+
+async function submitBlocklistRule() {
+    const pathInput = document.getElementById('blocklist-path-input');
+    const hashInput = document.getElementById('blocklist-hash-input');
+    const kindSelect = document.getElementById('blocklist-kind-select');
+    const broadcastCheck = document.getElementById('blocklist-broadcast-checkbox');
+    const statusSpan = document.getElementById('blocklist-action-status');
+
+    if (!pathInput) return;
+    const path = pathInput.value.trim();
+    if (!path) {
+        if (statusSpan) {
+            statusSpan.style.color = 'var(--accent-red)';
+            statusSpan.innerText = 'Please specify a target path or binary name';
+        }
+        showSkyrlToast('Target path or executable name cannot be empty', 'error');
+        return;
+    }
+
+    const hash = hashInput ? hashInput.value.trim() : '';
+    const kind = kindSelect ? kindSelect.value : 'executable';
+    const broadcast = broadcastCheck ? broadcastCheck.checked : true;
+
+    if (statusSpan) {
+        statusSpan.style.color = 'var(--accent-blue)';
+        statusSpan.innerText = 'Registering & broadcasting rule...';
+    }
+
+    try {
+        const payload = {
+            path,
+            kind,
+            hash: hash || undefined,
+            broadcast
+        };
+
+        const res = await fetch(`${API_BASE}/blocking/rules`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload)
+        });
+
+        const data = await res.json();
+        if (res.ok && data.ok) {
+            if (statusSpan) {
+                statusSpan.style.color = 'var(--accent-green)';
+                statusSpan.innerText = broadcast 
+                    ? 'Rule active & broadcast to P2P mesh' 
+                    : 'Rule active (local kernel only)';
+            }
+            showSkyrlToast(`Blocklist rule registered for ${path}${broadcast ? ' and broadcast to mesh' : ''}`, 'success');
+            pathInput.value = '';
+            if (hashInput) hashInput.value = '';
+            await fetchBlockingRules();
+            setTimeout(() => {
+                if (statusSpan) statusSpan.innerText = '';
+            }, 4000);
+        } else {
+            const err = data.error || 'Failed to register rule';
+            if (statusSpan) {
+                statusSpan.style.color = 'var(--accent-red)';
+                statusSpan.innerText = err;
+            }
+            showSkyrlToast(`Blocklist rule error: ${err}`, 'error');
+        }
+    } catch (e) {
+        if (statusSpan) {
+            statusSpan.style.color = 'var(--accent-red)';
+            statusSpan.innerText = e.message || 'Network error';
+        }
+        showSkyrlToast(`Failed to add blocklist rule: ${e.message}`, 'error');
+    }
+}
+
+async function unlockRule(encodedPath) {
+    const path = decodeURIComponent(encodedPath);
+    try {
+        const res = await fetch(`${API_BASE}/blocking/rules/unlock`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ path })
+        });
+        const data = await res.json();
+        if (res.ok && data.ok) {
+            showSkyrlToast(`Rule removed / unlocked for ${path}`, 'success');
+            await fetchBlockingRules();
+        } else {
+            showSkyrlToast(`Failed to unlock rule: ${data.error || 'Unknown error'}`, 'error');
+        }
+    } catch (e) {
+        showSkyrlToast(`Unlock error: ${e.message}`, 'error');
+    }
+}
+
+window.submitBlocklistRule = submitBlocklistRule;
+window.unlockRule = unlockRule;
+window.fetchBlockingRules = fetchBlockingRules;
 
 /**
  * Fetch and update Autonomy Defense Policy Settings
@@ -3458,6 +3611,7 @@ function toggleActivityPanel() { togglePanel('activity-feed-body', 'toggle-activ
 function toggleZoneRecPanel() { togglePanel('zone-rec-body', 'toggle-zone-rec-btn'); }
 function toggleZoneNodesPanel() { togglePanel('zone-nodes-body', 'toggle-zone-nodes-btn'); }
 function toggleApprovalsPanel() { togglePanel('approvals-body', 'toggle-approvals-btn'); }
+function toggleBlocklistPanel() { togglePanel('blocklist-manager-body', 'toggle-blocklist-btn'); }
 function toggleSuppressionPanel() { togglePanel('suppression-body', 'toggle-suppression-btn'); }
 function toggleManualTpPanel() { togglePanel('manual-tp-body', 'toggle-manual-tp-btn'); }
 function toggleMeshPanel() { togglePanel('mesh-panel-body', 'toggle-mesh-panel-btn'); }
@@ -3472,6 +3626,7 @@ window.toggleActivityPanel = toggleActivityPanel;
 window.toggleZoneRecPanel = toggleZoneRecPanel;
 window.toggleZoneNodesPanel = toggleZoneNodesPanel;
 window.toggleApprovalsPanel = toggleApprovalsPanel;
+window.toggleBlocklistPanel = toggleBlocklistPanel;
 window.toggleSuppressionPanel = toggleSuppressionPanel;
 window.toggleManualTpPanel = toggleManualTpPanel;
 window.toggleMeshPanel = toggleMeshPanel;

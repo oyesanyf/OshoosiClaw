@@ -1102,6 +1102,73 @@
                     </div>
                 </div>
 
+                <div class="card glass shadow-glow" id="blocklist-manager-card" style="margin-bottom: 24px;">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                        <div style="display:flex; align-items:center; gap:10px; flex-wrap:wrap;">
+                            <h3 style="margin:0;">🛡️ Kernel &amp; EDR Blocklist Manager</h3>
+                            <span class="badge blue" id="blocklist-count-badge">0 RULES ACTIVE</span>
+                            <span class="badge purple">P2P Mesh Broadcast Active</span>
+                        </div>
+                        <button class="btn-text" id="toggle-blocklist-btn" onclick="toggleBlocklistPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
+                    </div>
+                    <div class="card-body" id="blocklist-manager-body">
+                        <div style="font-size: 13px; color: var(--text-muted); line-height: 1.6; margin-bottom: 20px;">
+                            Hardware pre-execution interception enforced at Ring-0 kernel level with automatic cryptographic hash computation and real-time GossipSub v1.2 &amp; Nostr mesh broadcast across peer nodes.
+                        </div>
+
+                        <!-- Rule Form -->
+                        <div style="background: rgba(255, 255, 255, 0.02); border: 1px solid var(--glass-border); border-radius: 10px; padding: 18px; margin-bottom: 20px;">
+                            <div style="display: grid; grid-template-columns: 2fr 2fr 1fr auto; gap: 12px; align-items: end; margin-bottom: 14px;">
+                                <div>
+                                    <label for="blocklist-path-input" style="display: block; font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 6px;">Rule Target Path</label>
+                                    <input type="text" id="blocklist-path-input" placeholder="e.g. C:\Users\Public\mimikatz.exe or evil.exe" style="width: 100%; padding: 8px 12px; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--glass-border); border-radius: 6px; color: var(--text-primary); font-size: 13px;">
+                                </div>
+                                <div>
+                                    <label for="blocklist-hash-input" style="display: block; font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 6px;">Binary Hash</label>
+                                    <input type="text" id="blocklist-hash-input" placeholder="Optional 64-char hex hash (auto-computed if file exists)" style="width: 100%; padding: 8px 12px; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--glass-border); border-radius: 6px; color: var(--text-primary); font-size: 13px; font-family: monospace;">
+                                </div>
+                                <div>
+                                    <label for="blocklist-kind-select" style="display: block; font-size: 11px; font-weight: 600; color: var(--text-secondary); text-transform: uppercase; margin-bottom: 6px;">Enforcement</label>
+                                    <select id="blocklist-kind-select" style="width: 100%; padding: 8px 12px; background: rgba(0, 0, 0, 0.3); border: 1px solid var(--glass-border); border-radius: 6px; color: var(--text-primary); font-size: 13px;">
+                                        <option value="executable">Executable</option>
+                                        <option value="shredding">Shredding</option>
+                                    </select>
+                                </div>
+                                <div>
+                                    <button id="btn-add-blocklist-rule" onclick="submitBlocklistRule()" style="background:var(--accent-blue); color:var(--bg-dark); font-weight:600; padding:8px 20px; border-radius:8px; cursor: pointer; white-space: nowrap; height: 38px; border: none;">+ Add &amp; Broadcast</button>
+                                </div>
+                            </div>
+                            <div style="display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 12px;">
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <input type="checkbox" id="blocklist-broadcast-checkbox" checked style="width: 16px; height: 16px; cursor: pointer; accent-color: var(--accent-blue);">
+                                    <label for="blocklist-broadcast-checkbox" style="font-size: 12px; color: var(--text-secondary); cursor: pointer;">Broadcast Threat Signature to P2P Wire Mesh &amp; Nostr Relay Pool</label>
+                                </div>
+                                <span id="blocklist-action-status" style="font-size: 12px; font-weight: 500;"></span>
+                            </div>
+                        </div>
+
+                        <!-- Active Rules Table -->
+                        <div style="overflow-x: auto;">
+                            <table class="data-table" style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;">
+                                <thead>
+                                    <tr style="border-bottom: 1px solid var(--glass-border); background: rgba(255, 255, 255, 0.02); color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
+                                        <th style="padding: 12px 16px;">Rule Target Path</th>
+                                        <th style="padding: 12px 16px; width: 140px;">Enforcement</th>
+                                        <th style="padding: 12px 16px; width: 220px;">Hash</th>
+                                        <th style="padding: 12px 16px; width: 180px;">Mesh Status</th>
+                                        <th style="padding: 12px 16px; width: 130px; text-align: right;">Action</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="blocklist-rules-table-body">
+                                    <tr>
+                                        <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">Zero active manual blocking rules. Add a rule above to enforce pre-exec blocking.</td>
+                                    </tr>
+                                </tbody>
+                            </table>
+                        </div>
+                    </div>
+                </div>
+
                 <div class="card glass shadow-glow">
                     <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h3>Action Approval Queue</h3>

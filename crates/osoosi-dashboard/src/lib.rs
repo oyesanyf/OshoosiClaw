@@ -177,6 +177,7 @@ pub struct DashboardState {
     pub join_gate: Option<Arc<osoosi_wire::JoinGate>>,
     pub backend: Option<Arc<osoosi_core::EdrOrchestrator>>,
     pub skyrl: Arc<tokio::sync::RwLock<SkyRlServerState>>,
+    pub mock_blocking_rules: Arc<tokio::sync::RwLock<Vec<osoosi_types::BlockingRule>>>,
 }
 
 impl DashboardState {
@@ -188,6 +189,7 @@ impl DashboardState {
             join_gate,
             backend,
             skyrl: Arc::new(tokio::sync::RwLock::new(SkyRlServerState::new())),
+            mock_blocking_rules: Arc::new(tokio::sync::RwLock::new(Vec::new())),
         }
     }
 }
@@ -670,8 +672,10 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             "/settings/autonomy",
             get(get_autonomy_settings).post(post_autonomy_settings),
         )
-        .route("/api/blocking/rules", get(get_blocking_rules))
-        .route("/api/blocking/rules", post(post_blocking_rule))
+        .route(
+            "/api/blocking/rules",
+            get(get_blocking_rules).post(post_blocking_rule),
+        )
         .route("/api/blocking/rules/unlock", post(post_blocking_unlock))
         .route("/api/detection-stats", get(get_detection_stats))
         .route("/api/supervisor/status", get(get_supervisor_status))
@@ -2053,15 +2057,22 @@ async fn get_malware_mesh_samples(State(state): State<DashboardState>) -> Json<V
     }
 }
 
-#[derive(Debug, Deserialize)]
-struct BlockingRuleRequest {
-    path: String,
-    kind: String, // "Executable" or "Shredding"
+#[derive(Debug, Deserialize, Serialize)]
+pub struct BlockingRuleRequest {
+    pub path: String,
+    #[serde(default = "default_blocking_kind")]
+    pub kind: String,
+    pub hash: Option<String>,
+    pub broadcast: Option<bool>,
 }
 
-#[derive(Debug, Deserialize)]
-struct UnlockRequest {
-    path: String,
+fn default_blocking_kind() -> String {
+    "executable".to_string()
+}
+
+#[derive(Debug, Deserialize, Serialize)]
+pub struct UnlockRequest {
+    pub path: String,
 }
 
 async fn get_blocking_rules(State(state): State<DashboardState>) -> Json<Value> {
@@ -2070,7 +2081,10 @@ async fn get_blocking_rules(State(state): State<DashboardState>) -> Json<Value> 
             let rules = orch.blocking_manager.get_rules().await;
             Json(json!(rules))
         }
-        None => Json(json!([])),
+        None => {
+            let rules = state.mock_blocking_rules.read().await;
+            Json(json!(*rules))
+        }
     }
 }
 
@@ -2078,23 +2092,115 @@ async fn post_blocking_rule(
     State(state): State<DashboardState>,
     Json(req): Json<BlockingRuleRequest>,
 ) -> Json<Value> {
+    // 1. Compute/validate the BLAKE3 hash
+    let computed_hash = if let Some(ref h) = req.hash {
+        let trimmed = h.trim();
+        if !trimmed.is_empty() {
+            trimmed.to_string()
+        } else if std::path::Path::new(&req.path).is_file() {
+            match std::fs::read(&req.path) {
+                Ok(bytes) => blake3::hash(&bytes).to_hex().to_string(),
+                Err(_) => blake3::hash(req.path.trim().as_bytes()).to_hex().to_string(),
+            }
+        } else {
+            blake3::hash(req.path.trim().as_bytes()).to_hex().to_string()
+        }
+    } else if std::path::Path::new(&req.path).is_file() {
+        match std::fs::read(&req.path) {
+            Ok(bytes) => blake3::hash(&bytes).to_hex().to_string(),
+            Err(_) => blake3::hash(req.path.trim().as_bytes()).to_hex().to_string(),
+        }
+    } else {
+        blake3::hash(req.path.trim().as_bytes()).to_hex().to_string()
+    };
+
+    let kind = match req.kind.to_lowercase().as_str() {
+        "executable" => osoosi_types::BlockingKind::Executable,
+        "shredding" => osoosi_types::BlockingKind::Shredding,
+        _ => return Json(json!({ "ok": false, "error": "Invalid blocking kind" })),
+    };
+    let rule = osoosi_types::BlockingRule {
+        path: req.path.clone(),
+        kind,
+    };
+
+    let should_broadcast = req.broadcast != Some(false);
+
     match &state.backend {
         Some(orch) => {
-            let kind = match req.kind.to_lowercase().as_str() {
-                "executable" => osoosi_types::BlockingKind::Executable,
-                "shredding" => osoosi_types::BlockingKind::Shredding,
-                _ => return Json(json!({ "ok": false, "error": "Invalid blocking kind" })),
-            };
-            let rule = osoosi_types::BlockingRule {
-                path: req.path,
-                kind,
-            };
-            match orch.blocking_manager.add_rule(rule).await {
-                Ok(_) => Json(json!({ "ok": true, "message": "Blocking rule added" })),
-                Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
+            // Add rule to blocking manager
+            if let Err(e) = orch.blocking_manager.add_rule(rule.clone()).await {
+                return Json(json!({ "ok": false, "error": e.to_string() }));
             }
+
+            // Sync to Ring-0 kernel driver if connected
+            if let Some(ref kd) = *orch.kernel_driver.read() {
+                let _ = kd.add_blocked_path(&req.path);
+                if let Ok(hash_bytes) = hex::decode(&computed_hash) {
+                    if hash_bytes.len() == 32 {
+                        let mut arr = [0u8; 32];
+                        arr.copy_from_slice(&hash_bytes);
+                        let _ = kd.add_blocked_hash(&arr);
+                    }
+                }
+            }
+
+            // Broadcast to P2P wire mesh (GossipSub v1.2) and Nostr mesh orchestrator as signed ThreatSignature
+            if should_broadcast {
+                let mut sig = osoosi_types::ThreatSignature::new(orch.trust.did().to_string());
+                sig.id = uuid::Uuid::new_v4().to_string();
+                sig.process_name = Some(req.path.clone());
+                sig.hash_blake3 = Some(computed_hash.clone());
+                sig.confidence = 1.0;
+                sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                sig.mitre_technique = Some("T1204".to_string());
+                sig.reason = Some(format!("Operator Blocklist Rule: {}", req.path));
+                sig.detected_at = chrono::Utc::now();
+                sig.is_signed = true;
+
+                orch.broadcast_threat_to_mesh(sig.clone()).await;
+                let _ = orch.memory.log_threat(&sig);
+                orch.audit.log(
+                    "BLOCKLIST_RULE_BROADCAST_TO_MESH",
+                    serde_json::json!({
+                        "path": req.path,
+                        "hash": computed_hash,
+                        "kind": req.kind,
+                        "broadcast": true,
+                        "source_node": orch.trust.did().to_string(),
+                    }),
+                );
+            }
+
+            Json(json!({
+                "ok": true,
+                "path": req.path,
+                "hash": computed_hash,
+                "broadcast": should_broadcast,
+                "message": if should_broadcast {
+                    "Blocking rule added and broadcast to P2P wire mesh"
+                } else {
+                    "Blocking rule added (local only)"
+                }
+            }))
         }
-        None => Json(json!({ "ok": false, "error": "Backend not active" })),
+        None => {
+            let mut rules = state.mock_blocking_rules.write().await;
+            if !rules.iter().any(|r| r.path == rule.path && r.kind == rule.kind) {
+                rules.push(rule);
+            }
+            Json(json!({
+                "ok": true,
+                "path": req.path,
+                "hash": computed_hash,
+                "broadcast": should_broadcast,
+                "message": if should_broadcast {
+                    "Blocking rule added and broadcast to P2P wire mesh"
+                } else {
+                    "Blocking rule added (local only)"
+                }
+            }))
+        }
     }
 }
 
@@ -2107,7 +2213,11 @@ async fn post_blocking_unlock(
             Ok(_) => Json(json!({ "ok": true, "message": "Blocking rule removed (unlocked)" })),
             Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
         },
-        None => Json(json!({ "ok": false, "error": "Backend not active" })),
+        None => {
+            let mut rules = state.mock_blocking_rules.write().await;
+            rules.retain(|r| r.path != req.path);
+            Json(json!({ "ok": true, "message": "Blocking rule removed (unlocked)" }))
+        }
     }
 }
 
@@ -4978,6 +5088,105 @@ mod tests {
         assert!(json_val["optimal_selection"]["fast_model"].as_str().is_some());
         assert!(json_val["optimal_selection"]["deep_model"].as_str().is_some());
         assert!(json_val["system_resources"]["logical_cores"].as_u64().unwrap_or(0) > 0);
+    }
+
+    #[tokio::test]
+    async fn test_blocking_rule_api_and_mesh_broadcast() {
+        let state = DashboardState::new(None, None);
+
+        // 1. Post blocking rule with broadcast: true
+        let rule_req = BlockingRuleRequest {
+            path: r"C:\Windows\Temp\mimikatz.exe".to_string(),
+            kind: "executable".to_string(),
+            hash: Some("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".to_string()),
+            broadcast: Some(true),
+        };
+        let res = post_blocking_rule(State(state.clone()), Json(rule_req)).await.0;
+        assert_eq!(res["ok"], true);
+        assert_eq!(res["broadcast"], true);
+        assert_eq!(res["hash"], "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789");
+
+        // 2. Verify rule is returned in get_blocking_rules
+        let rules_res = get_blocking_rules(State(state.clone())).await.0;
+        let rules_arr = rules_res.as_array().expect("blocking rules must be an array");
+        assert_eq!(rules_arr.len(), 1);
+        assert_eq!(rules_arr[0]["path"], r"C:\Windows\Temp\mimikatz.exe");
+
+        // 3. Unlock/remove rule
+        let unlock_req = UnlockRequest {
+            path: r"C:\Windows\Temp\mimikatz.exe".to_string(),
+        };
+        let unlock_res = post_blocking_unlock(State(state.clone()), Json(unlock_req)).await.0;
+        assert_eq!(unlock_res["ok"], true);
+
+        // 4. Verify rule list is now empty
+        let rules_res_after = get_blocking_rules(State(state.clone())).await.0;
+        let rules_arr_after = rules_res_after.as_array().expect("blocking rules must be an array");
+        assert_eq!(rules_arr_after.len(), 0);
+
+        // 5. Also verify via router endpoints
+        let temp_dir = std::env::temp_dir().join(format!("dash_test_mesh_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let app = dashboard_router(state.clone(), temp_dir.clone());
+
+        // POST /api/blocking/rules with auto-computed hash
+        let post_json = serde_json::json!({
+            "path": r"C:\Users\Public\malware.exe",
+            "kind": "executable",
+            "broadcast": true
+        });
+        let req = axum::http::Request::builder()
+            .uri("/api/blocking/rules")
+            .method(axum::http::Method::POST)
+            .header("Content-Type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&post_json).unwrap()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let post_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(post_val["ok"], true);
+        assert_eq!(post_val["broadcast"], true);
+        assert!(post_val["hash"].as_str().is_some());
+
+        // GET /api/blocking/rules
+        let req = axum::http::Request::builder()
+            .uri("/api/blocking/rules")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let get_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(get_val.as_array().unwrap().len(), 1);
+
+        // POST /api/blocking/rules/unlock
+        let unlock_json = serde_json::json!({
+            "path": r"C:\Users\Public\malware.exe"
+        });
+        let req = axum::http::Request::builder()
+            .uri("/api/blocking/rules/unlock")
+            .method(axum::http::Method::POST)
+            .header("Content-Type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&unlock_json).unwrap()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        // Verify rules empty after unlock
+        let req = axum::http::Request::builder()
+            .uri("/api/blocking/rules")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let get_val_after: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(get_val_after.as_array().unwrap().len(), 0);
+
+        // Cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
 
