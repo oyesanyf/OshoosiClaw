@@ -772,9 +772,10 @@ async fn get_supervisor_status(State(state): State<DashboardState>) -> impl Into
             let regime = osoosi_core::supervisor::MultiSensorFusionEngine::map_regime(health_score);
             let hw_res = osoosi_behavioral::hardware_selection::get_system_resources();
             let ai_cfg = osoosi_types::config::load_ai_config();
+            let installed = osoosi_behavioral::hardware_selection::query_installed_ollama_models(&ai_cfg.reasoning_url).await;
             let hw_selection = Some(osoosi_behavioral::hardware_selection::select_optimal_models(
                 &hw_res,
-                &[],
+                &installed,
                 &ai_cfg.reasoning_model,
                 &ai_cfg.foundation_sec_model,
             ));

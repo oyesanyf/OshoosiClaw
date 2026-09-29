@@ -5679,15 +5679,17 @@ function renderSupervisorModal(data, regimeColor, regimeBadgeClass) {
         }
         const cpuProfile = document.getElementById('hw-cpu-profile');
         if (cpuProfile) {
-            cpuProfile.innerText = `${hw.cpu_cores} Cores | High-Throughput`;
+            cpuProfile.innerText = hw.cpu_cores != null ? `${hw.cpu_cores} Cores | Active Compute` : 'CPU Topology Active';
         }
         const ramProfile = document.getElementById('hw-ram-profile');
         if (ramProfile) {
-            ramProfile.innerText = `${hw.total_ram_gb.toFixed(1)} GB RAM (${hw.free_ram_gb.toFixed(1)} GB Free)`;
+            const total = typeof hw.total_ram_gb === 'number' ? hw.total_ram_gb.toFixed(1) : (hw.total_ram_gb ?? '0');
+            const free = typeof hw.free_ram_gb === 'number' ? hw.free_ram_gb.toFixed(1) : (hw.free_ram_gb ?? '0');
+            ramProfile.innerText = `${total} GB RAM (${free} GB Free)`;
         }
         const gpuProfile = document.getElementById('hw-gpu-profile');
         if (gpuProfile) {
-            gpuProfile.innerText = hw.gpu_vram_mb > 0 ? `GPU Active (${hw.gpu_vram_mb} MB VRAM)` : 'Standard CPU Execution';
+            gpuProfile.innerText = (hw.gpu_vram_mb && hw.gpu_vram_mb > 0) ? `GPU Active (${hw.gpu_vram_mb} MB VRAM)` : 'Standard CPU Execution';
         }
         const devBadge = document.getElementById('hw-device-badge');
         if (devBadge) {

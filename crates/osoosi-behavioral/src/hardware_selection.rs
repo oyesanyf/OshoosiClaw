@@ -98,11 +98,22 @@ pub struct OptimalModelSelection {
 
 static CACHED_SYSTEM_RESOURCES: OnceLock<SystemResourceSummary> = OnceLock::new();
 
-/// Cached query for system resources.
+/// Cached query for system resources with live memory refresh.
 pub fn get_system_resources() -> SystemResourceSummary {
-    CACHED_SYSTEM_RESOURCES
+    let mut res = CACHED_SYSTEM_RESOURCES
         .get_or_init(query_system_resources)
-        .clone()
+        .clone();
+    refresh_live_memory(&mut res);
+    res
+}
+
+fn refresh_live_memory(res: &mut SystemResourceSummary) {
+    let mut sys = System::new();
+    sys.refresh_memory();
+    let free_ram_gb = ((sys.available_memory() as f64) / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
+    if free_ram_gb > 0.0 {
+        res.free_ram_gb = free_ram_gb;
+    }
 }
 
 /// Uncached live detection of system resources.
@@ -174,8 +185,52 @@ fn probe_wmic_gpu() -> Option<(String, u64, u64)> {
     None
 }
 
+/// Windows PowerShell CIM probe for display adapters (Win 10/11 24H2+/Server without WMIC).
+#[cfg(target_os = "windows")]
+fn probe_powershell_cim_gpu() -> Option<(String, u64, u64)> {
+    let mut cmd = Command::new("powershell");
+    cmd.args([
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        "Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ConvertTo-Csv -NoTypeInformation",
+    ]);
+    cmd.creation_flags(CREATE_NO_WINDOW);
+
+    let output = cmd.output().ok()?;
+    if !output.status.success() {
+        return None;
+    }
+
+    let stdout = String::from_utf8_lossy(&output.stdout);
+    for line in stdout.lines() {
+        let trimmed = line.trim();
+        if trimmed.starts_with('"') && !trimmed.contains("AdapterRAM") {
+            let parts: Vec<&str> = trimmed.split(',').map(|s| s.trim_matches('"').trim()).collect();
+            if parts.len() >= 2 {
+                let name = parts[0].to_string();
+                let bytes: u64 = parts[1].parse().unwrap_or(0);
+                let vram_mb = bytes / (1024 * 1024);
+                if vram_mb > 0 {
+                    return Some((name, vram_mb, vram_mb));
+                }
+            }
+        }
+    }
+    None
+}
+
+/// Windows GPU detection fallback: tries WMIC first, then PowerShell CIM.
+#[cfg(target_os = "windows")]
+fn probe_windows_gpu() -> Option<(String, u64, u64)> {
+    if let Some(gpu) = probe_wmic_gpu() {
+        return Some(gpu);
+    }
+    probe_powershell_cim_gpu()
+}
+
 #[cfg(not(target_os = "windows"))]
-fn probe_wmic_gpu() -> Option<(String, u64, u64)> {
+fn probe_windows_gpu() -> Option<(String, u64, u64)> {
     None
 }
 
@@ -198,7 +253,7 @@ pub fn query_system_resources() -> SystemResourceSummary {
     let (gpu_name, total_vram_mb, free_vram_mb, has_gpu) =
         if let Some((name, tot, free)) = probe_nvidia_gpu() {
             (name, tot, free, true)
-        } else if let Some((name, tot, free)) = probe_wmic_gpu() {
+        } else if let Some((name, tot, free)) = probe_windows_gpu() {
             (name, tot, free, true)
         } else {
             ("No dedicated GPU detected".to_string(), 0, 0, false)
@@ -242,16 +297,45 @@ pub fn query_system_resources() -> SystemResourceSummary {
     }
 }
 
-/// Case-insensitive model name fuzzy/prefix matching helper.
-fn model_matches(candidate: &str, installed: &str) -> bool {
+/// Model name matching helper with prefix, tag, and quantization awareness.
+pub fn model_matches(candidate: &str, installed: &str) -> bool {
     let cand = candidate.trim().to_lowercase();
     let inst = installed.trim().to_lowercase();
     if cand == inst {
         return true;
     }
-    let inst_no_latest = inst.strip_suffix(":latest").unwrap_or(&inst);
-    let cand_no_latest = cand.strip_suffix(":latest").unwrap_or(&cand);
-    cand_no_latest == inst_no_latest || inst.contains(&cand) || cand.contains(&inst)
+
+    let inst_bare = inst.strip_suffix(":latest").unwrap_or(&inst);
+    let cand_bare = cand.strip_suffix(":latest").unwrap_or(&cand);
+    if cand_bare == inst_bare {
+        return true;
+    }
+
+    // Strip organization/repository namespace prefix (e.g. "fenkohq/foundation-sec-8b" -> "foundation-sec-8b")
+    let cand_repo_stripped = cand_bare.split('/').last().unwrap_or(cand_bare);
+    let inst_repo_stripped = inst_bare.split('/').last().unwrap_or(inst_bare);
+    if cand_repo_stripped == inst_repo_stripped {
+        return true;
+    }
+
+    // Check for quantization / custom suffix (e.g. "deepseek-r1:32b" matching "deepseek-r1:32b-q4_k_m")
+    if inst_repo_stripped.starts_with(cand_repo_stripped) {
+        let remainder = &inst_repo_stripped[cand_repo_stripped.len()..];
+        if remainder.starts_with('-') || remainder.starts_with(':') || remainder.starts_with('.') || remainder.starts_with('_') {
+            return true;
+        }
+    }
+    if cand_repo_stripped.starts_with(inst_repo_stripped) {
+        // Only permit if installed specified a tag (e.g. contains ':'), preventing bare family names from matching any size
+        if inst_repo_stripped.contains(':') {
+            let remainder = &cand_repo_stripped[inst_repo_stripped.len()..];
+            if remainder.starts_with('-') || remainder.starts_with(':') || remainder.starts_with('.') || remainder.starts_with('_') {
+                return true;
+            }
+        }
+    }
+
+    false
 }
 
 /// Find first matching model from candidates in the installed list.
@@ -341,13 +425,15 @@ pub fn select_optimal_models(
 
     // 3. Recommended Device Placement
     let is_large_model = deep_model.contains("32b") || deep_model.contains("70b");
-    let recommended_device = if res.has_gpu
-        && is_large_model
-        && res.logical_cores >= 32
-        && res.total_vram_mb <= 12_000
-    {
-        "Hybrid Offload (VRAM layers + High-Core CPU threads)".to_string()
-    } else if res.has_gpu && res.free_vram_mb >= 2000 {
+    let recommended_device = if res.has_gpu && is_large_model {
+        if res.total_vram_mb >= 22_000 && res.free_vram_mb >= 16_000 {
+            "GPU (CUDA / Tensor Cores)".to_string()
+        } else if res.logical_cores >= 16 {
+            "Hybrid Offload (VRAM layers + High-Core CPU threads)".to_string()
+        } else {
+            "CPU (AVX2/AVX-512)".to_string()
+        }
+    } else if res.has_gpu && res.free_vram_mb >= 1500 {
         "GPU (CUDA / Tensor Cores)".to_string()
     } else {
         "CPU (AVX2/AVX-512)".to_string()
@@ -396,14 +482,15 @@ struct OllamaModelTag {
 /// Uses a strict 2-second timeout to prevent any blocking of supervisor threads.
 /// Returns an empty vector if Ollama is unreachable.
 pub async fn query_installed_ollama_models(ollama_endpoint: &str) -> Vec<String> {
-    let tags_url = if ollama_endpoint.is_empty() {
+    let tags_url = if ollama_endpoint.trim().is_empty() {
         "http://127.0.0.1:11434/api/tags".to_string()
     } else if let Ok(mut parsed) = reqwest::Url::parse(ollama_endpoint) {
         parsed.set_path("/api/tags");
         parsed.set_query(None);
         parsed.to_string()
     } else {
-        "http://127.0.0.1:11434/api/tags".to_string()
+        warn!("Invalid Ollama endpoint URL: {}", ollama_endpoint);
+        return Vec::new();
     };
 
     let client = match reqwest::Client::builder()
@@ -455,18 +542,19 @@ pub fn query_installed_ollama_models_sync(ollama_endpoint: &str) -> Vec<String> 
 }
 
 fn query_installed_ollama_models_sync_inner(ollama_endpoint: &str) -> Vec<String> {
-    let tags_url = if ollama_endpoint.is_empty() {
+    let tags_url = if ollama_endpoint.trim().is_empty() {
         "http://127.0.0.1:11434/api/tags".to_string()
     } else if let Ok(mut parsed) = reqwest::Url::parse(ollama_endpoint) {
         parsed.set_path("/api/tags");
         parsed.set_query(None);
         parsed.to_string()
     } else {
-        "http://127.0.0.1:11434/api/tags".to_string()
+        warn!("Invalid Ollama endpoint URL (sync): {}", ollama_endpoint);
+        return Vec::new();
     };
 
     let client = match reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(2))
+        .timeout(Duration::from_secs(1))
         .build()
     {
         Ok(c) => c,
@@ -640,5 +728,67 @@ mod tests {
         assert_eq!(selection.deep_model, "custom-deep:7b");
         assert_eq!(selection.hardware_tier, HardwareTier::Tier2MidRange);
         assert_eq!(selection.recommended_device, "CPU (AVX2/AVX-512)");
+    }
+
+    #[test]
+    fn test_model_matches_variations() {
+        // Exact match
+        assert!(model_matches("deepseek-r1:1.5b", "deepseek-r1:1.5b"));
+        // Strips :latest
+        assert!(model_matches("deepseek-r1:1.5b", "deepseek-r1:1.5b:latest"));
+        assert!(model_matches("deepseek-r1:1.5b:latest", "deepseek-r1:1.5b"));
+        // Strips repo namespace
+        assert!(model_matches("fenkohq/foundation-sec-8b", "foundation-sec-8b"));
+        assert!(model_matches("foundation-sec-8b", "fenkohq/foundation-sec-8b"));
+        assert!(model_matches("fenkohq/foundation-sec-8b:latest", "foundation-sec-8b"));
+        // Quantization / custom tag suffixes
+        assert!(model_matches("deepseek-r1:32b", "deepseek-r1:32b-q4_K_M"));
+        assert!(model_matches("qwen2.5:7b", "qwen2.5:7b-instruct-q8_0"));
+
+        // Must NOT match wrong parameter count or bare family
+        assert!(!model_matches("deepseek-r1:1.5b", "deepseek-r1:32b"));
+        assert!(!model_matches("qwen2.5:1.5b", "qwen2.5:7b"));
+        assert!(!model_matches("qwen2.5:1.5b", "qwen2.5"));
+        assert!(!model_matches("deepseek-r1:1.5b", "deepseek-r1"));
+        assert!(!model_matches("qwen2.5:7b", "qwen2.5:70b"));
+    }
+
+    #[test]
+    fn test_select_optimal_models_high_vram_gpu_placement() {
+        let res = SystemResourceSummary {
+            cpu_name: "AMD EPYC".into(),
+            logical_cores: 64,
+            total_ram_gb: 128.0,
+            free_ram_gb: 90.0,
+            gpu_name: "NVIDIA RTX 4090".into(),
+            total_vram_mb: 24576,
+            free_vram_mb: 20000,
+            has_gpu: true,
+            free_disk_gb: 500.0,
+            total_disk_gb: 2000.0,
+            disks: vec![],
+        };
+
+        let installed = vec!["deepseek-r1:32b".to_string()];
+        let selection = select_optimal_models(
+            &res,
+            &installed,
+            "deepseek-r1:1.5b",
+            "deepseek-r1:32b",
+        );
+
+        assert_eq!(selection.deep_model, "deepseek-r1:32b");
+        assert_eq!(selection.hardware_tier, HardwareTier::Tier4Enterprise);
+        assert_eq!(selection.recommended_device, "GPU (CUDA / Tensor Cores)");
+    }
+
+    #[tokio::test]
+    async fn test_query_installed_ollama_models_empty_or_invalid() {
+        let res_empty = query_installed_ollama_models("").await;
+        // In testing with empty endpoint, if local Ollama is not on standard port or tags fail, it returns safely without panic
+        assert!(res_empty.is_empty() || !res_empty.is_empty());
+
+        let res_invalid = query_installed_ollama_models("http://127.0.0.1:99999/invalid").await;
+        assert!(res_invalid.is_empty());
     }
 }

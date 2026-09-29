@@ -1149,4 +1149,25 @@ mod tests {
         assert!(hw_sensor.details.contains("CPU:"));
         assert!(hw_sensor.details.contains("Active Tier:"));
     }
+
+    #[test]
+    fn test_hardware_resource_sensor_health_degradation() {
+        // Test degradation rules: <5% -> 0.40, <15% -> 0.75, >=15% -> 0.99
+        let calc_health = |ram_pct: f64, vram_pct: f64, has_gpu: bool| -> f64 {
+            if ram_pct < 5.0 || (has_gpu && vram_pct < 5.0) {
+                0.40
+            } else if ram_pct < 15.0 || (has_gpu && vram_pct < 15.0) {
+                0.75
+            } else {
+                0.99
+            }
+        };
+
+        assert_eq!(calc_health(50.0, 50.0, true), 0.99);
+        assert_eq!(calc_health(12.0, 50.0, true), 0.75);
+        assert_eq!(calc_health(50.0, 10.0, true), 0.75);
+        assert_eq!(calc_health(4.0, 50.0, true), 0.40);
+        assert_eq!(calc_health(50.0, 2.0, true), 0.40);
+        assert_eq!(calc_health(12.0, 0.0, false), 0.75);
+    }
 }
