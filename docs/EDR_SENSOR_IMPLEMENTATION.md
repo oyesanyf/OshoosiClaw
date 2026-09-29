@@ -66,7 +66,7 @@ if let Some(drv) = client {
     drv.set_mode(DriverAutonomyMode::Active)?;
     
     // Synchronize file path block rules to kernel memory
-    drv.add_block_path(r"C:\Users\Public\mimikatz.exe")?;
+    drv.add_blocked_path(r"C:\Users\Public\mimikatz.exe")?;
     
     // Poll intercepted events from kernel ring buffer
     let events = drv.poll_interceptions()?;
@@ -98,50 +98,11 @@ fn main() -> io::Result<()> {
 }
 ```
 
-## 2. macOS: Endpoint Security (Using endpoint-sec)
-On macOS, you must use the System Extension framework. This code requires the `com.apple.developer.endpoint-security.client` entitlement to run.
-
-### Cargo.toml
-```toml
-[target.'cfg(target_os = "macos")'.dependencies]
-endpoint-sec = "0.5.1"
-```
-
-### main.rs
-```rust
-#[cfg(target_os = "macos")]
-use endpoint_sec::{Client, Event};
-
-fn main() {
-    #[cfg(target_os = "macos")]
-    {
-        // 1. Create the ES Client with a handler callback
-        let client = Client::new(|_client, message| {
-            match message.event() {
-                Event::Open(ev) => {
-                    println!("File Open Detected: {}", ev.file().path());
-                }
-                Event::Connect(ev) => {
-                    println!("Network Connection: Destination {}", ev.address());
-                }
-                _ => (),
-            }
-        }).expect("Failed to create ES Client. Are you running with proper entitlements?");
-
-        // 2. Subscribe to the events we want to monitor
-        client.subscribe(&[Event::Connect]).unwrap();
-        
-        println!("macOS Endpoint Security Sensor Active.");
-        loop { std::thread::sleep(std::time::Duration::from_secs(1)); }
-    }
-}
-```
-
-## 3. Linux: Production eBPF Ring Buffers & LSM Pre-Execution Blocking
+## 2. Linux: Production eBPF Ring Buffers & LSM Pre-Execution Blocking
 
 On Linux edge nodes, OpenỌ̀ṣọ́ọ̀sì implements native kernel instrumentation and hardware-speed pre-operation execution blocking through **eBPF Ring Buffers** and the **BPF Linux Security Module (LSM)** (`ebpf/src/osoosi_probe.bpf.c` and `crates/osoosi-telemetry/src/linux_ebpf.rs`).
 
-### 3.1 Kernel eBPF Probe & LSM Blocking (`ebpf/src/osoosi_probe.bpf.c`)
+### 2.1 Kernel eBPF Probe & LSM Blocking (`ebpf/src/osoosi_probe.bpf.c`)
 
 Unlike legacy kprobes or tracepoint-only telemetry collectors that detect malicious binaries after process execution has already begun, OpenỌ̀ṣọ́ọ̀sì hooks `lsm/bprm_check_security` for hardware-enforced pre-operation blocking.
 
@@ -184,7 +145,7 @@ int BPF_PROG(osoosi_bprm_check, struct linux_binprm *bprm) {
 }
 ```
 
-### 3.2 User-Space Telemetry Engine (`crates/osoosi-telemetry/src/linux_ebpf.rs`)
+### 2.2 User-Space Telemetry Engine (`crates/osoosi-telemetry/src/linux_ebpf.rs`)
 
 The Linux telemetry engine loads and attaches the compiled eBPF bytecode using the pure-Rust Aya framework, streaming events asynchronously over Tokio channels.
 
@@ -227,15 +188,54 @@ tokio::spawn(async move {
 });
 ```
 
+## 3. macOS: Endpoint Security (Using endpoint-sec)
+On macOS, you must use the System Extension framework. This code requires the `com.apple.developer.endpoint-security.client` entitlement to run.
+
+### Cargo.toml
+```toml
+[target.'cfg(target_os = "macos")'.dependencies]
+endpoint-sec = "0.5.1"
+```
+
+### main.rs
+```rust
+#[cfg(target_os = "macos")]
+use endpoint_sec::{Client, Event};
+
+fn main() {
+    #[cfg(target_os = "macos")]
+    {
+        // 1. Create the ES Client with a handler callback
+        let client = Client::new(|_client, message| {
+            match message.event() {
+                Event::Open(ev) => {
+                    println!("File Open Detected: {}", ev.file().path());
+                }
+                Event::Connect(ev) => {
+                    println!("Network Connection: Destination {}", ev.address());
+                }
+                _ => (),
+            }
+        }).expect("Failed to create ES Client. Are you running with proper entitlements?");
+
+        // 2. Subscribe to the events we want to monitor
+        client.subscribe(&[Event::Connect]).unwrap();
+        
+        println!("macOS Endpoint Security Sensor Active.");
+        loop { std::thread::sleep(std::time::Duration::from_secs(1)); }
+    }
+}
+```
+
 ## Summary of Implementation Logic
 ### How to manage this "Unified" code:
-To keep your project clean, use Conditional Compilation (`#[cfg(target_os = "...")])` or create a Trait that abstracts the "Start Monitoring" function:
+To keep your project clean, use Conditional Compilation (`#[cfg(target_os = "...")]`) or create a Trait that abstracts the "Start Monitoring" function:
 - **Trait Sensor**: Defines `fn start_monitoring(&self)`.
-- **Impl for Windows**: Uses `wfp-rs`.
-- **Impl for macOS**: Uses `endpoint-sec`.
-- **Impl for Linux**: Uses `aya`.
+- **Impl for Windows**: Uses Ring-0 kernel filter driver (`osoosi_driver.sys`) for pre-operation execution blocking and WFP (`wfp-rs`) for network layer inspection.
+- **Impl for Linux**: Uses eBPF Ring Buffers (`aya`) for zero-drop event streaming and BPF LSM (`bprm_check_security`) for pre-execution blocking.
+- **Impl for macOS**: Uses Endpoint Security framework (`endpoint-sec`).
 
 ### A Crucial Warning on Privileges:
-- **Windows**: Must run as Administrator (and eventually as a PPL service).
+- **Windows**: Driver requires Administrator privilege and Service Control Manager (SCM) service installation (`sc create OsoosiDriver type= kernel binPath= ...` with test-signing or EV code certificate); user-mode runtime orchestrator runs as Administrator / PPL.
+- **Linux**: Requires `CAP_BPF` / `CAP_SYS_ADMIN` or root privileges with BTF and BPF LSM enabled (`lsm=...,bpf`) to load eBPF programs into the kernel.
 - **macOS**: Must be signed with an Endpoint Security Entitlement from Apple and run as root.
-- **Linux**: Requires `CAP_BPF` or root privileges to load eBPF programs into the kernel.

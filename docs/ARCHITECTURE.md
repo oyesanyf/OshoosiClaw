@@ -6,62 +6,58 @@
 
 ## Overview
 
-OshoosiClaw follows a **modular monolith** pattern — 20 specialized Rust crates compiled into a single binary. This gives us the deployment simplicity of a monolith with the code organization benefits of microservices.
+OshoosiClaw follows a **modular monolith** pattern — 23 specialized Rust crates compiled into a single binary. This gives us the deployment simplicity of a monolith with the code organization benefits of microservices.
 
 ## Core Data Flow
 
 ```
-┌────────────────────────────────────────────────────────────────────────┐
-│                   KERNEL-LEVEL INTERCEPTION LAYER                      │
-│                                                                        │
-│   ┌───────────────────────────────┐  ┌──────────────────────────────┐ │
-│   │   Windows Ring-0 Driver       │  │    Linux eBPF + LSM Probe    │ │
-│   │   (osoosi_driver.sys)         │  │    (osoosi_probe.bpf.c)      │ │
-│   │   • PsSetCreateProcessNotify  │  │    • lsm/bprm_check_security │ │
-│   │     RoutineEx (Pre-Exec Block)│  │      (Pre-Exec Reject -EPERM)│ │
-│   │   • STATUS_ACCESS_DENIED      │  │    • process_ring (RingBuf)  │ │
-│   │   • Spinlock Ring Queue       │  │    • network_ring (RingBuf)  │ │
-│   │   • IOCTL (\\.\OsoosiDriver)  │  │    • Hash Map (blocked_paths)│ │
-│   └───────────────┬───────────────┘  └──────────────┬───────────────┘ │
-│                   │                                 │                 │
-│   ┌───────────────▼───────────────┐                 │                 │
-│   │    Sysmon Kernel Driver (ETW) │                 │                 │
-│   │    (25+ Host Security Events) │                 │                 │
-│   └───────────────┬───────────────┘                 │                 │
-└───────────────────┼─────────────────────────────────┼─────────────────┘
-                    │                                 │
-                    ▼                                 ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                          osoosi-telemetry                              │
-│  ┌───────────────────────┐  ┌─────────────────┐  ┌──────────────────┐ │
-│  │ Host Event Reader     │  │ eBPF Aya Engine │  │ File Watcher     │ │
-│  │ (ETW / Sysmon 1-25)   │  │ (AsyncFd Ring)  │  │ (FIM + SHA-256)  │ │
-│  └───────────┬───────────┘  └────────┬────────┘  └────────┬─────────┘ │
-└──────────────┼───────────────────────┼────────────────────┼───────────┘
-               │                       │                    │
-               ▼                       ▼                    ▼
-┌────────────────────────────────────────────────────────────────────────┐
-│                       osoosi-core (EdrOrchestrator)                    │
-│                                                                        │
-│  ┌──────────┐    ┌──────────┐    ┌──────────┐    ┌────────────┐       │
-│  │ NSRL     │    │ Policy   │    │ Threat   │    │ Behavioral │       │
-│  │ Fast-Path│───▶│ Engine   │───▶│ Model    │───▶│ Classifier │       │
-│  │ (3-tier) │    │ (Sigma)  │    │ (EMBER)  │    │ (AI)       │       │
-│  └──────────┘    └──────────┘    └──────────┘    └────────────┘       │
-│       │               │              │                │                │
-│       ▼               ▼              ▼                ▼                │
-│  ┌─────────────────────────────────────────────────────────────────┐   │
-│  │      CAPA → FLOSS → HollowsHunter → Hayabusa → Chainsaw         │   │
-│  │               (Deep Forensic Analysis Pipeline)                 │   │
-│  └─────────────────────────────────────────────────────────────────┘   │
-│       │                                                                │
-│       ▼                                                                │
-│  ┌──────────────┐  ┌──────────────┐  ┌───────────────────────────┐    │
-│  │ Audit Trail  │  │ Mesh         │  │ Active Response Orchestr. │    │
-│  │ (Merkle Log) │  │ (Broadcast)  │  │ • Kernel Rule Sync (IOCTL)│    │
-│  │              │  │              │  │ • Quarantine / Tarpit     │    │
-│  └──────────────┘  └──────────────┘  └───────────────────────────┘    │
-└────────────────────────────────────────────────────────────────────────┘
+┌────────────────────────────────────────────────────────────────────────────────────────┐
+│                          KERNEL-LEVEL INTERCEPTION LAYER                               │
+│                                                                                        │
+│   ┌───────────────────────────────┐  ┌───────────────────────┐  ┌────────────────────┐ │
+│   │   Windows Ring-0 Driver       │  │  Sysmon Driver (ETW)  │  │ Linux eBPF + LSM   │ │
+│   │   (osoosi_driver.sys)         │  │  (Microsoft Signed)   │  │ (osoosi_probe)     │ │
+│   │   • PsSetCreateProcessNotify  │  │  • 25+ Event Providers│  │ • BPF LSM Pre-Exec │ │
+│   │     RoutineEx (Pre-Exec Block)│  │  • Asynchronous Host  │  │   Reject (-EACCES)│ │
+│   │   • STATUS_ACCESS_DENIED      │  │    Telemetry Engine   │  │ • process_ring     │ │
+│   │   • Ring Queue Buffer         │  │                       │  │ • network_ring     │ │
+│   │   • IOCTL (\\.\OsoosiDriver)  │  │                       │  │ • blocked_paths map│ │
+│   └───────────────┬───────────────┘  └───────────┬───────────┘  └─────────┬──────────┘ │
+└───────────────────┼──────────────────────────────┼────────────────────────┼────────────┘
+                    │                              │                        │
+                    │                              ▼                        ▼
+                    │  ┌───────────────────────────────────────────────────────────────┐
+                    │  │                      osoosi-telemetry                         │
+                    │  │  ┌────────────────────────┐         ┌───────────────────────┐ │
+                    │  │  │ Host Event Reader      │         │ eBPF Aya Engine       │ │
+                    │  │  │ (ETW / Sysmon 1-25)    │         │ (AsyncFd Ring Buffers)│ │
+                    │  │  └───────────┬────────────┘         └───────────┬───────────┘ │
+                    │  └──────────────┼──────────────────────────────────┼─────────────┘
+                    │                 │                                  │
+                    │                 ▼                                  ▼
+┌───────────────────┼──────────────────────────────────────────────────────────────────┐
+│                   │         osoosi-core / osoosi-runtime (EdrOrchestrator)           │
+│                   │                                                                  │
+│  ┌──────────┐     │  ┌──────────┐    ┌──────────┐    ┌────────────┐                  │
+│  │ NSRL     │     │  │ Policy   │    │ Threat   │    │ Behavioral │                  │
+│  │ Fast-Path│─────┼─▶│ Engine   │───▶│ Model    │───▶│ Classifier │                  │
+│  │ (3-tier) │     │  │ (Sigma)  │    │ (EMBER)  │    │ (AI)       │                  │
+│  └──────────┘     │  └──────────┘    └──────────┘    └────────────┘                  │
+│       │           │       │               │                │                         │
+│       ▼           │       ▼               ▼                ▼                         │
+│  ┌────────────────┼───────────────────────────────────────────────────────────────┐  │
+│  │                │   CAPA → FLOSS → HollowsHunter → Hayabusa → Chainsaw          │  │
+│  │                │            (Deep Forensic Analysis Pipeline)                  │  │
+│  └────────────────┼───────────────────────────────────────────────────────────────┘  │
+│       │           │       │                                                          │
+│       ▼           │       ▼                                                          │
+│  ┌──────────────┐ │  ┌──────────────┐        ┌───────────────────────────────────┐   │
+│  │ Audit Trail  │ │  │ Mesh         │        │ Active Response Orchestrator      │   │
+│  │ (Merkle Log) │ │  │ (Broadcast)  │        │ • Dynamic Autonomy Mode (Audit/Act│   │
+│  │              │ └──┼──────────────┼───────▶│ • Kernel Rule Sync (IOCTL Buffer) │   │
+│  │              │    │              │        │ • WFP Quarantine & Tarpit Fallback│   │
+│  └──────────────┘    └──────────────┘        └───────────────────────────────────┘   │
+└──────────────────────────────────────────────────────────────────────────────────────┘
 ```
 
 ## Detection Tiers

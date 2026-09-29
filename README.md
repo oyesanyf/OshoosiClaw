@@ -43,6 +43,8 @@
 
 <a id="-ring-0-windows-driver--linux-ebpf-parity"></a>
 <a id="ring-0-windows-driver--linux-ebpf-parity"></a>
+<a id="-native-ring-0-windows-driver--linux-ebpf-parity"></a>
+<a id="native-ring-0-windows-driver--linux-ebpf-parity"></a>
 ## 🛡️ Native Ring-0 Windows Driver & Linux eBPF Parity
 
 ### The Architectural Paradigm Shift: Pre-Operation Blocking vs. Post-Execution Telemetry
