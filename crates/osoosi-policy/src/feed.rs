@@ -235,13 +235,13 @@ impl ThreatFeedFetcher {
         let response = match request.send().await {
             Ok(r) => r,
             Err(e) => {
-                warn!("[KEV] Network fetch failed: {}. Falling back to cache.", e);
+                info!("[KEV] Network fetch failed: {}. Falling back to cache.", e);
                 return self.load_kev_from_cache().await;
             }
         };
 
         if !response.status().is_success() {
-            warn!(
+            info!(
                 "[KEV] Server returned HTTP {}. Falling back to cache.",
                 response.status()
             );
@@ -252,7 +252,7 @@ impl ThreatFeedFetcher {
         let bytes = match response.bytes().await {
             Ok(b) => b,
             Err(e) => {
-                warn!(
+                info!(
                     "[KEV] Failed to read response body: {}. Falling back to cache.",
                     e
                 );
@@ -269,7 +269,7 @@ impl ThreatFeedFetcher {
                 Ok(kevs)
             }
             Err(e) => {
-                warn!("[KEV] JSON decoding failed: {}. Falling back to cache.", e);
+                info!("[KEV] JSON decoding failed: {}. Falling back to cache.", e);
                 self.load_kev_from_cache().await
             }
         }
@@ -991,14 +991,14 @@ impl ThreatFeedFetcher {
         let mut last_error: Option<anyhow::Error> = None;
 
         for url in &urls {
-            let mut retry_count = 0;
+            let mut retry_count: u32 = 0;
             let mut stalled_count = 0;
             let mut last_processed_size = 0;
             let mut download_finished = false;
 
             while !download_finished && retry_count < 5 {
                 if retry_count > 0 {
-                    let backoff = (15 * retry_count as u64).min(300);
+                    let backoff = (30u64 * 2u64.saturating_pow(retry_count.saturating_sub(1))).min(1800);
                     info!(
                         "[NSRL Background] Retrying download in {}s (Attempt {})...",
                         backoff, retry_count
@@ -1052,7 +1052,7 @@ impl ThreatFeedFetcher {
                 let response = match request.send().await {
                     Ok(r) => r,
                     Err(e) => {
-                        warn!("[NSRL Background] Request failed: {}. Will retry.", e);
+                        info!("[NSRL Background] Request failed: {}. Will retry in background with exponential backoff.", e);
                         last_error = Some(e.into());
                         retry_count += 1;
                         continue;
@@ -1100,7 +1100,7 @@ impl ThreatFeedFetcher {
                         retry_count += 1;
                         continue;
                     }
-                    warn!("[NSRL Background] HTTP {} for {}. Retrying...", status, url);
+                    info!("[NSRL Background] HTTP {} for {}. Retrying in background...", status, url);
                     last_error = Some(anyhow::anyhow!("HTTP error {}", status));
                     retry_count += 1;
                     continue;
@@ -1193,7 +1193,7 @@ impl ThreatFeedFetcher {
                         let chunk = match item {
                             Ok(c) => c,
                             Err(e) => {
-                                warn!("[NSRL Background] Stream error: {}. Resuming...", e);
+                                info!("[NSRL Background] Stream interrupted: {}. Resuming...", e);
                                 stream_error = true;
                                 last_error = Some(e.into());
                                 break;

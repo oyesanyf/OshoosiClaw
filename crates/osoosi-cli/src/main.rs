@@ -593,7 +593,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                             )
                             .await;
                         }
-                        Err(e) => warn!("[NSRL Background] NSRL download paused or unavailable: {}. Agent continues with in-memory NSRL cache and peer mesh intelligence.", e),
+                        Err(e) => info!("[NSRL Background] NSRL download paused or unavailable: {}. Agent continues with in-memory NSRL cache and peer mesh intelligence.", e),
                     }
                 } else if nsrl_count == 0 && db_file.exists() {
                     info!("[NSRL Background] NSRL SQLite found on disk but agent DB empty. Importing...");

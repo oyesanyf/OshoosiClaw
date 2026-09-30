@@ -829,6 +829,62 @@ pub fn should_skip_file_malware_scan(path: &std::path::Path) -> bool {
     crate::voters::scanner_skip_path(&path.to_string_lossy())
 }
 
+pub fn is_cloud_storage_service(name: &str, exe_path: Option<&std::path::Path>) -> bool {
+    let name_lc = name.to_ascii_lowercase();
+    let filename_lc = std::path::Path::new(&name_lc)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&name_lc);
+    let base = filename_lc.strip_suffix(".exe").unwrap_or(filename_lc);
+    let is_name_match = matches!(
+        base,
+        "googledrivefs"
+            | "googledrivesync"
+            | "onedrive"
+            | "onedriveupdater"
+            | "onedrivestandaloneupdater"
+            | "filecoauth"
+            | "dropbox"
+            | "dropboxupdate"
+            | "nextcloud"
+            | "box"
+            | "boxsync"
+            | "boxedit"
+            | "icloudservices"
+            | "iclouddrive"
+            | "icloud"
+            | "seafile"
+            | "seafile-applet"
+            | "insync"
+            | "kbfs"
+            | "megasync"
+            | "synologydrive"
+            | "rclone"
+            | "dokanmounter"
+            | "winfsp-x64"
+            | "winfsp-x86"
+    );
+    if is_name_match {
+        return true;
+    }
+    if let Some(p) = exe_path {
+        let p_str = p.to_string_lossy().to_ascii_lowercase();
+        if p_str.contains("\\google\\drivefs\\")
+            || p_str.contains("\\microsoft\\onedrive\\")
+            || p_str.contains("\\dropbox\\")
+            || p_str.contains("\\nextcloud\\")
+            || p_str.contains("\\box\\")
+            || p_str.contains("\\icloud\\")
+            || p_str.contains("\\seafile\\")
+            || p_str.contains("\\winfsp\\")
+            || p_str.contains("\\dokan\\")
+        {
+            return true;
+        }
+    }
+    false
+}
+
 fn register_internal_assets(memory: &MemoryStore) {
     let mut assets: Vec<(std::path::PathBuf, &'static str)> = Vec::new();
 
@@ -2644,6 +2700,7 @@ impl EdrOrchestrator {
             tarpit_manager.start_phantom_memory_flux(flux_regions.clone());
 
             let mut interval = tokio::time::interval(Duration::from_secs(30));
+            let process_debounce = std::sync::Arc::new(dashmap::DashMap::<String, std::time::Instant>::new());
             loop {
                 interval.tick().await;
                 sys.refresh_all();
@@ -2661,18 +2718,41 @@ impl EdrOrchestrator {
                     let process_name_lc = process_name.to_lowercase();
                     let exe_path = process.exe().map(|p| p.to_path_buf());
 
-                    // EXEMPTIONS: Critical system processes and developer tools that legitimately spike during builds/maintenance/updates
+                    // EXEMPTIONS: Critical system processes, cloud sync / virtual filesystems, and developer tools
                     let is_exempt_system = process_name_lc == "msmpeng.exe"
                         || process_name_lc == "trustedinstaller.exe"
                         || process_name_lc == "tiworker.exe"
                         || process_name_lc == "googleupdater.exe"
-                        || process_name_lc == "updater.exe";
+                        || process_name_lc == "updater.exe"
+                        || process_name_lc == "taskhostw.exe"
+                        || process_name_lc == "searchindexer.exe"
+                        || process_name_lc == "wermgr.exe"
+                        || process_name_lc == "compattelrunner.exe"
+                        || process_name_lc == "sihost.exe"
+                        || process_name_lc == "ctfmon.exe";
                     let is_exempt_dev = is_developer_tool(&process_name_lc, exe_path.as_deref());
+                    let is_exempt_cloud = is_cloud_storage_service(&process_name_lc, exe_path.as_deref());
 
-                    if is_exempt_system || is_exempt_dev {
+                    if is_exempt_system || is_exempt_dev || is_exempt_cloud {
                         let cpu_usage = process.cpu_usage();
-                        let memory_usage = process.memory();
+                        let raw_memory = process.memory();
+                        let memory_usage = raw_memory.min(total_memory);
                         if cpu_usage > 300.0 || memory_usage > memory_threshold {
+                            let debounce_key = format!("{}:{}", pid.as_u32(), process_name_lc);
+                            if let Some(last_seen) = process_debounce.get(&debounce_key) {
+                                if last_seen.elapsed() < Duration::from_secs(600) {
+                                    continue;
+                                }
+                            }
+                            process_debounce.insert(debounce_key, std::time::Instant::now());
+
+                            let exemption_label = if is_exempt_cloud {
+                                "cloud_storage_vfs"
+                            } else if is_exempt_system {
+                                "system_maintenance"
+                            } else {
+                                "developer_tool"
+                            };
                             orchestrator.audit.log(
                                 "CYBERSHIELD_RESOURCE_ANOMALY",
                                 serde_json::json!({
@@ -2681,7 +2761,7 @@ impl EdrOrchestrator {
                                     "cpu_usage": cpu_usage,
                                     "memory_usage_kb": memory_usage / 1024,
                                     "threshold_memory_kb": memory_threshold / 1024,
-                                    "exemption": if is_exempt_system { "system_maintenance" } else { "developer_tool" },
+                                    "exemption": exemption_label,
                                     "action": "monitored_no_kill",
                                 }),
                             );
@@ -2690,7 +2770,9 @@ impl EdrOrchestrator {
                     }
 
                     let cpu_usage = process.cpu_usage();
-                    let memory_usage = process.memory();
+                    let raw_memory = process.memory();
+                    // Working-set / physical memory check: clamp virtual address space / mapped memory to installed RAM
+                    let memory_usage = raw_memory.min(total_memory);
 
                     // Higher thresholds for alerting (3.0 cores CPU, 50% RAM)
                     if cpu_usage > 300.0 || memory_usage > memory_threshold {
@@ -2700,6 +2782,15 @@ impl EdrOrchestrator {
                         if pid_val == 0 || pid_val == 4 || process_name.eq_ignore_ascii_case("System") || process_name.eq_ignore_ascii_case("Registry") {
                             continue;
                         }
+
+                        // Per-process debounce (10-minute cooldown) to prevent warning floods
+                        let debounce_key = format!("{}:{}", pid_val, process_name_lc);
+                        if let Some(last_alert) = process_debounce.get(&debounce_key) {
+                            if last_alert.elapsed() < Duration::from_secs(600) {
+                                continue;
+                            }
+                        }
+                        process_debounce.insert(debounce_key, std::time::Instant::now());
 
                         orchestrator.adaptive().spawn_adaptive(ResourceCategory::AI, Priority::High, async move {
                             warn!(
@@ -3035,6 +3126,8 @@ impl EdrOrchestrator {
                             if (result.combined_score > 0.5 || is_executable)
                                 && !crate::win_trust::is_trusted_signed_binary(path)
                                 && !osoosi_model::malware::is_ide_or_build_path(&event.path)
+                                && !crate::voters::scanner_skip_path(&event.path)
+                                && !should_skip_file_malware_scan(path)
                             {
                                 let analyzer = orchestrator.static_analyzer.clone();
                                 let path_buf = path.to_path_buf();
@@ -3042,13 +3135,38 @@ impl EdrOrchestrator {
                                 tokio::spawn(async move {
                                     match analyzer.analyze_file(&path_buf).await {
                                     Ok(Some(deep_sig)) => {
-                                        warn!("DEEP ANALYSIS IDENTIFIED THREAT (CAPA/FLOSS): {} - confidence {:.2}", deep_sig.id, deep_sig.confidence);
-                                        let _ = orch_clone.memory.log_threat(&deep_sig);
-                                        orch_clone.audit.log("DEEP_STATIC_THREAT", serde_json::json!({
-                                            "path": path_buf.display().to_string(),
-                                            "reasons": deep_sig.reason,
-                                            "confidence": deep_sig.confidence
-                                        }));
+                                        let sig_key = deep_sig.hash_blake3.clone().unwrap_or_else(|| deep_sig.id.clone());
+                                        let is_suppressed = {
+                                            if let Some(last_warn) = orch_clone.alert_suppression_cache.get(&sig_key) {
+                                                last_warn.elapsed() < Duration::from_secs(3600)
+                                            } else {
+                                                false
+                                            }
+                                        };
+                                        if !is_suppressed {
+                                            orch_clone.alert_suppression_cache.insert(sig_key, Instant::now());
+                                            if deep_sig.confidence >= 0.85 {
+                                                warn!(
+                                                    "DEEP ANALYSIS IDENTIFIED THREAT (CAPA/FLOSS): {} ({}) - confidence {:.2}",
+                                                    deep_sig.id,
+                                                    path_buf.display(),
+                                                    deep_sig.confidence
+                                                );
+                                            } else {
+                                                info!(
+                                                    "Deep analysis heuristic signal: {} ({}) - confidence {:.2}",
+                                                    deep_sig.id,
+                                                    path_buf.display(),
+                                                    deep_sig.confidence
+                                                );
+                                            }
+                                            let _ = orch_clone.memory.log_threat(&deep_sig);
+                                            orch_clone.audit.log("DEEP_STATIC_THREAT", serde_json::json!({
+                                                "path": path_buf.display().to_string(),
+                                                "reasons": deep_sig.reason,
+                                                "confidence": deep_sig.confidence
+                                            }));
+                                        }
                                     }
                                     Ok(None) => debug!("Deep analysis complete: no additional threats found for {:?}", path_buf),
                                     Err(e) => error!("Deep static analysis failed for {:?}: {}", path_buf, e),
@@ -8094,6 +8212,26 @@ mod tests {
 
         // Clean up test entry
         RECENT_TARPITTED_PIDS.remove(&pid);
+    }
+
+    #[test]
+    fn test_is_cloud_storage_service() {
+        assert!(is_cloud_storage_service("GoogleDriveFS.exe", None));
+        assert!(is_cloud_storage_service("googledrivefs.exe", None));
+        assert!(is_cloud_storage_service("OneDrive.exe", None));
+        assert!(is_cloud_storage_service("onedrive.exe", None));
+        assert!(is_cloud_storage_service("Dropbox.exe", None));
+        assert!(is_cloud_storage_service("Nextcloud.exe", None));
+        assert!(is_cloud_storage_service("Box.exe", None));
+        assert!(is_cloud_storage_service("iCloudServices.exe", None));
+        assert!(is_cloud_storage_service("rclone.exe", None));
+        assert!(is_cloud_storage_service("custom_sync.exe", Some(std::path::Path::new(r"C:\Program Files\Google\DriveFS\custom_sync.exe"))));
+
+        // Negative cases
+        assert!(!is_cloud_storage_service("cmd.exe", None));
+        assert!(!is_cloud_storage_service("powershell.exe", None));
+        assert!(!is_cloud_storage_service("mimikatz.exe", None));
+        assert!(!is_cloud_storage_service("payload.exe", Some(std::path::Path::new(r"C:\Windows\Temp\payload.exe"))));
     }
 }
 
