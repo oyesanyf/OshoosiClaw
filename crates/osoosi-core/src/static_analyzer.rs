@@ -61,6 +61,7 @@ impl StaticAnalyzer {
             || crate::win_trust::is_trusted_signed_binary(file_path)
             || osoosi_model::malware::is_ide_or_build_path(&path_str)
             || crate::voters::scanner_skip_path(&path_str)
+            || crate::should_skip_file_malware_scan(file_path)
         {
             debug!(
                 "Static Analyzer: skipping threat emission for trusted, IDE, agent, or managed path {:?}",
@@ -151,9 +152,9 @@ impl StaticAnalyzer {
     }
 
     fn is_oshoosi_managed_tool(path: &Path) -> bool {
-        let p = path.to_string_lossy().to_lowercase();
+        let p_raw = path.to_string_lossy().to_ascii_lowercase();
+        let p = p_raw.replace('/', "\\");
         p.contains("\\oshoosiclaw\\")
-            || p.contains("/oshoosiclaw/")
             || p.contains("\\.gemini\\")
             || p.contains("\\antigravity\\")
             || p.contains("\\target\\")
@@ -161,6 +162,9 @@ impl StaticAnalyzer {
             || p.contains("\\tools\\")
             || p.contains("\\harfile\\")
             || p.contains("\\modelfusion\\")
+            || p.contains("\\dist\\")
+            || p.contains("\\browser\\bin\\")
+            || p.contains("\\build\\bin\\")
     }
 
     fn calculate_sha256_sync(path: &Path) -> anyhow::Result<String> {

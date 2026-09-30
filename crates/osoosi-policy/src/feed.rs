@@ -105,6 +105,8 @@ fn offline_mode() -> bool {
         .unwrap_or(false)
 }
 
+static LAST_KEV_NETWORK_FAILURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+
 #[derive(Debug, Clone)]
 pub struct ThreatFeedFetcher {
     client: reqwest::Client,
@@ -209,6 +211,17 @@ impl ThreatFeedFetcher {
             return self.load_kev_from_cache().await;
         }
 
+        let now_secs = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let last_fail = LAST_KEV_NETWORK_FAILURE.load(std::sync::atomic::Ordering::Relaxed);
+        if last_fail > 0 && now_secs.saturating_sub(last_fail) < 300 {
+            debug!("[KEV] Recent network fetch failure within backoff window (300s); loading from cache.");
+            return self.load_kev_from_cache().await;
+        }
+
         let cache_path = osoosi_types::resolve_kev_cache_path();
         if cache_path.exists() {
             if let Ok(metadata) = std::fs::metadata(&cache_path) {
@@ -235,16 +248,18 @@ impl ThreatFeedFetcher {
         let response = match request.send().await {
             Ok(r) => r,
             Err(e) => {
-                info!("[KEV] Network fetch failed: {}. Falling back to cache.", e);
+                info!("[KEV] Network fetch failed: {}. Falling back to cache with 300s backoff.", e);
+                LAST_KEV_NETWORK_FAILURE.store(now_secs, std::sync::atomic::Ordering::Relaxed);
                 return self.load_kev_from_cache().await;
             }
         };
 
         if !response.status().is_success() {
             info!(
-                "[KEV] Server returned HTTP {}. Falling back to cache.",
+                "[KEV] Server returned HTTP {}. Falling back to cache with 300s backoff.",
                 response.status()
             );
+            LAST_KEV_NETWORK_FAILURE.store(now_secs, std::sync::atomic::Ordering::Relaxed);
             return self.load_kev_from_cache().await;
         }
 
@@ -256,6 +271,7 @@ impl ThreatFeedFetcher {
                     "[KEV] Failed to read response body: {}. Falling back to cache.",
                     e
                 );
+                LAST_KEV_NETWORK_FAILURE.store(now_secs, std::sync::atomic::Ordering::Relaxed);
                 return self.load_kev_from_cache().await;
             }
         };
@@ -266,10 +282,13 @@ impl ThreatFeedFetcher {
                 if !kevs.is_empty() {
                     let _ = self.save_kev_to_cache(&bytes).await;
                 }
+                // Reset failure timestamp on success
+                LAST_KEV_NETWORK_FAILURE.store(0, std::sync::atomic::Ordering::Relaxed);
                 Ok(kevs)
             }
             Err(e) => {
                 info!("[KEV] JSON decoding failed: {}. Falling back to cache.", e);
+                LAST_KEV_NETWORK_FAILURE.store(now_secs, std::sync::atomic::Ordering::Relaxed);
                 self.load_kev_from_cache().await
             }
         }
@@ -1016,7 +1035,7 @@ impl ThreatFeedFetcher {
                 if current_size > 0 {
                     if let Some(remote_len) = nsrl_s3_content_length(&download_client, url).await {
                         if current_size > remote_len {
-                            warn!(
+                            info!(
                                 "[NSRL Background] Local file ({current_size} B) is larger than remote ({remote_len} B). Removing stale partial."
                             );
                             let _ = std::fs::remove_file(&zip_path);
@@ -1121,7 +1140,7 @@ impl ThreatFeedFetcher {
                 if current_size == 0 {
                     if let Some(Ok(chunk)) = stream.next().await {
                         if !chunk.starts_with(b"PK\x03\x04") {
-                            warn!("[NSRL Background] Download is NOT a valid ZIP (Magic mismatch). Likely an S3 error page.");
+                            info!("[NSRL Background] Download is NOT a valid ZIP (Magic mismatch). Likely an S3 error page.");
                             last_error = Some(anyhow::anyhow!("Invalid ZIP magic"));
                             break;
                         }
@@ -1280,7 +1299,7 @@ impl ThreatFeedFetcher {
                         last_processed_size = downloaded;
                     }
                     if stalled_count > 3 {
-                        warn!("[NSRL Background] Download stalled after multiple attempts. Switching mirror.");
+                        info!("[NSRL Background] Download stalled after multiple attempts. Switching mirror.");
                         break;
                     }
                 }
