@@ -836,11 +836,25 @@ async fn get_hardware_summary(State(_state): State<DashboardState>) -> impl Into
 async fn get_skills_status() -> Json<Value> {
     let cfg = osoosi_types::config::load_skills_config();
     let ws_path = std::path::Path::new(&cfg.workspace);
-    let state_file = ws_path.join(".wikiskill-state.json");
+    let resolved_ws = if ws_path.is_dir() {
+        Some(ws_path.to_path_buf())
+    } else if let Some(config_path) = osoosi_types::resolve_config_path() {
+        let candidate = config_path.parent().map(|p| p.join(ws_path));
+        if candidate.as_ref().map(|c| c.is_dir()).unwrap_or(false) {
+            candidate
+        } else {
+            None
+        }
+    } else {
+        None
+    };
+
+    let active = resolved_ws.is_some();
+    let target_ws = resolved_ws.unwrap_or_else(|| ws_path.to_path_buf());
+    let state_file = target_ws.join(".wikiskill-state.json");
     let mut phase = "idle".to_string();
     let mut best_score = 1.0;
     let mut rounds = 1;
-    let active = ws_path.is_dir();
 
     if state_file.is_file() {
         if let Ok(content) = std::fs::read_to_string(&state_file) {

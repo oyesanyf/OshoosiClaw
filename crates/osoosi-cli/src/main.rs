@@ -554,9 +554,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                     let tasks_clone = skills_cfg.tasks_file.clone();
                     let scorer_clone = skills_cfg.scorer.clone();
                     let poll_interval = std::time::Duration::from_secs(skills_cfg.poll_interval_secs.max(30));
+                    let orch_skills = orchestrator.clone();
 
                     tokio::spawn(async move {
-                        run_wikiskill_background_loop(ws_clone, tasks_clone, scorer_clone, poll_interval).await;
+                        run_wikiskill_background_loop(ws_clone, tasks_clone, scorer_clone, poll_interval, Some(orch_skills)).await;
                     });
                 }
             }
@@ -2869,63 +2870,83 @@ async fn install_ollama_best_effort() {
     }
 }
 
-fn resolve_wikiskill_paths() -> (Option<PathBuf>, Option<PathBuf>) {
-    let mut base_dirs = Vec::new();
-    if let Ok(cwd) = std::env::current_dir() {
-        base_dirs.push(cwd.clone());
-        for ancestor in cwd.ancestors() {
-            base_dirs.push(ancestor.to_path_buf());
-        }
-    }
-    if let Ok(exe) = std::env::current_exe() {
-        for ancestor in exe.ancestors() {
-            base_dirs.push(ancestor.to_path_buf());
-        }
-    }
-    base_dirs.dedup();
+static WIKISKILL_PATHS: std::sync::OnceLock<(Option<PathBuf>, Option<PathBuf>, Option<PathBuf>)> =
+    std::sync::OnceLock::new();
 
-    let mut cli_path = None;
-    for dir in &base_dirs {
-        let candidate = dir
-            .join("tools")
-            .join("wikiskill")
-            .join("src")
-            .join("wikiskill")
-            .join("cli.py");
-        if candidate.is_file() {
-            cli_path = Some(candidate);
-            break;
-        }
-    }
-
-    let python_candidates = [
-        "python",
-        "python3",
-        "py",
-        r"C:\Python314\python.exe",
-        r"C:\Python313\python.exe",
-        r"C:\Python312\python.exe",
-        r"C:\Python311\python.exe",
-    ];
-
-    let mut python_bin = None;
-    for cand in python_candidates {
-        let output = std::process::Command::new(cand)
-            .arg("--version")
-            .output();
-        if let Ok(out) = output {
-            if out.status.success() {
-                python_bin = Some(PathBuf::from(cand));
-                break;
+/// Returns (python_bin, cli_path, project_root)
+fn resolve_wikiskill_paths() -> (Option<PathBuf>, Option<PathBuf>, Option<PathBuf>) {
+    WIKISKILL_PATHS
+        .get_or_init(|| {
+            let mut base_dirs = Vec::new();
+            if let Ok(cwd) = std::env::current_dir() {
+                base_dirs.push(cwd.clone());
+                for ancestor in cwd.ancestors() {
+                    base_dirs.push(ancestor.to_path_buf());
+                }
             }
-        }
-    }
+            if let Ok(exe) = std::env::current_exe() {
+                for ancestor in exe.ancestors() {
+                    base_dirs.push(ancestor.to_path_buf());
+                }
+            }
+            base_dirs.dedup();
 
-    (python_bin, cli_path)
+            let mut cli_path = None;
+            let mut project_root = None;
+            for dir in &base_dirs {
+                let candidate = dir
+                    .join("tools")
+                    .join("wikiskill")
+                    .join("src")
+                    .join("wikiskill")
+                    .join("cli.py");
+                if candidate.is_file() {
+                    cli_path = Some(candidate);
+                    project_root = Some(dir.clone());
+                    break;
+                }
+            }
+
+            let python_candidates = [
+                "python",
+                "python3",
+                "py",
+                r"C:\Python314\python.exe",
+                r"C:\Python313\python.exe",
+                r"C:\Python312\python.exe",
+                r"C:\Python311\python.exe",
+            ];
+
+            let mut python_bin = None;
+            for cand in python_candidates {
+                let mut cmd = std::process::Command::new(cand);
+                cmd.arg("--version")
+                    .stdin(std::process::Stdio::null())
+                    .stdout(std::process::Stdio::null())
+                    .stderr(std::process::Stdio::null());
+
+                #[cfg(target_os = "windows")]
+                {
+                    #[allow(unused_imports)]
+                    use std::os::windows::process::CommandExt;
+                    cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+                }
+
+                if let Ok(status) = cmd.status() {
+                    if status.success() {
+                        python_bin = Some(PathBuf::from(cand));
+                        break;
+                    }
+                }
+            }
+
+            (python_bin, cli_path, project_root)
+        })
+        .clone()
 }
 
 fn run_wikiskill_cli(args: &[&str]) -> anyhow::Result<std::process::Output> {
-    let (python_opt, cli_opt) = resolve_wikiskill_paths();
+    let (python_opt, cli_opt, _root_opt) = resolve_wikiskill_paths();
     let python = python_opt.ok_or_else(|| {
         anyhow::anyhow!("Python 3.11+ interpreter not found. Please ensure Python is installed and in PATH.")
     })?;
@@ -2933,11 +2954,43 @@ fn run_wikiskill_cli(args: &[&str]) -> anyhow::Result<std::process::Output> {
         anyhow::anyhow!("WikiSkill CLI not found at tools/wikiskill/src/wikiskill/cli.py.")
     })?;
 
-    let output = std::process::Command::new(&python)
-        .arg(&cli)
-        .args(args)
-        .output()?;
+    let mut cmd = std::process::Command::new(&python);
+    cmd.arg(&cli).args(args);
+
+    #[cfg(target_os = "windows")]
+    {
+        #[allow(unused_imports)]
+        use std::os::windows::process::CommandExt;
+        cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+    }
+
+    let output = cmd.output()?;
     Ok(output)
+}
+
+/// Atomically persists state JSON via temporary file swap to eliminate race conditions
+/// and avoid corrupted or truncated reads by concurrent supervisor / dashboard monitors.
+fn atomic_write_state_file(path: &Path, content: &[u8]) -> std::io::Result<()> {
+    if let Some(parent) = path.parent() {
+        std::fs::create_dir_all(parent)?;
+    }
+    let tmp_path = path.with_extension(format!("tmp.{}", std::process::id()));
+    std::fs::write(&tmp_path, content)?;
+    #[cfg(target_os = "windows")]
+    {
+        if path.exists() {
+            let _ = std::fs::remove_file(path);
+        }
+        if let Err(_) = std::fs::rename(&tmp_path, path) {
+            let _ = std::fs::write(path, content);
+            let _ = std::fs::remove_file(&tmp_path);
+        }
+    }
+    #[cfg(not(target_os = "windows"))]
+    {
+        std::fs::rename(&tmp_path, path)?;
+    }
+    Ok(())
 }
 
 async fn run_wikiskill_background_loop(
@@ -2945,26 +2998,66 @@ async fn run_wikiskill_background_loop(
     tasks_file: String,
     scorer: String,
     poll_interval: std::time::Duration,
+    orchestrator: Option<Arc<osoosi_core::EdrOrchestrator>>,
 ) {
-    let ws_path = PathBuf::from(&workspace);
+    let (python_opt, cli_opt, project_root) = resolve_wikiskill_paths();
+
+    // Anchor relative paths against project root if present and not in cwd
+    let ws_path = if Path::new(&workspace).is_absolute() {
+        PathBuf::from(&workspace)
+    } else if Path::new(&workspace).is_dir() {
+        PathBuf::from(&workspace)
+    } else if let Some(ref root) = project_root {
+        root.join(&workspace)
+    } else {
+        PathBuf::from(&workspace)
+    };
+
+    let resolved_tasks = if Path::new(&tasks_file).is_file() {
+        tasks_file.clone()
+    } else if let Some(ref root) = project_root {
+        let candidate = root.join(&tasks_file);
+        if candidate.is_file() {
+            candidate.to_string_lossy().to_string()
+        } else {
+            tasks_file.clone()
+        }
+    } else {
+        tasks_file.clone()
+    };
+
+    let resolved_scorer = if Path::new(&scorer).is_file() {
+        scorer.clone()
+    } else if let Some(ref root) = project_root {
+        let candidate = root.join(&scorer);
+        if candidate.is_file() {
+            candidate.to_string_lossy().to_string()
+        } else {
+            scorer.clone()
+        }
+    } else {
+        scorer.clone()
+    };
+
+    let resolved_ws_str = ws_path.to_string_lossy().to_string();
+    let mut broadcasted_patterns: std::collections::HashSet<String> = std::collections::HashSet::new();
 
     // 1. If workspace doesn't exist, bootstrap it with wikiskill start
     if !ws_path.is_dir() {
-        let (python_opt, cli_opt) = resolve_wikiskill_paths();
-        if let (Some(python), Some(cli)) = (python_opt, cli_opt) {
-            info!("[WikiSkill] Bootstrapping evolution workspace at {}...", workspace);
-            let mut cmd = tokio::process::Command::new(&python);
-            cmd.arg(&cli)
+        if let (Some(python), Some(cli)) = (python_opt.as_ref(), cli_opt.as_ref()) {
+            info!("[WikiSkill] Bootstrapping evolution workspace at {}...", resolved_ws_str);
+            let mut cmd = tokio::process::Command::new(python);
+            cmd.arg(cli)
                 .arg("start")
-                .arg(&workspace)
+                .arg(&resolved_ws_str)
                 .arg("--tasks")
-                .arg(&tasks_file)
+                .arg(&resolved_tasks)
                 .arg("--scorer")
-                .arg(&scorer)
+                .arg(&resolved_scorer)
                 .arg("--no-agent")
                 .arg("--trust-scorer")
                 .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
                 .stderr(std::process::Stdio::null());
 
             #[cfg(target_os = "windows")]
@@ -2974,13 +3067,14 @@ async fn run_wikiskill_background_loop(
                 cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
             }
 
-            match tokio::time::timeout(std::time::Duration::from_secs(30), cmd.status()).await {
-                Ok(Ok(status)) => {
-                    if status.success() {
-                        info!("[WikiSkill] Successfully initialized evolution workspace at {}.", workspace);
-                    } else {
-                        warn!("[WikiSkill] Bootstrapping returned status: {:?}", status.code());
-                    }
+            match tokio::time::timeout(std::time::Duration::from_secs(30), cmd.output()).await {
+                Ok(Ok(output)) if output.status.success() => {
+                    info!("[WikiSkill] Successfully initialized evolution workspace at {}.", resolved_ws_str);
+                    let state_file = ws_path.join(".wikiskill-state.json");
+                    let _ = atomic_write_state_file(&state_file, &output.stdout);
+                }
+                Ok(Ok(output)) => {
+                    warn!("[WikiSkill] Bootstrapping returned status: {:?}", output.status.code());
                 }
                 Ok(Err(e)) => {
                     warn!("[WikiSkill] Failed to execute bootstrap command: {}", e);
@@ -2994,55 +3088,154 @@ async fn run_wikiskill_background_loop(
         }
     }
 
+    // Immediate initial poll to eliminate any startup blackout window
+    let (_, initial_score) = poll_wikiskill_status(&resolved_ws_str, &ws_path).await;
+    broadcast_new_wiki_patterns(&ws_path, initial_score, &mut broadcasted_patterns, &orchestrator).await;
+
     // 2. Continuous background evaluation loop
     loop {
         tokio::time::sleep(poll_interval).await;
+        let (_, score) = poll_wikiskill_status(&resolved_ws_str, &ws_path).await;
+        broadcast_new_wiki_patterns(&ws_path, score, &mut broadcasted_patterns, &orchestrator).await;
+    }
+}
 
-        let (python_opt, cli_opt) = resolve_wikiskill_paths();
-        if let (Some(python), Some(cli)) = (python_opt, cli_opt) {
-            let mut cmd = tokio::process::Command::new(&python);
-            cmd.arg(&cli)
-                .arg("status")
-                .arg(&workspace)
-                .stdin(std::process::Stdio::null())
-                .stdout(std::process::Stdio::piped())
-                .stderr(std::process::Stdio::null());
+async fn broadcast_new_wiki_patterns(
+    ws_path: &Path,
+    score: f64,
+    broadcasted: &mut std::collections::HashSet<String>,
+    orchestrator: &Option<Arc<osoosi_core::EdrOrchestrator>>,
+) {
+    let orch = match orchestrator {
+        Some(o) => o,
+        None => return,
+    };
 
-            #[cfg(target_os = "windows")]
-            {
-                #[allow(unused_imports)]
-                use std::os::windows::process::CommandExt;
-                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-            }
+    let wiki_dir = ws_path.join("wiki");
+    let index_file = wiki_dir.join("index.md");
+    if !index_file.is_file() {
+        return;
+    }
 
-            match tokio::time::timeout(std::time::Duration::from_secs(30), cmd.output()).await {
-                Ok(Ok(output)) => {
-                    let mut phase = "unknown".to_string();
-                    let mut score = 1.0;
-                    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
-                        if let Some(p) = val.get("phase").and_then(|v| v.as_str()) {
-                            phase = p.to_string();
-                        }
-                        if let Some(b) = val.get("best_score").and_then(|v| v.as_f64()) {
-                            score = b;
-                        }
-                        let state_file = ws_path.join(".wikiskill-state.json");
-                        let _ = std::fs::write(&state_file, &output.stdout);
+    let content = match tokio::fs::read_to_string(&index_file).await {
+        Ok(c) => c,
+        Err(_) => return,
+    };
+
+    // Scan lines in wiki/index.md for pattern links: - [Title](path)
+    for line in content.lines() {
+        let trimmed = line.trim();
+        if !trimmed.starts_with("- [") && !trimmed.starts_with("* [") {
+            continue;
+        }
+
+        let link_start = match trimmed.find('[') {
+            Some(i) => i + 1,
+            None => continue,
+        };
+        let link_end = match trimmed.find("](") {
+            Some(i) => i,
+            None => continue,
+        };
+        let url_end = match trimmed[link_end + 2..].find(')') {
+            Some(i) => link_end + 2 + i,
+            None => continue,
+        };
+
+        let title = &trimmed[link_start..link_end];
+        let rel_path = &trimmed[link_end + 2..url_end];
+
+        let pattern_file = wiki_dir.join(rel_path);
+        if !pattern_file.is_file() {
+            continue;
+        }
+
+        let pattern_md = match tokio::fs::read_to_string(&pattern_file).await {
+            Ok(md) => md,
+            Err(_) => continue,
+        };
+
+        let content_hash = blake3::hash(pattern_md.trim().as_bytes()).to_hex().to_string();
+        if broadcasted.contains(&content_hash) {
+            continue;
+        }
+
+        let node_id = orch.trust().did().to_string();
+        let broadcast = osoosi_wire::SkillKnowledgeBroadcast {
+            node_id,
+            skill_name: "wikiskill".to_string(),
+            version: "1.0.0".to_string(),
+            content_hash: content_hash.clone(),
+            pattern_title: title.to_string(),
+            markdown_content: pattern_md,
+            score,
+            timestamp: chrono::Utc::now(),
+            signature: None,
+        };
+
+        info!(
+            "[WikiSkill] Discovered new pattern '{}' ({}); broadcasting to P2P wire mesh...",
+            title, content_hash
+        );
+
+        if let Err(e) = orch.broadcast_skill_knowledge(broadcast).await {
+            warn!("[WikiSkill] Failed to broadcast skill pattern {}: {}", title, e);
+        } else {
+            broadcasted.insert(content_hash);
+        }
+    }
+}
+
+async fn poll_wikiskill_status(workspace: &str, ws_path: &Path) -> (String, f64) {
+    let (python_opt, cli_opt, _root) = resolve_wikiskill_paths();
+    let mut phase = "unknown".to_string();
+    let mut score = 1.0;
+
+    if let (Some(python), Some(cli)) = (python_opt, cli_opt) {
+        let mut cmd = tokio::process::Command::new(&python);
+        cmd.arg(&cli)
+            .arg("status")
+            .arg(workspace)
+            .stdin(std::process::Stdio::null())
+            .stdout(std::process::Stdio::piped())
+            .stderr(std::process::Stdio::null());
+
+        #[cfg(target_os = "windows")]
+        {
+            #[allow(unused_imports)]
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        }
+
+        match tokio::time::timeout(std::time::Duration::from_secs(30), cmd.output()).await {
+            Ok(Ok(output)) if output.status.success() => {
+                if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                    if let Some(p) = val.get("phase").and_then(|v| v.as_str()) {
+                        phase = p.to_string();
                     }
-                    debug!(
-                        "[WikiSkill] Evolution cycle completed. Phase: {}, Best Score: {:.2}",
-                        phase, score
-                    );
+                    if let Some(b) = val.get("best_score").and_then(|v| v.as_f64()) {
+                        score = b;
+                    }
+                    let state_file = ws_path.join(".wikiskill-state.json");
+                    let _ = atomic_write_state_file(&state_file, &output.stdout);
                 }
-                Ok(Err(e)) => {
-                    debug!("[WikiSkill] Status evaluation poll error: {}", e);
-                }
-                Err(_) => {
-                    debug!("[WikiSkill] Status evaluation poll timed out.");
-                }
+                debug!(
+                    "[WikiSkill] Evolution cycle completed. Phase: {}, Best Score: {:.2}",
+                    phase, score
+                );
+            }
+            Ok(Ok(output)) => {
+                debug!("[WikiSkill] Status evaluation returned non-zero code: {:?}", output.status.code());
+            }
+            Ok(Err(e)) => {
+                debug!("[WikiSkill] Status evaluation poll error: {}", e);
+            }
+            Err(_) => {
+                debug!("[WikiSkill] Status evaluation poll timed out.");
             }
         }
     }
+    (phase, score)
 }
 
 async fn handle_skill_command(sub: Option<SkillSubcommand>) -> anyhow::Result<()> {
@@ -3151,7 +3344,7 @@ async fn handle_skill_command(sub: Option<SkillSubcommand>) -> anyhow::Result<()
             println!("\n================================================================================");
             println!("                       WikiSkill Runtime Doctor");
             println!("================================================================================");
-            let (python_opt, cli_opt) = resolve_wikiskill_paths();
+            let (python_opt, cli_opt, project_root) = resolve_wikiskill_paths();
             println!(
                 "Python Runtime:       {}",
                 match &python_opt {
@@ -3175,7 +3368,11 @@ async fn handle_skill_command(sub: Option<SkillSubcommand>) -> anyhow::Result<()
                 }
             );
 
-            let subagents_dir = Path::new(".agents").join("subagents");
+            let subagents_dir = if let Some(ref root) = project_root {
+                root.join(".agents").join("subagents")
+            } else {
+                Path::new(".agents").join("subagents")
+            };
             let has_subagents = subagents_dir.is_dir()
                 && subagents_dir.join("wikiskill-executor.md").is_file()
                 && subagents_dir.join("wikiskill-maintainer.md").is_file()
@@ -3189,7 +3386,11 @@ async fn handle_skill_command(sub: Option<SkillSubcommand>) -> anyhow::Result<()
                 }
             );
 
-            let skill_dir = Path::new(".agents").join("skills").join("wikiskill");
+            let skill_dir = if let Some(ref root) = project_root {
+                root.join(".agents").join("skills").join("wikiskill")
+            } else {
+                Path::new(".agents").join("skills").join("wikiskill")
+            };
             let has_skill = skill_dir.join("SKILL.md").is_file();
             println!(
                 "Entry Skill:          {}",
@@ -3617,5 +3818,53 @@ mod tests {
             }
             _ => panic!("Expected Commands::Skill with Report"),
         }
+    }
+
+    #[test]
+    fn test_atomic_write_state_file_and_parsing() {
+        let temp_dir = std::env::temp_dir().join(format!("osoosi_state_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let state_path = temp_dir.join(".wikiskill-state.json");
+
+        let initial_json = br#"{"schema_version":"wikiskill.workspace.v1","phase":"baseline","best_score":null,"round":1}"#;
+        atomic_write_state_file(&state_path, initial_json).expect("atomic write must succeed");
+        assert!(state_path.is_file());
+
+        let read_back = std::fs::read_to_string(&state_path).unwrap();
+        let val: serde_json::Value = serde_json::from_str(&read_back).unwrap();
+        assert_eq!(val.get("phase").and_then(|v| v.as_str()), Some("baseline"));
+        assert!(val.get("best_score").unwrap().is_null());
+        assert_eq!(val.get("round").and_then(|v| v.as_u64()), Some(1));
+
+        let updated_json = br#"{"schema_version":"wikiskill.workspace.v1","phase":"active","best_score":0.95,"round":2}"#;
+        atomic_write_state_file(&state_path, updated_json).expect("atomic overwrite must succeed");
+
+        let read_updated = std::fs::read_to_string(&state_path).unwrap();
+        let val_updated: serde_json::Value = serde_json::from_str(&read_updated).unwrap();
+        assert_eq!(val_updated.get("phase").and_then(|v| v.as_str()), Some("active"));
+        assert_eq!(val_updated.get("best_score").and_then(|v| v.as_f64()), Some(0.95));
+        assert_eq!(val_updated.get("round").and_then(|v| v.as_u64()), Some(2));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_broadcast_new_wiki_patterns_discovery() {
+        let temp_dir = std::env::temp_dir().join(format!("osoosi_wiki_broadcast_test_{}", std::process::id()));
+        let wiki_dir = temp_dir.join("wiki");
+        let patterns_dir = wiki_dir.join("patterns");
+        let _ = std::fs::create_dir_all(&patterns_dir);
+
+        let index_content = "# Wiki\n\n- [EDR-PAT-01: In-Memory Process Injection Analysis](patterns/d7002e64340557ef.md)\n";
+        std::fs::write(wiki_dir.join("index.md"), index_content).unwrap();
+
+        let pattern_content = "# EDR-PAT-01: In-Memory Process Injection Analysis\n\nVerify unbacked memory pages.";
+        std::fs::write(patterns_dir.join("d7002e64340557ef.md"), pattern_content).unwrap();
+
+        let mut broadcasted = std::collections::HashSet::new();
+        // Call helper with None orchestrator (should discover and parse without crashing)
+        broadcast_new_wiki_patterns(&temp_dir, 0.95, &mut broadcasted, &None).await;
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

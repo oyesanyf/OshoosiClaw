@@ -50,6 +50,7 @@ pub struct MeshNode {
     pub attestation_topic: gossipsub::IdentTopic,
     pub heartbeat_topic: gossipsub::IdentTopic,
     pub stix_update_topic: gossipsub::IdentTopic,
+    pub skills_topic: gossipsub::IdentTopic,
     pub reconciliation: Arc<super::MeshReconciliationEngine>,
     pub zone: String,
     pub memory: Arc<osoosi_memory::MemoryStore>,
@@ -170,6 +171,8 @@ impl MeshNode {
             gossipsub::IdentTopic::new(format!("{}-{}", super::HEARTBEAT_TOPIC, zone));
         let stix_update_topic =
             gossipsub::IdentTopic::new(super::STIX_UPDATE_TOPIC);
+        let skills_topic =
+            gossipsub::IdentTopic::new(super::SKILLS_TOPIC);
 
         swarm.behaviour_mut().gossipsub.subscribe(&threat_topic)?;
         swarm
@@ -218,6 +221,10 @@ impl MeshNode {
             .behaviour_mut()
             .gossipsub
             .subscribe(&stix_update_topic)?;
+        swarm
+            .behaviour_mut()
+            .gossipsub
+            .subscribe(&skills_topic)?;
 
         let mesh_config = osoosi_types::load_mesh_listen_config();
 
@@ -315,6 +322,7 @@ impl MeshNode {
             attestation_topic,
             heartbeat_topic,
             stix_update_topic,
+            skills_topic,
             reconciliation: Arc::new(super::MeshReconciliationEngine::default()),
             zone,
             memory,
@@ -442,7 +450,7 @@ impl MeshNode {
     }
 
     #[allow(clippy::too_many_arguments)]
-    pub async fn run_loop<F, G, H, I, J, K, L, M, N>(
+    pub async fn run_loop<F, G, H, I, J, K, L, M, N, O>(
         mut self,
         join_gate: Arc<JoinGate>,
         mut command_rx: mpsc::Receiver<MeshCommand>,
@@ -458,6 +466,7 @@ impl MeshNode {
         mut on_confidential: L,
         mut on_model_delta: M,
         mut on_tripwire: N,
+        mut on_skill: O,
     ) where
         F: FnMut(ThreatSignature) + Send + 'static,
         G: FnMut(osoosi_types::PolicyConsensusMessage) + Send + 'static,
@@ -468,6 +477,7 @@ impl MeshNode {
         L: FnMut(super::ConfidentialMessage) + Send + 'static,
         M: FnMut(osoosi_types::FederatedModelDelta) + Send + 'static,
         N: FnMut(osoosi_types::MeshTripwireAlert) + Send + 'static,
+        O: FnMut(super::SkillKnowledgeBroadcast) + Send + 'static,
     {
         let mut quarantined: HashSet<PeerId> = HashSet::new();
         let mut approved: HashSet<PeerId> = HashSet::new();
@@ -640,6 +650,10 @@ impl MeshNode {
                         self.publish_gossip_json(&topic, &manifest);
                         self.last_stix_manifest = Some(manifest);
                     }
+                    MeshCommand::BroadcastSkillKnowledge(knowledge) => {
+                        let topic = self.skills_topic.clone();
+                        self.publish_gossip_json(&topic, &knowledge);
+                    }
                     MeshCommand::ReconcilePeers => {
                         let actions = self.reconciliation.reconcile_partitions();
                         for action in actions {
@@ -777,6 +791,14 @@ impl MeshNode {
                                     );
                                     self.last_stix_manifest = Some(manifest);
                                 }
+                            }
+                        } else if message.topic == self.skills_topic.hash() {
+                            if let Ok(knowledge) = serde_json::from_slice::<super::SkillKnowledgeBroadcast>(&message.data) {
+                                info!(
+                                    "[wire-mesh] Received learned skill pattern '{}' for '{}' (v{}) from peer '{}' (score: {:.2})",
+                                    knowledge.pattern_title, knowledge.skill_name, knowledge.version, knowledge.node_id, knowledge.score
+                                );
+                                on_skill(knowledge);
                             }
                         }
                     }
@@ -967,5 +989,40 @@ mod tests {
 
         assert_eq!(node.stix_update_topic.hash().as_str(), "osoosi-stix-sync-v1");
         assert!(node.last_stix_manifest.is_none());
+    }
+
+    #[test]
+    fn test_skill_knowledge_broadcast_serialization_deserialization() {
+        let broadcast = crate::SkillKnowledgeBroadcast {
+            node_id: "node-test-peer-42".to_string(),
+            skill_name: "wikiskill".to_string(),
+            version: "1.0.0".to_string(),
+            content_hash: "a1b2c3d4e5f6".to_string(),
+            pattern_title: "EDR-PAT-01: In-Memory Process Injection Analysis".to_string(),
+            markdown_content: "# Pattern\n\nDetect unbacked executable memory.".to_string(),
+            score: 0.98,
+            timestamp: chrono::Utc::now(),
+            signature: Some("sig-xyz".to_string()),
+        };
+
+        let json_str = serde_json::to_string(&broadcast).expect("serialize SkillKnowledgeBroadcast");
+        assert!(json_str.contains("node-test-peer-42"));
+        assert!(json_str.contains("wikiskill"));
+        assert!(json_str.contains("a1b2c3d4e5f6"));
+        assert!(json_str.contains("EDR-PAT-01"));
+
+        let deserialized: crate::SkillKnowledgeBroadcast =
+            serde_json::from_str(&json_str).expect("deserialize SkillKnowledgeBroadcast");
+        assert_eq!(broadcast, deserialized);
+        assert_eq!(deserialized.score, 0.98);
+        assert_eq!(deserialized.skill_name, "wikiskill");
+    }
+
+    #[tokio::test]
+    async fn test_skills_topic_subscription() {
+        let memory = Arc::new(osoosi_memory::MemoryStore::new(":memory:").expect("in-memory db"));
+        let node = MeshNode::new(memory).await.expect("initialize MeshNode");
+
+        assert_eq!(node.skills_topic.hash().as_str(), crate::SKILLS_TOPIC);
     }
 }

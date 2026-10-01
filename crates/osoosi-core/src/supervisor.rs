@@ -436,8 +436,30 @@ impl MultiSensorFusionEngine {
         // 7. WikiSkill Autonomous Skill & Threat Evolution Sensor
         let skills_cfg = osoosi_types::config::load_skills_config();
         let ws_path = std::path::Path::new(&skills_cfg.workspace);
-        let (skill_health, skill_conf, skill_details) = if ws_path.is_dir() {
-            let state_file = ws_path.join(".wikiskill-state.json");
+        let resolved_ws = if ws_path.is_dir() {
+            Some(ws_path.to_path_buf())
+        } else if let Some(config_path) = osoosi_types::resolve_config_path() {
+            let candidate = config_path.parent().map(|p| p.join(ws_path));
+            if candidate.as_ref().map(|c| c.is_dir()).unwrap_or(false) {
+                candidate
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
+        let (skill_health, skill_conf, skill_details) = if !skills_cfg.enabled {
+            (
+                0.90,
+                0.90,
+                format!(
+                    "WikiSkill self-evolution: STANDBY (Engine disabled in configuration; workspace: {})",
+                    skills_cfg.workspace
+                ),
+            )
+        } else if let Some(ws) = resolved_ws {
+            let state_file = ws.join(".wikiskill-state.json");
             let mut phase = "active".to_string();
             let mut best_score = 1.0;
             let mut rounds = 1;

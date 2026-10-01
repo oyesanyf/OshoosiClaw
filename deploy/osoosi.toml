@@ -25,7 +25,7 @@ watch_paths      = ["all"]
 
 [autonomy]
 # Reputation threshold (0.0–1.0). Peers ≥ this are auto-approved.
-auto_approve_reputation_threshold = 0.4
+auto_approve_reputation_threshold = 0.40
 # Auto-quarantine detected malware files
 auto_quarantine_malware = false
 # Minimum confidence (0.0–1.0) to quarantine
@@ -130,3 +130,17 @@ trusted_stems = [
 
 # Alert suppression period in seconds (10 minutes)
 alert_suppression_secs = 600
+
+[skills]
+# Enable WikiSkill autonomous self-evolving agent skill engine
+enabled = true
+# Automatically start background self-evolution loop on EDR daemon startup
+auto_evolve_on_start = true
+# Designated evolution workspace
+workspace = "runs/edr-evolution"
+# Ground truth tasks catalog
+tasks_file = "examples/edr-skill-evolution/tasks.json"
+# Ground truth evaluation scorer
+scorer = "examples/edr-skill-evolution/scorer.py"
+# Re-evaluation and learning interval in seconds (5 minutes)
+poll_interval_secs = 300

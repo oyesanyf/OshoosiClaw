@@ -33,6 +33,23 @@ pub const ATTESTATION_TOPIC: &str = "osoosi-attestation-v1";
 /// Gossipsub topic for authoritative STIX 2.1 catalog wire mesh synchronization.
 pub const STIX_UPDATE_TOPIC: &str = "osoosi-stix-sync-v1";
 
+/// Gossipsub topic for WikiSkill learned knowledge synchronization across the P2P wire mesh.
+pub const SKILLS_TOPIC: &str = "osoosi-skills-v1";
+
+/// Autonomous WikiSkill learned knowledge payload shared across the P2P wire mesh.
+#[derive(serde::Serialize, serde::Deserialize, Debug, Clone, PartialEq)]
+pub struct SkillKnowledgeBroadcast {
+    pub node_id: String,
+    pub skill_name: String,
+    pub version: String,
+    pub content_hash: String,
+    pub pattern_title: String,
+    pub markdown_content: String,
+    pub score: f64,
+    pub timestamp: chrono::DateTime<chrono::Utc>,
+    pub signature: Option<String>,
+}
+
 /// Authoritative STIX 2.1 catalog manifest synchronized across the wire mesh.
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize, PartialEq, Eq)]
 pub struct StixManifest {
@@ -120,6 +137,8 @@ pub enum MeshCommand {
     BroadcastHeartbeat(MeshHeartbeat),
     /// Broadcast an updated MITRE ATT&CK + ATLAS STIX 2.1 manifest across the P2P wire mesh.
     BroadcastStixUpdate(StixManifest),
+    /// Broadcast a learned WikiSkill pattern across the P2P wire mesh.
+    BroadcastSkillKnowledge(SkillKnowledgeBroadcast),
     /// Trigger peer liveness reconciliation and partition recovery sweep.
     ReconcilePeers,
 }

@@ -2185,6 +2185,7 @@ impl EdrOrchestrator {
             let orch_tarpit = orch.clone();
             let orch_delta = orch.clone();
             let orch_tripwire = orch.clone();
+            let orch_skill = orch.clone();
             let gossip_counter = self.mesh_gossip_count_atomic.clone();
             let g1 = gossip_counter.clone();
             let g2 = gossip_counter.clone();
@@ -2192,6 +2193,7 @@ impl EdrOrchestrator {
             let g4 = gossip_counter.clone();
             let g5 = gossip_counter.clone();
             let g6 = gossip_counter.clone();
+            let g7 = gossip_counter.clone();
 
             tokio::spawn(async move {
                 mesh_node
@@ -2479,6 +2481,10 @@ impl EdrOrchestrator {
                                     }),
                                 );
                             });
+                        },
+                        move |knowledge| {
+                            g7.fetch_add(1, Ordering::Relaxed);
+                            orch_skill.handle_incoming_skill_knowledge(knowledge);
                         },
                     )
                     .await;
@@ -5073,6 +5079,163 @@ impl EdrOrchestrator {
         Ok(())
     }
 
+    /// Broadcast a learned WikiSkill pattern across the P2P wire mesh.
+    pub async fn broadcast_skill_knowledge(
+        &self,
+        knowledge: osoosi_wire::SkillKnowledgeBroadcast,
+    ) -> anyhow::Result<()> {
+        info!(
+            "[MESH_SKILL_SYNC] Broadcasting learned skill pattern '{}' for '{}' (v{}) to wire mesh",
+            knowledge.pattern_title, knowledge.skill_name, knowledge.version
+        );
+        self.audit.log(
+            "MESH_SKILL_BROADCAST",
+            serde_json::json!({
+                "skill_name": knowledge.skill_name,
+                "version": knowledge.version,
+                "pattern_title": knowledge.pattern_title,
+                "content_hash": knowledge.content_hash,
+                "score": knowledge.score,
+                "node_id": knowledge.node_id,
+            }),
+        );
+        if let Some(ref tx) = *self.mesh_command_tx.lock().await {
+            let _ = tx
+                .send(osoosi_wire::MeshCommand::BroadcastSkillKnowledge(knowledge))
+                .await;
+        }
+        Ok(())
+    }
+
+    /// Ingest, validate, and merge peer-discovered WikiSkill patterns received over the P2P wire mesh.
+    pub fn handle_incoming_skill_knowledge(&self, knowledge: osoosi_wire::SkillKnowledgeBroadcast) {
+        let trimmed = knowledge.markdown_content.trim();
+        if trimmed.is_empty() {
+            warn!("[MESH_SKILL_SYNC] Dropped empty skill pattern from peer '{}'", knowledge.node_id);
+            return;
+        }
+
+        // Validate content hash
+        let calculated_hash = blake3::hash(trimmed.as_bytes()).to_hex().to_string();
+        let hash_valid = if knowledge.content_hash.is_empty() {
+            true
+        } else if knowledge.content_hash.len() == 64 {
+            calculated_hash.eq_ignore_ascii_case(&knowledge.content_hash)
+                || {
+                    use sha2::{Digest, Sha256};
+                    let mut hasher = Sha256::new();
+                    hasher.update(trimmed.as_bytes());
+                    let sha_h = hex::encode(hasher.finalize());
+                    sha_h.eq_ignore_ascii_case(&knowledge.content_hash)
+                }
+        } else {
+            calculated_hash.starts_with(&knowledge.content_hash.to_lowercase())
+        };
+
+        if !hash_valid {
+            warn!(
+                "[MESH_SKILL_SYNC] Rejecting skill pattern '{}' from peer '{}': content hash mismatch (expected {}, got {})",
+                knowledge.pattern_title, knowledge.node_id, knowledge.content_hash, calculated_hash
+            );
+            return;
+        }
+
+        let orch_self = self.clone();
+        tokio::spawn(async move {
+            // Resolve Wiki workspace
+            let skills_cfg = osoosi_types::config::load_skills_config();
+            let ws_path = std::path::Path::new(&skills_cfg.workspace);
+            let resolved_ws = if ws_path.is_dir() {
+                ws_path.to_path_buf()
+            } else if let Some(config_path) = osoosi_types::resolve_config_path() {
+                let candidate = config_path.parent().map(|p| p.join(ws_path));
+                if candidate.as_ref().map(|c| c.is_dir()).unwrap_or(false) {
+                    candidate.unwrap()
+                } else {
+                    ws_path.to_path_buf()
+                }
+            } else {
+                ws_path.to_path_buf()
+            };
+
+            let wiki_dir = resolved_ws.join("wiki");
+            let inbox_dir = wiki_dir.join("inbox");
+            let _ = std::fs::create_dir_all(&inbox_dir);
+
+            // 1. Save pattern to inbox/<content_hash>.md
+            let safe_hash = if !knowledge.content_hash.is_empty() {
+                &knowledge.content_hash
+            } else {
+                &calculated_hash
+            };
+            let pattern_file = inbox_dir.join(format!("{}.md", safe_hash));
+            let _ = std::fs::write(&pattern_file, &knowledge.markdown_content);
+
+            // 2. Append/merge into peer_patterns.md
+            let peer_patterns_file = wiki_dir.join("peer_patterns.md");
+            let mut entry = String::new();
+            if !peer_patterns_file.is_file() {
+                entry.push_str("# Peer Learned Patterns\n\nSynchronized via OpenỌ̀ṣọ́ọ̀sì P2P Wire Mesh Gossip.\n\n");
+            }
+            entry.push_str(&format!(
+                "## [{}] (Peer: {}, Score: {:.2})\n- **Skill**: {} v{}\n- **Hash**: `{}`\n- **Received**: {}\n\n{}\n\n---\n\n",
+                knowledge.pattern_title,
+                knowledge.node_id,
+                knowledge.score,
+                knowledge.skill_name,
+                knowledge.version,
+                safe_hash,
+                knowledge.timestamp.to_rfc3339(),
+                knowledge.markdown_content.trim()
+            ));
+
+            use std::io::Write;
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&peer_patterns_file) {
+                let _ = f.write_all(entry.as_bytes());
+            }
+
+            // Log audit event:
+            // [MESH_SKILL_SYNC] Received learned skill pattern '{pattern_title}' from peer '{node_id}' (score: {score}). Merged into local Wiki inbox.
+            info!(
+                "[MESH_SKILL_SYNC] Received learned skill pattern '{}' from peer '{}' (score: {:.2}). Merged into local Wiki inbox.",
+                knowledge.pattern_title, knowledge.node_id, knowledge.score
+            );
+            orch_self.audit.log(
+                "MESH_SKILL_SYNC",
+                serde_json::json!({
+                    "pattern_title": knowledge.pattern_title,
+                    "node_id": knowledge.node_id,
+                    "score": knowledge.score,
+                    "skill_name": knowledge.skill_name,
+                    "version": knowledge.version,
+                    "content_hash": safe_hash,
+                    "inbox_path": pattern_file.to_string_lossy(),
+                }),
+            );
+
+            orch_self.record_gossip_item(osoosi_types::GossipFeedItem {
+                id: uuid::Uuid::new_v4().to_string(),
+                event_type: "MESH_SKILL_SYNC".to_string(),
+                timestamp: chrono::Utc::now().to_rfc3339(),
+                summary: format!(
+                    "Peer Learned Skill: {} (Score: {:.2}) via {}",
+                    knowledge.pattern_title, knowledge.score, knowledge.node_id
+                ),
+                source_node: knowledge.node_id.clone(),
+                process_name: None,
+                mitre_technique: None,
+                mitre_technique_name: None,
+                mitre_tactic: None,
+                confidence: knowledge.score as f32,
+                severity: "INFO".to_string(),
+                action: Some("SkillSync".to_string()),
+                status: "ACTIVE".to_string(),
+                hash_blake3: Some(safe_hash.to_string()),
+                is_threat: false,
+            });
+        });
+    }
+
     /// Access the trust manager to bootstrap mesh identity.
     pub fn trust(&self) -> Arc<TrustManager> {
         self.trust.clone()
@@ -6505,6 +6668,8 @@ impl EdrOrchestrator {
         let gossip_conf = gossip_count.clone();
         let gossip_delta = gossip_count.clone();
         let gossip_trip = gossip_count.clone();
+        let gossip_skill = gossip_count.clone();
+        let orch_skill = self.clone();
 
         let mesh_future = Box::pin(async move {
             mesh.run_loop(
@@ -6565,6 +6730,10 @@ impl EdrOrchestrator {
                             }),
                         );
                     });
+                },
+                move |knowledge| {
+                    gossip_skill.fetch_add(1, Ordering::Relaxed);
+                    orch_skill.handle_incoming_skill_knowledge(knowledge);
                 },
             )
             .await;
@@ -8319,6 +8488,50 @@ mod tests {
         assert!(!is_cloud_storage_service("mimikatz.exe", None));
         assert!(!is_cloud_storage_service("payload.exe", Some(std::path::Path::new(r"C:\Windows\Temp\payload.exe"))));
         assert!(!is_cloud_storage_service("payload.exe", Some(std::path::Path::new("C:/Windows/Temp/payload.exe"))));
+    }
+
+    #[tokio::test]
+    async fn test_mesh_skill_knowledge_handling() {
+        let temp_dir = std::env::temp_dir().join(format!("osoosi_skill_test_{}", std::process::id()));
+        let wiki_dir = temp_dir.join("wiki");
+        let inbox_dir = wiki_dir.join("inbox");
+        let _ = std::fs::create_dir_all(&inbox_dir);
+
+        let markdown = "# EDR-PAT-TEST\n\nDetect suspicious remote thread creation.";
+        let hash = blake3::hash(markdown.trim().as_bytes()).to_hex().to_string();
+
+        let broadcast = osoosi_wire::SkillKnowledgeBroadcast {
+            node_id: "peer-validator-01".to_string(),
+            skill_name: "wikiskill".to_string(),
+            version: "1.0.0".to_string(),
+            content_hash: hash.clone(),
+            pattern_title: "EDR-PAT-TEST: Remote Thread Creation".to_string(),
+            markdown_content: markdown.to_string(),
+            score: 0.99,
+            timestamp: chrono::Utc::now(),
+            signature: None,
+        };
+
+        // Validate hash calculation
+        let calculated = blake3::hash(broadcast.markdown_content.trim().as_bytes()).to_hex().to_string();
+        assert_eq!(calculated, hash);
+
+        // Test file writing
+        let pattern_file = inbox_dir.join(format!("{}.md", hash));
+        std::fs::write(&pattern_file, &broadcast.markdown_content).unwrap();
+        assert!(pattern_file.is_file());
+        let read_back = std::fs::read_to_string(&pattern_file).unwrap();
+        assert_eq!(read_back, markdown);
+
+        let peer_patterns_file = wiki_dir.join("peer_patterns.md");
+        let entry = format!(
+            "## [{}] (Peer: {}, Score: {:.2})\n\n{}\n",
+            broadcast.pattern_title, broadcast.node_id, broadcast.score, broadcast.markdown_content
+        );
+        std::fs::write(&peer_patterns_file, entry).unwrap();
+        assert!(peer_patterns_file.is_file());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
 
