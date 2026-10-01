@@ -23,7 +23,12 @@ impl DirectExecutor {
 
 #[async_trait]
 impl SecuredExecutor for DirectExecutor {
-    async fn execute(&self, cmd: std::process::Command) -> anyhow::Result<Output> {
+    async fn execute(&self, mut cmd: std::process::Command) -> anyhow::Result<Output> {
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000);
+        }
         let mut tokio_cmd = Command::from(cmd);
         // system-wide safety timeout for all orchestrated commands to prevent agent hangs
         let res = tokio::time::timeout(std::time::Duration::from_secs(600), tokio_cmd.output()).await;

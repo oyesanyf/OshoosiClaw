@@ -1496,13 +1496,21 @@ async fn setup_firewall() -> anyhow::Result<()> {
 
         // TCP rules
         let mut tcp_cmd = Command::new("netsh");
+        tcp_cmd.stdout(std::process::Stdio::null());
+        tcp_cmd.stderr(std::process::Stdio::null());
+        #[cfg(windows)]
+        tcp_cmd.creation_flags(0x08000000);
         tcp_cmd.args(&["advfirewall", "firewall", "add", "rule", "name=\"OpenOshoosi-TCP\"", "dir=in", "action=allow", "protocol=TCP", "localport=4001,9000,9876,3030,8080"]);
-        let _ = timeout(Duration::from_secs(30), tcp_cmd.output()).await;
+        let _ = timeout(Duration::from_secs(30), tcp_cmd.status()).await;
 
         // UDP rules (mDNS + P2P discovery)
         let mut udp_cmd = Command::new("netsh");
+        udp_cmd.stdout(std::process::Stdio::null());
+        udp_cmd.stderr(std::process::Stdio::null());
+        #[cfg(windows)]
+        udp_cmd.creation_flags(0x08000000);
         udp_cmd.args(&["advfirewall", "firewall", "add", "rule", "name=\"OpenOshoosi-UDP\"", "dir=in", "action=allow", "protocol=UDP", "localport=4001,5353"]);
-        let _ = timeout(Duration::from_secs(30), udp_cmd.output()).await;
+        let _ = timeout(Duration::from_secs(30), udp_cmd.status()).await;
     }
     osoosi_core::firewall::open_mesh_ports().await?;
     Ok(())

@@ -505,7 +505,11 @@ impl AgentProvisioner {
 
     #[cfg(target_os = "windows")]
     async fn ensure_windows_rule(&self, name: &str, port: &str, protocol: &str) -> anyhow::Result<()> {
+        #[allow(unused_imports)]
+        use std::os::windows::process::CommandExt;
         let mut check = Command::new("netsh");
+        #[cfg(windows)]
+        check.creation_flags(0x08000000);
         check.args([
             "advfirewall",
             "firewall",
@@ -517,6 +521,8 @@ impl AgentProvisioner {
         if !self.executor.execute(check).await?.status.success() {
             info!("Adding firewall rule: {} (Port {}/{})...", name, port, protocol);
             let mut add = Command::new("netsh");
+            #[cfg(windows)]
+            add.creation_flags(0x08000000);
             add.args([
                 "advfirewall",
                 "firewall",

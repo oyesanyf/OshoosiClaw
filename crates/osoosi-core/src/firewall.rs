@@ -308,10 +308,14 @@ pub async fn open_mesh_ports() -> Result<()> {
             let proto_lower = proto.to_lowercase();
 
             let mut ufw = Command::new("sudo");
+            ufw.stdout(std::process::Stdio::null());
+            ufw.stderr(std::process::Stdio::null());
             ufw.args(["ufw", "allow", &port_spec]);
             let _ = timeout(Duration::from_secs(10), ufw.status()).await;
 
             let mut ipt = Command::new("sudo");
+            ipt.stdout(std::process::Stdio::null());
+            ipt.stderr(std::process::Stdio::null());
             ipt.args([
                 "iptables",
                 "-I",
@@ -553,7 +557,13 @@ fn block_windows_program(image_path: Option<&str>) -> Result<String> {
     let in_rule = format!("{}-In", rule_base);
 
     let add_rule = |name: &str, dir: &str| -> Result<()> {
-        let output = Command::new("netsh")
+        let mut cmd = Command::new("netsh");
+        #[cfg(windows)]
+        {
+            use std::os::windows::process::CommandExt;
+            cmd.creation_flags(0x08000000);
+        }
+        let output = cmd
             .args([
                 "advfirewall",
                 "firewall",
@@ -620,9 +630,9 @@ fn block_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<String> 
         "profile=any",
         &format!("remoteip={}", payload),
     ]);
-    let status = cmd.output()?;
+    let status = cmd.status()?;
 
-    if !status.status.success() {
+    if !status.success() {
         let mut retry_cmd = Command::new("netsh");
         retry_cmd
             .stdout(std::process::Stdio::null())
@@ -639,7 +649,7 @@ fn block_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<String> 
                 "new",
                 "enable=yes",
             ])
-            .output();
+            .status();
     }
 
     save_blocked_rule(BlockedTarget::DnsIps {
@@ -672,7 +682,7 @@ fn unblock_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<()> {
             "rule",
             &format!("name={}", name),
         ])
-        .output()?;
+        .status();
     Ok(())
 }
 
