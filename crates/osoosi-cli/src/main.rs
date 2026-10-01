@@ -3100,77 +3100,145 @@ async fn run_wikiskill_background_loop(
     }
 }
 
+/// Discovers valid WikiSkill patterns from the given workspace directory.
+/// Scans `wiki/index.md` supporting table rows (`| [Title](path) | Summary |`),
+/// bullet lists (`- [Title](path)`), asterisk lists (`* [Title](path)`), and numbered lists (`1. [Title](path)`).
+/// Also falls back to scanning `wiki/patterns/*.md` for any unindexed pattern files.
+pub fn discover_wiki_patterns(ws_path: &Path) -> Vec<(String, String, String)> {
+    let mut patterns = Vec::new();
+    let mut seen_hashes = std::collections::HashSet::new();
+
+    let wiki_dir = ws_path.join("wiki");
+    let index_file = wiki_dir.join("index.md");
+
+    // 1. Scan wiki/index.md if present
+    if index_file.is_file() {
+        if let Ok(content) = std::fs::read_to_string(&index_file) {
+            for line in content.lines() {
+                let trimmed = line.trim();
+                let link_start = match trimmed.find('[') {
+                    Some(i) => i + 1,
+                    None => continue,
+                };
+                let link_end = match trimmed[link_start..].find("](") {
+                    Some(i) => link_start + i,
+                    None => continue,
+                };
+                let url_start = link_end + 2;
+                let url_end = match trimmed[url_start..].find(')') {
+                    Some(i) => url_start + i,
+                    None => continue,
+                };
+
+                let title = trimmed[link_start..link_end].trim();
+                let rel_path = trimmed[url_start..url_end].trim();
+
+                if title.is_empty() || rel_path.is_empty() {
+                    continue;
+                }
+                if rel_path.starts_with("http://") || rel_path.starts_with("https://") {
+                    continue;
+                }
+
+                let pattern_file = if wiki_dir.join(rel_path).is_file() {
+                    wiki_dir.join(rel_path)
+                } else if ws_path.join(rel_path).is_file() {
+                    ws_path.join(rel_path)
+                } else {
+                    continue;
+                };
+
+                if let Ok(pattern_md) = std::fs::read_to_string(&pattern_file) {
+                    let trimmed_md = pattern_md.trim();
+                    if trimmed_md.is_empty() {
+                        continue;
+                    }
+                    let hash = blake3::hash(trimmed_md.as_bytes()).to_hex().to_string();
+                    if seen_hashes.insert(hash.clone()) {
+                        patterns.push((title.to_string(), hash, pattern_md));
+                    }
+                }
+            }
+        }
+    }
+
+    // 2. Also scan wiki/patterns/*.md for any patterns not yet indexed
+    let patterns_dir = wiki_dir.join("patterns");
+    if patterns_dir.is_dir() {
+        if let Ok(entries) = std::fs::read_dir(&patterns_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                if path.is_file() && path.extension().and_then(|s| s.to_str()) == Some("md") {
+                    if let Ok(pattern_md) = std::fs::read_to_string(&path) {
+                        let trimmed_md = pattern_md.trim();
+                        if trimmed_md.is_empty() {
+                            continue;
+                        }
+                        let hash = blake3::hash(trimmed_md.as_bytes()).to_hex().to_string();
+                        if seen_hashes.insert(hash.clone()) {
+                            let title = pattern_md
+                                .lines()
+                                .find(|l| l.trim().starts_with("# "))
+                                .map(|l| l.trim().trim_start_matches('#').trim().to_string())
+                                .unwrap_or_else(|| {
+                                    path.file_stem()
+                                        .and_then(|s| s.to_str())
+                                        .unwrap_or("Pattern")
+                                        .to_string()
+                                });
+                            patterns.push((title, hash, pattern_md));
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    patterns
+}
+
 async fn broadcast_new_wiki_patterns(
     ws_path: &Path,
     score: f64,
     broadcasted: &mut std::collections::HashSet<String>,
     orchestrator: &Option<Arc<osoosi_core::EdrOrchestrator>>,
 ) {
-    let orch = match orchestrator {
-        Some(o) => o,
-        None => return,
-    };
-
-    let wiki_dir = ws_path.join("wiki");
-    let index_file = wiki_dir.join("index.md");
-    if !index_file.is_file() {
+    let patterns = discover_wiki_patterns(ws_path);
+    if patterns.is_empty() {
         return;
     }
 
-    let content = match tokio::fs::read_to_string(&index_file).await {
-        Ok(c) => c,
-        Err(_) => return,
+    let orch = match orchestrator {
+        Some(o) => o,
+        None => {
+            // For testing or dry-run without active orchestrator
+            for (_, hash, _) in patterns {
+                broadcasted.insert(hash);
+            }
+            return;
+        }
     };
 
-    // Scan lines in wiki/index.md for pattern links: - [Title](path)
-    for line in content.lines() {
-        let trimmed = line.trim();
-        if !trimmed.starts_with("- [") && !trimmed.starts_with("* [") {
-            continue;
-        }
-
-        let link_start = match trimmed.find('[') {
-            Some(i) => i + 1,
-            None => continue,
-        };
-        let link_end = match trimmed.find("](") {
-            Some(i) => i,
-            None => continue,
-        };
-        let url_end = match trimmed[link_end + 2..].find(')') {
-            Some(i) => link_end + 2 + i,
-            None => continue,
-        };
-
-        let title = &trimmed[link_start..link_end];
-        let rel_path = &trimmed[link_end + 2..url_end];
-
-        let pattern_file = wiki_dir.join(rel_path);
-        if !pattern_file.is_file() {
-            continue;
-        }
-
-        let pattern_md = match tokio::fs::read_to_string(&pattern_file).await {
-            Ok(md) => md,
-            Err(_) => continue,
-        };
-
-        let content_hash = blake3::hash(pattern_md.trim().as_bytes()).to_hex().to_string();
+    for (title, content_hash, pattern_md) in patterns {
         if broadcasted.contains(&content_hash) {
             continue;
         }
 
         let node_id = orch.trust().did().to_string();
+        use ed25519_dalek::Signer;
+        let sig = orch.trust().signing_key().sign(content_hash.as_bytes());
+        let signature = Some(hex::encode(sig.to_bytes()));
+
         let broadcast = osoosi_wire::SkillKnowledgeBroadcast {
             node_id,
             skill_name: "wikiskill".to_string(),
             version: "1.0.0".to_string(),
             content_hash: content_hash.clone(),
-            pattern_title: title.to_string(),
+            pattern_title: title.clone(),
             markdown_content: pattern_md,
             score,
             timestamp: chrono::Utc::now(),
-            signature: None,
+            signature,
         };
 
         info!(
@@ -3851,19 +3919,51 @@ mod tests {
     #[tokio::test]
     async fn test_broadcast_new_wiki_patterns_discovery() {
         let temp_dir = std::env::temp_dir().join(format!("osoosi_wiki_broadcast_test_{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&temp_dir);
         let wiki_dir = temp_dir.join("wiki");
         let patterns_dir = wiki_dir.join("patterns");
         let _ = std::fs::create_dir_all(&patterns_dir);
 
-        let index_content = "# Wiki\n\n- [EDR-PAT-01: In-Memory Process Injection Analysis](patterns/d7002e64340557ef.md)\n";
+        // 1. Table format (as produced by WikiSkill's python maintainer)
+        let pat1_content = "# EDR-PAT-01: In-Memory Process Injection Analysis\n\nVerify unbacked memory pages.";
+        let pat1_hash = blake3::hash(pat1_content.trim().as_bytes()).to_hex().to_string();
+        std::fs::write(patterns_dir.join("d7002e64340557ef.md"), pat1_content).unwrap();
+
+        // 2. Bullet list format
+        let pat2_content = "# EDR-PAT-02: Remote Thread Injection\n\nDetect CreateRemoteThread into svchost.";
+        let pat2_hash = blake3::hash(pat2_content.trim().as_bytes()).to_hex().to_string();
+        std::fs::write(patterns_dir.join("pat02.md"), pat2_content).unwrap();
+
+        // 3. Unindexed pattern in patterns/ directory (fallback discovery)
+        let pat3_content = "# EDR-PAT-03: Process Hollowing\n\nDetect unmapped executable sections.";
+        let pat3_hash = blake3::hash(pat3_content.trim().as_bytes()).to_hex().to_string();
+        std::fs::write(patterns_dir.join("pat03_unindexed.md"), pat3_content).unwrap();
+
+        let index_content = format!(
+            "# Wiki Index\n\n| Pattern | Summary |\n|---|---|\n| [EDR-PAT-01: In-Memory Process Injection Analysis](patterns/d7002e64340557ef.md) | Verify unbacked memory pages. |\n\n## Other Playbooks\n- [EDR-PAT-02: Remote Thread Injection](patterns/pat02.md)\n"
+        );
         std::fs::write(wiki_dir.join("index.md"), index_content).unwrap();
 
-        let pattern_content = "# EDR-PAT-01: In-Memory Process Injection Analysis\n\nVerify unbacked memory pages.";
-        std::fs::write(patterns_dir.join("d7002e64340557ef.md"), pattern_content).unwrap();
+        // Test discover_wiki_patterns directly
+        let discovered = discover_wiki_patterns(&temp_dir);
+        assert_eq!(discovered.len(), 3, "All 3 patterns (table, list, unindexed fallback) must be discovered");
 
+        let titles: Vec<_> = discovered.iter().map(|(t, _, _)| t.as_str()).collect();
+        assert!(titles.contains(&"EDR-PAT-01: In-Memory Process Injection Analysis"));
+        assert!(titles.contains(&"EDR-PAT-02: Remote Thread Injection"));
+        assert!(titles.contains(&"EDR-PAT-03: Process Hollowing"));
+
+        // Test broadcast_new_wiki_patterns populates broadcasted set
         let mut broadcasted = std::collections::HashSet::new();
-        // Call helper with None orchestrator (should discover and parse without crashing)
         broadcast_new_wiki_patterns(&temp_dir, 0.95, &mut broadcasted, &None).await;
+        assert_eq!(broadcasted.len(), 3, "All 3 pattern hashes must be recorded in broadcasted");
+        assert!(broadcasted.contains(&pat1_hash));
+        assert!(broadcasted.contains(&pat2_hash));
+        assert!(broadcasted.contains(&pat3_hash));
+
+        // Test deduplication on subsequent run
+        broadcast_new_wiki_patterns(&temp_dir, 0.95, &mut broadcasted, &None).await;
+        assert_eq!(broadcasted.len(), 3, "Subsequent run must not duplicate already broadcasted patterns");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

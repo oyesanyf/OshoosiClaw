@@ -5775,6 +5775,7 @@ dependencies = [
  "clap",
  "ed25519-dalek",
  "flate2",
+ "hex",
  "hf-hub 0.4.3",
  "libloading",
  "ort",

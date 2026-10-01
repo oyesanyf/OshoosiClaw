@@ -5107,133 +5107,196 @@ impl EdrOrchestrator {
         Ok(())
     }
 
-    /// Ingest, validate, and merge peer-discovered WikiSkill patterns received over the P2P wire mesh.
-    pub fn handle_incoming_skill_knowledge(&self, knowledge: osoosi_wire::SkillKnowledgeBroadcast) {
+    /// Ingest, validate, and persist peer-discovered WikiSkill patterns into a specified workspace.
+    /// Returns `(inbox_path, is_duplicate, blake3_hash)` on success, or an error string on rejection.
+    pub fn ingest_skill_knowledge_to_workspace(
+        knowledge: &osoosi_wire::SkillKnowledgeBroadcast,
+        workspace: &std::path::Path,
+    ) -> Result<(std::path::PathBuf, bool, String), String> {
         let trimmed = knowledge.markdown_content.trim();
         if trimmed.is_empty() {
-            warn!("[MESH_SKILL_SYNC] Dropped empty skill pattern from peer '{}'", knowledge.node_id);
-            return;
+            let msg = format!("Rejected empty skill pattern from peer '{}'", knowledge.node_id);
+            warn!("[MESH_SKILL_SYNC] {}", msg);
+            return Err(msg);
         }
 
-        // Validate content hash
-        let calculated_hash = blake3::hash(trimmed.as_bytes()).to_hex().to_string();
-        let hash_valid = if knowledge.content_hash.is_empty() {
+        // Cap pattern size to 1MB to prevent resource exhaustion
+        if trimmed.len() > 1024 * 1024 {
+            let msg = format!("Rejected oversized skill pattern (>1MB) from peer '{}'", knowledge.node_id);
+            warn!("[MESH_SKILL_SYNC] {}", msg);
+            return Err(msg);
+        }
+
+        if knowledge.content_hash.trim().is_empty() {
+            let msg = format!("Rejected skill pattern '{}' from peer '{}': missing content_hash", knowledge.pattern_title, knowledge.node_id);
+            warn!("[MESH_SKILL_SYNC] {}", msg);
+            return Err(msg);
+        }
+
+        // Validate content hash: calculate BLAKE3 of trimmed markdown
+        let calculated_blake3 = blake3::hash(trimmed.as_bytes()).to_hex().to_string();
+        let hash_valid = if knowledge.content_hash.eq_ignore_ascii_case(&calculated_blake3) {
             true
-        } else if knowledge.content_hash.len() == 64 {
-            calculated_hash.eq_ignore_ascii_case(&knowledge.content_hash)
-                || {
-                    use sha2::{Digest, Sha256};
-                    let mut hasher = Sha256::new();
-                    hasher.update(trimmed.as_bytes());
-                    let sha_h = hex::encode(hasher.finalize());
-                    sha_h.eq_ignore_ascii_case(&knowledge.content_hash)
-                }
+        } else if {
+            use sha2::{Digest, Sha256};
+            let mut hasher = Sha256::new();
+            hasher.update(trimmed.as_bytes());
+            let sha256_h = hex::encode(hasher.finalize());
+            knowledge.content_hash.eq_ignore_ascii_case(&sha256_h)
+        } {
+            true
+        } else if knowledge.content_hash.len() >= 12
+            && knowledge.content_hash.chars().all(|c| c.is_ascii_hexdigit())
+            && calculated_blake3.starts_with(&knowledge.content_hash.to_lowercase())
+        {
+            true
         } else {
-            calculated_hash.starts_with(&knowledge.content_hash.to_lowercase())
+            false
         };
 
         if !hash_valid {
-            warn!(
-                "[MESH_SKILL_SYNC] Rejecting skill pattern '{}' from peer '{}': content hash mismatch (expected {}, got {})",
-                knowledge.pattern_title, knowledge.node_id, knowledge.content_hash, calculated_hash
+            let msg = format!(
+                "Rejecting skill pattern '{}' from peer '{}': content hash mismatch (expected {}, got {})",
+                knowledge.pattern_title, knowledge.node_id, knowledge.content_hash, calculated_blake3
             );
-            return;
+            warn!("[MESH_SKILL_SYNC] {}", msg);
+            return Err(msg);
         }
 
-        let orch_self = self.clone();
-        tokio::spawn(async move {
-            // Resolve Wiki workspace
-            let skills_cfg = osoosi_types::config::load_skills_config();
-            let ws_path = std::path::Path::new(&skills_cfg.workspace);
-            let resolved_ws = if ws_path.is_dir() {
-                ws_path.to_path_buf()
-            } else if let Some(config_path) = osoosi_types::resolve_config_path() {
-                let candidate = config_path.parent().map(|p| p.join(ws_path));
-                if candidate.as_ref().map(|c| c.is_dir()).unwrap_or(false) {
-                    candidate.unwrap()
-                } else {
-                    ws_path.to_path_buf()
-                }
-            } else {
-                ws_path.to_path_buf()
-            };
+        let wiki_dir = workspace.join("wiki");
+        let inbox_dir = wiki_dir.join("inbox");
+        if let Err(e) = std::fs::create_dir_all(&inbox_dir) {
+            let msg = format!("Failed to create wiki inbox directory {:?}: {}", inbox_dir, e);
+            warn!("[MESH_SKILL_SYNC] {}", msg);
+            return Err(msg);
+        }
 
-            let wiki_dir = resolved_ws.join("wiki");
-            let inbox_dir = wiki_dir.join("inbox");
-            let _ = std::fs::create_dir_all(&inbox_dir);
+        // Always use the strictly verified 64-hex lowercase BLAKE3 hash for the filename.
+        // This completely prevents directory traversal and invalid filename attacks.
+        let pattern_file = inbox_dir.join(format!("{}.md", calculated_blake3));
+        let is_duplicate = pattern_file.is_file();
 
-            // 1. Save pattern to inbox/<content_hash>.md
-            let safe_hash = if !knowledge.content_hash.is_empty() {
-                &knowledge.content_hash
-            } else {
-                &calculated_hash
-            };
-            let pattern_file = inbox_dir.join(format!("{}.md", safe_hash));
-            let _ = std::fs::write(&pattern_file, &knowledge.markdown_content);
+        if !is_duplicate {
+            if let Err(e) = std::fs::write(&pattern_file, &knowledge.markdown_content) {
+                let msg = format!("Failed to write pattern to {:?}: {}", pattern_file, e);
+                warn!("[MESH_SKILL_SYNC] {}", msg);
+                return Err(msg);
+            }
 
-            // 2. Append/merge into peer_patterns.md
+            // Append/merge into peer_patterns.md
             let peer_patterns_file = wiki_dir.join("peer_patterns.md");
             let mut entry = String::new();
             if !peer_patterns_file.is_file() {
                 entry.push_str("# Peer Learned Patterns\n\nSynchronized via OpenỌ̀ṣọ́ọ̀sì P2P Wire Mesh Gossip.\n\n");
             }
+
+            let clean_title = knowledge.pattern_title.replace('\n', " ").replace('\r', "");
+            let clean_node_id = knowledge.node_id.replace('\n', "").replace('\r', "");
+            let clean_skill = knowledge.skill_name.replace('\n', "").replace('\r', "");
+            let clean_ver = knowledge.version.replace('\n', "").replace('\r', "");
+
+            let sig_line = if let Some(ref s) = knowledge.signature {
+                format!("- **Signature**: `{}`\n", s.trim())
+            } else {
+                String::new()
+            };
+
             entry.push_str(&format!(
-                "## [{}] (Peer: {}, Score: {:.2})\n- **Skill**: {} v{}\n- **Hash**: `{}`\n- **Received**: {}\n\n{}\n\n---\n\n",
-                knowledge.pattern_title,
-                knowledge.node_id,
+                "## [{}] (Peer: {}, Score: {:.2})\n- **Skill**: {} v{}\n- **Hash**: `{}`\n- **Received**: {}\n{}{}\n\n---\n\n",
+                clean_title,
+                clean_node_id,
                 knowledge.score,
-                knowledge.skill_name,
-                knowledge.version,
-                safe_hash,
+                clean_skill,
+                clean_ver,
+                calculated_blake3,
                 knowledge.timestamp.to_rfc3339(),
-                knowledge.markdown_content.trim()
+                sig_line,
+                trimmed
             ));
 
             use std::io::Write;
             if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(&peer_patterns_file) {
                 let _ = f.write_all(entry.as_bytes());
             }
+        }
 
-            // Log audit event:
-            // [MESH_SKILL_SYNC] Received learned skill pattern '{pattern_title}' from peer '{node_id}' (score: {score}). Merged into local Wiki inbox.
-            info!(
-                "[MESH_SKILL_SYNC] Received learned skill pattern '{}' from peer '{}' (score: {:.2}). Merged into local Wiki inbox.",
-                knowledge.pattern_title, knowledge.node_id, knowledge.score
-            );
-            orch_self.audit.log(
-                "MESH_SKILL_SYNC",
-                serde_json::json!({
-                    "pattern_title": knowledge.pattern_title,
-                    "node_id": knowledge.node_id,
-                    "score": knowledge.score,
-                    "skill_name": knowledge.skill_name,
-                    "version": knowledge.version,
-                    "content_hash": safe_hash,
-                    "inbox_path": pattern_file.to_string_lossy(),
-                }),
-            );
+        Ok((pattern_file, is_duplicate, calculated_blake3))
+    }
 
-            orch_self.record_gossip_item(osoosi_types::GossipFeedItem {
-                id: uuid::Uuid::new_v4().to_string(),
-                event_type: "MESH_SKILL_SYNC".to_string(),
-                timestamp: chrono::Utc::now().to_rfc3339(),
-                summary: format!(
-                    "Peer Learned Skill: {} (Score: {:.2}) via {}",
-                    knowledge.pattern_title, knowledge.score, knowledge.node_id
-                ),
-                source_node: knowledge.node_id.clone(),
-                process_name: None,
-                mitre_technique: None,
-                mitre_technique_name: None,
-                mitre_tactic: None,
-                confidence: knowledge.score as f32,
-                severity: "INFO".to_string(),
-                action: Some("SkillSync".to_string()),
-                status: "ACTIVE".to_string(),
-                hash_blake3: Some(safe_hash.to_string()),
-                is_threat: false,
-            });
+    /// Process and record peer skill knowledge, resolving workspace from configuration if not specified.
+    pub fn process_incoming_skill_knowledge(
+        &self,
+        knowledge: &osoosi_wire::SkillKnowledgeBroadcast,
+        custom_workspace: Option<&std::path::Path>,
+    ) -> Result<std::path::PathBuf, String> {
+        let resolved_ws = if let Some(ws) = custom_workspace {
+            ws.to_path_buf()
+        } else {
+            let skills_cfg = osoosi_types::config::load_skills_config();
+            let ws_path = std::path::Path::new(&skills_cfg.workspace);
+            if ws_path.is_absolute() {
+                ws_path.to_path_buf()
+            } else if let Some(config_path) = osoosi_types::resolve_config_path() {
+                if let Some(parent) = config_path.parent() {
+                    parent.join(ws_path)
+                } else {
+                    ws_path.to_path_buf()
+                }
+            } else {
+                ws_path.to_path_buf()
+            }
+        };
+
+        let (pattern_file, is_duplicate, hash) = Self::ingest_skill_knowledge_to_workspace(knowledge, &resolved_ws)?;
+
+        info!(
+            "[MESH_SKILL_SYNC] Received learned skill pattern '{}' from peer '{}' (score: {:.2}). Merged into local Wiki inbox.",
+            knowledge.pattern_title, knowledge.node_id, knowledge.score
+        );
+        self.audit.log(
+            "MESH_SKILL_SYNC",
+            serde_json::json!({
+                "pattern_title": knowledge.pattern_title,
+                "node_id": knowledge.node_id,
+                "score": knowledge.score,
+                "skill_name": knowledge.skill_name,
+                "version": knowledge.version,
+                "content_hash": hash,
+                "inbox_path": pattern_file.to_string_lossy(),
+                "is_duplicate": is_duplicate,
+                "signature": knowledge.signature,
+            }),
+        );
+
+        self.record_gossip_item(osoosi_types::GossipFeedItem {
+            id: uuid::Uuid::new_v4().to_string(),
+            event_type: "MESH_SKILL_SYNC".to_string(),
+            timestamp: chrono::Utc::now().to_rfc3339(),
+            summary: format!(
+                "Peer Learned Skill: {} (Score: {:.2}) via {}",
+                knowledge.pattern_title, knowledge.score, knowledge.node_id
+            ),
+            source_node: knowledge.node_id.clone(),
+            process_name: None,
+            mitre_technique: None,
+            mitre_technique_name: None,
+            mitre_tactic: None,
+            confidence: knowledge.score as f32,
+            severity: "INFO".to_string(),
+            action: Some("SkillSync".to_string()),
+            status: "ACTIVE".to_string(),
+            hash_blake3: Some(hash),
+            is_threat: false,
         });
+
+        Ok(pattern_file)
+    }
+
+    /// Ingest, validate, and merge peer-discovered WikiSkill patterns received over the P2P wire mesh.
+    pub fn handle_incoming_skill_knowledge(&self, knowledge: osoosi_wire::SkillKnowledgeBroadcast) {
+        if let Err(e) = self.process_incoming_skill_knowledge(&knowledge, None) {
+            warn!("[MESH_SKILL_SYNC] Ingestion failed: {}", e);
+        }
     }
 
     /// Access the trust manager to bootstrap mesh identity.
@@ -8493,9 +8556,7 @@ mod tests {
     #[tokio::test]
     async fn test_mesh_skill_knowledge_handling() {
         let temp_dir = std::env::temp_dir().join(format!("osoosi_skill_test_{}", std::process::id()));
-        let wiki_dir = temp_dir.join("wiki");
-        let inbox_dir = wiki_dir.join("inbox");
-        let _ = std::fs::create_dir_all(&inbox_dir);
+        let _ = std::fs::remove_dir_all(&temp_dir);
 
         let markdown = "# EDR-PAT-TEST\n\nDetect suspicious remote thread creation.";
         let hash = blake3::hash(markdown.trim().as_bytes()).to_hex().to_string();
@@ -8509,27 +8570,64 @@ mod tests {
             markdown_content: markdown.to_string(),
             score: 0.99,
             timestamp: chrono::Utc::now(),
-            signature: None,
+            signature: Some("test-signature-abc".to_string()),
         };
 
-        // Validate hash calculation
-        let calculated = blake3::hash(broadcast.markdown_content.trim().as_bytes()).to_hex().to_string();
-        assert_eq!(calculated, hash);
-
-        // Test file writing
-        let pattern_file = inbox_dir.join(format!("{}.md", hash));
-        std::fs::write(&pattern_file, &broadcast.markdown_content).unwrap();
+        // 1. Initial valid ingestion into non-existent workspace (tests automatic directory creation)
+        let res = EdrOrchestrator::ingest_skill_knowledge_to_workspace(&broadcast, &temp_dir);
+        assert!(res.is_ok(), "Valid broadcast must succeed: {:?}", res);
+        let (pattern_file, is_duplicate, returned_hash) = res.unwrap();
+        assert!(!is_duplicate, "First ingestion must not be duplicate");
+        assert_eq!(returned_hash, hash);
         assert!(pattern_file.is_file());
-        let read_back = std::fs::read_to_string(&pattern_file).unwrap();
-        assert_eq!(read_back, markdown);
 
-        let peer_patterns_file = wiki_dir.join("peer_patterns.md");
-        let entry = format!(
-            "## [{}] (Peer: {}, Score: {:.2})\n\n{}\n",
-            broadcast.pattern_title, broadcast.node_id, broadcast.score, broadcast.markdown_content
-        );
-        std::fs::write(&peer_patterns_file, entry).unwrap();
+        let saved_content = std::fs::read_to_string(&pattern_file).unwrap();
+        assert_eq!(saved_content, markdown);
+
+        let peer_patterns_file = temp_dir.join("wiki").join("peer_patterns.md");
         assert!(peer_patterns_file.is_file());
+        let peer_patterns_content = std::fs::read_to_string(&peer_patterns_file).unwrap();
+        assert!(peer_patterns_content.contains("EDR-PAT-TEST: Remote Thread Creation"));
+        assert!(peer_patterns_content.contains("peer-validator-01"));
+        assert!(peer_patterns_content.contains("test-signature-abc"));
+
+        // 2. Duplicate ingestion: must be recognized as duplicate and NOT inflate peer_patterns.md
+        let res2 = EdrOrchestrator::ingest_skill_knowledge_to_workspace(&broadcast, &temp_dir);
+        assert!(res2.is_ok());
+        let (_, is_dup2, _) = res2.unwrap();
+        assert!(is_dup2, "Second ingestion of identical pattern must be duplicate");
+        let peer_patterns_content_after = std::fs::read_to_string(&peer_patterns_file).unwrap();
+        assert_eq!(peer_patterns_content.len(), peer_patterns_content_after.len(), "Duplicate must not append to peer_patterns.md");
+
+        // 3. Reject empty markdown content
+        let mut empty_content = broadcast.clone();
+        empty_content.markdown_content = "   \n\t  ".to_string();
+        let res_empty = EdrOrchestrator::ingest_skill_knowledge_to_workspace(&empty_content, &temp_dir);
+        assert!(res_empty.is_err(), "Empty content must be rejected");
+
+        // 4. Reject empty content_hash (bypassing hash checks)
+        let mut empty_hash = broadcast.clone();
+        empty_hash.content_hash = "".to_string();
+        let res_empty_hash = EdrOrchestrator::ingest_skill_knowledge_to_workspace(&empty_hash, &temp_dir);
+        assert!(res_empty_hash.is_err(), "Empty content_hash must be rejected");
+
+        // 5. Reject forged mismatched hash
+        let mut forged_hash = broadcast.clone();
+        forged_hash.content_hash = "deadbeefcafebabe0123456789abcdef0123456789abcdef0123456789abcdef".to_string();
+        let res_forged = EdrOrchestrator::ingest_skill_knowledge_to_workspace(&forged_hash, &temp_dir);
+        assert!(res_forged.is_err(), "Forged mismatched content_hash must be rejected");
+
+        // 6. Reject forged single-character prefix hash
+        let mut forged_prefix = broadcast.clone();
+        forged_prefix.content_hash = hash[0..1].to_string();
+        let res_forged_prefix = EdrOrchestrator::ingest_skill_knowledge_to_workspace(&forged_prefix, &temp_dir);
+        assert!(res_forged_prefix.is_err(), "Short single-character prefix hash must be rejected");
+
+        // 7. Directory traversal in content_hash defense
+        let mut traversal = broadcast.clone();
+        traversal.content_hash = "../../evil_path".to_string();
+        let res_traversal = EdrOrchestrator::ingest_skill_knowledge_to_workspace(&traversal, &temp_dir);
+        assert!(res_traversal.is_err(), "Path traversal in content_hash must be rejected");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

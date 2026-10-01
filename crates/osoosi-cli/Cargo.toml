@@ -30,6 +30,7 @@ osoosi-telemetry = { path = "../osoosi-telemetry" }
 uuid = { workspace = true }
 anyhow = { workspace = true }
 ed25519-dalek = { workspace = true }
+hex = { workspace = true }
 rand = { workspace = true }
 ort = { workspace = true }
 osoosi-policy = { path = "../osoosi-policy" }
