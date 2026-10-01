@@ -25,7 +25,7 @@ watch_paths      = ["all"]
 
 [autonomy]
 # Reputation threshold (0.0–1.0). Peers ≥ this are auto-approved.
-auto_approve_reputation_threshold = 0.4
+auto_approve_reputation_threshold = 0.40
 # Auto-quarantine detected malware files
 auto_quarantine_malware = false
 # Minimum confidence (0.0–1.0) to quarantine

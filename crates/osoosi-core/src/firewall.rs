@@ -275,8 +275,14 @@ pub async fn open_mesh_ports() -> Result<()> {
 
     #[cfg(target_os = "windows")]
     {
+        #[allow(unused_imports)]
+        use std::os::windows::process::CommandExt;
         for (name, port, proto) in ports {
             let mut cmd = Command::new("netsh");
+            cmd.stdout(std::process::Stdio::null());
+            cmd.stderr(std::process::Stdio::null());
+            #[cfg(windows)]
+            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
             cmd.args([
                 "advfirewall",
                 "firewall",
@@ -592,26 +598,38 @@ fn block_windows_program(image_path: Option<&str>) -> Result<String> {
 
 #[cfg(target_os = "windows")]
 fn block_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<String> {
+    #[allow(unused_imports)]
+    use std::os::windows::process::CommandExt;
     let payload = targets.join(",");
     let name = dns_rule_name(prefix, &payload);
 
-    let status = Command::new("netsh")
-        .args([
-            "advfirewall",
-            "firewall",
-            "add",
-            "rule",
-            &format!("name={}", name),
-            "dir=out",
-            "action=block",
-            "enable=yes",
-            "profile=any",
-            &format!("remoteip={}", payload),
-        ])
-        .output()?;
+    let mut cmd = Command::new("netsh");
+    cmd.stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+    cmd.args([
+        "advfirewall",
+        "firewall",
+        "add",
+        "rule",
+        &format!("name={}", name),
+        "dir=out",
+        "action=block",
+        "enable=yes",
+        "profile=any",
+        &format!("remoteip={}", payload),
+    ]);
+    let status = cmd.output()?;
 
     if !status.status.success() {
-        let _ = Command::new("netsh")
+        let mut retry_cmd = Command::new("netsh");
+        retry_cmd
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        #[cfg(windows)]
+        retry_cmd.creation_flags(0x08000000);
+        let _ = retry_cmd
             .args([
                 "advfirewall",
                 "firewall",
@@ -637,9 +655,16 @@ fn block_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<String> 
 
 #[cfg(target_os = "windows")]
 fn unblock_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<()> {
+    #[allow(unused_imports)]
+    use std::os::windows::process::CommandExt;
     let payload = targets.join(",");
     let name = dns_rule_name(prefix, &payload);
-    let _ = Command::new("netsh")
+    let mut cmd = Command::new("netsh");
+    cmd.stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null());
+    #[cfg(windows)]
+    cmd.creation_flags(0x08000000);
+    let _ = cmd
         .args([
             "advfirewall",
             "firewall",
@@ -661,8 +686,13 @@ fn dns_rule_name(prefix: &str, payload: &str) -> String {
 
 #[cfg(target_os = "windows")]
 fn remove_windows_autoblock_rules() -> Result<usize> {
+    #[allow(unused_imports)]
+    use std::os::windows::process::CommandExt;
     use std::collections::HashSet;
-    let output = Command::new("netsh")
+    let mut show_cmd = Command::new("netsh");
+    #[cfg(windows)]
+    show_cmd.creation_flags(0x08000000);
+    let output = show_cmd
         .args(["advfirewall", "firewall", "show", "rule", "name=all"])
         .output()?;
     let stdout = String::from_utf8_lossy(&output.stdout);
@@ -677,7 +707,13 @@ fn remove_windows_autoblock_rules() -> Result<usize> {
     }
     let mut removed = 0usize;
     for name in to_delete {
-        let status = Command::new("netsh")
+        let mut del_cmd = Command::new("netsh");
+        del_cmd
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        #[cfg(windows)]
+        del_cmd.creation_flags(0x08000000);
+        let status = del_cmd
             .args([
                 "advfirewall",
                 "firewall",

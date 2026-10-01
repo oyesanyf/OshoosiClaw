@@ -2394,8 +2394,15 @@ impl EdrOrchestrator {
                                 // Block attacker IP at the firewall level (netsh on Windows, iptables on Linux)
                                 #[cfg(target_os = "windows")]
                                 {
+                                    #[allow(unused_imports)]
+                                    use std::os::windows::process::CommandExt;
                                     let rule_name = format!("Osoosi-MeshTarpit-{}", tarpit_signal.target_ip.replace('.', "-").replace(':', "-"));
-                                    let _ = std::process::Command::new("netsh")
+                                    let mut cmd1 = std::process::Command::new("netsh");
+                                    cmd1.stdout(std::process::Stdio::null())
+                                        .stderr(std::process::Stdio::null());
+                                    #[cfg(windows)]
+                                    cmd1.creation_flags(0x08000000);
+                                    let _ = cmd1
                                         .args([
                                             "advfirewall", "firewall", "add", "rule",
                                             &format!("name={}", rule_name),
@@ -2404,7 +2411,13 @@ impl EdrOrchestrator {
                                             "profile=any",
                                         ])
                                         .status();
-                                    let _ = std::process::Command::new("netsh")
+
+                                    let mut cmd2 = std::process::Command::new("netsh");
+                                    cmd2.stdout(std::process::Stdio::null())
+                                        .stderr(std::process::Stdio::null());
+                                    #[cfg(windows)]
+                                    cmd2.creation_flags(0x08000000);
+                                    let _ = cmd2
                                         .args([
                                             "advfirewall", "firewall", "add", "rule",
                                             &format!("name={}-out", rule_name),

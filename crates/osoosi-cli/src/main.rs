@@ -426,6 +426,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         let _ = ensure_ai_models().await;
         let _ = osoosi_core::firewall::open_mesh_ports().await;
     } else if is_starting {
+        println!("[+] Initializing OpenỌ̀ṣọ́ọ̀sì Autonomous EDR Engine...");
+        println!("[+] Configuring firewall filters & P2P mesh ports (4001, 9000, 9876, 5353, 3030)...");
         let executor = Arc::new(DirectExecutor::new());
         let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
         tokio::spawn(async move {
@@ -513,6 +515,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             let start_instant = std::time::Instant::now();
             let orchestrator = Arc::new(osoosi_core::EdrOrchestrator::new().await?);
             orchestrator.post_init_voters().await;
+
+            println!("[+] Cryptographic configuration integrity verified.");
+            println!("[+] Behavioral cortex & consensus voters armed.");
+            println!("[+] OpenỌ̀ṣọ́ọ̀sì daemon active and monitoring.");
 
             // Start maintenance loop (DB pruning/vacuum)
             let maint_orch = orchestrator.clone();

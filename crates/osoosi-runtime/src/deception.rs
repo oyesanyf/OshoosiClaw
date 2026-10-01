@@ -12,7 +12,7 @@ use tfhe::prelude::*;
 use tfhe::{generate_keys, ConfigBuilder, FheUint8};
 use tokio::fs::{self, File};
 use tokio::io::AsyncWriteExt;
-use tracing::{info, warn};
+use tracing::info;
 
 // Note: tfhe integration for "active" traps.
 // In a full implementation, we'd use tfhe type safe API.
@@ -77,7 +77,7 @@ impl DeceptionManager {
             info!("Spawned Ghost File (Trap): {:?}", path);
         }
 
-        warn!(
+        info!(
             "Deception active in {:?}: {} Ghost Files deployed.",
             dir,
             names.len()

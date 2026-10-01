@@ -18,14 +18,33 @@ impl RemediationController {
 
         #[cfg(target_os = "windows")]
         {
+            #[allow(unused_imports)]
+            use std::os::windows::process::CommandExt;
             // Block all inbound/outbound except common P2P mesh ports (4001, 8080)
-            let _ = Command::new("netsh")
+            let mut cmd1 = Command::new("netsh");
+            cmd1.stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            #[cfg(windows)]
+            cmd1.creation_flags(0x08000000);
+            let _ = cmd1
                 .args(["advfirewall", "firewall", "add", "rule", "name=Oshoosi-Isolation-In", "dir=in", "action=block", "profile=any"])
                 .status();
-            let _ = Command::new("netsh")
+
+            let mut cmd2 = Command::new("netsh");
+            cmd2.stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            #[cfg(windows)]
+            cmd2.creation_flags(0x08000000);
+            let _ = cmd2
                 .args(["advfirewall", "firewall", "add", "rule", "name=Oshoosi-Isolation-Out", "dir=out", "action=block", "profile=any"])
                 .status();
-            let _ = Command::new("netsh")
+
+            let mut cmd3 = Command::new("netsh");
+            cmd3.stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+            #[cfg(windows)]
+            cmd3.creation_flags(0x08000000);
+            let _ = cmd3
                 .args(["advfirewall", "firewall", "add", "rule", "name=Oshoosi-Isolation-Mesh", "dir=in", "action=allow", "protocol=TCP", "localport=4001,8080", "profile=any"])
                 .status();
 

@@ -962,7 +962,7 @@ impl ThreatFeedFetcher {
 
         let mut target_dir = dest_dir.to_path_buf();
         if !Self::is_dir_writable(&target_dir) {
-            warn!("[NSRL Background] Cannot write to requested dest_dir {:?}. Checking fallbacks...", target_dir);
+            info!("[NSRL Background] Cannot write to requested dest_dir {:?}. Checking fallbacks...", target_dir);
             let fallback_candidates = [
                 osoosi_types::resolve_database_dir().join("nsrl-cache"),
                 std::env::temp_dir().join("osoosi-nsrl-shared-cache"),
@@ -983,7 +983,7 @@ impl ThreatFeedFetcher {
         }
 
         if let Err(e) = self.check_disk_space(&target_dir, 3) {
-            warn!("[NSRL Background] Disk space warning for {:?}: {}. Checking fallback locations...", target_dir, e);
+            info!("[NSRL Background] Disk space check for {:?}: {}. Checking fallback locations...", target_dir, e);
             let fallback_candidates = [
                 osoosi_types::resolve_database_dir().join("nsrl-cache"),
                 std::env::temp_dir().join("osoosi-nsrl-shared-cache"),
@@ -1083,7 +1083,7 @@ impl ThreatFeedFetcher {
                     if status == reqwest::StatusCode::FORBIDDEN
                         || status == reqwest::StatusCode::NOT_FOUND
                     {
-                        warn!(
+                        info!(
                             "[NSRL Background] URL returned {}. Skipping to next URL.",
                             status
                         );
@@ -1091,7 +1091,7 @@ impl ThreatFeedFetcher {
                     }
                     // Range past EOF: treat as "already have full file" or delete stale partial and retry.
                     if status == reqwest::StatusCode::RANGE_NOT_SATISFIABLE {
-                        warn!(
+                        info!(
                             "[NSRL Background] HTTP 416 for {} (range not satisfiable). Verifying local copy…",
                             url
                         );
@@ -1113,7 +1113,7 @@ impl ThreatFeedFetcher {
                             download_finished = true;
                             break;
                         }
-                        warn!("[NSRL Background] Discarding partial/stale download and starting over.");
+                        info!("[NSRL Background] Discarding partial/stale download and starting over.");
                         let _ = std::fs::remove_file(&zip_path);
                         let _ = std::fs::remove_file(&state_path);
                         retry_count += 1;
@@ -1166,7 +1166,7 @@ impl ThreatFeedFetcher {
                         f
                     }
                     Err(e) => {
-                        warn!("[NSRL Background] File error opening {:?}: {}. Retrying...", zip_path, e);
+                        info!("[NSRL Background] File error opening {:?}: {}. Retrying...", zip_path, e);
                         last_error = Some(e.into());
                         if retry_count >= 1 {
                             let fallbacks = [
@@ -1194,7 +1194,7 @@ impl ThreatFeedFetcher {
 
                 if let Some(ref chunk) = first_chunk {
                     if let Err(e) = file.write_all(chunk).await {
-                        warn!("[NSRL Background] Write error on initial chunk: {}. Retrying...", e);
+                        info!("[NSRL Background] Write error on initial chunk: {}. Retrying...", e);
                         stream_error = true;
                         last_error = Some(e.into());
                     }
@@ -1230,7 +1230,7 @@ impl ThreatFeedFetcher {
                                 last_error = Some(e.into());
                                 break;
                             }
-                            warn!("[NSRL Background] Write error: {}. Retrying write chunk...", e);
+                            info!("[NSRL Background] Write error: {}. Retrying write chunk...", e);
                             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                             if let Err(e2) = file.write_all(&chunk).await {
                                 let err_str2 = e2.to_string();
@@ -1240,7 +1240,7 @@ impl ThreatFeedFetcher {
                                 if is_cancelled2 {
                                     debug!("[NSRL Background] Write cancelled or runtime shutting down: {}", e2);
                                 } else {
-                                    warn!("[NSRL Background] Write error persisted: {}. Resuming from offset.", e2);
+                                    info!("[NSRL Background] Write error persisted: {}. Resuming from offset.", e2);
                                 }
                                 stream_error = true;
                                 last_error = Some(e2.into());
@@ -1280,7 +1280,7 @@ impl ThreatFeedFetcher {
                     if is_cancelled {
                         debug!("[NSRL Background] Flush cancelled or runtime shutting down: {}", e);
                     } else {
-                        warn!("[NSRL Background] Flush error: {}. Will resume from offset.", e);
+                        info!("[NSRL Background] Flush error: {}. Will resume from offset.", e);
                     }
                     stream_error = true;
                     last_error = Some(e.into());
@@ -1351,11 +1351,11 @@ impl ThreatFeedFetcher {
                 match res {
                     Ok(Ok(db_path)) => return Ok(db_path),
                     Ok(Err(e)) => {
-                        warn!("[NSRL Background] Archive extraction error: {}. Retrying...", e);
+                        info!("[NSRL Background] Archive extraction error: {}. Retrying in background...", e);
                         last_error = Some(e);
                     }
                     Err(e) => {
-                        warn!("[NSRL Background] Extraction background task error: {}. Retrying...", e);
+                        info!("[NSRL Background] Extraction background task error: {}. Retrying in background...", e);
                         last_error = Some(e.into());
                     }
                 }
