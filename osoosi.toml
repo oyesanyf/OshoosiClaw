@@ -130,3 +130,17 @@ trusted_stems = [
 
 # Alert suppression period in seconds (10 minutes)
 alert_suppression_secs = 600
+
+[skills]
+# Enable WikiSkill autonomous self-evolving agent skill engine
+enabled = true
+# Automatically start background self-evolution loop on EDR daemon startup
+auto_evolve_on_start = true
+# Designated evolution workspace
+workspace = "runs/edr-evolution"
+# Ground truth tasks catalog
+tasks_file = "examples/edr-skill-evolution/tasks.json"
+# Ground truth evaluation scorer
+scorer = "examples/edr-skill-evolution/scorer.py"
+# Re-evaluation and learning interval in seconds (5 minutes)
+poll_interval_secs = 300

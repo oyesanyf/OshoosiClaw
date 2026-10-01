@@ -199,20 +199,21 @@ impl MultiSensorFusionEngine {
         }
     }
 
-    /// Evaluates the 5 concrete sensor domains:
+    /// Evaluates the 7 concrete sensor domains:
     /// 1. Telemetry & Canary Sensor
     /// 2. System Invariant Sensor
     /// 3. Asymmetric Containment Sensor
     /// 4. Consensus & Voter Sensor
     /// 5. Reinforcement Learning Stability Sensor
     /// 6. Hardware Resource & Compute Tier Sensor
+    /// 7. WikiSkill Autonomous Skill & Threat Evolution Sensor
     pub fn evaluate_sensors(
         &mut self,
         memory_store: Option<&osoosi_memory::MemoryStore>,
         active_tarpit: Option<&osoosi_runtime::tarpit::ActiveProcessTarpit>,
         stranded_reaper: Option<&StrandedResourceReaper>,
     ) -> Vec<SensorReading> {
-        let mut readings = Vec::with_capacity(6);
+        let mut readings = Vec::with_capacity(7);
 
         // 1. Telemetry & Canary Sensor
         let (canary_latency, token_loss, influx_vel) = if memory_store.is_some() {
@@ -430,6 +431,58 @@ impl MultiSensorFusionEngine {
                 hw_res.total_vram_mb,
                 hw_tier.label()
             ),
+        });
+
+        // 7. WikiSkill Autonomous Skill & Threat Evolution Sensor
+        let skills_cfg = osoosi_types::config::load_skills_config();
+        let ws_path = std::path::Path::new(&skills_cfg.workspace);
+        let (skill_health, skill_conf, skill_details) = if ws_path.is_dir() {
+            let state_file = ws_path.join(".wikiskill-state.json");
+            let mut phase = "active".to_string();
+            let mut best_score = 1.0;
+            let mut rounds = 1;
+            if state_file.is_file() {
+                if let Ok(content) = std::fs::read_to_string(&state_file) {
+                    if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if let Some(p) = val.get("phase").and_then(|v| v.as_str()) {
+                            phase = p.to_string();
+                        }
+                        if let Some(b) = val.get("best_score").and_then(|v| v.as_f64()) {
+                            best_score = b;
+                        }
+                        if let Some(r) = val.get("round").and_then(|v| v.as_u64()) {
+                            rounds = r;
+                        }
+                    }
+                }
+            }
+            (
+                0.99,
+                0.95,
+                format!(
+                    "WikiSkill self-evolution: ONLINE (Workspace: {}, Phase: {}, Best Score: {:.2}, Rounds: {})",
+                    skills_cfg.workspace, phase, best_score, rounds
+                ),
+            )
+        } else {
+            (
+                0.90,
+                0.90,
+                format!(
+                    "WikiSkill self-evolution: STANDBY (Workspace {} not yet initialized; scheduled on startup)",
+                    skills_cfg.workspace
+                ),
+            )
+        };
+
+        readings.push(SensorReading {
+            sensor_id: "wikiskill_evolution_sensor".to_string(),
+            name: "WikiSkill Self-Evolution Sensor".to_string(),
+            raw_value: skill_health * 100.0,
+            unit: "%_efficacy".to_string(),
+            health_score: skill_health,
+            confidence: skill_conf,
+            details: skill_details,
         });
 
         readings
@@ -680,8 +733,14 @@ impl SupervisorDiagnosticEngine {
             String::new()
         };
 
+        let skills_info = if let Some(s) = sensors.iter().find(|s| s.sensor_id == "wikiskill_evolution_sensor") {
+            format!("\nSkills: {}.", s.details)
+        } else {
+            String::new()
+        };
+
         format!(
-            "Regime: {:?} (Health: {:.1}%). {}{}\nInvariants: {}. Total reaped traps: {}.{}{}",
+            "Regime: {:?} (Health: {:.1}%). {}{}\nInvariants: {}. Total reaped traps: {}.{}{}{}",
             regime,
             health_score,
             regime_desc,
@@ -689,6 +748,7 @@ impl SupervisorDiagnosticEngine {
             invariant_status,
             reaped_traps_total,
             lowest_sensor_info,
+            skills_info,
             hw_info
         )
     }
@@ -1129,7 +1189,7 @@ mod tests {
     fn test_initial_supervisor_status_has_populated_sensors() {
         let supervisor = CognitiveFusionSupervisor::new();
         let status = supervisor.get_status();
-        assert_eq!(status.sensors.len(), 6, "Initial supervisor status must have all 6 sensors pre-populated");
+        assert_eq!(status.sensors.len(), 7, "Initial supervisor status must have all 7 sensors pre-populated");
         assert!(status.hardware_selection.is_some(), "Initial status must include hardware_selection");
         assert!(status.health_score >= 85.0);
         assert_eq!(status.regime, SupervisorRegime::Optimal);
@@ -1148,6 +1208,21 @@ mod tests {
         assert!(hw_sensor.confidence >= 0.95);
         assert!(hw_sensor.details.contains("CPU:"));
         assert!(hw_sensor.details.contains("Active Tier:"));
+    }
+
+    #[test]
+    fn test_wikiskill_evolution_sensor_evaluates() {
+        let mut fusion = MultiSensorFusionEngine::new();
+        let readings = fusion.evaluate_sensors(None, None, None);
+        assert_eq!(readings.len(), 7, "Must evaluate exactly 7 sensors");
+        let skill_sensor = readings
+            .iter()
+            .find(|s| s.sensor_id == "wikiskill_evolution_sensor")
+            .expect("wikiskill_evolution_sensor must exist in sensor readings");
+
+        assert!(skill_sensor.health_score > 0.0);
+        assert!(skill_sensor.confidence >= 0.90);
+        assert!(skill_sensor.details.contains("WikiSkill self-evolution:"));
     }
 
     #[test]

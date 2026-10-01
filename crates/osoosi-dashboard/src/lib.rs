@@ -682,6 +682,8 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/supervisor/status", get(get_supervisor_status))
         .route("/api/hardware/summary", get(get_hardware_summary))
         .route("/hardware/summary", get(get_hardware_summary))
+        .route("/api/skills/status", get(get_skills_status))
+        .route("/skills/status", get(get_skills_status))
         .route("/api/mitre/matrix", get(get_mitre_matrix))
         .route("/api/mitre/coverage", get(get_mitre_coverage))
         .route("/api/mitre/techniques", get(get_mitre_techniques))
@@ -829,6 +831,43 @@ async fn get_hardware_summary(State(_state): State<DashboardState>) -> impl Into
         optimal_selection,
         system_resources: resources,
     })
+}
+
+async fn get_skills_status() -> Json<Value> {
+    let cfg = osoosi_types::config::load_skills_config();
+    let ws_path = std::path::Path::new(&cfg.workspace);
+    let state_file = ws_path.join(".wikiskill-state.json");
+    let mut phase = "idle".to_string();
+    let mut best_score = 1.0;
+    let mut rounds = 1;
+    let active = ws_path.is_dir();
+
+    if state_file.is_file() {
+        if let Ok(content) = std::fs::read_to_string(&state_file) {
+            if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                if let Some(p) = val.get("phase").and_then(|v| v.as_str()) {
+                    phase = p.to_string();
+                }
+                if let Some(b) = val.get("best_score").and_then(|v| v.as_f64()) {
+                    best_score = b;
+                }
+                if let Some(r) = val.get("round").and_then(|v| v.as_u64()) {
+                    rounds = r;
+                }
+            }
+        }
+    }
+
+    Json(json!({
+        "enabled": cfg.enabled,
+        "auto_evolve_on_start": cfg.auto_evolve_on_start,
+        "workspace": cfg.workspace,
+        "active": active,
+        "phase": phase,
+        "best_score": best_score,
+        "rounds": rounds,
+        "poll_interval_secs": cfg.poll_interval_secs,
+    }))
 }
 
 pub async fn start_dashboard_with_backend(
@@ -5073,7 +5112,7 @@ mod tests {
         assert!(json_val.get("uptime_seconds").is_some());
 
         let sensors = json_val["sensors"].as_array().expect("sensors must be an array");
-        assert_eq!(sensors.len(), 6);
+        assert_eq!(sensors.len(), 7);
         assert!(json_val.get("hardware_selection").is_some());
         for s in sensors {
             assert!(s.get("sensor_id").is_some());
@@ -5084,6 +5123,23 @@ mod tests {
             assert!(s.get("confidence").is_some());
             assert!(s.get("details").is_some());
         }
+    }
+
+    #[tokio::test]
+    async fn test_api_skills_status() {
+        let resp = get_skills_status().await.into_response();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        let json_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(json_val.get("enabled").is_some());
+        assert!(json_val.get("auto_evolve_on_start").is_some());
+        assert!(json_val.get("workspace").is_some());
+        assert!(json_val.get("active").is_some());
+        assert!(json_val.get("phase").is_some());
+        assert!(json_val.get("best_score").is_some());
+        assert!(json_val.get("rounds").is_some());
+        assert!(json_val.get("poll_interval_secs").is_some());
     }
 
     #[tokio::test]

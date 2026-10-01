@@ -629,6 +629,9 @@ struct FileConfig {
     /// Log retention and intelligent rotation configuration.
     #[serde(default)]
     pub log_retention: LogRetentionConfig,
+    /// WikiSkill autonomous self-evolving coding and threat detection engine configuration.
+    #[serde(default)]
+    pub skills: SkillsConfig,
 }
 
 /// Hex-patch agent config: auto-patch files when rules match.
@@ -2151,6 +2154,59 @@ pub fn load_log_retention_config() -> LogRetentionConfig {
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SkillsConfig {
+    /// Whether the WikiSkill engine is enabled.
+    #[serde(default = "default_skills_enabled")]
+    pub enabled: bool,
+    /// Whether to automatically initialize and run the self-evolution loop on EDR daemon startup.
+    #[serde(default = "default_skills_auto_evolve")]
+    pub auto_evolve_on_start: bool,
+    /// Evolution workspace directory path.
+    #[serde(default = "default_skills_workspace")]
+    pub workspace: String,
+    /// Path to the ground-truth tasks catalog JSON.
+    #[serde(default = "default_skills_tasks_file")]
+    pub tasks_file: String,
+    #[serde(default = "default_skills_scorer")]
+    pub scorer: String,
+    /// Interval in seconds between evolution / evaluation cycles (default: 300s / 5m).
+    #[serde(default = "default_skills_poll_interval")]
+    pub poll_interval_secs: u64,
+}
+
+fn default_skills_enabled() -> bool { true }
+fn default_skills_auto_evolve() -> bool { true }
+fn default_skills_workspace() -> String { "runs/edr-evolution".to_string() }
+fn default_skills_tasks_file() -> String { "examples/edr-skill-evolution/tasks.json".to_string() }
+fn default_skills_scorer() -> String { "examples/edr-skill-evolution/scorer.py".to_string() }
+fn default_skills_poll_interval() -> u64 { 300 }
+
+impl Default for SkillsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_skills_enabled(),
+            auto_evolve_on_start: default_skills_auto_evolve(),
+            workspace: default_skills_workspace(),
+            tasks_file: default_skills_tasks_file(),
+            scorer: default_skills_scorer(),
+            poll_interval_secs: default_skills_poll_interval(),
+        }
+    }
+}
+
+pub fn load_skills_config() -> SkillsConfig {
+    let path = resolve_config_path().unwrap_or_else(|| PathBuf::from("osoosi.toml"));
+    if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(cfg) = toml::from_str::<FileConfig>(&content) {
+                return cfg.skills;
+            }
+        }
+    }
+    SkillsConfig::default()
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OsoosiConfig {
     pub agent: AgentConfig,
     pub telemetry: TelemetryConfig,
@@ -2303,6 +2359,34 @@ db_path = "./db.sqlite"
         // Ensure no lone LF without preceding CR
         let without_crlf = crlf_updated.replace("\r\n", "");
         assert!(!without_crlf.contains('\n'));
+    }
+
+    #[test]
+    fn test_skills_config_defaults_and_parsing() {
+        let default_cfg = SkillsConfig::default();
+        assert!(default_cfg.enabled);
+        assert!(default_cfg.auto_evolve_on_start);
+        assert_eq!(default_cfg.workspace, "runs/edr-evolution");
+        assert_eq!(default_cfg.tasks_file, "examples/edr-skill-evolution/tasks.json");
+        assert_eq!(default_cfg.scorer, "examples/edr-skill-evolution/scorer.py");
+        assert_eq!(default_cfg.poll_interval_secs, 300);
+
+        let custom_toml = r#"
+[skills]
+enabled = false
+auto_evolve_on_start = false
+workspace = "custom/workspace"
+tasks_file = "custom/tasks.json"
+scorer = "custom/scorer.py"
+poll_interval_secs = 60
+"#;
+        let fc: FileConfig = toml::from_str(custom_toml).expect("Must parse FileConfig with [skills]");
+        assert!(!fc.skills.enabled);
+        assert!(!fc.skills.auto_evolve_on_start);
+        assert_eq!(fc.skills.workspace, "custom/workspace");
+        assert_eq!(fc.skills.tasks_file, "custom/tasks.json");
+        assert_eq!(fc.skills.scorer, "custom/scorer.py");
+        assert_eq!(fc.skills.poll_interval_secs, 60);
     }
 }
 

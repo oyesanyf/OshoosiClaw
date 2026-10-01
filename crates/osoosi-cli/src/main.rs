@@ -7,7 +7,7 @@ use hf_hub::api::tokio::ApiBuilder;
 use std::fs;
 use std::path::{Path, PathBuf};
 use std::sync::Arc;
-use tracing::{error, info, warn};
+use tracing::{debug, error, info, warn};
 use tracing_subscriber::layer::SubscriberExt;
 use tracing_subscriber::util::SubscriberInitExt;
 use tracing_subscriber::{fmt, EnvFilter, Layer};
@@ -544,6 +544,22 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             println!("[+] Cryptographic configuration integrity verified.");
             println!("[+] Behavioral cortex & consensus voters armed.");
             println!("[+] OpenỌ̀ṣọ́ọ̀sì daemon active and monitoring.");
+
+            let skills_cfg = osoosi_types::config::load_skills_config();
+            if skills_cfg.enabled {
+                println!("[+] WikiSkill autonomous self-evolution engine initialized.");
+                if skills_cfg.auto_evolve_on_start {
+                    println!("[+] WikiSkill background learning loop active (workspace: {}).", skills_cfg.workspace);
+                    let ws_clone = skills_cfg.workspace.clone();
+                    let tasks_clone = skills_cfg.tasks_file.clone();
+                    let scorer_clone = skills_cfg.scorer.clone();
+                    let poll_interval = std::time::Duration::from_secs(skills_cfg.poll_interval_secs.max(30));
+
+                    tokio::spawn(async move {
+                        run_wikiskill_background_loop(ws_clone, tasks_clone, scorer_clone, poll_interval).await;
+                    });
+                }
+            }
 
             // Start maintenance loop (DB pruning/vacuum)
             let maint_orch = orchestrator.clone();
@@ -2922,6 +2938,111 @@ fn run_wikiskill_cli(args: &[&str]) -> anyhow::Result<std::process::Output> {
         .args(args)
         .output()?;
     Ok(output)
+}
+
+async fn run_wikiskill_background_loop(
+    workspace: String,
+    tasks_file: String,
+    scorer: String,
+    poll_interval: std::time::Duration,
+) {
+    let ws_path = PathBuf::from(&workspace);
+
+    // 1. If workspace doesn't exist, bootstrap it with wikiskill start
+    if !ws_path.is_dir() {
+        let (python_opt, cli_opt) = resolve_wikiskill_paths();
+        if let (Some(python), Some(cli)) = (python_opt, cli_opt) {
+            info!("[WikiSkill] Bootstrapping evolution workspace at {}...", workspace);
+            let mut cmd = tokio::process::Command::new(&python);
+            cmd.arg(&cli)
+                .arg("start")
+                .arg(&workspace)
+                .arg("--tasks")
+                .arg(&tasks_file)
+                .arg("--scorer")
+                .arg(&scorer)
+                .arg("--no-agent")
+                .arg("--trust-scorer")
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::null())
+                .stderr(std::process::Stdio::null());
+
+            #[cfg(target_os = "windows")]
+            {
+                #[allow(unused_imports)]
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
+
+            match tokio::time::timeout(std::time::Duration::from_secs(30), cmd.status()).await {
+                Ok(Ok(status)) => {
+                    if status.success() {
+                        info!("[WikiSkill] Successfully initialized evolution workspace at {}.", workspace);
+                    } else {
+                        warn!("[WikiSkill] Bootstrapping returned status: {:?}", status.code());
+                    }
+                }
+                Ok(Err(e)) => {
+                    warn!("[WikiSkill] Failed to execute bootstrap command: {}", e);
+                }
+                Err(_) => {
+                    warn!("[WikiSkill] Bootstrapping timed out after 30 seconds.");
+                }
+            }
+        } else {
+            warn!("[WikiSkill] Python interpreter or WikiSkill CLI not found; skipping bootstrap.");
+        }
+    }
+
+    // 2. Continuous background evaluation loop
+    loop {
+        tokio::time::sleep(poll_interval).await;
+
+        let (python_opt, cli_opt) = resolve_wikiskill_paths();
+        if let (Some(python), Some(cli)) = (python_opt, cli_opt) {
+            let mut cmd = tokio::process::Command::new(&python);
+            cmd.arg(&cli)
+                .arg("status")
+                .arg(&workspace)
+                .stdin(std::process::Stdio::null())
+                .stdout(std::process::Stdio::piped())
+                .stderr(std::process::Stdio::null());
+
+            #[cfg(target_os = "windows")]
+            {
+                #[allow(unused_imports)]
+                use std::os::windows::process::CommandExt;
+                cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            }
+
+            match tokio::time::timeout(std::time::Duration::from_secs(30), cmd.output()).await {
+                Ok(Ok(output)) => {
+                    let mut phase = "unknown".to_string();
+                    let mut score = 1.0;
+                    if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&output.stdout) {
+                        if let Some(p) = val.get("phase").and_then(|v| v.as_str()) {
+                            phase = p.to_string();
+                        }
+                        if let Some(b) = val.get("best_score").and_then(|v| v.as_f64()) {
+                            score = b;
+                        }
+                        let state_file = ws_path.join(".wikiskill-state.json");
+                        let _ = std::fs::write(&state_file, &output.stdout);
+                    }
+                    debug!(
+                        "[WikiSkill] Evolution cycle completed. Phase: {}, Best Score: {:.2}",
+                        phase, score
+                    );
+                }
+                Ok(Err(e)) => {
+                    debug!("[WikiSkill] Status evaluation poll error: {}", e);
+                }
+                Err(_) => {
+                    debug!("[WikiSkill] Status evaluation poll timed out.");
+                }
+            }
+        }
+    }
 }
 
 async fn handle_skill_command(sub: Option<SkillSubcommand>) -> anyhow::Result<()> {

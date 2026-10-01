@@ -17,6 +17,7 @@ def register(sub):
     start.add_argument('--scorer',help='JSON command array; reads task/output JSON from stdin and returns score JSON')
     start.add_argument('--trust-scorer',action='store_true',help='Explicitly authorize this locally configured scorer; do not use for unreviewed imported workspaces')
     start.add_argument('--scorer-timeout',type=float,default=120)
+    start.add_argument('--no-agent',action='store_true',help='Initialize without requiring an active agent runtime')
     for name in ['tasks','next','record','learn','propose','feedback','retry','export']:
         p=sub.add_parser(name,help={'tasks':'Attach training and validation tasks before execution','next':'Get work requests for your current agent','record':'Record an actual task output and its score','learn':'Apply trace-backed Wiki pattern updates','propose':'Submit a candidate skill or no_action','feedback':'Add user feedback directly to the Wiki inbox','retry':'Explicitly retry a failed request after resolving it','export':'Export the retained skill and provenance'}[name])
         p.add_argument('workspace',type=Path)
@@ -73,14 +74,19 @@ def register(sub):
 
 def _parse_scorer(val):
     if not val:return None
-    try:return json.loads(val)
+    try:res=json.loads(val)
     except Exception:
         import re,shlex
-        try:return json.loads(val.replace("'",'"'))
-        except Exception:pass
-        m=re.match(r'^\[(.*)\]$',val.strip())
-        if m:return [p.strip().strip('"').strip("'") for p in m.group(1).split(',') if p.strip()]
-        return shlex.split(val)
+        try:res=json.loads(val.replace("'",'"'))
+        except Exception:
+            m=re.match(r'^\[(.*)\]$',val.strip())
+            if m:res=[p.strip().strip('"').strip("'") for p in m.group(1).split(',') if p.strip()]
+            else:res=shlex.split(val)
+    if isinstance(res,list) and len(res)==1 and res[0].endswith('.py'):
+        return ['{python}',res[0]]
+    if isinstance(res,str) and res.endswith('.py'):
+        return ['{python}',res]
+    return res
 
 
 def handle(args):
