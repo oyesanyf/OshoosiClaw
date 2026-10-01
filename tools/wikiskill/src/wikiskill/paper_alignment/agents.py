@@ -13,7 +13,7 @@ from wikiskill.skill_proposer import ProposalPurpose, ProposalResult, _unified_d
 PROMPTS=Path(__file__).resolve().parents[1]/'resources/paper_alignment/prompts'
 
 def paper_prompts(task_description):
-    return {role+'.md':(PROMPTS/(role+'.paper.md')).read_text().replace('{task_desc}',task_description)
+    return {role+'.md':(PROMPTS/(role+'.paper.md')).read_text(encoding='utf-8').replace('{task_desc}',task_description)
             for role in ('maintainer','proposer')}
 
 def handoff(iteration,skills):
@@ -67,35 +67,35 @@ class PaperAgents:
     def maintainer_factory(self,*,model,workdir,reasoning_effort):
         def run(paths,*,iteration,wiki_dir):
             root=Path(wiki_dir).parent;state=engine.state(root)
-            current=(root/state['skill']).read_text();skills=self._skills(wiki_dir,current)
+            current=(root/state['skill']).read_text(encoding='utf-8');skills=self._skills(wiki_dir,current)
             rows=evidence.sample(self._rows(paths),self.seed+iteration)
             payload,wiki=self._payload(wiki_dir,rows,skills)
-            system=(Path(wiki_dir)/'prompts/maintainer.md').read_text()
+            system=(Path(wiki_dir)/'prompts/maintainer.md').read_text(encoding='utf-8')
             archive=Path(self.invoke(Path(workdir),payload,system,handoff(iteration,skills),'maintainer',model,reasoning_effort))
-            value=json.loads((archive/'submission.json').read_text())['proposal']
+            value=json.loads((archive/'submission.json').read_text(encoding='utf-8'))['proposal']
             normalized,updated=contracts.wiki_update(value,wiki)
             updated['log.md']=wiki.get('log.md','')+'\n'+normalized['append_log']+'\n'
             for name,text in updated.items():
-                path=Path(wiki_dir)/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(text)
+                path=Path(wiki_dir)/name;path.parent.mkdir(parents=True,exist_ok=True);path.write_text(text, encoding='utf-8')
             return normalized
         return run
 
     def proposer_factory(self,*,model,workdir,reasoning_effort):
         def run(current,paths,*,iteration,wiki_dir):
             skills=self._skills(wiki_dir,current);payload,_=self._payload(wiki_dir,self._rows(paths),skills)
-            system=(Path(wiki_dir)/'prompts/proposer.md').read_text();user=handoff(iteration,skills)
+            system=(Path(wiki_dir)/'prompts/proposer.md').read_text(encoding='utf-8');user=handoff(iteration,skills)
             archive=Path(self.invoke(Path(workdir),payload,system,user,'proposer',model,reasoning_effort))
-            submitted=json.loads((archive/'submission.json').read_text())
+            submitted=json.loads((archive/'submission.json').read_text(encoding='utf-8'))
             value,candidate=contracts.proposal(submitted['proposal'],skills,submitted['read_trace_ids'])
             # Check actual successful reads as well as the submitted receipt.
-            receipts=[json.loads(x) for x in (archive/'tool-events.jsonl').read_text().splitlines()]
+            receipts=[json.loads(x) for x in (archive/'tool-events.jsonl').read_text(encoding='utf-8').splitlines()]
             reads={Path(r['arguments']['path']).stem for r in receipts if r.get('ok') and r.get('tool')=='read_file' and r.get('arguments',{}).get('path','').startswith('traces/')}
             if value['action']!='no_action' and len(reads)<4:raise ValueError('Fewer than four actual training trace reads')
             engine.save(Path(workdir)/'paper-candidate.json',candidate)
             text=contracts.skill_text(candidate) if value['action']!='no_action' else ''
             return ProposalResult(action='no_action' if value['action']=='no_action' else 'skill',skill_md=text,
                                   purpose=ProposalPurpose(summary=value.get('purpose_md','')),
-                                  rationale=(archive/'final.txt').read_text(),
+                                  rationale=(archive/'final.txt').read_text(encoding='utf-8'),
                                   prompt_sha256=hashlib.sha256((system+user).encode()).hexdigest(),
                                   diff=_unified_diff(current,text),stdout_path=archive/'final.txt')
         return run

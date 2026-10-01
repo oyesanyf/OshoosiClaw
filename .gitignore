@@ -105,6 +105,7 @@ error_core.log
 # ---------- Temp / Misc ----------
 /tmp/
 /tmp_stix/
+/runs/
 .cargo/
 .crates.toml
 .crates2.json

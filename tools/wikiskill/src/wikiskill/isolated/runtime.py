@@ -332,6 +332,17 @@ def _copy_records(workspace: Path, control: Path, archive: Path, *, thread_id=''
         if (workspace/'output.xlsx').is_symlink():
             raise IntegrityError('Output workbook is a symlink')
         shutil.copy2(workspace/'output.xlsx', archive/'output.xlsx')
+def _killpg(pid: int, sig: int) -> None:
+    if hasattr(os, 'killpg'):
+        try:
+            os.killpg(pid, sig)
+        except ProcessLookupError:
+            pass
+    else:
+        try:
+            os.kill(pid, sig)
+        except OSError:
+            pass
 
 
 def execute(payload: Path, system: str, user: str, mode: str, timeout=1800, *,
@@ -385,11 +396,11 @@ def execute(payload: Path, system: str, user: str, mode: str, timeout=1800, *,
             stdout, stderr = child.communicate(rendered, timeout=timeout)
         except subprocess.TimeoutExpired:
             timed_out = True
-            os.killpg(child.pid, signal.SIGTERM)
+            _killpg(child.pid, signal.SIGTERM)
             try:
                 stdout, stderr = child.communicate(timeout=5)
             except subprocess.TimeoutExpired:
-                os.killpg(child.pid, signal.SIGKILL)
+                _killpg(child.pid, signal.SIGKILL)
                 stdout, stderr = child.communicate()
         (archive/'events.jsonl').write_text(stdout)
         (archive/'stderr.log').write_text(stderr)
@@ -411,11 +422,11 @@ def execute(payload: Path, system: str, user: str, mode: str, timeout=1800, *,
         preservation_error = None
         if child is not None and child.poll() is None:
             # A cancelled controller must not leave paid inference running.
-            os.killpg(child.pid, signal.SIGTERM)
+            _killpg(child.pid, signal.SIGTERM)
             try:
                 stdout, stderr = child.communicate(timeout=5)
             except subprocess.TimeoutExpired:
-                os.killpg(child.pid, signal.SIGKILL)
+                _killpg(child.pid, signal.SIGKILL)
                 stdout, stderr = child.communicate()
             if not (archive/'events.jsonl').exists():
                 (archive/'events.jsonl').write_text(stdout or '')

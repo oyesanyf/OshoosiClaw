@@ -142,4 +142,4 @@ def read_wiki(root):
     files=set(root.rglob('*.md'))
     files.update(p for p in (root/'patterns').glob('*') if p.is_file() and not p.name.startswith('.'))
     if any(not p.resolve().is_relative_to(root.resolve()) for p in files):raise ContractError('Wiki file resolves outside the Wiki directory')
-    return {str(p.relative_to(root)):p.read_text() for p in sorted(files)}
+    return {p.relative_to(root).as_posix():p.read_text(encoding='utf-8') for p in sorted(files)}

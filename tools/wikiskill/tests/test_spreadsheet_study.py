@@ -115,7 +115,7 @@ def fake_runtime(monkeypatch):
                     "skill_md": "---\nname: verify_output\ndescription: Verify spreadsheet edits\n---\n## When to Apply\nAfter edits.\n## When NOT to Apply\nRead-only tasks.\n## Instructions\nRead back saved workbook target cells.\n",
                     "purpose_md": "# Origin\nTraining traces.\n# Patterns Addressed\nVerify cached output.\n# Evolution History\nInitial candidate.\n"}
             (archive / "submission.json").write_text(json.dumps({"proposal": proposal, "read_trace_ids": reads}))
-        (archive / "tool-events.jsonl").write_text("".join(json.dumps(event, ensure_ascii=False) + "\n" for event in receipts))
+        (archive / "tool-events.jsonl").write_text("".join(json.dumps(event, ensure_ascii=False) + "\n" for event in receipts), encoding="utf-8")
         artifacts = study._tree(archive)
         (archive / "native-complete.json").write_text(json.dumps({"started_at": "2026-09-07T00:00:00Z", "finished_at": "2026-09-07T00:01:00Z", "duration": 60, "artifacts": artifacts}))
         return archive

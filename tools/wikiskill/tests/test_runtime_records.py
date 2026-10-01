@@ -16,7 +16,7 @@ def event(code, output='Script completed'):
 def test_jsonl_unicode_separators_are_string_content(tmp_path):
     rows = [{'text': 'first\u2028second\u2029third\u0085fourth'}, {'score': 1}]
     text = '\r\n'.join(json.dumps(r, ensure_ascii=False) for r in rows) + '\r\n'
-    path = tmp_path / 'session.jsonl';path.write_text(text)
+    path = tmp_path / 'session.jsonl';path.write_text(text, encoding='utf-8')
     assert len(text.splitlines()) > 2
     assert loads_jsonl(text) == read_jsonl(path) == rows
 

@@ -1,0 +1,2 @@
+# Ensure research snapshots and skill data retain LF line endings for checksum stability
+tools/wikiskill/src/wikiskill/resources/research/** text eol=lf

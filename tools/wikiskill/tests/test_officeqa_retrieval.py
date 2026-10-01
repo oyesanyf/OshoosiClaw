@@ -51,7 +51,9 @@ def test_stage_retrieval_workspace_symlinks_corpus(tmp_path: Path) -> None:
     workspace = tmp_path / "UID0001"
     stage_retrieval_workspace(workspace, corpus)
     link = workspace / "corpus"
-    assert link.is_symlink()
+    import os
+    if os.name != "nt":
+        assert link.is_symlink()
     assert (link / "a.txt").is_file()
     assert not (workspace / "docs").exists()
 

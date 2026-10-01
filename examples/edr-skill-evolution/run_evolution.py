@@ -30,8 +30,11 @@ CLI_PY = Path("tools/wikiskill/src/wikiskill/cli.py").resolve()
 
 
 def run_wikiskill(args):
-    """Run wikiskill CLI using python sys.executable directly to ensure exact argument passing."""
-    cmd = [sys.executable, str(CLI_PY)] + args
+    """Run wikiskill CLI using wikiskill.cmd on Windows or python cli.py."""
+    if os.name == 'nt' and CMD_BIN.exists():
+        cmd = [str(CMD_BIN)] + args
+    else:
+        cmd = [sys.executable, str(CLI_PY)] + args
     res = subprocess.run(cmd, capture_output=True, text=True, check=True, encoding="utf-8", errors="replace")
     return res.stdout
 

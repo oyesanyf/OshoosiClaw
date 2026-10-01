@@ -14,14 +14,14 @@ def test_original_engine_with_actual_paper_role_contracts(tmp_path,no_action):
     calls=[]
     def invoke(directory,payload,system,user,mode,model,effort):
         calls.append(mode)
-        original=(PROMPTS/(mode+'.paper.md')).read_text().replace('{task_desc}','financial questions')
+        original=(PROMPTS/(mode+'.paper.md')).read_text(encoding='utf-8').replace('{task_desc}','financial questions')
         assert system==original
         facts=json.loads(user);assert facts['executor_visibility']['wiki'] is False
         assert 'No action is allowed' not in user and 'must not be retried' not in user
         assert all(x['split']=='train' for x in json.loads(payload['trace-summary.json']))
         assert {'wiki/index.md','wiki/log.md','wiki/skill-impact.md'}<=set(payload)
         work=directory/'input';control=directory/'runtime';control.mkdir(parents=True)
-        for name,text in payload.items():p=work/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text)
+        for name,text in payload.items():p=work/name;p.parent.mkdir(parents=True,exist_ok=True);p.write_text(text, encoding='utf-8')
         server=RoleTools(work,control,mode,'python3');receipts=[]
         if mode=='maintainer':
             existing=json.loads(payload['skills.json'])
@@ -32,7 +32,7 @@ def test_original_engine_with_actual_paper_role_contracts(tmp_path,no_action):
             for item in json.loads(payload['trace-summary.json'])[:4]:
                 args={'path':item['path']};server.call('read_file',args);receipts.append({'tool':'read_file','arguments':args,'ok':True})
             value={'action':'no_action'} if no_action else {'action':'create','name':'compare_periods','skill_md':SKILL,'purpose_md':PURPOSE}
-        server.call('finish',{'proposal':value});(control/'tool-events.jsonl').write_text(''.join(json.dumps(r)+'\n' for r in receipts));(control/'final.txt').write_text('Fixture submission.')
+        server.call('finish',{'proposal':value});(control/'tool-events.jsonl').write_text(''.join(json.dumps(r)+'\n' for r in receipts), encoding='utf-8');(control/'final.txt').write_text('Fixture submission.', encoding='utf-8')
         return control
     agents=PaperAgents(invoke,seed=3)
     config={'domain':'synthetic-finance','model':'fixture','optimizer_model':'fixture','effort':'medium','optimizer_effort':'medium','workers':1,'iterations':4,'timeout':1}

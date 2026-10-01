@@ -10,7 +10,6 @@ from __future__ import annotations
 from concurrent.futures import FIRST_COMPLETED, ThreadPoolExecutor, wait
 from contextlib import contextmanager
 from datetime import datetime, timezone
-import fcntl
 import hashlib
 import importlib.metadata
 import json
@@ -83,7 +82,9 @@ def _tree(root):
         if path.is_symlink():
             raise IntegrityError(f"Symlink in sealed tree: {path}")
         if path.is_file():
-            result[str(path.relative_to(root))] = _sha(path)
+            if path.name == "study.lock":
+                continue
+            result[path.relative_to(root).as_posix()] = _sha(path)
     return result
 
 
@@ -103,15 +104,32 @@ def _local(root, relative):
 def _lock(root):
     root = Path(root)
     root.mkdir(parents=True, exist_ok=True)
-    with (root / "study.lock").open("a+") as handle:
-        try:
-            fcntl.flock(handle, fcntl.LOCK_EX | fcntl.LOCK_NB)
-        except BlockingIOError as exc:
-            raise StudyError("Another study controller holds the writer lock") from exc
+    with (root / "study.lock").open("a+b") as handle:
+        if os.name == "nt":
+            import msvcrt
+            if handle.tell() == 0:
+                handle.write(b"0")
+                handle.flush()
+            handle.seek(0)
+            try:
+                msvcrt.locking(handle.fileno(), msvcrt.LK_NBLCK, 1)
+            except OSError as exc:
+                raise StudyError("Another study controller holds the writer lock") from exc
+        else:
+            import fcntl
+            try:
+                fcntl.flock(handle.fileno(), fcntl.LOCK_EX | fcntl.LOCK_NB)
+            except BlockingIOError as exc:
+                raise StudyError("Another study controller holds the writer lock") from exc
         try:
             yield
         finally:
-            fcntl.flock(handle, fcntl.LOCK_UN)
+            if os.name == "nt":
+                handle.seek(0)
+                msvcrt.locking(handle.fileno(), msvcrt.LK_UNLCK, 1)
+            else:
+                import fcntl
+                fcntl.flock(handle.fileno(), fcntl.LOCK_UN)
 
 
 def _state(root, phase, **fields):
@@ -152,7 +170,7 @@ def _source_bindings():
     names = [Path(__file__), Path(spreadsheet.__file__), Path(contracts.__file__), Path(evidence.__file__),
              PACKAGE / "jsonl.py", PACKAGE / "codex_identity.py", *sorted((PACKAGE / "isolated").glob("*.py")),
              *sorted((PACKAGE / "resources/isolated").glob("*.json"))]
-    return {str(path.relative_to(PACKAGE)): _sha(path) for path in names}
+    return {path.relative_to(PACKAGE).as_posix(): _sha(path) for path in names}
 
 
 def _split_ids(path):
@@ -244,8 +262,8 @@ def prepare(root: Path, *, data: Path, split_dir: Path, libreoffice_app: Path,
                 rows[split].append({"uid": uid, "split": split, "question": case.instruction.replace("\r\n", "\n").replace("\r", "\n"),
                                     "instruction_type": case.instruction_type, "answer_position": case.answer_position,
                                     "answer_sheet": case.answer_sheet, "preview": _preview(directory / "input.xlsx"),
-                                    "input_path": str((directory / "input.xlsx").relative_to(root)),
-                                    "reference_path": str(reference.relative_to(root)), "total_cells": total})
+                                    "input_path": (directory / "input.xlsx").relative_to(root).as_posix(),
+                                    "reference_path": reference.relative_to(root).as_posix(), "total_cells": total})
         _save(frozen / "cases.json", rows)
         _save(frozen / "data-source-hashes.json", sources)
         for mode in ("spreadsheet", "maintainer", "proposer"):
@@ -273,7 +291,7 @@ def prepare(root: Path, *, data: Path, split_dir: Path, libreoffice_app: Path,
                     "automatic_next_stage": "none; no K4, TEST or follow-up run",
                     "scope": "Small development end-to-end verification; not held-out generalization or statistical evidence",
                     "source_bindings": _source_bindings(),
-                    "resource_bindings": {str(p.relative_to(PACKAGE)): _sha(p) for p in [PROMPTS / f"{mode}.paper.md" for mode in ("spreadsheet", "maintainer", "proposer")]},
+                    "resource_bindings": {p.relative_to(PACKAGE).as_posix(): _sha(p) for p in [PROMPTS / f"{mode}.paper.md" for mode in ("spreadsheet", "maintainer", "proposer")]},
                     "frozen_files": _tree(frozen)}
         _save(root / "protocol.json", protocol)
         _save(root / "protocol-lock.json", {"sha256": _sha(root / "protocol.json")})

@@ -79,7 +79,10 @@ def stage_retrieval_workspace(workspace: Path, corpus_dir: Path) -> None:
     target = corpus_dir.resolve()
     if not target.is_dir():
         raise OfficeQADatasetError(f"retrieval corpus missing: {target}")
-    (workspace / "corpus").symlink_to(target, target_is_directory=True)
+    try:
+        (workspace / "corpus").symlink_to(target, target_is_directory=True)
+    except OSError:
+        shutil.copytree(target, workspace / "corpus")
     # question.md is operator context only; it does not list source files.
 
 
