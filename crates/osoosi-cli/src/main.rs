@@ -216,6 +216,31 @@ enum Commands {
         #[command(subcommand)]
         action: DriverAction,
     },
+    /// Manage and evolve autonomous agent skills using WikiSkill
+    Skill {
+        #[command(subcommand)]
+        subcommand: Option<SkillSubcommand>,
+    },
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum SkillSubcommand {
+    /// List discovered skills in .agents/skills/ and active evolution workspaces
+    List,
+    /// Verify Python and WikiSkill runtime availability
+    Doctor,
+    /// List WikiSkill product capabilities
+    Capabilities,
+    /// Query status of an evolution workspace
+    Status {
+        /// Path to evolution workspace directory
+        workspace: PathBuf,
+    },
+    /// Display result report for an evolution workspace
+    Report {
+        /// Path to evolution workspace directory
+        workspace: PathBuf,
+    },
 }
 
 #[derive(Subcommand, Clone)]
@@ -1026,6 +1051,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Some(Commands::Driver { action }) => {
             handle_driver_command(action).await?;
+        }
+        Some(Commands::Skill { subcommand }) => {
+            handle_skill_command(subcommand).await?;
         }
         None => {
             if !cli.grant_access {
@@ -2825,6 +2853,285 @@ async fn install_ollama_best_effort() {
     }
 }
 
+fn resolve_wikiskill_paths() -> (Option<PathBuf>, Option<PathBuf>) {
+    let mut base_dirs = Vec::new();
+    if let Ok(cwd) = std::env::current_dir() {
+        base_dirs.push(cwd.clone());
+        for ancestor in cwd.ancestors() {
+            base_dirs.push(ancestor.to_path_buf());
+        }
+    }
+    if let Ok(exe) = std::env::current_exe() {
+        for ancestor in exe.ancestors() {
+            base_dirs.push(ancestor.to_path_buf());
+        }
+    }
+    base_dirs.dedup();
+
+    let mut cli_path = None;
+    for dir in &base_dirs {
+        let candidate = dir
+            .join("tools")
+            .join("wikiskill")
+            .join("src")
+            .join("wikiskill")
+            .join("cli.py");
+        if candidate.is_file() {
+            cli_path = Some(candidate);
+            break;
+        }
+    }
+
+    let python_candidates = [
+        "python",
+        "python3",
+        "py",
+        r"C:\Python314\python.exe",
+        r"C:\Python313\python.exe",
+        r"C:\Python312\python.exe",
+        r"C:\Python311\python.exe",
+    ];
+
+    let mut python_bin = None;
+    for cand in python_candidates {
+        let output = std::process::Command::new(cand)
+            .arg("--version")
+            .output();
+        if let Ok(out) = output {
+            if out.status.success() {
+                python_bin = Some(PathBuf::from(cand));
+                break;
+            }
+        }
+    }
+
+    (python_bin, cli_path)
+}
+
+fn run_wikiskill_cli(args: &[&str]) -> anyhow::Result<std::process::Output> {
+    let (python_opt, cli_opt) = resolve_wikiskill_paths();
+    let python = python_opt.ok_or_else(|| {
+        anyhow::anyhow!("Python 3.11+ interpreter not found. Please ensure Python is installed and in PATH.")
+    })?;
+    let cli = cli_opt.ok_or_else(|| {
+        anyhow::anyhow!("WikiSkill CLI not found at tools/wikiskill/src/wikiskill/cli.py.")
+    })?;
+
+    let output = std::process::Command::new(&python)
+        .arg(&cli)
+        .args(args)
+        .output()?;
+    Ok(output)
+}
+
+async fn handle_skill_command(sub: Option<SkillSubcommand>) -> anyhow::Result<()> {
+    match sub {
+        None | Some(SkillSubcommand::List) => {
+            println!("\n================================================================================");
+            println!("               OpenỌ̀ṣọ́ọ̀sì Autonomous Agent Skill Framework (WikiSkill)");
+            println!("================================================================================");
+
+            // 1. Discover skills in .agents/skills/
+            let skills_dir = Path::new(".agents").join("skills");
+            println!("\n📦 Discovered Agent Skills (.agents/skills/):");
+            if skills_dir.is_dir() {
+                let mut found_any = false;
+                if let Ok(entries) = fs::read_dir(&skills_dir) {
+                    for entry in entries.flatten() {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            let skill_md = path.join("SKILL.md");
+                            let skill_name = path
+                                .file_name()
+                                .unwrap_or_default()
+                                .to_string_lossy()
+                                .to_string();
+                            if skill_md.is_file() {
+                                found_any = true;
+                                let mut desc = String::new();
+                                if let Ok(content) = fs::read_to_string(&skill_md) {
+                                    if let Some(rest) = content.strip_prefix("---") {
+                                        if let Some(fm_end) = rest.find("---") {
+                                            let fm = &rest[..fm_end];
+                                            for line in fm.lines() {
+                                                let trimmed = line.trim();
+                                                if let Some(val) = trimmed.strip_prefix("description:") {
+                                                    desc = val
+                                                        .trim()
+                                                        .trim_matches('"')
+                                                        .trim_matches('\'')
+                                                        .to_string();
+                                                }
+                                            }
+                                        }
+                                    }
+                                }
+                                println!("  • \x1b[1m{}\x1b[0m", skill_name);
+                                println!("    Path:        {}", skill_md.display());
+                                if !desc.is_empty() {
+                                    println!("    Description: {}", desc);
+                                }
+                            }
+                        }
+                    }
+                }
+                if !found_any {
+                    println!("  (No skills found with SKILL.md in .agents/skills/)");
+                }
+            } else {
+                println!("  (.agents/skills/ directory does not exist)");
+            }
+
+            // 2. Discover active workspaces
+            println!("\n🔄 Active Skill Evolution Workspaces:");
+            let search_roots = [
+                Path::new("runs"),
+                Path::new(".wikiskill"),
+                Path::new("scratch"),
+            ];
+            let mut found_ws = false;
+            for root in &search_roots {
+                if root.is_dir() {
+                    if let Ok(entries) = fs::read_dir(root) {
+                        for entry in entries.flatten() {
+                            let path = entry.path();
+                            if path.is_dir()
+                                && ((path.join("config.json").is_file() && path.join("events").is_dir())
+                                    || path.join(".wikiskill-state.json").is_file())
+                            {
+                                found_ws = true;
+                                let mut phase = "unknown".to_string();
+                                let mut score_info = String::new();
+                                if let Ok(out) = run_wikiskill_cli(&["status", &path.to_string_lossy()]) {
+                                    if out.status.success() {
+                                        if let Ok(val) = serde_json::from_slice::<serde_json::Value>(&out.stdout) {
+                                            if let Some(p) = val.get("phase").and_then(|v| v.as_str()) {
+                                                phase = p.to_string();
+                                            }
+                                            if let Some(best) = val.get("best_score").and_then(|v| v.as_f64()) {
+                                                score_info = format!(", Score: {:.2}", best);
+                                            }
+                                        }
+                                    }
+                                }
+                                println!("  • \x1b[1m{}\x1b[0m (Phase: {}{})", path.display(), phase, score_info);
+                            }
+                        }
+                    }
+                }
+            }
+            if !found_ws {
+                println!("  (No active evolution workspaces found. Start one with `wikiskill start <path> --tasks <tasks.json>`)");
+            }
+            println!("================================================================================\n");
+            Ok(())
+        }
+        Some(SkillSubcommand::Doctor) => {
+            println!("\n================================================================================");
+            println!("                       WikiSkill Runtime Doctor");
+            println!("================================================================================");
+            let (python_opt, cli_opt) = resolve_wikiskill_paths();
+            println!(
+                "Python Runtime:       {}",
+                match &python_opt {
+                    Some(p) => format!("AVAILABLE ({})", p.display()),
+                    None => "NOT FOUND (Python 3.11+ required)".to_string(),
+                }
+            );
+            if let Some(ref py) = python_opt {
+                if let Ok(ver_out) = std::process::Command::new(py).arg("--version").output() {
+                    let ver = String::from_utf8_lossy(&ver_out.stdout).trim().to_string();
+                    let ver_err = String::from_utf8_lossy(&ver_out.stderr).trim().to_string();
+                    let full_ver = if !ver.is_empty() { ver } else { ver_err };
+                    println!("Python Version:       {}", full_ver);
+                }
+            }
+            println!(
+                "WikiSkill CLI:        {}",
+                match &cli_opt {
+                    Some(c) => format!("LOCATED ({})", c.display()),
+                    None => "NOT FOUND (Expected tools/wikiskill/src/wikiskill/cli.py)".to_string(),
+                }
+            );
+
+            let subagents_dir = Path::new(".agents").join("subagents");
+            let has_subagents = subagents_dir.is_dir()
+                && subagents_dir.join("wikiskill-executor.md").is_file()
+                && subagents_dir.join("wikiskill-maintainer.md").is_file()
+                && subagents_dir.join("wikiskill-proposer.md").is_file();
+            println!(
+                "Native Subagents:     {}",
+                if has_subagents {
+                    "INSTALLED (.agents/subagents/)"
+                } else {
+                    "NOT INSTALLED (Run wikiskill agents install)"
+                }
+            );
+
+            let skill_dir = Path::new(".agents").join("skills").join("wikiskill");
+            let has_skill = skill_dir.join("SKILL.md").is_file();
+            println!(
+                "Entry Skill:          {}",
+                if has_skill {
+                    "INSTALLED (.agents/skills/wikiskill/SKILL.md)"
+                } else {
+                    "NOT INSTALLED"
+                }
+            );
+
+            if python_opt.is_some() && cli_opt.is_some() {
+                println!("\n--- WikiSkill Self-Diagnostic Output ---");
+                match run_wikiskill_cli(&["doctor"]) {
+                    Ok(out) => {
+                        let text = String::from_utf8_lossy(&out.stdout);
+                        println!("{}", text.trim());
+                    }
+                    Err(e) => {
+                        eprintln!("Error executing wikiskill doctor: {}", e);
+                    }
+                }
+            }
+            println!("================================================================================\n");
+            Ok(())
+        }
+        Some(SkillSubcommand::Capabilities) => {
+            let out = run_wikiskill_cli(&["capabilities"])?;
+            if out.status.success() {
+                let text = String::from_utf8_lossy(&out.stdout);
+                println!("{}", text);
+            } else {
+                let err = String::from_utf8_lossy(&out.stderr);
+                eprintln!("Failed to get capabilities: {}", err);
+            }
+            Ok(())
+        }
+        Some(SkillSubcommand::Status { workspace }) => {
+            let ws_str = workspace.to_string_lossy();
+            let out = run_wikiskill_cli(&["status", &ws_str])?;
+            if out.status.success() {
+                let text = String::from_utf8_lossy(&out.stdout);
+                println!("{}", text);
+            } else {
+                let err = String::from_utf8_lossy(&out.stderr);
+                eprintln!("Error querying workspace status: {}", err);
+            }
+            Ok(())
+        }
+        Some(SkillSubcommand::Report { workspace }) => {
+            let ws_str = workspace.to_string_lossy();
+            let out = run_wikiskill_cli(&["report", &ws_str])?;
+            if out.status.success() {
+                let text = String::from_utf8_lossy(&out.stdout);
+                println!("{}", text);
+            } else {
+                let err = String::from_utf8_lossy(&out.stderr);
+                eprintln!("Error generating report: {}", err);
+            }
+            Ok(())
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3145,6 +3452,49 @@ mod tests {
         match cli_clear.command {
             Some(Commands::Driver { action: DriverAction::ClearRules }) => {}
             _ => panic!("Expected Commands::Driver with ClearRules"),
+        }
+    }
+
+    #[test]
+    fn test_skill_cli_parsing() {
+        let cli_list = Cli::try_parse_from(["osoosi", "skill", "list"]).unwrap();
+        match cli_list.command {
+            Some(Commands::Skill { subcommand: Some(SkillSubcommand::List) }) => {}
+            _ => panic!("Expected Commands::Skill with List"),
+        }
+
+        let cli_none = Cli::try_parse_from(["osoosi", "skill"]).unwrap();
+        match cli_none.command {
+            Some(Commands::Skill { subcommand: None }) => {}
+            _ => panic!("Expected Commands::Skill with None"),
+        }
+
+        let cli_doctor = Cli::try_parse_from(["osoosi", "skill", "doctor"]).unwrap();
+        match cli_doctor.command {
+            Some(Commands::Skill { subcommand: Some(SkillSubcommand::Doctor) }) => {}
+            _ => panic!("Expected Commands::Skill with Doctor"),
+        }
+
+        let cli_cap = Cli::try_parse_from(["osoosi", "skill", "capabilities"]).unwrap();
+        match cli_cap.command {
+            Some(Commands::Skill { subcommand: Some(SkillSubcommand::Capabilities) }) => {}
+            _ => panic!("Expected Commands::Skill with Capabilities"),
+        }
+
+        let cli_status = Cli::try_parse_from(["osoosi", "skill", "status", "runs/test"]).unwrap();
+        match cli_status.command {
+            Some(Commands::Skill { subcommand: Some(SkillSubcommand::Status { workspace }) }) => {
+                assert_eq!(workspace, PathBuf::from("runs/test"));
+            }
+            _ => panic!("Expected Commands::Skill with Status"),
+        }
+
+        let cli_report = Cli::try_parse_from(["osoosi", "skill", "report", "runs/test"]).unwrap();
+        match cli_report.command {
+            Some(Commands::Skill { subcommand: Some(SkillSubcommand::Report { workspace }) }) => {
+                assert_eq!(workspace, PathBuf::from("runs/test"));
+            }
+            _ => panic!("Expected Commands::Skill with Report"),
         }
     }
 }

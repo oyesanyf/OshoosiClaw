@@ -62,11 +62,14 @@ osoosi.toml.sig
 /Sysmon64a.exe
 /sysmonconfig-export.xml
 /Eula.txt
-tools/
-/tools/
+/tools/*
+!/tools/wikiskill/
+crates/osoosi-telemetry/tools/
 
 # ---------- Runtime Data ----------
 /data/
+/runs/
+runs/
 /models/
 !/models/malware/sorel_ffnn.pt
 /yara/
@@ -107,7 +110,10 @@ error_core.log
 .crates2.json
 /scratch/
 
-# ---------- Python (LLM Agent) ----------
+# ---------- Python (LLM Agent & Tools) ----------
+__pycache__/
+*.pyc
+*.pyo
 agent/__pycache__/
 agent/.venv/
 agent/*.pyc

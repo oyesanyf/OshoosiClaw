@@ -30,6 +30,7 @@
   <a href="#-p2p-wire-mesh-stix-synchronization">Wire STIX Sync</a> •
   <a href="#-high-throughput-p2p-mesh--consensus-stability">Mesh Stability</a> •
   <a href="#-interactive-webui-visual-gallery">Visual Tour</a> •
+  <a href="#-autonomous-agent-skill-evolution--wikiskill">WikiSkill Evolution</a> •
   <a href="#-cli-reference">CLI Reference</a>
 </p>
 
@@ -1271,6 +1272,50 @@ OshoosiClaw integrates a local LLM agent that embodies Ọ̀ṣọ́ọ̀sì's r
 $env:OSOOSI_LLM_AGENT_ENABLED="1"
 .\osoosi.exe start
 ```
+
+---
+
+<a id="-autonomous-agent-skill-evolution--wikiskill"></a>
+<a id="autonomous-agent-skill-evolution--wikiskill"></a>
+## 🧠 Autonomous Agent Skill Evolution & WikiSkill Framework
+
+OpenỌ̀ṣọ́ọ̀sì integrates the complete **[WikiSkill](https://github.com/Stahl-G/wikiskill)** framework (`tools/wikiskill/`, `.agents/skills/wikiskill/`, `.agents/subagents/`), empowering security agents to autonomously compile operational experience, raw telemetry, and analyst feedback into persistent, reusable skills with automated validation and strict improvement gating.
+
+### Architecture & Native Subagent Protocol
+
+The WikiSkill integration operates within OshoosiClaw's tiered governance architecture:
+- **Lead Architect**: Manages high-level reasoning, task decomposition, and drives the evolution loop using `tools/wikiskill/bin/wikiskill.cmd` or the native `osoosi skill` CLI.
+- **Worker Subagents**: Dispatched with fresh isolated child contexts via the host's native `invoke_subagent` tool (powered by Gemini Flash):
+  - `wikiskill-executor`: Executes baseline, training, and validation tasks against targeted EDR scenarios in isolated child contexts without inheriting parent conversation memory.
+  - `wikiskill-maintainer`: Consolidates training evidence, execution traces, and feedback into reusable Wiki threat patterns citing immutable request identifiers.
+  - `wikiskill-proposer`: Formulates procedural candidate skills (`SKILL.md`) incorporating lessons learned and verified playbooks.
+- **Strict Improvement Gating**: Candidate skills are strictly validated on held-out tasks against baseline incumbent scores. A candidate is accepted and retained only if performance strictly improves beyond the configured delta threshold (`candidate_score > incumbent_score + min_improvement`).
+
+### CLI Management Commands
+
+```powershell
+# Discover installed skills in .agents/skills/ and active workspaces
+.\osoosi.exe skill list
+
+# Run diagnostic verification of Python and WikiSkill runtime availability
+.\osoosi.exe skill doctor
+
+# Query supported platform capabilities and native hosts
+.\osoosi.exe skill capabilities
+
+# Inspect live status of an evolution workspace
+.\osoosi.exe skill status runs/edr-evolution
+
+# Generate journal-derived Markdown report with gate history and skill diffs
+.\osoosi.exe skill report runs/edr-evolution
+```
+
+### EDR Self-Evolution Example
+
+An end-to-end self-evolution cycle is implemented in `examples/edr-skill-evolution/`:
+- **Training Scenarios**: In-memory process injection (`T1055`), Living-off-the-Land Binary (LOLBin) account creation (`T1078`), and cloud storage virtual filesystem (VFS) ransomware activity (`T1486`).
+- **Validation Scenarios**: Early Bird APC injection into suspended processes (`T1055.004`) and LOLBin registry persistence via `mshta.exe` (`T1218.005`).
+- **Execution Script**: Run `python examples/edr-skill-evolution/run_evolution.py` to observe baseline triage (0.0 score), pattern extraction, candidate skill formulation, and successful strict-gate acceptance (1.0 score, +1.0 improvement).
 
 ---
 

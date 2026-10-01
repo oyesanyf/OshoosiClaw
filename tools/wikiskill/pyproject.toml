@@ -1,0 +1,34 @@
+[build-system]
+requires = ["setuptools>=77", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "wikiskill-research"
+version = "0.2.1"
+description = "Improve reusable agent skills from tasks and feedback with your own model and tools"
+readme = "README.md"
+requires-python = ">=3.11"
+license = "MIT"
+license-files = ["LICENSE", "NOTICE.md", "third_party/officeqa/*", "third_party/acorn/*"]
+dependencies = ["pydantic>=2.10,<3"]
+
+[project.optional-dependencies]
+spreadsheet = ["openpyxl>=3.1"]
+datasets = ["huggingface-hub>=0.30", "pyarrow>=17", "pandas>=2"]
+plots = ["matplotlib>=3.8"]
+paper = ["PyYAML>=6"]
+mcp = ["mcp>=1.2,<2"]
+dev = ["pytest>=8", "openpyxl>=3.1", "build>=1", "PyYAML>=6"]
+
+[project.scripts]
+wikiskill = "wikiskill.cli:main"
+
+[tool.setuptools.packages.find]
+where = ["src"]
+
+[tool.setuptools.package-data]
+wikiskill = ["resources/**/*.md", "resources/**/*.json", "resources/**/*.sha256", "resources/**/*.mjs", "resources/**/*.toml", "resources/**/*.yaml", "alfworld/*.sh"]
+
+[tool.pytest.ini_options]
+pythonpath = ["src"]
+testpaths = ["tests"]

