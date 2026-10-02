@@ -221,6 +221,32 @@ enum Commands {
         #[command(subcommand)]
         subcommand: Option<SkillSubcommand>,
     },
+    /// Embedded Velociraptor forensic extraction service and VQL queries
+    Forensics {
+        #[command(subcommand)]
+        action: ForensicsAction,
+    },
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum ForensicsAction {
+    /// Display embedded Velociraptor availability, version, path, and timeout configuration
+    Status,
+    /// Inspect Virtual Address Descriptor (VAD) memory regions of a running process
+    InspectProcess {
+        /// Target Process ID (PID)
+        pid: u32,
+    },
+    /// Scan NTFS Master File Table (MFT) and detect rootkit / DKOM hidden files
+    ScanMft {
+        /// Directory path to scan (e.g. C:\Windows\System32)
+        path: String,
+    },
+    /// Execute an arbitrary safe, schema-sanitized VQL query
+    Query {
+        /// VQL query string
+        vql: String,
+    },
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -1071,6 +1097,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Some(Commands::Skill { subcommand }) => {
             handle_skill_command(subcommand).await?;
+        }
+        Some(Commands::Forensics { action }) => {
+            handle_forensics_command(action).await?;
         }
         None => {
             if !cli.grant_access {
@@ -3522,6 +3551,123 @@ async fn handle_skill_command(sub: Option<SkillSubcommand>) -> anyhow::Result<()
     }
 }
 
+async fn handle_forensics_command(action: ForensicsAction) -> anyhow::Result<()> {
+    let cfg = osoosi_types::config::load_forensics_config();
+    let client = osoosi_forensics::VelociraptorClient::new(cfg.clone());
+
+    match action {
+        ForensicsAction::Status => {
+            println!("================================================================================");
+            println!("           OpenỌ̀ṣọ́ọ̀sì Embedded Velociraptor Forensics Status                     ");
+            println!("================================================================================");
+            println!("Enabled in config:        {}", cfg.enabled);
+            println!("Configured Binary Path:   {}", cfg.binary_path);
+            let resolved = client.resolve_binary_path();
+            println!(
+                "Resolved Binary Path:     {}",
+                resolved
+                    .as_ref()
+                    .map(|p| p.display().to_string())
+                    .unwrap_or_else(|| "NOT_FOUND".to_string())
+            );
+            println!("Binary Available:         {}", client.is_available());
+            let version = client
+                .probe_version()
+                .unwrap_or_else(|| "N/A (binary not running or absent)".to_string());
+            println!("Velociraptor Version:     {}", version);
+            println!("Execution Timeout:        {}s", cfg.execution_timeout_secs);
+            println!("Max Memory Cap:           {} MB", cfg.max_memory_mb);
+            println!("Max Output Lines:         {}", cfg.max_output_lines);
+            println!("Staging Directory:        {}", cfg.staging_dir);
+            println!("Auto Investigate Alerts:  {}", cfg.auto_investigate);
+            println!("Min Trigger Confidence:   {:.2}", cfg.min_trigger_confidence);
+            println!("Trigger ATT&CK Techniques: {:?}", cfg.trigger_techniques);
+            println!("================================================================================");
+        }
+        ForensicsAction::InspectProcess { pid } => {
+            println!("[*] Inspecting Virtual Address Descriptors (VAD) for PID {}...", pid);
+            let records = client.inspect_process_vad(pid).await?;
+            let (corroborated, delta, flagged) =
+                osoosi_forensics::corroborate_process_injection(pid, &records);
+
+            println!(
+                "Found {} memory regions ({} flagged as unbacked executable):",
+                records.len(),
+                flagged.len()
+            );
+            for r in &records {
+                let status = if r.is_unbacked_executable {
+                    "[!] INJECTION/UNBACKED"
+                } else {
+                    "[+] Backed/Normal"
+                };
+                println!(
+                    "  {} Address: {:<18} Size: {:<10} Prot: {:<24} Type: {:<10} File: {:?}",
+                    status, r.address, r.size, r.protection, r.mapping_type, r.filename
+                );
+            }
+
+            println!(
+                "\nCorroboration Verdict: {}",
+                if corroborated {
+                    "CORROBORATED (INJECTION DETECTED)"
+                } else {
+                    "BENIGN"
+                }
+            );
+            println!("Confidence Delta:      +{:.2}", delta);
+        }
+        ForensicsAction::ScanMft { path } => {
+            let drive_char = path.chars().next().unwrap_or('C');
+            println!(
+                "[*] Scanning NTFS Master File Table (MFT) for drive {}: and prefix '{}'...",
+                drive_char, path
+            );
+            let records = client.scan_mft(drive_char, &path).await?;
+            let (corroborated, delta, flagged) =
+                osoosi_forensics::corroborate_mft_rootkit_hiding(&records);
+
+            println!(
+                "MFT Records Scanned: {} ({} flagged as Win32 hidden / rootkit cloaked):",
+                records.len(),
+                flagged.len()
+            );
+            for r in &records {
+                if r.is_hidden_from_win32_api {
+                    println!(
+                        "  [!] ROOTKIT CLOAKED: Entry: {} Size: {} Path: {}",
+                        r.entry_number, r.size, r.full_path
+                    );
+                }
+            }
+
+            println!(
+                "\nRootkit Cloaking Verdict: {}",
+                if corroborated {
+                    "CORROBORATED (HIDDEN FILES DETECTED)"
+                } else {
+                    "NO DISCREPANCIES"
+                }
+            );
+            println!("Confidence Delta:        +{:.2}", delta);
+        }
+        ForensicsAction::Query { vql } => {
+            println!("[*] Executing VQL Query: {}", vql);
+            let output: Vec<serde_json::Value> = client.execute_vql(&vql).await?;
+            println!("Query returned {} record(s):", output.len());
+            for (idx, row) in output.iter().enumerate() {
+                println!(
+                    "[{}] {}",
+                    idx + 1,
+                    serde_json::to_string_pretty(row).unwrap_or_default()
+                );
+            }
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -3966,5 +4112,38 @@ mod tests {
         assert_eq!(broadcasted.len(), 3, "Subsequent run must not duplicate already broadcasted patterns");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_forensics_cli_parsing() {
+        let cli_status = Cli::try_parse_from(["osoosi", "forensics", "status"]).unwrap();
+        match cli_status.command {
+            Some(Commands::Forensics { action: ForensicsAction::Status }) => {}
+            _ => panic!("Expected Commands::Forensics with Status"),
+        }
+
+        let cli_vad = Cli::try_parse_from(["osoosi", "forensics", "inspect-process", "1234"]).unwrap();
+        match cli_vad.command {
+            Some(Commands::Forensics { action: ForensicsAction::InspectProcess { pid } }) => {
+                assert_eq!(pid, 1234);
+            }
+            _ => panic!("Expected Commands::Forensics with InspectProcess"),
+        }
+
+        let cli_mft = Cli::try_parse_from(["osoosi", "forensics", "scan-mft", "C:\\Windows\\System32"]).unwrap();
+        match cli_mft.command {
+            Some(Commands::Forensics { action: ForensicsAction::ScanMft { path } }) => {
+                assert_eq!(path, "C:\\Windows\\System32");
+            }
+            _ => panic!("Expected Commands::Forensics with ScanMft"),
+        }
+
+        let cli_query = Cli::try_parse_from(["osoosi", "forensics", "query", "SELECT 1"]).unwrap();
+        match cli_query.command {
+            Some(Commands::Forensics { action: ForensicsAction::Query { vql } }) => {
+                assert_eq!(vql, "SELECT 1");
+            }
+            _ => panic!("Expected Commands::Forensics with Query"),
+        }
     }
 }

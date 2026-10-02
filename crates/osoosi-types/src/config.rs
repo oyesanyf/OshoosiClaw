@@ -632,6 +632,9 @@ struct FileConfig {
     /// WikiSkill autonomous self-evolving coding and threat detection engine configuration.
     #[serde(default)]
     pub skills: SkillsConfig,
+    /// Embedded Velociraptor forensic extraction service configuration.
+    #[serde(default)]
+    pub forensics: ForensicsConfig,
 }
 
 /// Hex-patch agent config: auto-patch files when rules match.
@@ -2206,6 +2209,100 @@ pub fn load_skills_config() -> SkillsConfig {
     SkillsConfig::default()
 }
 
+fn default_forensics_enabled() -> bool {
+    true
+}
+
+fn default_forensics_binary() -> String {
+    "tools/velociraptor/velociraptor.exe".to_string()
+}
+
+fn default_forensics_timeout() -> u64 {
+    30
+}
+
+fn default_forensics_max_mem() -> u64 {
+    512
+}
+
+fn default_forensics_max_lines() -> usize {
+    10000
+}
+
+fn default_forensics_staging() -> String {
+    "runs/forensics".to_string()
+}
+
+fn default_forensics_auto() -> bool {
+    true
+}
+
+fn default_forensics_min_conf() -> f32 {
+    0.80
+}
+
+fn default_forensics_techniques() -> Vec<String> {
+    vec![
+        "T1055".to_string(),
+        "T1055.012".to_string(),
+        "T1003".to_string(),
+        "T1014".to_string(),
+        "T1547".to_string(),
+        "T1059".to_string(),
+    ]
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ForensicsConfig {
+    #[serde(default = "default_forensics_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_forensics_binary")]
+    pub binary_path: String,
+    #[serde(default = "default_forensics_timeout")]
+    pub execution_timeout_secs: u64,
+    #[serde(default = "default_forensics_max_mem")]
+    pub max_memory_mb: u64,
+    #[serde(default = "default_forensics_max_lines")]
+    pub max_output_lines: usize,
+    #[serde(default = "default_forensics_staging")]
+    pub staging_dir: String,
+    #[serde(default = "default_forensics_auto")]
+    pub auto_investigate: bool,
+    #[serde(default = "default_forensics_min_conf")]
+    pub min_trigger_confidence: f32,
+    #[serde(default = "default_forensics_techniques")]
+    pub trigger_techniques: Vec<String>,
+}
+
+impl Default for ForensicsConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_forensics_enabled(),
+            binary_path: default_forensics_binary(),
+            execution_timeout_secs: default_forensics_timeout(),
+            max_memory_mb: default_forensics_max_mem(),
+            max_output_lines: default_forensics_max_lines(),
+            staging_dir: default_forensics_staging(),
+            auto_investigate: default_forensics_auto(),
+            min_trigger_confidence: default_forensics_min_conf(),
+            trigger_techniques: default_forensics_techniques(),
+        }
+    }
+}
+
+pub fn load_forensics_config() -> ForensicsConfig {
+    let path = resolve_config_path().unwrap_or_else(|| PathBuf::from("osoosi.toml"));
+    if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(cfg) = toml::from_str::<FileConfig>(&content) {
+                return cfg.forensics;
+            }
+        }
+    }
+    ForensicsConfig::default()
+}
+
+
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OsoosiConfig {
     pub agent: AgentConfig,
@@ -2387,6 +2484,43 @@ poll_interval_secs = 60
         assert_eq!(fc.skills.tasks_file, "custom/tasks.json");
         assert_eq!(fc.skills.scorer, "custom/scorer.py");
         assert_eq!(fc.skills.poll_interval_secs, 60);
+    }
+
+    #[test]
+    fn test_forensics_config_defaults_and_parsing() {
+        let default_cfg = ForensicsConfig::default();
+        assert!(default_cfg.enabled);
+        assert_eq!(default_cfg.binary_path, "tools/velociraptor/velociraptor.exe");
+        assert_eq!(default_cfg.execution_timeout_secs, 30);
+        assert_eq!(default_cfg.max_memory_mb, 512);
+        assert_eq!(default_cfg.max_output_lines, 10000);
+        assert_eq!(default_cfg.staging_dir, "runs/forensics");
+        assert!(default_cfg.auto_investigate);
+        assert!((default_cfg.min_trigger_confidence - 0.80).abs() < 1e-4);
+        assert!(default_cfg.trigger_techniques.contains(&"T1055".to_string()));
+
+        let custom_toml = r#"
+[forensics]
+enabled = false
+binary_path = "C:/tools/velociraptor.exe"
+execution_timeout_secs = 60
+max_memory_mb = 1024
+max_output_lines = 50000
+staging_dir = "runs/custom-forensics"
+auto_investigate = false
+min_trigger_confidence = 0.95
+trigger_techniques = ["T1055", "T1003"]
+"#;
+        let fc: FileConfig = toml::from_str(custom_toml).expect("Must parse FileConfig with [forensics]");
+        assert!(!fc.forensics.enabled);
+        assert_eq!(fc.forensics.binary_path, "C:/tools/velociraptor.exe");
+        assert_eq!(fc.forensics.execution_timeout_secs, 60);
+        assert_eq!(fc.forensics.max_memory_mb, 1024);
+        assert_eq!(fc.forensics.max_output_lines, 50000);
+        assert_eq!(fc.forensics.staging_dir, "runs/custom-forensics");
+        assert!(!fc.forensics.auto_investigate);
+        assert!((fc.forensics.min_trigger_confidence - 0.95).abs() < 1e-4);
+        assert_eq!(fc.forensics.trigger_techniques.len(), 2);
     }
 }
 

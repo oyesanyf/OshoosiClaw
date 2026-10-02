@@ -199,7 +199,7 @@ impl MultiSensorFusionEngine {
         }
     }
 
-    /// Evaluates the 7 concrete sensor domains:
+    /// Evaluates the 8 concrete sensor domains:
     /// 1. Telemetry & Canary Sensor
     /// 2. System Invariant Sensor
     /// 3. Asymmetric Containment Sensor
@@ -207,13 +207,14 @@ impl MultiSensorFusionEngine {
     /// 5. Reinforcement Learning Stability Sensor
     /// 6. Hardware Resource & Compute Tier Sensor
     /// 7. WikiSkill Autonomous Skill & Threat Evolution Sensor
+    /// 8. Embedded Velociraptor Forensic Extraction Service Sensor
     pub fn evaluate_sensors(
         &mut self,
         memory_store: Option<&osoosi_memory::MemoryStore>,
         active_tarpit: Option<&osoosi_runtime::tarpit::ActiveProcessTarpit>,
         stranded_reaper: Option<&StrandedResourceReaper>,
     ) -> Vec<SensorReading> {
-        let mut readings = Vec::with_capacity(7);
+        let mut readings = Vec::with_capacity(8);
 
         // 1. Telemetry & Canary Sensor
         let (canary_latency, token_loss, influx_vel) = if memory_store.is_some() {
@@ -507,6 +508,55 @@ impl MultiSensorFusionEngine {
             details: skill_details,
         });
 
+        // 8. Embedded Velociraptor Forensic Extraction Service Sensor
+        let forensics_cfg = osoosi_types::config::load_forensics_config();
+        let forensics_client = osoosi_forensics::VelociraptorClient::new(forensics_cfg.clone());
+        let is_avail = forensics_client.is_available();
+        let version_str = if is_avail {
+            forensics_client.probe_version().unwrap_or_else(|| "Detected".to_string())
+        } else {
+            "NOT_FOUND".to_string()
+        };
+
+        let (forensics_health, forensics_conf, forensics_details) = if !forensics_cfg.enabled {
+            (
+                0.90,
+                0.90,
+                format!(
+                    "Embedded Velociraptor Forensics: STANDBY (Disabled in configuration; binary: {})",
+                    forensics_cfg.binary_path
+                ),
+            )
+        } else if is_avail {
+            (
+                0.99,
+                0.95,
+                format!(
+                    "Embedded Velociraptor Forensics: ONLINE (Version: {}, Binary: {}, Auto-investigate: {})",
+                    version_str, forensics_cfg.binary_path, forensics_cfg.auto_investigate
+                ),
+            )
+        } else {
+            (
+                0.85,
+                0.90,
+                format!(
+                    "Embedded Velociraptor Forensics: STANDBY (Binary '{}' not present; hermetic mock fallback active)",
+                    forensics_cfg.binary_path
+                ),
+            )
+        };
+
+        readings.push(SensorReading {
+            sensor_id: "forensic_service_sensor".to_string(),
+            name: "Embedded Velociraptor Forensic Service Sensor".to_string(),
+            raw_value: if is_avail { 1.0 } else { 0.0 },
+            unit: "state".to_string(),
+            health_score: forensics_health,
+            confidence: forensics_conf,
+            details: forensics_details,
+        });
+
         readings
     }
 
@@ -761,8 +811,14 @@ impl SupervisorDiagnosticEngine {
             String::new()
         };
 
+        let forensics_info = if let Some(s) = sensors.iter().find(|s| s.sensor_id == "forensic_service_sensor") {
+            format!("\nForensics: {}.", s.details)
+        } else {
+            String::new()
+        };
+
         format!(
-            "Regime: {:?} (Health: {:.1}%). {}{}\nInvariants: {}. Total reaped traps: {}.{}{}{}",
+            "Regime: {:?} (Health: {:.1}%). {}{}\nInvariants: {}. Total reaped traps: {}.{}{}{}{}",
             regime,
             health_score,
             regime_desc,
@@ -771,6 +827,7 @@ impl SupervisorDiagnosticEngine {
             reaped_traps_total,
             lowest_sensor_info,
             skills_info,
+            forensics_info,
             hw_info
         )
     }
@@ -1211,7 +1268,7 @@ mod tests {
     fn test_initial_supervisor_status_has_populated_sensors() {
         let supervisor = CognitiveFusionSupervisor::new();
         let status = supervisor.get_status();
-        assert_eq!(status.sensors.len(), 7, "Initial supervisor status must have all 7 sensors pre-populated");
+        assert_eq!(status.sensors.len(), 8, "Initial supervisor status must have all 8 sensors pre-populated");
         assert!(status.hardware_selection.is_some(), "Initial status must include hardware_selection");
         assert!(status.health_score >= 85.0);
         assert_eq!(status.regime, SupervisorRegime::Optimal);
@@ -1236,7 +1293,7 @@ mod tests {
     fn test_wikiskill_evolution_sensor_evaluates() {
         let mut fusion = MultiSensorFusionEngine::new();
         let readings = fusion.evaluate_sensors(None, None, None);
-        assert_eq!(readings.len(), 7, "Must evaluate exactly 7 sensors");
+        assert_eq!(readings.len(), 8, "Must evaluate exactly 8 sensors");
         let skill_sensor = readings
             .iter()
             .find(|s| s.sensor_id == "wikiskill_evolution_sensor")
@@ -1245,6 +1302,21 @@ mod tests {
         assert!(skill_sensor.health_score > 0.0);
         assert!(skill_sensor.confidence >= 0.90);
         assert!(skill_sensor.details.contains("WikiSkill self-evolution:"));
+    }
+
+    #[test]
+    fn test_forensic_service_sensor_evaluates() {
+        let mut fusion = MultiSensorFusionEngine::new();
+        let readings = fusion.evaluate_sensors(None, None, None);
+        assert_eq!(readings.len(), 8, "Must evaluate exactly 8 sensors");
+        let forensics_sensor = readings
+            .iter()
+            .find(|s| s.sensor_id == "forensic_service_sensor")
+            .expect("forensic_service_sensor must exist in sensor readings");
+
+        assert!(forensics_sensor.health_score > 0.0);
+        assert!(forensics_sensor.confidence >= 0.85);
+        assert!(forensics_sensor.details.contains("Embedded Velociraptor Forensics:"));
     }
 
     #[test]

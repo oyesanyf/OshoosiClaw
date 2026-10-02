@@ -144,3 +144,24 @@ tasks_file = "examples/edr-skill-evolution/tasks.json"
 scorer = "examples/edr-skill-evolution/scorer.py"
 # Re-evaluation and learning interval in seconds (5 minutes)
 poll_interval_secs = 300
+
+[forensics]
+# Enable embedded Velociraptor forensic extraction service
+enabled = true
+# Standalone headless executable path
+binary_path = "tools/velociraptor/velociraptor.exe"
+# Per-query execution hard timeout in seconds
+execution_timeout_secs = 30
+# Memory cap for headless forensic runner in MB
+max_memory_mb = 512
+# Max output lines streamed from VQL queries before applying backpressure cut
+max_output_lines = 10000
+# Forensic staging and artifact capture directory
+staging_dir = "runs/forensics"
+# Automatically trigger deep forensic sweeps on high-confidence alerts
+auto_investigate = true
+# Minimum alert confidence required to trigger automatic forensic sweep
+min_trigger_confidence = 0.80
+# MITRE ATT&CK techniques eligible for automatic forensic deep inspection
+trigger_techniques = ["T1055", "T1055.012", "T1003", "T1014", "T1547", "T1059"]
+

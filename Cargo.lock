@@ -5782,6 +5782,7 @@ dependencies = [
  "osoosi-core",
  "osoosi-dashboard",
  "osoosi-exporter",
+ "osoosi-forensics",
  "osoosi-memory",
  "osoosi-model",
  "osoosi-policy",
@@ -5835,6 +5836,7 @@ dependencies = [
  "osoosi-behavioral",
  "osoosi-dns",
  "osoosi-dp",
+ "osoosi-forensics",
  "osoosi-memory",
  "osoosi-model",
  "osoosi-policy",
@@ -5947,6 +5949,24 @@ dependencies = [
  "tracing",
  "tracing-opentelemetry",
  "tracing-subscriber",
+]
+
+[[package]]
+name = "osoosi-forensics"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "async-trait",
+ "chrono",
+ "osoosi-types",
+ "regex",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tokio-stream",
+ "tracing",
+ "uuid",
 ]
 
 [[package]]
@@ -8600,6 +8620,17 @@ dependencies = [
  "either",
  "futures-util",
  "thiserror 1.0.69",
+ "tokio",
+]
+
+[[package]]
+name = "tokio-stream"
+version = "0.1.19"
+source = "registry+https://github.com/rust-lang/crates.io-index"
+checksum = "a3d06f0b082ba57c26b79407372e57cf2a1e28124f78e9479fe80322cf53420b"
+dependencies = [
+ "futures-core",
+ "pin-project-lite",
  "tokio",
 ]
 

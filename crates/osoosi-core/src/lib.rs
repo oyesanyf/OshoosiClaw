@@ -1146,12 +1146,40 @@ pub struct EdrOrchestrator {
     pub supervisor: Arc<supervisor::CognitiveFusionSupervisor>,
     /// Hardware-enforced Ring-0 Windows Driver client for pre-operation process blocking.
     pub kernel_driver: Arc<parking_lot::RwLock<Option<osoosi_runtime::kernel_driver::KernelDriverClient>>>,
+    /// Embedded Velociraptor Forensic Extraction Service client.
+    pub forensics: Arc<osoosi_forensics::VelociraptorClient>,
 }
 
 impl EdrOrchestrator {
     /// Access the synthetic canary correlator.
     pub fn canary_correlator(&self) -> Arc<tokio::sync::Mutex<osoosi_telemetry::canary::CanaryCorrelator>> {
         self.canary_correlator.clone()
+    }
+
+    /// Trigger an embedded Velociraptor forensic sweep on-demand.
+    pub async fn trigger_forensic_sweep(
+        &self,
+        pid: Option<u32>,
+        path: Option<&str>,
+        technique: Option<&str>,
+    ) -> Option<osoosi_forensics::models::ForensicInvestigationReport> {
+        let forensics_cfg = &self.forensics.config;
+        if !forensics_cfg.enabled {
+            return None;
+        }
+
+        if let Some(tech) = technique {
+            let matched = forensics_cfg
+                .trigger_techniques
+                .iter()
+                .any(|t| tech.starts_with(t) || t == tech);
+            if !matched {
+                return None;
+            }
+        }
+
+        let report = self.forensics.investigate(pid, path, None, technique).await;
+        Some(report)
     }
 
     /// Morphic Hyper-Web: Entangle a suspicious process.
@@ -2005,6 +2033,13 @@ impl EdrOrchestrator {
             });
         }
 
+        let forensics_cfg = osoosi_types::config::load_forensics_config();
+        let forensics = Arc::new(osoosi_forensics::VelociraptorClient::new(forensics_cfg));
+        info!(
+            "[FORENSICS] Embedded Velociraptor extraction service initialized (available: {})",
+            forensics.is_available()
+        );
+
         let orch = Self {
             memory,
             mesh_peer_count,
@@ -2070,6 +2105,7 @@ impl EdrOrchestrator {
             preexisting_accounts,
             supervisor,
             kernel_driver,
+            forensics,
         };
 
         // Start background log retention loop (hourly rotation and pruning)
@@ -4882,6 +4918,70 @@ impl EdrOrchestrator {
                     signature.add_reason("Mesh Consensus: Peer nodes have collectively identified this binary as high-risk (Supreme Court verdict).");
                 }
             }
+        }
+
+        // Forensic Corroboration: Embedded Velociraptor Deep Sweep
+        let forensics_cfg = &self.forensics.config;
+        let tech_opt = signature.mitre_technique.as_deref();
+        let matches_technique = tech_opt
+            .map(|tech| {
+                forensics_cfg
+                    .trigger_techniques
+                    .iter()
+                    .any(|t| tech.starts_with(t) || t == tech)
+            })
+            .unwrap_or(false);
+
+        if forensics_cfg.enabled
+            && forensics_cfg.auto_investigate
+            && signature.confidence >= forensics_cfg.min_trigger_confidence
+            && matches_technique
+        {
+            let target_pid = event
+                .data
+                .get("ProcessId")
+                .or_else(|| event.data.get("TargetProcessId"))
+                .or_else(|| event.data.get("SourceProcessId"))
+                .and_then(|v| {
+                    v.as_u64()
+                        .map(|n| n as u32)
+                        .or_else(|| v.as_str().and_then(|s| s.parse::<u32>().ok()))
+                });
+            let target_path = event
+                .data
+                .get("Image")
+                .or_else(|| event.data.get("TargetFilename"))
+                .and_then(|v| v.as_str());
+
+            let forensics_client = self.forensics.clone();
+            let audit = self.audit.clone();
+            let alert_id = signature.reason.clone().unwrap_or_else(|| "ALERT".to_string());
+            let tech_str = tech_opt.map(String::from);
+            let path_str = target_path.map(String::from);
+
+            // Execute forensic sweep
+            let report = forensics_client
+                .investigate(
+                    target_pid,
+                    path_str.as_deref(),
+                    Some(&alert_id),
+                    tech_str.as_deref(),
+                )
+                .await;
+
+            if report.corroborated {
+                signature.confidence = (signature.confidence + report.confidence_delta).min(1.0);
+                signature.add_reason(format!("Velociraptor Corroboration: {}", report.summary));
+                warn!(
+                    "[FORENSICS] Forensic evidence corroborated threat! New confidence: {:.2} (PID: {:?}, Summary: {})",
+                    signature.confidence, target_pid, report.summary
+                );
+            }
+
+            audit.log(
+                "FORENSIC_INVESTIGATION",
+                serde_json::to_value(&report).unwrap_or_default(),
+            );
         }
 
         warn!(

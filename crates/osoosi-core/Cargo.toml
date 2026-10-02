@@ -20,6 +20,7 @@ osoosi-sandbox = { path = "../osoosi-sandbox" }
 osoosi-behavioral = { path = "../osoosi-behavioral" }
 osoosi-dp = { path = "../osoosi-dp" }
 osoosi-dns = { path = "../osoosi-dns" }
+osoosi-forensics = { path = "../osoosi-forensics" }
 ed25519-dalek = { workspace = true }
 # hayabusa = { workspace = true }
 dotscope = { workspace = true }
