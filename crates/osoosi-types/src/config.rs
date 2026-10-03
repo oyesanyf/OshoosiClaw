@@ -635,6 +635,9 @@ struct FileConfig {
     /// Embedded Velociraptor forensic extraction service configuration.
     #[serde(default)]
     pub forensics: ForensicsConfig,
+    /// Non-autoregressive Clef Decision Model configuration.
+    #[serde(default)]
+    pub decision_model: DecisionModelConfig,
 }
 
 /// Hex-patch agent config: auto-patch files when rules match.
@@ -2302,6 +2305,119 @@ pub fn load_forensics_config() -> ForensicsConfig {
     ForensicsConfig::default()
 }
 
+fn default_decision_provider() -> String {
+    "local".to_string()
+}
+
+fn default_decision_model() -> String {
+    "@cf/cloudflare/clef-flash".to_string()
+}
+
+fn default_decision_timeout_ms() -> u64 {
+    500
+}
+
+fn default_min_action_confidence() -> f64 {
+    0.80
+}
+
+fn default_decision_model_dir() -> String {
+    "models/clef".to_string()
+}
+
+/// Configuration for the non-autoregressive Clef Decision Model.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DecisionModelConfig {
+    #[serde(default = "default_true")]
+    pub enabled: bool,
+    /// Provider: "local", "cloudflare", "auto" (default: "local" for air-gapped self-hosted execution)
+    #[serde(default = "default_decision_provider")]
+    pub provider: String,
+    /// Model ID on Workers AI (e.g. "@cf/cloudflare/clef-flash" or "@cf/cloudflare/clef") or local model
+    #[serde(default = "default_decision_model")]
+    pub model: String,
+    #[serde(default)]
+    pub cloudflare_account_id: Option<String>,
+    #[serde(default)]
+    pub cloudflare_api_token: Option<String>,
+    /// Execution timeout in milliseconds (default: 500ms)
+    #[serde(default = "default_decision_timeout_ms")]
+    pub timeout_ms: u64,
+    /// Fallback to local non-autoregressive evaluator if Cloudflare fails or is offline
+    #[serde(default = "default_true")]
+    pub fallback_to_local: bool,
+    /// Minimum probability threshold to trigger automated containment (default: 0.80)
+    #[serde(default = "default_min_action_confidence")]
+    pub min_action_confidence: f64,
+    /// Automatically trigger background causal reasoning (FoundationSec) when flagged
+    #[serde(default = "default_true")]
+    pub auto_escalate_to_cortex: bool,
+    /// Path to local weights / calibration tables (default: "models/clef")
+    #[serde(default = "default_decision_model_dir")]
+    pub model_dir: String,
+}
+
+impl Default for DecisionModelConfig {
+    fn default() -> Self {
+        Self {
+            enabled: true,
+            provider: default_decision_provider(),
+            model: default_decision_model(),
+            cloudflare_account_id: None,
+            cloudflare_api_token: None,
+            timeout_ms: default_decision_timeout_ms(),
+            fallback_to_local: true,
+            min_action_confidence: default_min_action_confidence(),
+            auto_escalate_to_cortex: true,
+            model_dir: default_decision_model_dir(),
+        }
+    }
+}
+
+pub fn load_decision_model_config() -> DecisionModelConfig {
+    let path = resolve_config_path().unwrap_or_else(|| PathBuf::from("osoosi.toml"));
+    let mut cfg = if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(fc) = toml::from_str::<FileConfig>(&content) {
+                fc.decision_model
+            } else {
+                DecisionModelConfig::default()
+            }
+        } else {
+            DecisionModelConfig::default()
+        }
+    } else {
+        DecisionModelConfig::default()
+    };
+
+    if let Ok(val) = std::env::var("OSOOSI_DECISION_PROVIDER") {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            cfg.provider = trimmed.to_string();
+        }
+    }
+    if let Ok(val) = std::env::var("OSOOSI_DECISION_MODEL") {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            cfg.model = trimmed.to_string();
+        }
+    }
+    if let Ok(val) = std::env::var("CLOUDFLARE_ACCOUNT_ID") {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            cfg.cloudflare_account_id = Some(trimmed.to_string());
+        }
+    }
+    if let Ok(val) = std::env::var("CLOUDFLARE_API_TOKEN") {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            cfg.cloudflare_api_token = Some(trimmed.to_string());
+        }
+    }
+
+    cfg
+}
+
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OsoosiConfig {
@@ -2521,6 +2637,44 @@ trigger_techniques = ["T1055", "T1003"]
         assert!(!fc.forensics.auto_investigate);
         assert!((fc.forensics.min_trigger_confidence - 0.95).abs() < 1e-4);
         assert_eq!(fc.forensics.trigger_techniques.len(), 2);
+    }
+
+    #[test]
+    fn test_decision_model_config_defaults_and_parsing() {
+        let default_cfg = DecisionModelConfig::default();
+        assert!(default_cfg.enabled);
+        assert_eq!(default_cfg.provider, "local");
+        assert_eq!(default_cfg.model, "@cf/cloudflare/clef-flash");
+        assert_eq!(default_cfg.timeout_ms, 500);
+        assert!((default_cfg.min_action_confidence - 0.80).abs() < 1e-4);
+        assert!(default_cfg.fallback_to_local);
+        assert!(default_cfg.auto_escalate_to_cortex);
+        assert_eq!(default_cfg.model_dir, "models/clef");
+
+        let custom_toml = r#"
+[decision_model]
+enabled = false
+provider = "cloudflare"
+model = "@cf/cloudflare/clef"
+cloudflare_account_id = "test-account-id"
+cloudflare_api_token = "test-token"
+timeout_ms = 750
+fallback_to_local = false
+min_action_confidence = 0.92
+auto_escalate_to_cortex = false
+model_dir = "custom/models/clef"
+"#;
+        let fc: FileConfig = toml::from_str(custom_toml).expect("Must parse FileConfig with [decision_model]");
+        assert!(!fc.decision_model.enabled);
+        assert_eq!(fc.decision_model.provider, "cloudflare");
+        assert_eq!(fc.decision_model.model, "@cf/cloudflare/clef");
+        assert_eq!(fc.decision_model.cloudflare_account_id.as_deref(), Some("test-account-id"));
+        assert_eq!(fc.decision_model.cloudflare_api_token.as_deref(), Some("test-token"));
+        assert_eq!(fc.decision_model.timeout_ms, 750);
+        assert!(!fc.decision_model.fallback_to_local);
+        assert!((fc.decision_model.min_action_confidence - 0.92).abs() < 1e-4);
+        assert!(!fc.decision_model.auto_escalate_to_cortex);
+        assert_eq!(fc.decision_model.model_dir, "custom/models/clef");
     }
 }
 

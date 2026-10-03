@@ -557,6 +557,62 @@ impl MultiSensorFusionEngine {
             details: forensics_details,
         });
 
+        // 9. Clef Non-Autoregressive Decision Model Sensor
+        let decision_cfg = osoosi_types::config::load_decision_model_config();
+        let (decision_health, decision_conf, decision_details) = if !decision_cfg.enabled {
+            (
+                0.90,
+                0.90,
+                format!(
+                    "Clef Decision Model: STANDBY (Disabled in configuration; model: {})",
+                    decision_cfg.model
+                ),
+            )
+        } else {
+            let is_local = decision_cfg.provider.to_lowercase() == "local";
+            let has_cf_creds = decision_cfg
+                .cloudflare_account_id
+                .as_ref()
+                .map(|s| !s.trim().is_empty())
+                .unwrap_or(false)
+                && decision_cfg
+                    .cloudflare_api_token
+                    .as_ref()
+                    .map(|s| !s.trim().is_empty())
+                    .unwrap_or(false);
+
+            let provider_label = if is_local {
+                "Local Brier Engine (Self-Hosted Air-Gapped)"
+            } else if has_cf_creds {
+                "Cloudflare Workers AI (Clef-Flash)"
+            } else {
+                "Local Brier Engine (Auto-Selected Self-Hosted)"
+            };
+
+            let health = 1.0;
+            (
+                health,
+                0.96,
+                format!(
+                    "Clef Decision Model: ONLINE (Provider: {}, Model: {}, Cutoff: {}ms, Auto-Escalate: {})",
+                    provider_label,
+                    decision_cfg.model,
+                    decision_cfg.timeout_ms,
+                    decision_cfg.auto_escalate_to_cortex
+                ),
+            )
+        };
+
+        readings.push(SensorReading {
+            sensor_id: "decision_model_sensor".to_string(),
+            name: "Clef Decision Model Sensor".to_string(),
+            raw_value: decision_health * 100.0,
+            unit: "%_operational".to_string(),
+            health_score: decision_health,
+            confidence: decision_conf,
+            details: decision_details,
+        });
+
         readings
     }
 
@@ -817,8 +873,14 @@ impl SupervisorDiagnosticEngine {
             String::new()
         };
 
+        let decision_info = if let Some(s) = sensors.iter().find(|s| s.sensor_id == "decision_model_sensor") {
+            format!("\nDecision Model: {}.", s.details)
+        } else {
+            String::new()
+        };
+
         format!(
-            "Regime: {:?} (Health: {:.1}%). {}{}\nInvariants: {}. Total reaped traps: {}.{}{}{}{}",
+            "Regime: {:?} (Health: {:.1}%). {}{}\nInvariants: {}. Total reaped traps: {}.{}{}{}{}{}",
             regime,
             health_score,
             regime_desc,
@@ -828,6 +890,7 @@ impl SupervisorDiagnosticEngine {
             lowest_sensor_info,
             skills_info,
             forensics_info,
+            decision_info,
             hw_info
         )
     }
@@ -1268,7 +1331,7 @@ mod tests {
     fn test_initial_supervisor_status_has_populated_sensors() {
         let supervisor = CognitiveFusionSupervisor::new();
         let status = supervisor.get_status();
-        assert_eq!(status.sensors.len(), 8, "Initial supervisor status must have all 8 sensors pre-populated");
+        assert_eq!(status.sensors.len(), 9, "Initial supervisor status must have all 9 sensors pre-populated");
         assert!(status.hardware_selection.is_some(), "Initial status must include hardware_selection");
         assert!(status.health_score >= 85.0);
         assert_eq!(status.regime, SupervisorRegime::Optimal);
@@ -1293,7 +1356,7 @@ mod tests {
     fn test_wikiskill_evolution_sensor_evaluates() {
         let mut fusion = MultiSensorFusionEngine::new();
         let readings = fusion.evaluate_sensors(None, None, None);
-        assert_eq!(readings.len(), 8, "Must evaluate exactly 8 sensors");
+        assert_eq!(readings.len(), 9, "Must evaluate exactly 9 sensors");
         let skill_sensor = readings
             .iter()
             .find(|s| s.sensor_id == "wikiskill_evolution_sensor")
@@ -1308,7 +1371,7 @@ mod tests {
     fn test_forensic_service_sensor_evaluates() {
         let mut fusion = MultiSensorFusionEngine::new();
         let readings = fusion.evaluate_sensors(None, None, None);
-        assert_eq!(readings.len(), 8, "Must evaluate exactly 8 sensors");
+        assert_eq!(readings.len(), 9, "Must evaluate exactly 9 sensors");
         let forensics_sensor = readings
             .iter()
             .find(|s| s.sensor_id == "forensic_service_sensor")
@@ -1317,6 +1380,21 @@ mod tests {
         assert!(forensics_sensor.health_score > 0.0);
         assert!(forensics_sensor.confidence >= 0.85);
         assert!(forensics_sensor.details.contains("Embedded Velociraptor Forensics:"));
+    }
+
+    #[test]
+    fn test_decision_model_sensor_evaluates() {
+        let mut fusion = MultiSensorFusionEngine::new();
+        let readings = fusion.evaluate_sensors(None, None, None);
+        assert_eq!(readings.len(), 9, "Must evaluate exactly 9 sensors");
+        let decision_sensor = readings
+            .iter()
+            .find(|s| s.sensor_id == "decision_model_sensor")
+            .expect("decision_model_sensor must exist in sensor readings");
+
+        assert_eq!(decision_sensor.health_score, 1.0);
+        assert!(decision_sensor.confidence >= 0.90);
+        assert!(decision_sensor.details.contains("Clef Decision Model:"));
     }
 
     #[test]

@@ -1148,6 +1148,8 @@ pub struct EdrOrchestrator {
     pub kernel_driver: Arc<parking_lot::RwLock<Option<osoosi_runtime::kernel_driver::KernelDriverClient>>>,
     /// Embedded Velociraptor Forensic Extraction Service client.
     pub forensics: Arc<osoosi_forensics::VelociraptorClient>,
+    /// Non-autoregressive Clef Decision Model engine.
+    pub decision_engine: Arc<osoosi_behavioral::decision_model::ClefDecisionEngine>,
 }
 
 impl EdrOrchestrator {
@@ -2040,6 +2042,13 @@ impl EdrOrchestrator {
             forensics.is_available()
         );
 
+        let decision_cfg = osoosi_types::config::load_decision_model_config();
+        let decision_engine = Arc::new(osoosi_behavioral::decision_model::ClefDecisionEngine::new(decision_cfg.clone()));
+        info!(
+            "[DECISION] Non-autoregressive Clef Decision Model initialized (provider: {}, model: {}, enabled: {})",
+            decision_cfg.provider, decision_cfg.model, decision_cfg.enabled
+        );
+
         let orch = Self {
             memory,
             mesh_peer_count,
@@ -2106,6 +2115,7 @@ impl EdrOrchestrator {
             supervisor,
             kernel_driver,
             forensics,
+            decision_engine,
         };
 
         // Start background log retention loop (hourly rotation and pruning)
@@ -5039,7 +5049,98 @@ impl EdrOrchestrator {
         let is_catalog_attack = is_mitre_catalog_attack(&signature, &event);
         let is_destructive = is_destructive_mutation(&signature, &event);
 
-        let mut effective_action = if signature.confidence >= autonomy.action_confidence_threshold {
+        // Clef Non-Autoregressive Decision Model Evaluation
+        let mut decision_override: Option<ResponseAction> = None;
+        if self.decision_engine.is_enabled() {
+            let proc_str = signature.process_name.as_deref().unwrap_or("Unknown");
+            let cmd_str = event.data.get("CommandLine")
+                .or_else(|| event.data.get("command_line"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("None");
+            let state_text = format!(
+                "Process: {} | CmdLine: {} | MITRE: {:?} | Confidence: {:.2} | Signed: {} | Invariants: Nominal",
+                proc_str, cmd_str, signature.mitre_technique, signature.confidence, signature.is_signed
+            );
+
+            match self.decision_engine.evaluate_security_incident(&state_text).await {
+                Ok(decision) => {
+                    debug!(
+                        "[DECISION] Incident evaluated in {:.2}ms via {}: verdict='{}' ({:.2}), action='{}' ({:.2}), human_req={}",
+                        decision.latency_ms, decision.provider_used, decision.verdict, decision.verdict_probability,
+                        decision.containment_action, decision.action_probability, decision.human_escalation_required
+                    );
+
+                    // 1. Noise Suppression: Suppress benign false-positive noise
+                    if decision.verdict == "benign" && decision.verdict_probability >= 0.90 {
+                        info!(
+                            "[DECISION] Benign verdict ({:.2}) from Clef decision model. Suppressing alert.",
+                            decision.verdict_probability
+                        );
+                        self.audit.log(
+                            "DECISION_MODEL_SUPPRESSED_NOISE",
+                            serde_json::json!({
+                                "id": signature.id,
+                                "verdict": decision.verdict,
+                                "verdict_probability": decision.verdict_probability,
+                                "state": state_text,
+                                "latency_ms": decision.latency_ms,
+                                "provider": decision.provider_used,
+                            }),
+                        );
+                        return Ok(());
+                    }
+
+                    // 2. Action Routing: Containment actions
+                    if decision.action_probability >= self.decision_engine.min_action_confidence() {
+                        let mapped_action = match decision.containment_action.as_str() {
+                            "isolate" | "quarantine" => ResponseAction::Isolate,
+                            "tarpit" => ResponseAction::Tarpit,
+                            "ghost_tarpit" => ResponseAction::GhostTarpit,
+                            "alert" => ResponseAction::Alert,
+                            _ => signature.recommended_action,
+                        };
+
+                        if decision.human_escalation_required {
+                            signature.require_approval = true;
+                        }
+
+                        self.audit.log(
+                            "DECISION_MODEL_ACTION_ROUTED",
+                            serde_json::json!({
+                                "id": signature.id,
+                                "verdict": decision.verdict,
+                                "action": decision.containment_action,
+                                "action_probability": decision.action_probability,
+                                "mapped_action": format!("{:?}", mapped_action),
+                                "human_escalation_required": decision.human_escalation_required,
+                                "threat_severity": decision.threat_severity,
+                                "latency_ms": decision.latency_ms,
+                                "provider": decision.provider_used,
+                            }),
+                        );
+
+                        decision_override = Some(mapped_action);
+                    }
+
+                    // 3. Heavy Generative Causal Reasoning Escalation
+                    if decision.deep_reasoning_required && self.decision_engine.auto_escalate() {
+                        let storyteller = self.storyteller.clone();
+                        let audit = self.audit.clone();
+                        tokio::spawn(async move {
+                            debug!("[DECISION] Auto-escalating incident to background causal reasoning cortex...");
+                            let _story = storyteller.summarize_ai(&audit).await;
+                        });
+                    }
+                }
+                Err(e) => {
+                    warn!("[DECISION] Decision model evaluation error: {}", e);
+                }
+            }
+        }
+
+        let mut effective_action = if let Some(clef_act) = decision_override {
+            clef_act
+        } else if signature.confidence >= autonomy.action_confidence_threshold {
             signature.recommended_action
         } else if is_catalog_attack && autonomy.auto_quarantine_malware {
             // Only escalate if Active/Lockdown mode is armed (auto_quarantine_malware = true)
@@ -6638,6 +6739,9 @@ impl EdrOrchestrator {
             }
         }
 
+        let fp_id = hash_blake3.as_deref().or(process_name.as_deref()).unwrap_or("fp");
+        self.decision_engine.record_rl_feedback(fp_id, -1.0, "benign");
+
         self.audit.log(
             "MANUAL_FP_SUBMISSION",
             serde_json::json!({
@@ -7937,6 +8041,7 @@ impl EdrOrchestrator {
         if let Some(pos) = queue.iter().position(|r| r.id == threat_id) {
             let request = queue.remove(pos);
             info!("Action approved: {} (ID: {})", request.action, threat_id);
+            self.decision_engine.record_rl_feedback(threat_id, 1.0, &request.action);
             self.audit.log(
                 "ACTION_APPROVED",
                 serde_json::json!({"id": threat_id, "action": request.action}),
@@ -7956,6 +8061,7 @@ impl EdrOrchestrator {
         if let Some(pos) = queue.iter().position(|r| r.id == threat_id) {
             let request = queue.remove(pos);
             info!("Action rejected: {} (ID: {})", request.action, threat_id);
+            self.decision_engine.record_rl_feedback(threat_id, -1.0, "allow");
             self.audit.log(
                 "ACTION_REJECTED",
                 serde_json::json!({"id": threat_id, "action": request.action}),

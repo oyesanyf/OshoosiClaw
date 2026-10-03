@@ -226,6 +226,25 @@ enum Commands {
         #[command(subcommand)]
         action: ForensicsAction,
     },
+    /// Non-autoregressive Clef Decision Model inspection & evaluation
+    Decision {
+        #[command(subcommand)]
+        action: DecisionAction,
+    },
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum DecisionAction {
+    /// Display active provider, configured model, timeout, and metrics
+    Status,
+    /// Run built-in benchmark decision scenarios (benign vs Mimikatz attack)
+    Test,
+    /// Evaluate an arbitrary custom state string and display JSON verdict
+    Evaluate {
+        /// Security incident state description text
+        #[arg(short, long)]
+        state: String,
+    },
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -1100,6 +1119,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Some(Commands::Forensics { action }) => {
             handle_forensics_command(action).await?;
+        }
+        Some(Commands::Decision { action }) => {
+            handle_decision_command(action).await?;
         }
         None => {
             if !cli.grant_access {
@@ -3668,6 +3690,82 @@ async fn handle_forensics_command(action: ForensicsAction) -> anyhow::Result<()>
     Ok(())
 }
 
+async fn handle_decision_command(action: DecisionAction) -> anyhow::Result<()> {
+    let cfg = osoosi_types::config::load_decision_model_config();
+    let engine = osoosi_behavioral::decision_model::ClefDecisionEngine::new(cfg.clone());
+
+    match action {
+        DecisionAction::Status => {
+            println!("================================================================================");
+            println!("       OpenỌ̀ṣọ́ọ̀sì Clef Non-Autoregressive Decision Model Status");
+            println!("================================================================================");
+            println!("Enabled:                  {}", cfg.enabled);
+            println!("Provider:                 {}", cfg.provider);
+            println!("Model:                    {}", cfg.model);
+            println!("Timeout Cutoff:           {} ms", cfg.timeout_ms);
+            println!("Min Action Confidence:    {:.2}", cfg.min_action_confidence);
+            println!("Auto-Escalate to Cortex:  {}", cfg.auto_escalate_to_cortex);
+            println!("Fallback to Local Engine: {}", cfg.fallback_to_local);
+            println!("Local Model Directory:    {:?}", cfg.model_dir);
+            let airgapped = if cfg.provider.to_lowercase() == "local" {
+                "Active (100% Self-Hosted Hermetic / Air-Gapped)"
+            } else {
+                "Cloudflare Workers AI (with local fallback)"
+            };
+            println!("Air-Gapped Mode:          {}", airgapped);
+            let metrics = engine.metrics();
+            println!("Total Evaluations:        {}", metrics.total_evaluations);
+            println!("Local Evaluations:        {}", metrics.local_evaluations);
+            println!("Cloudflare Evaluations:   {}", metrics.cloudflare_evaluations);
+            println!("Fallback Evaluations:     {}", metrics.fallback_evaluations);
+            println!("Average Latency:          {:.3} ms", metrics.avg_latency_ms);
+            println!("RLCD Feedback Count:      {}", metrics.rl_feedback_count);
+            println!("Cumulative RLCD Reward:   {:.3}", metrics.cumulative_rl_reward);
+            println!("================================================================================");
+        }
+        DecisionAction::Test => {
+            println!("================================================================================");
+            println!("       OpenỌ̀ṣọ́ọ̀sì Clef Decision Model Benchmark Test");
+            println!("================================================================================");
+
+            // 1. Benign Scenario
+            println!("\n[1/2] Evaluating Benign Incident Scenario:");
+            let benign_state = "Process: svchost.exe (PID: 1204, Parent: services.exe). CommandLine: C:\\Windows\\system32\\svchost.exe -k RPCSS. Network: None. File activity: Standard registry query.";
+            println!("  State: {}", benign_state);
+            let benign_decision = engine.evaluate_security_incident(benign_state).await?;
+            println!("  Provider:         {}", benign_decision.provider_used);
+            println!("  Latency:          {:.2} ms", benign_decision.latency_ms);
+            println!("  Verdict:          {} ({:.2}%)", benign_decision.verdict, benign_decision.verdict_probability * 100.0);
+            println!("  Containment:      {} ({:.2}%)", benign_decision.containment_action, benign_decision.action_probability * 100.0);
+            println!("  Severity:         {}", benign_decision.threat_severity);
+            println!("  Human Escalation: {}", benign_decision.human_escalation_required);
+            println!("  Deep Reasoning:   {}", benign_decision.deep_reasoning_required);
+
+            // 2. Attack Scenario
+            println!("\n[2/2] Evaluating Malicious Attack Incident Scenario:");
+            let attack_state = "Process: mimikatz.exe (PID: 8492, Parent: powershell.exe). CommandLine: mimikatz.exe \"privilege::debug\" \"sekurlsa::logonpasswords\" exit. Target: lsass.exe memory dump via OpenProcess(PROCESS_VM_READ).";
+            println!("  State: {}", attack_state);
+            let attack_decision = engine.evaluate_security_incident(attack_state).await?;
+            println!("  Provider:         {}", attack_decision.provider_used);
+            println!("  Latency:          {:.2} ms", attack_decision.latency_ms);
+            println!("  Verdict:          {} ({:.2}%)", attack_decision.verdict, attack_decision.verdict_probability * 100.0);
+            println!("  Containment:      {} ({:.2}%)", attack_decision.containment_action, attack_decision.action_probability * 100.0);
+            println!("  Severity:         {}", attack_decision.threat_severity);
+            println!("  Human Escalation: {}", attack_decision.human_escalation_required);
+            println!("  Deep Reasoning:   {}", attack_decision.deep_reasoning_required);
+
+            println!("\n[+] Clef Decision Model benchmark completed successfully.");
+            println!("================================================================================");
+        }
+        DecisionAction::Evaluate { state } => {
+            let decision = engine.evaluate_security_incident(&state).await?;
+            println!("{}", serde_json::to_string_pretty(&decision)?);
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4146,4 +4244,28 @@ mod tests {
             _ => panic!("Expected Commands::Forensics with Query"),
         }
     }
+
+    #[test]
+    fn test_decision_cli_parsing() {
+        let cli_status = Cli::try_parse_from(["osoosi", "decision", "status"]).unwrap();
+        match cli_status.command {
+            Some(Commands::Decision { action: DecisionAction::Status }) => {}
+            _ => panic!("Expected Commands::Decision with Status"),
+        }
+
+        let cli_test = Cli::try_parse_from(["osoosi", "decision", "test"]).unwrap();
+        match cli_test.command {
+            Some(Commands::Decision { action: DecisionAction::Test }) => {}
+            _ => panic!("Expected Commands::Decision with Test"),
+        }
+
+        let cli_eval = Cli::try_parse_from(["osoosi", "decision", "evaluate", "--state", "svchost.exe"]).unwrap();
+        match cli_eval.command {
+            Some(Commands::Decision { action: DecisionAction::Evaluate { state } }) => {
+                assert_eq!(state, "svchost.exe");
+            }
+            _ => panic!("Expected Commands::Decision with Evaluate"),
+        }
+    }
 }
+

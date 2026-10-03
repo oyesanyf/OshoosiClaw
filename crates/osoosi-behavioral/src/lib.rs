@@ -23,7 +23,9 @@ pub mod rl_engine;
 pub mod skyrl;
 pub mod spider_eyes;
 pub mod yara_analyzer;
+pub mod decision_model;
 
+pub use decision_model::{ClefDecisionEngine, LocalDecisionEngine, SecurityIncidentDecision};
 pub use hardware_selection::{
     detect_live_resources, get_system_resources, query_installed_ollama_models,
     query_installed_ollama_models_sync, query_system_resources, DiskResourceInfo,

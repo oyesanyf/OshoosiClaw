@@ -5779,6 +5779,7 @@ dependencies = [
  "hf-hub 0.4.3",
  "libloading",
  "ort",
+ "osoosi-behavioral",
  "osoosi-core",
  "osoosi-dashboard",
  "osoosi-exporter",

@@ -18,6 +18,7 @@ osoosi-model = { path = "../osoosi-model" }
 osoosi-wire = { path = "../osoosi-wire" }
 osoosi-runtime = { path = "../osoosi-runtime" }
 osoosi-forensics = { path = "../osoosi-forensics" }
+osoosi-behavioral = { path = "../osoosi-behavioral" }
 blake3 = { workspace = true }
 candle-core = { workspace = true }
 clap = { workspace = true }

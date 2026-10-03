@@ -165,3 +165,24 @@ min_trigger_confidence = 0.80
 # MITRE ATT&CK techniques eligible for automatic forensic deep inspection
 trigger_techniques = ["T1055", "T1055.012", "T1003", "T1014", "T1547", "T1059"]
 
+[decision_model]
+# Enable non-autoregressive Clef Decision Model architecture
+enabled = true
+# Provider: "local" (100% self-hosted, air-gapped, zero-network by default), "auto", or "cloudflare"
+provider = "local"
+# Decision model identifier: "@cf/cloudflare/clef-flash" (38ms median) or "@cf/cloudflare/clef" (209ms)
+model = "@cf/cloudflare/clef-flash"
+# Cloudflare credentials (can also be supplied via CLOUDFLARE_ACCOUNT_ID & CLOUDFLARE_API_TOKEN env vars)
+cloudflare_account_id = ""
+cloudflare_api_token = ""
+# Hard inference cutoff in milliseconds (keeps decision on hot-path)
+timeout_ms = 500
+# Fallback to local non-autoregressive evaluator if Cloudflare fails or is offline
+fallback_to_local = true
+# Minimum probability threshold to trigger automated containment (0.80)
+min_action_confidence = 0.80
+# Automatically trigger background causal reasoning (FoundationSec) when flagged
+auto_escalate_to_cortex = true
+# Path to local weights / calibration tables (operates 100% self-hosted / air-gapped)
+model_dir = "models/clef"
+
