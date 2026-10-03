@@ -2044,6 +2044,7 @@ impl EdrOrchestrator {
 
         let decision_cfg = osoosi_types::config::load_decision_model_config();
         let decision_engine = Arc::new(osoosi_behavioral::decision_model::ClefDecisionEngine::new(decision_cfg.clone()));
+        supervisor.set_decision_engine(decision_engine.clone());
         info!(
             "[DECISION] Non-autoregressive Clef Decision Model initialized (provider: {}, model: {}, enabled: {})",
             decision_cfg.provider, decision_cfg.model, decision_cfg.enabled
@@ -5035,21 +5036,7 @@ impl EdrOrchestrator {
             }
         }
 
-        // 1. Aligned Messenger: Discerning what to share with the P2P Mesh
-        // 1. Aligned Messenger: Share verified intelligence with P2P Mesh & Nostr
-        self.broadcast_threat_to_mesh(signature.clone()).await;
-
-        // Auto-generated YARA from high-confidence detections
-        if signature.confidence >= 0.8 {
-            let _ = crate::yara_gen::generate_yara_from_threat(&signature);
-        }
-
-        // 2. Dispatch Active Response based on Decision Matrix
-        let autonomy = osoosi_types::load_autonomy_config();
-        let is_catalog_attack = is_mitre_catalog_attack(&signature, &event);
-        let is_destructive = is_destructive_mutation(&signature, &event);
-
-        // Clef Non-Autoregressive Decision Model Evaluation
+        // 1. Clef Non-Autoregressive Decision Model Evaluation & Noise Suppression Gate
         let mut decision_override: Option<ResponseAction> = None;
         if self.decision_engine.is_enabled() {
             let proc_str = signature.process_name.as_deref().unwrap_or("Unknown");
@@ -5070,7 +5057,7 @@ impl EdrOrchestrator {
                         decision.containment_action, decision.action_probability, decision.human_escalation_required
                     );
 
-                    // 1. Noise Suppression: Suppress benign false-positive noise
+                    // 1. Noise Suppression: Suppress benign false-positive noise before mesh broadcast or YARA generation
                     if decision.verdict == "benign" && decision.verdict_probability >= 0.90 {
                         info!(
                             "[DECISION] Benign verdict ({:.2}) from Clef decision model. Suppressing alert.",
@@ -5137,6 +5124,19 @@ impl EdrOrchestrator {
                 }
             }
         }
+
+        // 2. Aligned Messenger: Share verified intelligence with P2P Mesh & Nostr (only non-suppressed threats)
+        self.broadcast_threat_to_mesh(signature.clone()).await;
+
+        // Auto-generated YARA from high-confidence detections
+        if signature.confidence >= 0.8 {
+            let _ = crate::yara_gen::generate_yara_from_threat(&signature);
+        }
+
+        // 3. Dispatch Active Response based on Decision Matrix
+        let autonomy = osoosi_types::load_autonomy_config();
+        let is_catalog_attack = is_mitre_catalog_attack(&signature, &event);
+        let is_destructive = is_destructive_mutation(&signature, &event);
 
         let mut effective_action = if let Some(clef_act) = decision_override {
             clef_act
@@ -7774,6 +7774,13 @@ impl EdrOrchestrator {
                     .log("RESPONSE_ACTION", serde_json::json!({"type": "Alert"}));
             }
             ResponseAction::Isolate => {
+                if is_system_critical(event) {
+                    debug!(
+                        "[SECURITY SAFEGUARD] Isolate refused: Event targets a SYSTEM CRITICAL or Security Provider binary. Containment skipped."
+                    );
+                    return Ok(());
+                }
+
                 warn!("Action: Targeted Process Block & Termination (confidence {:.2})", signature.confidence);
                 self.audit.log("RESPONSE_ACTION", serde_json::json!({"type": "TargetedProcessBlock", "confidence": signature.confidence}));
 

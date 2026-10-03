@@ -110,6 +110,10 @@ impl ClefDecisionEngine {
         &self.local_engine
     }
 
+    pub fn metrics_handle(&self) -> &Arc<DecisionMetrics> {
+        &self.metrics
+    }
+
     /// Evaluates a raw DecisionRequest across configured or fallback providers.
     pub async fn evaluate_request(&self, request: &DecisionRequest) -> Result<DecisionResponse> {
         let start = Instant::now();

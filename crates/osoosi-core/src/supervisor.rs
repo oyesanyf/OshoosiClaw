@@ -167,7 +167,7 @@ impl BeliefMass {
     }
 }
 
-/// Multi-Sensor Fusion Engine that evaluates 5 concrete sensors and performs Dempster-Shafer combination.
+/// Multi-Sensor Fusion Engine that evaluates 9 concrete sensors and performs Dempster-Shafer combination.
 pub struct MultiSensorFusionEngine {
     pub canary_probe_latency_ms: f64,
     pub event_influx_velocity: f64,
@@ -177,6 +177,7 @@ pub struct MultiSensorFusionEngine {
     pub exploration_decay_alpha: f64,
     pub cov_condition_number: f64,
     pub advantage_stable: bool,
+    pub decision_engine: Option<Arc<osoosi_behavioral::decision_model::ClefDecisionEngine>>,
 }
 
 impl Default for MultiSensorFusionEngine {
@@ -196,10 +197,11 @@ impl MultiSensorFusionEngine {
             exploration_decay_alpha: 0.05,
             cov_condition_number: 1.12,
             advantage_stable: true,
+            decision_engine: None,
         }
     }
 
-    /// Evaluates the 8 concrete sensor domains:
+    /// Evaluates the 9 concrete sensor domains:
     /// 1. Telemetry & Canary Sensor
     /// 2. System Invariant Sensor
     /// 3. Asymmetric Containment Sensor
@@ -208,13 +210,14 @@ impl MultiSensorFusionEngine {
     /// 6. Hardware Resource & Compute Tier Sensor
     /// 7. WikiSkill Autonomous Skill & Threat Evolution Sensor
     /// 8. Embedded Velociraptor Forensic Extraction Service Sensor
+    /// 9. Clef Non-Autoregressive Decision Model Sensor
     pub fn evaluate_sensors(
         &mut self,
         memory_store: Option<&osoosi_memory::MemoryStore>,
         active_tarpit: Option<&osoosi_runtime::tarpit::ActiveProcessTarpit>,
         stranded_reaper: Option<&StrandedResourceReaper>,
     ) -> Vec<SensorReading> {
-        let mut readings = Vec::with_capacity(8);
+        let mut readings = Vec::with_capacity(9);
 
         // 1. Telemetry & Canary Sensor
         let (canary_latency, token_loss, influx_vel) = if memory_store.is_some() {
@@ -559,6 +562,7 @@ impl MultiSensorFusionEngine {
 
         // 9. Clef Non-Autoregressive Decision Model Sensor
         let decision_cfg = osoosi_types::config::load_decision_model_config();
+        let metrics = self.decision_engine.as_ref().map(|e| e.metrics());
         let (decision_health, decision_conf, decision_details) = if !decision_cfg.enabled {
             (
                 0.90,
@@ -589,18 +593,34 @@ impl MultiSensorFusionEngine {
                 "Local Brier Engine (Auto-Selected Self-Hosted)"
             };
 
-            let health = 1.0;
-            (
-                health,
-                0.96,
-                format!(
-                    "Clef Decision Model: ONLINE (Provider: {}, Model: {}, Cutoff: {}ms, Auto-Escalate: {})",
-                    provider_label,
-                    decision_cfg.model,
-                    decision_cfg.timeout_ms,
-                    decision_cfg.auto_escalate_to_cortex
-                ),
-            )
+            let (total_evals, avg_latency_ms, error_rate) = if let Some(ref m) = metrics {
+                let total = m.total_evaluations;
+                let errs = m.error_count;
+                let err_rate = if total > 0 { errs as f64 / total as f64 } else { 0.0 };
+                (total, m.avg_latency_ms, err_rate)
+            } else {
+                (0, 0.45, 0.0)
+            };
+
+            let mut health = 1.0;
+            if error_rate > 0.05 {
+                health = (1.0 - (error_rate - 0.05) * 4.0).clamp(0.20, 0.85);
+            } else if avg_latency_ms > 100.0 {
+                health = 0.85;
+            } else if avg_latency_ms > 50.0 {
+                health = 0.95;
+            }
+
+            let details = format!(
+                "Clef Decision Model: ONLINE (Provider: {}, Model: {}, Throughput: {} evals, Avg Latency: {:.2}ms, Error Rate: {:.1}%)",
+                provider_label,
+                decision_cfg.model,
+                total_evals,
+                avg_latency_ms,
+                error_rate * 100.0
+            );
+
+            (health, 0.96, details)
         };
 
         readings.push(SensorReading {
@@ -954,6 +974,13 @@ impl CognitiveFusionSupervisor {
             fusion_engine: Arc::new(RwLock::new(fusion)),
             start_time: Instant::now(),
             running: Arc::new(AtomicBool::new(true)),
+        }
+    }
+
+    /// Attaches the Clef Decision Engine instance for real-time telemetry inspection.
+    pub fn set_decision_engine(&self, engine: Arc<osoosi_behavioral::decision_model::ClefDecisionEngine>) {
+        if let Ok(mut guard) = self.fusion_engine.write() {
+            guard.decision_engine = Some(engine);
         }
     }
 
@@ -1395,6 +1422,33 @@ mod tests {
         assert_eq!(decision_sensor.health_score, 1.0);
         assert!(decision_sensor.confidence >= 0.90);
         assert!(decision_sensor.details.contains("Clef Decision Model:"));
+    }
+
+    #[test]
+    fn test_decision_model_sensor_health_degrades_on_high_error_rate() {
+        let mut fusion = MultiSensorFusionEngine::new();
+        let cfg = osoosi_types::config::DecisionModelConfig::default();
+        let engine = Arc::new(osoosi_behavioral::decision_model::ClefDecisionEngine::new(cfg));
+
+        // Inject simulated telemetry: 100 evaluations, 15 errors (15% error rate > 5% threshold)
+        let metrics = engine.metrics_handle();
+        metrics.total_evaluations.store(100, std::sync::atomic::Ordering::Relaxed);
+        metrics.error_count.store(15, std::sync::atomic::Ordering::Relaxed);
+
+        fusion.decision_engine = Some(engine);
+        let readings = fusion.evaluate_sensors(None, None, None);
+        let decision_sensor = readings
+            .iter()
+            .find(|s| s.sensor_id == "decision_model_sensor")
+            .expect("decision_model_sensor must exist in sensor readings");
+
+        assert!(
+            decision_sensor.health_score < 1.0,
+            "Decision model health must degrade when error rate exceeds 5%, got {}",
+            decision_sensor.health_score
+        );
+        assert!(decision_sensor.details.contains("Error Rate: 15.0%"));
+        assert!(decision_sensor.details.contains("Throughput: 100 evals"));
     }
 
     #[test]

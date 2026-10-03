@@ -198,6 +198,10 @@ impl LocalDecisionEngine {
         let mut entry = self.logit_biases.entry(actual_clean.clone()).or_insert(0.0);
         *entry = (*entry + effective_reward * 0.15).clamp(-5.0, 5.0);
 
+        // Bound feedback history cache to prevent memory leak
+        if self.rl_feedback_history.len() > 10_000 {
+            self.rl_feedback_history.clear();
+        }
         self.rl_feedback_history.insert(decision_id.to_string(), (effective_reward, actual_clean));
         self.rl_feedback_count.fetch_add(1, Ordering::Relaxed);
         let fixed_reward = (effective_reward * 1000.0) as i64;
@@ -293,6 +297,8 @@ impl LocalDecisionEngine {
         state_lower: &str,
     ) -> ChoiceAnswer {
         let is_destructive = state_lower.contains("delete shadows")
+            || (state_lower.contains("vssadmin") && state_lower.contains("delete"))
+            || (state_lower.contains("wbadmin") && state_lower.contains("delete"))
             || state_lower.contains("ransom")
             || state_lower.contains("t1486")
             || state_lower.contains("recoveryenabled no");
@@ -370,7 +376,7 @@ impl LocalDecisionEngine {
                         if mal_score > 2.0 {
                             -mal_score * 2.0
                         } else {
-                            ben_score * 1.5
+                            ben_score * 1.5 + 1.0
                         }
                     }
                     "alert" => {
@@ -378,6 +384,7 @@ impl LocalDecisionEngine {
                             -0.5
                         } else if mal_score > 1.0 {
                             1.5
+
                         } else {
                             0.5
                         }

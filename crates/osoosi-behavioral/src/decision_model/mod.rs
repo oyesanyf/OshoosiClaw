@@ -156,4 +156,30 @@ mod tests {
         assert_eq!(engine.rl_feedback_count(), 3);
         assert!(engine.cumulative_rl_reward() < prior_reward);
     }
+
+    #[test]
+    fn test_load_custom_weights_and_empty_state_evaluates_benign_allow() {
+        // Test empty/neutral input gives benign + allow
+        let engine = LocalDecisionEngine::new("models/clef");
+        let req = build_security_incident_request(
+            "@cf/cloudflare/clef-flash",
+            "",
+        );
+        let resp = engine.evaluate(&req).expect("Evaluation should succeed on empty state");
+        let decision = parse_security_incident_response(&resp);
+        assert_eq!(decision.verdict, "benign");
+        assert_eq!(decision.containment_action, "allow");
+
+        // Test loading custom weights file from tempdir
+        let temp_dir = std::env::temp_dir().join(format!("clef_test_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let weights_path = temp_dir.join("weights.json");
+        let custom_weights = local_engine::LocalClefWeights::default();
+        let json = serde_json::to_string_pretty(&custom_weights).unwrap();
+        std::fs::write(&weights_path, json).unwrap();
+
+        let custom_engine = LocalDecisionEngine::new(&temp_dir);
+        assert_eq!(custom_engine.model_dir(), temp_dir.as_path());
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
 }
