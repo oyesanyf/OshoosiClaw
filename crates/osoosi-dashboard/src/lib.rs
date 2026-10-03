@@ -613,6 +613,9 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/scan-trigger", post(post_scan_trigger))
         .route("/api/false-positive", post(post_manual_false_positive))
         .route("/api/quarantine", post(post_quarantine_action))
+        .route("/api/yara/status", get(get_yara_status))
+        .route("/api/yara/reload", post(post_yara_reload))
+        .route("/api/yara/update", post(post_yara_update))
         .route("/api/model-training-status", get(get_model_training_status))
         .route("/api/privilege-status", get(get_privilege_status))
         .route("/api/activity", get(get_activity))
@@ -1369,14 +1372,12 @@ fn baseline_attack_graph() -> Value {
             { "id": "host:local", "label": "Local Node (Master Core)", "group": "host", "shape": "dot", "size": 25 },
             { "id": "proc:osoosi", "label": "osoosi.exe (EDR Orchestrator)", "group": "process", "shape": "dot", "size": 20 },
             { "id": "proc:sysmon", "label": "Sysmon64.exe (Kernel Sensor)", "group": "process", "shape": "dot", "size": 18 },
-            { "id": "target:subsystem", "label": "Win32 Subsystems (Protected)", "group": "response", "shape": "dot", "size": 16 },
-            { "id": "peer:desktop", "label": "DESKTOP-4MJ7SCN (Mesh Peer)", "group": "host", "shape": "dot", "size": 22 }
+            { "id": "target:subsystem", "label": "Win32 Subsystems (Protected)", "group": "response", "shape": "dot", "size": 16 }
         ],
         "edges": [
             { "from": "host:local", "to": "proc:osoosi", "label": "executes" },
             { "from": "proc:osoosi", "to": "proc:sysmon", "label": "monitors" },
-            { "from": "proc:sysmon", "to": "target:subsystem", "label": "guards" },
-            { "from": "host:local", "to": "peer:desktop", "label": "mesh sync (0.8ms)" }
+            { "from": "proc:sysmon", "to": "target:subsystem", "label": "guards" }
         ]
     })
 }
@@ -1446,7 +1447,7 @@ async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => Json(orch.get_zone_summary().await),
         None => Json(json!({
-            "peer_count": 1,
+            "peer_count": 0,
             "security_score": 100,
             "recommendations": [],
             "structured_recommendations": [
@@ -1492,25 +1493,7 @@ async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value> {
                     "role": "Master Core",
                     "attestation": "TPM 2.0 RoT Verified",
                     "status": "Optimal",
-                    "latency_ms": 0.1
-                },
-                {
-                    "id": "peer:DESKTOP-4MJ7SCN",
-                    "name": "Active Mesh Peer",
-                    "address": "192.168.1.105:4001",
-                    "role": "Active Mesh Peer",
-                    "attestation": "TPM 2.0 Verified (PCR-0 Match)",
-                    "status": "Synchronized",
-                    "latency_ms": 0.8
-                },
-                {
-                    "id": "gw:relay-us-east",
-                    "name": "Gateway Relay",
-                    "address": "relay.osoosi.net:443",
-                    "role": "Rendezvous Relay",
-                    "attestation": "Mutual TLS",
-                    "status": "Active",
-                    "latency_ms": 14.2
+                    "latency_ms": 0.0
                 }
             ],
             "system_uptime": 0,
@@ -1857,6 +1840,76 @@ async fn get_malware_status(State(state): State<DashboardState>) -> Json<Value> 
             "model_loaded": false,
             "magika_available": false,
             "live": false
+        })),
+    }
+}
+
+async fn get_yara_status(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            let status = orch.yara_manager.get_status();
+            Json(serde_json::to_value(&status).unwrap_or(json!({})))
+        }
+        None => Json(json!({
+            "error": "Backend orchestrator not initialized",
+            "total_rules": 0,
+            "custom_rules": 0,
+            "generated_rules": 0,
+            "feed_rules": 0,
+            "directories_searched": [],
+            "total_scans": 0,
+            "total_matches": 0,
+            "is_updating": false
+        })),
+    }
+}
+
+async fn post_yara_reload(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            match orch.yara_manager.reload_rules() {
+                Ok(count) => {
+                    let status = orch.yara_manager.get_status();
+                    Json(json!({
+                        "success": true,
+                        "reloaded_rules": count,
+                        "status": status,
+                    }))
+                }
+                Err(e) => Json(json!({
+                    "success": false,
+                    "error": e.to_string(),
+                })),
+            }
+        }
+        None => Json(json!({
+            "success": false,
+            "error": "Backend orchestrator not initialized",
+        })),
+    }
+}
+
+async fn post_yara_update(State(state): State<DashboardState>) -> Json<Value> {
+    match &state.backend {
+        Some(orch) => {
+            match orch.yara_manager.update_feeds_and_reload().await {
+                Ok(count) => {
+                    let status = orch.yara_manager.get_status();
+                    Json(json!({
+                        "success": true,
+                        "updated_rules": count,
+                        "status": status,
+                    }))
+                }
+                Err(e) => Json(json!({
+                    "success": false,
+                    "error": e.to_string(),
+                })),
+            }
+        }
+        None => Json(json!({
+            "success": false,
+            "error": "Backend orchestrator not initialized",
         })),
     }
 }
@@ -2877,179 +2930,36 @@ async fn get_mesh_topology(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => Json(orch.mesh_topology()),
         None => {
-            // Default rich mock topology for standalone dashboard run
             let local_id = "did:osoosi:local";
-            let peer_desktop = "peer:DESKTOP-4MJ7SCN";
-            let gw_node = "gw:relay-us-east";
-            let otel_node = "otel:collector-mesh-01";
-            let sensor_node = "sensor:edge-linux-02";
+            let host_name = std::env::var("COMPUTERNAME")
+                .or_else(|_| std::env::var("HOSTNAME"))
+                .unwrap_or_else(|_| "Local Node".to_string());
 
             Json(json!({
                 "nodes": [
                     {
                         "id": local_id,
-                        "label": "Local Node",
+                        "label": format!("Local Node ({})", host_name),
                         "group": "host",
                         "role": "Local Core (Master Node)",
                         "status": "online",
                         "attestation": "TPM 2.0 Hardware RoT Verified",
                         "reputation": 1.0,
                         "health": "Optimal",
-                        "latency": "0.1 ms",
+                        "latency": "0.0 ms",
                         "ip": "127.0.0.1:3030",
-                        "os": "Windows 11 (build 26100)",
-                        "packets_tx": 1420,
-                        "packets_rx": 1205,
-                        "title": "Local Node (Core)\nAttestation: TPM 2.0 Verified\nHealth: Optimal\nLatency: 0.1 ms",
+                        "os": std::env::consts::OS,
+                        "packets_tx": 0,
+                        "packets_rx": 0,
+                        "title": format!("Local Node (Core)\nID: {}\nHealth: Optimal", local_id),
                         "color": { "background": "#00d2ff", "border": "#38bdf8" },
                         "size": 32
-                    },
-                    {
-                        "id": peer_desktop,
-                        "label": "DESKTOP-4MJ7SCN",
-                        "group": "peer",
-                        "role": "Active Mesh Peer",
-                        "status": "online",
-                        "attestation": "TPM 2.0 Verified (PCR-0 Match)",
-                        "reputation": 0.98,
-                        "health": "Synchronized",
-                        "latency": "0.8 ms",
-                        "ip": "192.168.1.105:4001",
-                        "os": "Windows 11 Enterprise",
-                        "packets_tx": 942,
-                        "packets_rx": 884,
-                        "title": "DESKTOP-4MJ7SCN\nRole: Active Mesh Peer\nAttestation: TPM 2.0 Verified\nReputation: 0.98\nLatency: 0.8 ms\nStatus: Synchronized",
-                        "color": { "background": "#10b981", "border": "#34d399" },
-                        "size": 26
-                    },
-                    {
-                        "id": gw_node,
-                        "label": "Gateway Relay (US-East)",
-                        "group": "relay",
-                        "role": "Rendezvous / Relay",
-                        "status": "online",
-                        "attestation": "Mutual TLS & Ed25519 Verified",
-                        "reputation": 0.99,
-                        "health": "Optimal",
-                        "latency": "12.4 ms",
-                        "ip": "relay.osoosi.net:443",
-                        "os": "Linux x86_64 Hardened",
-                        "packets_tx": 15200,
-                        "packets_rx": 14890,
-                        "title": "Gateway Relay (US-East)\nRole: Rendezvous / Relay\nAttestation: Mutual TLS Verified\nReputation: 0.99\nLatency: 12.4 ms",
-                        "color": { "background": "#a855f7", "border": "#c084fc" },
-                        "size": 24
-                    },
-                    {
-                        "id": otel_node,
-                        "label": "OTel Collector Alpha",
-                        "group": "telemetry",
-                        "role": "Telemetry Ingestion",
-                        "status": "online",
-                        "attestation": "TPM 2.0 Verified",
-                        "reputation": 0.96,
-                        "health": "Optimal",
-                        "latency": "4.2 ms",
-                        "ip": "10.0.1.20:4317",
-                        "os": "Linux x86_64",
-                        "packets_tx": 28400,
-                        "packets_rx": 31200,
-                        "title": "OTel Collector Alpha\nRole: Telemetry Ingestion\nAttestation: TPM 2.0 Verified\nReputation: 0.96\nLatency: 4.2 ms",
-                        "color": { "background": "#3b82f6", "border": "#60a5fa" },
-                        "size": 22
-                    },
-                    {
-                        "id": sensor_node,
-                        "label": "Edge Sensor Node 02",
-                        "group": "sensor",
-                        "role": "Edge Sentinel",
-                        "status": "online",
-                        "attestation": "Measured Boot Verified",
-                        "reputation": 0.92,
-                        "health": "Normal",
-                        "latency": "8.7 ms",
-                        "ip": "192.168.1.188:4001",
-                        "os": "Ubuntu 24.04 LTS",
-                        "packets_tx": 3410,
-                        "packets_rx": 3290,
-                        "title": "Edge Sensor Node 02\nRole: Edge Sentinel\nAttestation: Measured Boot Verified\nReputation: 0.92\nLatency: 8.7 ms",
-                        "color": { "background": "#f59e0b", "border": "#fbbf24" },
-                        "size": 20
                     }
                 ],
-                "edges": [
-                    {
-                        "from": local_id,
-                        "to": peer_desktop,
-                        "id": "e_local_desktop",
-                        "label": "0.8ms (GossipSub)",
-                        "latency_ms": 0.8,
-                        "protocol": "GossipSub",
-                        "status": "active",
-                        "color": { "color": "rgba(16, 185, 129, 0.7)", "highlight": "#34d399" },
-                        "width": 2.5
-                    },
-                    {
-                        "from": local_id,
-                        "to": gw_node,
-                        "id": "e_local_gw",
-                        "label": "12.4ms (TLS Relay)",
-                        "latency_ms": 12.4,
-                        "protocol": "TLS Relay",
-                        "status": "active",
-                        "color": { "color": "rgba(168, 85, 247, 0.7)", "highlight": "#c084fc" },
-                        "width": 2.0
-                    },
-                    {
-                        "from": peer_desktop,
-                        "to": gw_node,
-                        "id": "e_desktop_gw",
-                        "label": "14.1ms (Mesh Relay)",
-                        "latency_ms": 14.1,
-                        "protocol": "Mesh Relay",
-                        "status": "active",
-                        "color": { "color": "rgba(168, 85, 247, 0.5)", "highlight": "#c084fc" },
-                        "width": 1.5,
-                        "dashes": true
-                    },
-                    {
-                        "from": local_id,
-                        "to": otel_node,
-                        "id": "e_local_otel",
-                        "label": "4.2ms (gRPC OTel)",
-                        "latency_ms": 4.2,
-                        "protocol": "gRPC OTel",
-                        "status": "active",
-                        "color": { "color": "rgba(59, 130, 246, 0.7)", "highlight": "#60a5fa" },
-                        "width": 2.0
-                    },
-                    {
-                        "from": sensor_node,
-                        "to": gw_node,
-                        "id": "e_sensor_gw",
-                        "label": "8.7ms (Sync)",
-                        "latency_ms": 8.7,
-                        "protocol": "Sensor Sync",
-                        "status": "active",
-                        "color": { "color": "rgba(245, 158, 11, 0.6)", "highlight": "#fbbf24" },
-                        "width": 1.5,
-                        "dashes": true
-                    },
-                    {
-                        "from": sensor_node,
-                        "to": local_id,
-                        "id": "e_sensor_local",
-                        "label": "9.3ms (P2P Gossip)",
-                        "latency_ms": 9.3,
-                        "protocol": "P2P Gossip",
-                        "status": "active",
-                        "color": { "color": "rgba(245, 158, 11, 0.6)", "highlight": "#fbbf24" },
-                        "width": 1.5
-                    }
-                ],
+                "edges": [],
                 "mesh_health": "Optimal",
-                "peer_count": 1,
-                "total_nodes": 5
+                "peer_count": 0,
+                "total_nodes": 1
             }))
         }
     }
@@ -3073,91 +2983,22 @@ async fn get_peers(State(state): State<DashboardState>) -> Json<Value> {
         "attestation_state": "TPM 2.0 Hardware RoT Verified",
         "reputation_score": 1.0,
         "health": "Optimal",
-        "latency_ms": 0.1,
+        "latency_ms": 0.0,
         "ip": "127.0.0.1:3030",
-        "os": "Windows 11 (build 26100.3194)",
-        "packets_tx": 1420,
-        "packets_rx": 1205,
-        "last_seen": chrono::Utc::now().to_rfc3339(),
-    }));
-
-    // 2. Active peer DESKTOP-4MJ7SCN
-    peers.push(json!({
-        "id": "peer:DESKTOP-4MJ7SCN",
-        "label": "DESKTOP-4MJ7SCN",
-        "role": "Active Mesh Peer",
-        "status": "online",
-        "attestation_state": "TPM 2.0 Verified (PCR-0 Match)",
-        "reputation_score": 0.98,
-        "health": "Synchronized",
-        "latency_ms": 0.8,
-        "ip": "192.168.1.105:4001",
-        "os": "Windows 11 Enterprise",
-        "packets_tx": 942,
-        "packets_rx": 884,
-        "last_seen": chrono::Utc::now().to_rfc3339(),
-    }));
-
-    // 3. Gateway Relay US-East
-    peers.push(json!({
-        "id": "gw:relay-us-east",
-        "label": "Gateway Relay (US-East)",
-        "role": "Rendezvous Relay",
-        "status": "online",
-        "attestation_state": "Mutual TLS & Ed25519 Verified",
-        "reputation_score": 0.99,
-        "health": "Optimal",
-        "latency_ms": 12.4,
-        "ip": "relay.osoosi.net:443",
-        "os": "Linux x86_64 Hardened",
-        "packets_tx": 15200,
-        "packets_rx": 14890,
-        "last_seen": chrono::Utc::now().to_rfc3339(),
-    }));
-
-    // 4. OTel Collector Alpha
-    peers.push(json!({
-        "id": "otel:collector-mesh-01",
-        "label": "OTel Collector Alpha",
-        "role": "Telemetry Ingestion",
-        "status": "online",
-        "attestation_state": "TPM 2.0 Verified",
-        "reputation_score": 0.96,
-        "health": "Optimal",
-        "latency_ms": 4.2,
-        "ip": "10.0.1.20:4317",
-        "os": "Linux x86_64",
-        "packets_tx": 28400,
-        "packets_rx": 31200,
-        "last_seen": chrono::Utc::now().to_rfc3339(),
-    }));
-
-    // 5. Edge Sensor Node 02
-    peers.push(json!({
-        "id": "sensor:edge-linux-02",
-        "label": "Edge Sensor Node 02",
-        "role": "Edge Sentinel",
-        "status": "online",
-        "attestation_state": "Measured Boot Verified",
-        "reputation_score": 0.92,
-        "health": "Normal",
-        "latency_ms": 8.7,
-        "ip": "192.168.1.188:4001",
-        "os": "Ubuntu 24.04 LTS",
-        "packets_tx": 3410,
-        "packets_rx": 3290,
+        "os": std::env::consts::OS,
+        "packets_tx": 0,
+        "packets_rx": 0,
         "last_seen": chrono::Utc::now().to_rfc3339(),
     }));
 
     // Check DB for any additional peers
     if let Some(ref orch) = state.backend {
         let mem = orch.memory();
-        if let Ok(known) = mem.query_json("SELECT node_id, score FROM reputation", &[]) {
+        if let Ok(known) = mem.query_json("SELECT node_id, score FROM reputation WHERE node_id != ?", &[local_did.clone()]) {
             for row in known {
                 let nid = row["node_id"].as_str().unwrap_or("");
                 if nid.is_empty()
                     || nid == local_did
-                    || nid == "peer:DESKTOP-4MJ7SCN"
                     || peers.iter().any(|p| p["id"] == nid)
                 {
                     continue;
@@ -3177,10 +3018,10 @@ async fn get_peers(State(state): State<DashboardState>) -> Json<Value> {
                     "reputation_score": score,
                     "health": if score < 0.3 { "Compromised" } else if score < 0.7 { "Warning" } else { "Good" },
                     "latency_ms": 3.5,
-                    "ip": "10.0.0.12:4001",
+                    "ip": "P2P Mesh Swarm",
                     "os": "Linux x86_64",
-                    "packets_tx": 310,
-                    "packets_rx": 298,
+                    "packets_tx": 0,
+                    "packets_rx": 0,
                     "last_seen": chrono::Utc::now().to_rfc3339(),
                 }));
             }
@@ -4402,12 +4243,13 @@ mod tests {
         let val = resp.0;
         let nodes = val["nodes"].as_array().expect("nodes should be array");
         let edges = val["edges"].as_array().expect("edges should be array");
-        assert!(nodes.len() >= 5, "expected at least 5 nodes in mock topology");
-        assert!(edges.len() >= 6, "expected at least 6 edges in mock topology");
-        assert!(nodes.iter().any(|n| n["label"] == "DESKTOP-4MJ7SCN"));
-        assert!(nodes.iter().any(|n| n["label"] == "Gateway Relay (US-East)"));
-        assert!(nodes.iter().any(|n| n["label"] == "OTel Collector Alpha"));
-        assert!(nodes.iter().any(|n| n["label"] == "Edge Sensor Node 02"));
+        assert_eq!(nodes.len(), 1, "expected 1 local node in standalone topology");
+        assert_eq!(edges.len(), 0, "expected 0 edges in standalone topology");
+        assert_eq!(val["peer_count"], 0);
+        assert!(!nodes.iter().any(|n| n["label"] == "DESKTOP-4MJ7SCN"));
+        assert!(!nodes.iter().any(|n| n["label"] == "Gateway Relay (US-East)"));
+        assert!(!nodes.iter().any(|n| n["label"] == "OTel Collector Alpha"));
+        assert!(!nodes.iter().any(|n| n["label"] == "Edge Sensor Node 02"));
     }
 
     #[tokio::test]
@@ -4416,8 +4258,8 @@ mod tests {
         let resp = get_peers(State(state)).await;
         let val = resp.0;
         let peers = val["peers"].as_array().expect("peers should be array");
-        assert!(peers.len() >= 5, "expected at least 5 peers");
-        assert!(peers.iter().any(|p| p["label"] == "DESKTOP-4MJ7SCN"));
+        assert_eq!(peers.len(), 1, "expected only local node when standalone");
+        assert!(!peers.iter().any(|p| p["label"] == "DESKTOP-4MJ7SCN"));
         assert!(peers.iter().any(|p| p["label"] == "Local Node"));
     }
 
@@ -4431,10 +4273,10 @@ mod tests {
         assert_eq!(zone_resp["security_score"], 100);
         assert!(zone_resp["zones"].is_array());
         assert!(zone_resp["gaps"].is_array());
-        assert_eq!(zone_resp["peer_count"], 1);
+        assert_eq!(zone_resp["peer_count"], 0);
         assert_eq!(zone_resp["zone"], "zone-alpha-mesh");
         assert_eq!(zone_resp["tpm_attested"], true);
-        assert_eq!(zone_resp["nodes"].as_array().unwrap().len(), 3);
+        assert_eq!(zone_resp["nodes"].as_array().unwrap().len(), 1);
         assert_eq!(zone_resp["structured_recommendations"].as_array().unwrap().len(), 3);
 
         // 2. get_behavioral_analyze fallback
@@ -4471,8 +4313,8 @@ mod tests {
         )
         .await
         .0;
-        assert_eq!(graph_resp["nodes"].as_array().unwrap().len(), 5);
-        assert_eq!(graph_resp["edges"].as_array().unwrap().len(), 4);
+        assert_eq!(graph_resp["nodes"].as_array().unwrap().len(), 4);
+        assert_eq!(graph_resp["edges"].as_array().unwrap().len(), 3);
     }
 
     #[test]
@@ -5126,7 +4968,7 @@ mod tests {
         assert!(json_val.get("uptime_seconds").is_some());
 
         let sensors = json_val["sensors"].as_array().expect("sensors must be an array");
-        assert_eq!(sensors.len(), 7);
+        assert_eq!(sensors.len(), 9);
         assert!(json_val.get("hardware_selection").is_some());
         for s in sensors {
             assert!(s.get("sensor_id").is_some());
@@ -5137,6 +4979,26 @@ mod tests {
             assert!(s.get("confidence").is_some());
             assert!(s.get("details").is_some());
         }
+    }
+
+    #[tokio::test]
+    async fn test_api_yara_endpoints() {
+        let state = DashboardState::new(None, None);
+
+        // 1. GET /api/yara/status with fallback
+        let resp = get_yara_status(State(state.clone())).await.0;
+        assert!(resp.get("total_rules").is_some());
+        assert_eq!(resp["total_rules"], 0);
+
+        // 2. POST /api/yara/reload with fallback
+        let resp_reload = post_yara_reload(State(state.clone())).await.0;
+        assert_eq!(resp_reload["success"], false);
+        assert!(resp_reload.get("error").is_some());
+
+        // 3. POST /api/yara/update with fallback
+        let resp_update = post_yara_update(State(state.clone())).await.0;
+        assert_eq!(resp_update["success"], false);
+        assert!(resp_update.get("error").is_some());
     }
 
     #[tokio::test]

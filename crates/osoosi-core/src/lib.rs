@@ -1077,6 +1077,7 @@ pub struct EdrOrchestrator {
     #[allow(dead_code)]
     gemma_cortex: Option<Arc<osoosi_behavioral::Gemma4Analyzer>>,
     pub blocking_manager: Arc<crate::blocking_manager::BlockingManager>,
+    pub yara_manager: Arc<crate::yara::YaraManager>,
     /// PII Classifier (Presidio + Tika + Magika fallback)
     #[allow(dead_code)]
     pii_classifier: Arc<crate::pii::PiiClassifier>,
@@ -1635,7 +1636,8 @@ impl EdrOrchestrator {
         );
         let threat_model = Arc::new(tokio::sync::RwLock::new(ThreatModel::new(model_config)));
 
-        let yara_rules = Arc::new(crate::yara::load_rules());
+        let yara_manager = Arc::new(crate::yara::YaraManager::new());
+        let _yara_rules = yara_manager.active_rules();
         let models_dir = osoosi_types::resolve_models_dir();
         let malware_dir = models_dir.join("malware");
         let model_path = malware_dir.join("sorel.onnx");
@@ -1655,7 +1657,7 @@ impl EdrOrchestrator {
             malware_scanner.clone(),
         )?);
         let approval_queue = Arc::new(tokio::sync::Mutex::new(Vec::new()));
-        let shield = Arc::new(crate::shield::ShieldLayer::new(memory.clone(), Some(yara_rules.clone())));
+        let shield = Arc::new(crate::shield::ShieldLayer::with_manager(memory.clone(), yara_manager.clone()));
         let node_id = trust.did().to_string();
         let holograph = Arc::new(osoosi_wire::holograph::HolographEngine::new(
             node_id.clone(),
@@ -1668,11 +1670,11 @@ impl EdrOrchestrator {
             memory.clone(),
             audit.clone(),
         ));
-        let static_analyzer = Arc::new(crate::static_analyzer::StaticAnalyzer::new(
+        let static_analyzer = Arc::new(crate::static_analyzer::StaticAnalyzer::with_manager(
             memory.clone(),
             task_executor.clone(),
             malware_scanner.clone(),
-            yara_rules.clone(),
+            yara_manager.clone(),
             adaptive.clone(),
         ));
         let correlator = Arc::new(crate::correlator::EventCorrelator::new());
@@ -1896,7 +1898,7 @@ impl EdrOrchestrator {
         policy.add_voter(Box::new(osoosi_policy::voters::IocVoter { engine: ioc_engine })).await;
         
         policy.add_voter(Box::new(crate::voters::YaraXVoter {
-            rules: yara_rules.clone(),
+            yara_manager: yara_manager.clone(),
             adaptive: adaptive.clone(),
             total_detections: Arc::new(std::sync::atomic::AtomicU64::new(0)),
         })).await;
@@ -2092,6 +2094,7 @@ impl EdrOrchestrator {
             behavioral_engine,
             gemma_cortex,
             blocking_manager,
+            yara_manager,
             runtime_config,
             host_executor,
             task_executor,
@@ -2709,6 +2712,12 @@ impl EdrOrchestrator {
         Ok(())
     }
 
+    /// Register a temporary zero-day defense rule into both the PolicyEngine and dynamic YARA engine.
+    pub fn register_temporary_rule(&self, cve_id: &str, rule_text: &str, severity: f32) {
+        self.policy.register_temporary_rule(cve_id, rule_text, severity);
+        let _ = self.yara_manager.hot_load_rule(rule_text, &format!("mesh_{}", uuid::Uuid::new_v4()));
+    }
+
     /// Background task for Rule Maintenance (YARA, Sigma, etc.)
     pub fn start_maintenance_loop(&self) {
         let orch = self.clone();
@@ -2726,6 +2735,16 @@ impl EdrOrchestrator {
             loop {
                 interval.tick().await;
                 info!("Running periodic rule maintenance...");
+
+                // Periodic YARA Feed Update to prevent rule staleness
+                let ym = orch.yara_manager.clone();
+                tokio::spawn(async move {
+                    info!("Maintenance: Checking and updating YARA threat feeds...");
+                    match ym.update_feeds_and_reload().await {
+                        Ok(count) => info!("Maintenance: YARA rules updated! Currently active: {} rules.", count),
+                        Err(e) => debug!("Maintenance: YARA feed update skipped or offline: {}", e),
+                    }
+                });
 
                 // 3. ClamAV Health Check / Update
                 let orch_inner = orch.clone();
@@ -5130,7 +5149,10 @@ impl EdrOrchestrator {
 
         // Auto-generated YARA from high-confidence detections
         if signature.confidence >= 0.8 {
-            let _ = crate::yara_gen::generate_yara_from_threat(&signature);
+            if let Some(rule) = crate::yara_gen::generate_yara_from_threat(&signature) {
+                let _ = self.yara_manager.hot_load_rule(&rule, &signature.id);
+                info!("[YARA] Hot-loaded auto-generated YARA rule for threat '{}'. Engine updated.", signature.id);
+            }
         }
 
         // 3. Dispatch Active Response based on Decision Matrix
@@ -6191,22 +6213,25 @@ impl EdrOrchestrator {
         let mut edges = Vec::new();
 
         // Self node
+        let host_name = sysinfo::System::host_name()
+            .or_else(|| std::env::var("COMPUTERNAME").ok())
+            .unwrap_or_else(|| "Local Node".to_string());
         let self_id = self.trust.did().to_string();
         nodes.push(serde_json::json!({
             "id": self_id,
-            "label": "Local Node",
+            "label": format!("Local Node ({})", host_name),
             "group": "host",
             "role": "Local Core (Master Node)",
             "status": "online",
             "attestation": "TPM 2.0 Hardware RoT Verified",
             "reputation": 1.0,
             "health": "Optimal",
-            "latency": "0.1 ms",
+            "latency": "0.0 ms",
             "ip": "127.0.0.1:3030",
-            "os": "Windows 11 (build 26100)",
-            "packets_tx": 1420,
-            "packets_rx": 1205,
-            "title": format!("Local Node (Core)\nID: {}\nAttestation: TPM 2.0 Verified\nHealth: Optimal\nLatency: 0.1 ms", self_id),
+            "os": std::env::consts::OS,
+            "packets_tx": 0,
+            "packets_rx": 0,
+            "title": format!("Local Node (Core)\nID: {}\nHealth: Optimal", self_id),
             "color": {
                 "background": "#00d2ff",
                 "border": "#38bdf8",
@@ -6215,230 +6240,57 @@ impl EdrOrchestrator {
             "size": 32
         }));
 
-        // Active peer DESKTOP-4MJ7SCN
-        let peer_desktop = "peer:DESKTOP-4MJ7SCN";
-        nodes.push(serde_json::json!({
-            "id": peer_desktop,
-            "label": "DESKTOP-4MJ7SCN",
-            "group": "peer",
-            "role": "Active Mesh Peer",
-            "status": "online",
-            "attestation": "TPM 2.0 Verified (PCR-0 Match)",
-            "reputation": 0.98,
-            "health": "Synchronized",
-            "latency": "0.8 ms",
-            "ip": "192.168.1.105:4001",
-            "os": "Windows 11 Enterprise",
-            "packets_tx": 942,
-            "packets_rx": 884,
-            "title": "DESKTOP-4MJ7SCN\nRole: Active Mesh Peer\nAttestation: TPM 2.0 Verified\nReputation: 0.98\nLatency: 0.8 ms\nStatus: Synchronized",
-            "color": {
-                "background": "#10b981",
-                "border": "#34d399",
-                "highlight": { "background": "#34d399", "border": "#ffffff" }
-            },
-            "size": 26
-        }));
+        if self.mesh_peer_count() > 0 {
+            let query = "SELECT node_id, score FROM reputation WHERE node_id != ?";
+            if let Ok(known_peers) = memory.query_json(query, &[self_id.clone()]) {
+                for peer in known_peers {
+                    let id = peer["node_id"].as_str().unwrap_or("?");
+                    if id == self_id || nodes.iter().any(|n| n["id"] == id) {
+                        continue;
+                    }
 
-        edges.push(serde_json::json!({
-            "from": self_id,
-            "to": peer_desktop,
-            "id": "e_local_desktop",
-            "label": "0.8ms (GossipSub)",
-            "latency_ms": 0.8,
-            "protocol": "GossipSub",
-            "status": "active",
-            "color": { "color": "rgba(16, 185, 129, 0.7)", "highlight": "#34d399" },
-            "width": 2.5
-        }));
+                    let score = peer["score"].as_f64().unwrap_or(0.85);
+                    let is_threat = score < 0.3;
+                    let label = if id.starts_with("did:") && id.len() > 18 {
+                        format!("Node {}", &id[12..20])
+                    } else {
+                        format!("Node {}", &id[..id.len().min(8)])
+                    };
+                    nodes.push(serde_json::json!({
+                        "id": id,
+                        "label": label,
+                        "group": if is_threat { "threat" } else { "peer" },
+                        "role": if is_threat { "Suspect Node" } else { "Mesh Peer" },
+                        "status": if is_threat { "quarantined" } else { "online" },
+                        "attestation": if is_threat { "Attestation Failed" } else { "TPM 2.0 Verified" },
+                        "reputation": score,
+                        "health": if is_threat { "Compromised" } else { "Good" },
+                        "latency": "3.5 ms",
+                        "title": format!("Node ID: {}\nReputation: {:.2}\nStatus: {}", id, score, if is_threat { "Quarantined" } else { "Active" }),
+                        "color": if is_threat {
+                            serde_json::json!({ "background": "#ef4444", "border": "#f87171" })
+                        } else {
+                            serde_json::json!({ "background": "#10b981", "border": "#34d399" })
+                        },
+                        "size": 22
+                    }));
 
-        // Gateway Relay US-East
-        let gw_node = "gw:relay-us-east";
-        nodes.push(serde_json::json!({
-            "id": gw_node,
-            "label": "Gateway Relay (US-East)",
-            "group": "relay",
-            "role": "Rendezvous / Relay",
-            "status": "online",
-            "attestation": "Mutual TLS & Ed25519 Verified",
-            "reputation": 0.99,
-            "health": "Optimal",
-            "latency": "12.4 ms",
-            "ip": "relay.osoosi.net:443",
-            "os": "Linux x86_64 Hardened",
-            "packets_tx": 15200,
-            "packets_rx": 14890,
-            "title": "Gateway Relay (US-East)\nRole: Rendezvous / Relay\nAttestation: Mutual TLS Verified\nReputation: 0.99\nLatency: 12.4 ms",
-            "color": {
-                "background": "#a855f7",
-                "border": "#c084fc",
-                "highlight": { "background": "#c084fc", "border": "#ffffff" }
-            },
-            "size": 24
-        }));
-
-        edges.push(serde_json::json!({
-            "from": self_id,
-            "to": gw_node,
-            "id": "e_local_gw",
-            "label": "12.4ms (TLS Relay)",
-            "latency_ms": 12.4,
-            "protocol": "TLS Relay",
-            "status": "active",
-            "color": { "color": "rgba(168, 85, 247, 0.7)", "highlight": "#c084fc" },
-            "width": 2.0
-        }));
-
-        edges.push(serde_json::json!({
-            "from": peer_desktop,
-            "to": gw_node,
-            "id": "e_desktop_gw",
-            "label": "14.1ms (Mesh Relay)",
-            "latency_ms": 14.1,
-            "protocol": "Mesh Relay",
-            "status": "active",
-            "color": { "color": "rgba(168, 85, 247, 0.5)", "highlight": "#c084fc" },
-            "width": 1.5,
-            "dashes": true
-        }));
-
-        // OTel Telemetry Collector Alpha
-        let otel_node = "otel:collector-mesh-01";
-        nodes.push(serde_json::json!({
-            "id": otel_node,
-            "label": "OTel Collector Alpha",
-            "group": "telemetry",
-            "role": "Telemetry Ingestion",
-            "status": "online",
-            "attestation": "TPM 2.0 Verified",
-            "reputation": 0.96,
-            "health": "Optimal",
-            "latency": "4.2 ms",
-            "ip": "10.0.1.20:4317",
-            "os": "Linux x86_64",
-            "packets_tx": 28400,
-            "packets_rx": 31200,
-            "title": "OTel Collector Alpha\nRole: Telemetry Ingestion\nAttestation: TPM 2.0 Verified\nReputation: 0.96\nLatency: 4.2 ms",
-            "color": {
-                "background": "#3b82f6",
-                "border": "#60a5fa",
-                "highlight": { "background": "#60a5fa", "border": "#ffffff" }
-            },
-            "size": 22
-        }));
-
-        edges.push(serde_json::json!({
-            "from": self_id,
-            "to": otel_node,
-            "id": "e_local_otel",
-            "label": "4.2ms (gRPC OTel)",
-            "latency_ms": 4.2,
-            "protocol": "gRPC OTel",
-            "status": "active",
-            "color": { "color": "rgba(59, 130, 246, 0.7)", "highlight": "#60a5fa" },
-            "width": 2.0
-        }));
-
-        // Edge Sensor Node 02
-        let sensor_node = "sensor:edge-linux-02";
-        nodes.push(serde_json::json!({
-            "id": sensor_node,
-            "label": "Edge Sensor Node 02",
-            "group": "sensor",
-            "role": "Edge Sentinel",
-            "status": "online",
-            "attestation": "Measured Boot Verified",
-            "reputation": 0.92,
-            "health": "Normal",
-            "latency": "8.7 ms",
-            "ip": "192.168.1.188:4001",
-            "os": "Ubuntu 24.04 LTS",
-            "packets_tx": 3410,
-            "packets_rx": 3290,
-            "title": "Edge Sensor Node 02\nRole: Edge Sentinel\nAttestation: Measured Boot Verified\nReputation: 0.92\nLatency: 8.7 ms",
-            "color": {
-                "background": "#f59e0b",
-                "border": "#fbbf24",
-                "highlight": { "background": "#fbbf24", "border": "#ffffff" }
-            },
-            "size": 20
-        }));
-
-        edges.push(serde_json::json!({
-            "from": sensor_node,
-            "to": gw_node,
-            "id": "e_sensor_gw",
-            "label": "8.7ms (Sync)",
-            "latency_ms": 8.7,
-            "protocol": "Sensor Sync",
-            "status": "active",
-            "color": { "color": "rgba(245, 158, 11, 0.6)", "highlight": "#fbbf24" },
-            "width": 1.5,
-            "dashes": true
-        }));
-
-        edges.push(serde_json::json!({
-            "from": sensor_node,
-            "to": self_id,
-            "id": "e_sensor_local",
-            "label": "9.3ms (P2P Gossip)",
-            "latency_ms": 9.3,
-            "protocol": "P2P Gossip",
-            "status": "active",
-            "color": { "color": "rgba(245, 158, 11, 0.6)", "highlight": "#fbbf24" },
-            "width": 1.5
-        }));
-
-        // Fetch known peers from reputation table
-        let query = "SELECT node_id, score FROM reputation";
-        if let Ok(known_peers) = memory.query_json(query, &[]) {
-            for peer in known_peers {
-                let id = peer["node_id"].as_str().unwrap_or("?");
-                if id == self_id || id == peer_desktop || nodes.iter().any(|n| n["id"] == id) {
-                    continue;
+                    edges.push(serde_json::json!({
+                        "from": self_id,
+                        "to": id,
+                        "id": format!("e_local_{}", id),
+                        "label": "3.5ms (Gossip)",
+                        "latency_ms": 3.5,
+                        "protocol": "Gossip",
+                        "status": if is_threat { "blocked" } else { "active" },
+                        "color": if is_threat {
+                            serde_json::json!({ "color": "rgba(239, 68, 68, 0.6)", "highlight": "#f87171" })
+                        } else {
+                            serde_json::json!({ "color": "rgba(16, 185, 129, 0.6)", "highlight": "#34d399" })
+                        },
+                        "width": 1.5
+                    }));
                 }
-
-                let score = peer["score"].as_f64().unwrap_or(0.85);
-                let is_threat = score < 0.3;
-                let label = if id.starts_with("did:") && id.len() > 18 {
-                    format!("Node {}", &id[12..20])
-                } else {
-                    format!("Node {}", &id[..id.len().min(8)])
-                };
-                nodes.push(serde_json::json!({
-                    "id": id,
-                    "label": label,
-                    "group": if is_threat { "threat" } else { "peer" },
-                    "role": if is_threat { "Suspect Node" } else { "Mesh Peer" },
-                    "status": if is_threat { "quarantined" } else { "online" },
-                    "attestation": if is_threat { "Attestation Failed" } else { "TPM 2.0 Verified" },
-                    "reputation": score,
-                    "health": if is_threat { "Compromised" } else { "Good" },
-                    "latency": "3.5 ms",
-                    "title": format!("Node ID: {}\nReputation: {:.2}\nStatus: {}", id, score, if is_threat { "Quarantined" } else { "Active" }),
-                    "color": if is_threat {
-                        serde_json::json!({ "background": "#ef4444", "border": "#f87171" })
-                    } else {
-                        serde_json::json!({ "background": "#10b981", "border": "#34d399" })
-                    },
-                    "size": 22
-                }));
-
-                edges.push(serde_json::json!({
-                    "from": self_id,
-                    "to": id,
-                    "id": format!("e_local_{}", id),
-                    "label": "3.5ms (Gossip)",
-                    "latency_ms": 3.5,
-                    "protocol": "Gossip",
-                    "status": if is_threat { "blocked" } else { "active" },
-                    "color": if is_threat {
-                        serde_json::json!({ "color": "rgba(239, 68, 68, 0.6)", "highlight": "#f87171" })
-                    } else {
-                        serde_json::json!({ "color": "rgba(16, 185, 129, 0.6)", "highlight": "#34d399" })
-                    },
-                    "width": 1.5
-                }));
             }
         }
 
@@ -6446,7 +6298,7 @@ impl EdrOrchestrator {
             "nodes": nodes,
             "edges": edges,
             "mesh_health": "Optimal",
-            "peer_count": nodes.iter().filter(|n| n["group"] == "peer").count(),
+            "peer_count": self.mesh_peer_count(),
             "total_nodes": nodes.len()
         })
     }
@@ -7040,6 +6892,7 @@ impl EdrOrchestrator {
         // Process Global Intelligence: Gossip Sleuth Defense Learning
         let policy_orch = self.policy.clone();
         let audit_orch = self.audit.clone();
+        let yara_orch = self.yara_manager.clone();
         tokio::spawn(async move {
             while let Some(intel) = peer_intel_rx.recv().await {
                 audit_orch.log(
@@ -7064,6 +6917,7 @@ impl EdrOrchestrator {
                         &defense.learned_rule,
                         defense.severity,
                     );
+                    let _ = yara_orch.hot_load_rule(&defense.learned_rule, &format!("mesh_{}", uuid::Uuid::new_v4()));
                 }
             }
         });
@@ -7196,7 +7050,10 @@ impl EdrOrchestrator {
                 let mut model = model_peer.write().await;
                 model.add_training_sample(&sig);
                 if sig.confidence >= 0.8 {
-                    let _ = crate::yara_gen::generate_yara_from_threat(&sig);
+                    if let Some(rule) = crate::yara_gen::generate_yara_from_threat(&sig) {
+                        let _ = self_threat.yara_manager.hot_load_rule(&rule, &sig.id);
+                        info!("[YARA] Hot-loaded auto-generated YARA rule for peer threat '{}'. Engine updated.", sig.id);
+                    }
                 }
             }
         });
@@ -7922,10 +7779,9 @@ impl EdrOrchestrator {
 
     /// Get an aggregate summary of the security state of the entire zone.
     pub async fn get_zone_summary(&self) -> serde_json::Value {
-        let raw_peer_count = self
+        let peer_count = self
             .mesh_peer_count
             .load(std::sync::atomic::Ordering::Relaxed);
-        let peer_count = std::cmp::max(raw_peer_count, 1);
 
         // Run assess_security safely inside tokio::task::spawn_blocking with a 2-second timeout fallback.
         let assess_handle = tokio::task::spawn_blocking(crate::hardened::assess_security);
@@ -7975,35 +7831,57 @@ impl EdrOrchestrator {
             ]),
         };
 
-        let nodes = serde_json::json!([
-            {
-                "id": "did:osoosi:local",
-                "name": "Local Core Node",
-                "address": "127.0.0.1:3030",
-                "role": "Master Core",
-                "attestation": "TPM 2.0 RoT Verified",
-                "status": "Optimal",
-                "latency_ms": 0.1
-            },
-            {
-                "id": "peer:DESKTOP-4MJ7SCN",
-                "name": "Active Mesh Peer",
-                "address": "192.168.1.105:4001",
-                "role": "Active Mesh Peer",
-                "attestation": "TPM 2.0 Verified (PCR-0 Match)",
-                "status": "Synchronized",
-                "latency_ms": 0.8
-            },
-            {
-                "id": "gw:relay-us-east",
-                "name": "Gateway Relay",
-                "address": "relay.osoosi.net:443",
-                "role": "Rendezvous Relay",
-                "attestation": "Mutual TLS",
-                "status": "Active",
-                "latency_ms": 14.2
+        let host_name = sysinfo::System::host_name()
+            .or_else(|| std::env::var("COMPUTERNAME").ok())
+            .unwrap_or_else(|| "Local Core Node".to_string());
+
+        let mut nodes = vec![serde_json::json!({
+            "id": self.trust.did().to_string(),
+            "name": format!("Local Node ({})", host_name),
+            "address": "127.0.0.1:3030",
+            "role": "Master Core",
+            "attestation": if hardened_status.as_ref().map(|s| s.tpm.available).unwrap_or(false) { "TPM 2.0 RoT Verified" } else { "Software Enclave Verified" },
+            "status": "Optimal",
+            "latency_ms": 0.0
+        })];
+
+        let query = "SELECT node_id, score, last_seen FROM reputation WHERE node_id != ?";
+        if let Ok(known_peers) = self.memory().query_json(query, &[self.trust.did().to_string()]) {
+            for peer in known_peers {
+                let id = peer["node_id"].as_str().unwrap_or("?");
+                let score = peer["score"].as_f64().unwrap_or(0.85);
+                let is_threat = score < 0.3;
+                let label = if id.starts_with("did:") && id.len() > 18 {
+                    format!("Node {}", &id[12..20])
+                } else {
+                    format!("Node {}", &id[..id.len().min(8)])
+                };
+                nodes.push(serde_json::json!({
+                    "id": id,
+                    "name": label,
+                    "address": "P2P Mesh Swarm",
+                    "role": if is_threat { "Suspect Node" } else { "Active Mesh Peer" },
+                    "attestation": if is_threat { "Attestation Failed" } else { "TPM 2.0 Verified (PCR-0 Match)" },
+                    "status": if is_threat { "Quarantined" } else { "Synchronized" },
+                    "latency_ms": 1.2
+                }));
             }
-        ]);
+        }
+
+        let mesh_config = osoosi_types::load_mesh_listen_config();
+        for relay in &mesh_config.nostr_relays {
+            if !relay.trim().is_empty() {
+                nodes.push(serde_json::json!({
+                    "id": format!("relay:{}", relay),
+                    "name": format!("Nostr Relay ({})", relay),
+                    "address": relay,
+                    "role": "Nostr Relay Pool",
+                    "attestation": "Public / Configured Transport",
+                    "status": "Configured",
+                    "latency_ms": 15.0
+                }));
+            }
+        }
 
         serde_json::json!({
             "peer_count": peer_count,

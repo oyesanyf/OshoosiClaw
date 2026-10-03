@@ -231,6 +231,26 @@ enum Commands {
         #[command(subcommand)]
         action: DecisionAction,
     },
+    /// Dynamic, auto-updating YARA-X rule engine and live scanner
+    Yara {
+        #[command(subcommand)]
+        action: YaraAction,
+    },
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum YaraAction {
+    /// Display active YARA-X engine status, rule count, and anti-staleness metrics
+    Status,
+    /// Force a synchronous hot-reload of all local YARA rule files from disk
+    Reload,
+    /// Fetch and integrate the latest community YARA threat intelligence feeds
+    Update,
+    /// Scan a target file against the active YARA-X compiled rule set
+    Scan {
+        /// Path to the file to scan
+        path: PathBuf,
+    },
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -1122,6 +1142,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Some(Commands::Decision { action }) => {
             handle_decision_command(action).await?;
+        }
+        Some(Commands::Yara { action }) => {
+            handle_yara_command(action).await?;
         }
         None => {
             if !cli.grant_access {
@@ -2738,13 +2761,30 @@ async fn ensure_ollama_model() {
     };
 
     if ai.foundation_sec_enabled {
-        let f_model = ai.foundation_sec_model.clone();
-        if !list_stdout.contains(&f_model) {
-            info!("Pulling Cisco Foundation-Sec-8B model: '{}'...", f_model);
-            let pull_fut = tokio::process::Command::new(get_ollama_bin())
-                .args(["pull", &f_model])
-                .status();
-            let _ = tokio::time::timeout(std::time::Duration::from_secs(600), pull_fut).await;
+        let lite_mode = std::env::var("OSOOSI_LITE_MODE")
+            .map(|v| v == "1")
+            .unwrap_or(false);
+        if lite_mode {
+            info!("LITE mode active: Skipping heavy foundation model pulls.");
+        } else {
+            let mut sys = sysinfo::System::new();
+            sys.refresh_memory();
+            let available_ram_gb = sys.available_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+            if available_ram_gb < 16.0 {
+                warn!(
+                    "Available RAM ({:.1} GB) is below the 16.0 GB threshold required for heavy foundation model '{}'. Skipping pull to prevent OOM crash.",
+                    available_ram_gb, ai.foundation_sec_model
+                );
+            } else {
+                let f_model = ai.foundation_sec_model.clone();
+                if !list_stdout.contains(&f_model) {
+                    info!("Pulling Cisco Foundation-Sec-8B model: '{}'...", f_model);
+                    let pull_fut = tokio::process::Command::new(get_ollama_bin())
+                        .args(["pull", &f_model])
+                        .status();
+                    let _ = tokio::time::timeout(std::time::Duration::from_secs(600), pull_fut).await;
+                }
+            }
         }
     }
 
@@ -3766,6 +3806,123 @@ async fn handle_decision_command(action: DecisionAction) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn handle_yara_command(action: YaraAction) -> anyhow::Result<()> {
+    let dashboard_port = std::env::var("OSOOSI_DASHBOARD_PORT")
+        .ok()
+        .and_then(|s| s.parse::<u16>().ok())
+        .unwrap_or(3030);
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(5))
+        .build()?;
+
+    match action {
+        YaraAction::Status => {
+            println!("================================================================================");
+            println!("          OpenỌ̀ṣọ́ọ̀sì Dynamic YARA-X Rule Engine Status");
+            println!("================================================================================");
+
+            let daemon_url = format!("http://127.0.0.1:{}/api/yara/status", dashboard_port);
+            let live_status: Option<osoosi_core::yara::YaraEngineStatus> = match client.get(&daemon_url).send().await {
+                Ok(resp) if resp.status().is_success() => resp.json().await.ok(),
+                _ => None,
+            };
+
+            let (status, source_label) = if let Some(st) = live_status {
+                (st, format!("Connected to live OpenỌ̀ṣọ́ọ̀sì daemon (port {})", dashboard_port))
+            } else {
+                let ym = osoosi_core::yara::YaraManager::new();
+                (ym.get_status(), "Standalone local engine instance".to_string())
+            };
+
+            println!("Engine Mode:              {}", source_label);
+            println!("Total Compiled Rules:     {}", status.total_rules);
+            println!("Custom Signature Rules:   {}", status.custom_rules);
+            println!("Generated ML/Mesh Rules:  {}", status.generated_rules);
+            println!("Community Feed Rules:     {}", status.feed_rules);
+            println!("Total Files Scanned:      {}", status.total_scans);
+            println!("Total Malware Detections: {}", status.total_matches);
+            println!("Last Reloaded At:         {}", status.last_reloaded_at.to_rfc3339());
+            println!(
+                "Last Feed Update:         {}",
+                status
+                    .last_feed_update_at
+                    .map(|t| t.to_rfc3339())
+                    .unwrap_or_else(|| "Never / Offline Built-in".to_string())
+            );
+            println!("Updating In Progress:     {}", status.is_updating);
+            println!("Rule Search Directories:  {:?}", status.directories_searched);
+            println!("================================================================================");
+        }
+        YaraAction::Reload => {
+            println!("[*] Reloading YARA-X rule engine from disk...");
+
+            let daemon_url = format!("http://127.0.0.1:{}/api/yara/reload", dashboard_port);
+            let reloaded_via_daemon = match client.post(&daemon_url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    let json: serde_json::Value = resp.json().await.unwrap_or_default();
+                    let rules = json.get("rules").and_then(|v| v.as_u64()).unwrap_or(0);
+                    println!("[+] Successfully reloaded {} rules via live daemon (port {}).", rules, dashboard_port);
+                    true
+                }
+                _ => false,
+            };
+
+            if !reloaded_via_daemon {
+                let ym = osoosi_core::yara::YaraManager::new();
+                let count = ym.reload_rules_async().await?;
+                println!("[+] Successfully reloaded {} rules via standalone engine.", count);
+            }
+        }
+        YaraAction::Update => {
+            println!("[*] Updating community threat feeds and recompiling YARA rules...");
+
+            let daemon_url = format!("http://127.0.0.1:{}/api/yara/update", dashboard_port);
+            let updated_via_daemon = match client.post(&daemon_url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    let json: serde_json::Value = resp.json().await.unwrap_or_default();
+                    let rules = json.get("rules").and_then(|v| v.as_u64()).unwrap_or(0);
+                    println!("[+] Successfully updated and compiled {} rules via live daemon.", rules);
+                    true
+                }
+                _ => false,
+            };
+
+            if !updated_via_daemon {
+                let ym = osoosi_core::yara::YaraManager::new();
+                let count = ym.update_feeds_and_reload().await?;
+                println!("[+] Successfully updated community feeds. Total active rules: {}", count);
+            }
+        }
+        YaraAction::Scan { path } => {
+            if !path.exists() {
+                eprintln!("[!] Error: Target path '{}' does not exist.", path.display());
+                std::process::exit(1);
+            }
+
+            println!("[*] Initializing YARA-X engine for target scan: {}", path.display());
+            let ym = osoosi_core::yara::YaraManager::new();
+            let matches = ym.scan_file(&path)?;
+
+            println!("================================================================================");
+            println!("                   OpenỌ̀ṣọ́ọ̀sì YARA-X Scan Verdict");
+            println!("================================================================================");
+            println!("Target:               {}", path.display());
+            println!("Matching Rules Found: {}", matches.len());
+            if matches.is_empty() {
+                println!("Verdict:              CLEAN (No matching signatures)");
+            } else {
+                println!("Verdict:              MALICIOUS / SUSPICIOUS MATCH");
+                for (idx, rule_id) in matches.iter().enumerate() {
+                    println!("  [{}] Rule: {}", idx + 1, rule_id);
+                }
+            }
+            println!("================================================================================");
+        }
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4265,6 +4422,35 @@ mod tests {
                 assert_eq!(state, "svchost.exe");
             }
             _ => panic!("Expected Commands::Decision with Evaluate"),
+        }
+    }
+
+    #[test]
+    fn test_yara_cli_parsing() {
+        let cli_status = Cli::try_parse_from(["osoosi", "yara", "status"]).unwrap();
+        match cli_status.command {
+            Some(Commands::Yara { action: YaraAction::Status }) => {}
+            _ => panic!("Expected Commands::Yara with Status"),
+        }
+
+        let cli_reload = Cli::try_parse_from(["osoosi", "yara", "reload"]).unwrap();
+        match cli_reload.command {
+            Some(Commands::Yara { action: YaraAction::Reload }) => {}
+            _ => panic!("Expected Commands::Yara with Reload"),
+        }
+
+        let cli_update = Cli::try_parse_from(["osoosi", "yara", "update"]).unwrap();
+        match cli_update.command {
+            Some(Commands::Yara { action: YaraAction::Update }) => {}
+            _ => panic!("Expected Commands::Yara with Update"),
+        }
+
+        let cli_scan = Cli::try_parse_from(["osoosi", "yara", "scan", "C:\\test\\malware.exe"]).unwrap();
+        match cli_scan.command {
+            Some(Commands::Yara { action: YaraAction::Scan { path } }) => {
+                assert_eq!(path, std::path::PathBuf::from("C:\\test\\malware.exe"));
+            }
+            _ => panic!("Expected Commands::Yara with Scan"),
         }
     }
 }

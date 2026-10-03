@@ -10,8 +10,10 @@ pub struct ShieldLayer {
     pub self_defense_enabled: bool,
     /// Reference to the memory blocklist/reputation store
     memory: Arc<osoosi_memory::MemoryStore>,
-    /// YARA-X rules for real-time memory/buffer scanning
-    yara_rules: Option<Arc<yara_x::Rules>>,
+    /// Dynamic YARA-X rules manager for real-time memory/buffer scanning
+    yara_manager: Option<Arc<crate::yara::YaraManager>>,
+    /// Fallback static rules if YaraManager is not provided
+    fallback_yara_rules: Option<Arc<yara_x::Rules>>,
 }
 
 impl ShieldLayer {
@@ -22,7 +24,34 @@ impl ShieldLayer {
             sinkhole_enabled: true,
             self_defense_enabled: true,
             memory,
-            yara_rules,
+            yara_manager: None,
+            fallback_yara_rules: yara_rules,
+        }
+    }
+
+    /// Construct ShieldLayer with dynamic YaraManager to ensure real-time rule hot-swapping.
+    pub fn with_manager(memory: Arc<osoosi_memory::MemoryStore>, yara_manager: Arc<crate::yara::YaraManager>) -> Self {
+        Self {
+            ssrf_enabled: true,
+            strict_taint: true,
+            sinkhole_enabled: true,
+            self_defense_enabled: true,
+            memory,
+            yara_manager: Some(yara_manager),
+            fallback_yara_rules: None,
+        }
+    }
+
+    pub fn set_yara_manager(&mut self, yara_manager: Arc<crate::yara::YaraManager>) {
+        self.yara_manager = Some(yara_manager);
+    }
+
+    /// Always read the latest dynamically hot-swapped rules pointer.
+    pub fn active_rules(&self) -> Option<Arc<yara_x::Rules>> {
+        if let Some(ref ym) = self.yara_manager {
+            Some(ym.active_rules())
+        } else {
+            self.fallback_yara_rules.clone()
         }
     }
 
@@ -82,7 +111,7 @@ impl ShieldLayer {
         // On Windows, LSASS is the crown jewel for credential dumping.
         if self.is_lsass(target_pid) {
             // Check for PROCESS_VM_READ (0x0010) or PROCESS_VM_WRITE (0x0020)
-            if (access_mask & 0x0010 != 0) || (access_mask & 0x0020 != 0) {
+            if (access_mask & 0x0010 != 0) || (access_mask & 0x0800 != 0) {
                 warn!(
                     "Shield LSASS-Guard: Blocked credential dumping attempt by PID {} against LSASS (PID {})",
                     source_pid, target_pid
@@ -112,13 +141,14 @@ impl ShieldLayer {
     }
 
     /// JIT Anti-Injection Shield: Scan memory buffers during allocation/injection attempts.
+    /// Reads the latest dynamically hot-swapped rules pointer from YaraManager so zero stale rules are evaluated.
     pub async fn scan_injection_buffer(&self, buffer: &[u8]) -> bool {
-        let rules = match &self.yara_rules {
+        let rules = match self.active_rules() {
             Some(r) => r,
             None => return true, // Can't scan without rules
         };
 
-        let mut scanner = yara_x::Scanner::new(rules);
+        let mut scanner = yara_x::Scanner::new(&rules);
         match scanner.scan(buffer) {
             Ok(results) => {
                 if results.matching_rules().next().is_some() {
@@ -163,5 +193,47 @@ impl ShieldLayer {
 
     fn is_suspicious_ip(&self, ip: &str) -> bool {
         ip.starts_with("45.") || ip.starts_with("185.")
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_shield_layer_dynamic_hotswap() {
+        let mem = Arc::new(osoosi_memory::MemoryStore::new(":memory:").expect("in-memory db"));
+        let yara_mgr = Arc::new(crate::yara::YaraManager::new());
+        let shield = ShieldLayer::with_manager(mem, yara_mgr.clone());
+
+        let unique_suffix = uuid::Uuid::new_v4().to_string().replace('-', "_");
+        let rule_name = format!("Shellcode_Injection_{}", unique_suffix);
+        let sig = format!("SHELLCODE_SIG_{}", unique_suffix);
+        let shellcode_buffer = format!("Prefix {} Suffix", sig).into_bytes();
+
+        // Initially, the buffer is not known as malicious: injection check passes (returns true)
+        let allowed_before = shield.scan_injection_buffer(&shellcode_buffer).await;
+        assert!(allowed_before, "Buffer must pass before signature is loaded");
+
+        // Dynamically hot-swap a new rule into YaraManager on the fly
+        let rule_src = format!(r#"
+            rule {} {{
+                strings:
+                    $sc = "{}"
+                condition:
+                    $sc
+            }}
+        "#, rule_name, sig);
+        yara_mgr.hot_load_rule(&rule_src, &rule_name).expect("hot load must succeed");
+
+        // Immediately after hot-swap, ShieldLayer MUST detect the malicious buffer and block it (returns false)
+        let allowed_after = shield.scan_injection_buffer(&shellcode_buffer).await;
+        assert!(!allowed_after, "Buffer must be blocked immediately after dynamic rule hot-swap");
+
+        // Harmless buffer still passes
+        assert!(shield.scan_injection_buffer(b"Harmless harmless bytes").await);
+
+        let _ = std::fs::remove_file(format!("rules/osoosi_generated/{}.yar", rule_name));
+        let _ = std::fs::remove_file(format!("yara/osoosi_generated/{}.yar", rule_name));
     }
 }

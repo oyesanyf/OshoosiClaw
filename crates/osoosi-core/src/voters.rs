@@ -179,9 +179,27 @@ pub(crate) fn scanner_skip_path(path: &str) -> bool {
 /// Yara-X is a memory-safe, pure-Rust implementation of the YARA engine.
 /// It provides high-performance pattern matching without external binaries.
 pub struct YaraXVoter {
-    pub rules: Arc<yara_x::Rules>,
+    pub yara_manager: Arc<crate::yara::YaraManager>,
     pub adaptive: Arc<crate::adaptive::TelemetryController>,
     pub total_detections: Arc<std::sync::atomic::AtomicU64>,
+}
+
+impl YaraXVoter {
+    pub fn new(
+        yara_manager: Arc<crate::yara::YaraManager>,
+        adaptive: Arc<crate::adaptive::TelemetryController>,
+    ) -> Self {
+        Self {
+            yara_manager,
+            adaptive,
+            total_detections: Arc::new(std::sync::atomic::AtomicU64::new(0)),
+        }
+    }
+
+    /// Read the active dynamically hot-swapped rules pointer from YaraManager.
+    pub fn active_rules(&self) -> Arc<yara_x::Rules> {
+        self.yara_manager.active_rules()
+    }
 }
 
 #[async_trait]
@@ -200,21 +218,18 @@ impl ThreatVoter for YaraXVoter {
                 return None;
             }
 
-            // Perform scan via the native yara-x engine with adaptive concurrency
-            let rules = self.rules.clone();
+            // Perform scan via the dynamic yara manager with adaptive concurrency
+            let ym = self.yara_manager.clone();
             let adaptive = self.adaptive.clone();
             
             let scan_result = adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
-                if let Ok(bytes) = std::fs::read(&path_buf) {
-                    let mut scanner = yara_x::Scanner::new(&rules);
-                    if let Ok(results) = scanner.scan(&bytes) {
-                        if let Some(primary) = results.matching_rules().next() {
-                            return Some(VoteResult {
-                                confidence: 1.0,
-                                reason: format!("YaraX: THREAT detected - {}", primary.identifier()),
-                                weight: 1.0,
-                            });
-                        }
+                if let Ok(matches) = ym.scan_file(&path_buf) {
+                    if let Some(primary) = matches.first() {
+                        return Some(VoteResult {
+                            confidence: 1.0,
+                            reason: format!("YaraX: THREAT detected - {}", primary),
+                            weight: 1.0,
+                        });
                     }
                 }
                 None
@@ -1089,6 +1104,61 @@ mod tests {
 
         // 1 initial + 50 burst detections = 51
         assert_eq!(total_detections.load(std::sync::atomic::Ordering::Relaxed), 51);
+    }
+
+    #[tokio::test]
+    async fn test_yarax_voter_dynamic_hotswap() {
+        use osoosi_types::HostEventSource;
+        let yara_mgr = Arc::new(crate::yara::YaraManager::new());
+        let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
+        let voter = YaraXVoter::new(yara_mgr.clone(), adaptive);
+
+        let unique_suffix = uuid::Uuid::new_v4().to_string().replace('-', "_");
+        let rule_name = format!("Threat_Voter_{}", unique_suffix);
+        let sig = format!("VOTER_PAYLOAD_{}", unique_suffix);
+
+        let temp_dir = std::env::temp_dir().join(format!("test_voter_hot_{}", unique_suffix));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let target_bin = temp_dir.join("voter_probe_target.bin");
+        std::fs::write(&target_bin, format!("Prefix {} Suffix", sig).as_bytes()).unwrap();
+
+        let event = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: chrono::Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: serde_json::json!({
+                "Image": target_bin.to_string_lossy().to_string(),
+                "ProcessId": 1234,
+            }),
+            causal_parent: None,
+        };
+
+        // 1. Before dynamic rule addition, vote must return None
+        let vote_before = voter.vote(&event).await;
+        assert!(vote_before.is_none(), "Must not vote threat before dynamic rule exists");
+
+        // 2. Hot-swap new rule on the fly
+        let rule_src = format!(r#"
+            rule {} {{
+                strings:
+                    $sig = "{}"
+                condition:
+                    $sig
+            }}
+        "#, rule_name, sig);
+        yara_mgr.hot_load_rule(&rule_src, &rule_name).expect("hot load ok");
+
+        // 3. Immediately after hot-swap, YaraXVoter MUST detect and vote threat on the exact same event!
+        let vote_after = voter.vote(&event).await;
+        assert!(vote_after.is_some(), "YaraXVoter must detect newly hot-swapped rule on the fly");
+        let res = vote_after.unwrap();
+        assert!(res.reason.contains(&rule_name));
+        assert_eq!(res.confidence, 1.0);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let _ = std::fs::remove_file(format!("rules/osoosi_generated/{}.yar", rule_name));
+        let _ = std::fs::remove_file(format!("yara/osoosi_generated/{}.yar", rule_name));
     }
 }
 

@@ -304,7 +304,7 @@
                                 <div class="feed-item" style="cursor:pointer;" onclick="toggleActivityItem(1)">
                                     <div class="item-info">
                                         <div class="item-title" style="font-size:13px; display:flex; justify-content:space-between; align-items:center;">
-                                            <span>Consensus Heartbeat established with peer DESKTOP-4MJ7SCN</span>
+                                            <span>Autonomous Consensus Engine initialized (Awaiting remote peers)</span>
                                             <i data-lucide="chevron-down" style="width:12px; height:12px; color:var(--text-muted); shrink:0; margin-left:8px;"></i>
                                         </div>
                                         <div class="item-meta">
@@ -430,7 +430,7 @@
                                     <i data-lucide="network"></i>
                                 </div>
                                 <div class="item-info">
-                                    <div class="item-title">Connected Peers: 1</div>
+                                    <div class="item-title">Connected Peers: <span id="network-peer-count-val">0</span></div>
                                     <div class="item-meta">
                                         <span>Network is actively synchronizing state via libp2p GossipSub v1.2</span>
                                     </div>
@@ -451,42 +451,8 @@
                                     <div class="item-meta" style="margin-top:4px;">
                                         <span><i data-lucide="shield"></i> TPM 2.0 RoT Verified</span>
                                         <span><i data-lucide="cpu"></i> Master Core</span>
-                                        <span><i data-lucide="activity"></i> Latency: 0.1 ms</span>
-                                        <span><i data-lucide="arrow-up-down"></i> 14,290 tx / 12,840 rx</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="timeline-item" style="border-left: 2px solid var(--accent-blue); margin-bottom: 8px;">
-                                <div class="item-icon" style="background-color: rgba(0, 210, 255, 0.1); color: var(--accent-blue);">
-                                    <i data-lucide="check-circle"></i>
-                                </div>
-                                <div class="item-info" style="flex:1;">
-                                    <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
-                                        <span>DESKTOP-4MJ7SCN <code style="font-size:11px; opacity:0.8; margin-left:6px;">192.168.1.105:4001</code></span>
-                                        <span class="badge green">Synchronized</span>
-                                    </div>
-                                    <div class="item-meta" style="margin-top:4px;">
-                                        <span><i data-lucide="shield"></i> TPM 2.0 Verified (PCR-0 Match)</span>
-                                        <span><i data-lucide="users"></i> Active Mesh Peer</span>
-                                        <span><i data-lucide="activity"></i> Latency: 0.8 ms</span>
-                                        <span><i data-lucide="arrow-up-down"></i> 9,482 tx / 9,410 rx</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="timeline-item" style="border-left: 2px solid var(--accent-purple); margin-bottom: 8px;">
-                                <div class="item-icon" style="background-color: rgba(168, 85, 247, 0.1); color: var(--accent-purple);">
-                                    <i data-lucide="radio"></i>
-                                </div>
-                                <div class="item-info" style="flex:1;">
-                                    <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
-                                        <span>Gateway Relay US-East <code style="font-size:11px; opacity:0.8; margin-left:6px;">relay.osoosi.net:443</code></span>
-                                        <span class="badge blue">Active</span>
-                                    </div>
-                                    <div class="item-meta" style="margin-top:4px;">
-                                        <span><i data-lucide="shield"></i> Mutual TLS Anchored</span>
-                                        <span><i data-lucide="globe"></i> Rendezvous Relay</span>
-                                        <span><i data-lucide="activity"></i> Latency: 14.2 ms</span>
-                                        <span><i data-lucide="arrow-up-down"></i> 3,120 tx / 2,980 rx</span>
+                                        <span><i data-lucide="activity"></i> Latency: 0.0 ms</span>
+                                        <span><i data-lucide="arrow-up-down"></i> 0 tx / 0 rx</span>
                                     </div>
                                 </div>
                             </div>
@@ -538,9 +504,9 @@
                                     <i data-lucide="activity"></i>
                                 </div>
                                 <div class="item-info">
-                                    <div class="item-title">Gossip heartbeat sync acknowledged with peer DESKTOP-4MJ7SCN</div>
+                                    <div class="item-title">GossipSub v1.2 transport listener ready and active on port 4001</div>
                                     <div class="item-meta">
-                                        <span><i data-lucide="tag"></i> MESH_HEARTBEAT_ACK</span>
+                                        <span><i data-lucide="tag"></i> MESH_LISTENER_ACTIVE</span>
                                         <span><i data-lucide="clock"></i> 14s ago</span>
                                     </div>
                                 </div>
@@ -550,9 +516,9 @@
                                     <i data-lucide="check-circle"></i>
                                 </div>
                                 <div class="item-info">
-                                    <div class="item-title">Relativistic clock synchronization locked with peer DESKTOP-4MJ7SCN (offset: -0.8ms)</div>
+                                    <div class="item-title">Relativistic hardware timer monotonic drift calibrated against TPM 2.0 clock</div>
                                     <div class="item-meta">
-                                        <span><i data-lucide="tag"></i> CONSENSUS_CLOCK_SYNC</span>
+                                        <span><i data-lucide="tag"></i> HARDWARE_CLOCK_SYNC</span>
                                         <span><i data-lucide="clock"></i> 48s ago</span>
                                     </div>
                                 </div>
@@ -638,6 +604,45 @@
                                     <span style="color: var(--accent-green);"><i data-lucide="check-circle" style="width: 14px; height: 14px; vertical-align: middle;"></i> Memory Page Integrity: <strong>Verified</strong></span>
                                 </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Dynamic YARA Engine & Anti-Staleness Synchronizer Card -->
+                <div class="card glass shadow-glow mt-4">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <i data-lucide="shield-check" style="width:18px; color:var(--accent-blue);"></i>
+                            <h3 style="margin:0;">Dynamic YARA-X Engine & Anti-Staleness Status</h3>
+                        </div>
+                        <div class="header-actions" style="display:flex; align-items:center; gap:8px;">
+                            <button class="btn-text" id="yara-reload-btn" onclick="triggerYaraReload()"><i data-lucide="refresh-cw" style="width:14px; margin-right:4px;"></i> Hot Reload</button>
+                            <button class="btn-text" id="yara-update-btn" onclick="triggerYaraFeedUpdate()"><i data-lucide="cloud-download" style="width:14px; margin-right:4px;"></i> Update Feeds</button>
+                        </div>
+                    </div>
+                    <div class="card-body">
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin-bottom:16px;">
+                            <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px;">
+                                <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Total Active Rules</div>
+                                <div id="stat-yara-total" style="font-size:20px; font-weight:700; color:var(--accent-blue); margin-top:4px;">—</div>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px;">
+                                <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Curated / Custom</div>
+                                <div id="stat-yara-custom" style="font-size:20px; font-weight:700; color:var(--accent-green); margin-top:4px;">—</div>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px;">
+                                <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Auto-Generated</div>
+                                <div id="stat-yara-generated" style="font-size:20px; font-weight:700; color:var(--accent-purple); margin-top:4px;">—</div>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px;">
+                                <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Threat Feeds</div>
+                                <div id="stat-yara-feeds" style="font-size:20px; font-weight:700; color:var(--accent-yellow); margin-top:4px;">—</div>
+                            </div>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; flex-wrap:wrap; gap:12px; font-size:12px; color:var(--text-muted); border-top:1px solid rgba(255,255,255,0.06); padding-top:12px;">
+                            <div><i data-lucide="clock" style="width:13px; vertical-align:middle; margin-right:4px;"></i> Last Reloaded: <span id="yara-last-reloaded" style="color:var(--text-normal);">—</span></div>
+                            <div><i data-lucide="cloud" style="width:13px; vertical-align:middle; margin-right:4px;"></i> Last Feed Sync: <span id="yara-last-feed-update" style="color:var(--text-normal);">—</span></div>
+                            <div><i data-lucide="activity" style="width:13px; vertical-align:middle; margin-right:4px;"></i> Engine Status: <span id="yara-engine-state" style="color:var(--accent-green);">Active</span></div>
                         </div>
                     </div>
                 </div>
@@ -793,7 +798,7 @@
                         <div class="mesh-map-legend" style="position: absolute; bottom: 16px; left: 16px; z-index: 20; padding: 12px 14px; border-radius: 8px; font-size: 11px; display: flex; flex-direction: column; gap: 7px; background: rgba(10, 14, 23, 0.85); border: 1px solid var(--glass-border); box-shadow: 0 4px 20px rgba(0, 0, 0, 0.5); backdrop-filter: blur(8px); pointer-events: auto;">
                             <div style="font-weight: 600; color: var(--text-muted); text-transform: uppercase; font-size: 10px; letter-spacing: 0.6px; margin-bottom: 2px;">Mesh Node Classification</div>
                             <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 50%; background: #00d2ff; box-shadow: 0 0 8px #00d2ff; display: inline-block;"></span> <span style="color: #e6edf3;">Local Node (Core)</span></div>
-                            <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 50%; background: #10b981; box-shadow: 0 0 8px #10b981; display: inline-block;"></span> <span style="color: #e6edf3;">Connected Peer (DESKTOP-4MJ7SCN)</span></div>
+                            <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 50%; background: #10b981; box-shadow: 0 0 8px #10b981; display: inline-block;"></span> <span style="color: #e6edf3;">Active Mesh Peers</span></div>
                             <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 50%; background: #a855f7; box-shadow: 0 0 8px #a855f7; display: inline-block;"></span> <span style="color: #e6edf3;">Gateway / Rendezvous Relay</span></div>
                             <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 50%; background: #3b82f6; box-shadow: 0 0 8px #3b82f6; display: inline-block;"></span> <span style="color: #e6edf3;">OTel Telemetry Collector</span></div>
                             <div style="display: flex; align-items: center; gap: 8px;"><span style="width: 10px; height: 10px; border-radius: 50%; background: #f59e0b; box-shadow: 0 0 8px #f59e0b; display: inline-block;"></span> <span style="color: #e6edf3;">Edge Sensor Sentinel</span></div>
@@ -934,39 +939,7 @@
                                     <div class="item-meta" style="margin-top:4px;">
                                         <span><i data-lucide="shield"></i> TPM 2.0 RoT Verified</span>
                                         <span><i data-lucide="cpu"></i> Master Core</span>
-                                        <span><i data-lucide="activity"></i> Latency: 0.1 ms</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="timeline-item" style="border-left: 2px solid var(--accent-blue); margin-bottom: 8px;">
-                                <div class="item-icon" style="background-color: rgba(0, 210, 255, 0.1); color: var(--accent-blue);">
-                                    <i data-lucide="check-circle"></i>
-                                </div>
-                                <div class="item-info" style="flex:1;">
-                                    <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
-                                        <span>DESKTOP-4MJ7SCN <code style="font-size:11px; opacity:0.8; margin-left:6px;">192.168.1.105:4001</code></span>
-                                        <span class="badge green">Synchronized</span>
-                                    </div>
-                                    <div class="item-meta" style="margin-top:4px;">
-                                        <span><i data-lucide="shield"></i> TPM 2.0 Verified (PCR-0 Match)</span>
-                                        <span><i data-lucide="users"></i> Active Mesh Peer</span>
-                                        <span><i data-lucide="activity"></i> Latency: 0.8 ms</span>
-                                    </div>
-                                </div>
-                            </div>
-                            <div class="timeline-item" style="border-left: 2px solid var(--accent-purple); margin-bottom: 8px;">
-                                <div class="item-icon" style="background-color: rgba(168, 85, 247, 0.1); color: var(--accent-purple);">
-                                    <i data-lucide="radio"></i>
-                                </div>
-                                <div class="item-info" style="flex:1;">
-                                    <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
-                                        <span>Gateway Relay US-East <code style="font-size:11px; opacity:0.8; margin-left:6px;">relay.osoosi.net:443</code></span>
-                                        <span class="badge blue">Active</span>
-                                    </div>
-                                    <div class="item-meta" style="margin-top:4px;">
-                                        <span><i data-lucide="shield"></i> Mutual TLS Anchored</span>
-                                        <span><i data-lucide="globe"></i> Rendezvous Relay</span>
-                                        <span><i data-lucide="activity"></i> Latency: 14.2 ms</span>
+                                        <span><i data-lucide="activity"></i> Latency: 0.0 ms</span>
                                     </div>
                                 </div>
                             </div>
@@ -1209,7 +1182,7 @@
                                 <div style="font-size: 16px; font-weight: 700; color: var(--text-header); margin-bottom: 12px;">Autonomous Forensic Investigation Summary</div>
                                 <div style="margin-bottom: 12px;">• <strong>Node Identity &amp; Security Anchor:</strong> Platform node <code>did:osoosi:local</code> is operating under hardware-attested <strong>TPM 2.0</strong> Platform Configuration Register validation. Cryptographic non-repudiation is actively enforced across all process transitions.</div>
                                 <div style="margin-bottom: 12px;">• <strong>Runtime Session Metrics:</strong> System uptime is currently <strong>Active Session (Continuous)</strong>. A total of <strong>12</strong> forensic audit logs have been committed to the immutable Merkle DAG.</div>
-                                <div style="margin-bottom: 12px;">• <strong>Mesh Defense Posture:</strong> <strong>0</strong> threat vectors evaluated under continuous ML classification and heuristic inspection. P2P Byzantine consensus is maintaining synchronized threat signatures with active peer nodes (including <code>DESKTOP-4MJ7SCN</code>).</div>
+                                <div style="margin-bottom: 12px;">• <strong>Mesh Defense Posture:</strong> <strong>0</strong> threat vectors evaluated under continuous ML classification and heuristic inspection. P2P Byzantine consensus is maintaining synchronized threat signatures across the dynamic mesh network.</div>
                                 <div>• <strong>Integrity Assessment:</strong> Zero anomalous OS kernel modifications or syscall hijackings detected. All self-healing repair policies remain armed with automated containment tarpits.</div>
                             </div>
                         </div>

@@ -19,8 +19,10 @@ pub struct StaticAnalyzer {
     malware_scanner: Arc<osoosi_model::MalwareScanner>,
     /// In-memory session cache for static analysis results (SHA256 -> ThreatSignature)
     analysis_cache: dashmap::DashMap<String, Option<ThreatSignature>>,
-    /// Native Yara-X engine
-    yara_engine: Arc<yara_x::Rules>,
+    /// Dynamic YARA-X manager for real-time hot-swapped rules
+    yara_manager: Option<Arc<crate::yara::YaraManager>>,
+    /// Fallback static rules if YaraManager is not provided
+    fallback_yara_engine: Option<Arc<yara_x::Rules>>,
     /// Adaptive concurrency controller
     adaptive: Arc<crate::adaptive::TelemetryController>,
 }
@@ -37,9 +39,46 @@ impl StaticAnalyzer {
             _executor: executor,
             malware_scanner,
             analysis_cache: dashmap::DashMap::new(),
-            yara_engine: yara_rules,
+            yara_manager: None,
+            fallback_yara_engine: Some(yara_rules),
             adaptive,
         }
+    }
+
+    /// Construct StaticAnalyzer with dynamic YaraManager to ensure real-time hot-swapped rule scanning.
+    pub fn with_manager(
+        _memory: Arc<osoosi_memory::MemoryStore>,
+        executor: Arc<dyn osoosi_types::SecuredExecutor>,
+        malware_scanner: Arc<osoosi_model::MalwareScanner>,
+        yara_manager: Arc<crate::yara::YaraManager>,
+        adaptive: Arc<crate::adaptive::TelemetryController>,
+    ) -> Self {
+        Self {
+            _executor: executor,
+            malware_scanner,
+            analysis_cache: dashmap::DashMap::new(),
+            yara_manager: Some(yara_manager),
+            fallback_yara_engine: None,
+            adaptive,
+        }
+    }
+
+    pub fn set_yara_manager(&mut self, yara_manager: Arc<crate::yara::YaraManager>) {
+        self.yara_manager = Some(yara_manager);
+    }
+
+    /// Always reads the latest dynamically hot-swapped rules pointer.
+    pub fn active_rules(&self) -> Option<Arc<yara_x::Rules>> {
+        if let Some(ref ym) = self.yara_manager {
+            Some(ym.active_rules())
+        } else {
+            self.fallback_yara_engine.clone()
+        }
+    }
+
+    /// Clear cached analysis results (e.g. after rule update).
+    pub fn clear_cache(&self) {
+        self.analysis_cache.clear();
     }
 
     /// Analyze a file using multiple static analysis tools and LLM scoring.
@@ -181,7 +220,10 @@ impl StaticAnalyzer {
 
     async fn run_yara_x(&self, file_path: &Path) -> anyhow::Result<Option<String>> {
         let bytes = std::fs::read(file_path)?;
-        let yara_engine = self.yara_engine.clone();
+        let yara_engine = match self.active_rules() {
+            Some(engine) => engine,
+            None => return Ok(None),
+        };
         let malware_scanner = self.malware_scanner.clone();
         let path = file_path.to_path_buf();
 
@@ -288,5 +330,59 @@ impl StaticAnalyzer {
         {
             Ok(None)
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_static_analyzer_dynamic_hotswap() {
+        let mem = Arc::new(osoosi_memory::MemoryStore::new(":memory:").expect("in-memory db"));
+        let yara_mgr = Arc::new(crate::yara::YaraManager::new());
+        let executor = Arc::new(crate::secured_executor::DirectExecutor::new());
+        let malware_scanner = Arc::new(osoosi_model::MalwareScanner::new(Path::new("dummy.onnx")));
+        let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
+
+        let analyzer = StaticAnalyzer::with_manager(
+            mem,
+            executor,
+            malware_scanner,
+            yara_mgr.clone(),
+            adaptive,
+        );
+
+        let unique_suffix = uuid::Uuid::new_v4().to_string().replace('-', "_");
+        let rule_name = format!("Target_Static_{}", unique_suffix);
+        let sig = format!("MALICIOUS_STATIC_{}", unique_suffix);
+
+        let temp_dir = std::env::temp_dir().join(format!("test_sa_hot_{}", unique_suffix));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        let target_file = temp_dir.join("malicious_target.bin");
+        std::fs::write(&target_file, format!("Payload prefix {} suffix", sig).as_bytes()).unwrap();
+
+        // 1. Before dynamic rule addition, run_yara_x must return None
+        let yara_before = analyzer.run_yara_x(&target_file).await.unwrap();
+        assert!(yara_before.is_none(), "Must not match before rule is dynamically added");
+
+        // 2. Hot-swap new rule on the fly
+        let rule_src = format!(r#"
+            rule {} {{
+                strings:
+                    $sig = "{}"
+                condition:
+                    $sig
+            }}
+        "#, rule_name, sig);
+        yara_mgr.hot_load_rule(&rule_src, &rule_name).expect("hot load ok");
+
+        // 3. Immediately after hot-swap, StaticAnalyzer MUST see the new rule without restart!
+        let yara_after = analyzer.run_yara_x(&target_file).await.unwrap();
+        assert_eq!(yara_after, Some(rule_name.clone()), "Must detect new rule immediately after hot-swap");
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+        let _ = std::fs::remove_file(format!("rules/osoosi_generated/{}.yar", rule_name));
+        let _ = std::fs::remove_file(format!("yara/osoosi_generated/{}.yar", rule_name));
     }
 }

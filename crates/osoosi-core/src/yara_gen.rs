@@ -100,3 +100,47 @@ pub fn generate_yara_from_threat(sig: &ThreatSignature) -> Option<String> {
     }
     Some(rule)
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_generate_yara_no_strings() {
+        let sig = ThreatSignature::new("test_node".to_string());
+        assert!(generate_yara_from_threat(&sig).is_none());
+    }
+
+    #[test]
+    fn test_generate_yara_compilation_and_matching() {
+        let temp_dir = std::env::temp_dir().join(format!("osoosi_test_yara_{}", std::process::id()));
+        std::fs::create_dir_all(&temp_dir).unwrap();
+        std::env::set_var("OSOOSI_YARA_DIR", temp_dir.to_string_lossy().to_string());
+
+        let mut sig = ThreatSignature::new("mesh_node_01".to_string());
+        sig.id = "11223344-5566-7788-99aa-bbccddeeff00".to_string();
+        sig.process_name = Some("mimikatz.exe".to_string());
+        sig.hash_blake3 = Some("deadbeefcafebabe0123456789abcdefdeadbeefcafebabe0123456789abcdef".to_string());
+        sig.confidence = 0.95;
+
+        let rule_opt = generate_yara_from_threat(&sig);
+        assert!(rule_opt.is_some(), "Expected generated rule");
+        let rule_str = rule_opt.unwrap();
+
+        // 1. Verify the generated rule compiles with yara_x
+        let mut compiler = yara_x::Compiler::new();
+        compiler.add_source(rule_str.as_str()).expect("Generated YARA rule must compile cleanly");
+        let rules = compiler.build();
+        let mut scanner = yara_x::Scanner::new(&rules);
+
+        // 2. Verify matching on process name
+        let payload_proc = b"dummy process image with mimikatz.exe present";
+        let results = scanner.scan(payload_proc).unwrap();
+        let matches: Vec<&str> = results.matching_rules().map(|r| r.identifier()).collect();
+        assert_eq!(matches.len(), 1);
+        assert_eq!(matches[0], "OsoosiGen_11223344_5566_7788_9");
+
+        // 3. Verify clean file cleanup
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+}
