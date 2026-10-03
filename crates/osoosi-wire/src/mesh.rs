@@ -617,6 +617,15 @@ impl MeshNode {
                             self.swarm.behaviour_mut().kademlia.add_address(&pid, maddr);
                         }
                     }
+                    MeshCommand::DialMultiaddr(addr) => {
+                        if let Ok(maddr) = addr.parse::<Multiaddr>() {
+                            let _ = self.swarm.dial(maddr.clone());
+                            if let Some(Protocol::P2p(pid)) = maddr.iter().last() {
+                                self.swarm.behaviour_mut().gossipsub.add_explicit_peer(&pid);
+                                self.swarm.behaviour_mut().kademlia.add_address(&pid, maddr);
+                            }
+                        }
+                    }
                     MeshCommand::BroadcastTarpit(signal) => {
                         let topic = self.tarpit_topic.clone();
                         self.publish_gossip_json(&topic, &signal);

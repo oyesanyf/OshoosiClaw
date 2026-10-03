@@ -394,6 +394,13 @@ impl JoinGate {
             .map_err(|e| anyhow::anyhow!("Failed to dispatch STIX update to mesh: {}", e))
     }
 
+    /// Dial a multiaddr directly across the P2P wire mesh.
+    pub fn dial_multiaddr(&self, addr: &str) -> anyhow::Result<()> {
+        self.command_tx
+            .try_send(MeshCommand::DialMultiaddr(addr.to_string()))
+            .map_err(|e| anyhow::anyhow!("Failed to dispatch DialMultiaddr command: {}", e))
+    }
+
     /// Quarantine a peer immediately and remove it from active mesh participation.
     /// Drops reputation score to 0.0, ejects from routing, severs socket connectivity, and broadcasts a tripwire alert.
     pub fn quarantine_peer(&self, peer_id: &str, reason: &str) -> anyhow::Result<()> {

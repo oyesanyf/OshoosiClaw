@@ -121,6 +121,8 @@ pub enum MeshCommand {
     BroadcastAuditProof(String),
     /// Active dial a discovered peer to bootstrap connection.
     DialPeer(libp2p::PeerId, String),
+    /// Active dial a multiaddr directly without requiring known PeerId.
+    DialMultiaddr(String),
     /// Broadcast a Tarpit signal for collaborative attacker throttling.
     BroadcastTarpit(TarpitSignal),
     /// Broadcast an FHE-encrypted vote or IOC.

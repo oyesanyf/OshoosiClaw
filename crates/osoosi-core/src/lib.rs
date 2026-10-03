@@ -5816,6 +5816,14 @@ impl EdrOrchestrator {
         self.mesh_gossip_count_atomic.load(Ordering::Relaxed)
     }
 
+    /// Actively dial a bootstrap or remote mesh peer multiaddr.
+    pub async fn dial_mesh_peer(&self, addr: &str) {
+        let tx_guard = self.mesh_command_tx.lock().await;
+        if let Some(ref tx) = *tx_guard {
+            let _ = tx.send(osoosi_wire::MeshCommand::DialMultiaddr(addr.to_string())).await;
+        }
+    }
+
     /// Record an item into the live gossip feed ring buffer.
     pub fn record_gossip_item(&self, item: osoosi_types::GossipFeedItem) {
         if let Ok(mut buffer) = self.mesh_gossip_feed.write() {

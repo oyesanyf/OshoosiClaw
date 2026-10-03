@@ -1154,21 +1154,58 @@ pub fn verify_config_integrity(path: &std::path::Path) -> anyhow::Result<()> {
     }
     let current_hash = format!("{:x}", hasher.finalize());
 
-    let lock_path = path.with_extension("xml.lock");
-    if !lock_path.exists() {
-        // In a real prod environment, we would require this file to exist.
-        // For the prototype, we create it on first run if missing.
-        std::fs::write(&lock_path, &current_hash)?;
-        info!("Created cryptographic lock for config at {:?}", lock_path);
+    let sign_path = path.with_extension(format!(
+        "{}.sign",
+        path.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default()
+    ));
+    let xml_lock_path = path.with_extension("xml.lock");
+
+    let lock_path = if sign_path.exists() {
+        sign_path.clone()
+    } else if xml_lock_path.exists() {
+        xml_lock_path.clone()
+    } else {
+        std::fs::write(&xml_lock_path, &current_hash)?;
+        info!("Created cryptographic lock for config at {:?}", xml_lock_path);
         return Ok(());
-    }
+    };
 
     let locked_hash = std::fs::read_to_string(&lock_path)?;
     if current_hash.trim() != locked_hash.trim() {
+        // If .sign matches current content, heal outdated xml.lock
+        if sign_path.exists() && std::fs::read_to_string(&sign_path).map(|h| h.trim() == current_hash.trim()).unwrap_or(false) {
+            let _ = std::fs::write(&xml_lock_path, &current_hash);
+            return Ok(());
+        }
         return Err(anyhow::anyhow!("Configuration hash mismatch! Expected {}, got {}. Possible tampering detected.", locked_hash, current_hash));
     }
 
     Ok(())
+}
+
+/// Re-sign all configuration locks (xml.lock and .sign sidecars) to match current file contents.
+pub fn sign_all_configs() {
+    if let Some(path) = resolve_config_path() {
+        use sha2::{Sha256, Digest};
+        use std::io::Read;
+
+        if let Ok(mut file) = std::fs::File::open(&path) {
+            let mut hasher = Sha256::new();
+            let mut buffer = [0; 1024];
+            while let Ok(n) = file.read(&mut buffer) {
+                if n == 0 { break; }
+                hasher.update(&buffer[..n]);
+            }
+            let current_hash = format!("{:x}", hasher.finalize());
+            let _ = std::fs::write(path.with_extension("xml.lock"), &current_hash);
+            let sig_ext = format!(
+                "{}.sign",
+                path.extension().map(|e| e.to_string_lossy().to_string()).unwrap_or_default()
+            );
+            let _ = std::fs::write(path.with_extension(sig_ext), &current_hash);
+            info!("Updated cryptographic locks and signatures for config at {:?}", path);
+        }
+    }
 }
 
 pub fn resolve_openssl_path() -> PathBuf {

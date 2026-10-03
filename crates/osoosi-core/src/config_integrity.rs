@@ -37,6 +37,9 @@ pub fn sign_config_file(path: &Path) -> anyhow::Result<String> {
         SIG_EXTENSION
     ));
     std::fs::write(&sig_path, &hash)?;
+    if path.file_name().map(|f| f.to_string_lossy() == "osoosi.toml").unwrap_or(false) {
+        let _ = std::fs::write(path.with_extension("xml.lock"), &hash);
+    }
     info!("Signed config file {:?} → hash={}", path, &hash[..16]);
     Ok(hash)
 }
@@ -81,7 +84,21 @@ pub fn verify_config_integrity(path: &Path) -> anyhow::Result<bool> {
         SIG_EXTENSION
     ));
 
+    let xml_lock = path.with_extension("xml.lock");
+
     if !sig_path.exists() {
+        if xml_lock.exists() {
+            if let Ok(stored) = std::fs::read_to_string(&xml_lock) {
+                if let Ok(curr) = file_sha256(path) {
+                    if curr.trim() == stored.trim() {
+                        let _ = std::fs::write(&sig_path, &curr);
+                        info!("Integrity OK: {:?} (verified via lock sidecar)", path);
+                        return Ok(true);
+                    }
+                }
+            }
+        }
+
         if std::env::var("OSOOSI_SKIP_INTEGRITY_CHECK").is_ok() {
             warn!(
                 "Skipping digital signature check for {:?} (DEBUG MODE ONLY)",
@@ -103,8 +120,21 @@ pub fn verify_config_integrity(path: &Path) -> anyhow::Result<bool> {
     // Verification
     if current_hash == stored_hash {
         info!("Integrity OK: {:?} (SHA-256 hash verified)", path);
+        if path.file_name().map(|f| f.to_string_lossy() == "osoosi.toml").unwrap_or(false) {
+            let _ = std::fs::write(&xml_lock, &current_hash);
+        }
         Ok(true)
     } else {
+        // Fallback: check if xml.lock was signed with the current hash
+        if xml_lock.exists() {
+            if let Ok(stored) = std::fs::read_to_string(&xml_lock) {
+                if current_hash.trim() == stored.trim() {
+                    let _ = std::fs::write(&sig_path, &current_hash);
+                    info!("Integrity OK: {:?} (healed .sign from valid lock)", path);
+                    return Ok(true);
+                }
+            }
+        }
         error!(
             "CRITICAL SECURITY FAILURE: INTEGRITY HASH INVALID FOR {:?}",
             path
@@ -120,6 +150,10 @@ pub fn verify_config_integrity(path: &Path) -> anyhow::Result<bool> {
 /// - `osoosi.toml` (agent configuration)
 /// - `config/firewall_allowlist.txt` (firewall rules)
 pub fn verify_all_critical_configs() -> Vec<String> {
+    let root = osoosi_types::resolve_config_path()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
     let critical_files = [
         "config/openshell-policy.yaml",
         "osoosi.toml",
@@ -131,11 +165,17 @@ pub fn verify_all_critical_configs() -> Vec<String> {
     let mut tampered = Vec::new();
 
     for file in &critical_files {
-        let path = Path::new(file);
+        let p_rel = Path::new(file);
+        let path = if p_rel.exists() {
+            p_rel.to_path_buf()
+        } else {
+            root.join(file)
+        };
+
         if !path.exists() {
             continue;
         }
-        match verify_config_integrity(path) {
+        match verify_config_integrity(&path) {
             Ok(true) => {}
             Ok(false) => {
                 tampered.push(file.to_string());
@@ -147,7 +187,7 @@ pub fn verify_all_critical_configs() -> Vec<String> {
     }
 
     if let Some(resolved) = osoosi_types::resolve_config_path() {
-        if resolved.exists() && resolved != Path::new("osoosi.toml") {
+        if resolved.exists() {
             match verify_config_integrity(&resolved) {
                 Ok(true) => {}
                 Ok(false) => {
@@ -165,6 +205,10 @@ pub fn verify_all_critical_configs() -> Vec<String> {
 
 /// Re-sign all critical configuration files (call after legitimate edits).
 pub fn sign_all_critical_configs() {
+    let root = osoosi_types::resolve_config_path()
+        .and_then(|p| p.parent().map(|p| p.to_path_buf()))
+        .unwrap_or_else(|| std::path::PathBuf::from("."));
+
     let critical_files = [
         "config/openshell-policy.yaml",
         "osoosi.toml",
@@ -174,19 +218,28 @@ pub fn sign_all_critical_configs() {
     ];
 
     for file in &critical_files {
-        let path = Path::new(file);
+        let p_rel = Path::new(file);
+        let path = if p_rel.exists() {
+            p_rel.to_path_buf()
+        } else {
+            root.join(file)
+        };
+
         if path.exists() {
-            if let Err(e) = sign_config_file(path) {
+            if let Err(e) = sign_config_file(&path) {
                 warn!("Could not sign {:?}: {}", path, e);
             }
         }
     }
 
     if let Some(resolved) = osoosi_types::resolve_config_path() {
-        if resolved.exists() && resolved != Path::new("osoosi.toml") {
+        if resolved.exists() {
             if let Err(e) = sign_config_file(&resolved) {
                 warn!("Could not sign resolved config {:?}: {}", resolved, e);
             }
         }
     }
+
+    // Also update all locks in osoosi_types
+    osoosi_types::sign_all_configs();
 }

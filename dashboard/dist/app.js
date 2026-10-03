@@ -49,7 +49,9 @@ const state = {
         quarantine_confidence_threshold: 0.95
     },
     blockingRules: [],
-    supervisorStatus: null
+    supervisorStatus: null,
+    bootstrapPeers: [],
+    myWanMultiaddr: ''
 };
 
 let updateInterval = null;
@@ -77,6 +79,7 @@ function startApp() {
     renderRepairView(state.repairStatus || null);
     renderMalwareView(state.malwareDetections || []);
     renderMeshView(state.mesh || { peer_count: 1 });
+    fetchBootstrapPeers();
     renderGossipView();
     renderZoneView();
     renderApprovalsView();
@@ -328,6 +331,7 @@ function setupNav() {
                 document.getElementById('mesh-view').classList.add('active');
                 viewTitle.innerText = "Mesh Network";
                 renderMeshView(state.mesh || { peer_count: state.peer_count });
+                fetchBootstrapPeers();
             } else if (view === 'gossip') {
                 document.getElementById('gossip-view').classList.add('active');
                 viewTitle.innerText = "Inter-Node Gossip Feed";
@@ -401,6 +405,7 @@ function setupNav() {
                 'scanner': 'malware',
                 'rl': 'skyrl',
                 'models': 'skyrl',
+                'network': 'mesh',
             };
             const resolvedView = aliasMap[hash] || hash;
             const target = document.querySelector(`.nav-item[data-view="${resolvedView}"]`);
@@ -1260,6 +1265,147 @@ window.meshReleasePeer = async function(id) {
     await fetch(`${API_BASE}/quarantined-peers/${id}/release`, { method: 'POST', headers: {'x-osoosi-quarantine-key': 'admin'} });
     updateDashboard();
 };
+
+/**
+ * WAN Mesh & Bootstrap Peer Management
+ */
+async function fetchBootstrapPeers() {
+    try {
+        const res = await fetch(`${API_BASE}/mesh/bootstrap-peers`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (data.recommended_multiaddr) {
+            state.myWanMultiaddr = data.recommended_multiaddr;
+            const input = document.getElementById('this-node-wan-addr');
+            if (input) input.value = data.recommended_multiaddr;
+        }
+        if (data.duckdns_template) {
+            const preview = document.getElementById('duckdns-preview');
+            if (preview) preview.innerText = data.duckdns_template;
+        }
+        state.bootstrapPeers = Array.isArray(data.peers) ? data.peers : [];
+        renderBootstrapPeersList();
+    } catch (err) {
+        console.warn('Failed to fetch bootstrap peers:', err);
+    }
+}
+
+function renderBootstrapPeersList() {
+    const list = document.getElementById('bootstrap-peers-list');
+    if (!list) return;
+
+    if (!state.bootstrapPeers || state.bootstrapPeers.length === 0) {
+        list.innerHTML = `<div style="font-size:12px; color:var(--text-muted); font-style:italic; padding:8px 4px;">Zero remote bootstrap peers configured. Add an address above to link machines on other networks.</div>`;
+        return;
+    }
+
+    list.innerHTML = state.bootstrapPeers.map((peer, idx) => `
+        <div style="display:flex; justify-content:space-between; align-items:center; background:rgba(255,255,255,0.02); border:1px solid var(--glass-border); border-radius:6px; padding:6px 10px;">
+            <div style="display:flex; align-items:center; gap:8px; overflow:hidden;">
+                <span class="badge blue" style="font-size:10px; padding:2px 6px;">PEER</span>
+                <code style="font-size:12px; font-family:monospace; color:#38bdf8; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">${escapeHtml(peer)}</code>
+            </div>
+            <button class="btn-text" onclick="removeBootstrapPeer(${idx})" style="color:var(--accent-red); font-size:11px; cursor:pointer; padding:2px 6px;">Remove</button>
+        </div>
+    `).join('');
+}
+
+function addBootstrapPeer() {
+    const input = document.getElementById('new-bootstrap-peer-input');
+    if (!input) return;
+    const val = input.value.trim();
+    if (!val) {
+        alert("Please enter a multiaddr (e.g. /dns4/myedr.duckdns.org/tcp/4001 or /ip4/71.194.142.20/tcp/4001)");
+        return;
+    }
+    if (!val.startsWith('/')) {
+        alert("Bootstrap peer multiaddr must start with / (e.g. /dns4/..., /dns/..., /ip4/..., or /ip6/...)");
+        return;
+    }
+    if (state.bootstrapPeers.includes(val)) {
+        alert("This peer address is already configured.");
+        return;
+    }
+
+    state.bootstrapPeers.push(val);
+    input.value = '';
+    renderBootstrapPeersList();
+}
+
+function removeBootstrapPeer(idx) {
+    if (idx >= 0 && idx < state.bootstrapPeers.length) {
+        state.bootstrapPeers.splice(idx, 1);
+        renderBootstrapPeersList();
+    }
+}
+
+async function saveBootstrapPeers() {
+    const statusMsg = document.getElementById('bootstrap-peers-status-msg');
+    if (statusMsg) {
+        statusMsg.style.color = "var(--accent-blue)";
+        statusMsg.innerText = "Saving configuration & dialing...";
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/mesh/bootstrap-peers`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                peers: state.bootstrapPeers,
+                dial_now: true
+            })
+        });
+
+        const data = await res.json();
+        if (res.ok && data.ok) {
+            if (statusMsg) {
+                statusMsg.style.color = "var(--accent-green)";
+                statusMsg.innerText = "✓ Config saved and dialed!";
+                setTimeout(() => { if (statusMsg) statusMsg.innerText = ""; }, 4000);
+            }
+            showNotification("Bootstrap peers updated and dialed!", "success");
+            updateDashboard();
+        } else {
+            const err = data.error || "Failed to update bootstrap peers";
+            if (statusMsg) {
+                statusMsg.style.color = "var(--accent-red)";
+                statusMsg.innerText = `Error: ${err}`;
+            }
+            showNotification(err, "error");
+        }
+    } catch (e) {
+        if (statusMsg) {
+            statusMsg.style.color = "var(--accent-red)";
+            statusMsg.innerText = `Network error: ${e.message}`;
+        }
+        showNotification(`Network error: ${e.message}`, "error");
+    }
+}
+
+function copyThisNodeWanAddr() {
+    const input = document.getElementById('this-node-wan-addr');
+    if (!input) return;
+    const text = input.value || '';
+    if (navigator.clipboard && navigator.clipboard.writeText) {
+        navigator.clipboard.writeText(text).then(() => {
+            showNotification("WAN Multiaddr copied to clipboard!", "success");
+        }).catch(() => {
+            input.select();
+            document.execCommand('copy');
+            showNotification("WAN Multiaddr copied to clipboard!", "success");
+        });
+    } else {
+        input.select();
+        document.execCommand('copy');
+        showNotification("WAN Multiaddr copied to clipboard!", "success");
+    }
+}
+
+window.copyThisNodeWanAddr = copyThisNodeWanAddr;
+window.addBootstrapPeer = addBootstrapPeer;
+window.removeBootstrapPeer = removeBootstrapPeer;
+window.saveBootstrapPeers = saveBootstrapPeers;
+window.fetchBootstrapPeers = fetchBootstrapPeers;
 
 /**
  * Render malware scanner view with drill-down details

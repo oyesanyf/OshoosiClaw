@@ -2513,8 +2513,17 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
 
     // 1. Gemma 4 E4B ONNX (primary local reasoning model). Ollama is preferred
     // when installed; these files support pure ONNX Runtime deployments.
-    if std::env::var("OSOOSI_LITE_MODE").map(|v| v == "1").unwrap_or(false) {
-        info!("LITE MODE active: Skipping Gemma 4 ONNX download to save disk space.");
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    let available_ram_gb = sys.available_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+    let force_onnx = std::env::var("OSOOSI_FORCE_GEMMA_ONNX").map(|v| v == "1").unwrap_or(false);
+    let lite_mode = std::env::var("OSOOSI_LITE_MODE").map(|v| v == "1").unwrap_or(false);
+
+    if lite_mode || (!force_onnx && available_ram_gb < 8.0) {
+        info!(
+            "Available RAM ({:.1} GB) is below the 8.0 GB threshold (or LITE MODE active). Skipping heavy Gemma 4 ONNX shard download to prevent memory exhaustion.",
+            available_ram_gb
+        );
     } else {
         let gemma_repo_name = std::env::var("OSOOSI_GEMMA_ONNX_REPO")
             .unwrap_or_else(|_| "onnx-community/gemma-4-E4B-it-ONNX".to_string());
