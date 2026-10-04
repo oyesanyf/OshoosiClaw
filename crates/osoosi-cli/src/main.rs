@@ -426,6 +426,7 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    set_panic_hook();
     osoosi_types::persist_environment_paths();
     let _ = fs::create_dir_all(resolve_log_directory());
     osoosi_core::init_hybrid_concurrency();
@@ -497,6 +498,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     let is_bootstrapping = matches!(cli.command, Some(Commands::BootstrapModels));
 
     if is_granting {
+        osoosi_core::spawn_memory_watchdog();
         handle_grant_access().await?;
         let _ = osoosi_core::firewall::open_mesh_ports().await;
         // Provision models during initial setup
@@ -505,6 +507,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     } 
     
     if is_bootstrapping {
+        osoosi_core::spawn_memory_watchdog();
         // Ensure essentials on bootstrap
         let executor = Arc::new(DirectExecutor::new());
         let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
@@ -697,18 +700,25 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 // Only download if DB is empty AND the file is missing (or if we want a fresh copy/update)
                 // Note: fetcher.download_nsrl_streaming also has internally resumable logic.
                 if nsrl_count == 0 && !db_file.exists() {
-                    info!("[NSRL Background] NSRL data missing. Initiating autonomous background download (non-blocking)...");
-                    match fetcher.download_nsrl_streaming(&nsrl_dir).await {
-                        Ok(db_path) => {
-                            info!("[NSRL Background] Download complete at {:?}. Importing (fast path when possible)...", db_path);
-                            import_nsrl_with_fallback(
-                                &nsrl_orch.memory(),
-                                db_path.as_path(),
-                                &fetcher,
-                            )
-                            .await;
+                    let mut sys = sysinfo::System::new();
+                    sys.refresh_memory();
+                    let free_mb = sys.available_memory() as f64 / (1024.0 * 1024.0);
+                    if free_mb < 500.0 {
+                        warn!("❌ [OUT OF MEMORY GUARD] Skipping NSRL background download: System available RAM ({:.1} MB) is below 500 MB safety threshold.", free_mb);
+                    } else {
+                        info!("[NSRL Background] NSRL data missing. Initiating autonomous background download (non-blocking)...");
+                        match fetcher.download_nsrl_streaming(&nsrl_dir).await {
+                            Ok(db_path) => {
+                                info!("[NSRL Background] Download complete at {:?}. Importing (fast path when possible)...", db_path);
+                                import_nsrl_with_fallback(
+                                    &nsrl_orch.memory(),
+                                    db_path.as_path(),
+                                    &fetcher,
+                                )
+                                .await;
+                            }
+                            Err(e) => info!("[NSRL Background] NSRL download paused or unavailable: {}. Agent continues with in-memory NSRL cache and peer mesh intelligence.", e),
                         }
-                        Err(e) => info!("[NSRL Background] NSRL download paused or unavailable: {}. Agent continues with in-memory NSRL cache and peer mesh intelligence.", e),
                     }
                 } else if nsrl_count == 0 && db_file.exists() {
                     info!("[NSRL Background] NSRL SQLite found on disk but agent DB empty. Importing...");
@@ -2183,17 +2193,27 @@ impl<W> FlushOnWarnErrorAppender<W> {
     }
 }
 
+fn matches_flush_marker(buf: &[u8]) -> bool {
+    const PATTERNS: &[&[u8]] = &[
+        b"ERROR",
+        b"WARN",
+        "🚨".as_bytes(),
+        "💥".as_bytes(),
+        "⚠️".as_bytes(),
+        "❌".as_bytes(),
+    ];
+    for pattern in PATTERNS {
+        if buf.windows(pattern.len()).any(|w| w == *pattern) {
+            return true;
+        }
+    }
+    false
+}
+
 impl<W: std::io::Write> std::io::Write for FlushOnWarnErrorAppender<W> {
     fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
         let written = self.inner.write(buf)?;
-        let chunk = String::from_utf8_lossy(&buf[..written]);
-        if chunk.contains("ERROR")
-            || chunk.contains("WARN")
-            || chunk.contains("🚨")
-            || chunk.contains("💥")
-            || chunk.contains("⚠️")
-            || chunk.contains("❌")
-        {
+        if matches_flush_marker(&buf[..written]) {
             let _ = self.inner.flush();
         }
         Ok(written)
@@ -2679,6 +2699,9 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
         "decoder_model_merged.onnx_data_8",
         "onnx/decoder_model_merged.onnx_data_8",
     ] {
+        if !check_oom_guard(&mut sys) {
+            return Ok(());
+        }
         if let Ok(_) = gemma_repo.get(filename).await {
             tracing::debug!("Cached Gemma component: {}", filename);
         }
@@ -2697,12 +2720,18 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
         let smollm_repo = api.model("HuggingFaceTB/SmolLM2-135M-Instruct".to_string());
         info!("Ensuring SmolLM components are cached...");
         for file in ["model.safetensors", "tokenizer.json", "config.json"] {
+            if !check_oom_guard(&mut sys) {
+                return Ok(());
+            }
             let _ = smollm_repo.get(file).await;
         }
 
         // 2. SmolLM2-135M-Instruct (ONNX)
         let smollm_onnx_repo = api.model("onnx-community/SmolLM2-135M-Instruct".to_string());
         for filename in ["model.onnx", "smollm2-135m-it.onnx", "onnx/model.onnx"] {
+            if !check_oom_guard(&mut sys) {
+                return Ok(());
+            }
             let _ = smollm_onnx_repo.get(filename).await;
         }
     }
@@ -2741,6 +2770,9 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
         'malconv_hf: for repo_name in malconv_repos {
             let repo = api.model(repo_name.to_string());
             for file in malconv_files {
+                if !check_oom_guard(&mut sys) {
+                    return Ok(());
+                }
                 info!("📥 Verifying MalConv AI component: `{}` / `{}`...", repo_name, file);
                 match repo.get(file).await {
                     Ok(downloaded) => {
@@ -2798,6 +2830,9 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
         'sorel_hf: for repo_name in sorel_repos {
             let repo = api.model(repo_name.to_string());
             for file in ["sorel_ffnn.pt", "model.pt", "weights.pt"] {
+                if !check_oom_guard(&mut sys) {
+                    return Ok(());
+                }
                 match repo.get(file).await {
                     Ok(downloaded) => {
                         if let Ok(meta) = std::fs::metadata(&downloaded) {
@@ -2832,6 +2867,9 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
         warn!("⚠️ MalConv weights could not be provisioned from any source. Static AI analysis will be degraded.");
     }
     if !sorel_dest.exists() && !sorel_st.exists() {
+        if !check_oom_guard(&mut sys) {
+            return Ok(());
+        }
         warn!("⚠️ SOREL-20M weights could not be provisioned from remote mirrors. Attempting local build from dataset folder...");
         // Use a dummy path for the call; the function will resolve the dataset folder itself.
         let sorel_handle = Arc::new(tokio::sync::RwLock::new(None));
@@ -2849,11 +2887,17 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
             available_ram_gb
         );
     } else {
+        if !check_oom_guard(&mut sys) {
+            return Ok(());
+        }
         info!("Ensuring SecureBERT components are cached...");
         let sb_repo = api.model("MarsSecurity/securebert-onnx".to_string());
         let bert_dir = models_dir.join("securebert");
         let _ = fs::create_dir_all(&bert_dir);
         for file in ["tokenizer.json", "model.onnx", "config.json"] {
+            if !check_oom_guard(&mut sys) {
+                return Ok(());
+            }
             if let Ok(path) = sb_repo.get(file).await {
                 let _ = fs::copy(&path, bert_dir.join(file));
             }
@@ -2948,6 +2992,14 @@ async fn ensure_ollama_model() {
 
     if selected.is_none() {
         for model in &candidates {
+            let mut sys = sysinfo::System::new();
+            sys.refresh_memory();
+            let free_mb = sys.available_memory() as f64 / (1024.0 * 1024.0);
+            if free_mb < 500.0 {
+                warn!("❌ [OUT OF MEMORY GUARD] Skipping Ollama model '{}' pull: Available RAM ({:.1} MB) is below 500 MB safety threshold.", model, free_mb);
+                break;
+            }
+
             let pull_fut = tokio::process::Command::new(get_ollama_bin())
                 .args(["pull", model])
                 .status();
@@ -4654,10 +4706,22 @@ mod tests {
         appender.write_all(b"WARN: Potential risk detected\n").unwrap();
         assert!(flushed.load(Ordering::SeqCst), "WARN must trigger flush");
 
-        // Reset and check emoji markers
+        // Reset and check all emoji markers
+        for marker in [
+            "🚨 [CRITICAL MEMORY EXHAUSTION]",
+            "💥 [FATAL PANIC]",
+            "⚠️ [LOW MEMORY WARNING]",
+            "❌ [OUT OF MEMORY GUARD]",
+        ] {
+            flushed.store(false, Ordering::SeqCst);
+            appender.write_all(marker.as_bytes()).unwrap();
+            assert!(flushed.load(Ordering::SeqCst), "Marker '{}' must trigger flush", marker);
+        }
+
+        // Empty buffer should not trigger flush
         flushed.store(false, Ordering::SeqCst);
-        appender.write_all("🚨 [CRITICAL MEMORY EXHAUSTION]".as_bytes()).unwrap();
-        assert!(flushed.load(Ordering::SeqCst), "Emoji alert must trigger flush");
+        appender.write_all(b"").unwrap();
+        assert!(!flushed.load(Ordering::SeqCst), "Empty buffer must not trigger flush");
     }
 }
 

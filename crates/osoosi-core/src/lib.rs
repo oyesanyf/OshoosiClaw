@@ -33,7 +33,10 @@ pub mod triage;
 pub mod version_utils;
 pub mod watchdog;
 pub mod memory_watchdog;
-pub use memory_watchdog::{evaluate_memory_pressure, get_available_memory_mb, spawn_memory_watchdog, MemoryPressureLevel};
+pub use memory_watchdog::{
+    evaluate_memory_pressure, get_available_memory_mb, spawn_memory_watchdog,
+    MemoryPressureLevel, MemoryWatchdogDebouncer,
+};
 pub mod yara;
 pub mod yara_gen;
 pub mod pe_inspector;

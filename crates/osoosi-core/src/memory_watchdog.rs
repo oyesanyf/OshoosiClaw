@@ -38,6 +38,59 @@ pub fn get_available_memory_mb() -> f64 {
     sys.available_memory() as f64 / (1024.0 * 1024.0)
 }
 
+/// Debouncing tracker for memory watchdog alerts.
+#[derive(Debug, Clone)]
+pub struct MemoryWatchdogDebouncer {
+    pub last_critical: Option<Instant>,
+    pub last_warn: Option<Instant>,
+    pub critical_debounce: Duration,
+    pub warn_debounce: Duration,
+}
+
+impl Default for MemoryWatchdogDebouncer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
+impl MemoryWatchdogDebouncer {
+    /// Creates a debouncer with 10s critical alert interval and 30s warning interval.
+    pub fn new() -> Self {
+        Self {
+            last_critical: None,
+            last_warn: None,
+            critical_debounce: Duration::from_secs(10),
+            warn_debounce: Duration::from_secs(30),
+        }
+    }
+
+    /// Evaluates whether an alert should be emitted for the given level at `now`.
+    /// Automatically updates the recorded timestamp if an alert is emitted.
+    pub fn should_emit(&mut self, level: MemoryPressureLevel, now: Instant) -> bool {
+        match level {
+            MemoryPressureLevel::Critical => {
+                let emit = self
+                    .last_critical
+                    .map_or(true, |t| now.saturating_duration_since(t) >= self.critical_debounce);
+                if emit {
+                    self.last_critical = Some(now);
+                }
+                emit
+            }
+            MemoryPressureLevel::Warning => {
+                let emit = self
+                    .last_warn
+                    .map_or(true, |t| now.saturating_duration_since(t) >= self.warn_debounce);
+                if emit {
+                    self.last_warn = Some(now);
+                }
+                emit
+            }
+            MemoryPressureLevel::Normal => false,
+        }
+    }
+}
+
 /// Spawns a proactive memory watchdog background task (if not already running).
 ///
 /// Loops every 2 seconds:
@@ -55,18 +108,18 @@ pub fn spawn_memory_watchdog() -> Option<tokio::task::JoinHandle<()>> {
     let handle = tokio::spawn(async move {
         let mut sys = sysinfo::System::new();
         let mut interval = tokio::time::interval(Duration::from_secs(2));
-        let mut last_critical: Option<Instant> = None;
-        let mut last_warn: Option<Instant> = None;
+        interval.set_missed_tick_behavior(tokio::time::MissedTickBehavior::Delay);
+        let mut debouncer = MemoryWatchdogDebouncer::new();
 
         loop {
             interval.tick().await;
 
             sys.refresh_memory();
             let avail_mb = sys.available_memory() as f64 / (1024.0 * 1024.0);
+            let level = evaluate_memory_pressure(avail_mb);
 
-            if avail_mb < 250.0 {
-                let should_log = last_critical.map_or(true, |t| t.elapsed() >= Duration::from_secs(10));
-                if should_log {
+            if level == MemoryPressureLevel::Critical {
+                if debouncer.should_emit(MemoryPressureLevel::Critical, Instant::now()) {
                     error!(
                         "🚨 [CRITICAL MEMORY EXHAUSTION] System free RAM is critically low: {:.1} MB! High risk of OS Out-Of-Memory (OOM) termination!",
                         avail_mb
@@ -75,16 +128,17 @@ pub fn spawn_memory_watchdog() -> Option<tokio::task::JoinHandle<()>> {
                         "\n🚨 [OUT OF MEMORY DANGER] Free RAM is only {:.1} MB! Windows commit limit nearing exhaustion. Check running applications.\n",
                         avail_mb
                     );
-                    last_critical = Some(Instant::now());
+                    use std::io::Write;
+                    let _ = std::io::stderr().flush();
                 }
-            } else if avail_mb < 600.0 {
-                let should_log = last_warn.map_or(true, |t| t.elapsed() >= Duration::from_secs(30));
-                if should_log {
+            } else if level == MemoryPressureLevel::Warning {
+                if debouncer.should_emit(MemoryPressureLevel::Warning, Instant::now()) {
                     warn!(
                         "⚠️ [LOW MEMORY WARNING] Available system RAM is low: {:.1} MB. Heavy tasks throttled.",
                         avail_mb
                     );
-                    last_warn = Some(Instant::now());
+                    use std::io::Write;
+                    let _ = std::io::stderr().flush();
                 }
             }
         }
@@ -99,12 +153,43 @@ mod tests {
 
     #[test]
     fn test_evaluate_memory_pressure_thresholds() {
+        assert_eq!(evaluate_memory_pressure(0.0), MemoryPressureLevel::Critical);
         assert_eq!(evaluate_memory_pressure(100.0), MemoryPressureLevel::Critical);
-        assert_eq!(evaluate_memory_pressure(249.9), MemoryPressureLevel::Critical);
+        assert_eq!(evaluate_memory_pressure(249.99), MemoryPressureLevel::Critical);
         assert_eq!(evaluate_memory_pressure(250.0), MemoryPressureLevel::Warning);
-        assert_eq!(evaluate_memory_pressure(599.9), MemoryPressureLevel::Warning);
+        assert_eq!(evaluate_memory_pressure(599.99), MemoryPressureLevel::Warning);
         assert_eq!(evaluate_memory_pressure(600.0), MemoryPressureLevel::Normal);
         assert_eq!(evaluate_memory_pressure(8192.0), MemoryPressureLevel::Normal);
+    }
+
+    #[test]
+    fn test_memory_watchdog_debouncer_logic() {
+        let mut debouncer = MemoryWatchdogDebouncer::new();
+        let start = Instant::now();
+
+        // 1. Initial critical emits immediately
+        assert!(debouncer.should_emit(MemoryPressureLevel::Critical, start));
+
+        // 2. Next tick at +2s is debounced
+        assert!(!debouncer.should_emit(MemoryPressureLevel::Critical, start + Duration::from_secs(2)));
+
+        // 3. Tick at +9s is still debounced
+        assert!(!debouncer.should_emit(MemoryPressureLevel::Critical, start + Duration::from_secs(9)));
+
+        // 4. Tick at +10s emits
+        assert!(debouncer.should_emit(MemoryPressureLevel::Critical, start + Duration::from_secs(10)));
+
+        // 5. Warning level is independent: initial warning emits immediately
+        assert!(debouncer.should_emit(MemoryPressureLevel::Warning, start + Duration::from_secs(11)));
+
+        // 6. Next warning at +20s (9s after last warning) is debounced
+        assert!(!debouncer.should_emit(MemoryPressureLevel::Warning, start + Duration::from_secs(20)));
+
+        // 7. Warning at +41s (30s after +11s) emits
+        assert!(debouncer.should_emit(MemoryPressureLevel::Warning, start + Duration::from_secs(41)));
+
+        // 8. Normal pressure never emits
+        assert!(!debouncer.should_emit(MemoryPressureLevel::Normal, start + Duration::from_secs(42)));
     }
 
     #[test]
