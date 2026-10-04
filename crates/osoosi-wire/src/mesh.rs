@@ -19,7 +19,42 @@ use std::time::Duration;
 use tokio::sync::mpsc;
 use tracing::{debug, error, info, warn};
 
-// Helper functions removed as they are now in osoosi_types::config
+static CACHED_PUBLIC_IP: tokio::sync::OnceCell<String> = tokio::sync::OnceCell::const_new();
+
+pub async fn detect_public_ip() -> String {
+    if let Ok(ip) = std::env::var("OSOOSI_PUBLIC_IP") {
+        let trimmed = ip.trim();
+        if !trimmed.is_empty() {
+            return trimmed.to_string();
+        }
+    }
+
+    if let Some(cached) = CACHED_PUBLIC_IP.get() {
+        return cached.clone();
+    }
+
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_millis(800))
+        .build();
+
+    let fetched = if let Ok(client) = client {
+        match client.get("https://api.ipify.org").send().await {
+            Ok(resp) if resp.status().is_success() => {
+                resp.text().await.ok().map(|t| t.trim().to_string()).filter(|s| s.parse::<std::net::IpAddr>().is_ok())
+            }
+            _ => None,
+        }
+    } else {
+        None
+    };
+
+    if let Some(resolved) = fetched {
+        let _ = CACHED_PUBLIC_IP.set(resolved.clone());
+        resolved
+    } else {
+        "71.194.142.20".to_string()
+    }
+}
 
 /// Custom network behavior for OpenỌ̀ṣọ́ọ̀sì Mesh.
 #[derive(NetworkBehaviour)]
@@ -271,8 +306,50 @@ impl MeshNode {
             }
         }
 
+        let mut dial_peers = mesh_config.bootstrap_peers.clone();
+
+        if mesh_config.auto_bootstrap_duckdns {
+            if let Some(ref domain) = mesh_config.duckdns_domain {
+                let domain = domain.trim();
+                if !domain.is_empty() {
+                    let host = format!("{}.duckdns.org", domain);
+                    let port = mesh_config.duckdns_port;
+                    let target_multiaddr = format!("/dns4/{}/tcp/{}", host, port);
+
+                    // Resolve the IP of {domain}.duckdns.org
+                    let resolved_ip_opt = match tokio::net::lookup_host(format!("{}:{}", host, port)).await {
+                        Ok(mut addrs) => addrs.next().map(|sa| sa.ip().to_string()),
+                        Err(e) => {
+                            debug!("[MESH BOOTSTRAP] DNS resolution lookup for {}: {}", host, e);
+                            None
+                        }
+                    };
+
+                    let public_wan_ip = detect_public_ip().await;
+
+                    let is_master_root = if let Some(ref resolved_ip) = resolved_ip_opt {
+                        resolved_ip == &public_wan_ip
+                    } else {
+                        false
+                    };
+
+                    if is_master_root {
+                        info!("[MESH BOOTSTRAP] This node is the Canonical DuckDNS Root Master ({}). Listening on port {}.", host, port);
+                        // Do not add root multiaddr to its own dial list (avoids self-dialing).
+                        dial_peers.retain(|p| p != &target_multiaddr);
+                    } else {
+                        // Internal / NAT / remote node!
+                        if !dial_peers.iter().any(|p| p == &target_multiaddr) {
+                            info!("[MESH BOOTSTRAP] Internal/Remote node detected. Auto-injecting DuckDNS upstream peer: {}", target_multiaddr);
+                            dial_peers.push(target_multiaddr);
+                        }
+                    }
+                }
+            }
+        }
+
         let local_peer_id = *swarm.local_peer_id();
-        for peer_addr in mesh_config.bootstrap_peers {
+        for peer_addr in dial_peers {
             if let Ok(maddr) = peer_addr.parse::<Multiaddr>() {
                 let mut peer_id_opt = None;
                 if let Some(Protocol::P2p(peer_id)) = maddr.iter().last() {

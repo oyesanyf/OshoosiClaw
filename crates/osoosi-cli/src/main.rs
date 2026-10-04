@@ -1659,6 +1659,16 @@ async fn init_ort(suppress_warning: bool) -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    let available_ram_gb = sys.available_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+    let force_onnx = std::env::var("OSOOSI_FORCE_GEMMA_ONNX").map(|v| v == "1").unwrap_or(false);
+    if available_ram_gb < 2.5 && !force_onnx {
+        info!("Low available RAM ({:.1} GB < 2.5 GB). Operating in low-memory heuristic mode to prevent OOM crash.", available_ram_gb);
+        std::env::set_var("OSOOSI_NO_ORT", "1");
+        return Ok(());
+    }
+
     let dll_path = ort_dynamic_library_path();
 
     // ORT stable releases for Windows x64 — newest first so we always get the best version.
@@ -2470,6 +2480,12 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    let ai_cfg = osoosi_types::load_ai_config();
+    if !ai_cfg.enabled {
+        info!("AI subsystem disabled in config ([ai] enabled = false). Skipping all model downloads.");
+        return Ok(());
+    }
+
     osoosi_types::set_model_provisioning(true);
     let res = ensure_ai_models_inner().await;
     osoosi_types::set_model_provisioning(false);
@@ -2713,13 +2729,20 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
     }
 
     // 4. SecureBERT (Behavioral Sentence Classification)
-    info!("Ensuring SecureBERT components are cached...");
-    let sb_repo = api.model("MarsSecurity/securebert-onnx".to_string());
-    let bert_dir = models_dir.join("securebert");
-    let _ = fs::create_dir_all(&bert_dir);
-    for file in ["tokenizer.json", "model.onnx", "config.json"] {
-        if let Ok(path) = sb_repo.get(file).await {
-            let _ = fs::copy(&path, bert_dir.join(file));
+    if lite_mode || available_ram_gb < 4.0 {
+        info!(
+            "Available RAM ({:.1} GB) is below the 4.0 GB threshold (or Lite Mode active). Skipping heavy SecureBERT ONNX model to prevent memory exhaustion.",
+            available_ram_gb
+        );
+    } else {
+        info!("Ensuring SecureBERT components are cached...");
+        let sb_repo = api.model("MarsSecurity/securebert-onnx".to_string());
+        let bert_dir = models_dir.join("securebert");
+        let _ = fs::create_dir_all(&bert_dir);
+        for file in ["tokenizer.json", "model.onnx", "config.json"] {
+            if let Ok(path) = sb_repo.get(file).await {
+                let _ = fs::copy(&path, bert_dir.join(file));
+            }
         }
     }
 

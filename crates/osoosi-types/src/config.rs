@@ -591,8 +591,14 @@ struct WireConfigPartial {
     pub zone: Option<String>,
     #[serde(default)]
     pub nostr_relays: Vec<String>,
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub allow_public_relays: bool,
+    #[serde(default = "default_duckdns_domain")]
+    pub duckdns_domain: Option<String>,
+    #[serde(default = "default_true")]
+    pub auto_bootstrap_duckdns: bool,
+    #[serde(default = "default_duckdns_port")]
+    pub duckdns_port: u16,
 }
 
 /// Partial config for loading from file (only sections we need; rest use defaults).
@@ -1572,6 +1578,9 @@ pub struct WireListenConfig {
     pub zone: String,
     pub nostr_relays: Vec<String>,
     pub allow_public_relays: bool,
+    pub duckdns_domain: Option<String>,
+    pub auto_bootstrap_duckdns: bool,
+    pub duckdns_port: u16,
 }
 
 pub fn load_mesh_listen_config_extended() -> WireListenConfig {
@@ -1582,6 +1591,9 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
     let mut zone = "Global".to_string();
     let mut nostr_relays = Vec::new();
     let mut allow_public_relays = true; // Default to true for better out-of-the-box connectivity
+    let mut duckdns_domain = default_duckdns_domain();
+    let mut auto_bootstrap_duckdns = true;
+    let mut duckdns_port = default_duckdns_port();
 
     if let Some(path) = resolve_config_path() {
         if let Ok(content) = std::fs::read_to_string(&path) {
@@ -1620,6 +1632,9 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
                 }
                 nostr_relays = fc.wire.nostr_relays.clone();
                 allow_public_relays = fc.wire.allow_public_relays;
+                duckdns_domain = fc.wire.duckdns_domain.clone();
+                auto_bootstrap_duckdns = fc.wire.auto_bootstrap_duckdns;
+                duckdns_port = fc.wire.duckdns_port;
             }
         }
     }
@@ -1645,6 +1660,20 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
     if let Ok(v) = std::env::var("OSOOSI_ALLOW_PUBLIC_RELAYS") {
         allow_public_relays = v == "1" || v.eq_ignore_ascii_case("true");
     }
+    if let Ok(d) = std::env::var("OSOOSI_DUCKDNS_DOMAIN") {
+        let trimmed = d.trim();
+        if !trimmed.is_empty() {
+            duckdns_domain = Some(trimmed.to_string());
+        }
+    }
+    if let Ok(v) = std::env::var("OSOOSI_AUTO_BOOTSTRAP_DUCKDNS") {
+        auto_bootstrap_duckdns = v == "1" || v.eq_ignore_ascii_case("true");
+    }
+    if let Ok(p) = std::env::var("OSOOSI_DUCKDNS_PORT") {
+        if let Ok(port) = p.trim().parse::<u16>() {
+            duckdns_port = port;
+        }
+    }
 
     if listen_addrs.is_empty() {
         listen_addrs.push("/ip4/0.0.0.0/tcp/4001".to_string());
@@ -1658,6 +1687,9 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
         zone,
         nostr_relays,
         allow_public_relays,
+        duckdns_domain,
+        auto_bootstrap_duckdns,
+        duckdns_port,
     }
 }
 
@@ -1675,6 +1707,18 @@ pub fn load_wire_bootstrap_peers() -> Vec<String> {
         }
     }
     Vec::new()
+}
+
+/// Load DuckDNS configuration explicitly from osoosi.toml under [wire].
+pub fn load_wire_duckdns_config() -> (Option<String>, bool, u16) {
+    if let Some(path) = resolve_config_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(fc) = toml::from_str::<FileConfig>(&content) {
+                return (fc.wire.duckdns_domain, fc.wire.auto_bootstrap_duckdns, fc.wire.duckdns_port);
+            }
+        }
+    }
+    (default_duckdns_domain(), true, default_duckdns_port())
 }
 
 fn parse_csv_env_internal(var_name: &str) -> Vec<String> {
@@ -1919,8 +1963,22 @@ pub struct WireConfig {
     #[serde(default)]
     pub nostr_relays: Vec<String>,
     /// Security: Allow fallback to public Nostr relays.
-    #[serde(default)]
+    #[serde(default = "default_true")]
     pub allow_public_relays: bool,
+    #[serde(default = "default_duckdns_domain")]
+    pub duckdns_domain: Option<String>,
+    #[serde(default = "default_true")]
+    pub auto_bootstrap_duckdns: bool,
+    #[serde(default = "default_duckdns_port")]
+    pub duckdns_port: u16,
+}
+
+pub fn default_duckdns_domain() -> Option<String> {
+    Some("oshoosi".to_string())
+}
+
+pub fn default_duckdns_port() -> u16 {
+    4001
 }
 
 fn default_min_reputation() -> f32 {
@@ -2725,5 +2783,49 @@ model_dir = "custom/models/clef"
         assert!(!fc.decision_model.auto_escalate_to_cortex);
         assert_eq!(fc.decision_model.model_dir, "custom/models/clef");
     }
+
+    #[test]
+    fn test_wire_config_duckdns_defaults_and_parsing() {
+        let minimal_toml = r#"
+listen_addr = "/ip4/0.0.0.0/tcp/4001"
+shared_secret = "secret123"
+"#;
+        let wc: WireConfig = toml::from_str(minimal_toml).expect("Must parse minimal WireConfig");
+        assert_eq!(wc.duckdns_domain, Some("oshoosi".to_string()));
+        assert!(wc.auto_bootstrap_duckdns);
+        assert_eq!(wc.duckdns_port, 4001);
+        assert!(wc.allow_public_relays);
+
+        let custom_toml = r#"
+listen_addr = "/ip4/0.0.0.0/tcp/4001"
+shared_secret = "secret123"
+duckdns_domain = "custom-node"
+auto_bootstrap_duckdns = false
+duckdns_port = 5001
+"#;
+        let wc_custom: WireConfig = toml::from_str(custom_toml).expect("Must parse custom WireConfig");
+        assert_eq!(wc_custom.duckdns_domain, Some("custom-node".to_string()));
+        assert!(!wc_custom.auto_bootstrap_duckdns);
+        assert_eq!(wc_custom.duckdns_port, 5001);
+
+        // Verify serialization preserves fields
+        let serialized = toml::to_string(&wc).expect("Must serialize WireConfig");
+        assert!(serialized.contains("duckdns_domain"));
+        assert!(serialized.contains("auto_bootstrap_duckdns"));
+        assert!(serialized.contains("duckdns_port"));
+
+        // Verify FileConfig parsing with [wire]
+        let file_toml = r#"
+[wire]
+duckdns_domain = "my-fleet"
+auto_bootstrap_duckdns = true
+duckdns_port = 4001
+"#;
+        let fc: FileConfig = toml::from_str(file_toml).expect("Must parse FileConfig [wire]");
+        assert_eq!(fc.wire.duckdns_domain, Some("my-fleet".to_string()));
+        assert!(fc.wire.auto_bootstrap_duckdns);
+        assert_eq!(fc.wire.duckdns_port, 4001);
+    }
 }
+
 

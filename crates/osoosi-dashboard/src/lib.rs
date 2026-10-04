@@ -2586,74 +2586,101 @@ pub struct BootstrapPeersResponse {
     pub mesh_port: u16,
     pub recommended_multiaddr: String,
     pub duckdns_template: String,
+    #[serde(default = "default_duckdns_domain_string")]
+    pub duckdns_domain: Option<String>,
+    #[serde(default = "default_true_val")]
+    pub auto_bootstrap_duckdns: bool,
+    #[serde(default)]
+    pub is_duckdns_host: bool,
+    #[serde(default)]
+    pub upstream_peer: String,
 }
 
-#[derive(Debug, Deserialize)]
+fn default_duckdns_domain_string() -> Option<String> {
+    Some("oshoosi".to_string())
+}
+
+fn default_true_val() -> bool {
+    true
+}
+
+#[derive(Debug, Deserialize, Default)]
 pub struct UpdateBootstrapPeersRequest {
-    pub peers: Vec<String>,
+    #[serde(default)]
+    pub peers: Option<Vec<String>>,
     pub dial_now: Option<bool>,
+    pub duckdns_domain: Option<String>,
+    pub auto_bootstrap_duckdns: Option<bool>,
 }
 
-static CACHED_PUBLIC_IP: tokio::sync::OnceCell<String> = tokio::sync::OnceCell::const_new();
+#[allow(dead_code)]
 static CONFIG_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub async fn detect_public_ip() -> String {
-    if let Ok(ip) = std::env::var("OSOOSI_PUBLIC_IP") {
-        let trimmed = ip.trim();
-        if !trimmed.is_empty() {
-            return trimmed.to_string();
-        }
-    }
-
-    if let Some(cached) = CACHED_PUBLIC_IP.get() {
-        return cached.clone();
-    }
-
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_millis(800))
-        .build();
-
-    let fetched = if let Ok(client) = client {
-        match client.get("https://api.ipify.org").send().await {
-            Ok(resp) if resp.status().is_success() => {
-                resp.text().await.ok().map(|t| t.trim().to_string()).filter(|s| s.parse::<std::net::IpAddr>().is_ok())
-            }
-            _ => None,
-        }
-    } else {
-        None
-    };
-
-    if let Some(resolved) = fetched {
-        let _ = CACHED_PUBLIC_IP.set(resolved.clone());
-        resolved
-    } else {
-        "71.194.142.20".to_string()
-    }
+    osoosi_wire::detect_public_ip().await
 }
 
-pub fn update_bootstrap_peers_content(content: &str, peers: &[String]) -> String {
+pub fn update_wire_config_content(
+    content: &str,
+    peers: Option<&[String]>,
+    duckdns_domain: Option<&str>,
+    auto_bootstrap_duckdns: Option<bool>,
+) -> String {
     let has_crlf = content.contains("\r\n");
     let line_sep = if has_crlf { "\r\n" } else { "\n" };
 
-    let peers_formatted = if peers.is_empty() {
-        "peers = []".to_string()
-    } else {
-        let mut s = format!("peers = [{line_sep}");
-        for (i, p) in peers.iter().enumerate() {
-            let escaped = p.replace('\\', "\\\\").replace('\"', "\\\"");
-            let comma = if i + 1 < peers.len() { "," } else { "" };
-            s.push_str(&format!("    \"{escaped}\"{comma}{line_sep}"));
+    let peers_formatted = peers.map(|p_list| {
+        if p_list.is_empty() {
+            "peers = []".to_string()
+        } else {
+            let mut s = format!("peers = [{line_sep}");
+            for (i, p) in p_list.iter().enumerate() {
+                let escaped = p.replace('\\', "\\\\").replace('\"', "\\\"");
+                let comma = if i + 1 < p_list.len() { "," } else { "" };
+                s.push_str(&format!("    \"{escaped}\"{comma}{line_sep}"));
+            }
+            s.push(']');
+            s
         }
-        s.push(']');
-        s
-    };
+    });
+
+    let domain_formatted = duckdns_domain.map(|d| format!("duckdns_domain = \"{}\"", d.replace('\"', "\\\"")));
+    let auto_formatted = auto_bootstrap_duckdns.map(|b| format!("auto_bootstrap_duckdns = {}", b));
 
     let mut lines = Vec::new();
     let mut in_wire = false;
     let mut wire_found = false;
-    let mut peers_updated = false;
+    let mut peers_updated = peers.is_none();
+    let mut domain_updated = duckdns_domain.is_none();
+    let mut auto_updated = auto_bootstrap_duckdns.is_none();
     let mut skipping_multiline_peers = false;
+
+    let append_missing_wire_fields = |target: &mut Vec<String>,
+                                     peers_fmt: &Option<String>,
+                                     domain_fmt: &Option<String>,
+                                     auto_fmt: &Option<String>,
+                                     p_up: &mut bool,
+                                     d_up: &mut bool,
+                                     a_up: &mut bool| {
+        if !*p_up {
+            if let Some(ref pf) = peers_fmt {
+                target.push(pf.clone());
+            }
+            *p_up = true;
+        }
+        if !*d_up {
+            if let Some(ref df) = domain_fmt {
+                target.push(df.clone());
+            }
+            *d_up = true;
+        }
+        if !*a_up {
+            if let Some(ref af) = auto_fmt {
+                target.push(af.clone());
+            }
+            *a_up = true;
+        }
+    };
 
     for line in content.lines() {
         let trimmed = line.trim();
@@ -2673,23 +2700,52 @@ pub fn update_bootstrap_peers_content(content: &str, peers: &[String]) -> String
         }
 
         if code_part.starts_with('[') && code_part.ends_with(']') {
-            if in_wire && !peers_updated {
-                lines.push(peers_formatted.clone());
-                peers_updated = true;
+            if in_wire {
+                append_missing_wire_fields(
+                    &mut lines,
+                    &peers_formatted,
+                    &domain_formatted,
+                    &auto_formatted,
+                    &mut peers_updated,
+                    &mut domain_updated,
+                    &mut auto_updated,
+                );
             }
             in_wire = code_part == "[wire]";
             if in_wire {
                 wire_found = true;
             }
-        } else if in_wire && !peers_updated {
-            if code_part.starts_with("peers") {
+        } else if in_wire {
+            if !peers_updated && code_part.starts_with("peers") {
                 if let Some((k, v)) = code_part.split_once('=') {
                     if k.trim() == "peers" {
-                        lines.push(peers_formatted.clone());
+                        if let Some(ref pf) = peers_formatted {
+                            lines.push(pf.clone());
+                        }
                         peers_updated = true;
                         if !v.contains(']') {
                             skipping_multiline_peers = true;
                         }
+                        continue;
+                    }
+                }
+            } else if !domain_updated && code_part.starts_with("duckdns_domain") {
+                if let Some((k, _)) = code_part.split_once('=') {
+                    if k.trim() == "duckdns_domain" {
+                        if let Some(ref df) = domain_formatted {
+                            lines.push(df.clone());
+                        }
+                        domain_updated = true;
+                        continue;
+                    }
+                }
+            } else if !auto_updated && code_part.starts_with("auto_bootstrap_duckdns") {
+                if let Some((k, _)) = code_part.split_once('=') {
+                    if k.trim() == "auto_bootstrap_duckdns" {
+                        if let Some(ref af) = auto_formatted {
+                            lines.push(af.clone());
+                        }
+                        auto_updated = true;
                         continue;
                     }
                 }
@@ -2699,8 +2755,16 @@ pub fn update_bootstrap_peers_content(content: &str, peers: &[String]) -> String
         lines.push(line.to_string());
     }
 
-    if in_wire && !peers_updated {
-        lines.push(peers_formatted.clone());
+    if in_wire {
+        append_missing_wire_fields(
+            &mut lines,
+            &peers_formatted,
+            &domain_formatted,
+            &auto_formatted,
+            &mut peers_updated,
+            &mut domain_updated,
+            &mut auto_updated,
+        );
     }
 
     if !wire_found {
@@ -2708,7 +2772,15 @@ pub fn update_bootstrap_peers_content(content: &str, peers: &[String]) -> String
             lines.push(String::new());
         }
         lines.push("[wire]".to_string());
-        lines.push(peers_formatted);
+        append_missing_wire_fields(
+            &mut lines,
+            &peers_formatted,
+            &domain_formatted,
+            &auto_formatted,
+            &mut peers_updated,
+            &mut domain_updated,
+            &mut auto_updated,
+        );
     }
 
     let mut res = lines.join(line_sep);
@@ -2718,7 +2790,15 @@ pub fn update_bootstrap_peers_content(content: &str, peers: &[String]) -> String
     res
 }
 
-pub fn save_bootstrap_peers_to_config(peers: &[String]) -> anyhow::Result<PathBuf> {
+pub fn update_bootstrap_peers_content(content: &str, peers: &[String]) -> String {
+    update_wire_config_content(content, Some(peers), None, None)
+}
+
+pub fn save_wire_config(
+    peers: Option<&[String]>,
+    duckdns_domain: Option<&str>,
+    auto_bootstrap_duckdns: Option<bool>,
+) -> anyhow::Result<PathBuf> {
     let _lock = CONFIG_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
 
     let path = if let Ok(p) = std::env::var("OSOOSI_CONFIG") {
@@ -2738,7 +2818,7 @@ pub fn save_bootstrap_peers_to_config(peers: &[String]) -> anyhow::Result<PathBu
         String::new()
     };
 
-    let updated = update_bootstrap_peers_content(&content, peers);
+    let updated = update_wire_config_content(&content, peers, duckdns_domain, auto_bootstrap_duckdns);
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
             std::fs::create_dir_all(parent)?;
@@ -2754,6 +2834,10 @@ pub fn save_bootstrap_peers_to_config(peers: &[String]) -> anyhow::Result<PathBu
     osoosi_core::config_integrity::sign_all_critical_configs();
 
     Ok(path)
+}
+
+pub fn save_bootstrap_peers_to_config(peers: &[String]) -> anyhow::Result<PathBuf> {
+    save_wire_config(Some(peers), None, None)
 }
 
 async fn get_bootstrap_peers(State(_state): State<DashboardState>) -> Json<BootstrapPeersResponse> {
@@ -2788,12 +2872,33 @@ async fn get_bootstrap_peers(State(_state): State<DashboardState>) -> Json<Boots
     let recommended_multiaddr = format!("/{}/{}/tcp/{}", proto, public_ip, mesh_port);
     let duckdns_template = format!("/dns4/<your-domain>.duckdns.org/tcp/{}", mesh_port);
 
+    let duckdns_domain = mesh_config.duckdns_domain.clone().or_else(|| Some("oshoosi".to_string()));
+    let auto_bootstrap_duckdns = mesh_config.auto_bootstrap_duckdns;
+    let duckdns_port = mesh_config.duckdns_port;
+    let domain_name = duckdns_domain.as_deref().unwrap_or("oshoosi");
+    let upstream_peer = format!("/dns4/{}.duckdns.org/tcp/{}", domain_name, duckdns_port);
+
+    let host = format!("{}.duckdns.org", domain_name);
+    let resolved_ip_opt = match tokio::net::lookup_host(format!("{}:{}", host, duckdns_port)).await {
+        Ok(mut addrs) => addrs.next().map(|sa| sa.ip().to_string()),
+        Err(_) => None,
+    };
+    let is_duckdns_host = if let Some(ref rip) = resolved_ip_opt {
+        rip == &public_ip
+    } else {
+        false
+    };
+
     Json(BootstrapPeersResponse {
         peers,
         public_ip: Some(public_ip),
         mesh_port,
         recommended_multiaddr,
         duckdns_template,
+        duckdns_domain,
+        auto_bootstrap_duckdns,
+        is_duckdns_host,
+        upstream_peer,
     })
 }
 
@@ -2801,37 +2906,51 @@ async fn post_bootstrap_peers(
     State(state): State<DashboardState>,
     Json(req): Json<UpdateBootstrapPeersRequest>,
 ) -> impl IntoResponse {
-    for peer in &req.peers {
-        let trimmed = peer.trim();
-        if trimmed.is_empty() {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "ok": false,
-                    "error": "Peer address cannot be empty"
-                })),
-            ).into_response();
+    let mut sanitized_peers = None;
+    if let Some(ref peers) = req.peers {
+        for peer in peers {
+            let trimmed = peer.trim();
+            if trimmed.is_empty() {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "ok": false,
+                        "error": "Peer address cannot be empty"
+                    })),
+                ).into_response();
+            }
+            if !trimmed.starts_with("/ip4/")
+                && !trimmed.starts_with("/dns4/")
+                && !trimmed.starts_with("/dns/")
+                && !trimmed.starts_with("/dns6/")
+                && !trimmed.starts_with("/ip6/")
+            {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "ok": false,
+                        "error": format!("Invalid peer multiaddr '{}': must start with /ip4/, /dns4/, /dns/, or /ip6/", trimmed)
+                    })),
+                ).into_response();
+            }
         }
-        if !trimmed.starts_with("/ip4/")
-            && !trimmed.starts_with("/dns4/")
-            && !trimmed.starts_with("/dns/")
-            && !trimmed.starts_with("/dns6/")
-            && !trimmed.starts_with("/ip6/")
-        {
-            return (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "ok": false,
-                    "error": format!("Invalid peer multiaddr '{}': must start with /ip4/, /dns4/, /dns/, or /ip6/", trimmed)
-                })),
-            ).into_response();
-        }
+        sanitized_peers = Some(peers.iter().map(|s| s.trim().to_string()).collect::<Vec<_>>());
     }
 
-    let sanitized_peers: Vec<String> = req.peers.into_iter().map(|s| s.trim().to_string()).collect();
+    let domain_clean = req.duckdns_domain.as_ref().map(|d| {
+        let mut s = d.trim();
+        if s.ends_with(".duckdns.org") {
+            s = &s[..s.len() - 12];
+        }
+        s.to_string()
+    });
 
-    if let Err(e) = save_bootstrap_peers_to_config(&sanitized_peers) {
-        tracing::error!("Failed to save bootstrap peers to config: {}", e);
+    if let Err(e) = save_wire_config(
+        sanitized_peers.as_deref(),
+        domain_clean.as_deref(),
+        req.auto_bootstrap_duckdns,
+    ) {
+        tracing::error!("Failed to save bootstrap wire config: {}", e);
         return (
             StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
@@ -2843,21 +2962,23 @@ async fn post_bootstrap_peers(
 
     let dial_now = req.dial_now.unwrap_or(true);
     if dial_now {
-        if let Some(ref orch) = state.backend {
-            for peer in &sanitized_peers {
-                let p = peer.clone();
-                let orch_clone = orch.clone();
-                tokio::spawn(async move {
-                    orch_clone.dial_mesh_peer(&p).await;
-                });
+        if let Some(ref peers_to_dial) = sanitized_peers {
+            if let Some(ref orch) = state.backend {
+                for peer in peers_to_dial {
+                    let p = peer.clone();
+                    let orch_clone = orch.clone();
+                    tokio::spawn(async move {
+                        orch_clone.dial_mesh_peer(&p).await;
+                    });
+                }
+            } else if let Some(ref gate) = state.join_gate {
+                for peer in peers_to_dial {
+                    let _ = gate.dial_multiaddr(peer);
+                }
             }
-        } else if let Some(ref gate) = state.join_gate {
-            for peer in &sanitized_peers {
-                let _ = gate.dial_multiaddr(peer);
+            for peer in peers_to_dial {
+                tracing::info!("[Mesh WAN] Dial intention registered for bootstrap peer: {}", peer);
             }
-        }
-        for peer in &sanitized_peers {
-            tracing::info!("[Mesh WAN] Dial intention registered for bootstrap peer: {}", peer);
         }
     }
 
@@ -2865,7 +2986,9 @@ async fn post_bootstrap_peers(
         orch.audit().log(
             "BOOTSTRAP_PEERS_UPDATED",
             json!({
-                "peers": &sanitized_peers,
+                "peers": sanitized_peers,
+                "duckdns_domain": domain_clean,
+                "auto_bootstrap_duckdns": req.auto_bootstrap_duckdns,
                 "dial_now": dial_now,
             }),
         );
@@ -2875,7 +2998,9 @@ async fn post_bootstrap_peers(
         StatusCode::OK,
         Json(json!({
             "ok": true,
-            "peers": sanitized_peers,
+            "peers": sanitized_peers.unwrap_or_else(osoosi_types::load_wire_bootstrap_peers),
+            "duckdns_domain": domain_clean,
+            "auto_bootstrap_duckdns": req.auto_bootstrap_duckdns,
             "message": "Bootstrap peers updated and saved to config."
         })),
     ).into_response()
@@ -5510,6 +5635,10 @@ mod tests {
         assert!(get_val["recommended_multiaddr"].as_str().is_some());
         assert!(get_val["recommended_multiaddr"].as_str().unwrap().starts_with("/ip4/"));
         assert!(get_val["duckdns_template"].as_str().unwrap().contains("duckdns.org"));
+        assert_eq!(get_val["duckdns_domain"].as_str(), Some("oshoosi"));
+        assert_eq!(get_val["auto_bootstrap_duckdns"].as_bool(), Some(true));
+        assert!(get_val["is_duckdns_host"].as_bool().is_some());
+        assert!(get_val["upstream_peer"].as_str().unwrap().contains("oshoosi.duckdns.org"));
 
         // 2. Reject empty or invalid multiaddrs
         let invalid_req = serde_json::json!({
@@ -5578,6 +5707,25 @@ mod tests {
         assert_eq!(peers_after.len(), 2);
         assert_eq!(peers_after[0], "/ip4/71.194.142.20/tcp/4001");
         assert_eq!(peers_after[1], "/dns4/myedr.duckdns.org/tcp/4001");
+
+        // 6. POST duckdns domain and auto_bootstrap update
+        let duck_req = serde_json::json!({
+            "duckdns_domain": "fleet-alpha",
+            "auto_bootstrap_duckdns": false,
+            "dial_now": false
+        });
+        let req = axum::http::Request::builder()
+            .uri("/api/mesh/bootstrap-peers")
+            .method(axum::http::Method::POST)
+            .header("Content-Type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&duck_req).unwrap()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        let config_duck = std::fs::read_to_string(&test_config_path).unwrap();
+        assert!(config_duck.contains("fleet-alpha"));
+        assert!(config_duck.contains("auto_bootstrap_duckdns = false"));
 
         // Clean up env and temp dir
         std::env::remove_var("OSOOSI_CONFIG");
@@ -5669,6 +5817,9 @@ mod tests {
         let _env_guard = TEST_CONFIG_MUTEX.lock().await;
         let temp_dir = std::env::temp_dir().join(format!("dash_test_cors_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
+        let test_config_path = temp_dir.join("osoosi.toml");
+        std::fs::write(&test_config_path, "[wire]\npeers = []\n").unwrap();
+        std::env::set_var("OSOOSI_CONFIG", test_config_path.to_str().unwrap());
 
         let state = DashboardState::new(None, None);
         let app = dashboard_router(state.clone(), temp_dir.clone());
@@ -5691,8 +5842,29 @@ mod tests {
             Some("*")
         );
         assert!(resp.headers().contains_key("access-control-allow-methods"));
+        assert!(resp.headers().contains_key("access-control-allow-headers"));
 
-        // 2. GET request to /api/mesh/bootstrap-peers with Origin header
+        // 2. OPTIONS preflight request to /mesh/bootstrap-peers (unprefixed)
+        let req = axum::http::Request::builder()
+            .uri("/mesh/bootstrap-peers")
+            .method(axum::http::Method::OPTIONS)
+            .header("origin", "null")
+            .header("access-control-request-method", "POST")
+            .header("access-control-request-headers", "content-type")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("access-control-allow-origin")
+                .and_then(|v| v.to_str().ok()),
+            Some("*")
+        );
+        assert!(resp.headers().contains_key("access-control-allow-methods"));
+        assert!(resp.headers().contains_key("access-control-allow-headers"));
+
+        // 3. GET request to /api/mesh/bootstrap-peers with Origin header
         let req = axum::http::Request::builder()
             .uri("/api/mesh/bootstrap-peers")
             .method(axum::http::Method::GET)
@@ -5708,7 +5880,7 @@ mod tests {
             Some("*")
         );
 
-        // 3. GET request to /mesh/bootstrap-peers without /api prefix
+        // 4. GET request to /mesh/bootstrap-peers without /api prefix
         let req = axum::http::Request::builder()
             .uri("/mesh/bootstrap-peers")
             .method(axum::http::Method::GET)
@@ -5724,6 +5896,24 @@ mod tests {
             Some("*")
         );
 
+        // 5. POST request to /mesh/bootstrap-peers with Origin header
+        let req = axum::http::Request::builder()
+            .uri("/mesh/bootstrap-peers")
+            .method(axum::http::Method::POST)
+            .header("origin", "null")
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"peers": ["/ip4/71.194.142.20/tcp/4001"], "dial_now": false}"#))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("access-control-allow-origin")
+                .and_then(|v| v.to_str().ok()),
+            Some("*")
+        );
+
+        std::env::remove_var("OSOOSI_CONFIG");
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

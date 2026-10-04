@@ -1272,8 +1272,11 @@ window.meshReleasePeer = async function(id) {
  * WAN Mesh & Bootstrap Peer Management
  */
 async function fetchBootstrapPeers() {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 5000);
     try {
-        const res = await fetch(`${API_BASE}/mesh/bootstrap-peers`);
+        const res = await fetch(`${API_BASE}/mesh/bootstrap-peers`, { signal: controller.signal });
+        clearTimeout(timeoutId);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data.recommended_multiaddr) {
@@ -1285,9 +1288,28 @@ async function fetchBootstrapPeers() {
             const preview = document.getElementById('duckdns-preview');
             if (preview) preview.innerText = data.duckdns_template;
         }
+        state.duckdnsDomain = data.duckdns_domain || 'oshoosi';
+        state.isDuckDnsHost = data.is_duckdns_host || false;
+        state.autoBootstrapDuckdns = data.auto_bootstrap_duckdns !== false;
+
+        const duckInput = document.getElementById('duckdns-domain-input');
+        if (duckInput && !duckInput.matches(':focus')) {
+            duckInput.value = state.duckdnsDomain;
+        }
+
+        const badge = document.getElementById('duckdns-auto-status-badge');
+        if (badge) {
+            if (state.isDuckDnsHost) {
+                badge.innerHTML = `<span class="badge blue">👑 Core Root Master (oshoosi.duckdns.org)</span>`;
+            } else {
+                badge.innerHTML = `<span class="badge green">⚡ Auto-Configured Upstream: /dns4/${escapeHtml(state.duckdnsDomain)}.duckdns.org/tcp/4001 (Outbound NAT Active)</span>`;
+            }
+        }
+
         state.bootstrapPeers = Array.isArray(data.peers) ? data.peers : [];
         renderBootstrapPeersList();
     } catch (err) {
+        clearTimeout(timeoutId);
         console.warn('Failed to fetch bootstrap peers:', err);
     }
 }
@@ -1305,11 +1327,14 @@ function renderBootstrapPeersList() {
     if (!list) return;
 
     if (!state.bootstrapPeers || state.bootstrapPeers.length === 0) {
+        const myWanAddr = document.getElementById('this-node-wan-addr')?.value?.trim() || state.myWanMultiaddr;
+        const isSelf = myWanAddr && (myWanAddr.includes('71.194.142.20') || myWanAddr === '/ip4/71.194.142.20/tcp/4001');
+        const suggestedAddr = isSelf ? '/dns4/bootstrap.oshoosi.net/tcp/4001' : '/ip4/71.194.142.20/tcp/4001';
         list.innerHTML = `
             <div style="font-size:12px; color:var(--text-muted); font-style:italic; padding:8px 4px;">Zero remote bootstrap peers configured. Add an address above to link machines on other networks.</div>
             <div style="display:flex; align-items:center; gap:8px; padding:4px 4px; font-size:11px; color:var(--text-muted);">
                 <span>Suggested peer:</span>
-                <button type="button" class="btn-text" style="color:#38bdf8; font-family:monospace; text-decoration:underline; cursor:pointer;" onclick="setBootstrapPeerInput('/ip4/71.194.142.20/tcp/4001')">/ip4/71.194.142.20/tcp/4001</button>
+                <button type="button" class="btn-text" style="color:#38bdf8; font-family:monospace; text-decoration:underline; cursor:pointer;" onclick="setBootstrapPeerInput('${suggestedAddr}')">${suggestedAddr}</button>
             </div>
         `;
         return;
@@ -1330,19 +1355,30 @@ function renderBootstrapPeersList() {
 function addBootstrapPeer() {
     const input = document.getElementById('new-bootstrap-peer-input');
     if (!input) return;
-    const val = input.value.trim();
+    let val = input.value.trim();
     if (!val) {
         alert("Please enter a multiaddr (e.g. /dns4/myedr.duckdns.org/tcp/4001 or /ip4/71.194.142.20/tcp/4001)");
         return;
+    }
+    if (!val.startsWith('/')) {
+        val = '/' + val;
     }
     if (!val.startsWith('/ip4/') && !val.startsWith('/dns4/') && !val.startsWith('/dns/') && !val.startsWith('/dns6/') && !val.startsWith('/ip6/')) {
         alert("Bootstrap peer multiaddr must start with /ip4/, /dns4/, /dns/, or /ip6/ (e.g. /dns4/myedr.duckdns.org/tcp/4001 or /ip4/71.194.142.20/tcp/4001)");
         return;
     }
-    const myWanAddr = document.getElementById('this-node-wan-addr')?.value?.trim();
-    if (myWanAddr && val === myWanAddr) {
-        alert("⚠️ That is THIS node's own address! In 'Remote Bootstrap Peers', enter the address of the OTHER node you want to connect to (e.g. /ip4/71.194.142.20/tcp/4001).\n\nNodes on internal networks must dial the remote node, not themselves.");
+    if (val.startsWith('/ip4/127.0.0.1') || val.startsWith('/ip4/0.0.0.0') || val.startsWith('/dns4/localhost')) {
+        alert("⚠️ Loopback address entered! In 'Remote Bootstrap Peers', enter the external/public address of the remote node you want to connect to (e.g. /ip4/71.194.142.20/tcp/4001).\n\nNodes on internal networks must dial the remote node, not themselves or localhost.");
         return;
+    }
+    const myWanAddr = document.getElementById('this-node-wan-addr')?.value?.trim() || state.myWanMultiaddr;
+    if (myWanAddr) {
+        const normVal = val.toLowerCase().replace(/\/+$/, '');
+        const normWan = myWanAddr.toLowerCase().replace(/\/+$/, '');
+        if (normVal === normWan || normVal.startsWith(normWan + '/')) {
+            alert("⚠️ That is THIS node's own address! In 'Remote Bootstrap Peers', enter the address of the OTHER node you want to connect to (e.g. /ip4/71.194.142.20/tcp/4001).\n\nNodes on internal networks must dial the remote node, not themselves.");
+            return;
+        }
     }
     if (state.bootstrapPeers.includes(val)) {
         alert("This peer address is already configured.");
@@ -1387,7 +1423,7 @@ async function saveBootstrapPeers() {
         });
         clearTimeout(timeoutId);
 
-        const data = await res.json();
+        const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status} ${res.statusText}` }));
         if (res.ok && data.ok) {
             if (statusMsg) {
                 statusMsg.style.color = "var(--accent-green)";
@@ -1436,6 +1472,37 @@ function copyThisNodeWanAddr() {
     }
 }
 
+async function saveDuckDnsDomain() {
+    const input = document.getElementById('duckdns-domain-input');
+    let domain = input ? input.value.trim() : (state.duckdnsDomain || 'oshoosi');
+    if (!domain) domain = 'oshoosi';
+    if (domain.endsWith('.duckdns.org')) {
+        domain = domain.replace('.duckdns.org', '');
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/mesh/bootstrap-peers`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({
+                duckdns_domain: domain,
+                auto_bootstrap_duckdns: true,
+                dial_now: true
+            })
+        });
+        const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
+        if (res.ok && data.ok) {
+            alert("DuckDNS domain updated successfully!");
+            await fetchBootstrapPeers();
+        } else {
+            alert(data.error || "Failed to update DuckDNS domain");
+        }
+    } catch (err) {
+        alert(`Error saving DuckDNS domain: ${err.message}`);
+    }
+}
+
+window.saveDuckDnsDomain = saveDuckDnsDomain;
 window.copyThisNodeWanAddr = copyThisNodeWanAddr;
 window.setBootstrapPeerInput = setBootstrapPeerInput;
 window.addBootstrapPeer = addBootstrapPeer;
@@ -3808,7 +3875,7 @@ window.toggleMalwareDetails = function(id) {
 window.confirmThreat = async function(id) {
     if (!confirm('Are you sure you want to isolate this node and terminate the offending process?')) return;
     try {
-        await fetch(`/api/threats/confirm/${id}`, { method: 'POST' });
+        await fetch(`${API_BASE}/threats/confirm/${id}`, { method: 'POST' });
         showNotification('Response initiated: Node isolated.', 'info');
         updateDashboard();
     } catch (e) {

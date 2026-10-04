@@ -32,4 +32,5 @@ tfhe = { workspace = true, features = ["integer", "boolean", "shortint"] }
 subtle = { workspace = true }
 socket2 = { workspace = true }
 bincode = { workspace = true }
+reqwest = { workspace = true }
 # falcon-rs = { workspace = true }

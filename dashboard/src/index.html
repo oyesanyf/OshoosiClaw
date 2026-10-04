@@ -488,6 +488,29 @@
                             </div>
                         </div>
 
+                        <!-- DuckDNS Auto-Bootstrap Peering -->
+                        <div style="background:rgba(255,255,255,0.03); border:1px solid var(--glass-border); border-radius:8px; padding:12px 14px; margin-bottom:14px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:8px;">
+                                <div style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--text-muted);">DuckDNS Zero-Touch Auto-Bootstrap Peering</div>
+                                <div id="duckdns-auto-status-badge">
+                                    <span class="badge blue">👑 Core Root Master (oshoosi.duckdns.org)</span>
+                                </div>
+                            </div>
+                            <div style="display:flex; gap:8px; align-items:center;">
+                                <div style="display:flex; align-items:center; flex:1; background:rgba(0,0,0,0.3); border:1px solid var(--glass-border); border-radius:6px; padding:0 8px;">
+                                    <span style="font-size:12px; font-family:monospace; color:var(--text-muted); margin-right:4px;">Domain:</span>
+                                    <input type="text" id="duckdns-domain-input" class="input-text" style="flex:1; border:none; background:transparent; font-family:monospace; font-size:12px; color:#38bdf8;" value="oshoosi" placeholder="oshoosi" />
+                                    <span style="font-size:12px; font-family:monospace; color:var(--text-muted);">.duckdns.org</span>
+                                </div>
+                                <button type="button" class="btn-primary" onclick="saveDuckDnsDomain()" style="white-space:nowrap; padding:6px 14px; font-size:12px;">
+                                    Update Domain
+                                </button>
+                            </div>
+                            <div style="font-size:11px; color:var(--text-muted); margin-top:6px;">
+                                Automatically connects internal NAT &amp; dynamic remote nodes to your canonical DuckDNS root master without manual multiaddr configuration.
+                            </div>
+                        </div>
+
                         <div style="font-size:11px; color:#94a3b8; background:rgba(30,41,59,0.5); padding:8px 12px; border-radius:6px; margin-bottom:12px; border:1px solid rgba(148,163,184,0.15);">
                             <strong>🔒 Internal / NAT Network?</strong> Nodes behind home routers or private subnets can connect outbound to internet peers automatically. Dial the public/external node's multiaddr (e.g. <code>/ip4/71.194.142.20/tcp/4001</code>). Even if direct TCP is blocked by firewalls, decentralized <strong>Nostr relays</strong> sync threat intelligence in real time.
                         </div>
