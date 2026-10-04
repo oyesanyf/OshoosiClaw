@@ -18,6 +18,7 @@ use std::sync::Arc;
 use std::task::{Context, Poll};
 use std::time::Duration;
 use tower::{Service, ServiceExt};
+use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeFile;
 use tracing::{info, warn};
 use osoosi_behavioral::{
@@ -662,6 +663,10 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             "/api/mesh/bootstrap-peers",
             get(get_bootstrap_peers).post(post_bootstrap_peers),
         )
+        .route(
+            "/mesh/bootstrap-peers",
+            get(get_bootstrap_peers).post(post_bootstrap_peers),
+        )
         .route("/api/zone-summary", get(get_zone_summary))
         .route(
             "/api/zone/auto-remediate",
@@ -706,16 +711,23 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/logs/view", get(get_log_view))
         .with_state(state);
 
+    let cors = CorsLayer::new()
+        .allow_methods(Any)
+        .allow_origin(Any)
+        .allow_headers(Any);
+
     let safe_serve = SafeServeDir::new(asset_path);
     if index_html.is_file() {
         Router::new()
             .merge(api)
             .route_service("/", ServeFile::new(index_html))
             .fallback_service(safe_serve)
+            .layer(cors)
     } else {
         Router::new()
             .merge(api)
             .fallback_service(safe_serve)
+            .layer(cors)
     }
 }
 
@@ -5649,6 +5661,69 @@ mod tests {
         assert!(get_val["recommended_multiaddr"].as_str().unwrap().starts_with("/ip6/2600:1700::1/tcp/"));
 
         std::env::remove_var("OSOOSI_PUBLIC_IP");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_cors_headers_on_bootstrap_peers() {
+        let _env_guard = TEST_CONFIG_MUTEX.lock().await;
+        let temp_dir = std::env::temp_dir().join(format!("dash_test_cors_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+
+        let state = DashboardState::new(None, None);
+        let app = dashboard_router(state.clone(), temp_dir.clone());
+
+        // 1. OPTIONS preflight request to /api/mesh/bootstrap-peers
+        let req = axum::http::Request::builder()
+            .uri("/api/mesh/bootstrap-peers")
+            .method(axum::http::Method::OPTIONS)
+            .header("origin", "http://127.0.0.1:5500")
+            .header("access-control-request-method", "POST")
+            .header("access-control-request-headers", "content-type")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("access-control-allow-origin")
+                .and_then(|v| v.to_str().ok()),
+            Some("*")
+        );
+        assert!(resp.headers().contains_key("access-control-allow-methods"));
+
+        // 2. GET request to /api/mesh/bootstrap-peers with Origin header
+        let req = axum::http::Request::builder()
+            .uri("/api/mesh/bootstrap-peers")
+            .method(axum::http::Method::GET)
+            .header("origin", "http://127.0.0.1:5500")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("access-control-allow-origin")
+                .and_then(|v| v.to_str().ok()),
+            Some("*")
+        );
+
+        // 3. GET request to /mesh/bootstrap-peers without /api prefix
+        let req = axum::http::Request::builder()
+            .uri("/mesh/bootstrap-peers")
+            .method(axum::http::Method::GET)
+            .header("origin", "null")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        assert_eq!(
+            resp.headers()
+                .get("access-control-allow-origin")
+                .and_then(|v| v.to_str().ok()),
+            Some("*")
+        );
+
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

@@ -1,4 +1,6 @@
-const API_BASE = '/api';
+const API_BASE = (window.location.protocol === 'file:' || !window.location.host)
+    ? 'http://127.0.0.1:3030/api'
+    : '/api';
 const POLL_INTERVAL = 3000;
 
 const state = {
@@ -1290,12 +1292,26 @@ async function fetchBootstrapPeers() {
     }
 }
 
+function setBootstrapPeerInput(val) {
+    const input = document.getElementById('new-bootstrap-peer-input');
+    if (input) {
+        input.value = val;
+        input.focus();
+    }
+}
+
 function renderBootstrapPeersList() {
     const list = document.getElementById('bootstrap-peers-list');
     if (!list) return;
 
     if (!state.bootstrapPeers || state.bootstrapPeers.length === 0) {
-        list.innerHTML = `<div style="font-size:12px; color:var(--text-muted); font-style:italic; padding:8px 4px;">Zero remote bootstrap peers configured. Add an address above to link machines on other networks.</div>`;
+        list.innerHTML = `
+            <div style="font-size:12px; color:var(--text-muted); font-style:italic; padding:8px 4px;">Zero remote bootstrap peers configured. Add an address above to link machines on other networks.</div>
+            <div style="display:flex; align-items:center; gap:8px; padding:4px 4px; font-size:11px; color:var(--text-muted);">
+                <span>Suggested peer:</span>
+                <button type="button" class="btn-text" style="color:#38bdf8; font-family:monospace; text-decoration:underline; cursor:pointer;" onclick="setBootstrapPeerInput('/ip4/71.194.142.20/tcp/4001')">/ip4/71.194.142.20/tcp/4001</button>
+            </div>
+        `;
         return;
     }
 
@@ -1305,7 +1321,7 @@ function renderBootstrapPeersList() {
                 <span class="badge blue" style="font-size:10px; padding:2px 6px;">PEER</span>
                 <code style="font-size:12px; font-family:monospace; color:#38bdf8; text-overflow:ellipsis; overflow:hidden; white-space:nowrap;">${escapeHtml(peer)}</code>
             </div>
-            <button class="btn-text" onclick="removeBootstrapPeer(${idx})" style="color:var(--accent-red); font-size:11px; cursor:pointer; padding:2px 6px;">Remove</button>
+            <button type="button" class="btn-text" onclick="removeBootstrapPeer(${idx})" style="color:var(--accent-red); font-size:11px; cursor:pointer; padding:2px 6px;">Remove</button>
         </div>
     `).join('');
     if (window.lucide) lucide.createIcons();
@@ -1321,6 +1337,11 @@ function addBootstrapPeer() {
     }
     if (!val.startsWith('/ip4/') && !val.startsWith('/dns4/') && !val.startsWith('/dns/') && !val.startsWith('/dns6/') && !val.startsWith('/ip6/')) {
         alert("Bootstrap peer multiaddr must start with /ip4/, /dns4/, /dns/, or /ip6/ (e.g. /dns4/myedr.duckdns.org/tcp/4001 or /ip4/71.194.142.20/tcp/4001)");
+        return;
+    }
+    const myWanAddr = document.getElementById('this-node-wan-addr')?.value?.trim();
+    if (myWanAddr && val === myWanAddr) {
+        alert("⚠️ That is THIS node's own address! In 'Remote Bootstrap Peers', enter the address of the OTHER node you want to connect to (e.g. /ip4/71.194.142.20/tcp/4001).\n\nNodes on internal networks must dial the remote node, not themselves.");
         return;
     }
     if (state.bootstrapPeers.includes(val)) {
@@ -1351,6 +1372,9 @@ async function saveBootstrapPeers() {
         statusMsg.innerText = "Saving configuration & dialing...";
     }
 
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 10000);
+
     try {
         const res = await fetch(`${API_BASE}/mesh/bootstrap-peers`, {
             method: 'POST',
@@ -1358,8 +1382,10 @@ async function saveBootstrapPeers() {
             body: JSON.stringify({
                 peers: state.bootstrapPeers,
                 dial_now: true
-            })
+            }),
+            signal: controller.signal
         });
+        clearTimeout(timeoutId);
 
         const data = await res.json();
         if (res.ok && data.ok) {
@@ -1379,11 +1405,15 @@ async function saveBootstrapPeers() {
             showNotification(err, "error");
         }
     } catch (e) {
+        clearTimeout(timeoutId);
+        const errMsg = e.name === 'AbortError'
+            ? "Request timed out (10s). Check if daemon is active."
+            : `Network error: ${e.message}. Ensure daemon is running at ${API_BASE}`;
         if (statusMsg) {
             statusMsg.style.color = "var(--accent-red)";
-            statusMsg.innerText = `Network error: ${e.message}`;
+            statusMsg.innerText = errMsg;
         }
-        showNotification(`Network error: ${e.message}`, "error");
+        showNotification(errMsg, "error");
     }
 }
 
@@ -1407,6 +1437,7 @@ function copyThisNodeWanAddr() {
 }
 
 window.copyThisNodeWanAddr = copyThisNodeWanAddr;
+window.setBootstrapPeerInput = setBootstrapPeerInput;
 window.addBootstrapPeer = addBootstrapPeer;
 window.removeBootstrapPeer = removeBootstrapPeer;
 window.saveBootstrapPeers = saveBootstrapPeers;

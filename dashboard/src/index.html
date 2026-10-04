@@ -479,7 +479,7 @@
                             <div style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--text-muted); margin-bottom:6px;">This Node's Public WAN Multiaddr (Share with Remote Nodes)</div>
                             <div style="display:flex; gap:8px; align-items:center;">
                                 <input type="text" id="this-node-wan-addr" class="input-text" readonly style="flex:1; font-family:monospace; font-size:12px; background:rgba(0,0,0,0.3); color:#38bdf8;" value="/ip4/71.194.142.20/tcp/4001" />
-                                <button class="btn-primary" onclick="copyThisNodeWanAddr()" style="white-space:nowrap; padding:6px 12px; font-size:12px;">
+                                <button type="button" class="btn-primary" onclick="copyThisNodeWanAddr()" style="white-space:nowrap; padding:6px 12px; font-size:12px;">
                                     <i data-lucide="copy" style="width:12px; height:12px; margin-right:4px;"></i> Copy Address
                                 </button>
                             </div>
@@ -488,12 +488,16 @@
                             </div>
                         </div>
 
+                        <div style="font-size:11px; color:#94a3b8; background:rgba(30,41,59,0.5); padding:8px 12px; border-radius:6px; margin-bottom:12px; border:1px solid rgba(148,163,184,0.15);">
+                            <strong>🔒 Internal / NAT Network?</strong> Nodes behind home routers or private subnets can connect outbound to internet peers automatically. Dial the public/external node's multiaddr (e.g. <code>/ip4/71.194.142.20/tcp/4001</code>). Even if direct TCP is blocked by firewalls, decentralized <strong>Nostr relays</strong> sync threat intelligence in real time.
+                        </div>
+
                         <!-- Configured Bootstrap Peers -->
                         <div style="margin-bottom:12px;">
                             <div style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--text-muted); margin-bottom:6px;">Remote Bootstrap Peers to Dial</div>
                             <div style="display:flex; gap:8px; margin-bottom:8px;">
                                 <input type="text" id="new-bootstrap-peer-input" class="input-text" placeholder="e.g. /dns4/myedr.duckdns.org/tcp/4001 or /ip4/71.194.142.20/tcp/4001" style="flex:1; font-family:monospace; font-size:12px;" onkeydown="if(event.key==='Enter') addBootstrapPeer()" />
-                                <button class="btn-primary" onclick="addBootstrapPeer()" style="white-space:nowrap; padding:6px 14px; font-size:12px;">+ Add Peer</button>
+                                <button type="button" class="btn-primary" onclick="addBootstrapPeer()" style="white-space:nowrap; padding:6px 14px; font-size:12px;">+ Add Peer</button>
                             </div>
                             <div id="bootstrap-peers-list" style="display:flex; flex-direction:column; gap:6px; max-height:160px; overflow-y:auto;">
                                 <!-- Dynamically populated rows -->
@@ -502,7 +506,7 @@
 
                         <div style="display:flex; justify-content:space-between; align-items:center; margin-top:14px; padding-top:10px; border-top:1px solid var(--glass-border);">
                             <span id="bootstrap-peers-status-msg" style="font-size:12px; color:var(--accent-green);"></span>
-                            <button class="btn-primary" onclick="saveBootstrapPeers()" style="padding:7px 16px; font-size:12px; background:var(--accent-green); color:#000; font-weight:600;">
+                            <button type="button" class="btn-primary" onclick="saveBootstrapPeers()" style="padding:7px 16px; font-size:12px; background:var(--accent-green); color:#000; font-weight:600;">
                                 <i data-lucide="save" style="width:13px; height:13px; margin-right:4px;"></i> Save Config &amp; Dial Now
                             </button>
                         </div>
