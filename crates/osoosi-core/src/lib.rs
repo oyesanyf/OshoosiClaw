@@ -32,6 +32,8 @@ pub mod tool_paths;
 pub mod triage;
 pub mod version_utils;
 pub mod watchdog;
+pub mod memory_watchdog;
+pub use memory_watchdog::{evaluate_memory_pressure, get_available_memory_mb, spawn_memory_watchdog, MemoryPressureLevel};
 pub mod yara;
 pub mod yara_gen;
 pub mod pe_inspector;
@@ -2601,6 +2603,9 @@ impl EdrOrchestrator {
     pub async fn boot(&self) -> anyhow::Result<()> {
         info!("OpenỌ̀ṣọ́ọ̀sì Agent Booting (Target: {})", std::env::consts::OS);
         
+        // 0. Proactive Out-Of-Memory Watchdog
+        crate::spawn_memory_watchdog();
+
         // 1. Adaptive Runtime & Maintenance
         self.start_maintenance_loop();
 

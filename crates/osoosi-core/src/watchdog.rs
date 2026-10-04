@@ -24,6 +24,8 @@ use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
 use std::sync::Arc;
 use tracing::{error, info, warn};
 
+pub use crate::memory_watchdog::spawn_memory_watchdog;
+
 /// Watchdog configuration.
 #[derive(Debug, Clone)]
 pub struct WatchdogConfig {

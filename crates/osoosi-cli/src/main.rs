@@ -427,6 +427,7 @@ fn main() -> anyhow::Result<()> {
     }
 
     osoosi_types::persist_environment_paths();
+    let _ = fs::create_dir_all(resolve_log_directory());
     osoosi_core::init_hybrid_concurrency();
 
     let worker_threads = osoosi_core::tokio_worker_threads();
@@ -518,6 +519,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     } else if is_starting {
         println!("[+] Initializing OpenỌ̀ṣọ́ọ̀sì Autonomous EDR Engine...");
         println!("[+] Configuring firewall filters & P2P mesh ports (4001, 9000, 9876, 5353, 3030)...");
+        osoosi_core::spawn_memory_watchdog();
         let executor = Arc::new(DirectExecutor::new());
         let provisioner = osoosi_telemetry::AgentProvisioner::new(executor);
         tokio::spawn(async move {
@@ -715,6 +717,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             });
 
             info!("Starting OpenỌ̀ṣọ́ọ̀sì Security Agent...");
+
+            // Proactive Out-Of-Memory Watchdog
+            osoosi_core::spawn_memory_watchdog();
 
             // 2. [NEW] Ensure Firewall rules are applied on startup (User Request)
             let provisioner =
@@ -2166,12 +2171,46 @@ fn resolve_log_directory() -> PathBuf {
     osoosi_types::resolve_log_directory()
 }
 
+/// Custom writer wrapper that immediately flushes the underlying writer
+/// whenever an ERROR, WARN, or memory pressure marker is logged.
+pub struct FlushOnWarnErrorAppender<W> {
+    inner: W,
+}
+
+impl<W> FlushOnWarnErrorAppender<W> {
+    pub fn new(inner: W) -> Self {
+        Self { inner }
+    }
+}
+
+impl<W: std::io::Write> std::io::Write for FlushOnWarnErrorAppender<W> {
+    fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+        let written = self.inner.write(buf)?;
+        let chunk = String::from_utf8_lossy(&buf[..written]);
+        if chunk.contains("ERROR")
+            || chunk.contains("WARN")
+            || chunk.contains("🚨")
+            || chunk.contains("💥")
+            || chunk.contains("⚠️")
+            || chunk.contains("❌")
+        {
+            let _ = self.inner.flush();
+        }
+        Ok(written)
+    }
+
+    fn flush(&mut self) -> std::io::Result<()> {
+        self.inner.flush()
+    }
+}
+
 fn init_logging(debug: bool) -> anyhow::Result<tracing_appender::non_blocking::WorkerGuard> {
     let log_dir = resolve_log_directory();
     fs::create_dir_all(&log_dir)
         .map_err(|e| anyhow::anyhow!("Cannot create log directory {}: {}", log_dir.display(), e))?;
     let file_appender = tracing_appender::rolling::daily(&log_dir, "osoosi.log");
-    let (non_blocking, guard) = tracing_appender::non_blocking(file_appender);
+    let flushing_appender = FlushOnWarnErrorAppender::new(file_appender);
+    let (non_blocking, guard) = tracing_appender::non_blocking(flushing_appender);
     
     let file_filter = create_file_filter(debug);
     let console_filter = create_console_filter(debug);
@@ -2453,7 +2492,51 @@ fn open_browser(url: &str) {
 
 fn set_panic_hook() {
     std::panic::set_hook(Box::new(|info| {
-        error!("PANIC: {:?}", info);
+        let mut sys = sysinfo::System::new();
+        sys.refresh_memory();
+        let free_mb = sys.available_memory() as f64 / (1024.0 * 1024.0);
+        let oom_probable = free_mb < 300.0;
+        if oom_probable {
+            error!(
+                "🚨 [FATAL PANIC - OUT OF MEMORY PROBABLE] Process crashed while available RAM was only {:.1} MB! Payload: {:?}",
+                free_mb, info
+            );
+            eprintln!(
+                "\n🚨 [FATAL PANIC - OUT OF MEMORY PROBABLE]\nAvailable RAM was critically low: {:.1} MB\nError: {}\n",
+                free_mb, info
+            );
+        } else {
+            error!("💥 [FATAL PANIC] Process crashed: {:?}", info);
+            eprintln!("\n💥 [FATAL PANIC] {}\n", info);
+        }
+
+        // Direct synchronous write to logs/osoosi.log to guarantee persistence before process aborts
+        let log_dir = resolve_log_directory();
+        let _ = std::fs::create_dir_all(&log_dir);
+        let today = chrono::Local::now().format("%Y-%m-%d").to_string();
+        let daily_log_path = log_dir.join(format!("osoosi.log.{}", today));
+        let base_log_path = log_dir.join("osoosi.log");
+        let now_ts = chrono::Utc::now().to_rfc3339();
+        let log_entry = if oom_probable {
+            format!(
+                "{} ERROR 🚨 [FATAL PANIC - OUT OF MEMORY PROBABLE] Process crashed while available RAM was only {:.1} MB! Payload: {:?}\n",
+                now_ts, free_mb, info
+            )
+        } else {
+            format!("{} ERROR 💥 [FATAL PANIC] Process crashed: {:?}\n", now_ts, info)
+        };
+        for path in [daily_log_path, base_log_path] {
+            if let Ok(mut f) = std::fs::OpenOptions::new().create(true).append(true).open(path) {
+                use std::io::Write;
+                let _ = f.write_all(log_entry.as_bytes());
+                let _ = f.flush();
+            }
+        }
+
+        // Flush stdout and stderr immediately
+        use std::io::Write;
+        let _ = std::io::stdout().flush();
+        let _ = std::io::stderr().flush();
     }));
 }
 
@@ -2493,6 +2576,25 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
 }
 
 async fn ensure_ai_models_inner() -> anyhow::Result<()> {
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    let free_mb = sys.available_memory() as f64 / (1024.0 * 1024.0);
+    if free_mb < 500.0 {
+        error!("❌ [OUT OF MEMORY GUARD] Skipping AI model download: System available RAM ({:.1} MB) is below the 500 MB safety threshold. Preventing process OOM crash.", free_mb);
+        eprintln!("\n❌ [OUT OF MEMORY GUARD] AI model download skipped: Available RAM ({:.1} MB) is too low. Agent continues in lightweight heuristic mode.\n", free_mb);
+        return Ok(());
+    }
+
+    let check_oom_guard = |sys: &mut sysinfo::System| -> bool {
+        sys.refresh_memory();
+        let free_mb = sys.available_memory() as f64 / (1024.0 * 1024.0);
+        if free_mb < 500.0 {
+            error!("❌ [OUT OF MEMORY GUARD] Skipping AI model download: System available RAM ({:.1} MB) is below the 500 MB safety threshold. Preventing process OOM crash.", free_mb);
+            eprintln!("\n❌ [OUT OF MEMORY GUARD] AI model download skipped: Available RAM ({:.1} MB) is too low. Agent continues in lightweight heuristic mode.\n", free_mb);
+            return false;
+        }
+        true
+    };
 
     info!(
         "Verifying AI models in {}...",
@@ -2541,6 +2643,9 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
             available_ram_gb
         );
     } else {
+        if !check_oom_guard(&mut sys) {
+            return Ok(());
+        }
         let gemma_repo_name = std::env::var("OSOOSI_GEMMA_ONNX_REPO")
             .unwrap_or_else(|_| "onnx-community/gemma-4-E4B-it-ONNX".to_string());
         let gemma_repo = api.model(gemma_repo_name.clone());
@@ -2584,6 +2689,9 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
         .map(|v| v == "1")
         .unwrap_or(false)
     {
+        if !check_oom_guard(&mut sys) {
+            return Ok(());
+        }
         // Optional legacy SmolLM bootstrap. Disabled by default; Gemma 4 is primary.
         // 1. SmolLM2-135M-Instruct (Native)
         let smollm_repo = api.model("HuggingFaceTB/SmolLM2-135M-Instruct".to_string());
@@ -2605,6 +2713,9 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
 
     // 3. MalConv Provisioning
     if !malconv_dest.exists() {
+        if !check_oom_guard(&mut sys) {
+            return Ok(());
+        }
         if let Some(ref url) = ai_cfg.malconv_weights_url {
             info!("📥 Attempting MalConv download from primary URL...");
             let executor = DirectExecutor::new();
@@ -2675,6 +2786,9 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
     }
 
     if needs_sorel {
+        if !check_oom_guard(&mut sys) {
+            return Ok(());
+        }
         info!("📥 SOREL-20M weights missing or invalid. Attempting provisioning...");
         let sorel_repos = [
             "oyesanyf/OshoosiClaw-Weights",
@@ -4495,5 +4609,56 @@ mod tests {
         let tampered = osoosi_core::config_integrity::verify_all_critical_configs();
         assert!(tampered.is_empty(), "All critical configs must be valid after re-signing: {:?}", tampered);
     }
+
+    #[test]
+    fn test_flush_on_warn_error_appender() {
+        use std::io::Write;
+        use std::sync::atomic::{AtomicBool, AtomicUsize, Ordering};
+        use std::sync::Arc;
+
+        struct TestWriter {
+            flushed: Arc<AtomicBool>,
+            write_count: Arc<AtomicUsize>,
+        }
+
+        impl Write for TestWriter {
+            fn write(&mut self, buf: &[u8]) -> std::io::Result<usize> {
+                self.write_count.fetch_add(1, Ordering::SeqCst);
+                Ok(buf.len())
+            }
+
+            fn flush(&mut self) -> std::io::Result<()> {
+                self.flushed.store(true, Ordering::SeqCst);
+                Ok(())
+            }
+        }
+
+        let flushed = Arc::new(AtomicBool::new(false));
+        let write_count = Arc::new(AtomicUsize::new(0));
+
+        let mut appender = FlushOnWarnErrorAppender::new(TestWriter {
+            flushed: flushed.clone(),
+            write_count: write_count.clone(),
+        });
+
+        // Ordinary INFO line should not trigger flush
+        appender.write_all(b"INFO: Normal event\n").unwrap();
+        assert!(!flushed.load(Ordering::SeqCst), "INFO must not trigger flush");
+
+        // ERROR line must trigger flush immediately
+        appender.write_all(b"ERROR: Critical failure occurred\n").unwrap();
+        assert!(flushed.load(Ordering::SeqCst), "ERROR must trigger flush");
+
+        // Reset and check WARN
+        flushed.store(false, Ordering::SeqCst);
+        appender.write_all(b"WARN: Potential risk detected\n").unwrap();
+        assert!(flushed.load(Ordering::SeqCst), "WARN must trigger flush");
+
+        // Reset and check emoji markers
+        flushed.store(false, Ordering::SeqCst);
+        appender.write_all("🚨 [CRITICAL MEMORY EXHAUSTION]".as_bytes()).unwrap();
+        assert!(flushed.load(Ordering::SeqCst), "Emoji alert must trigger flush");
+    }
 }
+
 
