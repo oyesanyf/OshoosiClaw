@@ -1665,6 +1665,18 @@ pub fn load_mesh_listen_config() -> WireListenConfig {
     load_mesh_listen_config_extended()
 }
 
+/// Load bootstrap peers explicitly configured in osoosi.toml under [wire].peers.
+pub fn load_wire_bootstrap_peers() -> Vec<String> {
+    if let Some(path) = resolve_config_path() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(fc) = toml::from_str::<FileConfig>(&content) {
+                return fc.wire.peers;
+            }
+        }
+    }
+    Vec::new()
+}
+
 fn parse_csv_env_internal(var_name: &str) -> Vec<String> {
     std::env::var(var_name)
         .ok()

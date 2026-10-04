@@ -1308,6 +1308,7 @@ function renderBootstrapPeersList() {
             <button class="btn-text" onclick="removeBootstrapPeer(${idx})" style="color:var(--accent-red); font-size:11px; cursor:pointer; padding:2px 6px;">Remove</button>
         </div>
     `).join('');
+    if (window.lucide) lucide.createIcons();
 }
 
 function addBootstrapPeer() {
@@ -1318,8 +1319,8 @@ function addBootstrapPeer() {
         alert("Please enter a multiaddr (e.g. /dns4/myedr.duckdns.org/tcp/4001 or /ip4/71.194.142.20/tcp/4001)");
         return;
     }
-    if (!val.startsWith('/')) {
-        alert("Bootstrap peer multiaddr must start with / (e.g. /dns4/..., /dns/..., /ip4/..., or /ip6/...)");
+    if (!val.startsWith('/ip4/') && !val.startsWith('/dns4/') && !val.startsWith('/dns/') && !val.startsWith('/dns6/') && !val.startsWith('/ip6/')) {
+        alert("Bootstrap peer multiaddr must start with /ip4/, /dns4/, /dns/, or /ip6/ (e.g. /dns4/myedr.duckdns.org/tcp/4001 or /ip4/71.194.142.20/tcp/4001)");
         return;
     }
     if (state.bootstrapPeers.includes(val)) {
@@ -1329,12 +1330,16 @@ function addBootstrapPeer() {
 
     state.bootstrapPeers.push(val);
     input.value = '';
+    const statusMsg = document.getElementById('bootstrap-peers-status-msg');
+    if (statusMsg) statusMsg.innerText = '';
     renderBootstrapPeersList();
 }
 
 function removeBootstrapPeer(idx) {
     if (idx >= 0 && idx < state.bootstrapPeers.length) {
         state.bootstrapPeers.splice(idx, 1);
+        const statusMsg = document.getElementById('bootstrap-peers-status-msg');
+        if (statusMsg) statusMsg.innerText = '';
         renderBootstrapPeersList();
     }
 }

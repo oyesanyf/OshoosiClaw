@@ -2583,6 +2583,7 @@ pub struct UpdateBootstrapPeersRequest {
 }
 
 static CACHED_PUBLIC_IP: tokio::sync::OnceCell<String> = tokio::sync::OnceCell::const_new();
+static CONFIG_WRITE_LOCK: std::sync::Mutex<()> = std::sync::Mutex::new(());
 
 pub async fn detect_public_ip() -> String {
     if let Ok(ip) = std::env::var("OSOOSI_PUBLIC_IP") {
@@ -2611,9 +2612,12 @@ pub async fn detect_public_ip() -> String {
         None
     };
 
-    let resolved = fetched.unwrap_or_else(|| "71.194.142.20".to_string());
-    let _ = CACHED_PUBLIC_IP.set(resolved.clone());
-    resolved
+    if let Some(resolved) = fetched {
+        let _ = CACHED_PUBLIC_IP.set(resolved.clone());
+        resolved
+    } else {
+        "71.194.142.20".to_string()
+    }
 }
 
 pub fn update_bootstrap_peers_content(content: &str, peers: &[String]) -> String {
@@ -2623,10 +2627,11 @@ pub fn update_bootstrap_peers_content(content: &str, peers: &[String]) -> String
     let peers_formatted = if peers.is_empty() {
         "peers = []".to_string()
     } else {
-        let mut s = "peers = [\n".to_string();
+        let mut s = format!("peers = [{line_sep}");
         for (i, p) in peers.iter().enumerate() {
             let escaped = p.replace('\\', "\\\\").replace('\"', "\\\"");
-            s.push_str(&format!("    \"{}\"{}", escaped, if i + 1 < peers.len() { ",\n" } else { "\n" }));
+            let comma = if i + 1 < peers.len() { "," } else { "" };
+            s.push_str(&format!("    \"{escaped}\"{comma}{line_sep}"));
         }
         s.push(']');
         s
@@ -2641,25 +2646,32 @@ pub fn update_bootstrap_peers_content(content: &str, peers: &[String]) -> String
     for line in content.lines() {
         let trimmed = line.trim();
 
+        // Strip inline comments to reliably detect section headers and keys
+        let code_part = if let Some((code, _)) = trimmed.split_once('#') {
+            code.trim()
+        } else {
+            trimmed
+        };
+
         if skipping_multiline_peers {
-            if trimmed.contains(']') {
+            if code_part.contains(']') {
                 skipping_multiline_peers = false;
             }
             continue;
         }
 
-        if trimmed.starts_with('[') && trimmed.ends_with(']') {
+        if code_part.starts_with('[') && code_part.ends_with(']') {
             if in_wire && !peers_updated {
                 lines.push(peers_formatted.clone());
                 peers_updated = true;
             }
-            in_wire = trimmed == "[wire]";
+            in_wire = code_part == "[wire]";
             if in_wire {
                 wire_found = true;
             }
         } else if in_wire && !peers_updated {
-            if trimmed.starts_with("peers") {
-                if let Some((k, v)) = trimmed.split_once('=') {
+            if code_part.starts_with("peers") {
+                if let Some((k, v)) = code_part.split_once('=') {
                     if k.trim() == "peers" {
                         lines.push(peers_formatted.clone());
                         peers_updated = true;
@@ -2695,6 +2707,8 @@ pub fn update_bootstrap_peers_content(content: &str, peers: &[String]) -> String
 }
 
 pub fn save_bootstrap_peers_to_config(peers: &[String]) -> anyhow::Result<PathBuf> {
+    let _lock = CONFIG_WRITE_LOCK.lock().unwrap_or_else(|e| e.into_inner());
+
     let path = if let Ok(p) = std::env::var("OSOOSI_CONFIG") {
         let trimmed = p.trim();
         if !trimmed.is_empty() {
@@ -2721,6 +2735,9 @@ pub fn save_bootstrap_peers_to_config(peers: &[String]) -> anyhow::Result<PathBu
     std::fs::write(&path, updated)?;
 
     // Re-sign config signatures
+    if let Err(e) = osoosi_core::config_integrity::sign_config_file(&path) {
+        tracing::warn!("Could not sign updated config {:?}: {}", path, e);
+    }
     osoosi_types::config::sign_all_configs();
     osoosi_core::config_integrity::sign_all_critical_configs();
 
@@ -2729,7 +2746,10 @@ pub fn save_bootstrap_peers_to_config(peers: &[String]) -> anyhow::Result<PathBu
 
 async fn get_bootstrap_peers(State(_state): State<DashboardState>) -> Json<BootstrapPeersResponse> {
     let mesh_config = osoosi_types::load_mesh_listen_config();
-    let mut peers = mesh_config.bootstrap_peers;
+    let mut peers = osoosi_types::load_wire_bootstrap_peers();
+    if peers.is_empty() {
+        peers = mesh_config.bootstrap_peers;
+    }
 
     // Also include any peers in $env:OSOOSI_MESH_BOOTSTRAP_PEERS (split by comma or whitespace)
     if let Ok(env_val) = std::env::var("OSOOSI_MESH_BOOTSTRAP_PEERS") {
@@ -2752,7 +2772,8 @@ async fn get_bootstrap_peers(State(_state): State<DashboardState>) -> Json<Boots
     }).unwrap_or(4001);
 
     let public_ip = detect_public_ip().await;
-    let recommended_multiaddr = format!("/ip4/{}/tcp/{}", public_ip, mesh_port);
+    let proto = if public_ip.contains(':') { "ip6" } else { "ip4" };
+    let recommended_multiaddr = format!("/{}/{}/tcp/{}", proto, public_ip, mesh_port);
     let duckdns_template = format!("/dns4/<your-domain>.duckdns.org/tcp/{}", mesh_port);
 
     Json(BootstrapPeersResponse {
@@ -2782,6 +2803,7 @@ async fn post_bootstrap_peers(
         if !trimmed.starts_with("/ip4/")
             && !trimmed.starts_with("/dns4/")
             && !trimmed.starts_with("/dns/")
+            && !trimmed.starts_with("/dns6/")
             && !trimmed.starts_with("/ip6/")
         {
             return (
@@ -5547,6 +5569,86 @@ mod tests {
 
         // Clean up env and temp dir
         std::env::remove_var("OSOOSI_CONFIG");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_bootstrap_peers_preserves_file_peers_with_env_var() {
+        let _env_guard = TEST_CONFIG_MUTEX.lock().await;
+        let temp_dir = std::env::temp_dir().join(format!("dash_test_preserve_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let test_config_path = temp_dir.join("osoosi.toml");
+        std::fs::write(&test_config_path, "[wire]\npeers = [\"/ip4/71.194.142.20/tcp/4001\"]\n").unwrap();
+        std::env::set_var("OSOOSI_CONFIG", test_config_path.to_str().unwrap());
+        std::env::set_var("OSOOSI_MESH_BOOTSTRAP_PEERS", "/dns4/remote.edr.org/tcp/4001");
+
+        let state = DashboardState::new(None, None);
+        let app = dashboard_router(state.clone(), temp_dir.clone());
+
+        let req = axum::http::Request::builder()
+            .uri("/api/mesh/bootstrap-peers")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let get_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        let peers = get_val["peers"].as_array().unwrap();
+
+        assert_eq!(peers.len(), 2);
+        assert!(peers.iter().any(|p| p.as_str() == Some("/ip4/71.194.142.20/tcp/4001")));
+        assert!(peers.iter().any(|p| p.as_str() == Some("/dns4/remote.edr.org/tcp/4001")));
+
+        std::env::remove_var("OSOOSI_CONFIG");
+        std::env::remove_var("OSOOSI_MESH_BOOTSTRAP_PEERS");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_update_bootstrap_peers_content_crlf_and_inline_comments() {
+        // CRLF input with inline comments on section header and existing peers
+        let input = "[server]\r\nport = 3030\r\n\r\n[wire] # WAN and Mesh P2P settings\r\npeers = [\r\n    \"/ip4/1.2.3.4/tcp/4001\",\r\n]\r\nallow_public_relays = true\r\n";
+        let new_peers = vec!["/dns4/updated.edr.org/tcp/4001".to_string()];
+        let updated = update_bootstrap_peers_content(input, &new_peers);
+
+        assert!(updated.contains("\r\n"));
+        assert!(updated.contains("/dns4/updated.edr.org/tcp/4001"));
+        assert!(!updated.contains("/ip4/1.2.3.4/tcp/4001"));
+        assert!(updated.contains("allow_public_relays = true"));
+        assert_eq!(updated.matches("[wire]").count(), 1);
+
+        // When [wire] is missing, append it
+        let no_wire = "[server]\nport = 3030\n";
+        let updated_no_wire = update_bootstrap_peers_content(no_wire, &new_peers);
+        assert!(updated_no_wire.contains("[wire]"));
+        assert!(updated_no_wire.contains("/dns4/updated.edr.org/tcp/4001"));
+    }
+
+    #[tokio::test]
+    async fn test_detect_public_ip_ipv6() {
+        let _env_guard = TEST_CONFIG_MUTEX.lock().await;
+        std::env::set_var("OSOOSI_PUBLIC_IP", "2600:1700::1");
+
+        let state = DashboardState::new(None, None);
+        let temp_dir = std::env::temp_dir().join(format!("dash_test_ipv6_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let app = dashboard_router(state.clone(), temp_dir.clone());
+
+        let req = axum::http::Request::builder()
+            .uri("/api/mesh/bootstrap-peers")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let get_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+
+        assert_eq!(get_val["public_ip"].as_str(), Some("2600:1700::1"));
+        assert!(get_val["recommended_multiaddr"].as_str().unwrap().starts_with("/ip6/2600:1700::1/tcp/"));
+
+        std::env::remove_var("OSOOSI_PUBLIC_IP");
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

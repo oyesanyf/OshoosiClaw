@@ -461,7 +461,7 @@
                 </div>
 
                 <!-- 🌐 WAN Mesh & Remote Peering Settings -->
-                <div class="card glass shadow-glow" style="margin-top: 16px;">
+                <div class="card glass shadow-glow" id="network-container" style="margin-top: 16px;">
                     <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h3 style="font-size:15px; display:flex; align-items:center; gap:8px;">
                             <i data-lucide="globe" style="width:16px; height:16px; color:var(--accent-blue);"></i>
@@ -492,7 +492,7 @@
                         <div style="margin-bottom:12px;">
                             <div style="font-size:11px; font-weight:600; text-transform:uppercase; color:var(--text-muted); margin-bottom:6px;">Remote Bootstrap Peers to Dial</div>
                             <div style="display:flex; gap:8px; margin-bottom:8px;">
-                                <input type="text" id="new-bootstrap-peer-input" class="input-text" placeholder="e.g. /dns4/myedr.duckdns.org/tcp/4001 or /ip4/71.194.142.20/tcp/4001" style="flex:1; font-family:monospace; font-size:12px;" />
+                                <input type="text" id="new-bootstrap-peer-input" class="input-text" placeholder="e.g. /dns4/myedr.duckdns.org/tcp/4001 or /ip4/71.194.142.20/tcp/4001" style="flex:1; font-family:monospace; font-size:12px;" onkeydown="if(event.key==='Enter') addBootstrapPeer()" />
                                 <button class="btn-primary" onclick="addBootstrapPeer()" style="white-space:nowrap; padding:6px 14px; font-size:12px;">+ Add Peer</button>
                             </div>
                             <div id="bootstrap-peers-list" style="display:flex; flex-direction:column; gap:6px; max-height:160px; overflow-y:auto;">
