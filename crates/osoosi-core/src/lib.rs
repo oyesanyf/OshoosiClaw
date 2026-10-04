@@ -2777,6 +2777,13 @@ impl EdrOrchestrator {
         let _ = self.yara_manager.hot_load_rule(rule_text, &format!("mesh_{}", uuid::Uuid::new_v4()));
     }
 
+    /// Evict expired mesh debouncers and caches to prevent long-running memory leaks.
+    pub fn prune_in_memory_caches(&self) {
+        self.mesh_broadcast_debouncer.retain(|_, time| time.elapsed() < std::time::Duration::from_secs(3600));
+        self.alert_suppression_cache.retain(|_, time| time.elapsed() < std::time::Duration::from_secs(3600));
+        self.behavioral_debouncer.retain(|_, time| time.elapsed() < std::time::Duration::from_secs(3600));
+    }
+
     /// Background task for Rule Maintenance (YARA, Sigma, etc.)
     pub fn start_maintenance_loop(&self) {
         let orch = self.clone();
@@ -2794,6 +2801,9 @@ impl EdrOrchestrator {
             loop {
                 interval.tick().await;
                 info!("Running periodic rule maintenance...");
+
+                // 0. Periodic eviction of expired mesh debouncers and caches
+                orch.prune_in_memory_caches();
 
                 // Periodic YARA Feed Update to prevent rule staleness
                 let ym = orch.yara_manager.clone();

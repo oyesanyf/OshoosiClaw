@@ -7,17 +7,27 @@ use pelite::pe64::Pe as _;
 use pelite::pe32::Pe as _;
 use x509_parser::prelude::FromDer;
 
+const MAX_ZIP_ENTRIES: usize = 50_000;
+const MAX_ZIP_ENTRY_SIZE: u64 = 500 * 1024 * 1024; // 500 MB per entry
+const MAX_ZIP_TOTAL_SIZE: u64 = 5 * 1024 * 1024 * 1024; // 5 GB total
+
 /// Extract a ZIP archive to a destination directory using native Rust.
 pub fn extract_zip(zip_path: &Path, dest_dir: &Path) -> anyhow::Result<()> {
     let file = File::open(zip_path)?;
     let mut archive = zip::ZipArchive::new(file)?;
 
+    if archive.len() > MAX_ZIP_ENTRIES {
+        anyhow::bail!("ZIP contains too many entries: {}", archive.len());
+    }
+
     if !dest_dir.exists() {
         std::fs::create_dir_all(dest_dir)?;
     }
 
+    let mut total_bytes: u64 = 0;
+
     for i in 0..archive.len() {
-        let mut file = archive.by_index(i)?;
+        let file = archive.by_index(i)?;
         let outpath = match file.enclosed_name() {
             Some(path) => dest_dir.join(path),
             None => continue,
@@ -32,7 +42,18 @@ pub fn extract_zip(zip_path: &Path, dest_dir: &Path) -> anyhow::Result<()> {
                 }
             }
             let mut outfile = File::create(&outpath)?;
-            io::copy(&mut file, &mut outfile)?;
+            use std::io::Read;
+            let mut limited_reader = file.take(MAX_ZIP_ENTRY_SIZE + 1);
+            let bytes_copied = io::copy(&mut limited_reader, &mut outfile)?;
+            if bytes_copied > MAX_ZIP_ENTRY_SIZE {
+                let _ = std::fs::remove_file(&outpath);
+                anyhow::bail!("ZIP entry exceeds maximum allowed size (500MB)");
+            }
+            total_bytes += bytes_copied;
+            if total_bytes > MAX_ZIP_TOTAL_SIZE {
+                let _ = std::fs::remove_file(&outpath);
+                anyhow::bail!("ZIP archive exceeds maximum decompressed size (5GB)");
+            }
         }
 
         // Set permissions if on Unix (best effort)
@@ -608,5 +629,30 @@ mod tests {
     fn test_extract_certificate_thumbprints_nonexistent() {
         let tps = extract_certificate_thumbprints(r"C:\nonexistent\dummy.exe");
         assert!(tps.is_empty());
+    }
+
+    #[test]
+    fn test_extract_zip_bounds() {
+        let tmp_dir = std::env::temp_dir().join(format!("test_zip_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&tmp_dir);
+        let zip_file_path = tmp_dir.join("test.zip");
+        let extract_target = tmp_dir.join("extracted");
+
+        {
+            let file = std::fs::File::create(&zip_file_path).unwrap();
+            let mut zip = zip::ZipWriter::new(file);
+            let options = zip::write::SimpleFileOptions::default();
+            zip.start_file("sample.txt", options).unwrap();
+            use std::io::Write;
+            zip.write_all(b"Hello secure world").unwrap();
+            zip.finish().unwrap();
+        }
+
+        let res = extract_zip(&zip_file_path, &extract_target);
+        assert!(res.is_ok());
+        let content = std::fs::read_to_string(extract_target.join("sample.txt")).unwrap();
+        assert_eq!(content, "Hello secure world");
+
+        let _ = std::fs::remove_dir_all(&tmp_dir);
     }
 }

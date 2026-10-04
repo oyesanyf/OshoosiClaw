@@ -267,33 +267,38 @@ impl NativeTelemetryEngine {
 }
 
 async fn run_hook_telemetry_listener(tx: tokio::sync::mpsc::Sender<HostSecurityEvent>) -> anyhow::Result<()> {
-    use winapi::um::namedpipeapi::*;
-    use winapi::um::fileapi::ReadFile;
-    use winapi::um::winbase::*;
-    use winapi::um::handleapi::CloseHandle;
+    tokio::task::spawn_blocking(move || {
+        use winapi::um::namedpipeapi::*;
+        use winapi::um::fileapi::ReadFile;
+        use winapi::um::winbase::*;
+        use winapi::um::handleapi::CloseHandle;
 
-    let computer = hostname::get()
-        .ok()
-        .and_then(|h| h.into_string().ok())
-        .unwrap_or_else(|| "localhost".to_string());
+        let computer = hostname::get()
+            .ok()
+            .and_then(|h| h.into_string().ok())
+            .unwrap_or_else(|| "localhost".to_string());
 
-    info!("🚀 [HOOK-LISTENER] Starting Oshoosi Injection Telemetry Listener (Named Pipe)...");
+        info!("🚀 [HOOK-LISTENER] Starting Oshoosi Injection Telemetry Listener (Named Pipe)...");
 
-    loop {
-        let event = unsafe {
-            let pipe_name = "\\\\.\\pipe\\osoosi_injection".encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
-            let h_pipe = CreateNamedPipeW(
-                pipe_name.as_ptr(),
-                PIPE_ACCESS_INBOUND,
-                PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
-                PIPE_UNLIMITED_INSTANCES,
-                4096,
-                4096,
-                0,
-                std::ptr::null_mut(),
-            );
+        loop {
+            let event = unsafe {
+                let pipe_name = "\\\\.\\pipe\\osoosi_injection".encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+                let h_pipe = CreateNamedPipeW(
+                    pipe_name.as_ptr(),
+                    PIPE_ACCESS_INBOUND,
+                    PIPE_TYPE_BYTE | PIPE_READMODE_BYTE | PIPE_WAIT,
+                    PIPE_UNLIMITED_INSTANCES,
+                    4096,
+                    4096,
+                    0,
+                    std::ptr::null_mut(),
+                );
 
-            if h_pipe != winapi::um::handleapi::INVALID_HANDLE_VALUE {
+                if h_pipe == winapi::um::handleapi::INVALID_HANDLE_VALUE {
+                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    continue;
+                }
+
                 let mut result = None;
                 if ConnectNamedPipe(h_pipe, std::ptr::null_mut()) != 0 {
                     let mut buffer = [0u8; 4096];
@@ -310,17 +315,19 @@ async fn run_hook_telemetry_listener(tx: tokio::sync::mpsc::Sender<HostSecurityE
                             });
                         }
                     }
+                } else {
+                    let _ = CloseHandle(h_pipe);
+                    std::thread::sleep(std::time::Duration::from_millis(100));
+                    continue;
                 }
                 let _ = CloseHandle(h_pipe);
                 result
-            } else {
-                None
-            }
-        };
+            };
 
-        if let Some(ev) = event {
-            let _ = tx.send(ev).await;
+            if let Some(ev) = event {
+                let _ = tx.blocking_send(ev);
+            }
         }
-        tokio::task::yield_now().await;
-    }
+    }).await?;
+    Ok(())
 }

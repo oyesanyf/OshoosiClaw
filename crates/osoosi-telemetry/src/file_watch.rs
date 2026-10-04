@@ -120,6 +120,17 @@ fn osoosi_install_dir() -> std::path::PathBuf {
         })
 }
 
+struct HashingGuard {
+    set: Arc<dashmap::DashSet<String>>,
+    path: String,
+}
+
+impl Drop for HashingGuard {
+    fn drop(&mut self) {
+        self.set.remove(&self.path);
+    }
+}
+
 pub struct FileWatcher {
     watcher: notify::RecommendedWatcher,
     pub trap_paths: Arc<dashmap::DashSet<String>>,
@@ -203,6 +214,10 @@ impl FileWatcher {
                         let path_str_inner = path_str.clone();
 
                         let task: std::pin::Pin<Box<dyn std::future::Future<Output = ()> + Send + 'static>> = Box::pin(async move {
+                            let _guard = HashingGuard {
+                                set: hashing_set_inner.clone(),
+                                path: path_str_inner.clone(),
+                            };
                             match calculate_blake3_hash(&path_for_hash).await {
                                 Ok(hash) => {
                                     let _ = tx_clone.send(Ok(FileChangeEvent {
@@ -218,7 +233,6 @@ impl FileWatcher {
                                     }
                                 }
                             }
-                            hashing_set_inner.remove(&path_str_inner);
                         });
 
                         processor_adaptive.spawn_adaptive(

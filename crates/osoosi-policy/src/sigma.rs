@@ -229,6 +229,15 @@ impl SigmaEngine {
     }
 
     fn transpile_sigma_condition(&self, condition: &str, keys: &[String]) -> String {
+        static RE_QUANT: std::sync::LazyLock<Regex> =
+            std::sync::LazyLock::new(|| Regex::new(r"(1|all) of ([a-zA-Z_][a-zA-Z0-9_]*)\*").unwrap());
+        static RE_AND: std::sync::LazyLock<Regex> =
+            std::sync::LazyLock::new(|| Regex::new(r"(?i)\band\b").unwrap());
+        static RE_OR: std::sync::LazyLock<Regex> =
+            std::sync::LazyLock::new(|| Regex::new(r"(?i)\bor\b").unwrap());
+        static RE_NOT: std::sync::LazyLock<Regex> =
+            std::sync::LazyLock::new(|| Regex::new(r"(?i)\bnot\b").unwrap());
+
         let mut res = condition.to_string();
         
         // Handle aggregations
@@ -240,9 +249,8 @@ impl SigmaEngine {
         }
         
         // Pattern aggregations: "1 of selection*"
-        let re = Regex::new(r"(1|all) of ([a-zA-Z_][a-zA-Z0-9_]*)\*").unwrap();
         let cloned_res = res.clone();
-        for cap in re.captures_iter(&cloned_res) {
+        for cap in RE_QUANT.captures_iter(&cloned_res) {
             let quant = &cap[1];
             let pat = &cap[2];
             let matched: Vec<String> = keys.iter().filter(|k| k.starts_with(pat)).cloned().collect();
@@ -253,12 +261,9 @@ impl SigmaEngine {
         }
 
         // Logical operators
-        res = Regex::new(r"\bAND\b").unwrap().replace_all(&res, "&&").to_string();
-        res = Regex::new(r"\band\b").unwrap().replace_all(&res, "&&").to_string();
-        res = Regex::new(r"\bOR\b").unwrap().replace_all(&res, "||").to_string();
-        res = Regex::new(r"\bor\b").unwrap().replace_all(&res, "||").to_string();
-        res = Regex::new(r"\bNOT\b").unwrap().replace_all(&res, "!").to_string();
-        res = Regex::new(r"\bnot\b").unwrap().replace_all(&res, "!").to_string();
+        res = RE_AND.replace_all(&res, "&&").to_string();
+        res = RE_OR.replace_all(&res, "||").to_string();
+        res = RE_NOT.replace_all(&res, "!").to_string();
         
         res
     }

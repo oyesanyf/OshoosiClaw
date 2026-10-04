@@ -18,6 +18,7 @@ pub struct HollowingProcessState {
     pub thread_redirected: bool,
     pub hollowing_confirmed: bool,
     pub caller_pids: Vec<u32>,
+    pub created_at: std::time::Instant,
 }
 
 #[derive(Clone, Default)]
@@ -32,11 +33,19 @@ impl ProcessHollowingDetector {
         }
     }
 
+    pub fn prune_stale(&self, max_age: std::time::Duration) {
+        self.state_map.retain(|_, state| state.created_at.elapsed() < max_age);
+    }
+
     /// Called when a new process is created.
     /// Returns true if the process was created in a suspended state (CREATE_SUSPENDED).
     pub fn on_process_create(&self, pid: u32, image: &str, create_flags: u32) -> bool {
         let is_suspended = (create_flags & CREATE_SUSPENDED) != 0;
         if is_suspended {
+            if self.state_map.len() > 1024 {
+                self.prune_stale(std::time::Duration::from_secs(3600));
+            }
+
             info!(
                 "ProcessHollowingDetector: Detected process created with CREATE_SUSPENDED: {} (PID {})",
                 image, pid
@@ -51,6 +60,7 @@ impl ProcessHollowingDetector {
                     thread_redirected: false,
                     hollowing_confirmed: false,
                     caller_pids: Vec::new(),
+                    created_at: std::time::Instant::now(),
                 },
             );
             true
@@ -158,4 +168,17 @@ mod tests {
         assert_eq!(detector.state_map.len(), 0);
         assert!(!detector.is_hollowing_confirmed(target_pid));
     }
+
+    #[test]
+    fn test_hollowing_state_pruning() {
+        let detector = ProcessHollowingDetector::new();
+        detector.on_process_create(1001, "proc1.exe", CREATE_SUSPENDED);
+        detector.on_process_create(1002, "proc2.exe", CREATE_SUSPENDED);
+        assert_eq!(detector.state_map.len(), 2);
+
+        // Pruning with zero duration should prune all entries
+        detector.prune_stale(std::time::Duration::from_millis(0));
+        assert_eq!(detector.state_map.len(), 0);
+    }
 }
+

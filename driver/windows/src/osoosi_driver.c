@@ -398,6 +398,25 @@ static BOOLEAN OsoosiContainsSubstrInsensitive(
     return FALSE;
 }
 
+static BOOLEAN OsoosiEndsWithInsensitive(
+    _In_reads_(haystackLen) PCWSTR haystack,
+    _In_ ULONG haystackLen,
+    _In_reads_(suffixLen) PCWSTR suffix,
+    _In_ ULONG suffixLen
+) {
+    if (haystack == NULL || suffix == NULL || suffixLen == 0 || haystackLen < suffixLen) {
+        return FALSE;
+    }
+
+    ULONG offset = haystackLen - suffixLen;
+    for (ULONG j = 0; j < suffixLen; ++j) {
+        if (OsoosiToUpper(haystack[offset + j]) != OsoosiToUpper(suffix[j])) {
+            return FALSE;
+        }
+    }
+    return TRUE;
+}
+
 static BOOLEAN OsoosiIsCriticalSystemImage(_In_ PCUNICODE_STRING ImageFileName) {
     if (ImageFileName == NULL || ImageFileName->Buffer == NULL || ImageFileName->Length == 0) {
         return FALSE;
@@ -406,9 +425,31 @@ static BOOLEAN OsoosiIsCriticalSystemImage(_In_ PCUNICODE_STRING ImageFileName) 
     ULONG imgChars = ImageFileName->Length / sizeof(WCHAR);
 
     for (ULONG i = 0; i < sizeof(g_ProtectedImages) / sizeof(g_ProtectedImages[0]); ++i) {
-        ULONG protLen = (ULONG)wcslen(g_ProtectedImages[i]);
-        if (OsoosiContainsSubstrInsensitive(ImageFileName->Buffer, imgChars, g_ProtectedImages[i], protLen)) {
-            return TRUE;
+        PCWSTR protName = g_ProtectedImages[i];
+        ULONG protLen = (ULONG)wcslen(protName);
+
+        // Ensure ImageFileName ends with '\' + protName (or equals protName)
+        BOOLEAN matchesName = FALSE;
+        if (imgChars > protLen && ImageFileName->Buffer[imgChars - protLen - 1] == L'\\') {
+            matchesName = OsoosiEndsWithInsensitive(ImageFileName->Buffer, imgChars, protName, protLen);
+        } else if (imgChars == protLen) {
+            matchesName = OsoosiEndsWithInsensitive(ImageFileName->Buffer, imgChars, protName, protLen);
+        }
+
+        if (matchesName) {
+            // For OS core images (csrss, smss, wininit, services, lsass), require \system32\ or \windows\
+            BOOLEAN isOsCore = (i >= 4);
+            if (isOsCore) {
+                if (OsoosiContainsSubstrInsensitive(ImageFileName->Buffer, imgChars, L"\\System32\\", 10) ||
+                    OsoosiContainsSubstrInsensitive(ImageFileName->Buffer, imgChars, L"\\Windows\\", 9)) {
+                    return TRUE;
+                }
+                // An arbitrary binary outside System32/Windows (e.g. C:\temp\lsass.exe) is NOT critical system image!
+                return FALSE;
+            } else {
+                // Dedicated security images (sysmon64, sysmon, osoosi, msmpeng)
+                return TRUE;
+            }
         }
     }
 
