@@ -118,7 +118,27 @@ impl SigmaEngine {
     pub fn load_rules_from_dir(&mut self, dir: &Path) {
         if !dir.exists() { return; }
         let mut count = 0;
-        for entry in walkdir::WalkDir::new(dir).into_iter().filter_map(|e| e.ok()) {
+        for entry in walkdir::WalkDir::new(dir)
+            .into_iter()
+            .filter_entry(|e| {
+                let name = e.file_name().to_string_lossy().to_lowercase();
+                !matches!(
+                    name.as_str(),
+                    ".git"
+                        | "node_modules"
+                        | "target"
+                        | "__pycache__"
+                        | "traps"
+                        | "database"
+                        | "runs"
+                        | "logs"
+                        | "models"
+                        | ".agents"
+                        | ".gemini"
+                )
+            })
+            .filter_map(|e| e.ok())
+        {
             if entry.file_type().is_file() {
                 let p = entry.path();
                 if p.extension().map_or(false, |ext| ext == "yml" || ext == "yaml") {
@@ -136,6 +156,9 @@ impl SigmaEngine {
                                     self.global_rules.push(compiled);
                                 }
                                 count += 1;
+                                if count % 50 == 0 {
+                                    std::thread::yield_now();
+                                }
                             }
                         }
                     }
@@ -315,6 +338,55 @@ impl SigmaEngine {
 
     pub fn check(&self, event: &HostSecurityEvent) -> Vec<&SigmaRule> {
         let mut matches = Vec::new();
+
+        // 0. Skip Sigma evaluation on internal agent and deception paths
+        let is_internal_path = |path_str: &str| -> bool {
+            let lower = path_str.to_lowercase().replace('/', "\\");
+            lower.contains("\\traps\\")
+                || lower.ends_with("\\traps")
+                || lower.contains("\\database\\")
+                || lower.contains("osoosi.db")
+                || lower.contains("\\runs\\")
+                || lower.contains("\\logs\\")
+                || lower.contains("\\models\\")
+                || lower.contains("\\.agents\\")
+                || lower.contains("\\.gemini\\")
+                || lower.contains("\\target\\")
+        };
+
+        if let Some(img) = event.data.get("Image").or_else(|| event.data.get("image")).or_else(|| event.data.get("NewProcessName")).and_then(|v| v.as_str()) {
+            if is_internal_path(img) {
+                return Vec::new();
+            }
+        }
+        if let Some(target) = event.data.get("TargetFilename").or_else(|| event.data.get("target_filename")).and_then(|v| v.as_str()) {
+            if is_internal_path(target) {
+                return Vec::new();
+            }
+        }
+
+        // Throttle evaluation during high CPU load
+        static LAST_CPU_CHECK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+        static IS_CPU_HIGH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+
+        let now_sec = std::time::SystemTime::now()
+            .duration_since(std::time::UNIX_EPOCH)
+            .map(|d| d.as_secs())
+            .unwrap_or(0);
+
+        let last_check = LAST_CPU_CHECK.load(std::sync::atomic::Ordering::Relaxed);
+        if now_sec.saturating_sub(last_check) >= 2 {
+            LAST_CPU_CHECK.store(now_sec, std::sync::atomic::Ordering::Relaxed);
+            let mut sys = sysinfo::System::new();
+            sys.refresh_cpu_usage();
+            let total_cpu = sys.global_cpu_info().cpu_usage();
+            IS_CPU_HIGH.store(total_cpu > 85.0, std::sync::atomic::Ordering::Relaxed);
+        }
+
+        let is_high_cpu = IS_CPU_HIGH.load(std::sync::atomic::Ordering::Relaxed);
+        if is_high_cpu {
+            std::thread::yield_now();
+        }
         
         // 1. Identify the logsource of this event
         let mut event_sources = Vec::new();
@@ -351,6 +423,9 @@ impl SigmaEngine {
 
         // 2. Evaluate Global Rules
         for rule in &self.global_rules {
+            if is_high_cpu {
+                std::thread::yield_now();
+            }
             if self.evaluate_rule(rule, event) {
                 matches.push(&rule.rule);
             }

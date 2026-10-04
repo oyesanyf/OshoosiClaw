@@ -81,6 +81,9 @@ impl NostrMeshOrchestrator {
             debug!("Nostr Mesh: No relays configured; skipping broadcast.");
             return Ok(());
         }
+
+        // Mark our own broadcast threat as already seen so we don't re-process local echoes
+        self.seen_threats.insert(sig.id.clone(), std::time::Instant::now());
         
         // --- 1. MALCHELA DIFFERENTIAL PRIVACY ---
         // Inject Laplacian noise to prevent relay-side fingerprinting of specific threats.
@@ -116,6 +119,7 @@ impl NostrMeshOrchestrator {
 
         let client_clone = self.client.clone();
         let seen = self.seen_threats.clone();
+        let my_pubkey = self.keys.public_key();
         tokio::spawn(async move {
             let mut notifications = {
                 let c = client_clone.read().await;
@@ -125,6 +129,10 @@ impl NostrMeshOrchestrator {
             while let Ok(notification) = notifications.recv().await {
                 if let RelayPoolNotification::Event { event, .. } = notification {
                     if event.kind == KIND_EDR_ALERT {
+                        if event.author() == my_pubkey {
+                            debug!("BitChat: Suppressed local echo from our own Nostr pubkey");
+                            continue;
+                        }
                         if let Ok(sig) = serde_json::from_str::<ThreatSignature>(&event.content) {
                             if !Self::check_and_record_threat_map(&seen, &sig.id) {
                                 debug!("BitChat: Suppressed duplicate Nostr threat {} from relay pool", sig.id);

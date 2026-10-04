@@ -834,6 +834,17 @@ pub fn should_skip_file_malware_scan(path: &std::path::Path) -> bool {
     crate::voters::scanner_skip_path(&path.to_string_lossy())
 }
 
+pub fn is_internal_or_deception_path(path_str: &str) -> bool {
+    let lower = path_str.to_lowercase().replace('/', "\\");
+    lower.contains("\\traps\\")
+        || lower.ends_with("\\traps")
+        || lower.contains("\\database\\")
+        || lower.contains("osoosi.db")
+        || lower.contains("\\runs\\")
+        || lower.contains("\\logs\\")
+        || lower.contains("\\models\\")
+}
+
 pub fn is_cloud_storage_service(name: &str, exe_path: Option<&std::path::Path>) -> bool {
     let name_lc = name.to_ascii_lowercase();
     let filename_lc = std::path::Path::new(&name_lc)
@@ -2259,6 +2270,17 @@ impl EdrOrchestrator {
                         peer_rules,
                         orch.adaptive(),
                         move |sig| {
+                            let my_did = orch_sig.trust.did();
+                            if sig.source_node == my_did.id || sig.source_node == my_did.to_string() || sig.source_node == "local" {
+                                debug!("Mesh: Suppressed local echo threat from our own node DID ({})", sig.id);
+                                return;
+                            }
+                            if !orch_sig.mesh_broadcast_debouncer.contains_key(&sig.id) {
+                                orch_sig.mesh_broadcast_debouncer.insert(sig.id.clone(), std::time::Instant::now());
+                            } else {
+                                debug!("Mesh: Suppressed duplicate mesh threat ID {} from peer", sig.id);
+                                return;
+                            }
                             g1.fetch_add(1, Ordering::Relaxed);
                             info!(
                                 "Mesh Intelligence: External threat reported from {}: {:?}",
@@ -2576,6 +2598,11 @@ impl EdrOrchestrator {
         // Provides a robust, firewall-bypassing secondary intelligence layer.
         let orch_nostr = self.clone();
         self.nostr_mesh.start_listening(move |sig| {
+            let my_did = orch_nostr.trust.did();
+            if sig.source_node == my_did.id || sig.source_node == my_did.to_string() || sig.source_node == "local" {
+                debug!("Nostr: Suppressed local echo threat from our own node DID ({})", sig.id);
+                return;
+            }
             let orch = orch_nostr.clone();
             tokio::spawn(async move {
                 info!("BitChat: Decentralized threat received via Nostr relay: {:?} ({})", sig.reason, sig.source_node);
@@ -3235,6 +3262,7 @@ impl EdrOrchestrator {
                             let path = std::path::Path::new(&event.path);
                             let file_stem = path.file_name().and_then(|n| n.to_str());
                             if should_skip_file_malware_scan(path)
+                                || is_internal_or_deception_path(&event.path)
                                 || orchestrator
                                     .memory
                                     .is_internal_asset_path(&event.path)
@@ -3930,6 +3958,31 @@ impl EdrOrchestrator {
         if osoosi_telemetry::canary::is_canary_event(&event) {
             let mut correlator = self.canary_correlator.lock().await;
             osoosi_telemetry::canary::inspect_event_for_canary(&mut correlator, &event);
+            return Ok(());
+        }
+
+        // Drop internal/deception operations performed by osoosi.exe itself to eliminate feedback loop
+        let image = event.data.get("Image")
+            .or_else(|| event.data.get("image"))
+            .or_else(|| event.data.get("ImagePath"))
+            .or_else(|| event.data.get("NewProcessName"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let is_self = image.to_lowercase().ends_with("osoosi.exe")
+            || image.to_lowercase().ends_with("osoosi_service.exe")
+            || image.to_lowercase().ends_with("osoosi-cli.exe");
+
+        let target_path = event.data.get("TargetFilename")
+            .or_else(|| event.data.get("target_filename"))
+            .or_else(|| event.data.get("TargetObject"))
+            .or_else(|| event.data.get("target_object"))
+            .or_else(|| event.data.get("PipeName"))
+            .or_else(|| event.data.get("Destination"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+
+        if is_self && (is_internal_or_deception_path(target_path) || is_internal_or_deception_path(image)) {
+            debug!("Telemetry: Dropping internal/deception self-event by osoosi for target '{}'", target_path);
             return Ok(());
         }
 

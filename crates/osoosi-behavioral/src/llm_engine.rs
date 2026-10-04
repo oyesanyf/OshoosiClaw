@@ -966,6 +966,27 @@ impl SecureBertAnalyzer {
         if final_onnx_path.exists() {
             let sz = std::fs::metadata(&final_onnx_path).map(|m| m.len()).unwrap_or(0);
             if sz > 10_000_000 {
+                let mut sys = sysinfo::System::new();
+                sys.refresh_memory();
+                let avail_gb = sys.available_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+                if avail_gb < 3.5 && !std::env::var("OSOOSI_FORCE_GEMMA_ONNX").map(|v| v == "1").unwrap_or(false) {
+                    anyhow::bail!("Available RAM ({:.1} GB) below 3.5 GB threshold. Skipping SecureBERT ONNX session to prevent memory exhaustion.", avail_gb);
+                }
+
+                // Verify file can be opened with read sharing
+                let mut retries = 0;
+                while retries < 3 {
+                    match std::fs::File::open(&final_onnx_path) {
+                        Ok(_) => break,
+                        Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
+                            warn!("SecureBERT file lock / sharing contention on {:?} (attempt {}/3): {}. Retrying in 500ms...", final_onnx_path, retries + 1, e);
+                            std::thread::sleep(std::time::Duration::from_millis(500));
+                            retries += 1;
+                        }
+                        Err(e) => anyhow::bail!("Failed to access SecureBERT ONNX file: {}", e),
+                    }
+                }
+
                 let session = Session::builder()?
                     .with_optimization_level(GraphOptimizationLevel::Level3)?
                     .with_intra_threads(1)?
@@ -980,8 +1001,13 @@ impl SecureBertAnalyzer {
                         });
                     }
                     Err(e) => {
-                        error!("SecureBERT ONNX init failed: {}. Path: {:?}", e, final_onnx_path);
-                        warn!("SecureBERT ONNX init failed: {}. Trying Candle.", e);
+                        let err_str = e.to_string();
+                        if err_str.contains("13") || err_str.contains("AccessDenied") || err_str.to_lowercase().contains("sharing violation") {
+                            warn!("SecureBERT ONNX file lock / permission error 13: {}. Falling back gracefully.", err_str);
+                        } else {
+                            error!("SecureBERT ONNX init failed: {}. Path: {:?}", err_str, final_onnx_path);
+                            warn!("SecureBERT ONNX init failed: {}. Trying Candle.", err_str);
+                        }
                     }
                 }
             }

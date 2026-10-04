@@ -35,6 +35,18 @@ fn should_skip_path(path: &Path, osoosi_dir: &Path, exclude_paths: &[String]) ->
     if s_lower.contains("osoosi.db")
         || s_lower.contains("osoosi.log")
         || s_lower.contains("osoosi_core.log")
+        || s_lower.contains("/traps/")
+        || s_lower.contains("\\traps\\")
+        || s_lower.ends_with("/traps")
+        || s_lower.ends_with("\\traps")
+        || s_lower.contains("/database/")
+        || s_lower.contains("\\database\\")
+        || s_lower.contains("/runs/")
+        || s_lower.contains("\\runs\\")
+        || s_lower.contains("/logs/")
+        || s_lower.contains("\\logs\\")
+        || s_lower.contains("/models/")
+        || s_lower.contains("\\models\\")
     {
         return true;
     }
@@ -74,7 +86,14 @@ fn should_skip_path(path: &Path, osoosi_dir: &Path, exclude_paths: &[String]) ->
             | "programdata"
             | "google drive"
             | "onedrive"
-            | "dropbox" => return true,
+            | "dropbox"
+            | "traps"
+            | "database"
+            | "runs"
+            | "logs"
+            | "models"
+            | ".agents"
+            | ".gemini" => return true,
             _ => {}
         }
     }

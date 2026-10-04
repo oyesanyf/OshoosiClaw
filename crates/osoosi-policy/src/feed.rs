@@ -245,10 +245,15 @@ impl ThreatFeedFetcher {
         // CISA/Cloudflare may block requests without a proper User-Agent
         request = request.header("User-Agent", "OpenOsoosi-Agent/1.0");
 
-        let response = match request.send().await {
-            Ok(r) => r,
-            Err(e) => {
+        let response = match tokio::time::timeout(std::time::Duration::from_secs(10), request.send()).await {
+            Ok(Ok(r)) => r,
+            Ok(Err(e)) => {
                 info!("[KEV] Network fetch failed: {}. Falling back to cache with 300s backoff.", e);
+                LAST_KEV_NETWORK_FAILURE.store(now_secs, std::sync::atomic::Ordering::Relaxed);
+                return self.load_kev_from_cache().await;
+            }
+            Err(_) => {
+                info!("[KEV] Network fetch timed out after 10s. Falling back to cache with 300s backoff.");
                 LAST_KEV_NETWORK_FAILURE.store(now_secs, std::sync::atomic::Ordering::Relaxed);
                 return self.load_kev_from_cache().await;
             }
@@ -264,13 +269,18 @@ impl ThreatFeedFetcher {
         }
 
         // Fetch as bytes to handle potential decoding issues manually if needed
-        let bytes = match response.bytes().await {
-            Ok(b) => b,
-            Err(e) => {
+        let bytes = match tokio::time::timeout(std::time::Duration::from_secs(10), response.bytes()).await {
+            Ok(Ok(b)) => b,
+            Ok(Err(e)) => {
                 info!(
-                    "[KEV] Failed to read response body: {}. Falling back to cache.",
+                    "[KEV] Network response body incomplete or decoding failed: {}. Falling back cleanly to cached KEV database.",
                     e
                 );
+                LAST_KEV_NETWORK_FAILURE.store(now_secs, std::sync::atomic::Ordering::Relaxed);
+                return self.load_kev_from_cache().await;
+            }
+            Err(_) => {
+                info!("[KEV] Reading response body timed out. Falling back cleanly to cached KEV database.");
                 LAST_KEV_NETWORK_FAILURE.store(now_secs, std::sync::atomic::Ordering::Relaxed);
                 return self.load_kev_from_cache().await;
             }
@@ -286,12 +296,17 @@ impl ThreatFeedFetcher {
                 LAST_KEV_NETWORK_FAILURE.store(0, std::sync::atomic::Ordering::Relaxed);
                 Ok(kevs)
             }
-            Err(e) => {
-                info!("[KEV] JSON decoding failed: {}. Falling back to cache.", e);
+            Err(_) => {
+                info!("[KEV] Network response body incomplete or decoding failed. Falling back cleanly to cached KEV database.");
                 LAST_KEV_NETWORK_FAILURE.store(now_secs, std::sync::atomic::Ordering::Relaxed);
                 self.load_kev_from_cache().await
             }
         }
+    }
+
+    /// Alias for fetch_kev for compatibility.
+    pub async fn fetch_cisa_kev(&self) -> anyhow::Result<Vec<Kev>> {
+        self.fetch_kev().await
     }
 
     fn parse_kev_json(&self, json_val: Value) -> Vec<Kev> {
@@ -620,12 +635,13 @@ impl ThreatFeedFetcher {
                 req = req.header("apiKey", key);
             }
 
-            match req.send().await {
-                Ok(r) if r.status().is_success() => {
+            let send_fut = tokio::time::timeout(std::time::Duration::from_secs(10), req.send());
+            match send_fut.await {
+                Ok(Ok(r)) if r.status().is_success() => {
                     response = Some(r);
                     break;
                 }
-                Ok(r) => {
+                Ok(Ok(r)) => {
                     let status = r.status();
                     info!(
                         "[NVD] Attempt {} failed with status {}. Retrying...",
@@ -633,11 +649,17 @@ impl ThreatFeedFetcher {
                         status
                     );
                 }
-                Err(e) => {
+                Ok(Err(e)) => {
                     info!(
                         "[NVD] Attempt {} network error: {}. Retrying...",
                         attempts + 1,
                         e
+                    );
+                }
+                Err(_) => {
+                    info!(
+                        "[NVD] Attempt {} request timed out after 10s. Retrying...",
+                        attempts + 1
                     );
                 }
             }
@@ -658,7 +680,19 @@ impl ThreatFeedFetcher {
             }
         };
 
-        let json_val: Value = match response.json().await {
+        let bytes = match tokio::time::timeout(std::time::Duration::from_secs(10), response.bytes()).await {
+            Ok(Ok(b)) => b,
+            Ok(Err(e)) => {
+                info!("[NVD] Network response body incomplete or decoding failed: {}. Returning empty list.", e);
+                return Ok(Vec::new());
+            }
+            Err(_) => {
+                info!("[NVD] Reading response body timed out after 10s. Returning empty list.");
+                return Ok(Vec::new());
+            }
+        };
+
+        let json_val: Value = match serde_json::from_slice::<Value>(&bytes) {
             Ok(v) => v,
             Err(e) => {
                 info!("[NVD] Failed to parse NVD response: {}", e);

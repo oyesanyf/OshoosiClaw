@@ -80,6 +80,12 @@ struct Cli {
     /// Disable all AI features (ONNX Runtime, SmolLM fallback, behavioral analysis)
     #[arg(long, global = true)]
     no_ai: bool,
+    /// Run in LITE mode: skip massive reasoning models & external browser
+    #[arg(long, global = true)]
+    pub lite: bool,
+    /// Do not launch web browser on start (skip heavy browser process)
+    #[arg(long, global = true, alias = "no-dashboard")]
+    pub no_browser: bool,
     /// Enable debug logging (sets log level to DEBUG). Allowed before or after subcommands, e.g. `osoosi sandbox status --debug`
     #[arg(short, long, global = true)]
     debug: bool,
@@ -100,6 +106,9 @@ enum Commands {
         /// Run in LITE mode: skip massive reasoning models (Gemma-4) to save disk space (~14GB)
         #[arg(long, default_value_t = false)]
         lite: bool,
+        /// Do not launch web browser on start
+        #[arg(long, default_value_t = false)]
+        no_browser: bool,
         /// Run the agent inside an NVIDIA OpenShell sandbox (`openshell sandbox create` runs `osoosi start` inside). On success this process exits; no host daemon.
         #[arg(long)]
         sandbox: bool,
@@ -113,6 +122,8 @@ enum Commands {
         #[arg(long, alias = "wdlflag", default_value_t = false)]
         wsl: bool,
     },
+    /// Start the agent in lightweight, low-RAM EDR mode (bypasses heavy models & browser)
+    Lite,
     /// View the local threat intelligence status
     Status,
     /// Provisions native dependencies (ETW/eBPF)
@@ -129,6 +140,9 @@ enum Commands {
         /// Port to listen on
         #[arg(short, long, default_value = "3030")]
         port: u16,
+        /// Do not launch web browser on start
+        #[arg(long, default_value_t = false)]
+        no_browser: bool,
     },
     /// Grant OpenỌ̀ṣọ́ọ̀sì access to security event logs (run as Admin/root)
     GrantAccess,
@@ -493,7 +507,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         info!("AI features disabled via config.");
     }
 
-    let is_starting = matches!(cli.command, Some(Commands::Start { .. }));
+    let is_starting = matches!(cli.command, Some(Commands::Start { .. }) | Some(Commands::Lite) | None);
     let is_granting = cli.grant_access || matches!(cli.command, Some(Commands::GrantAccess));
     let is_bootstrapping = matches!(cli.command, Some(Commands::BootstrapModels));
 
@@ -549,23 +563,49 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     }
 
     // 2. Handle subcommands
-    match cli.command {
+    let effective_command = cli.command.clone().unwrap_or(Commands::Start {
+        dashboard: true,
+        no_dashboard: false,
+        lite: cli.lite,
+        no_browser: cli.no_browser,
+        sandbox: false,
+        sandbox_name: "osoosi".to_string(),
+        sandbox_deploy_gateway: false,
+        wsl: false,
+    });
+    let effective_command = match effective_command {
+        Commands::Lite => Commands::Start {
+            dashboard: true,
+            no_dashboard: false,
+            lite: true,
+            no_browser: cli.no_browser,
+            sandbox: false,
+            sandbox_name: "osoosi".to_string(),
+            sandbox_deploy_gateway: false,
+            wsl: false,
+        },
+        other => other,
+    };
+
+    match Some(effective_command) {
         Some(Commands::Start {
             dashboard,
             no_dashboard,
             lite,
+            no_browser,
             sandbox: start_in_sandbox,
             sandbox_name,
             sandbox_deploy_gateway,
             wsl,
         }) => {
-            let lite_mode = lite || std::env::var("OSOOSI_LITE_MODE")
+            let lite_mode = lite || cli.lite || std::env::var("OSOOSI_LITE_MODE")
                 .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
                 .unwrap_or(false);
             if lite_mode {
                 std::env::set_var("OSOOSI_LITE_MODE", "1");
                 info!("LITE mode enabled: Skipping heavy models.");
             }
+            let user_no_browser = no_browser || cli.no_browser;
             osoosi_core::tool_paths::discover_and_persist();
             run_yara_sanitizer();
             let with_dashboard = dashboard && !no_dashboard;
@@ -677,7 +717,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                         info!("Oshoosi Dashboard URL: http://127.0.0.1:{}/", port);
                         info!("----------------------------------------");
                         tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
-                        let _ = webbrowser::open(&format!("http://127.0.0.1:{}/", port));
+                        try_open_browser(&format!("http://127.0.0.1:{}/", port), user_no_browser, lite_mode);
                     } else {
                         error!("FAILED to start Dashboard UI after trying ports 3030-3040.");
                         error!("Check if another instance of Oshoosi is already running.");
@@ -771,7 +811,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             orchestrator.post_init_voters().await;
             println!("{}", orchestrator.generate_story().await);
         }
-        Some(Commands::Dashboard { port }) => {
+        Some(Commands::Dashboard { port, no_browser }) => {
+            let user_no_browser = no_browser || cli.no_browser;
             info!("Starting Oshoosi Dashboard (base port {})...", port);
             let mut current_port = port;
             let mut bound: Option<u16> = None;
@@ -791,7 +832,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
             if let Some(p) = bound {
                 tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
-                open_browser(&format!("http://127.0.0.1:{}/", p));
+                try_open_browser(&format!("http://127.0.0.1:{}/", p), user_no_browser, cli.lite);
                 tokio::signal::ctrl_c().await?;
             } else {
                 error!("Dashboard could not be started.");
@@ -1161,6 +1202,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Some(Commands::Yara { action }) => {
             handle_yara_command(action).await?;
         }
+        Some(Commands::Lite) => unreachable!(),
         None => {
             if !cli.grant_access {
                 println!("No command specified. Use --help for usage.");
@@ -2506,8 +2548,28 @@ fn fix_yara_escapes(s: &str) -> String {
     result
 }
 
-fn open_browser(url: &str) {
+fn try_open_browser(url: &str, user_no_browser: bool, lite_mode: bool) {
+    if user_no_browser {
+        info!("Dashboard web server is active at {}. (Browser auto-launch disabled by --no-browser)", url);
+        return;
+    }
+    let mut sys = sysinfo::System::new();
+    sys.refresh_memory();
+    let free_gb = sys.available_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+    let total_gb = sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+    if free_gb < 3.0 || total_gb < 4.0 || lite_mode {
+        info!(
+            "Low host memory ({:.1} GB free). Skipping auto-launching browser to preserve host RAM. Dashboard web server is active at {}",
+            free_gb, url
+        );
+        return;
+    }
     let _ = webbrowser::open(url);
+}
+
+#[allow(dead_code)]
+fn open_browser(url: &str) {
+    try_open_browser(url, false, false);
 }
 
 fn set_panic_hook() {
@@ -2598,7 +2660,14 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
 async fn ensure_ai_models_inner() -> anyhow::Result<()> {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
-    let free_mb = sys.available_memory() as f64 / (1024.0 * 1024.0);
+    let total_gb = sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+    let free_gb = sys.available_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+    if total_gb < 4.0 || free_gb < 2.5 {
+        info!("Hardware Profile: Constrained/Lean Endpoint (Total: {:.1} GB, Free: {:.1} GB). Operating with 100% native Rust heuristics, YARA-X, and kernel/firewall containment to protect host performance.", total_gb, free_gb);
+        return Ok(());
+    }
+
+    let free_mb = free_gb * 1024.0;
     if free_mb < 500.0 {
         error!("❌ [OUT OF MEMORY GUARD] Skipping AI model download: System available RAM ({:.1} MB) is below the 500 MB safety threshold. Preventing process OOM crash.", free_mb);
         eprintln!("\n❌ [OUT OF MEMORY GUARD] AI model download skipped: Available RAM ({:.1} MB) is too low. Agent continues in lightweight heuristic mode.\n", free_mb);
@@ -2607,7 +2676,13 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
 
     let check_oom_guard = |sys: &mut sysinfo::System| -> bool {
         sys.refresh_memory();
-        let free_mb = sys.available_memory() as f64 / (1024.0 * 1024.0);
+        let total_gb = sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+        let free_gb = sys.available_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
+        if total_gb < 4.0 || free_gb < 2.5 {
+            info!("Hardware Profile: Constrained/Lean Endpoint (Total: {:.1} GB, Free: {:.1} GB). Operating with 100% native Rust heuristics, YARA-X, and kernel/firewall containment to protect host performance.", total_gb, free_gb);
+            return false;
+        }
+        let free_mb = free_gb * 1024.0;
         if free_mb < 500.0 {
             error!("❌ [OUT OF MEMORY GUARD] Skipping AI model download: System available RAM ({:.1} MB) is below the 500 MB safety threshold. Preventing process OOM crash.", free_mb);
             eprintln!("\n❌ [OUT OF MEMORY GUARD] AI model download skipped: Available RAM ({:.1} MB) is too low. Agent continues in lightweight heuristic mode.\n", free_mb);
@@ -2899,7 +2974,11 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
                 return Ok(());
             }
             if let Ok(path) = sb_repo.get(file).await {
-                let _ = fs::copy(&path, bert_dir.join(file));
+                let target_file = bert_dir.join(file);
+                let tmp_path = bert_dir.join(format!("{}.tmp", file));
+                if fs::copy(&path, &tmp_path).is_ok() {
+                    let _ = fs::rename(&tmp_path, target_file);
+                }
             }
         }
     }
