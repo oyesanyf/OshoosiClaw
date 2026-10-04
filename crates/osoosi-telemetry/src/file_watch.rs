@@ -47,6 +47,10 @@ fn should_skip_path(path: &Path, osoosi_dir: &Path, exclude_paths: &[String]) ->
         || s_lower.contains("\\logs\\")
         || s_lower.contains("/models/")
         || s_lower.contains("\\models\\")
+        || s_lower.contains("/.agents/")
+        || s_lower.contains("\\.agents\\")
+        || s_lower.contains("/.gemini/")
+        || s_lower.contains("\\.gemini\\")
     {
         return true;
     }

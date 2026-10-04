@@ -950,7 +950,10 @@ impl SecureBertAnalyzer {
             let dst = model_dir.join(f);
             if src.exists() && !dst.exists() {
                 let _ = std::fs::create_dir_all(&model_dir);
-                let _ = std::fs::copy(&src, &dst);
+                let tmp = model_dir.join(format!("{}.tmp", f));
+                if std::fs::copy(&src, &tmp).is_ok() {
+                    let _ = std::fs::rename(&tmp, &dst);
+                }
             }
         }
 
@@ -975,9 +978,13 @@ impl SecureBertAnalyzer {
 
                 // Verify file can be opened with read sharing
                 let mut retries = 0;
+                let mut opened = false;
                 while retries < 3 {
                     match std::fs::File::open(&final_onnx_path) {
-                        Ok(_) => break,
+                        Ok(_) => {
+                            opened = true;
+                            break;
+                        }
                         Err(e) if e.kind() == std::io::ErrorKind::PermissionDenied => {
                             warn!("SecureBERT file lock / sharing contention on {:?} (attempt {}/3): {}. Retrying in 500ms...", final_onnx_path, retries + 1, e);
                             std::thread::sleep(std::time::Duration::from_millis(500));
@@ -985,6 +992,9 @@ impl SecureBertAnalyzer {
                         }
                         Err(e) => anyhow::bail!("Failed to access SecureBERT ONNX file: {}", e),
                     }
+                }
+                if !opened {
+                    anyhow::bail!("SecureBERT ONNX file locked after 3 attempts (sharing violation / Error 13): {:?}", final_onnx_path);
                 }
 
                 let session = Session::builder()?

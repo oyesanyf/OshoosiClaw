@@ -339,28 +339,56 @@ impl SigmaEngine {
     pub fn check(&self, event: &HostSecurityEvent) -> Vec<&SigmaRule> {
         let mut matches = Vec::new();
 
-        // 0. Skip Sigma evaluation on internal agent and deception paths
-        let is_internal_path = |path_str: &str| -> bool {
+        // 0. Skip Sigma evaluation on internal agent directories and self-activity
+        let is_internal_agent_path = |path_str: &str| -> bool {
+            if path_str.trim().is_empty() {
+                return false;
+            }
             let lower = path_str.to_lowercase().replace('/', "\\");
-            lower.contains("\\traps\\")
-                || lower.ends_with("\\traps")
-                || lower.contains("\\database\\")
-                || lower.contains("osoosi.db")
-                || lower.contains("\\runs\\")
-                || lower.contains("\\logs\\")
-                || lower.contains("\\models\\")
-                || lower.contains("\\.agents\\")
-                || lower.contains("\\.gemini\\")
-                || lower.contains("\\target\\")
+            let trimmed = lower.trim_matches('\\');
+            if trimmed == "database"
+                || trimmed == "runs"
+                || trimmed == "logs"
+                || trimmed == "models"
+                || trimmed == ".agents"
+                || trimmed == ".gemini"
+                || trimmed == "target"
+            {
+                return true;
+            }
+            let padded = format!("\\{}\\", trimmed);
+            padded.contains("\\database\\")
+                || padded.contains("osoosi.db")
+                || padded.contains("osoosi.log")
+                || padded.contains("osoosi_core.log")
+                || padded.contains("\\runs\\")
+                || padded.contains("\\logs\\")
+                || padded.contains("\\models\\")
+                || padded.contains("\\.agents\\")
+                || padded.contains("\\.gemini\\")
+                || padded.contains("\\target\\")
+        };
+
+        let is_self_image = |img: &str| -> bool {
+            let lower = img.to_lowercase();
+            lower.ends_with("osoosi.exe")
+                || lower.ends_with("osoosi_service.exe")
+                || lower.ends_with("osoosi-cli.exe")
         };
 
         if let Some(img) = event.data.get("Image").or_else(|| event.data.get("image")).or_else(|| event.data.get("NewProcessName")).and_then(|v| v.as_str()) {
-            if is_internal_path(img) {
+            if is_self_image(img) || is_internal_agent_path(img) {
                 return Vec::new();
             }
         }
         if let Some(target) = event.data.get("TargetFilename").or_else(|| event.data.get("target_filename")).and_then(|v| v.as_str()) {
-            if is_internal_path(target) {
+            if is_internal_agent_path(target) {
+                return Vec::new();
+            }
+            // Deception traps targeted by osoosi itself are dropped
+            if (target.to_lowercase().contains("\\traps\\") || target.to_lowercase().ends_with("\\traps") || target.to_lowercase() == "traps")
+                && event.data.get("Image").and_then(|v| v.as_str()).map_or(false, is_self_image)
+            {
                 return Vec::new();
             }
         }
@@ -368,6 +396,7 @@ impl SigmaEngine {
         // Throttle evaluation during high CPU load
         static LAST_CPU_CHECK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
         static IS_CPU_HIGH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        static SYSINFO_CPU: std::sync::Mutex<Option<sysinfo::System>> = std::sync::Mutex::new(None);
 
         let now_sec = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
@@ -377,10 +406,16 @@ impl SigmaEngine {
         let last_check = LAST_CPU_CHECK.load(std::sync::atomic::Ordering::Relaxed);
         if now_sec.saturating_sub(last_check) >= 2 {
             LAST_CPU_CHECK.store(now_sec, std::sync::atomic::Ordering::Relaxed);
-            let mut sys = sysinfo::System::new();
-            sys.refresh_cpu_usage();
-            let total_cpu = sys.global_cpu_info().cpu_usage();
-            IS_CPU_HIGH.store(total_cpu > 85.0, std::sync::atomic::Ordering::Relaxed);
+            if let Ok(mut guard) = SYSINFO_CPU.try_lock() {
+                let sys = guard.get_or_insert_with(|| {
+                    let mut s = sysinfo::System::new();
+                    s.refresh_cpu_usage();
+                    s
+                });
+                sys.refresh_cpu_usage();
+                let total_cpu = sys.global_cpu_info().cpu_usage();
+                IS_CPU_HIGH.store(total_cpu > 85.0, std::sync::atomic::Ordering::Relaxed);
+            }
         }
 
         let is_high_cpu = IS_CPU_HIGH.load(std::sync::atomic::Ordering::Relaxed);
@@ -435,6 +470,9 @@ impl SigmaEngine {
         for src in event_sources {
             if let Some(rules) = self.indexed_rules.get(&src) {
                 for rule in rules {
+                    if is_high_cpu {
+                        std::thread::yield_now();
+                    }
                     if self.evaluate_rule(rule, event) {
                         matches.push(&rule.rule);
                     }
@@ -702,5 +740,80 @@ ruletype: Sigma
         assert_eq!(matches.len(), 1, "Sysmon whoami /priv rule must match");
         assert_eq!(matches[0].title, "Security Privileges Enumeration Via Whoami.EXE");
         assert!(matches[0].tags.contains(&"attack.t1033".to_string()));
+    }
+
+    #[test]
+    fn test_sigma_internal_path_exclusion_and_deception_honeypot_retention() {
+        let yaml_rule = r#"
+title: Suspicious File Creation in Honey Directory
+id: 6a87b741-2b10-482a-a921-689d04961b12
+status: test
+description: Detects suspicious process accessing or dropping files
+tags:
+    - attack.persistence
+    - sysmon
+logsource:
+    category: file_event
+    product: windows
+detection:
+    file_event:
+        EventID: 11
+        Channel: Microsoft-Windows-Sysmon/Operational
+    condition: file_event
+level: high
+ruletype: Sigma
+"#;
+        let rule: SigmaRule = serde_yaml::from_str(yaml_rule).expect("Must deserialize SigmaRule");
+        let mut engine = SigmaEngine::new();
+        let compiled = engine.compile_rule(rule).expect("Must compile rule");
+        engine.global_rules.push(compiled);
+
+        // 1. External process accessing deception honeypot trap -> MUST BE EVALUATED AND MATCH!
+        let attacker_trap_event = HostSecurityEvent {
+            event_id: 11,
+            timestamp: Utc::now(),
+            source: HostEventSource::WindowsEventLog,
+            computer: "DESKTOP-TEST".to_string(),
+            data: serde_json::json!({
+                "Image": "C:\\Windows\\System32\\cmd.exe",
+                "TargetFilename": "C:\\traps\\decoy_creds.txt",
+                "ProviderName": "Microsoft-Windows-Sysmon",
+            }),
+            causal_parent: None,
+        };
+        let matches = engine.check(&attacker_trap_event);
+        assert_eq!(matches.len(), 1, "Attacker accessing trap must be evaluated by Sigma");
+
+        // 2. Osoosi itself accessing deception honeypot trap -> MUST BE SKIPPED
+        let osoosi_trap_event = HostSecurityEvent {
+            event_id: 11,
+            timestamp: Utc::now(),
+            source: HostEventSource::WindowsEventLog,
+            computer: "DESKTOP-TEST".to_string(),
+            data: serde_json::json!({
+                "Image": "C:\\Program Files\\OshoosiClaw\\osoosi.exe",
+                "TargetFilename": "C:\\traps\\decoy_creds.txt",
+                "ProviderName": "Microsoft-Windows-Sysmon",
+            }),
+            causal_parent: None,
+        };
+        let matches_self = engine.check(&osoosi_trap_event);
+        assert_eq!(matches_self.len(), 0, "Osoosi self-activity in traps must be skipped by Sigma");
+
+        // 3. Process running from internal agent directory (runs/database/logs) -> MUST BE SKIPPED
+        let internal_agent_event = HostSecurityEvent {
+            event_id: 11,
+            timestamp: Utc::now(),
+            source: HostEventSource::WindowsEventLog,
+            computer: "DESKTOP-TEST".to_string(),
+            data: serde_json::json!({
+                "Image": "C:\\Program Files\\OshoosiClaw\\runs\\analyzer.exe",
+                "TargetFilename": "C:\\Program Files\\OshoosiClaw\\database\\osoosi.db",
+                "ProviderName": "Microsoft-Windows-Sysmon",
+            }),
+            causal_parent: None,
+        };
+        let matches_internal = engine.check(&internal_agent_event);
+        assert_eq!(matches_internal.len(), 0, "Internal agent directory activity must be skipped by Sigma");
     }
 }

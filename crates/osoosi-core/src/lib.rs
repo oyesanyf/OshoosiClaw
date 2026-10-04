@@ -835,14 +835,32 @@ pub fn should_skip_file_malware_scan(path: &std::path::Path) -> bool {
 }
 
 pub fn is_internal_or_deception_path(path_str: &str) -> bool {
+    if path_str.trim().is_empty() {
+        return false;
+    }
     let lower = path_str.to_lowercase().replace('/', "\\");
-    lower.contains("\\traps\\")
-        || lower.ends_with("\\traps")
-        || lower.contains("\\database\\")
-        || lower.contains("osoosi.db")
-        || lower.contains("\\runs\\")
-        || lower.contains("\\logs\\")
-        || lower.contains("\\models\\")
+    let trimmed = lower.trim_matches('\\');
+    if trimmed == "traps"
+        || trimmed == "database"
+        || trimmed == "runs"
+        || trimmed == "logs"
+        || trimmed == "models"
+        || trimmed == ".agents"
+        || trimmed == ".gemini"
+    {
+        return true;
+    }
+    let padded = format!("\\{}\\", trimmed);
+    padded.contains("\\traps\\")
+        || padded.contains("\\database\\")
+        || padded.contains("osoosi.db")
+        || padded.contains("osoosi.log")
+        || padded.contains("osoosi_core.log")
+        || padded.contains("\\runs\\")
+        || padded.contains("\\logs\\")
+        || padded.contains("\\models\\")
+        || padded.contains("\\.agents\\")
+        || padded.contains("\\.gemini\\")
 }
 
 pub fn is_cloud_storage_service(name: &str, exe_path: Option<&std::path::Path>) -> bool {
@@ -2603,6 +2621,12 @@ impl EdrOrchestrator {
                 debug!("Nostr: Suppressed local echo threat from our own node DID ({})", sig.id);
                 return;
             }
+            if !orch_nostr.mesh_broadcast_debouncer.contains_key(&sig.id) {
+                orch_nostr.mesh_broadcast_debouncer.insert(sig.id.clone(), std::time::Instant::now());
+            } else {
+                debug!("Nostr: Suppressed duplicate mesh threat ID {} from relay/peer", sig.id);
+                return;
+            }
             let orch = orch_nostr.clone();
             tokio::spawn(async move {
                 info!("BitChat: Decentralized threat received via Nostr relay: {:?} ({})", sig.reason, sig.source_node);
@@ -3968,9 +3992,13 @@ impl EdrOrchestrator {
             .or_else(|| event.data.get("NewProcessName"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
+        let pid = event.data.get("ProcessId")
+            .or_else(|| event.data.get("process_id"))
+            .and_then(|v| v.as_u64());
         let is_self = image.to_lowercase().ends_with("osoosi.exe")
             || image.to_lowercase().ends_with("osoosi_service.exe")
-            || image.to_lowercase().ends_with("osoosi-cli.exe");
+            || image.to_lowercase().ends_with("osoosi-cli.exe")
+            || pid.map(|p| p as u32 == std::process::id()).unwrap_or(false);
 
         let target_path = event.data.get("TargetFilename")
             .or_else(|| event.data.get("target_filename"))
@@ -3978,6 +4006,10 @@ impl EdrOrchestrator {
             .or_else(|| event.data.get("target_object"))
             .or_else(|| event.data.get("PipeName"))
             .or_else(|| event.data.get("Destination"))
+            .or_else(|| event.data.get("Path"))
+            .or_else(|| event.data.get("path"))
+            .or_else(|| event.data.get("FilePath"))
+            .or_else(|| event.data.get("file_path"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
 
@@ -8790,6 +8822,47 @@ mod tests {
         assert!(res_traversal.is_err(), "Path traversal in content_hash must be rejected");
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_is_internal_or_deception_path_coverage() {
+        // Positive cases - relative paths
+        assert!(is_internal_or_deception_path("traps\\canary.docx"));
+        assert!(is_internal_or_deception_path("traps/canary.docx"));
+        assert!(is_internal_or_deception_path("runs\\20261004.log"));
+        assert!(is_internal_or_deception_path("runs/20261004.log"));
+        assert!(is_internal_or_deception_path("logs\\osoosi.log"));
+        assert!(is_internal_or_deception_path("models\\securebert\\model.onnx"));
+        assert!(is_internal_or_deception_path("database\\osoosi.db"));
+        assert!(is_internal_or_deception_path(".agents\\skills\\security.md"));
+        assert!(is_internal_or_deception_path(".gemini\\antigravity\\config"));
+
+        // Positive cases - exact directory/database names
+        assert!(is_internal_or_deception_path("traps"));
+        assert!(is_internal_or_deception_path("/traps/"));
+        assert!(is_internal_or_deception_path("\\traps\\"));
+        assert!(is_internal_or_deception_path("database"));
+        assert!(is_internal_or_deception_path("runs"));
+        assert!(is_internal_or_deception_path("logs"));
+        assert!(is_internal_or_deception_path("models"));
+        assert!(is_internal_or_deception_path(".agents"));
+        assert!(is_internal_or_deception_path(".gemini"));
+        assert!(is_internal_or_deception_path("osoosi.db"));
+        assert!(is_internal_or_deception_path("osoosi.log"));
+        assert!(is_internal_or_deception_path("osoosi_core.log"));
+
+        // Positive cases - absolute Windows paths
+        assert!(is_internal_or_deception_path("C:\\Program Files\\OshoosiClaw\\traps\\honey.txt"));
+        assert!(is_internal_or_deception_path("D:\\osoosi\\database\\state.db"));
+        assert!(is_internal_or_deception_path("C:\\ProgramData\\Oshoosi\\logs\\agent.log"));
+
+        // Negative cases - benign OS paths or substring traps
+        assert!(!is_internal_or_deception_path("C:\\Windows\\System32\\cmd.exe"));
+        assert!(!is_internal_or_deception_path("C:\\Users\\Bob\\Documents\\report.docx"));
+        assert!(!is_internal_or_deception_path("straps\\canary.docx"));
+        assert!(!is_internal_or_deception_path("C:\\remodels\\engine.dll"));
+        assert!(!is_internal_or_deception_path(""));
+        assert!(!is_internal_or_deception_path("   "));
     }
 }
 

@@ -84,7 +84,7 @@ struct Cli {
     #[arg(long, global = true)]
     pub lite: bool,
     /// Do not launch web browser on start (skip heavy browser process)
-    #[arg(long, global = true, alias = "no-dashboard")]
+    #[arg(long, global = true, alias = "no-dashboard", alias = "no_browser", alias = "nobrowser")]
     pub no_browser: bool,
     /// Enable debug logging (sets log level to DEBUG). Allowed before or after subcommands, e.g. `osoosi sandbox status --debug`
     #[arg(short, long, global = true)]
@@ -435,7 +435,30 @@ fn main() -> anyhow::Result<()> {
         }
     }
 
-    let cli = Cli::parse();
+    // Ultra-forgiving argument normalization:
+    // Seamlessly map common PowerShell/Windows CMD single-dash forms (-no-browser, -lite, -no-ai, -no-dashboard)
+    // to their standard clap long flag representations.
+    let normalized_args: Vec<String> = std::env::args()
+        .map(|arg| {
+            if arg == "-no-browser" {
+                "--no-browser".to_string()
+            } else if arg == "-no-dashboard" {
+                "--no-dashboard".to_string()
+            } else if arg == "-lite" {
+                "--lite".to_string()
+            } else if arg == "-no-ai" {
+                "--no-ai".to_string()
+            } else if arg == "-debug" {
+                "--debug".to_string()
+            } else if arg == "-grant-access" {
+                "--grant-access".to_string()
+            } else {
+                arg
+            }
+        })
+        .collect();
+
+    let cli = Cli::parse_from(normalized_args);
     if let Some(_uuid_str) = cli.canary_probe.as_ref() {
         return Ok(());
     }
@@ -563,18 +586,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
     }
 
     // 2. Handle subcommands
-    let effective_command = cli.command.clone().unwrap_or(Commands::Start {
-        dashboard: true,
-        no_dashboard: false,
-        lite: cli.lite,
-        no_browser: cli.no_browser,
-        sandbox: false,
-        sandbox_name: "osoosi".to_string(),
-        sandbox_deploy_gateway: false,
-        wsl: false,
-    });
-    let effective_command = match effective_command {
-        Commands::Lite => Commands::Start {
+    let effective_command = match cli.command.clone() {
+        Some(Commands::Lite) => Commands::Start {
             dashboard: true,
             no_dashboard: false,
             lite: true,
@@ -584,7 +597,18 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             sandbox_deploy_gateway: false,
             wsl: false,
         },
-        other => other,
+        Some(other) => other,
+        None if cli.grant_access => Commands::GrantAccess,
+        None => Commands::Start {
+            dashboard: true,
+            no_dashboard: false,
+            lite: cli.lite,
+            no_browser: cli.no_browser,
+            sandbox: false,
+            sandbox_name: "osoosi".to_string(),
+            sandbox_deploy_gateway: false,
+            wsl: false,
+        },
     };
 
     match Some(effective_command) {
@@ -832,7 +856,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
             if let Some(p) = bound {
                 tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
-                try_open_browser(&format!("http://127.0.0.1:{}/", p), user_no_browser, cli.lite);
+                let dash_lite = cli.lite || std::env::var("OSOOSI_LITE_MODE").map(|v| v == "1" || v.eq_ignore_ascii_case("true")).unwrap_or(false);
+                try_open_browser(&format!("http://127.0.0.1:{}/", p), user_no_browser, dash_lite);
                 tokio::signal::ctrl_c().await?;
             } else {
                 error!("Dashboard could not be started.");
@@ -2658,6 +2683,13 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
 }
 
 async fn ensure_ai_models_inner() -> anyhow::Result<()> {
+    let lite_mode = std::env::var("OSOOSI_LITE_MODE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if lite_mode {
+        info!("LITE mode active: Skipping all heavy AI model downloads.");
+        return Ok(());
+    }
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
     let total_gb = sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
@@ -2665,6 +2697,8 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
     if total_gb < 4.0 || free_gb < 2.5 {
         info!("Hardware Profile: Constrained/Lean Endpoint (Total: {:.1} GB, Free: {:.1} GB). Operating with 100% native Rust heuristics, YARA-X, and kernel/firewall containment to protect host performance.", total_gb, free_gb);
         return Ok(());
+    } else if total_gb >= 16.0 && free_gb >= 8.0 {
+        info!("Hardware Profile: High-Performance Endpoint (Total: {:.1} GB, Free: {:.1} GB). Standard AI tiers enabled.", total_gb, free_gb);
     }
 
     let free_mb = free_gb * 1024.0;
