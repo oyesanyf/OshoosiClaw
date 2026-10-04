@@ -2840,7 +2840,7 @@ pub fn save_bootstrap_peers_to_config(peers: &[String]) -> anyhow::Result<PathBu
     save_wire_config(Some(peers), None, None)
 }
 
-async fn get_bootstrap_peers(State(_state): State<DashboardState>) -> Json<BootstrapPeersResponse> {
+pub async fn get_bootstrap_peers(State(_state): State<DashboardState>) -> Json<BootstrapPeersResponse> {
     let mesh_config = osoosi_types::load_mesh_listen_config();
     let mut peers = osoosi_types::load_wire_bootstrap_peers();
     if peers.is_empty() {
@@ -2875,13 +2875,23 @@ async fn get_bootstrap_peers(State(_state): State<DashboardState>) -> Json<Boots
     let duckdns_domain = mesh_config.duckdns_domain.clone().or_else(|| Some("oshoosi".to_string()));
     let auto_bootstrap_duckdns = mesh_config.auto_bootstrap_duckdns;
     let duckdns_port = mesh_config.duckdns_port;
-    let domain_name = duckdns_domain.as_deref().unwrap_or("oshoosi");
-    let upstream_peer = format!("/dns4/{}.duckdns.org/tcp/{}", domain_name, duckdns_port);
+    let domain_raw = duckdns_domain.as_deref().unwrap_or("oshoosi");
+    let clean_domain = domain_raw
+        .trim()
+        .trim_start_matches("https://")
+        .trim_start_matches("http://")
+        .trim_end_matches('/')
+        .trim_end_matches(".duckdns.org");
+    let clean_domain = if clean_domain.is_empty() { "oshoosi" } else { clean_domain };
+    let upstream_peer = format!("/dns4/{}.duckdns.org/tcp/{}", clean_domain, duckdns_port);
 
-    let host = format!("{}.duckdns.org", domain_name);
-    let resolved_ip_opt = match tokio::net::lookup_host(format!("{}:{}", host, duckdns_port)).await {
-        Ok(mut addrs) => addrs.next().map(|sa| sa.ip().to_string()),
-        Err(_) => None,
+    let host = format!("{}.duckdns.org", clean_domain);
+    let resolved_ip_opt = match tokio::time::timeout(
+        std::time::Duration::from_millis(1500),
+        tokio::net::lookup_host(format!("{}:{}", host, duckdns_port)),
+    ).await {
+        Ok(Ok(mut addrs)) => addrs.next().map(|sa| sa.ip().to_string()),
+        _ => None,
     };
     let is_duckdns_host = if let Some(ref rip) = resolved_ip_opt {
         rip == &public_ip
@@ -2902,7 +2912,7 @@ async fn get_bootstrap_peers(State(_state): State<DashboardState>) -> Json<Boots
     })
 }
 
-async fn post_bootstrap_peers(
+pub async fn post_bootstrap_peers(
     State(state): State<DashboardState>,
     Json(req): Json<UpdateBootstrapPeersRequest>,
 ) -> impl IntoResponse {
@@ -2939,11 +2949,17 @@ async fn post_bootstrap_peers(
 
     let domain_clean = req.duckdns_domain.as_ref().map(|d| {
         let mut s = d.trim();
+        if let Some(stripped) = s.strip_prefix("https://") {
+            s = stripped;
+        } else if let Some(stripped) = s.strip_prefix("http://") {
+            s = stripped;
+        }
+        s = s.trim_end_matches('/');
         if s.ends_with(".duckdns.org") {
             s = &s[..s.len() - 12];
         }
         s.to_string()
-    });
+    }).filter(|s| !s.is_empty());
 
     if let Err(e) = save_wire_config(
         sanitized_peers.as_deref(),
@@ -2994,16 +3010,29 @@ async fn post_bootstrap_peers(
         );
     }
 
+    let (persisted_domain, persisted_auto, _) = osoosi_types::load_wire_duckdns_config();
+    let effective_domain = domain_clean.or(persisted_domain);
+    let effective_auto = req.auto_bootstrap_duckdns.unwrap_or(persisted_auto);
+
     (
         StatusCode::OK,
         Json(json!({
             "ok": true,
             "peers": sanitized_peers.unwrap_or_else(osoosi_types::load_wire_bootstrap_peers),
-            "duckdns_domain": domain_clean,
-            "auto_bootstrap_duckdns": req.auto_bootstrap_duckdns,
+            "duckdns_domain": effective_domain,
+            "auto_bootstrap_duckdns": effective_auto,
             "message": "Bootstrap peers updated and saved to config."
         })),
     ).into_response()
+}
+
+#[allow(dead_code)]
+pub async fn set_bootstrap_peers(
+    state: State<DashboardState>,
+    req: Json<UpdateBootstrapPeersRequest>,
+) -> axum::response::Response {
+    use axum::response::IntoResponse;
+    post_bootstrap_peers(state, req).await.into_response()
 }
 
 /// Consolidated context for LLM agent: status, pending joins, threats, malware, repair.
@@ -5722,10 +5751,29 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let duck_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(duck_val["ok"], true);
+        assert_eq!(duck_val["duckdns_domain"], "fleet-alpha");
+        assert_eq!(duck_val["auto_bootstrap_duckdns"], false);
 
         let config_duck = std::fs::read_to_string(&test_config_path).unwrap();
         assert!(config_duck.contains("fleet-alpha"));
         assert!(config_duck.contains("auto_bootstrap_duckdns = false"));
+
+        // 7. Verify GET /api/mesh/bootstrap-peers returns the updated duckdns domain & auto_bootstrap
+        let req = axum::http::Request::builder()
+            .uri("/api/mesh/bootstrap-peers")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let get_val_duck: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(get_val_duck["duckdns_domain"], "fleet-alpha");
+        assert_eq!(get_val_duck["auto_bootstrap_duckdns"], false);
+        assert!(get_val_duck["upstream_peer"].as_str().unwrap().contains("fleet-alpha.duckdns.org"));
 
         // Clean up env and temp dir
         std::env::remove_var("OSOOSI_CONFIG");

@@ -1300,9 +1300,9 @@ async function fetchBootstrapPeers() {
         const badge = document.getElementById('duckdns-auto-status-badge');
         if (badge) {
             if (state.isDuckDnsHost) {
-                badge.innerHTML = `<span class="badge blue">👑 Core Root Master (oshoosi.duckdns.org)</span>`;
+                badge.innerHTML = `<span class="badge blue">👑 Core Root Master (${escapeHtml(state.duckdnsDomain || 'oshoosi')}.duckdns.org)</span>`;
             } else {
-                badge.innerHTML = `<span class="badge green">⚡ Auto-Configured Upstream: /dns4/${escapeHtml(state.duckdnsDomain)}.duckdns.org/tcp/4001 (Outbound NAT Active)</span>`;
+                badge.innerHTML = `<span class="badge green">⚡ Auto-Configured Upstream: /dns4/${escapeHtml(state.duckdnsDomain || 'oshoosi')}.duckdns.org/tcp/4001 (Outbound NAT Active)</span>`;
             }
         }
 
@@ -1476,9 +1476,11 @@ async function saveDuckDnsDomain() {
     const input = document.getElementById('duckdns-domain-input');
     let domain = input ? input.value.trim() : (state.duckdnsDomain || 'oshoosi');
     if (!domain) domain = 'oshoosi';
-    if (domain.endsWith('.duckdns.org')) {
-        domain = domain.replace('.duckdns.org', '');
+    domain = domain.replace(/^https?:\/\//i, '').replace(/\/+$/, '');
+    if (domain.toLowerCase().endsWith('.duckdns.org')) {
+        domain = domain.slice(0, -12);
     }
+    if (!domain) domain = 'oshoosi';
 
     try {
         const res = await fetch(`${API_BASE}/mesh/bootstrap-peers`, {

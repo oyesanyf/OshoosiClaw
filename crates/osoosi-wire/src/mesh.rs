@@ -310,17 +310,29 @@ impl MeshNode {
 
         if mesh_config.auto_bootstrap_duckdns {
             if let Some(ref domain) = mesh_config.duckdns_domain {
-                let domain = domain.trim();
-                if !domain.is_empty() {
-                    let host = format!("{}.duckdns.org", domain);
+                let clean_domain = domain
+                    .trim()
+                    .trim_start_matches("https://")
+                    .trim_start_matches("http://")
+                    .trim_end_matches('/')
+                    .trim_end_matches(".duckdns.org");
+                if !clean_domain.is_empty() {
+                    let host = format!("{}.duckdns.org", clean_domain);
                     let port = mesh_config.duckdns_port;
                     let target_multiaddr = format!("/dns4/{}/tcp/{}", host, port);
 
-                    // Resolve the IP of {domain}.duckdns.org
-                    let resolved_ip_opt = match tokio::net::lookup_host(format!("{}:{}", host, port)).await {
-                        Ok(mut addrs) => addrs.next().map(|sa| sa.ip().to_string()),
-                        Err(e) => {
+                    // Resolve the IP of {domain}.duckdns.org with timeout to prevent startup hangs on NAT/offline nodes
+                    let resolved_ip_opt = match tokio::time::timeout(
+                        std::time::Duration::from_millis(1500),
+                        tokio::net::lookup_host(format!("{}:{}", host, port)),
+                    ).await {
+                        Ok(Ok(mut addrs)) => addrs.next().map(|sa| sa.ip().to_string()),
+                        Ok(Err(e)) => {
                             debug!("[MESH BOOTSTRAP] DNS resolution lookup for {}: {}", host, e);
+                            None
+                        }
+                        Err(_) => {
+                            debug!("[MESH BOOTSTRAP] DNS resolution lookup timed out for {}", host);
                             None
                         }
                     };
@@ -336,7 +348,10 @@ impl MeshNode {
                     if is_master_root {
                         info!("[MESH BOOTSTRAP] This node is the Canonical DuckDNS Root Master ({}). Listening on port {}.", host, port);
                         // Do not add root multiaddr to its own dial list (avoids self-dialing).
-                        dial_peers.retain(|p| p != &target_multiaddr);
+                        dial_peers.retain(|p| {
+                            p != &target_multiaddr
+                                && !p.contains(&format!("/{}/tcp/{}", public_wan_ip, port))
+                        });
                     } else {
                         // Internal / NAT / remote node!
                         if !dial_peers.iter().any(|p| p == &target_multiaddr) {

@@ -4485,5 +4485,15 @@ mod tests {
             _ => panic!("Expected Commands::Yara with Scan"),
         }
     }
+
+    #[test]
+    fn test_sign_configs_cli_parsing_and_execution() {
+        let cli = Cli::try_parse_from(["osoosi", "sign-configs"]).unwrap();
+        assert!(matches!(cli.command, Some(Commands::SignConfigs)));
+
+        osoosi_core::config_integrity::sign_all_critical_configs();
+        let tampered = osoosi_core::config_integrity::verify_all_critical_configs();
+        assert!(tampered.is_empty(), "All critical configs must be valid after re-signing: {:?}", tampered);
+    }
 }
 
