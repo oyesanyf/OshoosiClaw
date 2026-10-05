@@ -21,6 +21,7 @@ tracing = { workspace = true }
 anyhow = { workspace = true }
 chrono = { workspace = true }
 goblin = { workspace = true }
+sysinfo = { workspace = true }
 sha2 = { workspace = true }
 hex = { workspace = true }
 regex = { workspace = true }
@@ -44,4 +45,3 @@ rayon = { workspace = true }
 
 [dev-dependencies]
 tracing-subscriber = { workspace = true }
-

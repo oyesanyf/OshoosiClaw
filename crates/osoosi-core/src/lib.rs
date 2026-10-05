@@ -5382,6 +5382,62 @@ impl EdrOrchestrator {
             crate::triage::remove_expired(&self.triage_store, 300);
         }
 
+        // LangGraph Autonomous Defense Swarm trigger: dispatch non-blocking webhook to Ring-1 swarm
+        let swarm_cfg = osoosi_types::load_swarm_config();
+        if swarm_cfg.enabled
+            && swarm_cfg.auto_trigger_on_threat
+            && signature.confidence >= swarm_cfg.min_trigger_confidence
+        {
+            let swarm_service_url = swarm_cfg.service_url.trim_end_matches('/').to_string();
+            let incident_target_pid = crate::extract_raw_event_pid(event).unwrap_or(0);
+            let incident_target_name = signature.process_name.clone().unwrap_or_else(|| "unknown.exe".to_string());
+            let incident_target_path = event.data.get("Image")
+                .or_else(|| event.data.get("TargetFilename"))
+                .or_else(|| event.data.get("ImagePath"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let incident_cmdline = event.data.get("CommandLine")
+                .or_else(|| event.data.get("command_line"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let incident_engine = signature.id.clone();
+            let incident_conf = signature.confidence;
+            let incident_mitre = signature.mitre_technique.clone();
+            let incident_id = format!("INC-{}", &signature.id);
+            let timeout_duration = std::time::Duration::from_secs(swarm_cfg.timeout_secs.max(2));
+
+            tokio::spawn(async move {
+                let payload = serde_json::json!({
+                    "incident_id": incident_id,
+                    "target_pid": incident_target_pid,
+                    "target_process_name": incident_target_name,
+                    "target_path": incident_target_path,
+                    "command_line": incident_cmdline,
+                    "initial_detection_engine": incident_engine,
+                    "initial_confidence": incident_conf,
+                    "mitre_technique": incident_mitre,
+                });
+
+                let client = reqwest::Client::builder()
+                    .timeout(timeout_duration)
+                    .build();
+
+                if let Ok(c) = client {
+                    let endpoint = format!("{}/api/swarm/investigate", swarm_service_url);
+                    match c.post(&endpoint).json(&payload).send().await {
+                        Ok(resp) => {
+                            debug!("[SWARM] Dispatched incident to Swarm at {} (status: {})", endpoint, resp.status());
+                        }
+                        Err(err) => {
+                            debug!("[SWARM] Swarm service offline or unreachable at {}: {}", endpoint, err);
+                        }
+                    }
+                }
+            });
+        }
+
         Ok(())
     }
 

@@ -20,6 +20,9 @@
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-architecture">Architecture</a> •
   <a href="#-ring-0-windows-driver--linux-ebpf-parity">Ring-0 Driver & eBPF</a> •
+  <a href="#-autonomous-defense-swarm--langgraph">LangGraph Swarm</a> •
+  <a href="#-hybrid-decision-engine--strands-decider-2b--clef-flash">Hybrid Decision Engine</a> •
+  <a href="#-embedded-velociraptor-forensic-extraction-service">Velociraptor Forensics</a> •
   <a href="#-dns-telemetry-setup">DNS & Sysmon Setup</a> •
   <a href="#-two-host-mesh-consensus">Two-Host BFT Mesh</a> •
   <a href="#-rl-adaptive-controller">6-Pillar RL Controller</a> •
@@ -1319,6 +1322,201 @@ An end-to-end self-evolution cycle is implemented in `examples/edr-skill-evoluti
 
 ---
 
+<a id="-autonomous-defense-swarm--langgraph"></a>
+<a id="autonomous-defense-swarm--langgraph"></a>
+## 🐝 Autonomous Multi-Agent Defense Swarm (LangGraph)
+
+### The Decoupled Dual-Ring Architecture
+
+Placing complex language models or agent swarms inline before process execution introduces an unacceptable latency penalty (1.5s to 25s), allowing modern ransomware or memory injections to compromise endpoints before deliberation completes. 
+
+OpenỌ̀ṣọ́ọ̀sì solves this with a **decoupled Dual-Ring Architecture**:
+
+```
++---------------------------------------------------------------------------------------------------+
+|                                  THE DUAL-RING DEFENSE PARADIGM                                    |
++---------------------------------------------------------------------------------------------------+
+|  RING 0: FAST CONTAINMENT (Rust Core + Kernel + Clef)                                              |
+|  * Latency: < 10ms - 50ms                                                                        |
+|  * PsSetCreateProcessNotifyRoutineEx / eBPF bprm / WFP Filter / Memory Tarpit / Clef NAR Model    |
+|  * Action: Suspend thread, freeze PID, block network socket, prevent ransomware file encryption   |
++---------------------------------------------------------------------------------------------------+
+                                                  |
+                                                  | Asynchronous Event Hook (POST /api/swarm/investigate)
+                                                  v
++---------------------------------------------------------------------------------------------------+
+|  RING 1: DEEP SWARM DEFENSE (LangGraph StateGraph Multi-Agent Pipeline)                           |
+|  * Latency: 2s - 25s (tolerated because the suspect process/socket is ALREADY frozen)             |
+|  * Agents: Forensics (Velociraptor VAD/MFT) -> Threat Intel -> Rule Synth -> Patch Plan           |
+|  * Checkpoints: LangGraph interrupt() Human-in-the-Loop approval gate                            |
+|  * Output: YARA-X / Sigma rule hot-load, rollback, and P2P GossipSub cluster immunization        |
++---------------------------------------------------------------------------------------------------+
+```
+
+### LangGraph StateGraph Architecture
+
+The swarm operates in `tools/defense_swarm/` as an independent FastAPI microservice exposing REST and webhook interfaces. It executes an 8-node cyclical directed graph with state persistence and human-in-the-loop checkpointing:
+
+```mermaid
+flowchart TD
+    A([Fast-Ring Alert: Incident Triggered]) --> B[Triage & Blast-Radius Node]
+    B --> C{Is Confirmed Threat?}
+    C -- False Positive / Noise --> D[Un-freeze & Whitelist Node]
+    D --> END1([Resolved: False Positive Cleared])
+    
+    C -- Verified Threat --> E[Forensic Investigator Agent]
+    E --> F[Threat Intel Correlator Agent]
+    F --> G[Rule Synthesizer Agent]
+    
+    G --> H{YARA / Sigma Compiler Check}
+    H -- Syntax Error / Lint Failed --> G
+    H -- Validation Passed --> I[Remediation Planner Agent]
+    
+    I --> J{Requires Human Approval?}
+    J -- Low Risk / Auto-Approve --> L[Remediation Executor Node]
+    J -- High Risk / Critical Service --> K[LangGraph interrupt Checkpoint Gate]
+    
+    K -- Operator Rejects --> M[Rollback & Log Feedback]
+    M --> END2([Incident Closed by Operator])
+    
+    K -- Operator Approves --> L
+    L --> N[Mesh Swarm Broadcaster Node]
+    N --> END3([Incident Neutralized & Fleet Immunized])
+```
+
+#### Swarm Agent Roles
+
+1. **Triage & Blast Radius Agent (`triage.py`)**: Analyzes parent-child lineage, command-line arguments, and developer tool whitelists (`cargo`, `rustc`, `node`, `python`, `code.exe`). Computes blast radius scores.
+2. **Forensic Investigator Agent (`forensics.py`)**: Inspects Process VAD allocations for unbacked executable segments (`PAGE_EXECUTE_READWRITE`), scans raw NTFS MFT for hidden rootkit files, and correlates active socket handles.
+3. **Threat Intel Correlator Agent (`intel.py`)**: Maps findings to MITRE ATT&CK techniques (e.g. `T1055.012 Process Hollowing`, `T1003 Credential Dumping`), CISA Known Exploited Vulnerabilities (KEV), and CVSS exploit indicators.
+4. **Rule Synthesizer Agent (`rule_synth.py`)**: Automatically synthesizes tailored YARA-X patterns and Sigma YAML detection rules. Features an automated compiler validation retry loop to prevent syntax errors.
+5. **Remediation Planner Agent (`remediation.py`)**: Formulates surgical, prioritized containment and rollback steps with **immutable system process safeguards** protecting PIDs 0, 1, 4, `sysmon64.exe`, `osoosi.exe`, and `msmpeng.exe`.
+6. **Human-in-the-Loop Checkpoint Gate (`human_review_node`)**: Calls LangGraph's native `interrupt()` method to snapshot graph state to memory or SQLite. The incident narrative is rendered in the WebUI (`/api/approvals`), allowing security operators to inspect the plan and approve with one click.
+7. **Mesh Broadcaster / Fleet Immunizer (`mesh_sync.py`)**: Publishes synthesized YARA-X rules to libp2p GossipSub `osoosi-yara-v1` and defensive tradecraft to `osoosi-skills-v1` so all cluster peers become immune in real time.
+
+#### CLI & Service Commands
+
+```powershell
+# 1. Start the LangGraph Defense Swarm background service
+python -m defense_swarm.cli serve --host 127.0.0.1 --port 4002
+# Or using the Windows launcher:
+.\tools\defense_swarm\bin\defense-swarm.cmd serve
+
+# 2. Query Swarm health and status from OpenỌ̀ṣọ́ọ̀sì CLI
+.\osoosi.exe swarm status
+
+# 3. Trigger a synthetic attack incident test through the StateGraph
+.\osoosi.exe swarm test --pid 5555 --path "C:\Temp\decoy.exe" --command-line "decoy.exe -test" --engine clef --confidence 0.95
+
+# 4. Run standalone incident simulation with full node logs
+.\tools\defense_swarm\bin\defense-swarm.cmd test-incident --pid 4444 --process "decoy_hollowing.exe"
+```
+
+---
+
+<a id="-hybrid-decision-engine--strands-decider-2b--clef-flash"></a>
+<a id="hybrid-decision-engine--strands-decider-2b--clef-flash"></a>
+## ⚡ Multi-Tiered Hybrid Decision Engine (Strands Decider 2B & Clef Flash)
+
+OpenỌ̀ṣọ́ọ̀sì implements a **non-autoregressive hybrid decision fabric** combining edge cloud intelligence with local, air-gapped small decision models (SLMs).
+
+### What is Strands Decider 2B?
+Developed by the AWS Strands Agents team (October 2026, Apache 2.0, `StrandsAgents/strands-decider-2B-hobson-v19`), **Strands Decider 2B** is a 1.9-billion-parameter model designed specifically for routing, classification, and decision-making in agentic AI architectures:
+* **Pointer-Head Architecture**: Strips the standard token-generation head from a `Qwen/Qwen3.5-2B-Base` torso and replaces it with a pointer-style head that assigns calibrated probability distributions over developer-provided discrete choices.
+* **Low Latency**: ~115ms median latency running on local CPU/GPU hardware.
+* **Zero Hallucination**: Outputs are mathematically bounded to the set of provided actions (`allow`, `alert`, `tarpit`, `quarantine`, `isolate`).
+
+### The 4-Tier Decision Hierarchy
+
+| Tier | Engine | Location | Latency | Primary Role |
+| :---|:---|:---|:---|:---|
+| **Tier 1** | **In-Process Brier Gate** | Native Rust (In-Memory) | `< 5ms` | Runs inline on every syscall. Instantly clears verified benign binaries and definite high-threat signatures. |
+| **Tier 2** | **Clef Flash** | Cloudflare Workers AI | `~38ms` | Serverless edge decision model for sub-50ms cloud-connected containment. |
+| **Tier 3** | **Strands Decider 2B** | Local Host (PyTorch/ONNX/CLI) | `~115ms` | Open-source 2B SLM for deep semantic decision routing with **100% data privacy / air-gapped execution**. |
+| **Tier 4** | **LangGraph Defense Swarm** | Python Swarm Pipeline | `2s - 25s` | Post-containment deep forensics, automated YARA-X rule synthesis, HITL approvals, and P2P mesh broadcast. |
+
+### Three Hybrid Routing Strategies
+
+1. **Intelligent Cascade (`cascade` — Default)**:
+   * Tier 1 checks the event first (< 5ms).
+   * If confidence is ambiguous ($0.40 \le P \le 0.80$), it routes to **Clef Flash** (~38ms) if cloud credentials are configured.
+   * If Cloudflare is offline, air-gapped, or times out, it automatically falls back to **Strands Decider 2B** locally (~115ms).
+2. **High-Assurance Consensus Ensemble (`consensus`)**:
+   * Evaluates both **Clef Flash** and **Strands Decider 2B** concurrently using `tokio::join!`.
+   * Calculates the weighted Bayesian ensemble probability:
+     $$P_{\text{hybrid}}(\text{action}) = w_{\text{clef}} \cdot P_{\text{clef}}(\text{action}) + w_{\text{strands}} \cdot P_{\text{strands}}(\text{action})$$
+   * When both models independently concur on `isolate` or `tarpit`, action is taken with $> 0.98$ confidence. If they disagree, the event is held at the LangGraph human approval gate.
+3. **Local-First Privacy (`local_first`)**:
+   * Directs all evaluations to the local Strands Decider 2B model, keeping 100% of telemetry on-box with zero bytes sent to external cloud APIs.
+
+#### Configuration (`osoosi.toml`)
+
+```toml
+[decision_model]
+enabled = true
+# Provider options: "hybrid" (combines Clef & Strands), "cloudflare", "strands", or "local"
+provider = "hybrid"
+hybrid_strategy = "cascade"
+
+# Cloudflare Clef Settings (Tier 2 Edge)
+cloudflare_model = "@cf/cloudflare/clef-flash"
+cloudflare_account_id = ""
+cloudflare_api_token = ""
+cloudflare_timeout_ms = 400
+
+# Strands Decider 2B Settings (Tier 3 Local Open Source)
+strands_model = "StrandsAgents/strands-decider-2B-hobson-v19"
+strands_endpoint = "http://127.0.0.1:4003"
+strands_timeout_ms = 800
+
+min_action_confidence = 0.80
+auto_escalate_to_swarm = true
+```
+
+#### CLI Usage Examples
+
+```powershell
+# Query decision engine status and active provider
+.\osoosi.exe decision status
+
+# Run built-in benchmark decision scenarios (benign PowerShell vs Mimikatz T1003)
+.\osoosi.exe decision test
+
+# Evaluate custom incident state string
+.\osoosi.exe decision evaluate --state "Process: Mimikatz.exe | CmdLine: sekurlsa::logonpasswords | MITRE: T1003"
+```
+
+---
+
+<a id="-embedded-velociraptor-forensic-extraction-service"></a>
+<a id="embedded-velociraptor-forensic-extraction-service"></a>
+## 🔍 Embedded Velociraptor Forensic Extraction Service
+
+OpenỌ̀ṣọ́ọ̀sì features an embedded **Velociraptor Forensic Extraction Service** (`crates/osoosi-forensics`), providing deep digital forensics and incident response (DFIR) without third-party server infrastructure.
+
+- **Process VAD RWX Extraction**: Queries Process Virtual Address Descriptors for executable memory pages (`PAGE_EXECUTE_READWRITE`) unbacked by any on-disk binary, instantly corroborating process hollowing and reflective DLL injection (`T1055`).
+- **Raw NTFS Master File Table (MFT) Analysis**: Parses raw `$MFT` structures to identify timestomping, Alternate Data Streams (ADS), and rootkit files deliberately hidden from standard Win32 filesystem APIs.
+- **Sanitized VQL Generation**: Employs strict whitelist-based VQL query builders (`vql.rs`) that reject shell characters, quotes, and command chaining, eliminating injection vulnerabilities.
+- **Line-by-Line Streaming Deserialization**: Low-memory JSONL deserializer with hard output-line limits to guarantee zero host OOM starvation.
+
+#### CLI Usage Examples
+
+```powershell
+# 1. Query Velociraptor forensic service status and binary probe
+.\osoosi.exe forensics status
+
+# 2. Inspect process VAD memory for unbacked RWX segments
+.\osoosi.exe forensics inspect-process --pid 1844
+
+# 3. Scan NTFS MFT for rootkit file hiding and timestomping
+.\osoosi.exe forensics scan-mft --drive C --dir "Windows\Temp"
+
+# 4. Execute custom sanitized VQL query
+.\osoosi.exe forensics query --vql "SELECT Pid, Name, CommandLine FROM pslist() LIMIT 10"
+```
+
+---
+
 ## 📋 Requirements
 
 ### System Requirements
@@ -1461,6 +1659,9 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 | [Xori](https://github.com/CheckPointSW/xori) | Check Point | Apache 2.0 | Static analysis and shellcode emulation |
 | [RedBPF](https://github.com/redsift/redbpf) | Red Sift | MIT | eBPF monitoring and analysis |
 | [yara-x](https://github.com/VirusTotal/yara-x) | VirusTotal | Apache 2.0 | Pure Rust implementation of YARA |
+| [Velociraptor](https://github.com/Velocidex/velociraptor) | Rapid7 / Velocidex | AGPL 3.0 | Advanced digital forensics & endpoint visibility (VQL) |
+| [WikiSkill](https://github.com/Stahl-G/wikiskill) | Stahl-G | MIT | Autonomous agent skill compilation and self-evolution |
+| [LangGraph](https://github.com/langchain-ai/langgraph) | LangChain Inc. | MIT | Multi-agent cyclical stategraph orchestration |
 
 ### Rust Crate Dependencies
 
@@ -1490,18 +1691,26 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 
 | Model / Framework | Provider | Purpose |
 |:-------------------|:---------|:--------|
+| [Strands Decider 2B](https://huggingface.co/StrandsAgents/strands-decider-2B-hobson-v19) | AWS Strands Agents | Local open-source pointer-head decision model (~115ms) |
+| [Clef Flash](https://developers.cloudflare.com/workers-ai/) | Cloudflare | Serverless edge non-autoregressive decision model (~38ms) |
 | [SecureBERT](https://huggingface.co/ehsanaghaei/SecureBERT) | Ehsan Aghaei | Security-domain NLP classification |
 | [Gemma 4 9B](https://ai.google.dev/gemma) | Google DeepMind | Local behavioral reasoning (via Ollama) |
 | [Llama 3.1 8B](https://llama.meta.com/) | Meta AI | Autonomous agent reasoning (via Ollama) |
 | [EMBER](https://github.com/elastic/ember) | Elastic / Endgame | PE feature extraction methodology (54 features) |
-| [LangChain](https://python.langchain.com/) | LangChain Inc. | LLM agent orchestration framework |
+| [LangGraph](https://github.com/langchain-ai/langgraph) | LangChain Inc. | Stateful cyclical multi-agent defense swarm |
 | [ONNX Runtime](https://onnxruntime.ai/) | Microsoft | ML model inference engine |
 
 ---
 
-## 🏗️ Production Stability & Hardening (v1.1)
+## 🏗️ Production Stability & Hardening (v1.2)
 
-Recent hardening efforts have focused on agent resilience and production stability:
+Recent hardening efforts have focused on autonomous multi-agent defense, hybrid decision models, and production stability:
+
+- **LangGraph Autonomous Multi-Agent Defense Swarm (`tools/defense_swarm/`)**: Decoupled Dual-Ring Architecture executing 8-node cyclical StateGraph (`triage`, `de_escalate`, `forensics`, `intel`, `rule_synth` with retry, `remediation` with OS process immunity, `human_review` gate, `mesh_sync`). Integrated with FastAPI REST service on port 4002 and `osoosi swarm` CLI commands.
+- **Strands Decider 2B & Multi-Tiered Hybrid Decision Engine (`crates/osoosi-behavioral`)**: Hybrid non-autoregressive decision fabric uniting in-process Rust Brier gates (< 5ms), Cloudflare Clef Flash (~38ms), and AWS Strands Decider 2B (~115ms) with `cascade`, `consensus`, and `local_first` routing strategies.
+- **Embedded Velociraptor Forensic Extraction Service (`crates/osoosi-forensics`)**: Sub-second process VAD memory RWX extraction, NTFS Master File Table (MFT) rootkit hiding detection, and sanitized VQL builders with zero shell injection vulnerabilities.
+- **WikiSkill Autonomous Agent Evolution (`tools/wikiskill`)**: Self-evolving agent skills with ground-truth test catalogs, strict improvement gating, and automated P2P GossipSub replication over `osoosi-skills-v1`.
+- **Zero-Mock Real-Time Telemetry & libp2p WAN Mesh**: Complete elimination of mock topology cards, dynamic local node hostname resolution, zero-remote-peer graceful UI states, and DuckDNS auto-bootstrap.
 
 - **6-Pillar Reinforcement Learning Adaptive Controller**: Complete autonomous EDR RL engine (`osoosi-behavioral::rl_engine`) implementing exploration annealing ($\alpha(t) = \max(\alpha_{\min}, \frac{\alpha_0}{1 + \alpha_{\text{decay}} t})$), Tikhonov-regularized Cholesky inversion, Sherman-Morrison rank-1 streaming updates, counterfactual security gain, strict $\gamma=0$ contextual boundaries, shared bilinear Bayesian reward model ($s \otimes e_a$), unified 32-D state representation, multi-signal reward engineering with zero OS destabilization invariants (-500.0 penalty and safe degradation for protected PIDs 0, 1, 4), 3 execution regimes (`ColdRl`, `WarmPriorRl`, `FrozenTest`), advantage counting, and temporal regret decay dynamics.
 - **Authoritative MITRE ATT&CK + ATLAS STIX 2.1 Integration**: Complete 26,381-object STIX bundle uniting Enterprise ATT&CK (v19.2) and MITRE ATLAS (v2026.09) with 854 unified techniques and 4,334 correlated Sigma rules.

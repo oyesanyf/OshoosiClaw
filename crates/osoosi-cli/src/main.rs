@@ -84,7 +84,7 @@ struct Cli {
     #[arg(long, global = true)]
     pub lite: bool,
     /// Do not launch web browser on start (skip heavy browser process)
-    #[arg(long, global = true, alias = "no-dashboard", alias = "no_browser", alias = "nobrowser")]
+    #[arg(long, global = true, alias = "no-dashboard", alias = "no_browser", alias = "nobrowser", alias = "no-broswer", alias = "nobroswer")]
     pub no_browser: bool,
     /// Enable debug logging (sets log level to DEBUG). Allowed before or after subcommands, e.g. `osoosi sandbox status --debug`
     #[arg(short, long, global = true)]
@@ -107,7 +107,7 @@ enum Commands {
         #[arg(long, default_value_t = false)]
         lite: bool,
         /// Do not launch web browser on start
-        #[arg(long, default_value_t = false)]
+        #[arg(long, default_value_t = false, alias = "no_browser", alias = "nobrowser", alias = "no-broswer", alias = "nobroswer")]
         no_browser: bool,
         /// Run the agent inside an NVIDIA OpenShell sandbox (`openshell sandbox create` runs `osoosi start` inside). On success this process exits; no host daemon.
         #[arg(long)]
@@ -249,6 +249,38 @@ enum Commands {
     Yara {
         #[command(subcommand)]
         action: YaraAction,
+    },
+    /// LangGraph Autonomous Multi-Agent Defense Swarm management and testing
+    Swarm {
+        #[command(subcommand)]
+        action: SwarmAction,
+    },
+    /// Inspect system hardware specs, model memory requirements, and operational readiness
+    #[command(name = "check-resources", alias = "doctor", alias = "check_resources", alias = "resources")]
+    CheckResources,
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum SwarmAction {
+    /// Display LangGraph Defense Swarm service status and health
+    Status,
+    /// Trigger a synthetic test incident through the LangGraph StateGraph pipeline
+    Test {
+        /// Target Process ID (PID)
+        #[arg(short, long, default_value_t = 4444)]
+        pid: u32,
+        /// Target process image path
+        #[arg(long, default_value = "C:\\Windows\\Temp\\decoy_ransomware.exe")]
+        path: String,
+        /// Command line arguments
+        #[arg(long, default_value = "decoy_ransomware.exe -encrypt C:\\Users\\Public")]
+        command_line: String,
+        /// Initial detection engine
+        #[arg(long, default_value = "clef")]
+        engine: String,
+        /// Initial confidence score
+        #[arg(long, default_value_t = 0.95)]
+        confidence: f32,
     },
 }
 
@@ -440,7 +472,7 @@ fn main() -> anyhow::Result<()> {
     // to their standard clap long flag representations.
     let normalized_args: Vec<String> = std::env::args()
         .map(|arg| {
-            if arg == "-no-browser" {
+            if arg == "-no-browser" || arg == "-no-broswer" || arg == "--no-broswer" || arg == "-nobrowser" || arg == "--nobrowser" || arg == "-nobroswer" || arg == "--nobroswer" {
                 "--no-browser".to_string()
             } else if arg == "-no-dashboard" {
                 "--no-dashboard".to_string()
@@ -630,6 +662,25 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 info!("LITE mode enabled: Skipping heavy models.");
             }
             let user_no_browser = no_browser || cli.no_browser;
+            let host_profile = osoosi_core::system_check::HostResourceProfile::detect();
+            println!(
+                "[+] Host Hardware Profile: {:?} ({:.1} GB Total RAM, {:.1} GB Available, {} CPU cores)",
+                host_profile.tier,
+                host_profile.total_ram_mb as f64 / 1024.0,
+                host_profile.available_ram_mb as f64 / 1024.0,
+                host_profile.cpu_cores
+            );
+            let res_cfg = osoosi_types::load_resources_config();
+            let suppress_browser_by_ram = res_cfg.auto_suppress_browser_on_low_ram && !host_profile.can_launch_browser(&res_cfg);
+            let effective_no_browser = user_no_browser || suppress_browser_by_ram;
+            if suppress_browser_by_ram && !user_no_browser {
+                println!(
+                    "[+] Low host RAM ({:.1} GB available < {:.1} GB threshold). Automatically suppressing external browser launch to protect host responsiveness.",
+                    host_profile.available_ram_mb as f64 / 1024.0,
+                    res_cfg.min_free_ram_mb_for_browser as f64 / 1024.0
+                );
+                println!("[+] Web dashboard running at http://127.0.0.1:3030 without auto-launching external browser.");
+            }
             osoosi_core::tool_paths::discover_and_persist();
             run_yara_sanitizer();
             let with_dashboard = dashboard && !no_dashboard;
@@ -741,7 +792,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                         info!("Oshoosi Dashboard URL: http://127.0.0.1:{}/", port);
                         info!("----------------------------------------");
                         tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
-                        try_open_browser(&format!("http://127.0.0.1:{}/", port), user_no_browser, lite_mode);
+                        try_open_browser(&format!("http://127.0.0.1:{}/", port), effective_no_browser, lite_mode);
                     } else {
                         error!("FAILED to start Dashboard UI after trying ports 3030-3040.");
                         error!("Check if another instance of Oshoosi is already running.");
@@ -1226,6 +1277,12 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Some(Commands::Yara { action }) => {
             handle_yara_command(action).await?;
+        }
+        Some(Commands::Swarm { action }) => {
+            handle_swarm_command(action).await?;
+        }
+        Some(Commands::CheckResources) => {
+            handle_check_resources_command();
         }
         Some(Commands::Lite) => unreachable!(),
         None => {
@@ -2683,11 +2740,14 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
 }
 
 async fn ensure_ai_models_inner() -> anyhow::Result<()> {
+    let host_profile = osoosi_core::system_check::HostResourceProfile::detect();
+    let res_cfg = osoosi_types::load_resources_config();
     let lite_mode = std::env::var("OSOOSI_LITE_MODE")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-        .unwrap_or(false);
+        .unwrap_or(false)
+        || host_profile.tier == osoosi_types::config::HardwareTier::UltraLite;
     if lite_mode {
-        info!("LITE mode active: Skipping all heavy AI model downloads.");
+        info!("LITE / UltraLite mode active (Tier: {:?}): Skipping all heavy AI model downloads.", host_profile.tier);
         return Ok(());
     }
     let mut sys = sysinfo::System::new();
@@ -2766,10 +2826,12 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
     let force_onnx = std::env::var("OSOOSI_FORCE_GEMMA_ONNX").map(|v| v == "1").unwrap_or(false);
     let lite_mode = std::env::var("OSOOSI_LITE_MODE").map(|v| v == "1").unwrap_or(false);
 
-    if lite_mode || (!force_onnx && available_ram_gb < 8.0) {
+    if lite_mode || (!force_onnx && !host_profile.can_load_model("foundation_sec", &res_cfg)) {
         info!(
-            "Available RAM ({:.1} GB) is below the 8.0 GB threshold (or LITE MODE active). Skipping heavy Gemma 4 ONNX shard download to prevent memory exhaustion.",
-            available_ram_gb
+            "Available RAM ({:.1} GB) or tier {:?} is below threshold for Gemma 4 / FoundationSec ONNX ({:.1} GB free required). Skipping heavy shard download.",
+            available_ram_gb,
+            host_profile.tier,
+            res_cfg.min_free_ram_mb_for_foundation_sec as f64 / 1024.0
         );
     } else {
         if !check_oom_guard(&mut sys) {
@@ -2927,46 +2989,55 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
     }
 
     if needs_sorel {
-        if !check_oom_guard(&mut sys) {
-            return Ok(());
-        }
-        info!("📥 SOREL-20M weights missing or invalid. Attempting provisioning...");
-        let sorel_repos = [
-            "oyesanyf/OshoosiClaw-Weights",
-            "oyesanyf/OshoosiClaw",
-            "Xenova/sorel-20m",
-        ];
-        'sorel_hf: for repo_name in sorel_repos {
-            let repo = api.model(repo_name.to_string());
-            for file in ["sorel_ffnn.pt", "model.pt", "weights.pt"] {
-                if !check_oom_guard(&mut sys) {
-                    return Ok(());
-                }
-                match repo.get(file).await {
-                    Ok(downloaded) => {
-                        if let Ok(meta) = std::fs::metadata(&downloaded) {
-                            if meta.len() < 1024 { continue; }
-                            
-                            // Accept if it has ZIP magic (standard .pt) OR if it starts with something other than '<' (to avoid HTML 404s)
-                            let f = std::fs::File::open(&downloaded).ok();
-                            let mut magic = [0u8; 4];
-                            if let Some(mut f_inner) = f {
-                                use std::io::Read;
-                                if f_inner.read_exact(&mut magic).is_ok() {
-                                    if &magic != b"PK\x03\x04" && (magic[0] == b'<' || magic[0] == 0) {
-                                        warn!("Downloaded SOREL file {} appears to be an HTML error page. Skipping.", file);
-                                        continue;
+        if !host_profile.can_load_model("sorel", &res_cfg) {
+            info!(
+                "Available RAM ({:.1} GB) or tier {:?} is below threshold for SOREL-20M (requires {} MB). Skipping remote download.",
+                host_profile.available_ram_mb as f64 / 1024.0,
+                host_profile.tier,
+                res_cfg.min_free_ram_mb_for_sorel
+            );
+        } else {
+            if !check_oom_guard(&mut sys) {
+                return Ok(());
+            }
+            info!("📥 SOREL-20M weights missing or invalid. Attempting provisioning...");
+            let sorel_repos = [
+                "oyesanyf/OshoosiClaw-Weights",
+                "oyesanyf/OshoosiClaw",
+                "Xenova/sorel-20m",
+            ];
+            'sorel_hf: for repo_name in sorel_repos {
+                let repo = api.model(repo_name.to_string());
+                for file in ["sorel_ffnn.pt", "model.pt", "weights.pt"] {
+                    if !check_oom_guard(&mut sys) {
+                        return Ok(());
+                    }
+                    match repo.get(file).await {
+                        Ok(downloaded) => {
+                            if let Ok(meta) = std::fs::metadata(&downloaded) {
+                                if meta.len() < 1024 { continue; }
+                                
+                                // Accept if it has ZIP magic (standard .pt) OR if it starts with something other than '<' (to avoid HTML 404s)
+                                let f = std::fs::File::open(&downloaded).ok();
+                                let mut magic = [0u8; 4];
+                                if let Some(mut f_inner) = f {
+                                    use std::io::Read;
+                                    if f_inner.read_exact(&mut magic).is_ok() {
+                                        if &magic != b"PK\x03\x04" && (magic[0] == b'<' || magic[0] == 0) {
+                                            warn!("Downloaded SOREL file {} appears to be an HTML error page. Skipping.", file);
+                                            continue;
+                                        }
                                     }
                                 }
-                            }
 
-                            if fs::copy(&downloaded, &sorel_dest).is_ok() {
-                                info!("✅ SOREL-20M weights saved from {} ({}).", repo_name, file);
-                                break 'sorel_hf;
+                                if fs::copy(&downloaded, &sorel_dest).is_ok() {
+                                    info!("✅ SOREL-20M weights saved from {} ({}).", repo_name, file);
+                                    break 'sorel_hf;
+                                }
                             }
                         }
+                        Err(e) => tracing::debug!("SOREL HF get {} {}: {}", repo_name, file, e),
                     }
-                    Err(e) => tracing::debug!("SOREL HF get {} {}: {}", repo_name, file, e),
                 }
             }
         }
@@ -2976,24 +3047,30 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
         warn!("⚠️ MalConv weights could not be provisioned from any source. Static AI analysis will be degraded.");
     }
     if !sorel_dest.exists() && !sorel_st.exists() {
-        if !check_oom_guard(&mut sys) {
-            return Ok(());
-        }
-        warn!("⚠️ SOREL-20M weights could not be provisioned from remote mirrors. Attempting local build from dataset folder...");
-        // Use a dummy path for the call; the function will resolve the dataset folder itself.
-        let sorel_handle = Arc::new(tokio::sync::RwLock::new(None));
-        if let Err(e) = osoosi_model::malware::MalwareScanner::provision_sorel_by_training(sorel_handle, &sorel_dest).await {
-             warn!("⚠️ Local SOREL build failed: {}. Deep PE analysis will be degraded.", e);
+        if !host_profile.can_load_model("sorel", &res_cfg) {
+            info!("Skipping local SOREL build due to memory throttling.");
         } else {
-             info!("✅ SOREL model built locally and provisioned.");
+            if !check_oom_guard(&mut sys) {
+                return Ok(());
+            }
+            warn!("⚠️ SOREL-20M weights could not be provisioned from remote mirrors. Attempting local build from dataset folder...");
+            // Use a dummy path for the call; the function will resolve the dataset folder itself.
+            let sorel_handle = Arc::new(tokio::sync::RwLock::new(None));
+            if let Err(e) = osoosi_model::malware::MalwareScanner::provision_sorel_by_training(sorel_handle, &sorel_dest).await {
+                 warn!("⚠️ Local SOREL build failed: {}. Deep PE analysis will be degraded.", e);
+            } else {
+                 info!("✅ SOREL model built locally and provisioned.");
+            }
         }
     }
 
     // 4. SecureBERT (Behavioral Sentence Classification)
-    if lite_mode || available_ram_gb < 4.0 {
+    if lite_mode || !host_profile.can_load_model("securebert", &res_cfg) {
         info!(
-            "Available RAM ({:.1} GB) is below the 4.0 GB threshold (or Lite Mode active). Skipping heavy SecureBERT ONNX model to prevent memory exhaustion.",
-            available_ram_gb
+            "Available RAM ({:.1} GB) or tier {:?} is below threshold for SecureBERT ONNX (requires {} MB). Skipping download.",
+            host_profile.available_ram_mb as f64 / 1024.0,
+            host_profile.tier,
+            res_cfg.min_free_ram_mb_for_securebert
         );
     } else {
         if !check_oom_guard(&mut sys) {
@@ -3064,29 +3141,27 @@ async fn ensure_ollama_model() {
     };
 
     if ai.foundation_sec_enabled {
+        let host_profile = osoosi_core::system_check::HostResourceProfile::detect();
+        let res_cfg = osoosi_types::load_resources_config();
         let lite_mode = std::env::var("OSOOSI_LITE_MODE")
             .map(|v| v == "1")
-            .unwrap_or(false);
-        if lite_mode {
-            info!("LITE mode active: Skipping heavy foundation model pulls.");
+            .unwrap_or(false)
+            || host_profile.tier == osoosi_types::config::HardwareTier::UltraLite;
+        if lite_mode || !host_profile.can_load_model("foundation_sec", &res_cfg) {
+            info!(
+                "Available RAM ({:.1} GB) or tier {:?} is below threshold for heavy foundation model '{}'. Skipping pull to protect host responsiveness.",
+                host_profile.available_ram_mb as f64 / 1024.0,
+                host_profile.tier,
+                ai.foundation_sec_model
+            );
         } else {
-            let mut sys = sysinfo::System::new();
-            sys.refresh_memory();
-            let available_ram_gb = sys.available_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
-            if available_ram_gb < 16.0 {
-                warn!(
-                    "Available RAM ({:.1} GB) is below the 16.0 GB threshold required for heavy foundation model '{}'. Skipping pull to prevent OOM crash.",
-                    available_ram_gb, ai.foundation_sec_model
-                );
-            } else {
-                let f_model = ai.foundation_sec_model.clone();
-                if !list_stdout.contains(&f_model) {
-                    info!("Pulling Cisco Foundation-Sec-8B model: '{}'...", f_model);
-                    let pull_fut = tokio::process::Command::new(get_ollama_bin())
-                        .args(["pull", &f_model])
-                        .status();
-                    let _ = tokio::time::timeout(std::time::Duration::from_secs(600), pull_fut).await;
-                }
+            let f_model = ai.foundation_sec_model.clone();
+            if !list_stdout.contains(&f_model) {
+                info!("Pulling Cisco Foundation-Sec-8B model: '{}'...", f_model);
+                let pull_fut = tokio::process::Command::new(get_ollama_bin())
+                    .args(["pull", &f_model])
+                    .status();
+                let _ = tokio::time::timeout(std::time::Duration::from_secs(600), pull_fut).await;
             }
         }
     }
@@ -4234,6 +4309,155 @@ async fn handle_yara_command(action: YaraAction) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn handle_swarm_command(action: SwarmAction) -> anyhow::Result<()> {
+    let cfg = osoosi_types::config::load_swarm_config();
+    let client = reqwest::Client::builder()
+        .timeout(std::time::Duration::from_secs(cfg.timeout_secs.max(5)))
+        .build()?;
+
+    match action {
+        SwarmAction::Status => {
+            println!("================================================================================");
+            println!("       OpenỌ̀ṣọ́ọ̀sì LangGraph Autonomous Defense Swarm Status");
+            println!("================================================================================");
+            println!("Enabled:                  {}", cfg.enabled);
+            println!("Service URL:              {}", cfg.service_url);
+            println!("Auto-Trigger on Threat:   {}", cfg.auto_trigger_on_threat);
+            println!("Min Trigger Confidence:   {:.2}", cfg.min_trigger_confidence);
+            println!("Timeout Cutoff:           {} s", cfg.timeout_secs);
+            println!("--------------------------------------------------------------------------------");
+
+            let health_url = format!("{}/api/swarm/health", cfg.service_url.trim_end_matches('/'));
+            match client.get(&health_url).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    let health: serde_json::Value = resp.json().await?;
+                    println!("Daemon Health:            ONLINE");
+                    println!("Daemon Status:            {}", health.get("status").and_then(|v| v.as_str()).unwrap_or("ok"));
+                    println!("Version:                  {}", health.get("version").and_then(|v| v.as_str()).unwrap_or("0.1.0"));
+                    println!("Active Incidents:         {}", health.get("active_incidents").and_then(|v| v.as_i64()).unwrap_or(0));
+                    println!("Execution Engine:         {}", health.get("engine").and_then(|v| v.as_str()).unwrap_or("LangGraph"));
+                }
+                Ok(resp) => {
+                    println!("Daemon Health:            DEGRADED (HTTP {})", resp.status());
+                }
+                Err(err) => {
+                    println!("Daemon Health:            OFFLINE ({})", err);
+                    println!("\nTip: Launch the defense swarm microservice via: defense-swarm serve");
+                }
+            }
+            println!("================================================================================");
+        }
+        SwarmAction::Test { pid, path, command_line, engine, confidence } => {
+            println!("================================================================================");
+            println!("       OpenỌ̀ṣọ́ọ̀sì LangGraph Defense Swarm: Dispatching Synthetic Incident");
+            println!("================================================================================");
+            println!("Target PID:     {}", pid);
+            println!("Target Path:    {}", path);
+            println!("Command Line:   {}", command_line);
+            println!("Engine:         {}", engine);
+            println!("Confidence:     {:.2}", confidence);
+            println!("--------------------------------------------------------------------------------");
+
+            let incident_id = format!("TEST-CLI-{}", std::time::SystemTime::now().duration_since(std::time::UNIX_EPOCH)?.as_secs());
+            let target_proc_name = std::path::Path::new(&path)
+                .file_name()
+                .and_then(|n| n.to_str())
+                .unwrap_or("decoy_ransomware.exe");
+
+            let payload = serde_json::json!({
+                "incident_id": incident_id,
+                "target_pid": pid,
+                "target_process_name": target_proc_name,
+                "target_path": path,
+                "command_line": command_line,
+                "initial_detection_engine": engine,
+                "initial_confidence": confidence,
+            });
+
+            let investigate_url = format!("{}/api/swarm/investigate", cfg.service_url.trim_end_matches('/'));
+            match client.post(&investigate_url).json(&payload).send().await {
+                Ok(resp) if resp.status().is_success() => {
+                    let result: serde_json::Value = resp.json().await?;
+                    println!("✓ Incident successfully dispatched to LangGraph Swarm!");
+                    println!("{}", serde_json::to_string_pretty(&result)?);
+                }
+                Ok(resp) => {
+                    let err_text = resp.text().await.unwrap_or_default();
+                    eprintln!("✗ Swarm service returned HTTP error: {}", err_text);
+                }
+                Err(err) => {
+                    eprintln!("✗ Failed to connect to LangGraph Swarm at {}: {}", investigate_url, err);
+                    eprintln!("Tip: Ensure the service is running via: python -m defense_swarm.cli serve");
+                }
+            }
+            println!("================================================================================");
+        }
+    }
+
+    Ok(())
+}
+
+fn handle_check_resources_command() {
+    let host_profile = osoosi_core::system_check::HostResourceProfile::detect();
+    let res_cfg = osoosi_types::load_resources_config();
+
+    println!("================================================================================");
+    println!("                     OPENỌ̀ṢỌ́Ọ̀SÌ HARDWARE & RESOURCE DIAGNOSTICS                ");
+    println!("================================================================================");
+    println!(" Host Operating System : {} {}", host_profile.os_name, host_profile.os_version);
+    println!(" Logical CPU Cores     : {}", host_profile.cpu_cores);
+    println!(" Total System Memory   : {:.2} GB ({} MB)", host_profile.total_ram_mb as f64 / 1024.0, host_profile.total_ram_mb);
+    println!(" Available Free Memory : {:.2} GB ({} MB)", host_profile.available_ram_mb as f64 / 1024.0, host_profile.available_ram_mb);
+    println!(" GPU Acceleration      : {}", if host_profile.has_gpu { host_profile.gpu_name.as_deref().unwrap_or("Detected") } else { "None (CPU Execution)" });
+    println!(" Configured Profile    : {}", res_cfg.profile);
+    println!(" Assigned Hardware Tier: {:?}", host_profile.tier);
+    println!("--------------------------------------------------------------------------------");
+    println!(" Tier Description      : {}", match host_profile.tier {
+        osoosi_types::config::HardwareTier::UltraLite => "UltraLite (<4 GB RAM): Native heuristics, Magika & EMBER only; browser suppressed.",
+        osoosi_types::config::HardwareTier::Lite => "Lite (4-8 GB RAM): SOREL-20M, SecureBERT & Clef Flash; browser suppressed unless forced.",
+        osoosi_types::config::HardwareTier::Standard => "Standard (8-16 GB RAM): Strands Decider 2B & LangGraph Swarm; web browser enabled.",
+        osoosi_types::config::HardwareTier::Enterprise => "Enterprise (>16 GB RAM): Full reasoning models (FoundationSec-8B) & full NSRL cache.",
+    });
+    println!("================================================================================");
+    println!(" {:<30} | {:<12} | {:<20} | {:<20}", "COMPONENT / MODEL", "MIN FREE RAM", "STATUS", "RECOMMENDED ACTION");
+    println!("--------------------------------------------------------------------------------");
+    
+    let verdicts = host_profile.evaluate_model_readiness(&res_cfg);
+    for v in &verdicts {
+        let rec_action = if v.can_load {
+            "Optimal / Armed".to_string()
+        } else if v.model_name.contains("Browser") {
+            "Run with --no-browser or add RAM".to_string()
+        } else if v.model_name.contains("Foundation") || v.model_name.contains("Strands") {
+            "Use cloud endpoint or upgrade RAM".to_string()
+        } else {
+            "Fallback heuristics active".to_string()
+        };
+        println!(" {:<30} | {:>9} MB | {:<20} | {:<20}", v.model_name, v.required_ram_mb, v.status, rec_action);
+    }
+    println!("================================================================================");
+    println!(" Diagnostic Summary:");
+    match host_profile.tier {
+        osoosi_types::config::HardwareTier::UltraLite => {
+            println!(" [!] Constrained endpoint mode: Web browser auto-launch and heavy AI shards are suppressed");
+            println!("     to safeguard system stability. Operating with native Rust heuristics.");
+        }
+        osoosi_types::config::HardwareTier::Lite => {
+            println!(" [!] Lean endpoint mode: Core neural models (SOREL/SecureBERT/Clef) armed.");
+            println!("     External browser suppressed to prevent memory thrashing.");
+        }
+        osoosi_types::config::HardwareTier::Standard => {
+            println!(" [+] Standard endpoint mode: Local SLM arbiters (Strands 2B) and LangGraph Swarm ready.");
+            println!("     Web dashboard auto-launch allowed.");
+        }
+        osoosi_types::config::HardwareTier::Enterprise => {
+            println!(" [+] High-performance endpoint mode: Full deep-reasoning neural stack (FoundationSec-8B)");
+            println!("     and extended NSRL database cache fully armed.");
+        }
+    }
+    println!("================================================================================\n");
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -4835,6 +5059,55 @@ mod tests {
         flushed.store(false, Ordering::SeqCst);
         appender.write_all(b"").unwrap();
         assert!(!flushed.load(Ordering::SeqCst), "Empty buffer must not trigger flush");
+    }
+
+    #[test]
+    fn test_swarm_cli_parsing() {
+        let cli_status = Cli::try_parse_from(["osoosi", "swarm", "status"]).unwrap();
+        match cli_status.command {
+            Some(Commands::Swarm { action: SwarmAction::Status }) => {}
+            _ => panic!("Expected Commands::Swarm with Status"),
+        }
+
+        let cli_test = Cli::try_parse_from([
+            "osoosi", "swarm", "test",
+            "--pid", "5555",
+            "--path", "C:\\Temp\\decoy.exe",
+            "--command-line", "decoy.exe -test",
+            "--engine", "clef",
+            "--confidence", "0.92"
+        ]).unwrap();
+        match cli_test.command {
+            Some(Commands::Swarm { action: SwarmAction::Test { pid, path, command_line, engine, confidence } }) => {
+                assert_eq!(pid, 5555);
+                assert_eq!(path, "C:\\Temp\\decoy.exe");
+                assert_eq!(command_line, "decoy.exe -test");
+                assert_eq!(engine, "clef");
+                assert!((confidence - 0.92).abs() < 1e-4);
+            }
+            _ => panic!("Expected Commands::Swarm with Test"),
+        }
+    }
+
+    #[test]
+    fn test_check_resources_cli_parsing() {
+        for name in ["check-resources", "doctor", "check_resources", "resources"] {
+            let cli = Cli::try_parse_from(["osoosi", name]).unwrap();
+            assert!(matches!(cli.command, Some(Commands::CheckResources)));
+        }
+
+        // Test browser typo normalization
+        let cli_typo1 = Cli::try_parse_from(["osoosi", "--no-broswer"]).unwrap();
+        assert!(cli_typo1.no_browser);
+
+        let cli_typo2 = Cli::try_parse_from(["osoosi", "--nobrowser"]).unwrap();
+        assert!(cli_typo2.no_browser);
+
+        let cli_typo3 = Cli::try_parse_from(["osoosi", "start", "--no-broswer"]).unwrap();
+        match cli_typo3.command {
+            Some(Commands::Start { no_browser, .. }) => assert!(no_browser),
+            _ => panic!("Expected Commands::Start"),
+        }
     }
 }
 

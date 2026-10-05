@@ -64,6 +64,7 @@ osoosi.toml.sig
 /Eula.txt
 /tools/*
 !/tools/wikiskill/
+!/tools/defense_swarm/
 crates/osoosi-telemetry/tools/
 
 # ---------- Runtime Data ----------

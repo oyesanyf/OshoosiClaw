@@ -170,23 +170,52 @@ min_trigger_confidence = 0.80
 trigger_techniques = ["T1055", "T1055.012", "T1003", "T1014", "T1547", "T1059"]
 
 [decision_model]
-# Enable non-autoregressive Clef Decision Model architecture
 enabled = true
-# Provider: "local" (100% self-hosted, air-gapped, zero-network by default), "auto", or "cloudflare"
-provider = "local"
-# Decision model identifier: "@cf/cloudflare/clef-flash" (38ms median) or "@cf/cloudflare/clef" (209ms)
+# Provider: "hybrid" (combines Clef Flash & Strands Decider), "local", or "cloudflare"
+provider = "hybrid"
+# Hybrid routing strategy: "cascade", "consensus", or "local_first"
+hybrid_strategy = "cascade"
+# Cloudflare Clef Settings (Tier 2 Edge)
 model = "@cf/cloudflare/clef-flash"
-# Cloudflare credentials (can also be supplied via CLOUDFLARE_ACCOUNT_ID & CLOUDFLARE_API_TOKEN env vars)
 cloudflare_account_id = ""
 cloudflare_api_token = ""
-# Hard inference cutoff in milliseconds (keeps decision on hot-path)
 timeout_ms = 500
-# Fallback to local non-autoregressive evaluator if Cloudflare fails or is offline
+# Strands Decider 2B Settings (Tier 3 Local Open Source SLM)
+strands_endpoint = "http://127.0.0.1:4003"
+strands_model = "StrandsAgents/strands-decider-2B-hobson-v19"
+strands_timeout_ms = 800
 fallback_to_local = true
-# Minimum probability threshold to trigger automated containment (0.80)
 min_action_confidence = 0.80
-# Automatically trigger background causal reasoning (FoundationSec) when flagged
 auto_escalate_to_cortex = true
 # Path to local weights / calibration tables (operates 100% self-hosted / air-gapped)
 model_dir = "models/clef"
+
+[swarm]
+# Enable LangGraph Autonomous Defense Swarm
+enabled = true
+# LangGraph Swarm Service REST API endpoint
+service_url = "http://127.0.0.1:4002"
+# Automatically dispatch incidents to Swarm on high-confidence detection
+auto_trigger_on_threat = true
+# Minimum threat confidence to trigger deep swarm investigation
+min_trigger_confidence = 0.85
+# Swarm webhook timeout in seconds
+timeout_secs = 30
+
+[resources]
+# Hardware tier profile: "auto", "ultralite", "lite", "standard", "enterprise"
+profile = "auto"
+# Minimum free RAM (MB) required to launch external web browser process
+min_free_ram_mb_for_browser = 2500
+# Minimum free RAM (MB) thresholds for specific models
+min_free_ram_mb_for_foundation_sec = 8192
+min_free_ram_mb_for_strands_decider = 3500
+min_free_ram_mb_for_securebert = 800
+min_free_ram_mb_for_sorel = 350
+min_free_ram_mb_for_malconv = 150
+# Protect host responsiveness by suppressing browser & heavy models on low RAM
+auto_suppress_browser_on_low_ram = true
+auto_throttle_ai_on_low_ram = true
+
+
 

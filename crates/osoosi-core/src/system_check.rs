@@ -1,4 +1,5 @@
 use anyhow::{anyhow, Result};
+use serde::{Deserialize, Serialize};
 use sysinfo::System;
 use tracing::{error, info, warn};
 
@@ -178,4 +179,409 @@ pub async fn validate_windows_file_integrity(path: &str) -> bool {
 
     false
 }
+
+/// Detect presence of hardware GPU accelerators (NVIDIA CUDA, Direct3D 12, Vulkan).
+pub fn detect_gpu() -> (bool, Option<String>) {
+    if let Ok(path) = std::env::var("ORT_DYLIB_PATH") {
+        let p_lower = path.to_lowercase();
+        if p_lower.contains("cuda") {
+            return (true, Some("NVIDIA CUDA (via ORT_DYLIB_PATH)".to_string()));
+        } else if p_lower.contains("dml") || p_lower.contains("directml") {
+            return (true, Some("DirectML GPU (via ORT_DYLIB_PATH)".to_string()));
+        }
+    }
+    if let Ok(cuda_path) = std::env::var("CUDA_PATH") {
+        if !cuda_path.trim().is_empty() {
+            return (true, Some(format!("NVIDIA CUDA ({})", cuda_path.trim())));
+        }
+    }
+    if std::env::var("OSOOSI_FORCE_GPU").map(|v| v == "1").unwrap_or(false) {
+        return (true, Some("Forced GPU".to_string()));
+    }
+
+    #[cfg(target_os = "windows")]
+    {
+        if std::path::Path::new("C:\\Windows\\System32\\nvcuda.dll").exists() {
+            return (true, Some("NVIDIA CUDA Driver".to_string()));
+        }
+        if std::path::Path::new("C:\\Windows\\System32\\vulkan-1.dll").exists() {
+            return (true, Some("Vulkan Graphics / Compute".to_string()));
+        }
+        if std::path::Path::new("C:\\Windows\\System32\\d3d12.dll").exists() {
+            return (true, Some("Direct3D 12 Hardware Acceleration".to_string()));
+        }
+    }
+
+    #[cfg(target_os = "linux")]
+    {
+        if std::path::Path::new("/usr/lib/x86_64-linux-gnu/libcuda.so").exists()
+            || std::path::Path::new("/usr/local/cuda").exists()
+        {
+            return (true, Some("NVIDIA CUDA Driver (Linux)".to_string()));
+        }
+        if std::path::Path::new("/dev/dri/renderD128").exists() {
+            return (true, Some("DRI Direct Rendering Manager".to_string()));
+        }
+    }
+
+    (false, None)
+}
+
+/// Comprehensive hardware resource profile of the host endpoint.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct HostResourceProfile {
+    pub total_ram_mb: u64,
+    pub available_ram_mb: u64,
+    pub cpu_cores: usize,
+    pub os_name: String,
+    pub os_version: String,
+    pub tier: osoosi_types::config::HardwareTier,
+    pub has_gpu: bool,
+    pub gpu_name: Option<String>,
+}
+
+/// Operational verdict for a given machine learning model or service.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelResourceVerdict {
+    pub model_name: String,
+    pub required_ram_mb: u64,
+    pub available_ram_mb: u64,
+    pub can_load: bool,
+    pub status: String, // "Active", "Skipped (Insufficient RAM)", "Fallback Heuristic Active"
+}
+
+impl HostResourceProfile {
+    /// Detect live hardware resources and dynamically evaluate hardware tier.
+    pub fn detect() -> Self {
+        let mut sys = System::new_all();
+        sys.refresh_memory();
+        sys.refresh_cpu();
+
+        let total_ram_mb = sys.total_memory() / (1024 * 1024);
+        let available_ram_mb = sys.available_memory() / (1024 * 1024);
+        let cpu_cores = sys.cpus().len();
+
+        let (os_name, os_version, _) = get_os_info();
+        let (has_gpu, gpu_name) = detect_gpu();
+
+        let res_cfg = osoosi_types::load_resources_config();
+        let tier = Self::resolve_tier(&res_cfg.profile, total_ram_mb, available_ram_mb);
+
+        Self {
+            total_ram_mb,
+            available_ram_mb,
+            cpu_cores,
+            os_name,
+            os_version,
+            tier,
+            has_gpu,
+            gpu_name,
+        }
+    }
+
+    /// Resolve hardware tier given configured profile override or raw memory numbers.
+    pub fn resolve_tier(profile_str: &str, total_ram_mb: u64, available_ram_mb: u64) -> osoosi_types::config::HardwareTier {
+        match profile_str.trim().to_lowercase().as_str() {
+            "ultralite" | "ultra_lite" | "ultra-lite" => osoosi_types::config::HardwareTier::UltraLite,
+            "lite" => osoosi_types::config::HardwareTier::Lite,
+            "standard" => osoosi_types::config::HardwareTier::Standard,
+            "enterprise" => osoosi_types::config::HardwareTier::Enterprise,
+            _ => {
+                if total_ram_mb < 4096 || available_ram_mb < 1500 {
+                    osoosi_types::config::HardwareTier::UltraLite
+                } else if total_ram_mb < 8192 || available_ram_mb < 3500 {
+                    osoosi_types::config::HardwareTier::Lite
+                } else if total_ram_mb < 16384 || available_ram_mb < 7000 {
+                    osoosi_types::config::HardwareTier::Standard
+                } else {
+                    osoosi_types::config::HardwareTier::Enterprise
+                }
+            }
+        }
+    }
+
+    /// Evaluate operational readiness across all registered models and subsystems.
+    pub fn evaluate_model_readiness(&self, cfg: &osoosi_types::config::ResourcesConfig) -> Vec<ModelResourceVerdict> {
+        vec![
+            ModelResourceVerdict {
+                model_name: "Magika (Type Classifier)".to_string(),
+                required_ram_mb: 50,
+                available_ram_mb: self.available_ram_mb,
+                can_load: self.can_load_model("magika", cfg),
+                status: if self.can_load_model("magika", cfg) {
+                    "Active".to_string()
+                } else {
+                    "Fallback Heuristic Active".to_string()
+                },
+            },
+            ModelResourceVerdict {
+                model_name: "EMBER / MalConv (PE Neural)".to_string(),
+                required_ram_mb: cfg.min_free_ram_mb_for_malconv,
+                available_ram_mb: self.available_ram_mb,
+                can_load: self.can_load_model("malconv", cfg),
+                status: if self.can_load_model("malconv", cfg) {
+                    "Active".to_string()
+                } else {
+                    "Skipped (Insufficient RAM)".to_string()
+                },
+            },
+            ModelResourceVerdict {
+                model_name: "SOREL-20M (Deep Malware FFNN)".to_string(),
+                required_ram_mb: cfg.min_free_ram_mb_for_sorel,
+                available_ram_mb: self.available_ram_mb,
+                can_load: self.can_load_model("sorel", cfg),
+                status: if self.can_load_model("sorel", cfg) {
+                    "Active".to_string()
+                } else {
+                    "Skipped (Insufficient RAM)".to_string()
+                },
+            },
+            ModelResourceVerdict {
+                model_name: "SecureBERT (Behavioral Sentence)".to_string(),
+                required_ram_mb: cfg.min_free_ram_mb_for_securebert,
+                available_ram_mb: self.available_ram_mb,
+                can_load: self.can_load_model("securebert", cfg),
+                status: if self.can_load_model("securebert", cfg) {
+                    "Active".to_string()
+                } else {
+                    "Skipped (Insufficient RAM)".to_string()
+                },
+            },
+            ModelResourceVerdict {
+                model_name: "Clef Flash (Fast Decision Engine)".to_string(),
+                required_ram_mb: 100,
+                available_ram_mb: self.available_ram_mb,
+                can_load: self.can_load_model("clef", cfg),
+                status: if self.can_load_model("clef", cfg) {
+                    "Active".to_string()
+                } else {
+                    "Fallback Heuristic Active".to_string()
+                },
+            },
+            ModelResourceVerdict {
+                model_name: "Strands Decider 2B (SLM Arbiter)".to_string(),
+                required_ram_mb: cfg.min_free_ram_mb_for_strands_decider,
+                available_ram_mb: self.available_ram_mb,
+                can_load: self.can_load_model("strands", cfg),
+                status: if self.can_load_model("strands", cfg) {
+                    "Active".to_string()
+                } else {
+                    "Skipped (Insufficient RAM)".to_string()
+                },
+            },
+            ModelResourceVerdict {
+                model_name: "FoundationSec-8B (Cisco / Gemma 4)".to_string(),
+                required_ram_mb: cfg.min_free_ram_mb_for_foundation_sec,
+                available_ram_mb: self.available_ram_mb,
+                can_load: self.can_load_model("foundation_sec", cfg),
+                status: if self.can_load_model("foundation_sec", cfg) {
+                    "Active".to_string()
+                } else {
+                    "Skipped (Insufficient RAM)".to_string()
+                },
+            },
+            ModelResourceVerdict {
+                model_name: "Web Browser (External Dashboard)".to_string(),
+                required_ram_mb: cfg.min_free_ram_mb_for_browser,
+                available_ram_mb: self.available_ram_mb,
+                can_load: self.can_launch_browser(cfg),
+                status: if self.can_launch_browser(cfg) {
+                    "Ready".to_string()
+                } else {
+                    "Suppressed (Low RAM Protection)".to_string()
+                },
+            },
+            ModelResourceVerdict {
+                model_name: "NSRL SQLite Hash Cache".to_string(),
+                required_ram_mb: match self.tier {
+                    osoosi_types::config::HardwareTier::UltraLite => 100,
+                    osoosi_types::config::HardwareTier::Lite => 250,
+                    osoosi_types::config::HardwareTier::Standard => 500,
+                    osoosi_types::config::HardwareTier::Enterprise => 1000,
+                },
+                available_ram_mb: self.available_ram_mb,
+                can_load: true,
+                status: format!("Active (Cap: {} records)", self.recommended_nsrl_cache_limit()),
+            },
+        ]
+    }
+
+    /// Check if host has sufficient resources to safely execute/load a specific model.
+    pub fn can_load_model(&self, model: &str, cfg: &osoosi_types::config::ResourcesConfig) -> bool {
+        if !cfg.auto_throttle_ai_on_low_ram {
+            return true;
+        }
+        let m = model.to_lowercase();
+        if m.contains("foundation") || m.contains("gemma") || m.contains("cisco") {
+            self.tier >= osoosi_types::config::HardwareTier::Enterprise
+                && self.available_ram_mb >= cfg.min_free_ram_mb_for_foundation_sec
+        } else if m.contains("strands") || m.contains("decider") {
+            self.tier >= osoosi_types::config::HardwareTier::Standard
+                && self.available_ram_mb >= cfg.min_free_ram_mb_for_strands_decider
+        } else if m.contains("securebert") || m.contains("bert") {
+            self.tier >= osoosi_types::config::HardwareTier::Lite
+                && self.available_ram_mb >= cfg.min_free_ram_mb_for_securebert
+        } else if m.contains("sorel") {
+            self.tier >= osoosi_types::config::HardwareTier::Lite
+                && self.available_ram_mb >= cfg.min_free_ram_mb_for_sorel
+        } else if m.contains("malconv") || m.contains("ember") || m.contains("bodmas") {
+            self.available_ram_mb >= cfg.min_free_ram_mb_for_malconv
+        } else if m.contains("magika") {
+            self.available_ram_mb >= 50
+        } else if m.contains("clef") {
+            self.available_ram_mb >= 100
+        } else {
+            self.available_ram_mb >= 500
+        }
+    }
+
+    /// Check whether external browser process should be launched.
+    pub fn can_launch_browser(&self, cfg: &osoosi_types::config::ResourcesConfig) -> bool {
+        if !cfg.auto_suppress_browser_on_low_ram {
+            return true;
+        }
+        self.available_ram_mb >= cfg.min_free_ram_mb_for_browser
+            && self.tier >= osoosi_types::config::HardwareTier::Standard
+    }
+
+    /// Determine safe maximum in-memory cache limit for NSRL hash verification.
+    pub fn recommended_nsrl_cache_limit(&self) -> usize {
+        let cfg = osoosi_types::load_resources_config();
+        if let Some(limit) = cfg.nsrl_cache_limit {
+            return limit;
+        }
+        match self.tier {
+            osoosi_types::config::HardwareTier::UltraLite => 25_000,
+            osoosi_types::config::HardwareTier::Lite => 100_000,
+            osoosi_types::config::HardwareTier::Standard => 500_000,
+            osoosi_types::config::HardwareTier::Enterprise => 2_500_000,
+        }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use osoosi_types::config::{HardwareTier, ResourcesConfig};
+
+    #[test]
+    fn test_tier_resolution_auto() {
+        // UltraLite: total < 4096 or avail < 1500
+        assert_eq!(HostResourceProfile::resolve_tier("auto", 2048, 1024), HardwareTier::UltraLite);
+        assert_eq!(HostResourceProfile::resolve_tier("auto", 16384, 1000), HardwareTier::UltraLite);
+
+        // Lite: total < 8192 or avail < 3500 (and not UltraLite)
+        assert_eq!(HostResourceProfile::resolve_tier("auto", 6144, 2500), HardwareTier::Lite);
+        assert_eq!(HostResourceProfile::resolve_tier("auto", 16384, 2500), HardwareTier::Lite);
+
+        // Standard: total < 16384 or avail < 7000 (and not Lite/UltraLite)
+        assert_eq!(HostResourceProfile::resolve_tier("auto", 12288, 5000), HardwareTier::Standard);
+        assert_eq!(HostResourceProfile::resolve_tier("auto", 32768, 5000), HardwareTier::Standard);
+
+        // Enterprise: total >= 16384 and avail >= 7000
+        assert_eq!(HostResourceProfile::resolve_tier("auto", 32768, 16384), HardwareTier::Enterprise);
+    }
+
+    #[test]
+    fn test_tier_resolution_overrides() {
+        assert_eq!(HostResourceProfile::resolve_tier("ultralite", 65536, 32768), HardwareTier::UltraLite);
+        assert_eq!(HostResourceProfile::resolve_tier("lite", 65536, 32768), HardwareTier::Lite);
+        assert_eq!(HostResourceProfile::resolve_tier("standard", 1024, 512), HardwareTier::Standard);
+        assert_eq!(HostResourceProfile::resolve_tier("enterprise", 1024, 512), HardwareTier::Enterprise);
+    }
+
+    #[test]
+    fn test_ultralite_verdicts() {
+        let profile = HostResourceProfile {
+            total_ram_mb: 2048,
+            available_ram_mb: 1200,
+            cpu_cores: 2,
+            os_name: "Windows".to_string(),
+            os_version: "11".to_string(),
+            tier: HardwareTier::UltraLite,
+            has_gpu: false,
+            gpu_name: None,
+        };
+        let cfg = ResourcesConfig::default();
+
+        assert!(profile.can_load_model("magika", &cfg));
+        assert!(profile.can_load_model("malconv", &cfg));
+        assert!(!profile.can_load_model("sorel", &cfg));
+        assert!(!profile.can_load_model("securebert", &cfg));
+        assert!(!profile.can_load_model("strands", &cfg));
+        assert!(!profile.can_load_model("foundation_sec", &cfg));
+        assert!(!profile.can_launch_browser(&cfg));
+        assert_eq!(profile.recommended_nsrl_cache_limit(), 25_000);
+
+        let verdicts = profile.evaluate_model_readiness(&cfg);
+        assert_eq!(verdicts.len(), 9);
+        let browser_v = verdicts.iter().find(|v| v.model_name.contains("Browser")).unwrap();
+        assert!(!browser_v.can_load);
+    }
+
+    #[test]
+    fn test_lite_verdicts() {
+        let profile = HostResourceProfile {
+            total_ram_mb: 6144,
+            available_ram_mb: 2800,
+            cpu_cores: 4,
+            os_name: "Windows".to_string(),
+            os_version: "11".to_string(),
+            tier: HardwareTier::Lite,
+            has_gpu: false,
+            gpu_name: None,
+        };
+        let cfg = ResourcesConfig::default();
+
+        assert!(profile.can_load_model("magika", &cfg));
+        assert!(profile.can_load_model("malconv", &cfg));
+        assert!(profile.can_load_model("sorel", &cfg));
+        assert!(profile.can_load_model("securebert", &cfg));
+        assert!(profile.can_load_model("clef", &cfg));
+        assert!(!profile.can_load_model("strands", &cfg));
+        assert!(!profile.can_load_model("foundation_sec", &cfg));
+        assert!(!profile.can_launch_browser(&cfg));
+        assert_eq!(profile.recommended_nsrl_cache_limit(), 100_000);
+    }
+
+    #[test]
+    fn test_standard_verdicts() {
+        let profile = HostResourceProfile {
+            total_ram_mb: 16384,
+            available_ram_mb: 5000,
+            cpu_cores: 8,
+            os_name: "Windows".to_string(),
+            os_version: "11".to_string(),
+            tier: HardwareTier::Standard,
+            has_gpu: true,
+            gpu_name: Some("NVIDIA".to_string()),
+        };
+        let cfg = ResourcesConfig::default();
+
+        assert!(profile.can_load_model("strands", &cfg));
+        assert!(!profile.can_load_model("foundation_sec", &cfg));
+        assert!(profile.can_launch_browser(&cfg));
+        assert_eq!(profile.recommended_nsrl_cache_limit(), 500_000);
+    }
+
+    #[test]
+    fn test_enterprise_verdicts() {
+        let profile = HostResourceProfile {
+            total_ram_mb: 32768,
+            available_ram_mb: 16384,
+            cpu_cores: 16,
+            os_name: "Windows".to_string(),
+            os_version: "11".to_string(),
+            tier: HardwareTier::Enterprise,
+            has_gpu: true,
+            gpu_name: Some("NVIDIA".to_string()),
+        };
+        let cfg = ResourcesConfig::default();
+
+        assert!(profile.can_load_model("foundation_sec", &cfg));
+        assert!(profile.can_launch_browser(&cfg));
+        assert_eq!(profile.recommended_nsrl_cache_limit(), 2_500_000);
+    }
+}
+
 

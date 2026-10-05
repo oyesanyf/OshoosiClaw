@@ -2,10 +2,12 @@ pub mod cloudflare_client;
 pub mod engine;
 pub mod local_engine;
 pub mod models;
+pub mod strands_client;
 
 pub use cloudflare_client::CloudflareClient;
 pub use engine::{ClefDecisionEngine, DecisionMetrics, DecisionMetricsSummary};
 pub use local_engine::LocalDecisionEngine;
+pub use strands_client::StrandsClient;
 pub use models::{
     build_security_incident_request, build_standard_incident_questions,
     parse_security_incident_response, BoolAnswer, ChoiceAnswer, DecisionAnswer, DecisionRequest,
@@ -181,5 +183,110 @@ mod tests {
         let custom_engine = LocalDecisionEngine::new(&temp_dir);
         assert_eq!(custom_engine.model_dir(), temp_dir.as_path());
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_strands_client_fallback_and_calibrated_probabilities() {
+        let client = StrandsClient::new(
+            "http://127.0.0.1:4003".to_string(),
+            "StrandsAgents/strands-decider-2B-hobson-v19".to_string(),
+            100, // fast timeout
+        ).expect("StrandsClient creation must succeed");
+
+        let req = build_security_incident_request(
+            "StrandsAgents/strands-decider-2B-hobson-v19",
+            "Process Image: C:\\Users\\Public\\mimikatz.exe | CommandLine: sekurlsa::logonpasswords | MITRE: T1003.001 | IsSigned: false",
+        );
+
+        let resp = client.run_decision(&req).await.expect("Run decision must fall back gracefully");
+        assert_eq!(resp.provider, "strands-decider-2b");
+
+        // Validate probabilities sum to 1.0 within 1e-5
+        for (q_name, ans) in &resp.answers {
+            if let Some(probs) = &ans.probabilities {
+                let sum: f64 = probs.values().sum();
+                assert!(
+                    (sum - 1.0).abs() < 1e-5,
+                    "Question {} probabilities sum to {}, expected 1.0",
+                    q_name,
+                    sum
+                );
+            }
+        }
+
+        let dec = parse_security_incident_response(&resp);
+        assert_eq!(dec.verdict, "malicious");
+        assert!(dec.containment_action == "tarpit" || dec.containment_action == "isolate");
+    }
+
+    #[tokio::test]
+    async fn test_hybrid_cascade_routing() {
+        let mut cfg = DecisionModelConfig::default();
+        cfg.provider = "hybrid".to_string();
+        cfg.hybrid_strategy = "cascade".to_string();
+        cfg.strands_endpoint = Some("http://127.0.0.1:4003".to_string());
+        cfg.timeout_ms = 100;
+        cfg.strands_timeout_ms = 100;
+
+        let engine = ClefDecisionEngine::new(cfg);
+        let dec = engine
+            .evaluate_security_incident(
+                "Process Image: C:\\Windows\\System32\\svchost.exe | CommandLine: -k DcomLaunch | IsSigned: true | Invariants: Nominal",
+            )
+            .await
+            .expect("Cascade evaluation must succeed");
+
+        assert_eq!(dec.verdict, "benign");
+        assert_eq!(dec.containment_action, "allow");
+        let metrics = engine.metrics();
+        assert_eq!(metrics.hybrid_evaluations, 1);
+        assert!(metrics.local_evaluations >= 1 || metrics.strands_evaluations >= 1);
+    }
+
+    #[tokio::test]
+    async fn test_hybrid_consensus_agreement_and_dispute() {
+        let mut cfg = DecisionModelConfig::default();
+        cfg.provider = "hybrid".to_string();
+        cfg.hybrid_strategy = "consensus".to_string();
+        cfg.strands_endpoint = Some("http://127.0.0.1:4003".to_string());
+        cfg.strands_timeout_ms = 100;
+
+        let engine = ClefDecisionEngine::new(cfg);
+
+        // Agreement on malicious incident
+        let dec = engine
+            .evaluate_security_incident(
+                "Process Image: vssadmin.exe | CommandLine: delete shadows /all /quiet | MITRE: T1486 | IsSigned: false",
+            )
+            .await
+            .expect("Consensus evaluation must succeed");
+
+        assert!(dec.containment_action == "isolate" || dec.containment_action == "tarpit");
+        assert!(dec.action_probability > 0.50);
+
+        let metrics = engine.metrics();
+        assert_eq!(metrics.hybrid_evaluations, 1);
+    }
+
+    #[tokio::test]
+    async fn test_hybrid_local_first_routing() {
+        let mut cfg = DecisionModelConfig::default();
+        cfg.provider = "hybrid".to_string();
+        cfg.hybrid_strategy = "local_first".to_string();
+        cfg.strands_endpoint = Some("http://127.0.0.1:4003".to_string());
+        cfg.strands_timeout_ms = 100;
+
+        let engine = ClefDecisionEngine::new(cfg);
+        let dec = engine
+            .evaluate_security_incident(
+                "Process Image: C:\\Users\\Public\\mimikatz.exe | CommandLine: sekurlsa::logonpasswords | MITRE: T1003.001 | IsSigned: false",
+            )
+            .await
+            .expect("Local first evaluation must succeed");
+
+        assert_eq!(dec.verdict, "malicious");
+        assert!(dec.containment_action == "isolate" || dec.containment_action == "tarpit");
+        let metrics = engine.metrics();
+        assert_eq!(metrics.hybrid_evaluations, 1);
     }
 }

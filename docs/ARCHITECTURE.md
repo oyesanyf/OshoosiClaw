@@ -184,6 +184,39 @@ OpenỌ̀ṣọ́ọ̀sì eliminates the post-execution telemetry gap of traditi
 - **Graceful Defense-in-Depth Fallback**: If the kernel driver is not loaded, the orchestrator automatically degrades to user-mode WFP (Windows Filtering Platform) network filtering, active thread tarpitting, and Job Object sandboxing.
 - **CLI Management**: Full administrative control via `osoosi driver status`, `install`, `uninstall`, `add-rule`, `set-mode`, and `clear-rules`.
 
+### 12. Embedded Velociraptor Forensic Extraction Service (`crates/osoosi-forensics`)
+- **Direct Process VAD Memory Inspection**: Queries Process Virtual Address Descriptors for unbacked executable segments (`PAGE_EXECUTE_READWRITE`). Instantly corroborates in-memory process hollowing, reflective DLL loading, and thread injection without relying on disk artifacts.
+- **Raw NTFS Master File Table (MFT) Analysis**: Directly reads NTFS raw `$MFT` structures to detect timestomping, Alternate Data Streams (ADS), and rootkit files hidden from standard Win32 API calls.
+- **Sanitized VQL Query Generation**: Whitelist-based query generators (`vql.rs`) that sanitize PIDs, paths, and commands, neutralizing shell injection risks.
+- **Line-by-Line Streaming Deserializer**: Memory-bounded JSONL stream parser (`stream.rs`) enforcing strict output quotas to prevent system memory starvation during massive forensic sweeps.
+
+### 13. Non-Autoregressive Clef Decision Model (`crates/osoosi-behavioral/src/decision_model`)
+- **Sub-50ms Cloudflare Workers AI Gate**: Leverages Clef Flash (`@cf/cloudflare/clef-flash`) for rapid, non-autoregressive decision classification (~38ms median latency) directly at the network edge.
+- **Structured Incident State Evaluation**: Translates real-time incident states into discrete questions (Verdict, Containment Action, Human Escalation) evaluated simultaneously rather than sequentially.
+- **Calibrated Brier Scoring**: All verdict probabilities are calibrated using Brier score minimization, guaranteeing that confidence levels directly correlate to real-world threat frequencies.
+
+### 14. LangGraph Autonomous Multi-Agent Defense Swarm (`tools/defense_swarm`)
+- **Decoupled Dual-Ring Architecture**:
+  - **Ring-0 Fast Containment (< 50ms)**: Rust core, kernel driver, WFP filter, memory tarpit, and Clef immediately freeze suspicious PIDs and isolate sockets.
+  - **Ring-1 Swarm Pipeline (2s - 25s)**: Once the target is frozen, the Python LangGraph StateGraph executes post-containment deep forensics, threat intel correlation, rule synthesis, and remediation planning without real-time latency pressure.
+- **Cyclical StateGraph Workflow**:
+  - `triage_node` -> `forensics_node` -> `intel_node` -> `rule_synth_node` -> `remediation_node` -> `human_review_node` -> `executor_node` -> `mesh_sync_node`.
+  - **Automated Syntax Retry Loop**: If a synthesized YARA-X or Sigma rule fails compilation, the compiler error trace loops back to the synthesizer node for up to 3 automatic refinement cycles.
+  - **Human-in-the-Loop Checkpoint Gate**: Invokes LangGraph native `interrupt()`, snapshotting execution state and rendering the proposed remediation in the WebUI (`/api/approvals`) for one-click operator authorization.
+  - **Protected OS Invariants**: Immutable safeguards preventing containment or termination of PIDs 0, 1, 4, `sysmon64.exe`, `osoosi.exe`, and `msmpeng.exe`.
+
+### 15. Strands Decider 2B & Multi-Tiered Hybrid Decision Engine
+- **AWS Strands Decider 2B Integration**: 1.9B parameter open-source decision model (`StrandsAgents/strands-decider-2B-hobson-v19`, Apache 2.0) built on a `Qwen/Qwen3.5-2B-Base` torso with a pointer-style head for sub-115ms local on-device decision routing.
+- **4-Tier Decision Hierarchy**:
+  - *Tier 1 (In-Process Gate / < 5ms)*: Native Rust Brier scoring immediately clears verified software and definite high-threat signatures.
+  - *Tier 2 (Fast Edge Cloud / ~38ms)*: Cloudflare Clef Flash edge evaluation when connected.
+  - *Tier 3 (Local Open-Source 2B SLM / ~115ms)*: Strands Decider 2B running locally on CPU/GPU for deep semantic decision routing with **100% data privacy / air-gapped execution**.
+  - *Tier 4 (Deep Autonomous Swarm / > 2s)*: LangGraph multi-agent swarm for multi-stage forensics, automated YARA synthesis, and mesh immunization.
+- **Three Hybrid Routing Strategies**:
+  - `cascade`: Tier 1 -> Tier 2 (Clef) -> Tier 3 (Strands Decider 2B) -> Tier 1 fallback.
+  - `consensus`: Parallel Bayesian weighted ensemble ($P_{\text{hybrid}} = w_1 P_{\text{clef}} + w_2 P_{\text{strands}}$) for zero false-positive containment.
+  - `local_first`: 100% on-device inference using Strands Decider 2B, keeping all telemetry strictly on-host.
+
 ## Response Matrix
 
 | Confidence | Action | Description |

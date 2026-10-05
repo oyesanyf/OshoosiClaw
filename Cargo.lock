@@ -6035,6 +6035,7 @@ dependencies = [
  "serde_json",
  "sevenz-rust",
  "sha2",
+ "sysinfo",
  "tokio",
  "tracing",
  "tracing-subscriber",

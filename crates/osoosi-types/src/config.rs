@@ -644,6 +644,12 @@ struct FileConfig {
     /// Non-autoregressive Clef Decision Model configuration.
     #[serde(default)]
     pub decision_model: DecisionModelConfig,
+    /// LangGraph Autonomous Multi-Agent Defense Swarm configuration.
+    #[serde(default)]
+    pub swarm: SwarmConfig,
+    /// Hardware resource thresholds and model gating configuration.
+    #[serde(default)]
+    pub resources: ResourcesConfig,
 }
 
 /// Hex-patch agent config: auto-patch files when rules match.
@@ -2432,6 +2438,22 @@ fn default_decision_model_dir() -> String {
     "models/clef".to_string()
 }
 
+fn default_hybrid_strategy() -> String {
+    "cascade".to_string()
+}
+
+fn default_strands_endpoint() -> Option<String> {
+    Some("http://127.0.0.1:4003".to_string())
+}
+
+fn default_strands_model() -> String {
+    "StrandsAgents/strands-decider-2B-hobson-v19".to_string()
+}
+
+fn default_strands_timeout_ms() -> u64 {
+    800
+}
+
 /// Configuration for the non-autoregressive Clef Decision Model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionModelConfig {
@@ -2462,6 +2484,18 @@ pub struct DecisionModelConfig {
     /// Path to local weights / calibration tables (default: "models/clef")
     #[serde(default = "default_decision_model_dir")]
     pub model_dir: String,
+    /// Hybrid strategy: "cascade", "consensus", "local_first"
+    #[serde(default = "default_hybrid_strategy")]
+    pub hybrid_strategy: String,
+    /// Local or remote endpoint for Strands Decider 2B service
+    #[serde(default = "default_strands_endpoint")]
+    pub strands_endpoint: Option<String>,
+    /// Strands Decider 2B model name / repo
+    #[serde(default = "default_strands_model")]
+    pub strands_model: String,
+    /// Timeout for Strands Decider 2B in milliseconds (default: 800ms)
+    #[serde(default = "default_strands_timeout_ms")]
+    pub strands_timeout_ms: u64,
 }
 
 impl Default for DecisionModelConfig {
@@ -2477,6 +2511,10 @@ impl Default for DecisionModelConfig {
             min_action_confidence: default_min_action_confidence(),
             auto_escalate_to_cortex: true,
             model_dir: default_decision_model_dir(),
+            hybrid_strategy: default_hybrid_strategy(),
+            strands_endpoint: default_strands_endpoint(),
+            strands_model: default_strands_model(),
+            strands_timeout_ms: default_strands_timeout_ms(),
         }
     }
 }
@@ -2521,10 +2559,246 @@ pub fn load_decision_model_config() -> DecisionModelConfig {
             cfg.cloudflare_api_token = Some(trimmed.to_string());
         }
     }
+    if let Ok(val) = std::env::var("OSOOSI_HYBRID_STRATEGY") {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            cfg.hybrid_strategy = trimmed.to_string();
+        }
+    }
+    if let Ok(val) = std::env::var("STRANDS_ENDPOINT") {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            cfg.strands_endpoint = Some(trimmed.to_string());
+        }
+    }
+    if let Ok(val) = std::env::var("STRANDS_MODEL") {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            cfg.strands_model = trimmed.to_string();
+        }
+    }
+    if let Ok(val) = std::env::var("STRANDS_TIMEOUT_MS") {
+        if let Ok(ms) = val.trim().parse::<u64>() {
+            cfg.strands_timeout_ms = ms;
+        }
+    }
 
     cfg
 }
 
+/// LangGraph Autonomous Multi-Agent Defense Swarm configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct SwarmConfig {
+    #[serde(default = "default_swarm_enabled")]
+    pub enabled: bool,
+    #[serde(default = "default_swarm_url")]
+    pub service_url: String,
+    #[serde(default = "default_swarm_auto_trigger")]
+    pub auto_trigger_on_threat: bool,
+    #[serde(default = "default_swarm_min_confidence")]
+    pub min_trigger_confidence: f32,
+    #[serde(default = "default_swarm_timeout_secs")]
+    pub timeout_secs: u64,
+}
+
+fn default_swarm_enabled() -> bool {
+    true
+}
+
+fn default_swarm_url() -> String {
+    "http://127.0.0.1:4002".to_string()
+}
+
+fn default_swarm_auto_trigger() -> bool {
+    true
+}
+
+fn default_swarm_min_confidence() -> f32 {
+    0.85
+}
+
+fn default_swarm_timeout_secs() -> u64 {
+    30
+}
+
+impl Default for SwarmConfig {
+    fn default() -> Self {
+        Self {
+            enabled: default_swarm_enabled(),
+            service_url: default_swarm_url(),
+            auto_trigger_on_threat: default_swarm_auto_trigger(),
+            min_trigger_confidence: default_swarm_min_confidence(),
+            timeout_secs: default_swarm_timeout_secs(),
+        }
+    }
+}
+
+pub fn load_swarm_config() -> SwarmConfig {
+    let path = resolve_config_path().unwrap_or_else(|| PathBuf::from("osoosi.toml"));
+    let mut cfg = if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(fc) = toml::from_str::<FileConfig>(&content) {
+                fc.swarm
+            } else {
+                SwarmConfig::default()
+            }
+        } else {
+            SwarmConfig::default()
+        }
+    } else {
+        SwarmConfig::default()
+    };
+
+    if let Ok(val) = std::env::var("OSOOSI_SWARM_ENABLED") {
+        let trimmed = val.trim();
+        if trimmed == "0" || trimmed.eq_ignore_ascii_case("false") {
+            cfg.enabled = false;
+        } else if trimmed == "1" || trimmed.eq_ignore_ascii_case("true") {
+            cfg.enabled = true;
+        }
+    }
+    if let Ok(val) = std::env::var("OSOOSI_SWARM_URL") {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            cfg.service_url = trimmed.to_string();
+        }
+    }
+    if let Ok(val) = std::env::var("OSOOSI_SWARM_AUTO_TRIGGER") {
+        let trimmed = val.trim();
+        if trimmed == "0" || trimmed.eq_ignore_ascii_case("false") {
+            cfg.auto_trigger_on_threat = false;
+        } else if trimmed == "1" || trimmed.eq_ignore_ascii_case("true") {
+            cfg.auto_trigger_on_threat = true;
+        }
+    }
+    if let Ok(val) = std::env::var("OSOOSI_SWARM_MIN_CONFIDENCE") {
+        if let Ok(num) = val.trim().parse::<f32>() {
+            cfg.min_trigger_confidence = num;
+        }
+    }
+    if let Ok(val) = std::env::var("OSOOSI_SWARM_TIMEOUT_SECS") {
+        if let Ok(num) = val.trim().parse::<u64>() {
+            cfg.timeout_secs = num;
+        }
+    }
+
+    cfg
+}
+
+/// Hardware performance tiers dynamically resolved from available system resources.
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+pub enum HardwareTier {
+    UltraLite,  // < 4 GB total RAM or < 1.5 GB free: Magika, EMBER, Local Brier only; no browser
+    Lite,       // 4-8 GB total RAM or 1.5-4 GB free: SOREL, SecureBERT, Clef Flash; no browser unless forced
+    Standard,   // 8-16 GB total RAM: Strands Decider 2B, LangGraph swarm, browser allowed
+    Enterprise, // > 16 GB total RAM: Full models including FoundationSec-8B and full NSRL
+}
+
+/// Dynamic system resource thresholds and model execution gating configuration.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ResourcesConfig {
+    /// Hardware profile: "auto", "ultralite", "lite", "standard", "enterprise"
+    #[serde(default = "default_resource_profile")]
+    pub profile: String,
+    /// Minimum available free RAM in MB required to auto-launch external browser (default: 2500 MB)
+    #[serde(default = "default_min_free_ram_browser")]
+    pub min_free_ram_mb_for_browser: u64,
+    /// Minimum free RAM in MB for FoundationSec / Gemma 4 (default: 8192 MB)
+    #[serde(default = "default_min_free_ram_foundation")]
+    pub min_free_ram_mb_for_foundation_sec: u64,
+    /// Minimum free RAM in MB for Strands Decider 2B SLM (default: 3500 MB)
+    #[serde(default = "default_min_free_ram_strands")]
+    pub min_free_ram_mb_for_strands_decider: u64,
+    /// Minimum free RAM in MB for SecureBERT ONNX (default: 800 MB)
+    #[serde(default = "default_min_free_ram_securebert")]
+    pub min_free_ram_mb_for_securebert: u64,
+    /// Minimum free RAM in MB for SOREL-20M (default: 350 MB)
+    #[serde(default = "default_min_free_ram_sorel")]
+    pub min_free_ram_mb_for_sorel: u64,
+    /// Minimum free RAM in MB for MalConv / EMBER (default: 150 MB)
+    #[serde(default = "default_min_free_ram_malconv")]
+    pub min_free_ram_mb_for_malconv: u64,
+    /// Automatically suppress heavy external browser if available RAM < min_free_ram_mb_for_browser
+    #[serde(default = "default_true")]
+    pub auto_suppress_browser_on_low_ram: bool,
+    /// Automatically skip heavy AI downloads and model loads if RAM is insufficient
+    #[serde(default = "default_true")]
+    pub auto_throttle_ai_on_low_ram: bool,
+    /// NSRL cache entry limit based on memory (None = dynamic based on tier)
+    #[serde(default)]
+    pub nsrl_cache_limit: Option<usize>,
+}
+
+fn default_resource_profile() -> String {
+    "auto".to_string()
+}
+
+fn default_min_free_ram_browser() -> u64 {
+    2500
+}
+
+fn default_min_free_ram_foundation() -> u64 {
+    8192
+}
+
+fn default_min_free_ram_strands() -> u64 {
+    3500
+}
+
+fn default_min_free_ram_securebert() -> u64 {
+    800
+}
+
+fn default_min_free_ram_sorel() -> u64 {
+    350
+}
+
+fn default_min_free_ram_malconv() -> u64 {
+    150
+}
+
+impl Default for ResourcesConfig {
+    fn default() -> Self {
+        Self {
+            profile: default_resource_profile(),
+            min_free_ram_mb_for_browser: default_min_free_ram_browser(),
+            min_free_ram_mb_for_foundation_sec: default_min_free_ram_foundation(),
+            min_free_ram_mb_for_strands_decider: default_min_free_ram_strands(),
+            min_free_ram_mb_for_securebert: default_min_free_ram_securebert(),
+            min_free_ram_mb_for_sorel: default_min_free_ram_sorel(),
+            min_free_ram_mb_for_malconv: default_min_free_ram_malconv(),
+            auto_suppress_browser_on_low_ram: true,
+            auto_throttle_ai_on_low_ram: true,
+            nsrl_cache_limit: None,
+        }
+    }
+}
+
+pub fn load_resources_config() -> ResourcesConfig {
+    let path = resolve_config_path().unwrap_or_else(|| PathBuf::from("osoosi.toml"));
+    let mut cfg = if path.exists() {
+        if let Ok(content) = std::fs::read_to_string(&path) {
+            if let Ok(fc) = toml::from_str::<FileConfig>(&content) {
+                fc.resources
+            } else {
+                ResourcesConfig::default()
+            }
+        } else {
+            ResourcesConfig::default()
+        }
+    } else {
+        ResourcesConfig::default()
+    };
+
+    if let Ok(val) = std::env::var("OSOOSI_RESOURCE_PROFILE") {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            cfg.profile = trimmed.to_string();
+        }
+    }
+
+    cfg
+}
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct OsoosiConfig {
@@ -2535,6 +2809,8 @@ pub struct OsoosiConfig {
     pub runtime: RuntimeConfig,
     pub exporter: ExporterConfig,
     pub wire: WireConfig,
+    #[serde(default)]
+    pub resources: ResourcesConfig,
 }
 
 #[cfg(test)]
@@ -2757,11 +3033,16 @@ trigger_techniques = ["T1055", "T1003"]
         assert!(default_cfg.fallback_to_local);
         assert!(default_cfg.auto_escalate_to_cortex);
         assert_eq!(default_cfg.model_dir, "models/clef");
+        assert_eq!(default_cfg.hybrid_strategy, "cascade");
+        assert_eq!(default_cfg.strands_endpoint.as_deref(), Some("http://127.0.0.1:4003"));
+        assert_eq!(default_cfg.strands_model, "StrandsAgents/strands-decider-2B-hobson-v19");
+        assert_eq!(default_cfg.strands_timeout_ms, 800);
 
         let custom_toml = r#"
 [decision_model]
 enabled = false
-provider = "cloudflare"
+provider = "hybrid"
+hybrid_strategy = "consensus"
 model = "@cf/cloudflare/clef"
 cloudflare_account_id = "test-account-id"
 cloudflare_api_token = "test-token"
@@ -2770,10 +3051,14 @@ fallback_to_local = false
 min_action_confidence = 0.92
 auto_escalate_to_cortex = false
 model_dir = "custom/models/clef"
+strands_endpoint = "http://10.0.0.42:4003"
+strands_model = "custom/strands-slm"
+strands_timeout_ms = 1200
 "#;
         let fc: FileConfig = toml::from_str(custom_toml).expect("Must parse FileConfig with [decision_model]");
         assert!(!fc.decision_model.enabled);
-        assert_eq!(fc.decision_model.provider, "cloudflare");
+        assert_eq!(fc.decision_model.provider, "hybrid");
+        assert_eq!(fc.decision_model.hybrid_strategy, "consensus");
         assert_eq!(fc.decision_model.model, "@cf/cloudflare/clef");
         assert_eq!(fc.decision_model.cloudflare_account_id.as_deref(), Some("test-account-id"));
         assert_eq!(fc.decision_model.cloudflare_api_token.as_deref(), Some("test-token"));
@@ -2782,6 +3067,9 @@ model_dir = "custom/models/clef"
         assert!((fc.decision_model.min_action_confidence - 0.92).abs() < 1e-4);
         assert!(!fc.decision_model.auto_escalate_to_cortex);
         assert_eq!(fc.decision_model.model_dir, "custom/models/clef");
+        assert_eq!(fc.decision_model.strands_endpoint.as_deref(), Some("http://10.0.0.42:4003"));
+        assert_eq!(fc.decision_model.strands_model, "custom/strands-slm");
+        assert_eq!(fc.decision_model.strands_timeout_ms, 1200);
     }
 
     #[test]
@@ -2825,6 +3113,71 @@ duckdns_port = 4001
         assert_eq!(fc.wire.duckdns_domain, Some("my-fleet".to_string()));
         assert!(fc.wire.auto_bootstrap_duckdns);
         assert_eq!(fc.wire.duckdns_port, 4001);
+    }
+
+    #[test]
+    fn test_swarm_config_defaults_and_parsing() {
+        let default_cfg = SwarmConfig::default();
+        assert!(default_cfg.enabled);
+        assert_eq!(default_cfg.service_url, "http://127.0.0.1:4002");
+        assert!(default_cfg.auto_trigger_on_threat);
+        assert!((default_cfg.min_trigger_confidence - 0.85).abs() < 1e-4);
+        assert_eq!(default_cfg.timeout_secs, 30);
+
+        let custom_toml = r#"
+[swarm]
+enabled = false
+service_url = "http://10.0.0.50:8000"
+auto_trigger_on_threat = false
+min_trigger_confidence = 0.90
+timeout_secs = 60
+"#;
+        let fc: FileConfig = toml::from_str(custom_toml).expect("Must parse FileConfig with [swarm]");
+        assert!(!fc.swarm.enabled);
+        assert_eq!(fc.swarm.service_url, "http://10.0.0.50:8000");
+        assert!(!fc.swarm.auto_trigger_on_threat);
+        assert!((fc.swarm.min_trigger_confidence - 0.90).abs() < 1e-4);
+        assert_eq!(fc.swarm.timeout_secs, 60);
+    }
+
+    #[test]
+    fn test_resources_config_defaults_and_parsing() {
+        let default_cfg = ResourcesConfig::default();
+        assert_eq!(default_cfg.profile, "auto");
+        assert_eq!(default_cfg.min_free_ram_mb_for_browser, 2500);
+        assert_eq!(default_cfg.min_free_ram_mb_for_foundation_sec, 8192);
+        assert_eq!(default_cfg.min_free_ram_mb_for_strands_decider, 3500);
+        assert_eq!(default_cfg.min_free_ram_mb_for_securebert, 800);
+        assert_eq!(default_cfg.min_free_ram_mb_for_sorel, 350);
+        assert_eq!(default_cfg.min_free_ram_mb_for_malconv, 150);
+        assert!(default_cfg.auto_suppress_browser_on_low_ram);
+        assert!(default_cfg.auto_throttle_ai_on_low_ram);
+        assert_eq!(default_cfg.nsrl_cache_limit, None);
+
+        let custom_toml = r#"
+[resources]
+profile = "lite"
+min_free_ram_mb_for_browser = 3000
+min_free_ram_mb_for_foundation_sec = 10000
+min_free_ram_mb_for_strands_decider = 4000
+min_free_ram_mb_for_securebert = 900
+min_free_ram_mb_for_sorel = 400
+min_free_ram_mb_for_malconv = 200
+auto_suppress_browser_on_low_ram = false
+auto_throttle_ai_on_low_ram = false
+nsrl_cache_limit = 50000
+"#;
+        let fc: FileConfig = toml::from_str(custom_toml).expect("Must parse FileConfig with [resources]");
+        assert_eq!(fc.resources.profile, "lite");
+        assert_eq!(fc.resources.min_free_ram_mb_for_browser, 3000);
+        assert_eq!(fc.resources.min_free_ram_mb_for_foundation_sec, 10000);
+        assert_eq!(fc.resources.min_free_ram_mb_for_strands_decider, 4000);
+        assert_eq!(fc.resources.min_free_ram_mb_for_securebert, 900);
+        assert_eq!(fc.resources.min_free_ram_mb_for_sorel, 400);
+        assert_eq!(fc.resources.min_free_ram_mb_for_malconv, 200);
+        assert!(!fc.resources.auto_suppress_browser_on_low_ram);
+        assert!(!fc.resources.auto_throttle_ai_on_low_ram);
+        assert_eq!(fc.resources.nsrl_cache_limit, Some(50000));
     }
 }
 

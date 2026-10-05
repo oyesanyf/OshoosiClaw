@@ -89,8 +89,47 @@ If you see "PRODUCTION-CRITICAL: All ML models failed to load":
   - **Fix**: Run `Add-MpPreference -ExclusionPath "C:\TEST"` (or your test directory) in an Admin PowerShell.
 
 ### 6. Mesh Handshaking & Firewalls
-- **Port Requirements**: Oshoosi Mesh requires **TCP/UDP 9000-9010** to be open for sibling discovery.
+- **Port Requirements**: Oshoosi Mesh requires **TCP/UDP 9000-9010** and **TCP 4001** to be open for sibling discovery.
 - **Connection Timeout (10061)**: Indicates the peer is unreachable. Verify that `mesh.listen_addrs` in `osoosi.toml` is set to `0.0.0.0` and that your hardware firewall allows P2P traffic.
+
+### 7. Autonomous Defense Swarm Operation (`tools/defense_swarm/`)
+- **FastAPI Microservice (Port 4002)**: The LangGraph multi-agent defense swarm runs on `127.0.0.1:4002`.
+- **Start Swarm Service**:
+  ```powershell
+  python -m defense_swarm.cli serve --host 127.0.0.1 --port 4002
+  # Or via Windows batch launcher:
+  .\tools\defense_swarm\bin\defense-swarm.cmd serve
+  ```
+- **Operator Review Gate (`/api/approvals`)**: High-risk remediation actions pause at the `human_review_node` using LangGraph `interrupt()`. Operators review the synthesized incident narrative and click **Approve** or **Reject** in the WebUI.
+- **CLI Verification**:
+  ```powershell
+  .\osoosi.exe swarm status
+  .\osoosi.exe swarm test --pid 5555 --engine clef --confidence 0.95
+  ```
+
+### 8. Multi-Tiered Hybrid Decision Engine Operations
+- **Strands Decider 2B + Clef Flash**: Combines Cloudflare Workers AI edge models with AWS Strands Decider 2B (open-source local SLM).
+- **Routing Strategies**:
+  - `cascade`: Fastest evaluation, falling back from Clef to Strands Decider 2B.
+  - `consensus`: Dual-query ensemble averaging probabilities for zero false-positive containment.
+  - `local_first`: 100% on-device inference for air-gapped data sovereignty.
+- **CLI Diagnostics**:
+  ```powershell
+  .\osoosi.exe decision status
+  .\osoosi.exe decision test
+  .\osoosi.exe decision evaluate --state "Process: Mimikatz.exe | CmdLine: sekurlsa::logonpasswords | MITRE: T1003"
+  ```
+
+### 9. Embedded Velociraptor Forensics Operations
+- **Deep Process & Disk DFIR**:
+  ```powershell
+  # Check forensics service status
+  .\osoosi.exe forensics status
+  # Inspect VAD allocations for unbacked executable (RWX) code injection
+  .\osoosi.exe forensics inspect-process --pid 1844
+  # Scan raw NTFS MFT for rootkit file hiding and timestomping
+  .\osoosi.exe forensics scan-mft --drive C --dir "Windows\Temp"
+  ```
 
 ---
 
