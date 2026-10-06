@@ -102,6 +102,8 @@ error_core.log
 /osoosi_deploy/
 /deploy/*
 !/deploy/OshoosiClaw.msi
+!/deploy/reports/
+!/deploy/reports/*
 
 # ---------- Temp / Misc ----------
 /tmp/
