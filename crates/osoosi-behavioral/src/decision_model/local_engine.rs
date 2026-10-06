@@ -70,6 +70,11 @@ impl Default for LocalClefWeights {
         benign.insert("msmpeng.exe".to_string(), 3.5);
         benign.insert("sysmon64.exe".to_string(), 4.0);
         benign.insert("osoosi.exe".to_string(), 4.5);
+        benign.insert("python.exe".to_string(), 3.0);
+        benign.insert("python".to_string(), 2.5);
+        benign.insert("pythonsoftwarefoundation".to_string(), 3.5);
+        benign.insert("windowsapps".to_string(), 2.5);
+        benign.insert("target: file".to_string(), 1.5);
 
         let mut mitre = HashMap::new();
         mitre.insert("t1003".to_string(), 4.2);

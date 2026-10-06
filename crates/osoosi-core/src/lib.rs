@@ -3407,14 +3407,83 @@ impl EdrOrchestrator {
                                     return;
                                 }
 
-                                warn!(
-                                    "MALWARE DETECTED: {} (magika={}, ml={:.2}, combined={:.2})",
-                                    result.file_path, result.magika_label,
-                                    result.ml_score, result.combined_score
-                                );
-
                                 let autonomy = osoosi_types::load_autonomy_config();
-                                if result.combined_score >= autonomy.action_confidence_threshold as f64 {
+                                let mut should_hard_block = false;
+
+                                if orchestrator.decision_engine.is_enabled() {
+                                    let is_signed = crate::win_trust::is_trusted_signed_binary(path);
+                                    let yara_str = if result.yara_matches.is_empty() {
+                                        "none".to_string()
+                                    } else {
+                                        result.yara_matches.join(",")
+                                    };
+                                    let state_text = format!(
+                                        "Target: File | Path: {} | Magika: {} | ML Score: {:.2} | YARA: {} | IsSigned: {} | Invariants: Nominal",
+                                        result.file_path, result.magika_label, result.ml_score, yara_str, is_signed
+                                    );
+
+                                    match orchestrator.decision_engine.evaluate_security_incident(&state_text).await {
+                                        Ok(decision) => {
+                                            if decision.verdict == "benign" || decision.containment_action == "allow" {
+                                                info!(
+                                                    "File Monitor: Decision model evaluated {} as benign (prob={:.2}, action='{}'). Alert suppressed.",
+                                                    result.file_path, decision.verdict_probability, decision.containment_action
+                                                );
+                                                return;
+                                            } else if decision.verdict == "malicious"
+                                                || decision.containment_action == "isolate"
+                                                || decision.containment_action == "quarantine"
+                                            {
+                                                warn!(
+                                                    "MALWARE DETECTED: {} (magika={}, ml={:.2}, decision='{}' prob={:.2})",
+                                                    result.file_path, result.magika_label, result.ml_score,
+                                                    decision.verdict, decision.verdict_probability
+                                                );
+                                                if decision.action_probability >= autonomy.action_confidence_threshold as f64 {
+                                                    should_hard_block = true;
+                                                }
+                                            } else {
+                                                info!(
+                                                    "File Monitor: Incident flagged for review: {} (decision='{}')",
+                                                    result.file_path, decision.verdict
+                                                );
+                                                return;
+                                            }
+                                        }
+                                        Err(e) => {
+                                            tracing::error!("File Monitor: Decision engine evaluation failed: {}. Falling back to heuristic gates.", e);
+                                            if result.ml_score >= 0.90 && (result.signature_score > 0.0 || !result.yara_matches.is_empty()) {
+                                                warn!(
+                                                    "MALWARE DETECTED: {} (magika={}, ml={:.2}, combined={:.2})",
+                                                    result.file_path, result.magika_label,
+                                                    result.ml_score, result.combined_score
+                                                );
+                                                if result.combined_score >= autonomy.action_confidence_threshold as f64 {
+                                                    should_hard_block = true;
+                                                }
+                                            } else {
+                                                return;
+                                            }
+                                        }
+                                    }
+                                } else {
+                                    // If decision engine is not enabled:
+                                    // Require both result.ml_score >= 0.90 AND (result.signature_score > 0.0 OR !result.yara_matches.is_empty()) before hard-blocking.
+                                    if result.ml_score >= 0.90 && (result.signature_score > 0.0 || !result.yara_matches.is_empty()) {
+                                        warn!(
+                                            "MALWARE DETECTED: {} (magika={}, ml={:.2}, combined={:.2})",
+                                            result.file_path, result.magika_label,
+                                            result.ml_score, result.combined_score
+                                        );
+                                        if result.combined_score >= autonomy.action_confidence_threshold as f64 {
+                                            should_hard_block = true;
+                                        }
+                                    } else {
+                                        return;
+                                    }
+                                }
+
+                                if should_hard_block {
                                     info!("AUTONOMOUS RESPONSE: Applying hard-block and quarantine for {}", result.file_path);
                                     
                                     // 1. Block the path persistently

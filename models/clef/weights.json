@@ -46,7 +46,12 @@
     "rustc.exe": 3.5,
     "signed: true": 2.8,
     "svchost.exe": 2.2,
-    "sysmon64.exe": 4.0
+    "sysmon64.exe": 4.0,
+    "python.exe": 3.0,
+    "python": 2.5,
+    "pythonsoftwarefoundation": 3.5,
+    "windowsapps": 2.5,
+    "target: file": 1.5
   },
   "mitre_technique_weights": {
     "t1003": 4.2,

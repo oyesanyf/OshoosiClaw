@@ -17,6 +17,40 @@ fn yara_dir() -> PathBuf {
         .unwrap_or_else(|_| PathBuf::from("yara"))
 }
 
+pub fn is_common_system_or_dev_binary(name: &str) -> bool {
+    let lower = name.trim().to_ascii_lowercase();
+    let file_name = std::path::Path::new(&lower)
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or(&lower);
+    matches!(
+        file_name,
+        "powershell.exe"
+            | "pwsh.exe"
+            | "cmd.exe"
+            | "python.exe"
+            | "python3.exe"
+            | "pythonw.exe"
+            | "conhost.exe"
+            | "explorer.exe"
+            | "svchost.exe"
+            | "rundll32.exe"
+            | "antigravity.exe"
+            | "filecoauth.exe"
+            | "git.exe"
+            | "cargo.exe"
+            | "rustc.exe"
+            | "code.exe"
+            | "bash.exe"
+            | "wsl.exe"
+            | "unknown"
+            | "googledrivefs.exe"
+            | "language_server_windows_x64.exe"
+            | "osoosi.exe"
+            | "osoosi-cli.exe"
+    )
+}
+
 /// Generate YARA rule from threat and write to yara/osoosi_generated/.
 /// Returns the rule content for mesh sharing.
 pub fn generate_yara_from_threat(sig: &ThreatSignature) -> Option<String> {
@@ -31,16 +65,21 @@ pub fn generate_yara_from_threat(sig: &ThreatSignature) -> Option<String> {
             .take(20)
             .collect::<String>()
     );
-    let mut has_strings = false;
+
+    let mut has_hash = false;
     let mut strings_section = String::new();
     let mut cond_parts = Vec::new();
 
+    // 1. Process name inclusion: reject common OS or developer binaries
     if let Some(ref proc) = sig.process_name {
-        let safe = proc.replace('\\', "\\\\").replace('\"', "\\\"");
-        strings_section.push_str(&format!("        $proc = \"{}\" ascii wide\n", safe));
-        cond_parts.push("$proc".to_string());
-        has_strings = true;
+        if !is_common_system_or_dev_binary(proc) && !proc.trim().is_empty() {
+            let safe = proc.replace('\\', "\\\\").replace('\"', "\\\"");
+            strings_section.push_str(&format!("        $proc = \"{}\" ascii wide\n", safe));
+            cond_parts.push("$proc".to_string());
+        }
     }
+
+    // 2. Cryptographic hash is strictly required for file-level rules
     if let Some(ref hash) = sig.hash_blake3 {
         let hex: String = hash.chars().filter(|c| c.is_ascii_hexdigit()).collect();
         if hex.len() >= 32 {
@@ -55,17 +94,21 @@ pub fn generate_yara_from_threat(sig: &ThreatSignature) -> Option<String> {
                 .join(" ");
             strings_section.push_str(&format!("        $h = {{ {} }}\n", spaced));
             cond_parts.push("$h".to_string());
-            has_strings = true;
+            has_hash = true;
         }
     }
-    if !has_strings {
+
+    // A file-level YARA rule strictly requires a cryptographic hash or unique signature.
+    // If no unique binary hash exists, return None.
+    if !has_hash {
         return None;
     }
 
     let cond_str = if cond_parts.len() == 1 {
         cond_parts[0].clone()
     } else {
-        "any of them".to_string()
+        // Condition MUST be '$proc and $h', NEVER 'any of them'
+        cond_parts.join(" and ")
     };
 
     let meta = format!(
@@ -112,6 +155,26 @@ mod tests {
     }
 
     #[test]
+    fn test_generate_yara_common_binary_without_hash() {
+        let mut sig = ThreatSignature::new("test_node".to_string());
+        sig.process_name = Some("powershell.exe".to_string());
+        assert!(generate_yara_from_threat(&sig).is_none());
+    }
+
+    #[test]
+    fn test_generate_yara_common_binary_with_hash() {
+        let mut sig = ThreatSignature::new("test_node".to_string());
+        sig.process_name = Some("powershell.exe".to_string());
+        sig.hash_blake3 = Some("deadbeefcafebabe0123456789abcdefdeadbeefcafebabe0123456789abcdef".to_string());
+        let rule_opt = generate_yara_from_threat(&sig);
+        assert!(rule_opt.is_some());
+        let rule_str = rule_opt.unwrap();
+        assert!(!rule_str.contains("$proc = \"powershell.exe\""));
+        assert!(rule_str.contains("$h = {"));
+        assert!(rule_str.contains("condition:\n        $h"));
+    }
+
+    #[test]
     fn test_generate_yara_compilation_and_matching() {
         let temp_dir = std::env::temp_dir().join(format!("osoosi_test_yara_{}", std::process::id()));
         std::fs::create_dir_all(&temp_dir).unwrap();
@@ -133,14 +196,29 @@ mod tests {
         let rules = compiler.build();
         let mut scanner = yara_x::Scanner::new(&rules);
 
-        // 2. Verify matching on process name
-        let payload_proc = b"dummy process image with mimikatz.exe present";
-        let results = scanner.scan(payload_proc).unwrap();
+        // 2. Verify condition is '$proc and $h', NOT 'any of them'
+        assert!(rule_str.contains("$proc and $h"));
+        assert!(!rule_str.contains("any of them"));
+
+        // 3. Verify that matching on process name alone fails
+        let payload_proc_only = b"dummy process image with mimikatz.exe present";
+        let results_proc = scanner.scan(payload_proc_only).unwrap();
+        assert_eq!(results_proc.matching_rules().count(), 0, "Process name alone must not trigger rule without binary hash");
+
+        // 4. Verify that matching with BOTH process name and hash succeeds
+        let mut payload_both = b"dummy process image with mimikatz.exe present ".to_vec();
+        payload_both.extend_from_slice(&[
+            0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe,
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe,
+            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+        ]);
+        let results = scanner.scan(&payload_both).unwrap();
         let matches: Vec<&str> = results.matching_rules().map(|r| r.identifier()).collect();
         assert_eq!(matches.len(), 1);
         assert_eq!(matches[0], "OsoosiGen_11223344_5566_7788_9");
 
-        // 3. Verify clean file cleanup
+        // 5. Verify clean file cleanup
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

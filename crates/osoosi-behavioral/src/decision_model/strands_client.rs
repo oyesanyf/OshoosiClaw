@@ -212,7 +212,7 @@ impl StrandsClient {
             || state_lower.contains("beacon")
             || state_lower.contains("t1055");
 
-        let is_critical = (is_destructive || (has_credential_theft && !is_signed)) && !is_signed;
+        let is_critical = is_destructive && !is_signed;
         let is_malicious = is_critical || has_credential_theft || has_injection;
 
         // Discrete candidate actions: [allow, alert, tarpit, ghost_tarpit, quarantine, isolate]

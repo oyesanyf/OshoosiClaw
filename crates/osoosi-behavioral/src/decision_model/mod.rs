@@ -52,6 +52,21 @@ mod tests {
     }
 
     #[test]
+    fn test_local_engine_evaluates_python_file_as_benign() {
+        let engine = LocalDecisionEngine::new("models/clef");
+        let req = build_security_incident_request(
+            "@cf/cloudflare/clef-flash",
+            "Target: File | Path: C:\\Program Files\\WindowsApps\\PythonSoftwareFoundation.Python.3.11_qbz5n2kfra8p0\\python.exe | Magika: pebin | ML Score: 0.65 | YARA: none | IsSigned: true | Invariants: Nominal",
+        );
+        let resp = engine.evaluate(&req).expect("Local evaluation failed");
+        let decision = parse_security_incident_response(&resp);
+
+        assert_eq!(decision.verdict, "benign");
+        assert!(decision.verdict_probability > 0.60);
+        assert_eq!(decision.containment_action, "allow");
+    }
+
+    #[test]
     fn test_local_engine_evaluates_critical_attack() {
         let engine = LocalDecisionEngine::new("models/clef");
         let req = build_security_incident_request(

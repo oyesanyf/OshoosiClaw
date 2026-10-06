@@ -17,6 +17,12 @@
 - **Scripting & Registry Invariant:** Never set `Path` in PowerShell without reading, preserving, and appending to the existing `Path` string.
 - **Runtime Invariant:** The EDR engine and background daemons must never write to persistent Windows Registry environment hives (`HKLM` or `HKCU`).
 
+## Strict Invariant: Production Code Only (No Mocks, No Naive Shortcuts)
+- **User Requirement:** "dont ever make up mock code write actual code"
+- **Zero-Mock Rule:** Under NO circumstance may any agent, subagent, or feature generate dummy placeholders, mock signatures, or synthetic shortcuts in place of genuine production functionality.
+- **No Lazy Path Exclusions:** Never resolve false positives by adding blind directory or path string exclusions. Accuracy matters: always resolve root causes via genuine signature verification, Windows Catalog lookups, and decision model consensus.
+- **Decision Model Integration:** All candidate detections and automated responses MUST be evaluated by the production decision models (Clef Decision Engine, Strands Decider, Threat Voters) rather than raw isolated heuristics.
+
 ## Execution Blueprints (Flash Engine Constraints)
 - **Trigger:** Applies ONLY when running high-speed/Flash models (e.g., Gemini Flash variants).
 - **Exclusion:** Full-scale reasoning engines and simple/trivial single-line queries proceed normally without blueprints.

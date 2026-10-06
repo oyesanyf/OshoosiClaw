@@ -15,7 +15,8 @@ use sha2::{Sha256, Digest};
 pub struct StaticAnalyzer {
     /// Executor for running tools (Direct or OpenShell)
     _executor: Arc<dyn osoosi_types::SecuredExecutor>,
-    /// Malware scanner for feedback loops
+    /// Malware scanner for feedback loops (operator verified)
+    #[allow(dead_code)]
     malware_scanner: Arc<osoosi_model::MalwareScanner>,
     /// In-memory session cache for static analysis results (SHA256 -> ThreatSignature)
     analysis_cache: dashmap::DashMap<String, Option<ThreatSignature>>,
@@ -224,8 +225,6 @@ impl StaticAnalyzer {
             Some(engine) => engine,
             None => return Ok(None),
         };
-        let malware_scanner = self.malware_scanner.clone();
-        let path = file_path.to_path_buf();
 
         let yara_res = self.adaptive.run_adaptive(ResourceCategory::AI, Priority::High, async move {
             let mut scanner = yara_x::Scanner::new(&yara_engine);
@@ -236,13 +235,10 @@ impl StaticAnalyzer {
             }
         }).await.ok().flatten();
 
-        if let Some(sig_name) = yara_res {
-            // FEEDBACK LOOP: Report the malicious sample to MalConv for fine-tuning
-            let _ = malware_scanner.report_label_to_malconv(&path, 1.0).await;
-            return Ok(Some(sig_name));
-        }
-        
-        Ok(None)
+        // Passive static scans must NEVER automatically report online samples to MalConv.
+        // Doing so poisons model weights on benign files or false positives.
+        // Label reporting must strictly require operator verification or multi-voter consensus.
+        Ok(yara_res)
     }
 
     pub fn calculate_entropy(&self, path: &Path) -> anyhow::Result<f32> {

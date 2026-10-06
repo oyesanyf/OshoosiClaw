@@ -119,6 +119,66 @@ pub fn sanitize_yara_content(content: &str) -> String {
     result
 }
 
+/// Sanitizer check for generated YARA rules:
+/// If a rule from `osoosi_generated` only checks a generic process name with no hash or other conditions,
+/// skip compiling it and log a debug message.
+pub fn is_unsafe_generic_generated_rule(path_or_ident: &str, content: &str) -> bool {
+    let lower_path = path_or_ident.to_ascii_lowercase();
+    let is_generated = lower_path.contains("osoosi_generated")
+        || lower_path.contains("generated")
+        || path_or_ident.starts_with("OsoosiGen_");
+
+    if !is_generated {
+        return false;
+    }
+
+    let lower_content = content.to_ascii_lowercase();
+    let has_hash = lower_content.contains("$h = {") || lower_content.contains("$h=");
+
+    // If it has no hash:
+    if !has_hash {
+        let generic_proc_names = [
+            "powershell.exe",
+            "pwsh.exe",
+            "cmd.exe",
+            "python.exe",
+            "python3.exe",
+            "pythonw.exe",
+            "conhost.exe",
+            "explorer.exe",
+            "svchost.exe",
+            "rundll32.exe",
+            "antigravity.exe",
+            "filecoauth.exe",
+            "git.exe",
+            "cargo.exe",
+            "rustc.exe",
+            "code.exe",
+            "bash.exe",
+            "wsl.exe",
+            "unknown",
+            "googledrivefs.exe",
+            "language_server_windows_x64.exe",
+            "osoosi.exe",
+            "osoosi-cli.exe",
+        ];
+
+        let has_proc = lower_content.contains("$proc");
+        let has_generic_name = generic_proc_names.iter().any(|name| lower_content.contains(name));
+        if has_proc || has_generic_name {
+            return true;
+        }
+    }
+
+    // If condition has 'any of them' and has $proc, it would match on process name alone without hash
+    if lower_content.contains("any of them") && lower_content.contains("$proc") {
+        return true;
+    }
+
+    false
+}
+
+
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct YaraRuleMetadata {
     pub identifier: String,
@@ -266,6 +326,10 @@ impl YaraManager {
 
     /// Validate, write (best-effort), and atomically hot-load a single YARA rule without restarting the EDR agent.
     pub fn hot_load_rule(&self, rule_content: &str, identifier: &str) -> anyhow::Result<bool> {
+        if is_unsafe_generic_generated_rule(identifier, rule_content) {
+            debug!("[YARA] Skipping generic process rule without hash: {}", identifier);
+            anyhow::bail!("Rule {} rejected: generic process name without cryptographic hash", identifier);
+        }
         let sanitized = sanitize_yara_content(rule_content);
 
         // 1. Validate rule syntax with an isolated test compiler
@@ -311,6 +375,10 @@ impl YaraManager {
 
     /// Hot-load in-memory rule directly without touching disk.
     pub fn hot_load_memory_rule(&self, rule_content: &str, identifier: &str) -> anyhow::Result<bool> {
+        if is_unsafe_generic_generated_rule(identifier, rule_content) {
+            debug!("[YARA] Skipping generic process rule without hash: {}", identifier);
+            anyhow::bail!("Rule {} rejected: generic process name without cryptographic hash", identifier);
+        }
         let sanitized = sanitize_yara_content(rule_content);
         let mut test_compiler = yara_x::Compiler::new();
         test_compiler
@@ -567,6 +635,10 @@ pub fn collect_file_sources() -> (Vec<String>, Vec<PathBuf>, Vec<(PathBuf, Strin
     for path in target_paths {
         if let Ok(content) = std::fs::read_to_string(&path) {
             let path_str = path.to_string_lossy().to_string();
+            if is_unsafe_generic_generated_rule(&path_str, &content) {
+                debug!("[YARA] Skipping generic process rule without hash from disk: {}", path_str);
+                continue;
+            }
             let sanitized = sanitize_yara_content(&content);
             collected_files.push((path, path_str, sanitized));
         }
@@ -607,6 +679,10 @@ pub fn compile_sources_to_rules(
         let mut chunk_metadata = Vec::new();
 
         for (path, path_str, sanitized) in chunk {
+            if is_unsafe_generic_generated_rule(path_str, sanitized) {
+                debug!("[YARA] Skipping generic process rule without hash: {}", path_str);
+                continue;
+            }
             batched_src.push_str(sanitized);
             batched_src.push('\n');
 
@@ -644,6 +720,10 @@ pub fn compile_sources_to_rules(
             Err(_) => {
                 // Fallback: compile items in this batch one-by-one to preserve valid rules
                 for (path, path_str, sanitized) in chunk {
+                    if is_unsafe_generic_generated_rule(path_str, sanitized) {
+                        debug!("[YARA] Skipping generic process rule without hash: {}", path_str);
+                        continue;
+                    }
                     let single_source = yara_x::SourceCode::from(sanitized.as_str())
                         .with_origin(path_str.as_str());
                     match compiler.add_source(single_source) {
@@ -714,6 +794,10 @@ pub fn compile_sources_to_rules(
         .collect();
 
     for (ident, rule_src) in dynamic_rules {
+        if is_unsafe_generic_generated_rule(ident, rule_src) {
+            debug!("[YARA] Skipping generic process rule without hash from dynamic memory: {}", ident);
+            continue;
+        }
         let sanitized = sanitize_yara_content(rule_src);
         let mut parsed_idents = Vec::new();
         for cap in rule_ident_regex().captures_iter(&sanitized) {
@@ -1017,6 +1101,35 @@ mod tests {
 
         let _ = std::fs::remove_file(format!("rules/osoosi_generated/{}.yar", rule_name));
         let _ = std::fs::remove_file(format!("yara/osoosi_generated/{}.yar", rule_name));
+    }
+
+    #[test]
+    fn test_unsafe_generic_generated_rule_rejected() {
+        let unsafe_rule = r#"
+            rule OsoosiGen_TestGeneric {
+                strings:
+                    $proc = "powershell.exe" ascii wide
+                condition:
+                    $proc
+            }
+        "#;
+        assert!(is_unsafe_generic_generated_rule("yara/osoosi_generated/OsoosiGen_TestGeneric.yar", unsafe_rule));
+        assert!(is_unsafe_generic_generated_rule("OsoosiGen_TestGeneric", unsafe_rule));
+
+        let manager = YaraManager::new();
+        let res = manager.hot_load_rule(unsafe_rule, "OsoosiGen_TestGeneric");
+        assert!(res.is_err(), "Generic process rule without hash must be rejected by hot_load_rule");
+
+        let safe_rule = r#"
+            rule OsoosiGen_SafeRule {
+                strings:
+                    $proc = "malware.exe" ascii wide
+                    $h = { DE AD BE EF }
+                condition:
+                    $proc and $h
+            }
+        "#;
+        assert!(!is_unsafe_generic_generated_rule("yara/osoosi_generated/OsoosiGen_SafeRule.yar", safe_rule));
     }
 }
 
