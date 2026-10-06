@@ -682,7 +682,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 println!("[+] Web dashboard running at http://127.0.0.1:3030 without auto-launching external browser.");
             }
             osoosi_core::tool_paths::discover_and_persist();
-            run_yara_sanitizer();
+            tokio::spawn(async move {
+                run_yara_sanitizer();
+            });
             let with_dashboard = dashboard && !no_dashboard;
 
             if wsl {
@@ -722,6 +724,7 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 }
             }
 
+            println!("[+] Initializing threat detection engines (YARA, Sigma, AI cortex)...");
             let start_instant = std::time::Instant::now();
             let orchestrator = Arc::new(osoosi_core::EdrOrchestrator::new().await?);
             orchestrator.post_init_voters().await;
@@ -787,15 +790,18 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                         }
                     }
                     if let Some(port) = opened_port {
-                        info!("Dashboard started successfully!");
-                        info!("----------------------------------------");
-                        info!("Oshoosi Dashboard URL: http://127.0.0.1:{}/", port);
-                        info!("----------------------------------------");
+                        let dash_url = format!("http://127.0.0.1:{}/", port);
+                        println!();
+                        println!("========================================================");
+                        println!("  OpenỌ̀ṣọ́ọ̀sì Web Dashboard: {}", dash_url);
+                        println!("========================================================");
+                        println!("[+] Auto-launching default web browser...");
+                        info!("Dashboard started successfully at {}", dash_url);
                         tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
-                        try_open_browser(&format!("http://127.0.0.1:{}/", port), effective_no_browser, lite_mode);
+                        try_open_browser(&dash_url, effective_no_browser, lite_mode);
                     } else {
+                        eprintln!("[-] FAILED to start Dashboard UI after trying ports 3030-3040.");
                         error!("FAILED to start Dashboard UI after trying ports 3030-3040.");
-                        error!("Check if another instance of Oshoosi is already running.");
                     }
                 });
             }
@@ -2632,6 +2638,7 @@ fn fix_yara_escapes(s: &str) -> String {
 
 fn try_open_browser(url: &str, user_no_browser: bool, lite_mode: bool) {
     if user_no_browser {
+        println!("[+] Browser auto-launch disabled by --no-browser.");
         info!("Dashboard web server is active at {}. (Browser auto-launch disabled by --no-browser)", url);
         return;
     }
@@ -2640,13 +2647,27 @@ fn try_open_browser(url: &str, user_no_browser: bool, lite_mode: bool) {
     let free_gb = sys.available_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
     let total_gb = sys.total_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
     if free_gb < 3.0 || total_gb < 4.0 || lite_mode {
+        println!(
+            "[+] Low host memory ({:.1} GB free). Skipping auto-launching browser. Dashboard: {}",
+            free_gb, url
+        );
         info!(
             "Low host memory ({:.1} GB free). Skipping auto-launching browser to preserve host RAM. Dashboard web server is active at {}",
             free_gb, url
         );
         return;
     }
-    let _ = webbrowser::open(url);
+    let opened = webbrowser::open(url).is_ok();
+    if !opened {
+        #[cfg(target_os = "windows")]
+        {
+            if url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:") {
+                let _ = std::process::Command::new("cmd")
+                    .args(["/c", "start", "", url])
+                    .spawn();
+            }
+        }
+    }
 }
 
 #[allow(dead_code)]

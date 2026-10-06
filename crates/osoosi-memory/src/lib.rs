@@ -51,11 +51,13 @@ impl MemoryStore {
         // Enable WAL mode for concurrent readers + single writer (no blocking reads)
         let _ = conn.execute_batch("
             PRAGMA journal_mode = WAL;
+            PRAGMA wal_autocheckpoint = 1000;
             PRAGMA synchronous = NORMAL;
             PRAGMA temp_store = MEMORY;
             PRAGMA mmap_size = 134217728;
             PRAGMA cache_size = -8000;
             PRAGMA busy_timeout = 5000;
+            PRAGMA wal_checkpoint(TRUNCATE);
         ");
 
         let lock = Mutex::new(conn);
@@ -1426,8 +1428,9 @@ impl MemoryStore {
 
     pub fn repopulate_bloom_filter(&self) -> anyhow::Result<()> {
         let conn = self.conn.lock();
-        let mut stmt =
-            conn.prepare("SELECT hash_blake3 FROM threats WHERE hash_blake3 IS NOT NULL")?;
+        let mut stmt = conn.prepare(
+            "SELECT hash_blake3 FROM threats WHERE hash_blake3 IS NOT NULL ORDER BY rowid DESC LIMIT 50000",
+        )?;
         let hashes = stmt.query_map([], |row| row.get::<_, String>(0))?;
 
         let mut bloom = self.bloom_filter.lock();

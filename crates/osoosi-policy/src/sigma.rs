@@ -12,6 +12,7 @@ use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
+use rayon::prelude::*;
 use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -117,8 +118,7 @@ impl SigmaEngine {
 
     pub fn load_rules_from_dir(&mut self, dir: &Path) {
         if !dir.exists() { return; }
-        let mut count = 0;
-        for entry in walkdir::WalkDir::new(dir)
+        let paths: Vec<std::path::PathBuf> = walkdir::WalkDir::new(dir)
             .into_iter()
             .filter_entry(|e| {
                 let name = e.file_name().to_string_lossy().to_lowercase();
@@ -138,31 +138,32 @@ impl SigmaEngine {
                 )
             })
             .filter_map(|e| e.ok())
-        {
-            if entry.file_type().is_file() {
-                let p = entry.path();
-                if p.extension().map_or(false, |ext| ext == "yml" || ext == "yaml") {
-                    if let Ok(content) = std::fs::read_to_string(p) {
-                        if let Ok(rule) = serde_yaml::from_str::<SigmaRule>(&content) {
-                            if let Ok(compiled) = self.compile_rule(rule) {
-                                let service = compiled.rule.logsource.service.as_deref();
-                                let product = compiled.rule.logsource.product.as_deref();
-                                
-                                if let Some(s) = service {
-                                    self.indexed_rules.entry(s.to_lowercase()).or_default().push(compiled);
-                                } else if let Some(p) = product {
-                                    self.indexed_rules.entry(p.to_lowercase()).or_default().push(compiled);
-                                } else {
-                                    self.global_rules.push(compiled);
-                                }
-                                count += 1;
-                                if count % 50 == 0 {
-                                    std::thread::yield_now();
-                                }
-                            }
-                        }
-                    }
-                }
+            .filter(|e| {
+                e.file_type().is_file()
+                    && e.path().extension().map_or(false, |ext| ext == "yml" || ext == "yaml")
+            })
+            .map(|e| e.path().to_path_buf())
+            .collect();
+
+        let compiled_rules: Vec<CompiledRule> = paths
+            .par_iter()
+            .filter_map(|p| {
+                let content = std::fs::read_to_string(p).ok()?;
+                let rule = serde_yaml::from_str::<SigmaRule>(&content).ok()?;
+                self.compile_rule(rule).ok()
+            })
+            .collect();
+
+        let count = compiled_rules.len();
+        for compiled in compiled_rules {
+            let service = compiled.rule.logsource.service.as_deref();
+            let product = compiled.rule.logsource.product.as_deref();
+            if let Some(s) = service {
+                self.indexed_rules.entry(s.to_lowercase()).or_default().push(compiled);
+            } else if let Some(p) = product {
+                self.indexed_rules.entry(p.to_lowercase()).or_default().push(compiled);
+            } else {
+                self.global_rules.push(compiled);
             }
         }
         info!("Loaded {} Advanced Sigma rules from {}", count, dir.display());

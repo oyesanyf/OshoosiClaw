@@ -6066,6 +6066,7 @@ dependencies = [
  "osoosi-types",
  "otx-taxii-rs",
  "rand 0.8.6",
+ "rayon",
  "regex",
  "reqwest",
  "rusqlite",

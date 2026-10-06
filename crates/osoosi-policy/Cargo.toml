@@ -27,6 +27,7 @@ tokio = { workspace = true }
 thiserror = { workspace = true }
 walkdir = { workspace = true }
 serde_yaml = { workspace = true }
+rayon = { workspace = true }
 zip = { workspace = true }
 rusqlite = { workspace = true }
 futures = { workspace = true }
