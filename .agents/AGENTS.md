@@ -10,6 +10,13 @@
 - **Enforcement:** Code artifacts MUST always be Authenticode signed (SHA-256 + RFC 3161 timestamp) and submitted to Microsoft Security Intelligence (WDSI) via `python scripts/submit_to_wdsi.py --all --no-launch` (orchestrated by `scripts/build_and_submit.ps1`).
 - **Standard Command:** Use `powershell -ExecutionPolicy Bypass -File scripts/build_and_submit.ps1` as the canonical command to build, sign, package, and submit to Microsoft in one go.
 
+## Strict Invariant: PATH & Environment Variable Protection
+- **User Requirement:** "my path must never ever be over wrote"
+- **Zero-Overwrite Rule:** Under NO circumstance may any script, installer definition, registry operation, or code modification overwrite, replace, or truncate the user or system `PATH` or any environment variable.
+- **WiX / MSI Invariant:** In all WiX manifests (`.wxs`), any `<Environment>` tag targeting `PATH` MUST have `Permanent="yes"` and `Part="last"`. Never use `Permanent="no"`, which generates destructive `-` deletion flags in the Windows Installer `Environment` table.
+- **Scripting & Registry Invariant:** Never set `Path` in PowerShell without reading, preserving, and appending to the existing `Path` string.
+- **Runtime Invariant:** The EDR engine and background daemons must never write to persistent Windows Registry environment hives (`HKLM` or `HKCU`).
+
 ## Execution Blueprints (Flash Engine Constraints)
 - **Trigger:** Applies ONLY when running high-speed/Flash models (e.g., Gemini Flash variants).
 - **Exclusion:** Full-scale reasoning engines and simple/trivial single-line queries proceed normally without blueprints.

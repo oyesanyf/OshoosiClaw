@@ -21,3 +21,9 @@ model: gemini-3.1-pro
    - Every build of release binaries or installer packages MUST automatically code-sign all target binaries with Authenticode (SHA-256 + DigiCert RFC 3161 timestamp) and submit them to Microsoft Security Intelligence (WDSI).
    - Use `scripts/build_and_submit.ps1` as the canonical unified release build command, which automatically compiles `osoosi-cli`, re-signs configs, generates the MSI installer, signs all binaries, and invokes `python scripts/submit_to_wdsi.py --all --no-launch`.
    - Never release or produce an unsubmitted binary artifact.
+
+4. **Strict Invariant: Zero Environment Overwrites (PATH Immutability)**:
+   - **User Preference:** "my path must never ever be over wrote"
+   - Every installer package, build script, and code modification must preserve all existing user and system environment variables.
+   - WiX environment components for `PATH` must strictly be `Permanent="yes"`.
+
