@@ -24,6 +24,7 @@
 *.msi
 !OshoosiClaw.msi
 !deploy/OshoosiClaw.msi
+*.locked.*
 
 # ---------- IDE ----------
 .vscode/

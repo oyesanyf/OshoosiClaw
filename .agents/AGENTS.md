@@ -4,6 +4,12 @@
 - **Restricted Remotes:** NEVER run `git push` inside `IDE/vscode` or target any Microsoft/upstream third-party remote.
 - **Canonical Repository:** ALL code pushes must strictly target `https://github.com/oyesanyf/OshoosiClaw.git`.
 
+## Mandatory Automated Microsoft Submission on Every Build
+- **User Preference:** "Each time the code is built, remember to send to Microsoft."
+- **Trigger:** Whenever code is built, packaged, or released.
+- **Enforcement:** Code artifacts MUST always be Authenticode signed (SHA-256 + RFC 3161 timestamp) and submitted to Microsoft Security Intelligence (WDSI) via `python scripts/submit_to_wdsi.py --all --no-launch` (orchestrated by `scripts/build_and_submit.ps1`).
+- **Standard Command:** Use `powershell -ExecutionPolicy Bypass -File scripts/build_and_submit.ps1` as the canonical command to build, sign, package, and submit to Microsoft in one go.
+
 ## Execution Blueprints (Flash Engine Constraints)
 - **Trigger:** Applies ONLY when running high-speed/Flash models (e.g., Gemini Flash variants).
 - **Exclusion:** Full-scale reasoning engines and simple/trivial single-line queries proceed normally without blueprints.
