@@ -61,8 +61,17 @@ function Test-And-Handle-LockedFile {
 }
 
 function Cleanup-OldLockedFiles {
-    Get-ChildItem -Path $ProjectRoot -Filter "*.locked.*" -Recurse -ErrorAction SilentlyContinue | ForEach-Object {
-        try { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue } catch {}
+    $searchDirs = @(
+        (Join-Path $ProjectRoot "target\release"),
+        (Join-Path $ProjectRoot "deploy"),
+        $ProjectRoot
+    )
+    foreach ($dir in $searchDirs) {
+        if (Test-Path $dir) {
+            Get-ChildItem -Path $dir -Filter "*.locked.*" -ErrorAction SilentlyContinue | ForEach-Object {
+                try { Remove-Item $_.FullName -Force -ErrorAction SilentlyContinue } catch {}
+            }
+        }
     }
 }
 Cleanup-OldLockedFiles
