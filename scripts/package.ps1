@@ -171,7 +171,14 @@ if (Test-Path $WixWxs) {
     }
 }
 
-# 9. Create a handy installation script for the target machine
+# 9. Authenticode Digital Code-Signing & Microsoft WDSI Submission Pipeline
+Write-Host "--- Step 9: Authenticode Code-Signing & Microsoft Submission Pipeline ---" -ForegroundColor Cyan
+$SubmitScript = Join-Path $ProjectRoot "scripts\submit_to_microsoft.ps1"
+if (Test-Path $SubmitScript) {
+    & powershell -ExecutionPolicy Bypass -File $SubmitScript
+}
+
+# 10. Create a handy installation script for the target machine
 $InstallScript = @"
 # OpenỌ̀ṣọ́ọ̀sì Target-Side Installation Helper
 # 1. Install/Update Sysmon

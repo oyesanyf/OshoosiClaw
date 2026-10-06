@@ -68,6 +68,22 @@ if (Test-Path (Join-Path $ProjectRoot "wintun.dll")) {
     Write-Host "Copied wintun.dll" -ForegroundColor Green
 }
 
+# Sign all executables and DLLs in bins/ with Authenticode SHA-256 and RFC 3161 timestamping
+$CertThumbprint = "9A6D3B509500813058EC63183476464FAC8F015B"
+$Cert = Get-Item "Cert:\CurrentUser\My\$CertThumbprint" -ErrorAction SilentlyContinue
+if (-not $Cert) { $Cert = Get-Item "Cert:\LocalMachine\My\$CertThumbprint" -ErrorAction SilentlyContinue }
+if ($Cert) {
+    Write-Host "Signing bins/ executables and DLLs with Authenticode..." -ForegroundColor Cyan
+    Get-ChildItem -Path $BinsDir -Include *.exe,*.dll -Recurse | ForEach-Object {
+        try {
+            $sig = Set-AuthenticodeSignature -FilePath $_.FullName -Certificate $Cert -TimestampServer "http://timestamp.digicert.com" -HashAlgorithm SHA256
+            Write-Host "   -> $($sig.Status): $($_.Name)" -ForegroundColor Green
+        } catch {
+            Write-Warning "Failed to sign $($_.Name): $_"
+        }
+    }
+}
+
 # Copy config and assets
 $ItemsToCopy = @(
     @{ Src = "config"; Dest = "config" },
