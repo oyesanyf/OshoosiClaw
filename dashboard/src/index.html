@@ -902,25 +902,25 @@
                     <div class="stat-card glass shadow-glow">
                         <div class="stat-info">
                             <span class="stat-label">Security Score</span>
-                            <span class="stat-value" style="color: var(--accent-green); font-weight: 700;">100%</span>
+                            <span class="stat-value" style="color: var(--text-muted); font-weight: 700;">--</span>
                         </div>
                     </div>
                     <div class="stat-card glass shadow-glow">
                         <div class="stat-info">
                             <span class="stat-label">Zone Gateway ID</span>
-                            <span class="stat-value" style="font-size: 15px; font-weight: 600; color: var(--accent-blue);">zone-alpha-mesh</span>
+                            <span class="stat-value" style="font-size: 15px; font-weight: 600; color: var(--accent-blue);">--</span>
                         </div>
                     </div>
                     <div class="stat-card glass shadow-glow">
                         <div class="stat-info">
                             <span class="stat-label">Active Nodes</span>
-                            <span class="stat-value" style="font-weight: 700;">3</span>
+                            <span class="stat-value" style="font-weight: 700;">--</span>
                         </div>
                     </div>
                     <div class="stat-card glass shadow-glow">
                         <div class="stat-info">
                             <span class="stat-label">Hardware Attestation</span>
-                            <span class="stat-value" style="font-size: 12px; font-weight: 600; color: var(--accent-green); line-height: 1.4;">TPM 2.0 Anchored · WFP Containment Armed</span>
+                            <span class="stat-value" style="font-size: 12px; font-weight: 600; color: var(--text-muted); line-height: 1.4;">Probing Hardware Attestation...</span>
                         </div>
                     </div>
                 </div>
@@ -928,71 +928,13 @@
                     <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
                         <h3>Zone-Wide Security Recommendations</h3>
                         <div style="display:flex; align-items:center; gap:8px;">
-                            <button id="btn-auto-remediate-all" class="btn-configured" disabled><i data-lucide="shield-check" style="width:14px; height:14px;"></i> All Settings Remediated (100%)</button>
+                            <button id="btn-auto-remediate-all" class="btn-primary btn-sm flex items-center gap-2" style="display:none;"><i data-lucide="zap" style="width:14px; height:14px;"></i> Auto-Configure All Settings</button>
                             <button class="btn-text" id="toggle-zone-rec-btn" onclick="toggleZoneRecPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
                         </div>
                     </div>
                     <div id="zone-rec-body" class="card-body feed-list">
-                        <div id="zone-recommendations">
-                            <div class="card glass p-3 mb-3" style="border: 1px solid rgba(0, 255, 136, 0.3); background: rgba(0, 255, 136, 0.05); border-radius: 10px; margin-bottom: 14px;">
-                                <div style="font-size: 15px; font-weight: 600; color: var(--accent-green); margin-bottom: 6px; display: flex; align-items: center; gap: 8px;">
-                                    <span>🛡️ Platform Security Posture Fully Optimized (100% Score)</span>
-                                </div>
-                                <div style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
-                                    Hardware root-of-trust attestation active: TPM 2.0 Endorsement Key anchored, Volatile Memory Shield enclave active with ephemeral zeroization scrubbers, and Windows Filtering Platform (WFP) software sandbox armed.
-                                </div>
-                            </div>
-                            <div class="zone-rec-item remediated">
-                                <div class="zone-rec-info">
-                                    <div class="zone-rec-title">
-                                        <span>Deploy on SGX/SEV-capable hardware for memory encryption</span>
-                                        <span class="badge-impact">+20% Impact</span>
-                                        <span class="badge-compatible"><i data-lucide="check-circle" style="width:12px; height:12px;"></i> Compatible Host</span>
-                                    </div>
-                                    <div class="zone-rec-desc">Hardware memory encryption isolates cryptographic keys and process memory. Volatile Memory Shield enclave zeroes out secrets and enforces volatile memory isolation.</div>
-                                    <div class="zone-rec-meta">
-                                        <span style="font-size: 11px; color: var(--accent-blue); font-weight: 500;">Action: Volatile Memory Shield / ephemeral secret zeroization enclave (+20%)</span>
-                                    </div>
-                                    <div class="item-remediation-active"><i data-lucide="check" style="width:12px; height:12px;"></i> Volatile Memory Shield active: ephemeral secret zeroization enclave enforced with volatile scrubbers.</div>
-                                </div>
-                                <div class="zone-rec-action">
-                                    <button class="btn-configured" disabled><i data-lucide="shield-check" style="width:14px; height:14px;"></i> ✓ Configured / Secured</button>
-                                </div>
-                            </div>
-                            <div class="zone-rec-item remediated">
-                                <div class="zone-rec-info">
-                                    <div class="zone-rec-title">
-                                        <span>Enable TPM 2.0 for hardware-backed audit attestation</span>
-                                        <span class="badge-impact">+20% Impact</span>
-                                        <span class="badge-compatible"><i data-lucide="check-circle" style="width:12px; height:12px;"></i> Compatible Host</span>
-                                    </div>
-                                    <div class="zone-rec-desc">Cryptographically binds audit log event hashes to the platform TPM 2.0 hardware Endorsement Key, providing tamper-proof non-repudiation.</div>
-                                    <div class="zone-rec-meta">
-                                        <span style="font-size: 11px; color: var(--accent-blue); font-weight: 500;">Action: Hardware TPM 2.0 attestation binding (+20%)</span>
-                                    </div>
-                                    <div class="item-remediation-active"><i data-lucide="check" style="width:12px; height:12px;"></i> Hardware TPM 2.0 bound (ACPI\MSFT0101\1). Cryptographic audit attestation active.</div>
-                                </div>
-                                <div class="zone-rec-action">
-                                    <button class="btn-configured" disabled><i data-lucide="shield-check" style="width:14px; height:14px;"></i> ✓ Configured / Secured</button>
-                                </div>
-                            </div>
-                            <div class="zone-rec-item remediated">
-                                <div class="zone-rec-info">
-                                    <div class="zone-rec-title">
-                                        <span>Consider NVIDIA BlueField DPU for hardware egress filtering</span>
-                                        <span class="badge-impact">+20% Impact</span>
-                                        <span class="badge-compatible"><i data-lucide="check-circle" style="width:12px; height:12px;"></i> Compatible Host</span>
-                                    </div>
-                                    <div class="zone-rec-desc">Enforces zero-trust egress network policy. When hardware DPU is absent, deploys OpenShell L7 network sandbox with Windows Filtering Platform (WFP) egress enforcement.</div>
-                                    <div class="zone-rec-meta">
-                                        <span style="font-size: 11px; color: var(--accent-blue); font-weight: 500;">Action: OpenShell L7 Sandbox + Windows Filtering Platform (WFP) software egress enforcer (+20%)</span>
-                                    </div>
-                                    <div class="item-remediation-active"><i data-lucide="check" style="width:12px; height:12px;"></i> OpenShell L7 Sandbox active with Windows Filtering Platform (WFP) kernel packet filter enforcer.</div>
-                                </div>
-                                <div class="zone-rec-action">
-                                    <button class="btn-configured" disabled><i data-lucide="shield-check" style="width:14px; height:14px;"></i> ✓ Configured / Secured</button>
-                                </div>
-                            </div>
+                        <div id="zone-recommendations" class="placeholder-container">
+                            <div class="placeholder-text"><i data-lucide="loader-2" class="spin"></i> Querying Hardware Root-of-Trust Attestation...</div>
                         </div>
                     </div>
                 </div>
@@ -1003,22 +945,7 @@
                     </div>
                     <div id="zone-nodes-body" class="card-body">
                         <div id="zone-nodes-list" class="timeline-list">
-                            <div class="timeline-item" style="border-left: 2px solid var(--accent-green); margin-bottom: 8px;">
-                                <div class="item-icon" style="background-color: rgba(0, 255, 136, 0.1); color: var(--accent-green);">
-                                    <i data-lucide="shield-check"></i>
-                                </div>
-                                <div class="item-info" style="flex:1;">
-                                    <div class="item-title" style="display:flex; justify-content:space-between; align-items:center;">
-                                        <span>Local Core Node <code style="font-size:11px; opacity:0.8; margin-left:6px;">127.0.0.1:3030</code></span>
-                                        <span class="badge green">Optimal</span>
-                                    </div>
-                                    <div class="item-meta" style="margin-top:4px;">
-                                        <span><i data-lucide="shield"></i> TPM 2.0 RoT Verified</span>
-                                        <span><i data-lucide="cpu"></i> Master Core</span>
-                                        <span><i data-lucide="activity"></i> Latency: 0.0 ms</span>
-                                    </div>
-                                </div>
-                            </div>
+                            <div class="placeholder-text" style="padding: 16px; color: var(--text-muted);"><i data-lucide="loader-2" class="spin"></i> Discovering cluster nodes...</div>
                         </div>
                     </div>
                 </div>

@@ -8026,7 +8026,7 @@ impl EdrOrchestrator {
             _ => None,
         };
 
-        let security_score = hardened_status.as_ref().map(|s| s.security_score).unwrap_or(100);
+        let security_score = hardened_status.as_ref().map(|s| s.security_score).unwrap_or(30);
         let recommendations = hardened_status.as_ref().map(|s| s.recommendations.clone()).unwrap_or_default();
         let structured_recommendations = match hardened_status.as_ref().map(|s| &s.structured_recommendations) {
             Some(recs) if !recs.is_empty() => serde_json::to_value(recs).unwrap_or_else(|_| serde_json::json!([])),
@@ -8037,10 +8037,10 @@ impl EdrOrchestrator {
                     "description": "Hardware memory encryption isolates cryptographic keys and process memory. Volatile Memory Shield enclave zeroes out secrets and enforces volatile memory isolation.",
                     "compatible": true,
                     "can_auto_remediate": true,
-                    "status": "remediated",
-                    "remediation_action": "Volatile Memory Shield / ephemeral secret zeroization enclave (+20%)",
-                    "impact_points": 20,
-                    "remediation_details": "Volatile Memory Shield active: ephemeral secret zeroization enclave enforced with volatile scrubbers."
+                    "status": "open",
+                    "remediation_action": "Volatile Memory Shield / ephemeral secret zeroization enclave (+10%)",
+                    "impact_points": 10,
+                    "remediation_details": "Hardware SGX/SEV not detected. Volatile Memory Shield enclave ready for auto-configuration."
                 },
                 {
                     "id": "tpm",
@@ -8048,10 +8048,10 @@ impl EdrOrchestrator {
                     "description": "Cryptographically binds audit log event hashes to the platform TPM 2.0 hardware Endorsement Key, providing tamper-proof non-repudiation.",
                     "compatible": true,
                     "can_auto_remediate": true,
-                    "status": "remediated",
+                    "status": "open",
                     "remediation_action": "Hardware TPM 2.0 attestation binding (+20%)",
                     "impact_points": 20,
-                    "remediation_details": "Hardware TPM 2.0 bound (ACPI\\MSFT0101\\1). Cryptographic audit attestation active."
+                    "remediation_details": "Hardware TPM ready to bind for cryptographic audit attestation."
                 },
                 {
                     "id": "dpu",
@@ -8059,10 +8059,10 @@ impl EdrOrchestrator {
                     "description": "Enforces zero-trust egress network policy. When hardware DPU is absent, deploys OpenShell L7 network sandbox with Windows Filtering Platform (WFP) egress enforcement.",
                     "compatible": true,
                     "can_auto_remediate": true,
-                    "status": "remediated",
-                    "remediation_action": "OpenShell L7 Sandbox + Windows Filtering Platform (WFP) software egress enforcer (+20%)",
-                    "impact_points": 20,
-                    "remediation_details": "OpenShell L7 Sandbox active with Windows Filtering Platform (WFP) kernel packet filter enforcer."
+                    "status": "open",
+                    "remediation_action": "OpenShell L7 Sandbox + Windows Filtering Platform (WFP) software egress enforcer (+10%)",
+                    "impact_points": 10,
+                    "remediation_details": "Hardware DPU not detected. Software egress enforcer ready for auto-configuration."
                 }
             ]),
         };

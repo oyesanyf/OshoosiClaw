@@ -1462,64 +1462,36 @@ async fn get_repair_status(State(state): State<DashboardState>) -> Json<Value> {
 async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => Json(orch.get_zone_summary().await),
-        None => Json(json!({
-            "peer_count": 0,
-            "security_score": 100,
-            "recommendations": [],
-            "structured_recommendations": [
-                {
-                    "id": "tee",
-                    "title": "Deploy on SGX/SEV-capable hardware for memory encryption",
-                    "description": "Hardware memory encryption isolates cryptographic keys and process memory. Volatile Memory Shield enclave zeroes out secrets and enforces volatile memory isolation.",
-                    "compatible": true,
-                    "can_auto_remediate": true,
-                    "status": "remediated",
-                    "remediation_action": "Volatile Memory Shield / ephemeral secret zeroization enclave (+20%)",
-                    "impact_points": 20,
-                    "remediation_details": "Volatile Memory Shield active: ephemeral secret zeroization enclave enforced with volatile scrubbers."
-                },
-                {
-                    "id": "tpm",
-                    "title": "Enable TPM 2.0 for hardware-backed audit attestation",
-                    "description": "Cryptographically binds audit log event hashes to the platform TPM 2.0 hardware Endorsement Key, providing tamper-proof non-repudiation.",
-                    "compatible": true,
-                    "can_auto_remediate": true,
-                    "status": "remediated",
-                    "remediation_action": "Hardware TPM 2.0 attestation binding (+20%)",
-                    "impact_points": 20,
-                    "remediation_details": "Hardware TPM 2.0 bound (ACPI\\MSFT0101\\1). Cryptographic audit attestation active."
-                },
-                {
-                    "id": "dpu",
-                    "title": "Consider NVIDIA BlueField DPU for hardware egress filtering",
-                    "description": "Enforces zero-trust egress network policy. When hardware DPU is absent, deploys OpenShell L7 network sandbox with Windows Filtering Platform (WFP) egress enforcement.",
-                    "compatible": true,
-                    "can_auto_remediate": true,
-                    "status": "remediated",
-                    "remediation_action": "OpenShell L7 Sandbox + Windows Filtering Platform (WFP) software egress enforcer (+20%)",
-                    "impact_points": 20,
-                    "remediation_details": "OpenShell L7 Sandbox active with Windows Filtering Platform (WFP) kernel packet filter enforcer."
-                }
-            ],
-            "nodes": [
-                {
-                    "id": "did:osoosi:local",
-                    "name": "Local Core Node",
-                    "address": "127.0.0.1:3030",
-                    "role": "Master Core",
-                    "attestation": "TPM 2.0 RoT Verified",
-                    "status": "Optimal",
-                    "latency_ms": 0.0
-                }
-            ],
-            "system_uptime": 0,
-            "recent_events": [],
-            "zone": "zone-alpha-mesh",
-            "tpm_attested": true,
-            "zones": [],
-            "gaps": [],
-            "status": "idle"
-        })),
+        None => {
+            let assessment = osoosi_core::hardened::assess_security();
+            let host_name = std::env::var("COMPUTERNAME")
+                .or_else(|_| std::env::var("HOSTNAME"))
+                .unwrap_or_else(|_| "Local Core Node".to_string());
+            Json(json!({
+                "peer_count": 0,
+                "security_score": assessment.security_score,
+                "recommendations": assessment.recommendations,
+                "structured_recommendations": assessment.structured_recommendations,
+                "nodes": [
+                    {
+                        "id": "did:osoosi:local",
+                        "name": format!("Local Node ({})", host_name),
+                        "address": "127.0.0.1:3030",
+                        "role": "Master Core",
+                        "attestation": if assessment.tpm.available { "TPM 2.0 RoT Verified" } else { "Software Enclave Verified" },
+                        "status": "Optimal",
+                        "latency_ms": 0.0
+                    }
+                ],
+                "system_uptime": 0,
+                "recent_events": [],
+                "zone": "zone-alpha-mesh",
+                "tpm_attested": assessment.tpm.available,
+                "zones": [],
+                "gaps": [],
+                "status": "idle"
+            }))
+        }
     }
 }
 
@@ -1532,20 +1504,21 @@ async fn post_auto_remediate_gap(
     State(state): State<DashboardState>,
     body: Option<Json<AutoRemediateRequest>>,
 ) -> Json<Value> {
+    let gap = body
+        .and_then(|Json(b)| b.gap_id)
+        .unwrap_or_else(|| "all".to_string());
     match &state.backend {
-        Some(orch) => {
-            let gap = body
-                .and_then(|Json(b)| b.gap_id)
-                .unwrap_or_else(|| "all".to_string());
-            Json(orch.auto_remediate_security_gap(&gap).await)
+        Some(orch) => Json(orch.auto_remediate_security_gap(&gap).await),
+        None => {
+            let status = osoosi_core::hardened::auto_remediate_security_gap(&gap);
+            Json(json!({
+                "status": "remediated",
+                "security_score": status.security_score,
+                "recommendations": status.recommendations,
+                "structured_recommendations": status.structured_recommendations,
+                "remediated": true
+            }))
         }
-        None => Json(json!({
-            "status": "idle",
-            "security_score": 100,
-            "recommendations": [],
-            "structured_recommendations": [],
-            "remediated": false
-        })),
     }
 }
 
@@ -4742,12 +4715,13 @@ mod tests {
         // 1. get_zone_summary fallback
         let zone_resp = get_zone_summary(State(state.clone())).await.0;
         assert_eq!(zone_resp["status"], "idle");
-        assert_eq!(zone_resp["security_score"], 100);
+        let score = zone_resp["security_score"].as_u64().expect("security_score should be a number");
+        assert!(score >= 30 && score <= 80, "honest calibrated score must be between 30 and 80");
         assert!(zone_resp["zones"].is_array());
         assert!(zone_resp["gaps"].is_array());
         assert_eq!(zone_resp["peer_count"], 0);
         assert_eq!(zone_resp["zone"], "zone-alpha-mesh");
-        assert_eq!(zone_resp["tpm_attested"], true);
+        assert!(zone_resp["tpm_attested"].is_boolean());
         assert_eq!(zone_resp["nodes"].as_array().unwrap().len(), 1);
         assert_eq!(zone_resp["structured_recommendations"].as_array().unwrap().len(), 3);
 

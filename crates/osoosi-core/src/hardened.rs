@@ -656,116 +656,185 @@ pub fn assess_security() -> HardenedSecurityStatus {
     let config_integrity_ok = tampered.is_empty();
 
     let tee_remediated = MEMORY_SHIELD_REMEDIATED.load(Ordering::SeqCst);
-    let tee_active = tee.sgx_available || tee.sev_available || tee.confidential_vm || tee_remediated;
+    let has_hardware_tee = tee.sgx_available || tee.sev_available || tee.confidential_vm;
 
     let tpm_remediated = TPM_REMEDIATED.load(Ordering::SeqCst);
-    let tpm_active = tpm.available || tpm_remediated;
+    let tpm_active = tpm_remediated;
 
     let egress_remediated = SOFTWARE_EGRESS_REMEDIATED.load(Ordering::SeqCst);
-    let egress_active = dpu.bluefield_detected || egress_remediated;
 
-    // Calculate security score
-    let mut score: u8 = 30; // Base score (software protections)
-    if tee_active {
-        score += 20;
-    }
-    if tpm_active {
-        score += 20;
-    }
-    if egress_active {
-        score += 20;
-    }
+    // Calculate calibrated security score
+    let mut score: u8 = 30; // Base OS security
     if config_integrity_ok {
         score += 10;
+    }
+    if tpm.available {
+        score += 20; // Physical Hardware TPM Root of Trust
+    } else if tpm_remediated {
+        score += 10; // Software Cryptographic Anchor
+    }
+    if has_hardware_tee {
+        score += 20; // Hardware TEE Memory Encryption
+    } else if tee_remediated {
+        score += 10; // Software Volatile Memory Shield
+    }
+    if dpu.bluefield_detected {
+        score += 20; // NVIDIA BlueField DPU Hardware Gate
+    } else if egress_remediated {
+        score += 10; // OpenShell L7 + WFP Software Egress Filter
     }
 
     // Generate recommendations
     let mut recommendations = Vec::new();
-    if !tee_active {
-        recommendations
-            .push("Deploy on SGX/SEV-capable hardware for memory encryption".to_string());
+    if !has_hardware_tee {
+        if !tee_remediated {
+            recommendations
+                .push("Deploy on SGX/SEV-capable hardware for memory encryption (or configure Volatile Memory Shield software enclave)".to_string());
+        } else {
+            recommendations
+                .push("Deploy on SGX/SEV-capable hardware for dedicated hardware memory encryption (+10% impact)".to_string());
+        }
     }
-    if !tpm_active {
-        recommendations.push("Enable TPM 2.0 for hardware-backed audit attestation".to_string());
+    if !tpm.available {
+        if !tpm_remediated {
+            recommendations.push("Enable TPM 2.0 for hardware-backed audit attestation (or bind software cryptographic anchor)".to_string());
+        }
+    } else if !tpm_active {
+        recommendations.push("Bind hardware TPM 2.0 root-of-trust for audit attestation".to_string());
     }
-    if !egress_active {
-        recommendations
-            .push("Consider NVIDIA BlueField DPU for hardware egress filtering".to_string());
+    if !dpu.bluefield_detected {
+        if !egress_remediated {
+            recommendations
+                .push("Consider NVIDIA BlueField DPU for hardware egress filtering (or configure OpenShell L7 + WFP software enforcer)".to_string());
+        } else {
+            recommendations
+                .push("Consider NVIDIA BlueField DPU for dedicated hardware egress filtering (+10% impact)".to_string());
+        }
     }
     if !config_integrity_ok {
         recommendations.push(format!("Re-sign tampered config files: {:?}", tampered));
     }
 
     // Structured recommendations for automated remediation UI
+    let (tee_status, tee_impact, tee_action, tee_details) = if has_hardware_tee {
+        (
+            "remediated".to_string(),
+            20u8,
+            "Hardware TEE memory encryption (+20%)".to_string(),
+            "Hardware TEE memory encryption active (SGX/SEV).".to_string(),
+        )
+    } else if tee_remediated {
+        (
+            "mitigated".to_string(),
+            10u8,
+            "Volatile Memory Shield / ephemeral secret zeroization enclave (+10%)".to_string(),
+            "Volatile Memory Shield active: ephemeral secret zeroization enclave enforced with volatile scrubbers (Software Mitigated).".to_string(),
+        )
+    } else {
+        (
+            "open".to_string(),
+            10u8,
+            "Volatile Memory Shield / ephemeral secret zeroization enclave (+10%)".to_string(),
+            "Hardware SGX/SEV not detected. Volatile Memory Shield enclave ready for auto-configuration.".to_string(),
+        )
+    };
+
+    let dev = tpm.device_id.as_deref().unwrap_or("ACPI\\MSFT0101\\1");
+    let (tpm_status, tpm_impact, tpm_action, tpm_details) = if tpm.available && tpm_active {
+        (
+            "remediated".to_string(),
+            20u8,
+            "Hardware TPM 2.0 attestation binding (+20%)".to_string(),
+            format!(
+                "Hardware TPM {} bound ({}). Cryptographic audit attestation active.",
+                tpm.version.as_deref().unwrap_or("2.0"),
+                dev
+            ),
+        )
+    } else if tpm.available {
+        let dev_suffix = tpm.device_id.as_deref().map(|d| format!(" ({})", d)).unwrap_or_default();
+        (
+            "open".to_string(),
+            20u8,
+            "Hardware TPM 2.0 attestation binding (+20%)".to_string(),
+            format!(
+                "Hardware TPM {}{} detected on host. Ready to bind platform audit attestation.",
+                tpm.version.as_deref().unwrap_or("2.0"),
+                dev_suffix
+            ),
+        )
+    } else if tpm_remediated {
+        (
+            "mitigated".to_string(),
+            10u8,
+            "Software Cryptographic Anchor (+10%)".to_string(),
+            "Software-backed cryptographic audit attestation active (Software Mitigated).".to_string(),
+        )
+    } else {
+        (
+            "open".to_string(),
+            10u8,
+            "Software Cryptographic Anchor (+10%)".to_string(),
+            "TPM hardware not detected on this host. Ready to bind software-backed audit attestation.".to_string(),
+        )
+    };
+
+    let (dpu_status, dpu_impact, dpu_action, dpu_details) = if dpu.bluefield_detected {
+        (
+            "remediated".to_string(),
+            20u8,
+            "NVIDIA BlueField DPU hardware egress filtering (+20%)".to_string(),
+            "NVIDIA BlueField DPU hardware egress filtering active.".to_string(),
+        )
+    } else if egress_remediated {
+        (
+            "mitigated".to_string(),
+            10u8,
+            "OpenShell L7 Sandbox + Windows Filtering Platform (WFP) software egress enforcer (+10%)".to_string(),
+            "OpenShell L7 Sandbox + Windows Filtering Platform (WFP) software egress enforcer active (Software Mitigated).".to_string(),
+        )
+    } else {
+        (
+            "open".to_string(),
+            10u8,
+            "OpenShell L7 Sandbox + Windows Filtering Platform (WFP) software egress enforcer (+10%)".to_string(),
+            "Hardware DPU not detected. Software egress enforcer ready for auto-configuration.".to_string(),
+        )
+    };
+
     let structured_recommendations = vec![
         SecurityRecommendationItem {
             id: "tee".to_string(),
             title: "Deploy on SGX/SEV-capable hardware for memory encryption".to_string(),
             description: "Hardware memory encryption isolates cryptographic keys and process memory. Volatile Memory Shield enclave zeroes out secrets and enforces volatile memory isolation.".to_string(),
             compatible: true,
-            can_auto_remediate: true,
-            status: if tee_active { "remediated".to_string() } else { "open".to_string() },
-            remediation_action: "Volatile Memory Shield / ephemeral secret zeroization enclave (+20%)".to_string(),
-            impact_points: 20,
-            remediation_details: if tee_active {
-                if tee.sgx_available || tee.sev_available {
-                    "Hardware TEE memory encryption active (SGX/SEV).".to_string()
-                } else {
-                    "Volatile Memory Shield active: ephemeral secret zeroization enclave enforced with volatile scrubbers.".to_string()
-                }
-            } else {
-                "Volatile Memory Shield enclave ready for auto-configuration.".to_string()
-            },
+            can_auto_remediate: tee_status == "open",
+            status: tee_status,
+            remediation_action: tee_action,
+            impact_points: tee_impact,
+            remediation_details: tee_details,
         },
         SecurityRecommendationItem {
             id: "tpm".to_string(),
             title: "Enable TPM 2.0 for hardware-backed audit attestation".to_string(),
             description: "Cryptographically binds audit log event hashes to the platform TPM 2.0 hardware Endorsement Key, providing tamper-proof non-repudiation.".to_string(),
             compatible: true,
-            can_auto_remediate: true,
-            status: if tpm_active { "remediated".to_string() } else { "open".to_string() },
-            remediation_action: "Hardware TPM 2.0 attestation binding (+20%)".to_string(),
-            impact_points: 20,
-            remediation_details: if tpm_active {
-                let dev = tpm.device_id.as_deref().unwrap_or("ACPI\\MSFT0101\\1");
-                if tpm.available {
-                    format!(
-                        "Hardware TPM {} bound ({}). Cryptographic audit attestation active.",
-                        tpm.version.as_deref().unwrap_or("2.0"),
-                        dev
-                    )
-                } else {
-                    "Software-backed cryptographic audit attestation active.".to_string()
-                }
-            } else if tpm.available {
-                let dev = tpm.device_id.as_deref().map(|d| format!(" ({})", d)).unwrap_or_default();
-                format!(
-                    "Hardware TPM {}{} detected on host. Ready to bind platform audit attestation.",
-                    tpm.version.as_deref().unwrap_or("2.0"),
-                    dev
-                )
-            } else {
-                "TPM hardware not detected on this host. Ready to bind software-backed audit attestation.".to_string()
-            },
+            can_auto_remediate: tpm_status == "open",
+            status: tpm_status,
+            remediation_action: tpm_action,
+            impact_points: tpm_impact,
+            remediation_details: tpm_details,
         },
         SecurityRecommendationItem {
             id: "dpu".to_string(),
             title: "Consider NVIDIA BlueField DPU for hardware egress filtering".to_string(),
             description: "Enforces zero-trust egress network policy. When hardware DPU is absent, deploys OpenShell L7 network sandbox with Windows Filtering Platform (WFP) egress enforcement.".to_string(),
             compatible: true,
-            can_auto_remediate: true,
-            status: if egress_active { "remediated".to_string() } else { "open".to_string() },
-            remediation_action: "OpenShell L7 Sandbox + Windows Filtering Platform (WFP) software egress enforcer (+20%)".to_string(),
-            impact_points: 20,
-            remediation_details: if egress_active {
-                if dpu.bluefield_detected {
-                    "NVIDIA BlueField DPU hardware egress filtering active.".to_string()
-                } else {
-                    "OpenShell L7 Sandbox + Windows Filtering Platform (WFP) software egress enforcer active.".to_string()
-                }
-            } else {
-                "Software egress enforcer ready for auto-configuration.".to_string()
-            },
+            can_auto_remediate: dpu_status == "open",
+            status: dpu_status,
+            remediation_action: dpu_action,
+            impact_points: dpu_impact,
+            remediation_details: dpu_details,
         },
     ];
 
@@ -907,25 +976,25 @@ mod tests {
         let tee_res = auto_remediate_security_gap("tee");
         assert!(MEMORY_SHIELD_REMEDIATED.load(Ordering::SeqCst));
         let tee_item = tee_res.structured_recommendations.iter().find(|i| i.id == "tee").unwrap();
-        assert_eq!(tee_item.status, "remediated");
+        assert!(tee_item.status == "remediated" || tee_item.status == "mitigated");
 
         // Remediate DPU / Egress
         let dpu_res = auto_remediate_security_gap("dpu");
         assert!(SOFTWARE_EGRESS_REMEDIATED.load(Ordering::SeqCst));
         let dpu_item = dpu_res.structured_recommendations.iter().find(|i| i.id == "dpu").unwrap();
-        assert_eq!(dpu_item.status, "remediated");
+        assert!(dpu_item.status == "remediated" || dpu_item.status == "mitigated");
 
-        // All gaps remediated => score should be 100%
-        assert_eq!(dpu_res.security_score, 100);
+        // Calibrated score: capped at 80% on hosts without physical SGX/SEV or BlueField DPU
+        assert!(dpu_res.security_score <= 80 && dpu_res.security_score >= 70);
 
         // Test "all" remediation
         TPM_REMEDIATED.store(false, Ordering::SeqCst);
         MEMORY_SHIELD_REMEDIATED.store(false, Ordering::SeqCst);
         SOFTWARE_EGRESS_REMEDIATED.store(false, Ordering::SeqCst);
         let all_res = auto_remediate_security_gap("all");
-        assert_eq!(all_res.security_score, 100);
+        assert!(all_res.security_score <= 80 && all_res.security_score >= 70);
         for item in &all_res.structured_recommendations {
-            assert_eq!(item.status, "remediated");
+            assert!(item.status == "remediated" || item.status == "mitigated");
         }
     }
 

@@ -1148,6 +1148,11 @@ body::before {
     background: rgba(0, 255, 127, 0.03);
 }
 
+.zone-rec-item.mitigated {
+    border-color: rgba(0, 217, 255, 0.25);
+    background: rgba(0, 217, 255, 0.03);
+}
+
 .zone-rec-info {
     flex: 1;
 }

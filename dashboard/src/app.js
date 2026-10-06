@@ -2906,11 +2906,11 @@ document.addEventListener('DOMContentLoaded', init);
  */
 async function renderZoneView() {
     const defaultZoneData = {
-        security_score: 100,
+        security_score: 30,
         peer_count: 0,
         zone: "zone-alpha-mesh",
         node_id: state.node_id || "did:osoosi:local",
-        tpm_attested: true,
+        tpm_attested: false,
         structured_recommendations: [
             {
                 id: "tee",
@@ -2918,10 +2918,10 @@ async function renderZoneView() {
                 description: "Hardware memory encryption isolates cryptographic keys and process memory. Volatile Memory Shield enclave zeroes out secrets and enforces volatile memory isolation.",
                 compatible: true,
                 can_auto_remediate: true,
-                status: "remediated",
-                remediation_action: "Volatile Memory Shield / ephemeral secret zeroization enclave (+20%)",
-                impact_points: 20,
-                remediation_details: "Volatile Memory Shield active: ephemeral secret zeroization enclave enforced with volatile scrubbers."
+                status: "open",
+                remediation_action: "Volatile Memory Shield / ephemeral secret zeroization enclave (+10%)",
+                impact_points: 10,
+                remediation_details: ""
             },
             {
                 id: "tpm",
@@ -2929,10 +2929,10 @@ async function renderZoneView() {
                 description: "Cryptographically binds audit log event hashes to the platform TPM 2.0 hardware Endorsement Key, providing tamper-proof non-repudiation.",
                 compatible: true,
                 can_auto_remediate: true,
-                status: "remediated",
+                status: "open",
                 remediation_action: "Hardware TPM 2.0 attestation binding (+20%)",
                 impact_points: 20,
-                remediation_details: "Hardware TPM 2.0 bound (ACPI\\MSFT0101\\1). Cryptographic audit attestation active."
+                remediation_details: ""
             },
             {
                 id: "dpu",
@@ -2940,10 +2940,10 @@ async function renderZoneView() {
                 description: "Enforces zero-trust egress network policy. When hardware DPU is absent, deploys OpenShell L7 network sandbox with Windows Filtering Platform (WFP) egress enforcement.",
                 compatible: true,
                 can_auto_remediate: true,
-                status: "remediated",
-                remediation_action: "OpenShell L7 Sandbox + Windows Filtering Platform (WFP) software egress enforcer (+20%)",
-                impact_points: 20,
-                remediation_details: "OpenShell L7 Sandbox active with Windows Filtering Platform (WFP) kernel packet filter enforcer."
+                status: "open",
+                remediation_action: "OpenShell L7 Sandbox + Windows Filtering Platform (WFP) software egress enforcer (+10%)",
+                impact_points: 10,
+                remediation_details: ""
             }
         ],
         nodes: [
@@ -2952,8 +2952,8 @@ async function renderZoneView() {
                 name: "Local Core Node",
                 address: "127.0.0.1:3030",
                 role: "Master Core",
-                attestation: "TPM 2.0 RoT Verified",
-                status: "Optimal",
+                attestation: "Hardware Attestation Pending",
+                status: "Active",
                 latency_ms: 0.0
             }
         ]
@@ -2974,9 +2974,14 @@ async function renderZoneView() {
         }
     }
 
-    const score = summary.security_score !== undefined ? summary.security_score : 100;
-    const scoreColor = score >= 80 ? 'var(--accent-green)' : (score >= 60 ? 'var(--accent-orange)' : 'var(--accent-red)');
+    const score = summary.security_score !== undefined ? summary.security_score : 30;
+    const scoreColor = score >= 80 ? 'var(--accent-green)' : (score >= 60 ? 'var(--accent-blue)' : (score >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)'));
     const activeNodes = (summary.nodes && summary.nodes.length > 0) ? summary.nodes.length : ((summary.peer_count || 0) + 1);
+
+    const attestationLabel = summary.tpm_attested
+        ? "TPM 2.0 Anchored · Active"
+        : (score >= 60 ? "Calibrated Baseline · Active" : "Audit Attestation Standby");
+    const attestationColor = summary.tpm_attested ? 'var(--accent-green)' : 'var(--accent-blue)';
 
     const container = document.getElementById('zone-summary-container');
     if (container) {
@@ -3002,23 +3007,23 @@ async function renderZoneView() {
             <div class="stat-card glass shadow-glow">
                 <div class="stat-info">
                     <span class="stat-label">Hardware Attestation</span>
-                    <span class="stat-value" style="font-size: 12px; font-weight: 600; color: var(--accent-green); line-height: 1.4;">TPM 2.0 Anchored · WFP Containment Armed</span>
+                    <span class="stat-value" style="font-size: 12px; font-weight: 600; color: ${attestationColor}; line-height: 1.4;">${escapeHtml(attestationLabel)}</span>
                 </div>
             </div>
         `;
     }
 
-    // Update master auto-config button state if all remediated
+    // Update master auto-config button state: only disable and label All Settings Configured if no actionable items remain open
     const masterBtn = document.getElementById('btn-auto-remediate-all');
-    const allRemediated = (summary.structured_recommendations && 
-        summary.structured_recommendations.length > 0 && 
-        summary.structured_recommendations.every(r => r.status === 'remediated' || !r.can_auto_remediate)) || score >= 100;
-    
+    const openActionableGaps = (summary.structured_recommendations || []).filter(r => r.status === 'open' && r.can_auto_remediate);
+    const hasActionableGaps = openActionableGaps.length > 0;
+
     if (masterBtn) {
-        if (allRemediated) {
+        masterBtn.style.display = 'inline-flex';
+        if (!hasActionableGaps) {
             masterBtn.className = 'btn-configured';
             masterBtn.disabled = true;
-            masterBtn.innerHTML = '<i data-lucide="shield-check" style="width:14px; height:14px;"></i> All Settings Remediated (100%)';
+            masterBtn.innerHTML = '<i data-lucide="shield-check" style="width:14px; height:14px;"></i> All Available Settings Configured';
         } else {
             masterBtn.className = 'btn-primary btn-sm flex items-center gap-2';
             masterBtn.disabled = false;
@@ -3029,14 +3034,28 @@ async function renderZoneView() {
     const recs = document.getElementById('zone-recommendations');
     if (recs && !state.isRemediating) {
         let bannerHtml = '';
-        if (allRemediated) {
+        const allPhysicallyRemediated = (summary.structured_recommendations || []).length > 0 &&
+            (summary.structured_recommendations || []).every(r => r.status === 'remediated');
+
+        if (score >= 100 && allPhysicallyRemediated) {
             bannerHtml = `
                 <div class="card glass p-3 mb-3" style="border: 1px solid rgba(0, 255, 136, 0.3); background: rgba(0, 255, 136, 0.05); border-radius: 10px; margin-bottom: 14px;">
                     <div style="font-size: 15px; font-weight: 600; color: var(--accent-green); margin-bottom: 6px; display: flex; align-items: center; gap: 8px;">
                         <span>🛡️ Platform Security Posture Fully Optimized (${score}% Score)</span>
                     </div>
                     <div style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
-                        Hardware root-of-trust attestation active: TPM 2.0 Endorsement Key anchored, Volatile Memory Shield enclave active with ephemeral zeroization scrubbers, and Windows Filtering Platform (WFP) software sandbox armed.
+                        Hardware root-of-trust attestation active: TPM 2.0 Endorsement Key anchored, hardware TEE memory encryption active, and hardware DPU egress filtering active.
+                    </div>
+                </div>
+            `;
+        } else if (score >= 60) {
+            bannerHtml = `
+                <div class="card glass p-3 mb-3" style="border: 1px solid rgba(0, 217, 255, 0.3); background: rgba(0, 217, 255, 0.05); border-radius: 10px; margin-bottom: 14px;">
+                    <div style="font-size: 15px; font-weight: 600; color: var(--accent-blue); margin-bottom: 6px; display: flex; align-items: center; gap: 8px;">
+                        <span>🛡️ Platform Security Posture: Calibrated Baseline (${score}% Score)</span>
+                    </div>
+                    <div style="font-size: 12px; color: var(--text-muted); line-height: 1.5;">
+                        Host platform evaluated against genuine hardware root-of-trust telemetry. Software mitigations and cryptographic anchors active where dedicated hardware is unequipped.
                     </div>
                 </div>
             `;
@@ -3044,29 +3063,40 @@ async function renderZoneView() {
 
         const itemsHtml = (summary.structured_recommendations || []).map(r => {
             const isRemediated = r.status === 'remediated';
+            const isMitigated = r.status === 'mitigated';
             const compatBadge = r.compatible 
                 ? `<span class="badge-compatible"><i data-lucide="check-circle" style="width:12px; height:12px;"></i> Compatible Host</span>`
                 : `<span class="badge-incompatible"><i data-lucide="alert-triangle" style="width:12px; height:12px;"></i> Compatibility Notice</span>`;
             
+            let statusBadge = '';
             let actionBtn;
             if (isRemediated) {
+                statusBadge = `<span class="badge green"><i data-lucide="shield-check" style="width:11px; height:11px; vertical-align:middle;"></i> Hardware Secured</span>`;
                 actionBtn = `<button class="btn-configured" disabled><i data-lucide="shield-check" style="width:14px; height:14px;"></i> ✓ Configured / Secured</button>`;
+            } else if (isMitigated) {
+                statusBadge = `<span class="badge blue"><i data-lucide="shield" style="width:11px; height:11px; vertical-align:middle;"></i> Software Mitigated</span>`;
+                actionBtn = `<button class="btn-configured" disabled><i data-lucide="shield" style="width:14px; height:14px;"></i> ✓ Software Mitigated</button>`;
             } else if (r.can_auto_remediate) {
+                statusBadge = `<span class="badge orange"><i data-lucide="alert-circle" style="width:11px; height:11px; vertical-align:middle;"></i> Open Gap</span>`;
                 actionBtn = `<button class="btn-primary btn-sm flex items-center gap-1" onclick="autoRemediateGap('${r.id}', this)"><i data-lucide="zap" style="width:14px; height:14px;"></i> Auto-Configure</button>`;
             } else {
+                statusBadge = `<span class="badge red"><i data-lucide="slash" style="width:11px; height:11px; vertical-align:middle;"></i> Incompatible</span>`;
                 actionBtn = `<button class="btn-primary btn-sm flex items-center gap-1" disabled title="Incompatible on this host"><i data-lucide="slash" style="width:14px; height:14px;"></i> Incompatible</button>`;
             }
 
-            const detailsHtml = isRemediated && r.remediation_details
+            const detailsHtml = (isRemediated || isMitigated) && r.remediation_details
                 ? `<div class="item-remediation-active"><i data-lucide="check" style="width:12px; height:12px;"></i> ${escapeHtml(r.remediation_details)}</div>`
-                : '';
+                : (r.remediation_details ? `<div style="font-size: 11px; color: var(--text-muted); margin-top: 4px;">${escapeHtml(r.remediation_details)}</div>` : '');
+
+            const cardClass = isRemediated ? 'remediated' : (isMitigated ? 'mitigated' : '');
 
             return `
-                <div class="zone-rec-item ${isRemediated ? 'remediated' : ''}">
+                <div class="zone-rec-item ${cardClass}">
                     <div class="zone-rec-info">
                         <div class="zone-rec-title">
                             <span>${escapeHtml(r.title)}</span>
                             <span class="badge-impact">+${r.impact_points}% Impact</span>
+                            ${statusBadge}
                             ${compatBadge}
                         </div>
                         <div class="zone-rec-desc">${escapeHtml(r.description)}</div>
