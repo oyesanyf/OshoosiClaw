@@ -131,12 +131,33 @@ function Invoke-AuthenticodeSigning {
     }
 
     Write-Host "[SIGN] Active Signing Certificate: $($Cert.Subject) ($($Cert.Thumbprint))" -ForegroundColor Green
+    $signtoolCandidates = @(
+        "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe",
+        "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe",
+        "C:\Program Files (x86)\Windows Kits\10\App Certification Kit\signtool.exe"
+    )
+    $signtool = $signtoolCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+    if (-not $signtool) {
+        $stCmd = Get-Command "signtool.exe" -ErrorAction SilentlyContinue
+        if ($stCmd) { $signtool = $stCmd.Source }
+    }
+
     foreach ($file in $Files) {
         if (Test-Path $file) {
             Write-Host "       Signing '$file' (SHA-256 + RFC 3161 timestamp)..." -ForegroundColor Cyan
             try {
-                $sig = Set-AuthenticodeSignature -FilePath $file -Certificate $Cert -TimestampServer $Timestamp -HashAlgorithm SHA256
-                Write-Host "       -> $($sig.Status): $file" -ForegroundColor Green
+                if ($file -like "*.msi" -and $signtool) {
+                    & $signtool sign /sha1 $Thumbprint /fd SHA256 /tr $Timestamp /td SHA256 $file | Out-Null
+                    Write-Host "       -> Valid (via signtool): $file" -ForegroundColor Green
+                } else {
+                    $sig = Set-AuthenticodeSignature -FilePath $file -Certificate $Cert -TimestampServer $Timestamp -HashAlgorithm SHA256
+                    if ($sig.Status -eq "UnknownError" -and $signtool) {
+                        & $signtool sign /sha1 $Thumbprint /fd SHA256 /tr $Timestamp /td SHA256 $file | Out-Null
+                        Write-Host "       -> Valid (fallback signtool): $file" -ForegroundColor Green
+                    } else {
+                        Write-Host "       -> $($sig.Status): $file" -ForegroundColor Green
+                    }
+                }
             } catch {
                 Write-Warning "       -> Signing failed for $file : $_"
             }

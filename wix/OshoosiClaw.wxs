@@ -12,7 +12,7 @@
             <Directory Id="INSTALLFOLDER" Name="OshoosiClaw">
                 <Component Id="MainExecutable" Guid="3e0d8694-5ef8-4903-b1da-5847fa2c03cf" Bitness="always64">
                     <File Id="OsoosiExe" Source="target\release\osoosi.exe" KeyPath="yes" />
-                    <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="no" Part="last" Action="set" System="yes" />
+                    <Environment Id="PATH" Name="PATH" Value="[INSTALLFOLDER]" Permanent="yes" Part="last" Action="set" System="yes" />
                 </Component>
 
                 <Component Id="OnnxRuntimeDll" Guid="d2a71bf5-7798-4c17-9154-374cf1ec1b73" Bitness="always64">
