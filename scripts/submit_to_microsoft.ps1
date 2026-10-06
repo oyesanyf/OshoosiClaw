@@ -135,7 +135,7 @@ $Manifest = [PSCustomObject]@{
     software_vendor = "Oshoosi Security Team"
     software_name = "OpenỌ̀ṣọ́ọ̀sì Autonomous EDR"
     version = "0.1.1"
-    submission_portal = "https://www.microsoft.com/en-us/wdsi/filesubmission"
+    submission_portal = "https://www.microsoft.com/en-us/wdsi/filesubmission?persona=SoftwareDeveloper"
     user_type = "Software Developer"
     submission_reason = "Incorrectly detected / Request SmartScreen reputation and false-positive whitelisting for legitimate signed EDR application."
     developer_certificate_subject = "CN=Oshoosi Developer"
@@ -164,7 +164,7 @@ and timestamped via DigiCert RFC 3161:
 
 TO COMPLETE SUBMISSION TO MICROSOFT DEFENDER & SMARTSCREEN:
 1. Open your browser and navigate to:
-   https://www.microsoft.com/en-us/wdsi/filesubmission
+   https://www.microsoft.com/en-us/wdsi/filesubmission?persona=SoftwareDeveloper
 
 2. Select: 'Software Developer' (or sign in with your Microsoft / Azure AD account)
 
@@ -214,12 +214,12 @@ if ($env:DEFENDER_SUBMISSION_TOKEN) {
     }
 } else {
     Write-Host "No automated DEFENDER_SUBMISSION_TOKEN detected in environment." -ForegroundColor Gray
-    Write-Host "WDSI Web Portal submission is ready at: https://www.microsoft.com/en-us/wdsi/filesubmission" -ForegroundColor Cyan
+    Write-Host "WDSI Web Portal submission is ready at: https://www.microsoft.com/en-us/wdsi/filesubmission?persona=SoftwareDeveloper" -ForegroundColor Cyan
 }
 
 if ($OpenBrowser) {
     Write-Host "`nLaunching Microsoft WDSI Portal in default browser..." -ForegroundColor Green
-    Start-Process "https://www.microsoft.com/en-us/wdsi/filesubmission"
+    Start-Process "https://www.microsoft.com/en-us/wdsi/filesubmission?persona=SoftwareDeveloper"
     Start-Process "explorer.exe" -ArgumentList "/select,`"$ZipPath`""
 }
 
@@ -232,8 +232,8 @@ Write-Host "============================================================`n" -For
 # SIG # Begin signature block
 # MIIb/AYJKoZIhvcNAQcCoIIb7TCCG+kCAQExDzANBglghkgBZQMEAgEFADB5Bgor
 # BgEEAYI3AgEEoGswaTA0BgorBgEEAYI3AgEeMCYCAwEAAAQQH8w7YFlLCE63JNLG
-# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCAi10NUmE9y4IU0
-# zTh26woSrkMAZRhFVeGQYycStmzfZ6CCFkYwggMIMIIB8KADAgECAhAh8/CC2Hkj
+# KX7zUQIBAAIBAAIBAAIBAAIBADAxMA0GCWCGSAFlAwQCAQUABCDywzEQj1KKRQeC
+# 0DcDr04lXbvn6maPvFr+ZID6K0uqHaCCFkYwggMIMIIB8KADAgECAhAh8/CC2Hkj
 # rktK5uIfHiCjMA0GCSqGSIb3DQEBCwUAMBwxGjAYBgNVBAMMEU9zaG9vc2kgRGV2
 # ZWxvcGVyMB4XDTI2MDkyOTE2NTYxMloXDTI3MDkyOTE3MTYxMlowHDEaMBgGA1UE
 # AwwRT3Nob29zaSBEZXZlbG9wZXIwggEiMA0GCSqGSIb3DQEBAQUAA4IBDwAwggEK
@@ -356,28 +356,28 @@ Write-Host "============================================================`n" -For
 # aSBEZXZlbG9wZXICECHz8ILYeSOuS0rm4h8eIKMwDQYJYIZIAWUDBAIBBQCggYQw
 # GAYKKwYBBAGCNwIBDDEKMAigAoAAoQKAADAZBgkqhkiG9w0BCQMxDAYKKwYBBAGC
 # NwIBBDAcBgorBgEEAYI3AgELMQ4wDAYKKwYBBAGCNwIBFTAvBgkqhkiG9w0BCQQx
-# IgQgIIe1oSUNekFGtNQGh3hfTv/dy3Drv+9pkrk/Ky/JUrEwDQYJKoZIhvcNAQEB
-# BQAEggEAH7OdpEVU5nfd1eStHrQzfgM86C7uL4lILEUDvOX+j9+5WWleKYw97hSG
-# DZvLz6dIEhAhR+jhHAdMaluWsKNpiFh3mKO1lqNz5qOR4dC25UZfYSGczRGMgOyD
-# Drk2ODYVpUlnJeWsCx+BOPmcVFxbDmGfKLSoM5unZk3JiMGeIzF8OHT0o9Hsw3d9
-# twhkNpTMohmMoxI33uFkYmnqPzKKWRu3RYe2nJC40W5G/GGcdhH05PgzLUWcTxVZ
-# cWayMKuGyOexzXt2rL5XVcjiWMXqRInnLRCB/GAKUz2RPoWT1jp9PZ5NXilpgNhK
-# PuD2CGUGYBfp9Qk8SU3JVbLD7XFOd6GCAyYwggMiBgkqhkiG9w0BCQYxggMTMIID
+# IgQgjozeBXQxAbFpwk8V+o3aAYs9+EAMtan7BiE7EH8H7kgwDQYJKoZIhvcNAQEB
+# BQAEggEAtd5Yc/EAN7SuogoiDxWSGriAWo57SBXtm1ii7PSsEKdeg9tSaBjOJ1Xx
+# mXeAHgKQQG6X9kh6PZ7ZX2RXIWSDtHIZcrK77BYussC7DyMESVBXocLMAXSg4j7t
+# kcQ/Ituv3/WX0WRdyZLB2qx9wkFQsy96YwmCZj3y14tL7iEF0+1jyc7jg+/2Fi1p
+# rL9YX1EoIM8iAehQDKKW0XeeQQT4sw2Z/sHBPCK2ezz2nEA+rH48iE7xJvQQrR8n
+# 91SsPgP9NqBj2geGsYcrLsG/rA/l0TiroFGhlolWlwencdPdyAEkySmv5QXMxS2X
+# l4gn0FMfD0jaZMzevvQwv2sFsgK3yKGCAyYwggMiBgkqhkiG9w0BCQYxggMTMIID
 # DwIBATB9MGkxCzAJBgNVBAYTAlVTMRcwFQYDVQQKEw5EaWdpQ2VydCwgSW5jLjFB
 # MD8GA1UEAxM4RGlnaUNlcnQgVHJ1c3RlZCBHNCBUaW1lU3RhbXBpbmcgUlNBNDA5
 # NiBTSEEyNTYgMjAyNSBDQTECEAhP3DNPfkVO28MPj/mSGDUwDQYJYIZIAWUDBAIB
 # BQCgaTAYBgkqhkiG9w0BCQMxCwYJKoZIhvcNAQcBMBwGCSqGSIb3DQEJBTEPFw0y
-# NjEwMDYwNDI2MzlaMC8GCSqGSIb3DQEJBDEiBCATyGdOZaIixJ1up+IgYNT7Tuuh
-# PajQTsetEm/ojwmK3jANBgkqhkiG9w0BAQEFAASCAgArrfJsUsshLpFZy2v7ex+B
-# jh4Lr3csL3Ctp7kOw5fzt+iuk6jHyUKd4YsbEwNcHi9l/RjcDu3fhWfq/mdJjZJt
-# yb7XkcebicAEIciDjkaAIVjOlhu28IYaL5lonE4wUFTwYLg7kIaOo/hnCtWUyE88
-# t/IW8tYB4B2rTQIJJWrACspTNcO1FVexMFB73DiawM3MNf/4fy3s0QtDTKckcFrA
-# AMBf2eFnLjBS0pTvehu3l0n/nT/cqcUIcYZihQ87vnyOu7THcPrCXcLwIfVNp0xo
-# BofaLDlHCHvRgRfPBclCWKCM/TJJyJtoHRQ5fJCoSRcCzkghyDRIICU99xtmpP7T
-# ayz7pZb08VQIlm9xeUSmwPhwtGRKqtPChgr4WuRY/QOfr3uhZIDDUQFuAYFPFpUY
-# 0rOakPWIL0Ory8r8Y2aHLznngr5s7wWbLQEzkVDWKbRGE3ujp35/aCIiAdflGhQO
-# +ibBvgTPmbRJsJlVuSECXx0OLs5CNRoFzn7hPJzn4qQX/chJe1BZqai43tKY1aQZ
-# amvsZVv1ijDmPi4YnTlJ5/hMKOAlXuKag03QSA6FMVxuiQeb0rnuV5WDefcuoxpN
-# Ga3pG2QDrbLF6rx3gM9TP//WGbfCoRP4wOqVj0cfZTIHNd3f8iOmZqHucMCweeOq
-# TromQ8P5pSLGqt64GSVVYw==
+# NjEwMDYxMjM5NDRaMC8GCSqGSIb3DQEJBDEiBCCHzZAc43SkGkq1r1yhQkEd1Fqy
+# NwJmuuVrFuXjjaBhijANBgkqhkiG9w0BAQEFAASCAgBSSw31mVX/zVDSenY1U4uy
+# 82aWbyuHtAroWyi3InJ986+enYPJszbiKpMV2xuh277fEUHNaf/Yg89IivTpaWEz
+# HZZQlcqkjdfEszUFIGbFUeM+ok6L24plBw/nuSH2ODivdC84AvEx0HchUxPOoJ6y
+# 00t3/quj12xEFTAcwYaehOcUtVQmFOmc+vw3EJXzV8cm0HwuP/7N4dBBD0TToj1q
+# Sx0mrFnN0lqEkVmpdU4IWDSzPzpVMLbFjdqcNea0gKIfDO06xdiAejpzJ4V9LNMJ
+# TpIICGZFdb0BUx0itt92oUlKdeivK+8lckfI2TfWivjpvvUmxgdJ8QRuojr4Zuqr
+# LX9/J0rmRegToelbeT876hOmfJL73/fNm+KLs5khHuIrFAR150VytGo+nmk3gPBd
+# HOCP5taO508ZERBCgC5Q9TYuO7thOEvwW1wioXvmsQupF2pVyIjXDd2gQsr2Bz4m
+# FrrgpjwmpNtIByvCEzciSKwajpIjuiozQUw4AsHAAVb2h0KeSikX1ch8+gWZV4eP
+# sbedYQurX+QIfzQl9ufYetcowam4ek2Ac3vGIT+7Gqzal0kmtuge7CR9pUAx5UXc
+# bCZmUSuVf0FfN/WKoFd9/OCjjQSZ6k5CngwjRJxm1iO0HQD31lzcVsw9oMTec9Za
+# z+KmPazlqboAqQMnm4d8eg==
 # SIG # End signature block
