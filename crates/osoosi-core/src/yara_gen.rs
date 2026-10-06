@@ -48,6 +48,39 @@ pub fn is_common_system_or_dev_binary(name: &str) -> bool {
             | "language_server_windows_x64.exe"
             | "osoosi.exe"
             | "osoosi-cli.exe"
+            | "ollama.exe"
+            | "chrome.exe"
+            | "msedge.exe"
+            | "rg.exe"
+            | "sysmon.exe"
+            | "sysmon64.exe"
+            | "wmic.exe"
+            | "netsh.exe"
+            | "wermgr.exe"
+            | "tiworker.exe"
+            | "trustedinstaller.exe"
+            | "services.exe"
+            | "lsass.exe"
+            | "csrss.exe"
+            | "smss.exe"
+            | "winlogon.exe"
+            | "wininit.exe"
+            | "dllhost.exe"
+            | "msiexec.exe"
+            | "reg.exe"
+            | "cscript.exe"
+            | "wscript.exe"
+            | "curl.exe"
+            | "tar.exe"
+            | "where.exe"
+            | "updater.exe"
+            | "vctip.exe"
+            | "hxtsr.exe"
+            | "git-remote-https.exe"
+            | "git-credential-manager.exe"
+            | "grep.exe"
+            | "sh.exe"
+            | "wmiprvse.exe"
     )
 }
 
@@ -163,6 +196,10 @@ mod tests {
 
     #[test]
     fn test_generate_yara_common_binary_with_hash() {
+        let temp_dir = std::env::temp_dir().join(format!("osoosi_test_yara_cb_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        std::env::set_var("OSOOSI_YARA_DIR", temp_dir.to_string_lossy().to_string());
+
         let mut sig = ThreatSignature::new("test_node".to_string());
         sig.process_name = Some("powershell.exe".to_string());
         sig.hash_blake3 = Some("deadbeefcafebabe0123456789abcdefdeadbeefcafebabe0123456789abcdef".to_string());
@@ -172,6 +209,8 @@ mod tests {
         assert!(!rule_str.contains("$proc = \"powershell.exe\""));
         assert!(rule_str.contains("$h = {"));
         assert!(rule_str.contains("condition:\n        $h"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]

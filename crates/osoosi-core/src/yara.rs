@@ -134,8 +134,15 @@ pub fn is_unsafe_generic_generated_rule(path_or_ident: &str, content: &str) -> b
 
     let lower_content = content.to_ascii_lowercase();
     let has_hash = lower_content.contains("$h = {") || lower_content.contains("$h=");
+    let cond_str = if let Some(idx) = lower_content.find("condition:") {
+        &lower_content[idx + "condition:".len()..]
+    } else {
+        ""
+    };
 
-    // If it has no hash:
+    let has_proc = lower_content.contains("$proc");
+
+    // 1. If it has no hash:
     if !has_hash {
         let generic_proc_names = [
             "powershell.exe",
@@ -161,18 +168,36 @@ pub fn is_unsafe_generic_generated_rule(path_or_ident: &str, content: &str) -> b
             "language_server_windows_x64.exe",
             "osoosi.exe",
             "osoosi-cli.exe",
+            "ollama.exe",
+            "chrome.exe",
+            "msedge.exe",
+            "rg.exe",
+            "sysmon.exe",
+            "sysmon64.exe",
+            "wmic.exe",
+            "netsh.exe",
+            "wermgr.exe",
+            "tiworker.exe",
+            "trustedinstaller.exe",
         ];
 
-        let has_proc = lower_content.contains("$proc");
         let has_generic_name = generic_proc_names.iter().any(|name| lower_content.contains(name));
         if has_proc || has_generic_name {
             return true;
         }
     }
 
-    // If condition has 'any of them' and has $proc, it would match on process name alone without hash
-    if lower_content.contains("any of them") && lower_content.contains("$proc") {
-        return true;
+    // 2. If it has $proc:
+    if has_proc {
+        // Condition must not allow $proc alone to trigger without $h:
+        // no 'any of them', no '$proc or', no 'or $proc', and condition MUST require '$h'
+        if cond_str.contains("any of them")
+            || cond_str.contains("$proc or")
+            || cond_str.contains("or $proc")
+            || !cond_str.contains("$h")
+        {
+            return true;
+        }
     }
 
     false
@@ -1130,6 +1155,52 @@ mod tests {
             }
         "#;
         assert!(!is_unsafe_generic_generated_rule("yara/osoosi_generated/OsoosiGen_SafeRule.yar", safe_rule));
+    }
+
+    #[test]
+    fn test_unsafe_condition_variations_rejected() {
+        let or_rule = r#"
+            rule OsoosiGen_OrCond {
+                strings:
+                    $proc = "powershell.exe" ascii wide
+                    $h = { DE AD BE EF }
+                condition:
+                    $proc or $h
+            }
+        "#;
+        assert!(is_unsafe_generic_generated_rule("OsoosiGen_OrCond", or_rule));
+
+        let any_rule = r#"
+            rule OsoosiGen_AnyCond {
+                strings:
+                    $proc = "cmd.exe" ascii wide
+                    $h = { DE AD BE EF }
+                condition:
+                    any of them
+            }
+        "#;
+        assert!(is_unsafe_generic_generated_rule("OsoosiGen_AnyCond", any_rule));
+
+        let unused_hash_rule = r#"
+            rule OsoosiGen_UnusedHash {
+                strings:
+                    $proc = "python.exe" ascii wide
+                    $h = { DE AD BE EF }
+                condition:
+                    $proc
+            }
+        "#;
+        assert!(is_unsafe_generic_generated_rule("OsoosiGen_UnusedHash", unused_hash_rule));
+
+        let hash_only_rule = r#"
+            rule OsoosiGen_HashOnly {
+                strings:
+                    $h = { DE AD BE EF }
+                condition:
+                    $h
+            }
+        "#;
+        assert!(!is_unsafe_generic_generated_rule("OsoosiGen_HashOnly", hash_only_rule));
     }
 }
 
