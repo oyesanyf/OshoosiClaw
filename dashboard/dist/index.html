@@ -87,6 +87,10 @@
                     <div class="status-dot online"></div>
                     <span id="agent-status-text">Agent Online</span>
                 </div>
+                <div class="status-indicator" style="margin-top: 6px;">
+                    <div id="sidebar-mesh-dot" class="status-dot offline" style="background-color: #94a3b8;"></div>
+                    <span id="sidebar-mesh-text" style="font-size: 12px; color: var(--text-muted);">P2P Swarm: Standalone</span>
+                </div>
                 <div class="node-id-label">Node ID: <span id="node-id-short">...</span></div>
                 <a href="#" id="reset-password-nav-btn" class="nav-item" style="margin-top: 12px; border: 1px solid var(--glass-border); color: var(--text-primary); display: flex; align-items: center; gap: 12px; padding: 10px 16px; border-radius: 12px; text-decoration: none; font-size: 14px; font-weight: 500;">
                     <i data-lucide="key-round" style="width: 18px; height: 18px; color: var(--accent-blue);"></i>
@@ -118,7 +122,14 @@
                         <span id="defense-mode-indicator-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #38bdf8; display: inline-block;"></span>
                         <span id="defense-mode-top-text" style="font-weight: 600; color: #38bdf8;">MODE: AUDIT 🛡️</span>
                     </button>
+                    <button id="mesh-status-top-btn" class="icon-btn glass" title="P2P Mesh Swarm Connection Status (Click to view mesh)" onclick="window.navigateToView('mesh')" style="background: rgba(13, 17, 23, 0.7); border: 1px solid var(--glass-border); padding: 6px 14px; border-radius: 10px; display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                        <span id="mesh-status-indicator-dot" style="width: 8px; height: 8px; border-radius: 50%; background: #94a3b8; display: inline-block; transition: all 0.3s ease;"></span>
+                        <span id="mesh-status-top-text" style="font-weight: 600; color: #94a3b8; transition: all 0.3s ease;">MESH: STANDALONE (0 PEERS)</span>
+                    </button>
                     <button id="admin-settings-top-btn" class="icon-btn glass" title="Admin Security Settings" style="background: rgba(13, 17, 23, 0.7); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 8px 12px; border-radius: 10px; display: flex; align-items: center; gap: 8px; cursor: pointer; font-size: 13px;">
+                        <i data-lucide="shield" style="width: 16px; height: 16px; color: var(--accent-blue);"></i>
+                        <span>Admin</span>
+                    </button>
                         <i data-lucide="shield" style="width: 16px; height: 16px; color: var(--accent-blue);"></i>
                         <span>Admin</span>
                     </button>
@@ -404,6 +415,7 @@
 
             <!-- Mesh Network View -->
             <div id="mesh-view" class="view-content">
+                <div id="network-connection-banner" style="margin-bottom: 16px;"></div>
                 <div class="stats-grid" id="mesh-stats-grid">
                     <div class="stat-card glass shadow-glow">
                         <div class="stat-info">
