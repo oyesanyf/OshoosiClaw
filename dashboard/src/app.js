@@ -392,6 +392,10 @@ function setupNav() {
                 document.getElementById('agent-anomalies-view').classList.add('active');
                 viewTitle.innerText = "Agent Anomaly Detection (AAD)";
                 renderAgentAnomaliesView();
+            } else if (view === 'utilities') {
+                document.getElementById('utilities-view').classList.add('active');
+                viewTitle.innerText = "Utilities & Host AI Calibration";
+                renderUtilitiesView();
             } else {
                 document.getElementById('other-view').classList.add('active');
                 viewTitle.innerText = item.querySelector('span').innerText;
@@ -411,7 +415,8 @@ function setupNav() {
                 'attack-graph': 'process-map',
                 'scanner': 'malware',
                 'rl': 'skyrl',
-                'models': 'skyrl',
+                'models': 'utilities',
+                'utilities': 'utilities',
                 'network': 'mesh',
                 'agent-anomalies': 'agent-anomalies',
                 'agent-anomaly': 'agent-anomalies',
@@ -454,7 +459,9 @@ window.navigateToView = function(viewName) {
         'dashboard': 'dashboard',
         'threats': 'threats',
         'approvals': 'approvals',
-        'zone': 'zone'
+        'zone': 'zone',
+        'utilities': 'utilities',
+        'models': 'utilities'
     };
     const targetView = aliasMap[viewName] || viewName;
     const target = document.querySelector(`.nav-item[data-view="${targetView}"]`);
@@ -6588,6 +6595,305 @@ async function triggerAgentAnomalySimulation() {
 
 window.renderAgentAnomaliesView = renderAgentAnomaliesView;
 window.triggerAgentAnomalySimulation = triggerAgentAnomalySimulation;
+
+/**
+ * ============================================================================
+ * Utilities & Calibrated Models Management
+ * ============================================================================
+ */
+
+let modelPullPollInterval = null;
+
+function renderUtilitiesView() {
+    loadCalibratedModels();
+    pollModelPullProgress();
+    if (window.lucide) {
+        window.lucide.createIcons();
+    }
+}
+
+async function loadCalibratedModels(forceRefresh = false) {
+    const summaryText = document.getElementById('util-hardware-summary-text');
+    const grid = document.getElementById('calibrated-models-grid');
+    const daemonBadge = document.getElementById('ollama-daemon-status-badge');
+    const installedList = document.getElementById('ollama-installed-models-list');
+
+    if (forceRefresh && grid) {
+        grid.innerHTML = '<div class="placeholder-text"><i data-lucide="loader-2" class="spin"></i> Refreshing calibrated models and hardware profile...</div>';
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    try {
+        const resp = await fetch('/api/models/calibrated');
+        if (!resp.ok) {
+            throw new Error(`HTTP ${resp.status}`);
+        }
+        const data = await resp.json();
+
+        // 1. Hardware Summary
+        if (summaryText && data.system_resources) {
+            const res = data.system_resources;
+            const ramInfo = `${res.free_ram_gb.toFixed(1)} GB free / ${res.total_ram_gb.toFixed(1)} GB total`;
+            const gpuInfo = res.has_gpu ? `${res.gpu_name} (${res.free_vram_mb} MB free VRAM)` : 'CPU AVX2 Acceleration';
+            summaryText.innerHTML = `<strong>Compute Profile:</strong> <span class="badge blue" style="font-size:11px;">${escapeHtml(data.tier_label || data.tier)}</span> &nbsp;·&nbsp; <strong>Cores:</strong> ${res.logical_cores} &nbsp;·&nbsp; <strong>RAM:</strong> ${ramInfo} &nbsp;·&nbsp; <strong>Device:</strong> ${gpuInfo}`;
+        }
+
+        // 2. Ollama Daemon Badge
+        if (daemonBadge) {
+            if (data.ollama_online) {
+                daemonBadge.className = 'badge green';
+                daemonBadge.innerHTML = '<i data-lucide="check-circle" style="width:12px;height:12px;margin-right:4px;"></i> Daemon Active (127.0.0.1:11434)';
+            } else {
+                daemonBadge.className = 'badge yellow';
+                daemonBadge.innerHTML = '<i data-lucide="alert-triangle" style="width:12px;height:12px;margin-right:4px;"></i> Daemon Unreachable';
+            }
+        }
+
+        // 3. Installed Models Pills
+        if (installedList) {
+            if (!data.installed_models || data.installed_models.length === 0) {
+                installedList.innerHTML = '<div style="font-size:12px; color:var(--text-muted);"><i data-lucide="info" style="width:13px; margin-right:4px;"></i> No local models currently installed in Ollama. Click the download button above to retrieve calibrated models.</div>';
+            } else {
+                installedList.innerHTML = data.installed_models.map(m => `
+                    <span class="badge blue" style="font-size:12px; padding:6px 12px; border-radius:8px; display:inline-flex; align-items:center; gap:6px;">
+                        <i data-lucide="cpu" style="width:12px; height:12px;"></i>
+                        <code>${escapeHtml(m)}</code>
+                        <span style="opacity:0.6; font-size:10px;">Installed</span>
+                    </span>
+                `).join('');
+            }
+        }
+
+        // 4. Calibrated Models Grid
+        if (grid) {
+            if (!data.calibrated_models || data.calibrated_models.length === 0) {
+                grid.innerHTML = '<div class="placeholder-text">No calibrated models found.</div>';
+            } else {
+                grid.innerHTML = data.calibrated_models.map(item => {
+                    const isInstalled = item.installed;
+                    const statusBadge = isInstalled
+                        ? '<span class="badge green" style="font-size:11px;"><i data-lucide="check" style="width:11px; margin-right:3px;"></i> Ready &amp; Installed</span>'
+                        : '<span class="badge yellow" style="font-size:11px;"><i data-lucide="download" style="width:11px; margin-right:3px;"></i> Available to Download</span>';
+
+                    const downloadBtn = isInstalled
+                        ? `<button class="btn-text" style="font-size:12px; color:var(--accent-green); cursor:default;" disabled>
+                               <i data-lucide="check-circle" style="width:14px; margin-right:4px;"></i> Installed
+                           </button>`
+                        : `<button class="btn-primary btn-sm" id="btn-pull-${escapeHtml(item.model).replace(/[^a-zA-Z0-9_-]/g, '_')}" onclick="downloadCalibratedModel('${escapeHtml(item.model)}')" style="display:inline-flex; align-items:center; gap:6px;">
+                               <i data-lucide="download" style="width:13px; height:13px;"></i> Pull Model
+                           </button>`;
+
+                    const pullCmd = `ollama pull ${escapeHtml(item.model)}`;
+
+                    return `
+                        <div class="stat-card glass shadow-glow" style="display:flex; flex-direction:column; justify-content:space-between; padding:18px; border-radius:12px; border:1px solid rgba(255,255,255,0.06); position:relative; overflow:hidden;">
+                            <div>
+                                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; gap:8px;">
+                                    <div>
+                                        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:var(--accent-blue); font-weight:600;">${escapeHtml(item.role)}</div>
+                                        <h4 style="margin:4px 0 0 0; font-size:16px; font-weight:600; color:var(--text-header); font-family:monospace;">${escapeHtml(item.model)}</h4>
+                                    </div>
+                                    ${statusBadge}
+                                </div>
+                                <div style="font-size:12px; color:var(--text-muted); line-height:1.45; margin-bottom:12px;">
+                                    ${escapeHtml(item.purpose)}
+                                </div>
+                                <div style="background:rgba(255,255,255,0.02); border-radius:8px; padding:10px; margin-bottom:14px; font-size:11px; border:1px solid rgba(255,255,255,0.04);">
+                                    <div style="color:var(--text-primary); margin-bottom:4px;"><strong>Hardware Fit:</strong> ${escapeHtml(item.tier_fit)}</div>
+                                    <div style="color:var(--text-muted);"><strong>Estimated Weight:</strong> ~${item.size_est_gb.toFixed(1)} GB VRAM/RAM</div>
+                                </div>
+                            </div>
+                            <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(255,255,255,0.06); padding-top:12px; margin-top:auto;">
+                                <button class="btn-text" onclick="copyTerminalCommand('${pullCmd}', this)" style="font-size:11px; color:var(--text-muted); cursor:pointer;" title="Copy terminal command">
+                                    <i data-lucide="terminal" style="width:12px; margin-right:3px;"></i> Copy CLI
+                                </button>
+                                ${downloadBtn}
+                            </div>
+                        </div>
+                    `;
+                }).join('');
+            }
+        }
+
+        // Update Download All button state
+        const allBtn = document.getElementById('btn-download-all-calibrated');
+        if (allBtn && data.calibrated_models) {
+            const uninstalledCount = data.calibrated_models.filter(m => !m.installed).length;
+            if (uninstalledCount === 0) {
+                allBtn.innerHTML = '<i data-lucide="check-check" style="width:16px; height:16px;"></i> All Calibrated Models Ready';
+                allBtn.className = 'btn-text';
+                allBtn.style.color = 'var(--accent-green)';
+            } else {
+                allBtn.innerHTML = `<i data-lucide="download-cloud" style="width:16px; height:16px;"></i> Download Calibrated Models for This Host (${uninstalledCount} New)`;
+                allBtn.className = 'btn-primary';
+                allBtn.style.color = '';
+            }
+        }
+
+        if (window.lucide) {
+            window.lucide.createIcons();
+        }
+    } catch (err) {
+        console.error('Failed to load calibrated models:', err);
+        if (summaryText) {
+            summaryText.innerHTML = '<span style="color:var(--accent-red);">Failed to query host hardware profile. Ensure dashboard backend is running.</span>';
+        }
+        if (grid) {
+            grid.innerHTML = `<div class="placeholder-text" style="color:var(--accent-red);"><i data-lucide="alert-circle"></i> Error loading models: ${escapeHtml(err.message)}</div>`;
+        }
+        if (window.lucide) window.lucide.createIcons();
+    }
+}
+
+async function downloadCalibratedModel(modelName) {
+    if (!modelName) return;
+    const btnId = `btn-pull-${modelName.replace(/[^a-zA-Z0-9_-]/g, '_')}`;
+    const btn = document.getElementById(btnId);
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="spin" style="width:13px; height:13px;"></i> Queuing...';
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    try {
+        const resp = await fetch('/api/models/pull', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ model: modelName })
+        });
+        const res = await resp.json();
+        console.log('Model pull initiated:', res);
+        pollModelPullProgress();
+    } catch (err) {
+        console.error('Failed to initiate model pull:', err);
+        alert(`Failed to initiate pull for ${modelName}: ${err.message}`);
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="download" style="width:13px; height:13px;"></i> Retry Pull';
+            if (window.lucide) window.lucide.createIcons();
+        }
+    }
+}
+
+async function downloadAllCalibratedModels() {
+    const allBtn = document.getElementById('btn-download-all-calibrated');
+    if (allBtn) {
+        allBtn.disabled = true;
+        allBtn.innerHTML = '<i data-lucide="loader-2" class="spin" style="width:16px; height:16px;"></i> Initiating Batch Download...';
+        if (window.lucide) window.lucide.createIcons();
+    }
+
+    try {
+        const resp = await fetch('/api/models/pull', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ download_all_calibrated: true })
+        });
+        const res = await resp.json();
+        console.log('Batch download initiated:', res);
+        pollModelPullProgress();
+    } catch (err) {
+        console.error('Failed to trigger batch calibrated download:', err);
+        alert(`Failed to trigger download: ${err.message}`);
+        if (allBtn) {
+            allBtn.disabled = false;
+            allBtn.innerHTML = '<i data-lucide="download-cloud" style="width:16px; height:16px;"></i> Download Calibrated Models for This Host';
+            if (window.lucide) window.lucide.createIcons();
+        }
+    }
+}
+
+async function pollModelPullProgress() {
+    const card = document.getElementById('active-pull-progress-card');
+    const body = document.getElementById('active-pull-progress-body');
+    if (!card || !body) return;
+
+    try {
+        const resp = await fetch('/api/models/pull-status');
+        if (!resp.ok) return;
+        const progressMap = await resp.json();
+        const entries = Object.values(progressMap);
+
+        if (entries.length === 0) {
+            card.style.display = 'none';
+            if (modelPullPollInterval) {
+                clearInterval(modelPullPollInterval);
+                modelPullPollInterval = null;
+            }
+            return;
+        }
+
+        const hasActive = entries.some(e => e.status === 'pulling' || e.status === 'queued' || e.status === 'verifying');
+        card.style.display = 'block';
+
+        body.innerHTML = entries.map(item => {
+            let statusBadge = '<span class="badge blue">In Progress</span>';
+            let barColor = 'var(--accent-blue)';
+            if (item.status === 'success') {
+                statusBadge = '<span class="badge green"><i data-lucide="check" style="width:11px;"></i> Completed</span>';
+                barColor = 'var(--accent-green)';
+            } else if (item.status === 'error') {
+                statusBadge = '<span class="badge red"><i data-lucide="alert-circle" style="width:11px;"></i> Failed</span>';
+                barColor = 'var(--accent-red)';
+            }
+
+            const pct = Math.min(100, Math.max(5, item.percent || (item.status === 'success' ? 100 : 25)));
+
+            return `
+                <div style="margin-bottom:14px; padding-bottom:12px; border-bottom:1px solid rgba(255,255,255,0.05);">
+                    <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:6px;">
+                        <span style="font-weight:600; font-family:monospace; font-size:13px; color:var(--text-header);">${escapeHtml(item.model)}</span>
+                        ${statusBadge}
+                    </div>
+                    <div style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">${escapeHtml(item.message || '')}</div>
+                    <div style="width:100%; height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden;">
+                        <div style="width:${pct}%; height:100%; background:${barColor}; border-radius:3px; transition:width 0.4s ease;"></div>
+                    </div>
+                    ${item.error ? `<div style="font-size:11px; color:var(--accent-red); margin-top:6px;"><i data-lucide="alert-triangle" style="width:11px; margin-right:3px;"></i> ${escapeHtml(item.error)}</div>` : ''}
+                </div>
+            `;
+        }).join('');
+
+        if (window.lucide) window.lucide.createIcons();
+
+        if (hasActive) {
+            if (!modelPullPollInterval) {
+                modelPullPollInterval = setInterval(pollModelPullProgress, 2500);
+            }
+        } else {
+            if (modelPullPollInterval) {
+                clearInterval(modelPullPollInterval);
+                modelPullPollInterval = null;
+            }
+            loadCalibratedModels();
+        }
+    } catch (e) {
+        console.error('Error polling model progress:', e);
+    }
+}
+
+function copyTerminalCommand(cmd, btn) {
+    if (!navigator.clipboard) return;
+    navigator.clipboard.writeText(cmd).then(() => {
+        if (btn) {
+            const originalHtml = btn.innerHTML;
+            btn.innerHTML = '<i data-lucide="check" style="width:12px; color:var(--accent-green); margin-right:3px;"></i> Copied!';
+            if (window.lucide) window.lucide.createIcons();
+            setTimeout(() => {
+                btn.innerHTML = originalHtml;
+                if (window.lucide) window.lucide.createIcons();
+            }, 2000);
+        }
+    }).catch(err => {
+        console.error('Could not copy text: ', err);
+    });
+}
+
+window.renderUtilitiesView = renderUtilitiesView;
+window.loadCalibratedModels = loadCalibratedModels;
+window.downloadCalibratedModel = downloadCalibratedModel;
+window.downloadAllCalibratedModels = downloadAllCalibratedModels;
+window.copyTerminalCommand = copyTerminalCommand;
 
 
 

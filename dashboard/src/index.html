@@ -65,6 +65,10 @@
                     <i data-lucide="wrench"></i>
                     <span>Repair Engine</span>
                 </a>
+                <a href="#" class="nav-item" data-view="utilities">
+                    <i data-lucide="sliders"></i>
+                    <span>Utilities &amp; Models</span>
+                </a>
                 <a href="#" class="nav-item" data-view="process-map">
                     <i data-lucide="network"></i>
                     <span>Attack Graph</span>
@@ -811,7 +815,87 @@
                                         </div>
                                     </div>
                                 </div>
+                                <div class="stat-card glass" style="margin-top:16px; padding:14px 20px; display:flex; justify-content:space-between; align-items:center; cursor:pointer; border:1px solid rgba(0, 210, 255, 0.2);" onclick="window.navigateToView('utilities')">
+                                    <div style="display:flex; align-items:center; gap:12px;">
+                                        <i data-lucide="download-cloud" style="width:22px; height:22px; color:var(--accent-blue);"></i>
+                                        <div>
+                                            <div style="font-weight:600; font-size:14px; color:var(--text-header);">Host-Calibrated AI Models</div>
+                                            <div style="font-size:12px; color:var(--text-muted);">Manage and download local models calibrated for your host's memory and CPU architecture</div>
+                                        </div>
+                                    </div>
+                                    <button class="btn-primary btn-sm flex items-center gap-1" style="pointer-events:none;">
+                                        <span>Open Utilities</span> <i data-lucide="arrow-right" style="width:13px; height:13px;"></i>
+                                    </button>
+                                </div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Utilities & Models View -->
+            <div id="utilities-view" class="view-content">
+                <!-- Hero Calibration Banner -->
+                <div class="card glass shadow-glow" style="margin-bottom: 20px;">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center; flex-wrap:wrap; gap:12px;">
+                        <div style="display:flex; align-items:center; gap:14px;">
+                            <div style="width:48px; height:48px; border-radius:12px; background:rgba(0, 210, 255, 0.12); display:flex; align-items:center; justify-content:center; color:var(--accent-blue);">
+                                <i data-lucide="cpu" style="width:26px; height:26px;"></i>
+                            </div>
+                            <div>
+                                <h3 style="font-size:18px; margin:0 0 4px 0;">Host Hardware AI Calibration &amp; Model Downloader</h3>
+                                <div id="util-hardware-summary-text" style="font-size:13px; color:var(--text-muted);">
+                                    Probing host hardware compute profile and memory limits...
+                                </div>
+                            </div>
+                        </div>
+                        <div style="display:flex; gap:10px; align-items:center;">
+                            <button class="btn-text" onclick="loadCalibratedModels(true)" style="font-size:12px; cursor:pointer;">
+                                <i data-lucide="refresh-cw" style="width:13px; margin-right:4px;"></i> Refresh Status
+                            </button>
+                            <button id="btn-download-all-calibrated" class="btn-primary" onclick="downloadAllCalibratedModels()" style="display:flex; align-items:center; gap:8px; font-weight:600; padding:10px 18px; border-radius:10px; cursor:pointer;">
+                                <i data-lucide="download-cloud" style="width:16px; height:16px;"></i> Download Calibrated Models for This Host
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Active Downloads Progress Panel (hidden by default) -->
+                <div class="card glass shadow-glow" id="active-pull-progress-card" style="display:none; margin-bottom: 20px; border-left: 3px solid var(--accent-blue);">
+                    <div class="card-header">
+                        <h4 style="font-size:14px; margin:0; display:flex; align-items:center; gap:8px;">
+                            <i data-lucide="loader-2" class="spin" style="width:16px; height:16px; color:var(--accent-blue);"></i>
+                            <span>Active Model Downloads &amp; Background Pulls</span>
+                        </h4>
+                    </div>
+                    <div class="card-body" id="active-pull-progress-body" style="padding:14px 20px;">
+                        <!-- Progress items rendered dynamically -->
+                    </div>
+                </div>
+
+                <!-- Calibrated Model Cards Grid -->
+                <div style="margin-bottom: 24px;">
+                    <h4 style="font-size:15px; margin:0 0 12px 0; color:var(--text-header); display:flex; align-items:center; gap:8px;">
+                        <i data-lucide="sparkles" style="width:16px; height:16px; color:var(--accent-green);"></i>
+                        <span>Calibrated AI Models for Host Architecture</span>
+                    </h4>
+                    <div class="stats-grid" id="calibrated-models-grid" style="grid-template-columns: repeat(auto-fit, minmax(280px, 1fr)); gap:16px;">
+                        <div class="placeholder-text"><i data-lucide="loader-2" class="spin"></i> Profiling hardware and loading calibrated models...</div>
+                    </div>
+                </div>
+
+                <!-- Ollama Local Service & Installed Models Inventory -->
+                <div class="card glass shadow-glow">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                        <h4 style="font-size:15px; margin:0; display:flex; align-items:center; gap:8px;">
+                            <i data-lucide="server" style="width:16px; height:16px; color:var(--accent-purple);"></i>
+                            <span>Local Ollama Daemon &amp; Installed Inventory</span>
+                        </h4>
+                        <span id="ollama-daemon-status-badge" class="badge gray">Checking Daemon...</span>
+                    </div>
+                    <div class="card-body" style="padding:16px 20px;">
+                        <div id="ollama-installed-models-list" style="display:flex; flex-wrap:wrap; gap:10px;">
+                            <!-- Installed pills rendered dynamically -->
                         </div>
                     </div>
                 </div>

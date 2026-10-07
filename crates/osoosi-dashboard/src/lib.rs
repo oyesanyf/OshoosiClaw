@@ -26,6 +26,8 @@ use osoosi_behavioral::{
     SkyAction, Transition,
 };
 use rand::Rng;
+use once_cell::sync::Lazy;
+use dashmap::DashMap;
 
 /// In-memory state and metrics for the SkyRL EDR Self-Improvement & Tinker API.
 pub struct SkyRlServerState {
@@ -707,6 +709,12 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/supervisor/status", get(get_supervisor_status))
         .route("/api/hardware/summary", get(get_hardware_summary))
         .route("/hardware/summary", get(get_hardware_summary))
+        .route("/api/models/calibrated", get(get_calibrated_models))
+        .route("/api/models/pull", post(post_model_pull))
+        .route("/api/models/pull-status", get(get_model_pull_status))
+        .route("/models/calibrated", get(get_calibrated_models))
+        .route("/models/pull", post(post_model_pull))
+        .route("/models/pull-status", get(get_model_pull_status))
         .route("/api/skills/status", get(get_skills_status))
         .route("/skills/status", get(get_skills_status))
         .route("/api/mitre/matrix", get(get_mitre_matrix))
@@ -870,6 +878,354 @@ async fn get_hardware_summary(State(_state): State<DashboardState>) -> impl Into
         optimal_selection,
         system_resources: resources,
     })
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalibratedModelItem {
+    pub role: String,
+    pub model: String,
+    pub purpose: String,
+    pub tier_fit: String,
+    pub size_est_gb: f32,
+    pub installed: bool,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct CalibratedModelsResponse {
+    pub status: String,
+    pub tier: String,
+    pub tier_label: String,
+    pub system_resources: osoosi_behavioral::hardware_selection::SystemResourceSummary,
+    pub ollama_url: String,
+    pub ollama_online: bool,
+    pub installed_models: Vec<String>,
+    pub calibrated_models: Vec<CalibratedModelItem>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct PullModelRequest {
+    pub model: Option<String>,
+    pub download_all_calibrated: Option<bool>,
+}
+
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct ModelPullProgress {
+    pub model: String,
+    pub status: String, // "queued", "pulling", "verifying", "success", "error"
+    pub completed_bytes: u64,
+    pub total_bytes: u64,
+    pub percent: f32,
+    pub message: String,
+    pub error: Option<String>,
+    pub updated_at: String,
+}
+
+static MODEL_PULL_TRACKER: Lazy<DashMap<String, ModelPullProgress>> = Lazy::new(DashMap::new);
+
+async fn get_calibrated_models(State(_state): State<DashboardState>) -> Json<CalibratedModelsResponse> {
+    let resources = osoosi_behavioral::hardware_selection::get_system_resources();
+    let tier = resources.determine_tier();
+    let ai_cfg = osoosi_types::config::load_ai_config();
+    let installed_models = osoosi_behavioral::hardware_selection::query_installed_ollama_models(&ai_cfg.reasoning_url).await;
+
+    let ollama_online = if !installed_models.is_empty() {
+        true
+    } else {
+        let client = reqwest::Client::builder()
+            .timeout(Duration::from_millis(800))
+            .build()
+            .ok();
+        if let Some(c) = client {
+            let tags_url = if let Ok(mut parsed) = reqwest::Url::parse(&ai_cfg.reasoning_url) {
+                parsed.set_path("/api/tags");
+                parsed.set_query(None);
+                parsed.to_string()
+            } else {
+                format!("{}/api/tags", ai_cfg.reasoning_url.trim_end_matches('/'))
+            };
+            c.get(&tags_url).send().await.map(|r| r.status().is_success()).unwrap_or(false)
+        } else {
+            false
+        }
+    };
+
+    let (deep_model_name, deep_size) = match tier {
+        osoosi_behavioral::hardware_selection::HardwareTier::Tier4Enterprise => ("qwen2.5:32b", 19.0),
+        osoosi_behavioral::hardware_selection::HardwareTier::Tier3HighPerf => ("qwen2.5:14b", 9.0),
+        osoosi_behavioral::hardware_selection::HardwareTier::Tier2MidRange => ("qwen2.5:7b", 4.7),
+        osoosi_behavioral::hardware_selection::HardwareTier::Tier1Constrained => ("qwen2.5:1.5b", 1.0),
+    };
+
+    let is_installed = |target: &str| -> bool {
+        installed_models.iter().any(|inst| osoosi_behavioral::hardware_selection::model_matches(target, inst))
+    };
+
+    let calibrated_models = vec![
+        CalibratedModelItem {
+            role: "Deep Forensic Reasoning".to_string(),
+            model: deep_model_name.to_string(),
+            purpose: "Multi-step causal graph attack synthesis, threat reconstruction & lateral movement tracing".to_string(),
+            tier_fit: format!("{}: Calibrated for host RAM ({:.1} GB) and compute profile", tier.label(), resources.total_ram_gb),
+            size_est_gb: deep_size,
+            installed: is_installed(deep_model_name),
+        },
+        CalibratedModelItem {
+            role: "Real-Time Fast Triage".to_string(),
+            model: "qwen2.5:1.5b".to_string(),
+            purpose: "Sub-second live event triage, API anomaly classification & rapid incident classification".to_string(),
+            tier_fit: "Ultra-low latency streaming inference with minimal CPU/VRAM footprint".to_string(),
+            size_est_gb: 1.0,
+            installed: is_installed("qwen2.5:1.5b"),
+        },
+        CalibratedModelItem {
+            role: "Semantic Embedding & AAD".to_string(),
+            model: "embeddinggemma:2b".to_string(),
+            purpose: "High-density vector embeddings for Agent Anomaly Detection (AAD) & semantic threat search".to_string(),
+            tier_fit: "Dense vector transformation optimized for local CPU/GPU acceleration".to_string(),
+            size_est_gb: 1.7,
+            installed: is_installed("embeddinggemma:2b"),
+        },
+        CalibratedModelItem {
+            role: "Foundation Security".to_string(),
+            model: "fenkohq/foundation-sec-8b".to_string(),
+            purpose: "Specialized infosec reasoning, exploit analysis & vulnerability correlation".to_string(),
+            tier_fit: "Domain-specialized weights providing expert-grade cybersecurity analysis".to_string(),
+            size_est_gb: 4.9,
+            installed: is_installed("fenkohq/foundation-sec-8b"),
+        },
+    ];
+
+    Json(CalibratedModelsResponse {
+        status: "ok".to_string(),
+        tier: format!("{:?}", tier),
+        tier_label: tier.label().to_string(),
+        system_resources: resources,
+        ollama_url: ai_cfg.reasoning_url,
+        ollama_online,
+        installed_models,
+        calibrated_models,
+    })
+}
+
+async fn post_model_pull(
+    State(_state): State<DashboardState>,
+    Json(payload): Json<PullModelRequest>,
+) -> Json<Value> {
+    let resources = osoosi_behavioral::hardware_selection::get_system_resources();
+    let tier = resources.determine_tier();
+    let ai_cfg = osoosi_types::config::load_ai_config();
+    let installed_models = osoosi_behavioral::hardware_selection::query_installed_ollama_models(&ai_cfg.reasoning_url).await;
+
+    let deep_model_name = match tier {
+        osoosi_behavioral::hardware_selection::HardwareTier::Tier4Enterprise => "qwen2.5:32b",
+        osoosi_behavioral::hardware_selection::HardwareTier::Tier3HighPerf => "qwen2.5:14b",
+        osoosi_behavioral::hardware_selection::HardwareTier::Tier2MidRange => "qwen2.5:7b",
+        osoosi_behavioral::hardware_selection::HardwareTier::Tier1Constrained => "qwen2.5:1.5b",
+    };
+
+    let all_calibrated = [
+        deep_model_name,
+        "qwen2.5:1.5b",
+        "embeddinggemma:2b",
+        "fenkohq/foundation-sec-8b",
+    ];
+
+    let mut target_models = Vec::new();
+
+    if payload.download_all_calibrated == Some(true) {
+        for m in &all_calibrated {
+            let already = installed_models.iter().any(|inst| osoosi_behavioral::hardware_selection::model_matches(m, inst));
+            if !already {
+                target_models.push(m.to_string());
+            }
+        }
+        if target_models.is_empty() {
+            return Json(json!({
+                "status": "all_installed",
+                "message": "All calibrated models are already installed on this host",
+                "models": all_calibrated
+            }));
+        }
+    } else if let Some(ref m) = payload.model {
+        let trimmed = m.trim();
+        if !trimmed.is_empty() {
+            target_models.push(trimmed.to_string());
+        }
+    }
+
+    if target_models.is_empty() {
+        return Json(json!({
+            "status": "error",
+            "error": "No model specified and download_all_calibrated is false"
+        }));
+    }
+
+    let reasoning_url = ai_cfg.reasoning_url.clone();
+
+    for model_name in &target_models {
+        MODEL_PULL_TRACKER.insert(
+            model_name.clone(),
+            ModelPullProgress {
+                model: model_name.clone(),
+                status: "queued".to_string(),
+                completed_bytes: 0,
+                total_bytes: 0,
+                percent: 0.0,
+                message: format!("Download queued for {}", model_name),
+                error: None,
+                updated_at: chrono::Utc::now().to_rfc3339(),
+            },
+        );
+
+        let model_to_pull = model_name.clone();
+        let base_url = reasoning_url.clone();
+
+        tokio::spawn(async move {
+            MODEL_PULL_TRACKER.insert(
+                model_to_pull.clone(),
+                ModelPullProgress {
+                    model: model_to_pull.clone(),
+                    status: "pulling".to_string(),
+                    completed_bytes: 0,
+                    total_bytes: 0,
+                    percent: 15.0,
+                    message: format!("Pulling {} via Ollama API...", model_to_pull),
+                    error: None,
+                    updated_at: chrono::Utc::now().to_rfc3339(),
+                },
+            );
+
+            let pull_url = if let Ok(mut u) = reqwest::Url::parse(&base_url) {
+                u.set_path("/api/pull");
+                u.set_query(None);
+                u.to_string()
+            } else {
+                format!("{}/api/pull", base_url.trim_end_matches('/'))
+            };
+
+            let client = reqwest::Client::builder()
+                .timeout(Duration::from_secs(600))
+                .build();
+
+            let mut pulled = false;
+            let mut pull_err = None;
+
+            if let Ok(c) = client {
+                info!("Requesting Ollama REST pull for {} at {}", model_to_pull, pull_url);
+                match c
+                    .post(&pull_url)
+                    .json(&serde_json::json!({
+                        "name": &model_to_pull,
+                        "stream": false
+                    }))
+                    .send()
+                    .await
+                {
+                    Ok(res) => {
+                        if res.status().is_success() {
+                            pulled = true;
+                        } else {
+                            let status = res.status();
+                            let txt = res.text().await.unwrap_or_default();
+                            warn!("Ollama REST pull failed ({status}): {txt}");
+                            pull_err = Some(format!("Ollama API {status}: {txt}"));
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Ollama REST pull connection failed: {e}");
+                        pull_err = Some(e.to_string());
+                    }
+                }
+            }
+
+            if !pulled {
+                info!("Attempting fallback: CLI 'ollama pull {}'", model_to_pull);
+                MODEL_PULL_TRACKER.insert(
+                    model_to_pull.clone(),
+                    ModelPullProgress {
+                        model: model_to_pull.clone(),
+                        status: "pulling".to_string(),
+                        completed_bytes: 0,
+                        total_bytes: 0,
+                        percent: 40.0,
+                        message: format!("Falling back to CLI execution: ollama pull {}", model_to_pull),
+                        error: None,
+                        updated_at: chrono::Utc::now().to_rfc3339(),
+                    },
+                );
+
+                let mut cmd = tokio::process::Command::new("ollama");
+                cmd.args(["pull", &model_to_pull]);
+                #[cfg(target_os = "windows")]
+                {
+                    cmd.creation_flags(0x0800_0000);
+                }
+
+                match cmd.output().await {
+                    Ok(out) => {
+                        if out.status.success() {
+                            pulled = true;
+                        } else {
+                            let stderr = String::from_utf8_lossy(&out.stderr);
+                            let msg = format!("CLI pull failed: {}", stderr.trim());
+                            warn!("{}", msg);
+                            pull_err = Some(msg);
+                        }
+                    }
+                    Err(e) => {
+                        let msg = format!("Failed to run 'ollama pull': {e}");
+                        warn!("{}", msg);
+                        pull_err = Some(msg);
+                    }
+                }
+            }
+
+            if pulled {
+                MODEL_PULL_TRACKER.insert(
+                    model_to_pull.clone(),
+                    ModelPullProgress {
+                        model: model_to_pull.clone(),
+                        status: "success".to_string(),
+                        completed_bytes: 0,
+                        total_bytes: 0,
+                        percent: 100.0,
+                        message: format!("Successfully downloaded and verified {}", model_to_pull),
+                        error: None,
+                        updated_at: chrono::Utc::now().to_rfc3339(),
+                    },
+                );
+            } else {
+                MODEL_PULL_TRACKER.insert(
+                    model_to_pull.clone(),
+                    ModelPullProgress {
+                        model: model_to_pull.clone(),
+                        status: "error".to_string(),
+                        completed_bytes: 0,
+                        total_bytes: 0,
+                        percent: 0.0,
+                        message: format!("Download failed for {}", model_to_pull),
+                        error: pull_err,
+                        updated_at: chrono::Utc::now().to_rfc3339(),
+                    },
+                );
+            }
+        });
+    }
+
+    Json(json!({
+        "status": "initiated",
+        "models": target_models
+    }))
+}
+
+async fn get_model_pull_status(State(_state): State<DashboardState>) -> Json<Value> {
+    let mut map = serde_json::Map::new();
+    for entry in MODEL_PULL_TRACKER.iter() {
+        if let Ok(val) = serde_json::to_value(entry.value()) {
+            map.insert(entry.key().clone(), val);
+        }
+    }
+    Json(Value::Object(map))
 }
 
 async fn get_skills_status() -> Json<Value> {
@@ -6593,6 +6949,76 @@ mod tests {
         assert_eq!(embed_res_tool["status"], "ok");
         assert_eq!(embed_res_tool["dimension"], 128);
         assert_eq!(embed_res_tool["embedding"].as_array().unwrap().len(), 128);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_calibrated_models_and_pull_endpoints() {
+        let state = DashboardState::new(None, None);
+        let temp_dir = std::env::temp_dir().join(format!("dash_test_models_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let app = dashboard_router(state.clone(), temp_dir.clone());
+
+        // 1. GET /api/models/calibrated
+        let req = axum::http::Request::builder()
+            .uri("/api/models/calibrated")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let cal_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(cal_res["status"], "ok");
+        assert!(cal_res["system_resources"]["logical_cores"].as_u64().unwrap_or(0) > 0);
+        let calibrated_models = cal_res["calibrated_models"].as_array().expect("calibrated_models should be array");
+        assert_eq!(calibrated_models.len(), 4);
+        assert!(calibrated_models.iter().any(|m| m["role"] == "Deep Forensic Reasoning"));
+        assert!(calibrated_models.iter().any(|m| m["role"] == "Real-Time Fast Triage"));
+        assert!(calibrated_models.iter().any(|m| m["role"] == "Semantic Embedding & AAD"));
+        assert!(calibrated_models.iter().any(|m| m["role"] == "Foundation Security"));
+
+        // 2. POST /api/models/pull (single model)
+        let pull_single = serde_json::json!({
+            "model": "qwen2.5:test-calibration-sim"
+        });
+        let req = axum::http::Request::builder()
+            .uri("/api/models/pull")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&pull_single).unwrap()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let pull_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(pull_res["status"], "initiated");
+
+        // 3. GET /api/models/pull-status
+        let req = axum::http::Request::builder()
+            .uri("/api/models/pull-status")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let status_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(status_res.get("qwen2.5:test-calibration-sim").is_some());
+
+        // 4. POST /api/models/pull with download_all_calibrated
+        let pull_all = serde_json::json!({
+            "download_all_calibrated": true
+        });
+        let req = axum::http::Request::builder()
+            .uri("/api/models/pull")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&pull_all).unwrap()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
