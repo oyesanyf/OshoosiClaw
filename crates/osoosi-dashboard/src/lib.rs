@@ -1469,6 +1469,8 @@ async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value> {
                 .unwrap_or_else(|_| "Local Core Node".to_string());
             Json(json!({
                 "peer_count": 0,
+                "host_count": 1,
+                "relay_count": 0,
                 "security_score": assessment.security_score,
                 "recommendations": assessment.recommendations,
                 "structured_recommendations": assessment.structured_recommendations,
@@ -1478,6 +1480,7 @@ async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value> {
                         "name": format!("Local Node ({})", host_name),
                         "address": "127.0.0.1:3030",
                         "role": "Master Core",
+                        "node_type": "endpoint_host",
                         "attestation": if assessment.tpm.available { "TPM 2.0 RoT Verified" } else { "Software Enclave Verified" },
                         "status": "Optimal",
                         "latency_ms": 0.0
@@ -4720,6 +4723,8 @@ mod tests {
         assert!(zone_resp["zones"].is_array());
         assert!(zone_resp["gaps"].is_array());
         assert_eq!(zone_resp["peer_count"], 0);
+        assert_eq!(zone_resp["host_count"], 1);
+        assert_eq!(zone_resp["relay_count"], 0);
         assert_eq!(zone_resp["zone"], "zone-alpha-mesh");
         assert!(zone_resp["tpm_attested"].is_boolean());
         assert_eq!(zone_resp["nodes"].as_array().unwrap().len(), 1);

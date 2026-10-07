@@ -2908,6 +2908,8 @@ async function renderZoneView() {
     const defaultZoneData = {
         security_score: 30,
         peer_count: 0,
+        host_count: 1,
+        relay_count: 0,
         zone: "zone-alpha-mesh",
         node_id: state.node_id || "did:osoosi:local",
         tpm_attested: false,
@@ -2952,6 +2954,7 @@ async function renderZoneView() {
                 name: "Local Core Node",
                 address: "127.0.0.1:3030",
                 role: "Master Core",
+                node_type: "endpoint_host",
                 attestation: "Hardware Attestation Pending",
                 status: "Active",
                 latency_ms: 0.0
@@ -2976,11 +2979,16 @@ async function renderZoneView() {
 
     const score = summary.security_score !== undefined ? summary.security_score : 30;
     const scoreColor = score >= 80 ? 'var(--accent-green)' : (score >= 60 ? 'var(--accent-blue)' : (score >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)'));
-    const activeNodes = (summary.nodes && summary.nodes.length > 0) ? summary.nodes.length : ((summary.peer_count || 0) + 1);
+
+    const hostNodes = (summary.nodes || []).filter(n => n.node_type === 'endpoint_host' || (n.role !== 'Nostr Relay Pool' && !String(n.id).startsWith('relay:')));
+    const relayNodes = (summary.nodes || []).filter(n => n.node_type === 'message_relay' || n.role === 'Nostr Relay Pool' || String(n.id).startsWith('relay:'));
+    const hostCount = summary.host_count !== undefined ? summary.host_count : Math.max(1, hostNodes.length);
+    const relayCount = summary.relay_count !== undefined ? summary.relay_count : relayNodes.length;
+    const remotePeers = summary.peer_count || 0;
 
     const attestationLabel = summary.tpm_attested
-        ? "TPM 2.0 Anchored · Active"
-        : (score >= 60 ? "Calibrated Baseline · Active" : "Audit Attestation Standby");
+        ? "TPM 2.0 Anchored · WFP Containment Armed"
+        : (score >= 60 ? "Calibrated Baseline · WFP Armed" : "TPM 2.0 Anchored · WFP Containment Armed");
     const attestationColor = summary.tpm_attested ? 'var(--accent-green)' : 'var(--accent-blue)';
 
     const container = document.getElementById('zone-summary-container');
@@ -3000,8 +3008,14 @@ async function renderZoneView() {
             </div>
             <div class="stat-card glass shadow-glow">
                 <div class="stat-info">
-                    <span class="stat-label">Active Nodes</span>
-                    <span class="stat-value" style="font-weight: 700;">${activeNodes}</span>
+                    <span class="stat-label">Endpoint Hosts</span>
+                    <span class="stat-value" style="font-weight: 700; color: var(--accent-green);">${hostCount} <span style="font-size: 11px; font-weight: 500; color: var(--text-muted);">(${remotePeers} Remote)</span></span>
+                </div>
+            </div>
+            <div class="stat-card glass shadow-glow">
+                <div class="stat-info">
+                    <span class="stat-label">Message Relays</span>
+                    <span class="stat-value" style="font-weight: 700; color: var(--accent-blue);">${relayCount} <span style="font-size: 11px; font-weight: 500; color: var(--text-muted);">Nostr Relays</span></span>
                 </div>
             </div>
             <div class="stat-card glass shadow-glow">
@@ -3125,7 +3139,7 @@ async function renderZoneView() {
             containerDiv.className = 'card glass shadow-glow mt-4';
             containerDiv.innerHTML = `
                 <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
-                    <h3>Active Zone Nodes & Hardware Attestation Cluster</h3>
+                    <h3>Active Endpoint Hosts &amp; Threat Sync Infrastructure</h3>
                     <button class="btn-text" id="toggle-zone-nodes-btn" onclick="toggleZoneNodesPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
                 </div>
                 <div id="zone-nodes-body" class="card-body">
@@ -3139,16 +3153,45 @@ async function renderZoneView() {
 
     if (nodesList && summary.nodes) {
         nodesList.innerHTML = summary.nodes.map(n => {
-            const statusClass = (n.status === 'Optimal' || n.status === 'Synchronized' || n.status === 'Active') ? 'green' : 'blue';
-            return `
-                <div class="timeline-item" style="border-left: 2px solid ${n.status === 'Optimal' ? 'var(--accent-green)' : (n.status === 'Synchronized' ? 'var(--accent-blue)' : 'var(--accent-purple)')}; margin-bottom: 8px;">
-                    <div class="item-icon" style="background-color: rgba(0, 255, 136, 0.1); color: var(--accent-green);">
-                        <i data-lucide="server"></i>
+            const isRelay = n.node_type === 'message_relay' || n.role === 'Nostr Relay Pool' || String(n.id).startsWith('relay:');
+            if (isRelay) {
+                return `
+                <div class="timeline-item" style="border-left: 2px solid var(--accent-purple); margin-bottom: 8px;">
+                    <div class="item-icon" style="background-color: rgba(188, 140, 242, 0.15); color: var(--accent-purple);">
+                        <i data-lucide="radio"></i>
                     </div>
                     <div class="item-info" style="flex: 1;">
                         <div class="item-title" style="display: flex; justify-content: space-between; align-items: center;">
                             <span style="font-weight: 600;">${escapeHtml(n.name)} <code style="font-size: 11px; opacity: 0.8; margin-left: 6px;">${escapeHtml(n.address)}</code></span>
-                            <span class="badge ${statusClass}">${escapeHtml(n.status)}</span>
+                            <span class="badge purple">Cloud Message Relay</span>
+                        </div>
+                        <div class="item-meta" style="margin-top: 4px;">
+                            <span><i data-lucide="cloud"></i> Decentralized Threat Transport Pool</span>
+                            <span><i data-lucide="wifi"></i> Public WebSocket</span>
+                            <span><i data-lucide="activity"></i> Latency: ${n.latency_ms} ms</span>
+                        </div>
+                    </div>
+                </div>
+                `;
+            } else {
+                const isLocal = n.role === 'Master Core' || String(n.id).includes('local') || (summary.node_id && n.id === summary.node_id);
+                const hostBadge = isLocal 
+                    ? `<span class="badge green">Local Host (Core)</span>` 
+                    : (n.status === 'Quarantined' ? `<span class="badge red">Quarantined Peer</span>` : `<span class="badge blue">Remote Peer</span>`);
+                const borderStyle = isLocal 
+                    ? 'var(--accent-green)' 
+                    : (n.status === 'Quarantined' ? 'var(--accent-red)' : 'var(--accent-blue)');
+                const iconBg = isLocal ? 'rgba(0, 255, 136, 0.1)' : 'rgba(0, 217, 255, 0.1)';
+                const iconColor = isLocal ? 'var(--accent-green)' : 'var(--accent-blue)';
+                return `
+                <div class="timeline-item" style="border-left: 2px solid ${borderStyle}; margin-bottom: 8px;">
+                    <div class="item-icon" style="background-color: ${iconBg}; color: ${iconColor};">
+                        <i data-lucide="monitor"></i>
+                    </div>
+                    <div class="item-info" style="flex: 1;">
+                        <div class="item-title" style="display: flex; justify-content: space-between; align-items: center;">
+                            <span style="font-weight: 600;">${escapeHtml(n.name)} <code style="font-size: 11px; opacity: 0.8; margin-left: 6px;">${escapeHtml(n.address)}</code></span>
+                            ${hostBadge}
                         </div>
                         <div class="item-meta" style="margin-top: 4px;">
                             <span><i data-lucide="shield-check"></i> ${escapeHtml(n.attestation)}</span>
@@ -3157,14 +3200,15 @@ async function renderZoneView() {
                         </div>
                     </div>
                 </div>
-            `;
+                `;
+            }
         }).join('');
 
-        if (summary.nodes.length <= 1) {
+        if (hostNodes.length <= 1 && remotePeers === 0) {
             nodesList.innerHTML += `
                 <div class="timeline-item" style="border-left: 2px solid var(--accent-orange); margin-bottom: 8px;">
                     <div class="item-icon" style="background-color: rgba(255, 165, 0, 0.1); color: var(--accent-orange);">
-                        <i data-lucide="radio"></i>
+                        <i data-lucide="shield"></i>
                     </div>
                     <div class="item-info">
                         <div class="item-title">Autonomous Sentinel Zone</div>

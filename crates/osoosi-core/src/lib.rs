@@ -8076,6 +8076,7 @@ impl EdrOrchestrator {
             "name": format!("Local Node ({})", host_name),
             "address": "127.0.0.1:3030",
             "role": "Master Core",
+            "node_type": "endpoint_host",
             "attestation": if hardened_status.as_ref().map(|s| s.tpm.available).unwrap_or(false) { "TPM 2.0 RoT Verified" } else { "Software Enclave Verified" },
             "status": "Optimal",
             "latency_ms": 0.0
@@ -8097,6 +8098,7 @@ impl EdrOrchestrator {
                     "name": label,
                     "address": "P2P Mesh Swarm",
                     "role": if is_threat { "Suspect Node" } else { "Active Mesh Peer" },
+                    "node_type": "endpoint_host",
                     "attestation": if is_threat { "Attestation Failed" } else { "TPM 2.0 Verified (PCR-0 Match)" },
                     "status": if is_threat { "Quarantined" } else { "Synchronized" },
                     "latency_ms": 1.2
@@ -8105,6 +8107,7 @@ impl EdrOrchestrator {
         }
 
         let mesh_config = osoosi_types::load_mesh_listen_config();
+        let relay_count = mesh_config.nostr_relays.iter().filter(|r| !r.trim().is_empty()).count();
         for relay in &mesh_config.nostr_relays {
             if !relay.trim().is_empty() {
                 nodes.push(serde_json::json!({
@@ -8112,6 +8115,7 @@ impl EdrOrchestrator {
                     "name": format!("Nostr Relay ({})", relay),
                     "address": relay,
                     "role": "Nostr Relay Pool",
+                    "node_type": "message_relay",
                     "attestation": "Public / Configured Transport",
                     "status": "Configured",
                     "latency_ms": 15.0
@@ -8119,8 +8123,12 @@ impl EdrOrchestrator {
             }
         }
 
+        let host_count = 1 + peer_count;
+
         serde_json::json!({
             "peer_count": peer_count,
+            "host_count": host_count,
+            "relay_count": relay_count,
             "security_score": security_score,
             "recommendations": recommendations,
             "structured_recommendations": structured_recommendations,
