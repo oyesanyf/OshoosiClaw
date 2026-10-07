@@ -6767,7 +6767,7 @@ impl EdrOrchestrator {
         }));
 
         // Remote Peers from peer_status and reputation
-        let query = "SELECT peer_id as node_id, 1.0 as score FROM peer_status WHERE peer_id != ? UNION SELECT node_id, score FROM reputation WHERE node_id != ?";
+        let query = "SELECT peer_id as node_id, 1.0 as score FROM peer_status WHERE peer_id != ? AND (datetime(received_at) > datetime('now', '-30 minutes') OR received_at IS NULL) UNION SELECT node_id, score FROM reputation WHERE node_id != ? AND (datetime(last_updated) > datetime('now', '-30 minutes') OR last_updated IS NULL)";
         if let Ok(known_peers) = memory.query_json(query, &[self_id.clone(), self_id.clone()]) {
             for peer in known_peers {
                 let id = peer["node_id"].as_str().unwrap_or("?");
@@ -8386,7 +8386,7 @@ impl EdrOrchestrator {
             "latency_ms": 0.0
         })];
 
-        let query = "SELECT peer_id as node_id, 1.0 as score FROM peer_status WHERE peer_id != ? UNION SELECT node_id, score FROM reputation WHERE node_id != ?";
+        let query = "SELECT peer_id as node_id, 1.0 as score FROM peer_status WHERE peer_id != ? AND (datetime(received_at) > datetime('now', '-30 minutes') OR received_at IS NULL) UNION SELECT node_id, score FROM reputation WHERE node_id != ? AND (datetime(last_updated) > datetime('now', '-30 minutes') OR last_updated IS NULL)";
         if let Ok(known_peers) = self.memory().query_json(query, &[self.trust.did().to_string(), self.trust.did().to_string()]) {
             for peer in known_peers {
                 let id = peer["node_id"].as_str().unwrap_or("?");
@@ -9363,7 +9363,7 @@ mod tests {
         let _ = memory.query_json("INSERT INTO reputation (node_id, score, alerts_verified, false_positives, last_updated) VALUES (?, 1.0, 5, 0, ?)", &[did_hotspot2.to_string(), now_iso.clone()]);
 
         // Verify query matches our get_zone_summary logic
-        let query = "SELECT peer_id as node_id, 1.0 as score FROM peer_status WHERE peer_id != ? UNION SELECT node_id, score FROM reputation WHERE node_id != ?";
+        let query = "SELECT peer_id as node_id, 1.0 as score FROM peer_status WHERE peer_id != ? AND (datetime(received_at) > datetime('now', '-30 minutes') OR received_at IS NULL) UNION SELECT node_id, score FROM reputation WHERE node_id != ? AND (datetime(last_updated) > datetime('now', '-30 minutes') OR last_updated IS NULL)";
         let peers = memory.query_json(query, &["did:osoosi:local".to_string(), "did:osoosi:local".to_string()]).unwrap();
         assert_eq!(peers.len(), 3);
 

@@ -6803,6 +6803,11 @@ async function downloadAllCalibratedModels() {
     }
 }
 
+function stripAnsi(str) {
+    if (!str) return '';
+    return str.replace(/[\u001b\x1b]\[[0-9;?]*[a-zA-Z]/g, '').trim();
+}
+
 async function pollModelPullProgress() {
     const card = document.getElementById('active-pull-progress-card');
     const body = document.getElementById('active-pull-progress-body');
@@ -6849,7 +6854,7 @@ async function pollModelPullProgress() {
                     <div style="width:100%; height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden;">
                         <div style="width:${pct}%; height:100%; background:${barColor}; border-radius:3px; transition:width 0.4s ease;"></div>
                     </div>
-                    ${item.error ? `<div style="font-size:11px; color:var(--accent-red); margin-top:6px;"><i data-lucide="alert-triangle" style="width:11px; margin-right:3px;"></i> ${escapeHtml(item.error)}</div>` : ''}
+                    ${item.error ? `<div style="font-size:11px; color:var(--accent-red); margin-top:6px;"><i data-lucide="alert-triangle" style="width:11px; margin-right:3px;"></i> ${escapeHtml(stripAnsi(item.error))}</div>` : ''}
                 </div>
             `;
         }).join('');

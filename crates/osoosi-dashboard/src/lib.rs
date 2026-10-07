@@ -979,11 +979,11 @@ async fn get_calibrated_models(State(_state): State<DashboardState>) -> Json<Cal
         },
         CalibratedModelItem {
             role: "Semantic Embedding & AAD".to_string(),
-            model: "embeddinggemma:2b".to_string(),
+            model: "embeddinggemma:latest".to_string(),
             purpose: "High-density vector embeddings for Agent Anomaly Detection (AAD) & semantic threat search".to_string(),
             tier_fit: "Dense vector transformation optimized for local CPU/GPU acceleration".to_string(),
-            size_est_gb: 1.7,
-            installed: is_installed("embeddinggemma:2b"),
+            size_est_gb: 0.6,
+            installed: is_installed("embeddinggemma:latest") || is_installed("embeddinggemma"),
         },
         CalibratedModelItem {
             role: "Foundation Security".to_string(),
@@ -1007,6 +1007,12 @@ async fn get_calibrated_models(State(_state): State<DashboardState>) -> Json<Cal
     })
 }
 
+fn strip_ansi_escapes(s: &str) -> String {
+    static ANSI_RE: once_cell::sync::Lazy<regex::Regex> =
+        once_cell::sync::Lazy::new(|| regex::Regex::new(r"\x1b\[[0-9;?]*[a-zA-Z]").unwrap());
+    ANSI_RE.replace_all(s, "").to_string()
+}
+
 async fn post_model_pull(
     State(_state): State<DashboardState>,
     Json(payload): Json<PullModelRequest>,
@@ -1026,7 +1032,7 @@ async fn post_model_pull(
     let all_calibrated = [
         deep_model_name,
         "qwen2.5:1.5b",
-        "embeddinggemma:2b",
+        "embeddinggemma:latest",
         "fenkohq/foundation-sec-8b",
     ];
 
@@ -1127,13 +1133,15 @@ async fn post_model_pull(
                         } else {
                             let status = res.status();
                             let txt = res.text().await.unwrap_or_default();
-                            warn!("Ollama REST pull failed ({status}): {txt}");
-                            pull_err = Some(format!("Ollama API {status}: {txt}"));
+                            let clean_txt = strip_ansi_escapes(&txt);
+                            warn!("Ollama REST pull failed ({status}): {clean_txt}");
+                            pull_err = Some(format!("Ollama API {status}: {}", clean_txt.trim()));
                         }
                     }
                     Err(e) => {
-                        warn!("Ollama REST pull connection failed: {e}");
-                        pull_err = Some(e.to_string());
+                        let clean_err = strip_ansi_escapes(&e.to_string());
+                        warn!("Ollama REST pull connection failed: {clean_err}");
+                        pull_err = Some(clean_err);
                     }
                 }
             }
@@ -1167,13 +1175,15 @@ async fn post_model_pull(
                             pulled = true;
                         } else {
                             let stderr = String::from_utf8_lossy(&out.stderr);
-                            let msg = format!("CLI pull failed: {}", stderr.trim());
+                            let clean_stderr = strip_ansi_escapes(&stderr);
+                            let msg = format!("CLI pull failed: {}", clean_stderr.trim());
                             warn!("{}", msg);
                             pull_err = Some(msg);
                         }
                     }
                     Err(e) => {
-                        let msg = format!("Failed to run 'ollama pull': {e}");
+                        let clean_err = strip_ansi_escapes(&e.to_string());
+                        let msg = format!("Failed to run 'ollama pull': {clean_err}");
                         warn!("{}", msg);
                         pull_err = Some(msg);
                     }
@@ -1204,7 +1214,7 @@ async fn post_model_pull(
                         total_bytes: 0,
                         percent: 0.0,
                         message: format!("Download failed for {}", model_to_pull),
-                        error: pull_err,
+                        error: pull_err.map(|e| strip_ansi_escapes(&e).trim().to_string()),
                         updated_at: chrono::Utc::now().to_rfc3339(),
                     },
                 );
@@ -4033,7 +4043,7 @@ async fn get_peers(State(state): State<DashboardState>) -> Json<Value> {
         osoosi_core::MemoryStore::new(&db_path).ok().map(std::sync::Arc::new)
     });
     if let Some(ref mem) = mem_store {
-        let query = "SELECT peer_id as node_id, 1.0 as score FROM peer_status WHERE peer_id != ? UNION SELECT node_id, score FROM reputation WHERE node_id != ?";
+        let query = "SELECT peer_id as node_id, 1.0 as score FROM peer_status WHERE peer_id != ? AND (datetime(received_at) > datetime('now', '-30 minutes') OR received_at IS NULL) UNION SELECT node_id, score FROM reputation WHERE node_id != ? AND (datetime(last_updated) > datetime('now', '-30 minutes') OR last_updated IS NULL)";
         if let Ok(known) = mem.query_json(query, &[local_did.clone(), local_did.clone()]) {
             for row in known {
                 let nid = row["node_id"].as_str().unwrap_or("");

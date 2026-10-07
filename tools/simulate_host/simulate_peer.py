@@ -1,15 +1,15 @@
 #!/usr/bin/env python3
 """
-OpenỌ̀ṣọ́ọ̀sì Simulated Host & Mesh Communication Test Tool
-=========================================================
-Generates an authentic Ed25519 DID identity, performs a cryptographic
-handshake, and broadcasts peer announcement and heartbeats across:
+[TEST MODE] OpenỌ̀ṣọ́ọ̀sì Simulated Host & Mesh Communication Test Tool
+=====================================================================
+Isolated testing utility that generates an authentic Ed25519 DID identity,
+performs a cryptographic handshake, and broadcasts peer announcement:
 1. Decentralized Nostr WebSocket Relays (wss://relay.damus.io, wss://nos.lol)
-2. Local Wire P2P Mesh Handshake & Attestation Store (database/osoosi.db)
+2. Local Test Wire P2P Handshake Store (database/test_simulation.db)
 3. Verifies immediate reflection in the OpenỌ̀ṣọ́ọ̀sì Web Dashboard APIs
 
 Usage:
-  python tools/simulate_host/simulate_peer.py [--hotspot] [--keep] [--cleanup]
+  python tools/simulate_host/simulate_peer.py [--hotspot] [--keep]
 """
 
 import sys
@@ -153,7 +153,7 @@ async def broadcast_to_nostr_relay(relay_url: str, event: dict, timeout_secs: fl
         return False, False, str(e)
 
 
-def sync_to_local_database(host: SimulatedHost, db_path: str = "database/osoosi.db"):
+def sync_to_local_database(host: SimulatedHost, db_path: str = "database/test_simulation.db"):
     """Inserts or updates the simulated host record in SQLite peer_status & reputation."""
     if not os.path.exists(db_path):
         os.makedirs(os.path.dirname(db_path), exist_ok=True)
@@ -198,7 +198,7 @@ def sync_to_local_database(host: SimulatedHost, db_path: str = "database/osoosi.
     return True
 
 
-def remove_from_local_database(peer_id: str, db_path: str = "database/osoosi.db"):
+def remove_from_local_database(peer_id: str, db_path: str = "database/test_simulation.db"):
     """Removes a test peer from SQLite tables."""
     if not os.path.exists(db_path):
         return
@@ -225,7 +225,8 @@ def query_dashboard_api(endpoint: str = "http://127.0.0.1:3030/api/peers"):
 
 async def main_async(args):
     print("=" * 70)
-    print("  OpenỌ̀ṣọ́ọ̀sì Autonomous P2P Mesh - Host Communication Simulator")
+    print("  [TEST MODE] OpenỌ̀ṣọ́ọ̀sì Simulated Host & Mesh Communication Test Tool")
+    print("  NOTE: This is an isolated test tool. Target DB: " + str(args.db))
     print("=" * 70)
     
     count = max(1, getattr(args, "count", 1))
@@ -294,33 +295,29 @@ async def main_async(args):
             break
 
     if not found_in_dashboard:
-        print("    [i] Note: The dashboard process may be compiling or restarting. The peers are safely committed in database/osoosi.db and will appear upon startup.")
+        print(f"    [i] Note: The dashboard process may be compiling or restarting. The peers are safely committed in {args.db} and will appear upon startup.")
 
     # Cleanup or Keep
     print("\n" + "=" * 70)
-    if args.cleanup:
-        print(f"[!] Cleanup flag passed. Purging simulated peers from database...")
+    if not args.keep:
+        print(f"[!] Test Mode: Purging simulated peers from '{args.db}' (default test cleanup)...")
         for h in simulated_hosts:
             remove_from_local_database(h.did, args.db)
-        print("[✔] Database cleaned.")
-    elif not args.keep:
-        print(f"[+] Simulation completed successfully ({count} simulated host(s) active)!")
-        print(f"    All simulated hosts are registered and communicating across the mesh.")
-        print(f"    To remove later, run: python tools/simulate_host/simulate_peer.py --cleanup")
+        print("[✔] Test database cleaned. (Pass --keep to preserve test records)")
     else:
-        print(f"[+] Simulated peer identities preserved in database.")
+        print(f"[+] Simulated peer identities preserved in test database '{args.db}' (--keep specified).")
     print("=" * 70)
 
 
 def main():
-    parser = argparse.ArgumentParser(description="OpenỌ̀ṣọ́ọ̀sì Simulated Host & Communication Tester")
+    parser = argparse.ArgumentParser(description="[TEST MODE] OpenỌ̀ṣọ́ọ̀sì Simulated Host & Communication Tester")
     parser.add_argument("--count", type=int, default=1, help="Number of simulated hosts to launch (default: 1)")
     parser.add_argument("--hotspot", action="store_true", default=True, help="Simulate a host on a mobile cellular hotspot (default: True)")
     parser.add_argument("--lan", action="store_false", dest="hotspot", help="Simulate a host on the local LAN")
     parser.add_argument("--alias", type=str, default=None, help="Custom node label alias")
-    parser.add_argument("--db", type=str, default="database/osoosi.db", help="Path to SQLite database")
-    parser.add_argument("--keep", action="store_true", help="Preserve simulated peer in database")
-    parser.add_argument("--cleanup", action="store_true", help="Remove the simulated peer from database after test")
+    parser.add_argument("--db", type=str, default="database/test_simulation.db", help="Path to SQLite test database (default: database/test_simulation.db)")
+    parser.add_argument("--keep", action="store_true", default=False, help="Preserve simulated peer in database (default is to clean up after test run)")
+    parser.add_argument("--cleanup", action="store_true", default=True, help="Remove the simulated peer from database after test (default: True)")
     
     args = parser.parse_args()
     asyncio.run(main_async(args))
