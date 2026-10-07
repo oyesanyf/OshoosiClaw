@@ -6905,7 +6905,7 @@ async function pollModelPullProgress() {
                         <span style="font-weight:600; font-family:monospace; font-size:13px; color:var(--text-header);">${escapeHtml(item.model)}</span>
                         ${statusBadge}
                     </div>
-                    <div style="font-size:12px; color:var(--text-muted); margin-bottom:8px;">${escapeHtml(item.message || '')}</div>
+                    ${item.message ? `<div style="font-size:12px; color:var(--text-muted); margin-bottom:8px; display:flex; align-items:center; gap:6px;"><i data-lucide="activity" style="width:13px; height:13px; flex-shrink:0;"></i><span>${escapeHtml(item.message)}</span></div>` : ''}
                     <div style="width:100%; height:6px; background:rgba(255,255,255,0.08); border-radius:3px; overflow:hidden;">
                         <div style="width:${pct}%; height:100%; background:${barColor}; border-radius:3px; transition:width 0.4s ease;"></div>
                     </div>

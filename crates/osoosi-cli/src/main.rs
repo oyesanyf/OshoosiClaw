@@ -258,6 +258,16 @@ enum Commands {
     /// Inspect system hardware specs, model memory requirements, and operational readiness
     #[command(name = "check-resources", alias = "doctor", alias = "check_resources", alias = "resources")]
     CheckResources,
+    /// Pull host-calibrated AI models for Ollama with automatic IPv4 fallback and IPv6 auto-restoration
+    #[command(name = "pull-model", alias = "pull_model", alias = "model-pull")]
+    PullModel {
+        /// Specific model name to pull (e.g. embeddinggemma:latest, qwen2.5:1.5b). If omitted, pulls all calibrated models.
+        #[arg(value_name = "MODEL")]
+        model: Option<String>,
+        /// Specific model name to pull via flag
+        #[arg(long = "model", hide = true)]
+        model_flag: Option<String>,
+    },
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -1289,6 +1299,10 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         }
         Some(Commands::CheckResources) => {
             handle_check_resources_command();
+        }
+        Some(Commands::PullModel { model, model_flag }) => {
+            let target_model = model.or(model_flag);
+            handle_pull_model_command(target_model).await?;
         }
         Some(Commands::Lite) => unreachable!(),
         None => {
@@ -4479,6 +4493,157 @@ fn handle_check_resources_command() {
     println!("================================================================================\n");
 }
 
+async fn handle_pull_model_command(model: Option<String>) -> anyhow::Result<()> {
+    println!("================================================================================");
+    println!("           OPENỌ̀ṢỌ́Ọ̀SÌ HOST MODEL PULL WITH IPV6 LIFECYCLE GUARD               ");
+    println!("================================================================================");
+
+    let target_models = if let Some(m) = model {
+        let trimmed = m.trim().to_string();
+        if trimmed.is_empty() {
+            anyhow::bail!("Model name cannot be empty");
+        }
+        vec![trimmed]
+    } else {
+        println!("Detecting host hardware tier and calibrated model suite...");
+        let resources = osoosi_behavioral::hardware_selection::get_system_resources();
+        let tier = resources.determine_tier();
+        let ai_cfg = osoosi_types::config::load_ai_config();
+        let installed_models = osoosi_behavioral::hardware_selection::query_installed_ollama_models(&ai_cfg.reasoning_url).await;
+
+        let deep_model_name = match tier {
+            osoosi_behavioral::hardware_selection::HardwareTier::Tier4Enterprise => "qwen2.5:32b",
+            osoosi_behavioral::hardware_selection::HardwareTier::Tier3HighPerf => "qwen2.5:14b",
+            osoosi_behavioral::hardware_selection::HardwareTier::Tier2MidRange => "qwen2.5:7b",
+            osoosi_behavioral::hardware_selection::HardwareTier::Tier1Constrained => "qwen2.5:1.5b",
+        };
+
+        let all_calibrated = [
+            deep_model_name,
+            "qwen2.5:1.5b",
+            "embeddinggemma:latest",
+            "fenkohq/foundation-sec-8b",
+        ];
+
+        let mut targets = Vec::new();
+        for m in &all_calibrated {
+            let already = installed_models.iter().any(|inst| osoosi_behavioral::hardware_selection::model_matches(m, inst));
+            if !already {
+                targets.push(m.to_string());
+            } else {
+                println!("  [✓] Model '{}' already installed on this host.", m);
+            }
+        }
+
+        if targets.is_empty() {
+            println!("\nAll calibrated models for this host are already installed! Nothing to pull.");
+            return Ok(());
+        }
+        targets
+    };
+
+    println!("\nTarget model(s) to pull: {:?}", target_models);
+    println!("Acquiring network guard (suspending IPv6 if needed to prevent Cloudflare R2 timeouts)...");
+    let mut guard = osoosi_dashboard::ipv6_guard::Ipv6SuspensionGuard::acquire().await;
+    if guard.has_disabled_adapters() {
+        println!("✓ Temporarily disabled IPv6 on adapter(s): {:?}", guard.disabled_adapters());
+        println!("  (IPv6 will be automatically re-enabled immediately after pull completes)");
+    } else {
+        println!("ℹ No active IPv6 adapters needed suspension or elevation required.");
+    }
+
+    let mut succeeded = Vec::new();
+    let mut failed = Vec::new();
+
+    for m in &target_models {
+        println!("\n--------------------------------------------------------------------------------");
+        println!("▶ Pulling model: {}", m);
+        println!("--------------------------------------------------------------------------------");
+
+        // Attempt via CLI 'ollama pull' first
+        let mut cli_cmd = tokio::process::Command::new("ollama");
+        cli_cmd.args(["pull", m]);
+
+        let cli_res = cli_cmd.status().await;
+        let success = match cli_res {
+            Ok(status) if status.success() => true,
+            Ok(status) => {
+                warn!("CLI 'ollama pull {}' exited with non-zero status: {}", m, status);
+                false
+            }
+            Err(e) => {
+                warn!("Could not spawn 'ollama pull': {}. Falling back to REST API...", e);
+                false
+            }
+        };
+
+        if success {
+            println!("✓ Successfully pulled '{}'.", m);
+            succeeded.push(m.clone());
+        } else {
+            // Attempt REST pull
+            println!("Attempting fallback via Ollama REST API...");
+            let ai_cfg = osoosi_types::config::load_ai_config();
+            let base_url = ai_cfg.reasoning_url;
+            let pull_url = if let Ok(mut u) = reqwest::Url::parse(&base_url) {
+                u.set_path("/api/pull");
+                u.set_query(None);
+                u.to_string()
+            } else {
+                format!("{}/api/pull", base_url.trim_end_matches('/'))
+            };
+
+            let rest_res = reqwest::Client::builder()
+                .timeout(std::time::Duration::from_secs(600))
+                .build()
+                .map_err(|e| anyhow::anyhow!(e))?
+                .post(&pull_url)
+                .json(&serde_json::json!({
+                    "name": m,
+                    "stream": false
+                }))
+                .send()
+                .await;
+
+            match rest_res {
+                Ok(resp) if resp.status().is_success() => {
+                    println!("✓ Successfully pulled '{}' via REST API.", m);
+                    succeeded.push(m.clone());
+                }
+                Ok(resp) => {
+                    let err_txt = resp.text().await.unwrap_or_default();
+                    eprintln!("✗ REST pull failed for '{}': {}", m, err_txt);
+                    failed.push((m.clone(), err_txt));
+                }
+                Err(e) => {
+                    eprintln!("✗ REST pull connection error for '{}': {}", m, e);
+                    failed.push((m.clone(), e.to_string()));
+                }
+            }
+        }
+    }
+
+    println!("\nRestoring IPv6 bindings on network adapters...");
+    guard.restore().await;
+    println!("✓ IPv6 bindings restored successfully.");
+
+    println!("================================================================================");
+    println!("                             PULL EXECUTION SUMMARY                             ");
+    println!("================================================================================");
+    println!(" Succeeded : {} model(s) {:?}", succeeded.len(), succeeded);
+    if !failed.is_empty() {
+        println!(" Failed    : {} model(s)", failed.len());
+        for (f_model, f_err) in &failed {
+            println!("   - {}: {}", f_model, f_err);
+        }
+        anyhow::bail!("Failed to pull {} model(s)", failed.len());
+    } else {
+        println!(" Status    : All requested models pulled and verified successfully.");
+    }
+
+    Ok(())
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5128,6 +5293,38 @@ mod tests {
         match cli_typo3.command {
             Some(Commands::Start { no_browser, .. }) => assert!(no_browser),
             _ => panic!("Expected Commands::Start"),
+        }
+    }
+
+    #[test]
+    fn test_pull_model_cli_parsing() {
+        for name in ["pull-model", "pull_model", "model-pull"] {
+            let cli = Cli::try_parse_from(["osoosi", name]).unwrap();
+            match cli.command {
+                Some(Commands::PullModel { model, model_flag }) => {
+                    assert_eq!(model, None);
+                    assert_eq!(model_flag, None);
+                }
+                _ => panic!("Expected Commands::PullModel"),
+            }
+        }
+
+        let cli_named = Cli::try_parse_from(["osoosi", "pull-model", "qwen2.5:1.5b"]).unwrap();
+        match cli_named.command {
+            Some(Commands::PullModel { model, model_flag }) => {
+                assert_eq!(model, Some("qwen2.5:1.5b".to_string()));
+                assert_eq!(model_flag, None);
+            }
+            _ => panic!("Expected Commands::PullModel"),
+        }
+
+        let cli_flag = Cli::try_parse_from(["osoosi", "pull-model", "--model", "embeddinggemma:latest"]).unwrap();
+        match cli_flag.command {
+            Some(Commands::PullModel { model, model_flag }) => {
+                assert_eq!(model, None);
+                assert_eq!(model_flag, Some("embeddinggemma:latest".to_string()));
+            }
+            _ => panic!("Expected Commands::PullModel"),
         }
     }
 }

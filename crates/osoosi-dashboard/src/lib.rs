@@ -29,6 +29,9 @@ use rand::Rng;
 use once_cell::sync::Lazy;
 use dashmap::DashMap;
 
+pub mod ipv6_guard;
+use ipv6_guard::Ipv6SuspensionGuard;
+
 /// In-memory state and metrics for the SkyRL EDR Self-Improvement & Tinker API.
 pub struct SkyRlServerState {
     pub dqn: DeepQEngine,
@@ -1120,6 +1123,14 @@ async fn post_model_pull(
         let base_url = reasoning_url.clone();
 
         tokio::spawn(async move {
+            let mut ipv6_guard = Ipv6SuspensionGuard::acquire().await;
+
+            let initial_message = if ipv6_guard.has_disabled_adapters() {
+                format!("IPv4 prioritized (IPv6 will be auto-restored after download). Pulling {}...", model_to_pull)
+            } else {
+                format!("Pulling {} via Ollama API...", model_to_pull)
+            };
+
             MODEL_PULL_TRACKER.insert(
                 model_to_pull.clone(),
                 ModelPullProgress {
@@ -1128,7 +1139,7 @@ async fn post_model_pull(
                     completed_bytes: 0,
                     total_bytes: 0,
                     percent: 15.0,
-                    message: format!("Pulling {} via Ollama API...", model_to_pull),
+                    message: initial_message,
                     error: None,
                     updated_at: chrono::Utc::now().to_rfc3339(),
                 },
@@ -1252,6 +1263,8 @@ async fn post_model_pull(
                     },
                 );
             }
+
+            ipv6_guard.restore().await;
         });
     }
 
