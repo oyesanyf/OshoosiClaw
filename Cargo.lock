@@ -5693,6 +5693,23 @@ dependencies = [
 ]
 
 [[package]]
+name = "osoosi-agent-anomaly"
+version = "0.1.1"
+dependencies = [
+ "anyhow",
+ "chrono",
+ "dashmap 6.1.0",
+ "regex",
+ "reqwest",
+ "serde",
+ "serde_json",
+ "thiserror 2.0.18",
+ "tokio",
+ "tracing",
+ "uuid",
+]
+
+[[package]]
 name = "osoosi-audit"
 version = "0.1.1"
 dependencies = [
@@ -5833,6 +5850,7 @@ dependencies = [
  "opentelemetry",
  "opentelemetry_sdk",
  "ort",
+ "osoosi-agent-anomaly",
  "osoosi-audit",
  "osoosi-behavioral",
  "osoosi-dns",
@@ -5886,6 +5904,7 @@ dependencies = [
  "blake3",
  "chrono",
  "hex",
+ "osoosi-agent-anomaly",
  "osoosi-behavioral",
  "osoosi-core",
  "osoosi-policy",

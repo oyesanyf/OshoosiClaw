@@ -81,6 +81,10 @@
                     <i data-lucide="brain-circuit"></i>
                     <span>RL Policy Training</span>
                 </a>
+                <a href="#" class="nav-item" data-view="agent-anomalies">
+                    <i data-lucide="bot"></i>
+                    <span>Agent Anomaly Detection</span>
+                </a>
             </nav>
             <div class="sidebar-footer">
                 <div class="status-indicator">
@@ -1374,6 +1378,136 @@
                                 </div>
                                 <div class="voter-desc" id="skyrl-step-desc">Awaiting step transition from security gym.</div>
                             </div>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Agent Anomaly Detection (AAD) View -->
+            <div id="agent-anomalies-view" class="view-content">
+                <!-- Header Banner -->
+                <div class="card glass shadow-glow mb-4" style="border-left: 4px solid #8b5cf6;">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                        <div>
+                            <div style="display: flex; align-items: center; gap: 10px;">
+                                <h3 style="font-size: 20px; font-weight: 600; color: var(--text-header);">Agent Anomaly Detection (AAD)</h3>
+                                <span class="badge purple" style="font-size: 11px;"><i data-lucide="bot" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>OWASP Agentic Top 10 (2026)</span>
+                                <span class="badge green" style="font-size: 11px;"><i data-lucide="zap" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>Out-of-Band Engine Active</span>
+                            </div>
+                            <p style="color: var(--text-secondary); font-size: 13px; margin-top: 4px;">
+                                Layer 1 Statistical Screener (&lt;5µs) · Layer 2 Semantic Reasoner · OWASP Top 10 for Agentic Applications (2026)
+                            </p>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <button id="aad-simulate-btn" class="btn-primary" onclick="triggerAgentAnomalySimulation()" style="background: linear-gradient(135deg, #8b5cf6, #6366f1); border: none; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; cursor: pointer; color: #fff;">
+                                <i data-lucide="play" style="width: 14px; height: 14px;"></i>
+                                <span>Simulate Agent Turn</span>
+                            </button>
+                            <button id="aad-refresh-btn" class="btn-secondary" onclick="renderAgentAnomaliesView()" style="padding: 8px 14px; font-size: 13px; border-radius: 8px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                                <i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i>
+                                <span>Refresh</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Top Stats Grid -->
+                <div class="stats-grid mb-4">
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">Monitored Agent Sessions</span>
+                            <i data-lucide="users" class="stat-icon" style="color: var(--accent-blue);"></i>
+                        </div>
+                        <div class="stat-value" id="aad-monitored-sessions">0</div>
+                        <div class="stat-subtext">Active agent execution threads</div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">Flagged Behavioral Anomalies</span>
+                            <i data-lucide="alert-triangle" class="stat-icon" style="color: #f59e0b;"></i>
+                        </div>
+                        <div class="stat-value" id="aad-total-anomalies">0</div>
+                        <div class="stat-subtext">Total behavioral deviations</div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">Critical / Rogue Threats</span>
+                            <i data-lucide="shield-alert" class="stat-icon" style="color: #ef4444;"></i>
+                        </div>
+                        <div class="stat-value" id="aad-critical-threats">0</div>
+                        <div class="stat-subtext">ASI10 / Prompt Injections blocked</div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">OWASP ASI Compliance</span>
+                            <i data-lucide="check-circle-2" class="stat-icon" style="color: #10b981;"></i>
+                        </div>
+                        <div class="stat-value" id="aad-compliance-pct">100%</div>
+                        <div class="stat-subtext">10 / 10 Threat vectors covered</div>
+                    </div>
+                </div>
+
+                <!-- OWASP Top 10 Breakdown Bar -->
+                <div class="card glass shadow-glow mb-4">
+                    <div class="card-header">
+                        <h4 style="font-size: 15px; font-weight: 600; color: var(--text-header); display: flex; align-items: center; gap: 8px;">
+                            <i data-lucide="layers" style="width: 16px; height: 16px; color: #8b5cf6;"></i>
+                            OWASP Agentic Applications (2026) Risk Vector Distribution
+                        </h4>
+                    </div>
+                    <div class="card-body">
+                        <div id="aad-owasp-tags-container" style="display: flex; flex-wrap: wrap; gap: 10px;">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Two-Column Layout: Live Findings Feed & Active Sessions -->
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                    <!-- Real-time Timeline Feed of Anomaly Findings -->
+                    <div class="card glass shadow-glow">
+                        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                            <h4 style="font-size: 15px; font-weight: 600; color: var(--text-header); display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="activity" style="width: 16px; height: 16px; color: #f59e0b;"></i>
+                                Real-time Anomaly Findings
+                            </h4>
+                            <span id="aad-findings-count" class="badge yellow" style="font-size: 11px;">0 Flagged</span>
+                        </div>
+                        <div class="card-body" style="max-height: 480px; overflow-y: auto; padding: 12px;" id="aad-findings-feed">
+                            <div style="text-align: center; color: var(--text-muted); padding: 40px 0;">
+                                <i data-lucide="shield-check" style="width: 36px; height: 36px; margin: 0 auto 10px; color: #10b981; opacity: 0.6;"></i>
+                                <div>No agent anomalies detected. Runtime behavior nominal.</div>
+                            </div>
+                        </div>
+                    </div>
+
+                    <!-- Active Monitored Agent Sessions Table -->
+                    <div class="card glass shadow-glow">
+                        <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                            <h4 style="font-size: 15px; font-weight: 600; color: var(--text-header); display: flex; align-items: center; gap: 8px;">
+                                <i data-lucide="cpu" style="width: 16px; height: 16px; color: var(--accent-blue);"></i>
+                                Active Monitored Agent Sessions
+                            </h4>
+                            <span id="aad-sessions-count" class="badge blue" style="font-size: 11px;">0 Active</span>
+                        </div>
+                        <div class="card-body" style="max-height: 480px; overflow-y: auto; padding: 0;">
+                            <table class="data-table" style="width: 100%; border-collapse: collapse;">
+                                <thead>
+                                    <tr>
+                                        <th style="padding: 10px 14px; text-align: left; font-size: 12px;">Session / Agent</th>
+                                        <th style="padding: 10px 14px; text-align: center; font-size: 12px;">Total Calls</th>
+                                        <th style="padding: 10px 14px; text-align: center; font-size: 12px;">Anomalies</th>
+                                        <th style="padding: 10px 14px; text-align: center; font-size: 12px;">Max Severity</th>
+                                    </tr>
+                                </thead>
+                                <tbody id="aad-sessions-table-body">
+                                    <tr>
+                                        <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 40px 0;">
+                                            No agent sessions registered. Telemetry awaiting ingestion.
+                                        </td>
+                                    </tr>
+                                </tbody>
+                            </table>
                         </div>
                     </div>
                 </div>

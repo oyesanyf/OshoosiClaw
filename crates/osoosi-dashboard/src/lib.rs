@@ -179,6 +179,7 @@ pub struct DashboardState {
     pub backend: Option<Arc<osoosi_core::EdrOrchestrator>>,
     pub skyrl: Arc<tokio::sync::RwLock<SkyRlServerState>>,
     pub mock_blocking_rules: Arc<tokio::sync::RwLock<Vec<osoosi_types::BlockingRule>>>,
+    pub agent_anomaly_detector: Arc<osoosi_agent_anomaly::AgentAnomalyDetector>,
 }
 
 impl DashboardState {
@@ -186,11 +187,19 @@ impl DashboardState {
         join_gate: Option<Arc<osoosi_wire::JoinGate>>,
         backend: Option<Arc<osoosi_core::EdrOrchestrator>>,
     ) -> Self {
+        let agent_anomaly_detector = backend
+            .as_ref()
+            .map(|b| b.agent_anomaly_detector.clone())
+            .unwrap_or_else(|| {
+                Arc::new(osoosi_agent_anomaly::AgentAnomalyDetector::new(50, 200, None))
+            });
+
         Self {
             join_gate,
             backend,
             skyrl: Arc::new(tokio::sync::RwLock::new(SkyRlServerState::new())),
             mock_blocking_rules: Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            agent_anomaly_detector,
         }
     }
 }
@@ -709,6 +718,12 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/history/export", get(export_history))
         .route("/api/logs/files", get(get_log_files))
         .route("/api/logs/view", get(get_log_view))
+        .route("/api/agent-anomalies/evaluate", post(post_agent_anomalies_evaluate))
+        .route("/api/agent-anomalies/enforce", post(post_agent_anomalies_enforce))
+        .route("/api/agent-anomalies/findings", get(get_agent_anomalies_findings))
+        .route("/api/agent-anomalies/sessions", get(get_agent_anomalies_sessions))
+        .route("/api/agent-anomalies/summary", get(get_agent_anomalies_summary))
+        .route("/api/agent-anomalies/simulate-test", post(post_agent_anomalies_simulate_test))
         .with_state(state);
 
     let cors = CorsLayer::new()
@@ -4680,6 +4695,127 @@ async fn get_log_view(
     }
 }
 
+#[derive(Debug, Deserialize)]
+pub struct EnforcePayload {
+    #[serde(flatten)]
+    pub telemetry: osoosi_agent_anomaly::ToolCallTelemetry,
+    pub mode: Option<String>,
+}
+
+#[derive(Debug, Deserialize, Default)]
+pub struct AgentFindingsQuery {
+    #[serde(default = "default_agent_findings_limit")]
+    pub limit: usize,
+}
+fn default_agent_findings_limit() -> usize {
+    100
+}
+
+pub async fn post_agent_anomalies_evaluate(
+    State(state): State<DashboardState>,
+    Json(telemetry): Json<osoosi_agent_anomaly::ToolCallTelemetry>,
+) -> impl IntoResponse {
+    let finding = state.agent_anomaly_detector.evaluate_immediate(&telemetry).await;
+    (
+        StatusCode::OK,
+        Json(json!({
+            "anomalous": finding.is_some(),
+            "finding": finding,
+        })),
+    )
+}
+
+pub async fn post_agent_anomalies_enforce(
+    State(state): State<DashboardState>,
+    Query(query_params): Query<std::collections::HashMap<String, String>>,
+    Json(payload): Json<serde_json::Value>,
+) -> impl IntoResponse {
+    let (telemetry, mode) = if let Ok(wrapped) = serde_json::from_value::<EnforcePayload>(payload.clone()) {
+        let m = wrapped.mode.unwrap_or_else(|| query_params.get("mode").cloned().unwrap_or_else(|| "enforce".to_string()));
+        (wrapped.telemetry, m)
+    } else if let Ok(direct_tel) = serde_json::from_value::<osoosi_agent_anomaly::ToolCallTelemetry>(payload) {
+        let m = query_params.get("mode").cloned().unwrap_or_else(|| "enforce".to_string());
+        (direct_tel, m)
+    } else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Invalid ToolCallTelemetry payload"
+            })),
+        );
+    };
+
+    let decision = state.agent_anomaly_detector.enforce_policy(&telemetry, &mode).await;
+    (StatusCode::OK, Json(json!(decision)))
+}
+
+pub async fn get_agent_anomalies_findings(
+    State(state): State<DashboardState>,
+    Query(query): Query<AgentFindingsQuery>,
+) -> impl IntoResponse {
+    let findings = state.agent_anomaly_detector.get_recent_findings(query.limit).await;
+    (StatusCode::OK, Json(findings))
+}
+
+pub async fn get_agent_anomalies_sessions(
+    State(state): State<DashboardState>,
+) -> impl IntoResponse {
+    let summaries = state.agent_anomaly_detector.get_session_summaries();
+    (StatusCode::OK, Json(summaries))
+}
+
+pub async fn get_agent_anomalies_summary(
+    State(state): State<DashboardState>,
+) -> impl IntoResponse {
+    let summary = state.agent_anomaly_detector.get_risk_summary().await;
+    (StatusCode::OK, Json(summary))
+}
+
+pub async fn post_agent_anomalies_simulate_test(
+    State(state): State<DashboardState>,
+) -> impl IntoResponse {
+    let now = chrono::Utc::now();
+    // 1. Benign tool call
+    let benign = osoosi_agent_anomaly::ToolCallTelemetry {
+        session_id: "agent-sim-session-01".to_string(),
+        agent_id: "google-gemini-inventory-worker".to_string(),
+        trace_id: Some("sim-trace-01".to_string()),
+        tool_name: "list_inventory".to_string(),
+        call_parameters: json!({"category": "hardware", "limit": 10, "offset": 0}),
+        execution_duration_ms: 18,
+        timestamp: now,
+        tokens_used: Some(150),
+        is_error: false,
+        error_message: None,
+    };
+    state.agent_anomaly_detector.submit_telemetry(benign.clone()).await;
+
+    // 2. Google Inventory Agent scraping pattern attack
+    let attack = osoosi_agent_anomaly::ToolCallTelemetry {
+        session_id: "agent-sim-session-01".to_string(),
+        agent_id: "google-gemini-inventory-worker".to_string(),
+        trace_id: Some("sim-trace-02".to_string()),
+        tool_name: "list_inventory".to_string(),
+        call_parameters: json!({"category": "all", "limit": 100, "offset": 500}),
+        execution_duration_ms: 32,
+        timestamp: now + chrono::Duration::milliseconds(50),
+        tokens_used: Some(3500),
+        is_error: false,
+        error_message: None,
+    };
+    let finding = state.agent_anomaly_detector.evaluate_immediate(&attack).await;
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "status": "success",
+            "message": "Simulation executed: 1 benign turn, 1 inventory scraping attack turn.",
+            "simulated_calls": 2,
+            "detected_finding": finding,
+        })),
+    )
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -5941,6 +6077,115 @@ mod tests {
         );
 
         std::env::remove_var("OSOOSI_CONFIG");
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_agent_anomalies_routes() {
+        let state = DashboardState::new(None, None);
+        let temp_dir = std::env::temp_dir().join(format!("dash_test_aad_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let app = dashboard_router(state.clone(), temp_dir.clone());
+
+        // 1. POST /api/agent-anomalies/evaluate with benign telemetry
+        let benign_tel = serde_json::json!({
+            "session_id": "test-session-api-1",
+            "agent_id": "test-agent-1",
+            "tool_name": "get_weather",
+            "call_parameters": {"city": "Austin"},
+            "execution_duration_ms": 10,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "tokens_used": 50,
+            "is_error": false
+        });
+        let req = axum::http::Request::builder()
+            .uri("/api/agent-anomalies/evaluate")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&benign_tel).unwrap()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let eval_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(eval_res["anomalous"], false);
+
+        // 2. POST /api/agent-anomalies/enforce with inventory scraping attack
+        let attack_tel = serde_json::json!({
+            "session_id": "test-session-api-1",
+            "agent_id": "test-agent-1",
+            "tool_name": "list_inventory",
+            "call_parameters": {"limit": 100, "offset": 500},
+            "execution_duration_ms": 25,
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "tokens_used": 2000,
+            "is_error": false,
+            "mode": "enforce"
+        });
+        let req = axum::http::Request::builder()
+            .uri("/api/agent-anomalies/enforce")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&attack_tel).unwrap()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let enforce_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(enforce_res["allowed"], false);
+        assert_eq!(enforce_res["action"], "isolate");
+
+        // 3. GET /api/agent-anomalies/findings
+        let req = axum::http::Request::builder()
+            .uri("/api/agent-anomalies/findings")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let findings_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(findings_res.is_array());
+        assert!(!findings_res.as_array().unwrap().is_empty());
+
+        // 4. GET /api/agent-anomalies/sessions
+        let req = axum::http::Request::builder()
+            .uri("/api/agent-anomalies/sessions")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let sessions_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(sessions_res.is_array());
+
+        // 5. GET /api/agent-anomalies/summary
+        let req = axum::http::Request::builder()
+            .uri("/api/agent-anomalies/summary")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let summary_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(summary_res["total_anomalies"].as_u64().unwrap() >= 1);
+        assert!(summary_res["owasp_distribution"].is_object());
+
+        // 6. POST /api/agent-anomalies/simulate-test
+        let req = axum::http::Request::builder()
+            .uri("/api/agent-anomalies/simulate-test")
+            .method(axum::http::Method::POST)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let sim_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(sim_res["status"], "success");
+        assert_eq!(sim_res["simulated_calls"], 2);
+
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }

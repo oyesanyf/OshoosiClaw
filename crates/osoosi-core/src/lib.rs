@@ -1185,6 +1185,8 @@ pub struct EdrOrchestrator {
     pub forensics: Arc<osoosi_forensics::VelociraptorClient>,
     /// Non-autoregressive Clef Decision Model engine.
     pub decision_engine: Arc<osoosi_behavioral::decision_model::ClefDecisionEngine>,
+    /// Native Rust Agent Anomaly Detection (AAD) engine (OWASP Agentic Top 10)
+    pub agent_anomaly_detector: Arc<osoosi_agent_anomaly::AgentAnomalyDetector>,
 }
 
 impl EdrOrchestrator {
@@ -2086,6 +2088,9 @@ impl EdrOrchestrator {
             decision_cfg.provider, decision_cfg.model, decision_cfg.enabled
         );
 
+        let agent_anomaly_detector = Arc::new(osoosi_agent_anomaly::AgentAnomalyDetector::new(50, 200, None));
+        info!("[AAD] Native Rust Agent Anomaly Detection (OWASP Top 10) initialized.");
+
         let orch = Self {
             memory,
             mesh_peer_count,
@@ -2154,6 +2159,7 @@ impl EdrOrchestrator {
             kernel_driver,
             forensics,
             decision_engine,
+            agent_anomaly_detector,
         };
 
         // Start background log retention loop (hourly rotation and pruning)
@@ -2764,6 +2770,39 @@ impl EdrOrchestrator {
                 interval.tick().await;
                 if let Err(e) = orch_heart.nostr_mesh.send_heartbeat(&node_id).await {
                     debug!("Nostr heartbeat failed: {} (relays may be offline)", e);
+                }
+            }
+        });
+
+        // 8. Agent Anomaly Detection (AAD) findings listener
+        let aad_orch = self.clone();
+        let mut aad_rx = self.agent_anomaly_detector.subscribe_findings();
+        tokio::spawn(async move {
+            info!("Agent Anomaly Detection (AAD) findings listener active.");
+            while let Ok(finding) = aad_rx.recv().await {
+                if finding.severity == osoosi_agent_anomaly::AlertSeverity::Critical {
+                    warn!(
+                        "CRITICAL Agent Anomaly Detected [{}]: {} (Agent: {}, Session: {})",
+                        finding.risk_category.as_code(),
+                        finding.rationale,
+                        finding.agent_id,
+                        finding.session_id
+                    );
+                    aad_orch.audit.log(
+                        "AGENT_ANOMALY_CRITICAL",
+                        serde_json::json!({
+                            "id": finding.id,
+                            "agent_id": finding.agent_id,
+                            "session_id": finding.session_id,
+                            "risk_category": finding.risk_category.as_code(),
+                            "risk_name": finding.risk_category.as_name(),
+                            "severity": finding.severity.as_str(),
+                            "confidence": finding.confidence_score,
+                            "rationale": finding.rationale,
+                            "mitigation": finding.recommended_mitigation,
+                            "evidence": finding.evidence,
+                        }),
+                    );
                 }
             }
         });

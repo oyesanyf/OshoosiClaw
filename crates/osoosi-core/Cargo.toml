@@ -21,6 +21,7 @@ osoosi-behavioral = { path = "../osoosi-behavioral" }
 osoosi-dp = { path = "../osoosi-dp" }
 osoosi-dns = { path = "../osoosi-dns" }
 osoosi-forensics = { path = "../osoosi-forensics" }
+osoosi-agent-anomaly = { path = "../osoosi-agent-anomaly" }
 ed25519-dalek = { workspace = true }
 # hayabusa = { workspace = true }
 dotscope = { workspace = true }

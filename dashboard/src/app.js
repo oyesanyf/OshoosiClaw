@@ -388,6 +388,10 @@ function setupNav() {
                 document.getElementById('mitre-view').classList.add('active');
                 viewTitle.innerText = "MITRE ATT&CK® Enterprise Matrix";
                 renderMitreView();
+            } else if (view === 'agent-anomalies') {
+                document.getElementById('agent-anomalies-view').classList.add('active');
+                viewTitle.innerText = "Agent Anomaly Detection (AAD)";
+                renderAgentAnomaliesView();
             } else {
                 document.getElementById('other-view').classList.add('active');
                 viewTitle.innerText = item.querySelector('span').innerText;
@@ -409,6 +413,9 @@ function setupNav() {
                 'rl': 'skyrl',
                 'models': 'skyrl',
                 'network': 'mesh',
+                'agent-anomalies': 'agent-anomalies',
+                'agent-anomaly': 'agent-anomalies',
+                'aad': 'agent-anomalies',
             };
             const resolvedView = aliasMap[hash] || hash;
             const target = document.querySelector(`.nav-item[data-view="${resolvedView}"]`);
@@ -628,6 +635,9 @@ async function updateDashboard() {
         if (state.current_view === 'mitre') {
             renderMitreView();
         }
+        if (state.current_view === 'agent-anomalies') {
+            renderAgentAnomaliesView();
+        }
 
         // Ensure collapsed panels retain their display state across polling updates
         if (state.collapsedPanels && state.collapsedPanels.size > 0) {
@@ -731,6 +741,29 @@ async function fetchAPI(endpoint) {
         } else {
             console.warn(`Error fetching ${endpoint}:`, err);
         }
+        return null;
+    }
+}
+
+/**
+ * Helper to POST to API
+ */
+async function postAPI(endpoint, payload = {}) {
+    const controller = new AbortController();
+    const timeoutId = setTimeout(() => controller.abort(), 6000);
+    try {
+        const response = await fetch(`${API_BASE}${endpoint}`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+            signal: controller.signal
+        });
+        clearTimeout(timeoutId);
+        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        return await response.json();
+    } catch (err) {
+        clearTimeout(timeoutId);
+        console.warn(`Error in postAPI ${endpoint}:`, err);
         return null;
     }
 }
@@ -6339,5 +6372,176 @@ document.addEventListener('DOMContentLoaded', () => {
         }
     });
 });
+
+// ==========================================
+// Agent Anomaly Detection (AAD) WebUI
+// ==========================================
+
+async function renderAgentAnomaliesView() {
+    try {
+        const [summary, findings, sessions] = await Promise.all([
+            fetchAPI('/agent-anomalies/summary'),
+            fetchAPI('/agent-anomalies/findings?limit=50'),
+            fetchAPI('/agent-anomalies/sessions')
+        ]);
+
+        if (summary) {
+            const sessionsEl = document.getElementById('aad-monitored-sessions');
+            const anomaliesEl = document.getElementById('aad-total-anomalies');
+            const criticalEl = document.getElementById('aad-critical-threats');
+            if (sessionsEl) sessionsEl.innerText = summary.monitored_sessions || 0;
+            if (anomaliesEl) anomaliesEl.innerText = summary.total_anomalies || 0;
+            if (criticalEl) criticalEl.innerText = summary.critical_threats || 0;
+
+            const tagsContainer = document.getElementById('aad-owasp-tags-container');
+            if (tagsContainer && summary.owasp_distribution) {
+                const owaspMeta = {
+                    "ASI01": "Prompt Injection",
+                    "ASI02": "Tool Misuse",
+                    "ASI03": "Privilege Abuse",
+                    "ASI04": "Supply Chain Poisoning",
+                    "ASI05": "Unexpected Execution",
+                    "ASI06": "Context Poisoning",
+                    "ASI07": "Data Exfiltration",
+                    "ASI08": "Cascading Failures",
+                    "ASI09": "Resource Exhaustion",
+                    "ASI10": "Rogue Agent Drift"
+                };
+
+                tagsContainer.innerHTML = Object.entries(owaspMeta).map(([code, name]) => {
+                    const count = summary.owasp_distribution[code] || 0;
+                    const badgeClass = count > 0 ? (code === 'ASI01' || code === 'ASI10' || code === 'ASI07' ? 'badge red' : 'badge yellow') : 'badge gray';
+                    return `
+                        <div style="background: rgba(255,255,255,0.03); border: 1px solid var(--glass-border); padding: 8px 12px; border-radius: 8px; display: flex; align-items: center; gap: 8px;">
+                            <span style="font-weight: 700; color: #8b5cf6; font-size: 12px;">${code}</span>
+                            <span style="font-size: 12px; color: var(--text-primary);">${name}</span>
+                            <span class="${badgeClass}" style="font-size: 11px; padding: 2px 6px;">${count}</span>
+                        </div>
+                    `;
+                }).join('');
+            }
+        }
+
+        const findingsFeed = document.getElementById('aad-findings-feed');
+        const findingsCountEl = document.getElementById('aad-findings-count');
+        if (findings && Array.isArray(findings)) {
+            if (findingsCountEl) findingsCountEl.innerText = `${findings.length} Flagged`;
+            if (findingsFeed) {
+                if (findings.length === 0) {
+                    findingsFeed.innerHTML = `
+                        <div style="text-align: center; color: var(--text-muted); padding: 40px 0;">
+                            <i data-lucide="shield-check" style="width: 36px; height: 36px; margin: 0 auto 10px; color: #10b981; opacity: 0.6;"></i>
+                            <div>No agent anomalies detected. Runtime behavior nominal.</div>
+                        </div>
+                    `;
+                } else {
+                    findingsFeed.innerHTML = findings.map(f => {
+                        const sevColor = f.severity === 'Critical' ? '#ef4444' : (f.severity === 'High' ? '#f97316' : '#eab308');
+                        const sevBadge = f.severity === 'Critical' ? 'badge red' : (f.severity === 'High' ? 'badge orange' : 'badge yellow');
+                        const formattedTime = new Date(f.flagged_at).toLocaleTimeString();
+                        const evidenceSnippet = f.evidence ? JSON.stringify(f.evidence, null, 2) : '';
+
+                        return `
+                            <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--glass-border); border-left: 3px solid ${sevColor}; padding: 12px; border-radius: 8px; margin-bottom: 10px;">
+                                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                                    <div style="display: flex; align-items: center; gap: 8px;">
+                                        <span class="${sevBadge}" style="font-size: 11px;">${f.severity}</span>
+                                        <span style="font-weight: 600; color: #8b5cf6; font-size: 12px;">${f.risk_category}</span>
+                                        <span style="font-size: 12px; color: var(--text-muted);">Agent: ${escapeHtml(f.agent_id)}</span>
+                                    </div>
+                                    <span style="font-size: 11px; color: var(--text-muted);">${formattedTime}</span>
+                                </div>
+                                <div style="font-size: 13px; color: var(--text-primary); margin-bottom: 6px; font-weight: 500;">
+                                    ${escapeHtml(f.rationale)}
+                                </div>
+                                <div style="font-size: 12px; color: #10b981; margin-bottom: 8px; display: flex; align-items: flex-start; gap: 6px;">
+                                    <span style="font-weight: 600;">Mitigation:</span>
+                                    <span>${escapeHtml(f.recommended_mitigation)}</span>
+                                </div>
+                                ${evidenceSnippet ? `
+                                    <details style="font-size: 11px; color: var(--text-muted);">
+                                        <summary style="cursor: pointer; color: var(--accent-blue);">Inspect Payload Evidence</summary>
+                                        <pre style="margin-top: 6px; background: rgba(0,0,0,0.4); padding: 8px; border-radius: 4px; overflow-x: auto; max-height: 140px;">${escapeHtml(evidenceSnippet)}</pre>
+                                    </details>
+                                ` : ''}
+                            </div>
+                        `;
+                    }).join('');
+                }
+            }
+        }
+
+        const sessionsTable = document.getElementById('aad-sessions-table-body');
+        const sessionsCountEl = document.getElementById('aad-sessions-count');
+        if (sessions && Array.isArray(sessions)) {
+            if (sessionsCountEl) sessionsCountEl.innerText = `${sessions.length} Active`;
+            if (sessionsTable) {
+                if (sessions.length === 0) {
+                    sessionsTable.innerHTML = `
+                        <tr>
+                            <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 40px 0;">
+                                No agent sessions registered. Telemetry awaiting ingestion.
+                            </td>
+                        </tr>
+                    `;
+                } else {
+                    sessionsTable.innerHTML = sessions.map(s => {
+                        const sevBadge = s.highest_severity === 'Critical' ? 'badge red' : (s.highest_severity === 'High' ? 'badge orange' : 'badge green');
+                        return `
+                            <tr style="border-bottom: 1px solid rgba(255,255,255,0.04);">
+                                <td style="padding: 10px 14px; font-size: 12px;">
+                                    <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(s.agent_id)}</div>
+                                    <div style="font-size: 11px; color: var(--text-muted); font-family: monospace;">${escapeHtml(s.session_id)}</div>
+                                </td>
+                                <td style="padding: 10px 14px; text-align: center; font-size: 12px; font-weight: 600;">
+                                    ${s.total_calls}
+                                </td>
+                                <td style="padding: 10px 14px; text-align: center; font-size: 12px;">
+                                    <span class="${s.flagged_anomalies > 0 ? 'badge yellow' : 'badge gray'}" style="font-size: 11px;">${s.flagged_anomalies}</span>
+                                </td>
+                                <td style="padding: 10px 14px; text-align: center; font-size: 12px;">
+                                    <span class="${sevBadge}" style="font-size: 11px;">${s.highest_severity}</span>
+                                </td>
+                            </tr>
+                        `;
+                    }).join('');
+                }
+            }
+        }
+
+        if (window.lucide) {
+            window.lucide.createIcons();
+        }
+    } catch (err) {
+        console.error('Failed to render Agent Anomalies view:', err);
+    }
+}
+
+async function triggerAgentAnomalySimulation() {
+    const btn = document.getElementById('aad-simulate-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="spin" style="width:14px;height:14px;"></i> Simulating...';
+        if (window.lucide) window.lucide.createIcons();
+    }
+    try {
+        const res = await postAPI('/agent-anomalies/simulate-test', {});
+        if (res && res.status === 'success') {
+            await renderAgentAnomaliesView();
+        }
+    } catch (err) {
+        console.error('Error triggering agent anomaly simulation:', err);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="play" style="width:14px;height:14px;"></i> Simulate Agent Turn';
+            if (window.lucide) window.lucide.createIcons();
+        }
+    }
+}
+
+window.renderAgentAnomaliesView = renderAgentAnomaliesView;
+window.triggerAgentAnomalySimulation = triggerAgentAnomalySimulation;
+
 
 
