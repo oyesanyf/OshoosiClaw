@@ -122,7 +122,10 @@ impl MeshNode {
                     .duplicate_cache_time(Duration::from_secs(60)) // Cache IDs longer to prevent re-gossip overhead
                     .history_length(10)
                     .history_gossip(6)
-                    .mesh_n_low(4) // Lower neighbor requirements for resource-constrained nodes
+                    .mesh_n(8)
+                    .mesh_n_low(6)
+                    .mesh_n_high(12)
+                    .gossip_lazy(6)
                     .build()
                     .map_err(std::io::Error::other)?;
 

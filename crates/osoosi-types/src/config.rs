@@ -599,6 +599,10 @@ struct WireConfigPartial {
     pub auto_bootstrap_duckdns: bool,
     #[serde(default = "default_duckdns_port")]
     pub duckdns_port: u16,
+    #[serde(default = "default_cellular_quota_bytes_per_hour")]
+    pub cellular_quota_bytes_per_hour: Option<u64>,
+    #[serde(default)]
+    pub is_cellular_hotspot: bool,
 }
 
 /// Partial config for loading from file (only sections we need; rest use defaults).
@@ -1587,6 +1591,8 @@ pub struct WireListenConfig {
     pub duckdns_domain: Option<String>,
     pub auto_bootstrap_duckdns: bool,
     pub duckdns_port: u16,
+    pub cellular_quota_bytes_per_hour: Option<u64>,
+    pub is_cellular_hotspot: bool,
 }
 
 pub fn load_mesh_listen_config_extended() -> WireListenConfig {
@@ -1600,6 +1606,8 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
     let mut duckdns_domain = default_duckdns_domain();
     let mut auto_bootstrap_duckdns = true;
     let mut duckdns_port = default_duckdns_port();
+    let mut cellular_quota_bytes_per_hour = default_cellular_quota_bytes_per_hour();
+    let mut is_cellular_hotspot = false;
 
     if let Some(path) = resolve_config_path() {
         if let Ok(content) = std::fs::read_to_string(&path) {
@@ -1641,6 +1649,12 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
                 duckdns_domain = fc.wire.duckdns_domain.clone();
                 auto_bootstrap_duckdns = fc.wire.auto_bootstrap_duckdns;
                 duckdns_port = fc.wire.duckdns_port;
+                if let Some(quota) = fc.wire.cellular_quota_bytes_per_hour {
+                    cellular_quota_bytes_per_hour = Some(quota);
+                }
+                if fc.wire.is_cellular_hotspot {
+                    is_cellular_hotspot = true;
+                }
             }
         }
     }
@@ -1680,6 +1694,14 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
             duckdns_port = port;
         }
     }
+    if let Ok(v) = std::env::var("OSOOSI_IS_CELLULAR_HOTSPOT") {
+        is_cellular_hotspot = v == "1" || v.eq_ignore_ascii_case("true");
+    }
+    if let Ok(v) = std::env::var("OSOOSI_CELLULAR_QUOTA_BYTES_PER_HOUR") {
+        if let Ok(bytes) = v.trim().parse::<u64>() {
+            cellular_quota_bytes_per_hour = Some(bytes);
+        }
+    }
 
     if listen_addrs.is_empty() {
         listen_addrs.push("/ip4/0.0.0.0/tcp/4001".to_string());
@@ -1696,6 +1718,8 @@ pub fn load_mesh_listen_config_extended() -> WireListenConfig {
         duckdns_domain,
         auto_bootstrap_duckdns,
         duckdns_port,
+        cellular_quota_bytes_per_hour,
+        is_cellular_hotspot,
     }
 }
 
@@ -1977,6 +2001,16 @@ pub struct WireConfig {
     pub auto_bootstrap_duckdns: bool,
     #[serde(default = "default_duckdns_port")]
     pub duckdns_port: u16,
+    /// Cellular data quota in bytes per hour for metered hotspot nodes (default: 51200, i.e. 50 KB/hr).
+    #[serde(default = "default_cellular_quota_bytes_per_hour")]
+    pub cellular_quota_bytes_per_hour: Option<u64>,
+    /// Whether this node operates over a cellular hotspot or metered link.
+    #[serde(default)]
+    pub is_cellular_hotspot: bool,
+}
+
+pub fn default_cellular_quota_bytes_per_hour() -> Option<u64> {
+    Some(51200)
 }
 
 pub fn default_duckdns_domain() -> Option<String> {
@@ -3083,6 +3117,8 @@ shared_secret = "secret123"
         assert!(wc.auto_bootstrap_duckdns);
         assert_eq!(wc.duckdns_port, 4001);
         assert!(wc.allow_public_relays);
+        assert_eq!(wc.cellular_quota_bytes_per_hour, Some(51200));
+        assert!(!wc.is_cellular_hotspot);
 
         let custom_toml = r#"
 listen_addr = "/ip4/0.0.0.0/tcp/4001"
@@ -3090,17 +3126,23 @@ shared_secret = "secret123"
 duckdns_domain = "custom-node"
 auto_bootstrap_duckdns = false
 duckdns_port = 5001
+cellular_quota_bytes_per_hour = 102400
+is_cellular_hotspot = true
 "#;
         let wc_custom: WireConfig = toml::from_str(custom_toml).expect("Must parse custom WireConfig");
         assert_eq!(wc_custom.duckdns_domain, Some("custom-node".to_string()));
         assert!(!wc_custom.auto_bootstrap_duckdns);
         assert_eq!(wc_custom.duckdns_port, 5001);
+        assert_eq!(wc_custom.cellular_quota_bytes_per_hour, Some(102400));
+        assert!(wc_custom.is_cellular_hotspot);
 
         // Verify serialization preserves fields
         let serialized = toml::to_string(&wc).expect("Must serialize WireConfig");
         assert!(serialized.contains("duckdns_domain"));
         assert!(serialized.contains("auto_bootstrap_duckdns"));
         assert!(serialized.contains("duckdns_port"));
+        assert!(serialized.contains("cellular_quota_bytes_per_hour"));
+        assert!(serialized.contains("is_cellular_hotspot"));
 
         // Verify FileConfig parsing with [wire]
         let file_toml = r#"
@@ -3108,11 +3150,15 @@ duckdns_port = 5001
 duckdns_domain = "my-fleet"
 auto_bootstrap_duckdns = true
 duckdns_port = 4001
+cellular_quota_bytes_per_hour = 25600
+is_cellular_hotspot = true
 "#;
         let fc: FileConfig = toml::from_str(file_toml).expect("Must parse FileConfig [wire]");
         assert_eq!(fc.wire.duckdns_domain, Some("my-fleet".to_string()));
         assert!(fc.wire.auto_bootstrap_duckdns);
         assert_eq!(fc.wire.duckdns_port, 4001);
+        assert_eq!(fc.wire.cellular_quota_bytes_per_hour, Some(25600));
+        assert!(fc.wire.is_cellular_hotspot);
     }
 
     #[test]

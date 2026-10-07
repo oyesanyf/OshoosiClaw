@@ -66,6 +66,7 @@ osoosi.toml.sig
 /tools/*
 !/tools/wikiskill/
 !/tools/defense_swarm/
+!/tools/simulate_host/
 crates/osoosi-telemetry/tools/
 
 # ---------- Runtime Data ----------

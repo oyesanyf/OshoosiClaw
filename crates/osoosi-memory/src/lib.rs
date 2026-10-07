@@ -367,6 +367,21 @@ impl MemoryStore {
             [],
         )?;
 
+        // Zone posture table (persists security posture, scores, and remediations)
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS zone_posture (
+                zone_id TEXT PRIMARY KEY,
+                security_score INTEGER,
+                tpm_remediated INTEGER,
+                memory_shield_remediated INTEGER,
+                egress_remediated INTEGER,
+                hardware_attestation TEXT,
+                recommendations_json TEXT,
+                updated_at TEXT
+            )",
+            [],
+        )?;
+
         // MIGRATION: Add version_start_including / version_end_excluding to kev if they are missing
         let table_info: Vec<String> = conn
             .prepare("PRAGMA table_info(kev)")?
@@ -761,6 +776,61 @@ impl MemoryStore {
             let mut cache = self.status_cache.write();
             cache.insert(cache_key, val.clone());
         }
+        Ok(res)
+    }
+
+    pub fn save_zone_posture(
+        &self,
+        zone_id: &str,
+        security_score: i64,
+        tpm_remediated: bool,
+        memory_shield_remediated: bool,
+        egress_remediated: bool,
+        hardware_attestation: &str,
+        recommendations_json: &str,
+    ) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT OR REPLACE INTO zone_posture (
+                zone_id,
+                security_score,
+                tpm_remediated,
+                memory_shield_remediated,
+                egress_remediated,
+                hardware_attestation,
+                recommendations_json,
+                updated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8)",
+            params![
+                zone_id,
+                security_score,
+                if tpm_remediated { 1 } else { 0 },
+                if memory_shield_remediated { 1 } else { 0 },
+                if egress_remediated { 1 } else { 0 },
+                hardware_attestation,
+                recommendations_json,
+                Utc::now().to_rfc3339()
+            ],
+        )?;
+        Ok(())
+    }
+
+    pub fn load_zone_posture(&self, zone_id: &str) -> anyhow::Result<Option<serde_json::Value>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT security_score, tpm_remediated, memory_shield_remediated, egress_remediated, hardware_attestation, recommendations_json, updated_at FROM zone_posture WHERE zone_id = ?1"
+        )?;
+        let res = stmt.query_row(params![zone_id], |row| {
+            Ok(serde_json::json!({
+                "security_score": row.get::<_, i64>(0)?,
+                "tpm_remediated": row.get::<_, i64>(1)? == 1,
+                "memory_shield_remediated": row.get::<_, i64>(2)? == 1,
+                "egress_remediated": row.get::<_, i64>(3)? == 1,
+                "hardware_attestation": row.get::<_, String>(4)?,
+                "recommendations_json": row.get::<_, String>(5)?,
+                "updated_at": row.get::<_, String>(6)?,
+            }))
+        }).ok();
         Ok(res)
     }
 
