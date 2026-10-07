@@ -75,6 +75,18 @@ impl AgentAnomalyDetector {
         detector_self
     }
 
+    /// Convenient bootstrap method returning the detector and a broadcast receiver for anomaly findings.
+    pub fn bootstrap(
+        _buffer_size: usize,
+        rate_limit: usize,
+        batch_threshold: u64,
+        reasoning_url: String,
+    ) -> (Self, broadcast::Receiver<AnomalyFinding>) {
+        let detector = Self::new(rate_limit, batch_threshold, Some(reasoning_url));
+        let rx = detector.subscribe_findings();
+        (detector, rx)
+    }
+
     /// Subscribes to the broadcast stream of detected anomalies.
     pub fn subscribe_findings(&self) -> broadcast::Receiver<AnomalyFinding> {
         self.findings_tx.subscribe()
