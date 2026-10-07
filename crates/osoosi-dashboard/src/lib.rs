@@ -1013,6 +1013,39 @@ fn strip_ansi_escapes(s: &str) -> String {
     ANSI_RE.replace_all(s, "").to_string()
 }
 
+fn sanitize_pull_error(raw: &str) -> String {
+    let clean = strip_ansi_escapes(raw);
+    let normalized = clean.replace('\r', "\n");
+    let mut meaningful_lines = Vec::new();
+    for line in normalized.lines() {
+        let mut trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+        if trimmed.starts_with("pulling manifest") {
+            if let Some(idx) = trimmed.find("Error:") {
+                trimmed = trimmed[idx..].trim();
+            } else if !trimmed.contains("Error") && !trimmed.contains("failed") {
+                continue;
+            }
+        }
+        meaningful_lines.push(trimmed);
+    }
+    if meaningful_lines.is_empty() {
+        return "Model pull failed".to_string();
+    }
+    let err_lines: Vec<&str> = meaningful_lines
+        .iter()
+        .filter(|l| l.contains("Error") || l.contains("failed") || l.contains("dial") || l.contains("connectex"))
+        .copied()
+        .collect();
+    if !err_lines.is_empty() {
+        err_lines.join(" | ")
+    } else {
+        meaningful_lines.last().copied().unwrap_or("Model pull failed").to_string()
+    }
+}
+
 async fn post_model_pull(
     State(_state): State<DashboardState>,
     Json(payload): Json<PullModelRequest>,
@@ -1175,8 +1208,8 @@ async fn post_model_pull(
                             pulled = true;
                         } else {
                             let stderr = String::from_utf8_lossy(&out.stderr);
-                            let clean_stderr = strip_ansi_escapes(&stderr);
-                            let msg = format!("CLI pull failed: {}", clean_stderr.trim());
+                            let clean_msg = sanitize_pull_error(&stderr);
+                            let msg = format!("CLI pull failed: {}", clean_msg);
                             warn!("{}", msg);
                             pull_err = Some(msg);
                         }
@@ -7108,6 +7141,20 @@ mod tests {
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_sanitize_pull_error() {
+        let raw = "\x1b[?25lpulling manifest ⠋ \r\x1b[2Kpulling manifest ⠙ \r\x1b[2Kpulling manifest ⠹ \r\x1b[2KError: max retries exceeded: dial tcp 127.0.0.1:11434: connectex: No connection could be made because the target machine actively refused it.\n";
+        let cleaned = sanitize_pull_error(raw);
+        assert!(!cleaned.contains('⠋'));
+        assert!(cleaned.contains("Error: max retries exceeded"));
+
+        let empty = sanitize_pull_error("");
+        assert_eq!(empty, "Model pull failed");
+
+        let spinners_only = "pulling manifest ⠋ \npulling manifest ⠙ \n";
+        assert_eq!(sanitize_pull_error(spinners_only), "Model pull failed");
     }
 }
 

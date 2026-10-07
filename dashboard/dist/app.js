@@ -6851,7 +6851,16 @@ async function downloadAllCalibratedModels() {
 
 function stripAnsi(str) {
     if (!str) return '';
-    return str.replace(/[\u001b\x1b]\[[0-9;?]*[a-zA-Z]/g, '').trim();
+    let cleaned = str.replace(/[\u001b\x1b]\[[0-9;?]*[a-zA-Z]/g, '').trim();
+    if (cleaned.includes('pulling manifest')) {
+        const errorIdx = cleaned.indexOf('Error:');
+        if (errorIdx !== -1) {
+            cleaned = cleaned.substring(errorIdx);
+        } else {
+            cleaned = cleaned.replace(/(?:pulling manifest\s*[⠋⠙⠹⠸⠼⠴⠦⠧⠇⠏\s]*)+/g, ' ').trim();
+        }
+    }
+    return cleaned;
 }
 
 async function pollModelPullProgress() {
