@@ -1247,7 +1247,7 @@ pub fn resolve_xori_path() -> PathBuf {
 }
 
 /// Walk up from current_dir to find project/workspace root (osoosi.toml or Cargo.toml with [workspace]).
-fn resolve_project_root() -> Option<PathBuf> {
+pub fn resolve_project_root() -> Option<PathBuf> {
     let mut dir = std::env::current_dir().ok()?;
     loop {
         if dir.join("osoosi.toml").is_file() {
