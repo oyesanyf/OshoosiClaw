@@ -5699,6 +5699,7 @@ dependencies = [
  "anyhow",
  "chrono",
  "dashmap 6.1.0",
+ "osoosi-behavioral",
  "regex",
  "reqwest",
  "serde",

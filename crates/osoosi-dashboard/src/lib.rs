@@ -180,6 +180,7 @@ pub struct DashboardState {
     pub skyrl: Arc<tokio::sync::RwLock<SkyRlServerState>>,
     pub mock_blocking_rules: Arc<tokio::sync::RwLock<Vec<osoosi_types::BlockingRule>>>,
     pub agent_anomaly_detector: Arc<osoosi_agent_anomaly::AgentAnomalyDetector>,
+    pub embedding_engine: Arc<osoosi_behavioral::EmbeddingGemma2Engine>,
 }
 
 impl DashboardState {
@@ -200,6 +201,9 @@ impl DashboardState {
             skyrl: Arc::new(tokio::sync::RwLock::new(SkyRlServerState::new())),
             mock_blocking_rules: Arc::new(tokio::sync::RwLock::new(Vec::new())),
             agent_anomaly_detector,
+            embedding_engine: Arc::new(osoosi_behavioral::EmbeddingGemma2Engine::new(
+                osoosi_behavioral::MatryoshkaDim::Dim128,
+            )),
         }
     }
 }
@@ -723,6 +727,7 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/agent-anomalies/findings", get(get_agent_anomalies_findings))
         .route("/api/agent-anomalies/sessions", get(get_agent_anomalies_sessions))
         .route("/api/agent-anomalies/summary", get(get_agent_anomalies_summary))
+        .route("/api/agent-anomalies/embed", post(post_agent_anomalies_embed))
         .route("/api/agent-anomalies/simulate-test", post(post_agent_anomalies_simulate_test))
         .with_state(state);
 
@@ -4767,8 +4772,67 @@ pub async fn get_agent_anomalies_sessions(
 pub async fn get_agent_anomalies_summary(
     State(state): State<DashboardState>,
 ) -> impl IntoResponse {
-    let summary = state.agent_anomaly_detector.get_risk_summary().await;
+    let mut summary = state.agent_anomaly_detector.get_risk_summary().await;
+    if let Some(obj) = summary.as_object_mut() {
+        obj.insert(
+            "embedding_engine".to_string(),
+            json!("EmbeddingGemma 2 (128-dim MRL)"),
+        );
+    }
     (StatusCode::OK, Json(summary))
+}
+
+#[derive(Debug, Deserialize)]
+pub struct AgentEmbedRequest {
+    pub text: Option<String>,
+    pub dim: Option<usize>,
+    pub tool_name: Option<String>,
+    pub call_parameters: Option<serde_json::Value>,
+}
+
+pub async fn post_agent_anomalies_embed(
+    State(state): State<DashboardState>,
+    Json(payload): Json<AgentEmbedRequest>,
+) -> impl IntoResponse {
+    let target_dim = payload.dim.unwrap_or(128);
+    let mrl_dim = osoosi_behavioral::MatryoshkaDim::from_usize(target_dim);
+
+    let embedding = if let Some(text) = payload.text {
+        let temp_engine = if state.embedding_engine.dim() == mrl_dim {
+            state.embedding_engine.clone()
+        } else {
+            Arc::new(osoosi_behavioral::EmbeddingGemma2Engine::new(mrl_dim))
+        };
+        temp_engine.embed_text(&text)
+    } else if let Some(tool) = payload.tool_name {
+        let params = payload.call_parameters.unwrap_or(serde_json::Value::Null);
+        let temp_engine = if state.embedding_engine.dim() == mrl_dim {
+            state.embedding_engine.clone()
+        } else {
+            Arc::new(osoosi_behavioral::EmbeddingGemma2Engine::new(mrl_dim))
+        };
+        temp_engine.embed_tool_call(&tool, &params)
+    } else {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "error": "Either 'text' or 'tool_name' must be provided in request payload."
+            })),
+        );
+    };
+
+    let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
+    let l2_norm = (norm * 1000.0).round() / 1000.0;
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "embedding": embedding,
+            "dimension": embedding.len(),
+            "l2_norm": l2_norm,
+            "status": "ok"
+        })),
+    )
 }
 
 pub async fn post_agent_anomalies_simulate_test(
@@ -6172,6 +6236,10 @@ mod tests {
         let summary_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert!(summary_res["total_anomalies"].as_u64().unwrap() >= 1);
         assert!(summary_res["owasp_distribution"].is_object());
+        assert_eq!(
+            summary_res["embedding_engine"],
+            "EmbeddingGemma 2 (128-dim MRL)"
+        );
 
         // 6. POST /api/agent-anomalies/simulate-test
         let req = axum::http::Request::builder()
@@ -6185,6 +6253,47 @@ mod tests {
         let sim_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(sim_res["status"], "success");
         assert_eq!(sim_res["simulated_calls"], 2);
+
+        // 7. POST /api/agent-anomalies/embed with text
+        let embed_req_text = serde_json::json!({
+            "text": "sample text for EmbeddingGemma 2 semantic verification",
+            "dim": 128
+        });
+        let req = axum::http::Request::builder()
+            .uri("/api/agent-anomalies/embed")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&embed_req_text).unwrap()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let embed_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(embed_res["status"], "ok");
+        assert_eq!(embed_res["dimension"], 128);
+        assert!(embed_res["embedding"].is_array());
+        assert_eq!(embed_res["embedding"].as_array().unwrap().len(), 128);
+        assert!((embed_res["l2_norm"].as_f64().unwrap() - 1.0).abs() < 0.01);
+
+        // 8. POST /api/agent-anomalies/embed with tool_name and call_parameters
+        let embed_req_tool = serde_json::json!({
+            "tool_name": "list_inventory",
+            "call_parameters": {"limit": 100, "offset": 500},
+            "dim": 128
+        });
+        let req = axum::http::Request::builder()
+            .uri("/api/agent-anomalies/embed")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&embed_req_tool).unwrap()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let embed_res_tool: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(embed_res_tool["status"], "ok");
+        assert_eq!(embed_res_tool["dimension"], 128);
+        assert_eq!(embed_res_tool["embedding"].as_array().unwrap().len(), 128);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

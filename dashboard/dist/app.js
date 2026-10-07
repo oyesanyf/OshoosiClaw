@@ -6440,6 +6440,8 @@ async function renderAgentAnomaliesView() {
                         const sevBadge = f.severity === 'Critical' ? 'badge red' : (f.severity === 'High' ? 'badge orange' : 'badge yellow');
                         const formattedTime = new Date(f.flagged_at).toLocaleTimeString();
                         const evidenceSnippet = f.evidence ? JSON.stringify(f.evidence, null, 2) : '';
+                        const embScore = f.embedding_cosine ?? (f.evidence && f.evidence.embedding_gemma2_cosine_score !== undefined ? f.evidence.embedding_gemma2_cosine_score : null);
+                        const embBadge = (embScore !== null && embScore !== undefined) ? `<span class="badge purple" style="font-size: 10px;">EmbeddingGemma 2 Match: ${Math.round(embScore * 100)}%</span>` : '';
 
                         return `
                             <div style="background: rgba(255,255,255,0.02); border: 1px solid var(--glass-border); border-left: 3px solid ${sevColor}; padding: 12px; border-radius: 8px; margin-bottom: 10px;">
@@ -6448,6 +6450,7 @@ async function renderAgentAnomaliesView() {
                                         <span class="${sevBadge}" style="font-size: 11px;">${f.severity}</span>
                                         <span style="font-weight: 600; color: #8b5cf6; font-size: 12px;">${f.risk_category}</span>
                                         <span style="font-size: 12px; color: var(--text-muted);">Agent: ${escapeHtml(f.agent_id)}</span>
+                                        ${embBadge}
                                     </div>
                                     <span style="font-size: 11px; color: var(--text-muted);">${formattedTime}</span>
                                 </div>

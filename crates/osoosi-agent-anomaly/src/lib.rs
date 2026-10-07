@@ -227,4 +227,33 @@ mod tests {
         assert_eq!(audit_decision.action, "allow");
         assert!(audit_decision.finding.is_some());
     }
+
+    #[tokio::test]
+    async fn test_embedding_gemma2_evidence_attachment() {
+        let detector = AgentAnomalyDetector::new(50, 200, None);
+
+        let attack_tel = ToolCallTelemetry {
+            session_id: "session-emb-1".to_string(),
+            agent_id: "crawler-agent".to_string(),
+            trace_id: None,
+            tool_name: "list_inventory".to_string(),
+            call_parameters: json!({"category": "all", "limit": 100, "offset": 500, "page_size": 100}),
+            execution_duration_ms: 20,
+            timestamp: Utc::now(),
+            tokens_used: Some(2500),
+            is_error: false,
+            error_message: None,
+        };
+
+        let finding = detector.evaluate_immediate(&attack_tel).await;
+        assert!(finding.is_some(), "Attack must produce an anomaly finding");
+        let f = finding.unwrap();
+        assert!(
+            f.evidence.get("embedding_gemma2_cosine_score").is_some(),
+            "Evidence must include embedding_gemma2_cosine_score"
+        );
+        let score = f.evidence["embedding_gemma2_cosine_score"].as_f64().unwrap();
+        assert!(score >= 0.82, "Cosine score must be >= 0.82, got {}", score);
+        assert_eq!(f.evidence["embedding_gemma2_dimension"], 128);
+    }
 }

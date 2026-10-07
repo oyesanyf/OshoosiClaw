@@ -1,7 +1,9 @@
+use std::sync::Arc;
 use chrono::Utc;
 use regex::Regex;
 use tracing::debug;
 use uuid::Uuid;
+use osoosi_behavioral::{EmbeddingGemma2Engine, MatryoshkaDim};
 
 use crate::screener::ScreenerResult;
 use crate::types::{AlertSeverity, AnomalyFinding, OwaspAgenticRisk, ToolCallTelemetry};
@@ -14,6 +16,7 @@ pub struct SemanticReasoningEngine {
     jwt_re: Regex,
     credit_card_re: Regex,
     private_key_re: Regex,
+    pub embedding_engine: Arc<EmbeddingGemma2Engine>,
 }
 
 impl Default for SemanticReasoningEngine {
@@ -36,7 +39,13 @@ impl SemanticReasoningEngine {
             credit_card_re: Regex::new(r"\b(?:\d{4}[ -]?){3}\d{4}\b").expect("Valid CC regex"),
             private_key_re: Regex::new(r"-----BEGIN [A-Z ]*PRIVATE KEY-----")
                 .expect("Valid private key regex"),
+            embedding_engine: Arc::new(EmbeddingGemma2Engine::new(MatryoshkaDim::Dim128)),
         }
+    }
+
+    pub fn with_embedding_engine(mut self, engine: Arc<EmbeddingGemma2Engine>) -> Self {
+        self.embedding_engine = engine;
+        self
     }
 
     /// Evaluates telemetry and returns an `AnomalyFinding` if an OWASP risk pattern is confirmed.
@@ -49,35 +58,32 @@ impl SemanticReasoningEngine {
         let mut strings = Vec::new();
         Self::collect_strings(&telemetry.call_parameters, &mut strings);
 
+        // Compute EmbeddingGemma 2 128-dim vector embedding and threat cluster similarity
+        let threat_similarity = self
+            .embedding_engine
+            .evaluate_similarity_against_threats(&telemetry.tool_name, &telemetry.call_parameters);
+
+        let mut candidate_finding: Option<AnomalyFinding> = None;
+
         // Pattern 1: Prompt Injection & Jailbreak in Parameters (ASI01)
         if let Some(finding) = self.detect_prompt_injection(telemetry, &strings) {
-            return Some(finding);
-        }
-
-        // Pattern 2: Rogue Agent Shell Destruction (ASI10)
-        if let Some(finding) = self.detect_rogue_agent_shell_destruction(telemetry, &strings) {
-            return Some(finding);
-        }
-
-        // Pattern 3: Secondary Channel Data Exfiltration (ASI07)
-        if let Some(finding) = self.detect_data_exfiltration(telemetry, &strings) {
-            return Some(finding);
-        }
-
-        // Pattern 4: Scraping & Exfiltration (Google Inventory Agent pattern - ASI09/ASI02)
-        if let Some(finding) = self.detect_scraping_exfiltration(telemetry) {
-            return Some(finding);
-        }
-
-        // Pattern 5: Confused Deputy & Privilege Abuse (ASI03)
-        if let Some(finding) = self.detect_privilege_abuse(telemetry, &strings) {
-            return Some(finding);
-        }
-
-        // Pattern 6: If Layer 1 screener flagged an anomaly (e.g. rate limit, cascading failure)
-        if let Some(flag) = screener_flag {
+            candidate_finding = Some(finding);
+        } else if let Some(finding) = self.detect_rogue_agent_shell_destruction(telemetry, &strings) {
+            // Pattern 2: Rogue Agent Shell Destruction (ASI10)
+            candidate_finding = Some(finding);
+        } else if let Some(finding) = self.detect_data_exfiltration(telemetry, &strings) {
+            // Pattern 3: Secondary Channel Data Exfiltration (ASI07)
+            candidate_finding = Some(finding);
+        } else if let Some(finding) = self.detect_scraping_exfiltration(telemetry) {
+            // Pattern 4: Scraping & Exfiltration (Google Inventory Agent pattern - ASI09/ASI02)
+            candidate_finding = Some(finding);
+        } else if let Some(finding) = self.detect_privilege_abuse(telemetry, &strings) {
+            // Pattern 5: Confused Deputy & Privilege Abuse (ASI03)
+            candidate_finding = Some(finding);
+        } else if let Some(flag) = screener_flag {
+            // Pattern 6: If Layer 1 screener flagged an anomaly (e.g. rate limit, cascading failure)
             if flag.is_anomalous {
-                return Some(AnomalyFinding {
+                candidate_finding = Some(AnomalyFinding {
                     id: format!("AF-{}", Uuid::new_v4().simple()),
                     session_id: telemetry.session_id.clone(),
                     agent_id: telemetry.agent_id.clone(),
@@ -94,6 +100,95 @@ impl SemanticReasoningEngine {
                     }),
                 });
             }
+        } else if let Some((threat_cluster, sim_score, tag)) = threat_similarity.as_ref() {
+            // Pattern 7: EmbeddingGemma 2 semantic threat match (>= 0.85)
+            if *sim_score >= 0.85 {
+                let (risk_category, rationale, mitigation) = match threat_cluster.as_str() {
+                    "Scraping" => (
+                        OwaspAgenticRisk::ResourceExhaustionASI09,
+                        format!(
+                            "Bulk data harvesting detected matching Google Inventory Agent pattern: '{}' (EmbeddingGemma 2 cosine similarity {:.2})",
+                            telemetry.tool_name, sim_score
+                        ),
+                        "Cap query pagination to 25 items max, enforce rate limiting, and require human-in-the-loop signoff for bulk exports.".to_string(),
+                    ),
+                    "Prompt Injection" => (
+                        OwaspAgenticRisk::PromptInjectionASI01,
+                        format!(
+                            "Prompt injection semantic vector detected in '{}' (EmbeddingGemma 2 cosine similarity {:.2})",
+                            telemetry.tool_name, sim_score
+                        ),
+                        "Quarantine prompt origin, sanitize retrieved RAG chunks, and reset agent context window.".to_string(),
+                    ),
+                    "Privilege Escalation" => (
+                        OwaspAgenticRisk::PrivilegeAbuseASI03,
+                        format!(
+                            "Privilege escalation semantic pattern detected in '{}' (EmbeddingGemma 2 cosine similarity {:.2})",
+                            telemetry.tool_name, sim_score
+                        ),
+                        "Enforce strict least-privilege RBAC boundaries; reject cross-tenant and unauthenticated impersonation queries.".to_string(),
+                    ),
+                    "Exfiltration" => (
+                        OwaspAgenticRisk::DataExfiltrationASI07,
+                        format!(
+                            "Data exfiltration semantic pattern detected in '{}' (EmbeddingGemma 2 cosine similarity {:.2})",
+                            telemetry.tool_name, sim_score
+                        ),
+                        "Halt transmission, rotate leaked credentials immediately, and quarantine origin session.".to_string(),
+                    ),
+                    "Shell Destruction" => (
+                        OwaspAgenticRisk::RogueAgentASI10,
+                        format!(
+                            "Destructive shell command semantic pattern detected in '{}' (EmbeddingGemma 2 cosine similarity {:.2})",
+                            telemetry.tool_name, sim_score
+                        ),
+                        "Immediately terminate agent process, revoke execution token, and snapshot environment state.".to_string(),
+                    ),
+                    _ => (
+                        OwaspAgenticRisk::UnexpectedExecutionASI05,
+                        format!(
+                            "Anomalous tool execution vector in '{}' (EmbeddingGemma 2 cosine similarity {:.2})",
+                            telemetry.tool_name, sim_score
+                        ),
+                        "Enforce strict agent authorization policy.".to_string(),
+                    ),
+                };
+
+                candidate_finding = Some(AnomalyFinding {
+                    id: format!("AF-{}", Uuid::new_v4().simple()),
+                    session_id: telemetry.session_id.clone(),
+                    agent_id: telemetry.agent_id.clone(),
+                    risk_category,
+                    severity: AlertSeverity::Critical,
+                    confidence_score: *sim_score,
+                    rationale,
+                    recommended_mitigation: mitigation,
+                    flagged_at: Utc::now(),
+                    evidence: serde_json::json!({
+                        "embedding_gemma2_cosine_score": sim_score,
+                        "threat_cluster": threat_cluster,
+                        "threat_tag": tag,
+                        "mrl_dimension": 128,
+                        "tool_name": telemetry.tool_name,
+                        "call_parameters": telemetry.call_parameters,
+                    }),
+                });
+            }
+        }
+
+        if let Some(mut found) = candidate_finding {
+            if let Some((threat_cluster, sim_score, tag)) = threat_similarity {
+                if let Some(obj) = found.evidence.as_object_mut() {
+                    obj.insert("embedding_gemma2_cosine_score".to_string(), serde_json::json!(sim_score));
+                    obj.insert("embedding_gemma2_threat_cluster".to_string(), serde_json::json!(threat_cluster));
+                    obj.insert("embedding_gemma2_threat_tag".to_string(), serde_json::json!(tag));
+                    obj.insert("embedding_gemma2_dimension".to_string(), serde_json::json!(128));
+                }
+                if sim_score >= 0.85 {
+                    found.confidence_score = ((found.confidence_score + sim_score) / 2.0).clamp(0.0, 0.99);
+                }
+            }
+            return Some(found);
         }
 
         // Optional: Upstream LLM / External evaluator hook

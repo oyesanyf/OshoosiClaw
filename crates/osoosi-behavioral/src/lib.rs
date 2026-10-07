@@ -24,6 +24,7 @@ pub mod skyrl;
 pub mod spider_eyes;
 pub mod yara_analyzer;
 pub mod decision_model;
+pub mod embedding_gemma;
 
 pub use decision_model::{ClefDecisionEngine, LocalDecisionEngine, SecurityIncidentDecision};
 pub use hardware_selection::{
@@ -59,4 +60,5 @@ pub use sentence::event_to_behavioral_sentence;
 pub use skyrl::{OshoosiSecurityGym, SkyAction, StepResult};
 pub use spider_eyes::{SpiderEyes, GemmaSupervisor};
 pub use yara_analyzer::YaraAnalyzer;
+pub use embedding_gemma::{EmbeddingGemma2Engine, MatryoshkaDim};
 
