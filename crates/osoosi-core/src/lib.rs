@@ -3333,6 +3333,10 @@ impl EdrOrchestrator {
                             );
 
                             let path = std::path::Path::new(&event.path);
+                            if !path.exists() {
+                                debug!("File Monitor: skipping vanished/ephemeral file: {}", event.path);
+                                return;
+                            }
                             let file_stem = path.file_name().and_then(|n| n.to_str());
                             if should_skip_file_malware_scan(path)
                                 || is_internal_or_deception_path(&event.path)
@@ -3433,6 +3437,34 @@ impl EdrOrchestrator {
                             }
 
                             if result.is_malware {
+                                if !path.exists() {
+                                    debug!(
+                                        "File Monitor: candidate malware vanished before action: {}",
+                                        result.file_path
+                                    );
+                                    return;
+                                }
+
+                                let sig_info = crate::win_trust::inspect_binary_authenticode(path);
+                                if sig_info.is_valid {
+                                    if let Some(ref subject) = sig_info.signer_subject {
+                                        if crate::win_trust::is_trusted_vendor(subject) {
+                                            info!(
+                                                "File Monitor: verified Authenticode digital signature for trusted vendor '{}' on {}. Disregarding ML flag as false positive (SUPPRESSED_FP).",
+                                                subject, result.file_path
+                                            );
+                                            return;
+                                        }
+                                    }
+                                    if crate::win_trust::is_trusted_signed_binary(path) {
+                                        info!(
+                                            "File Monitor: verified Authenticode digital signature on {}. Disregarding ML flag as false positive (SUPPRESSED_FP).",
+                                            result.file_path
+                                        );
+                                        return;
+                                    }
+                                }
+
                                 // Extra guard against false-positive detection/quarantine for trusted binaries, dev tools, or IDE paths
                                 if crate::win_trust::is_trusted_signed_binary(path)
                                     || osoosi_model::malware::is_ide_or_build_path(&result.file_path)
@@ -3523,6 +3555,12 @@ impl EdrOrchestrator {
                                 }
 
                                 if should_hard_block {
+                                    let target_p = std::path::Path::new(&result.file_path);
+                                    if !target_p.exists() {
+                                        debug!("Autonomous response skipped: file vanished before action: {}", result.file_path);
+                                        return;
+                                    }
+
                                     info!("AUTONOMOUS RESPONSE: Applying hard-block and quarantine for {}", result.file_path);
                                     
                                     // 1. Block the path persistently
@@ -3537,7 +3575,12 @@ impl EdrOrchestrator {
 
                                     // 2. Physical Quarantine
                                     if let Err(e) = crate::quarantine::quarantine_file(&result.file_path) {
-                                        error!("Quarantine failed for {}: {}", result.file_path, e);
+                                        let err_msg = e.to_string();
+                                        if err_msg.contains("File does not exist") || err_msg.contains("The system cannot find the file specified") {
+                                            debug!("Quarantine skipped: file was removed by parent installer: {}", result.file_path);
+                                        } else {
+                                            error!("Quarantine failed for {}: {}", result.file_path, e);
+                                        }
                                     }
                                 }
                                 // Broadcast to mesh for distributed EMBER training (PE samples with features)

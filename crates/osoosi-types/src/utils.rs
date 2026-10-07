@@ -354,7 +354,7 @@ pub fn extract_publisher_from_pe(file_path: &str) -> Option<String> {
 }
 
 /// Detailed status of an Authenticode signature.
-#[derive(Debug, Clone, Copy, PartialEq, Eq)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
 pub enum AuthenticodeStatus {
     ValidTrusted,       // 0 / ERROR_SUCCESS: Cryptographically valid and trusted by OS root store
     UntrustedRoot,      // 0x800B0109 / CERT_E_UNTRUSTEDROOT: Valid signature, untrusted root CA
@@ -363,6 +363,14 @@ pub enum AuthenticodeStatus {
     ExplicitDistrust,   // 0x800B0111 / TRUST_E_EXPLICIT_DISTRUST
     Revoked,            // 0x800B010C / CERT_E_REVOKED or 0x80092013 / CRYPT_E_REVOKED
     OtherError(i32),
+}
+
+/// Detailed information about an Authenticode digital signature inspection.
+#[derive(Debug, Clone, PartialEq, Eq, serde::Serialize, serde::Deserialize)]
+pub struct AuthenticodeSignatureInfo {
+    pub is_valid: bool,
+    pub signer_subject: Option<String>,
+    pub status: AuthenticodeStatus,
 }
 
 /// Extracts SHA-256 certificate thumbprints (lowercase hex) from all Authenticode certificates in binary.
@@ -503,43 +511,178 @@ pub fn check_authenticode_status(path: &str) -> AuthenticodeStatus {
     }
 }
 
-/// Check if a binary has a valid digital signature or belongs to a known trusted vendor.
-pub fn is_trusted_signed_binary(path: &Path) -> bool {
+/// Extracts the signer certificate subject name using native Win32 CryptQueryObject and CryptMsg API.
+#[cfg(target_os = "windows")]
+pub fn extract_signer_subject(path: &Path) -> Option<String> {
+    use std::ffi::c_void;
+    use std::os::windows::ffi::OsStrExt;
+    use windows::Win32::Security::Cryptography::*;
+
+    let mut wide_path: Vec<u16> = path.as_os_str().encode_wide().collect();
+    wide_path.push(0);
+
+    let mut msg: *mut c_void = std::ptr::null_mut();
+    let mut store: HCERTSTORE = HCERTSTORE::default();
+
+    unsafe {
+        let res = CryptQueryObject(
+            CERT_QUERY_OBJECT_FILE,
+            wide_path.as_ptr() as *const c_void,
+            CERT_QUERY_CONTENT_FLAG_PKCS7_SIGNED_EMBED,
+            CERT_QUERY_FORMAT_FLAG_BINARY,
+            0,
+            None,
+            None,
+            None,
+            Some(&mut store),
+            Some(&mut msg),
+            None,
+        );
+
+        if res.is_err() || msg.is_null() || store.is_invalid() {
+            return None;
+        }
+
+        let mut signer_info_size: u32 = 0;
+        if CryptMsgGetParam(
+            msg,
+            CMSG_SIGNER_INFO_PARAM,
+            0,
+            None,
+            &mut signer_info_size,
+        ).is_err() || signer_info_size == 0 {
+            let _ = CryptMsgClose(Some(msg));
+            let _ = CertCloseStore(store, 0);
+            return None;
+        }
+
+        let mut signer_info_bytes = vec![0u8; signer_info_size as usize];
+        if CryptMsgGetParam(
+            msg,
+            CMSG_SIGNER_INFO_PARAM,
+            0,
+            Some(signer_info_bytes.as_mut_ptr() as *mut c_void),
+            &mut signer_info_size,
+        ).is_err() {
+            let _ = CryptMsgClose(Some(msg));
+            let _ = CertCloseStore(store, 0);
+            return None;
+        }
+
+        let cert_context = CertFindCertificateInStore(
+            store,
+            X509_ASN_ENCODING | PKCS_7_ASN_ENCODING,
+            0,
+            CERT_FIND_ANY,
+            None,
+            None,
+        );
+
+        if cert_context.is_null() {
+            let _ = CryptMsgClose(Some(msg));
+            let _ = CertCloseStore(store, 0);
+            return None;
+        }
+
+        let name_len = CertGetNameStringW(
+            cert_context,
+            CERT_NAME_SIMPLE_DISPLAY_TYPE,
+            0,
+            None,
+            None,
+        );
+
+        let mut name_buffer = vec![0u16; name_len as usize];
+        CertGetNameStringW(
+            cert_context,
+            CERT_NAME_SIMPLE_DISPLAY_TYPE,
+            0,
+            None,
+            Some(&mut name_buffer),
+        );
+
+        let _ = CertFreeCertificateContext(Some(cert_context));
+        let _ = CryptMsgClose(Some(msg));
+        let _ = CertCloseStore(store, 0);
+
+        let subject = String::from_utf16_lossy(&name_buffer)
+            .trim_matches('\0')
+            .trim()
+            .to_string();
+
+        if subject.is_empty() {
+            None
+        } else {
+            Some(subject)
+        }
+    }
+}
+
+#[cfg(not(target_os = "windows"))]
+pub fn extract_signer_subject(_path: &Path) -> Option<String> {
+    None
+}
+
+/// Inspects the Authenticode signature of a binary, extracting validity status and signer subject.
+pub fn inspect_binary_authenticode(path: &Path) -> AuthenticodeSignatureInfo {
     let path_str = path.to_string_lossy();
-    #[cfg(target_os = "windows")]
-    {
-        let status = check_authenticode_status(&path_str);
-        match status {
-            AuthenticodeStatus::ValidTrusted => {
-                // Valid signature rooted in the OS Trust Store.
-                // Verify publisher matches known trusted vendor list.
-                if let Some(meta) = get_pe_metadata(path) {
-                    if let Some(ref pub_name) = meta.publisher {
-                        return is_trusted_vendor(pub_name);
-                    }
-                    if is_trusted_vendor(&meta.product_name) {
+    let status = check_authenticode_status(&path_str);
+    let is_valid = matches!(status, AuthenticodeStatus::ValidTrusted);
+    let signer_subject = if is_valid {
+        extract_signer_subject(path)
+    } else {
+        None
+    };
+
+    AuthenticodeSignatureInfo {
+        is_valid,
+        signer_subject,
+        status,
+    }
+}
+
+/// Check if a binary has a valid digital signature or belongs to a known trusted vendor.
+#[cfg(target_os = "windows")]
+pub fn is_trusted_signed_binary(path: &Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
+    let path_str = path.to_string_lossy();
+    let status = check_authenticode_status(&path_str);
+    match status {
+        AuthenticodeStatus::ValidTrusted => {
+            // 1. Try native Crypt32 subject extraction first
+            if let Some(subject) = extract_signer_subject(path) {
+                if is_trusted_vendor(&subject) {
+                    return true;
+                }
+            }
+            // 2. Check PE metadata / publisher
+            if let Some(meta) = get_pe_metadata(path) {
+                if let Some(ref pub_name) = meta.publisher {
+                    if is_trusted_vendor(pub_name) {
                         return true;
                     }
                 }
-                false
-            }
-            AuthenticodeStatus::UntrustedRoot => {
-                // Strict hardening: eliminate loose substring checks for development certs
-                // and require explicit thumbprint or recognized root store pinning.
-                let cert_thumbprints = extract_certificate_thumbprints(&path_str);
-                if is_pinned_thumbprint_allowed(&cert_thumbprints) {
+                if is_trusted_vendor(&meta.product_name) {
                     return true;
                 }
-                false
             }
-            // TamperedBadDigest, NotSigned, ExplicitDistrust, Revoked: NEVER trust
-            _ => false,
+            // 3. If ValidTrusted and located in protected OS/Program Files folders, trust it
+            let lower = path_str.to_lowercase().replace('/', "\\");
+            if lower.starts_with("c:\\program files\\")
+                || lower.starts_with("c:\\program files (x86)\\")
+                || lower.starts_with("c:\\windows\\")
+            {
+                return true;
+            }
+            false
         }
-    }
-    #[cfg(not(target_os = "windows"))]
-    {
-        let _ = path_str;
-        false
+        AuthenticodeStatus::UntrustedRoot => {
+            let cert_thumbprints = extract_certificate_thumbprints(&path_str);
+            is_pinned_thumbprint_allowed(&cert_thumbprints)
+        }
+        _ => false,
     }
 }
 
@@ -654,5 +797,22 @@ mod tests {
         assert_eq!(content, "Hello secure world");
 
         let _ = std::fs::remove_dir_all(&tmp_dir);
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_inspect_binary_authenticode_system() {
+        let kernel32 = Path::new(r"C:\Windows\System32\kernel32.dll");
+        if kernel32.exists() {
+            let info = inspect_binary_authenticode(kernel32);
+            assert_eq!(info.status, AuthenticodeStatus::ValidTrusted);
+            assert!(info.is_valid);
+            assert!(is_trusted_signed_binary(kernel32));
+        }
+
+        let non_existent = Path::new(r"C:\nonexistent\fake.exe");
+        let non_info = inspect_binary_authenticode(non_existent);
+        assert!(!non_info.is_valid);
+        assert_eq!(non_info.signer_subject, None);
     }
 }

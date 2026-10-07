@@ -5,6 +5,9 @@
 
 use dashmap::DashMap;
 use osoosi_types::AuthenticodeStatus;
+pub use osoosi_types::{
+    extract_signer_subject, inspect_binary_authenticode, AuthenticodeSignatureInfo,
+};
 use std::path::Path;
 use std::sync::LazyLock;
 use std::time::{Duration, SystemTime};
@@ -33,10 +36,28 @@ pub fn get_cached_authenticode_status(path: &str) -> AuthenticodeStatus {
         }
     }
 
+    let p = Path::new(path);
+    if !p.exists() {
+        return AuthenticodeStatus::NotSigned;
+    }
+
     #[cfg(target_os = "windows")]
-    let status = osoosi_types::check_authenticode_status(path);
+    let mut status = osoosi_types::check_authenticode_status(path);
     #[cfg(not(target_os = "windows"))]
     let status = AuthenticodeStatus::NotSigned;
+
+    #[cfg(target_os = "windows")]
+    if let AuthenticodeStatus::OtherError(code) = status {
+        // -2147024864 (0x80070020): ERROR_SHARING_VIOLATION (file is locked by active installer)
+        if code == -2147024864 {
+            std::thread::sleep(Duration::from_millis(30));
+            status = osoosi_types::check_authenticode_status(path);
+        }
+        // Never poison the 300-second cache with transient I/O or sharing errors
+        if let AuthenticodeStatus::OtherError(_) = status {
+            return status;
+        }
+    }
 
     AUTHENTICODE_CACHE.insert(key, (status, now));
     status
@@ -48,20 +69,40 @@ pub fn verify_file_signature(path: &str) -> bool {
 }
 
 /// Check if a binary has a valid digital signature or belongs to a known trusted vendor,
-/// leveraging cached WinVerifyTrust status.
+/// leveraging cached WinVerifyTrust status and native Crypt32 subject extraction.
 pub fn is_trusted_signed_binary(path: &Path) -> bool {
+    if !path.exists() {
+        return false;
+    }
     let path_str = path.to_string_lossy();
     let status = get_cached_authenticode_status(&path_str);
 
     match status {
         AuthenticodeStatus::ValidTrusted => {
+            // 1. Try native Crypt32 subject extraction first
+            if let Some(subject) = extract_signer_subject(path) {
+                if is_trusted_vendor(&subject) {
+                    return true;
+                }
+            }
+            // 2. Check PE metadata / publisher
             if let Some(meta) = osoosi_types::get_pe_metadata(path) {
                 if let Some(ref pub_name) = meta.publisher {
-                    return is_trusted_vendor(pub_name);
+                    if is_trusted_vendor(pub_name) {
+                        return true;
+                    }
                 }
                 if is_trusted_vendor(&meta.product_name) {
                     return true;
                 }
+            }
+            // 3. If ValidTrusted and located in protected OS/Program Files folders, trust it
+            let lower = path_str.to_lowercase().replace('/', "\\");
+            if lower.starts_with("c:\\program files\\")
+                || lower.starts_with("c:\\program files (x86)\\")
+                || lower.starts_with("c:\\windows\\")
+            {
+                return true;
             }
             false
         }
@@ -122,5 +163,24 @@ mod tests {
 
         invalidate_cache_entry(test_path);
         assert_eq!(cache_len(), 0);
+    }
+
+    #[test]
+    fn test_transient_error_not_cached() {
+        clear_authenticode_cache();
+        let transient_status = AuthenticodeStatus::OtherError(-2147024864);
+        assert!(!matches!(transient_status, AuthenticodeStatus::ValidTrusted));
+    }
+
+    #[test]
+    #[cfg(target_os = "windows")]
+    fn test_core_inspect_binary_authenticode_system() {
+        let kernel32 = Path::new(r"C:\Windows\System32\kernel32.dll");
+        if kernel32.exists() {
+            let info = inspect_binary_authenticode(kernel32);
+            assert!(info.is_valid);
+            assert_eq!(info.status, AuthenticodeStatus::ValidTrusted);
+            assert!(is_trusted_signed_binary(kernel32));
+        }
     }
 }

@@ -24,8 +24,20 @@ pub fn quarantine_file(file_path: &str) -> anyhow::Result<PathBuf> {
     let dest = Path::new(quarantine_dir).join(format!("{}_{}_{}", nanos, unique_tag, filename));
 
     if std::fs::rename(src, &dest).is_err() {
-        std::fs::copy(src, &dest)?;
-        let _ = std::fs::remove_file(src);
+        if !src.exists() {
+            return Err(anyhow::anyhow!("File does not exist: {}", file_path));
+        }
+        match std::fs::copy(src, &dest) {
+            Ok(_) => {
+                let _ = std::fs::remove_file(src);
+            }
+            Err(e) => {
+                if !src.exists() || e.kind() == std::io::ErrorKind::NotFound {
+                    return Err(anyhow::anyhow!("File does not exist: {}", file_path));
+                }
+                return Err(e.into());
+            }
+        }
     }
 
     #[cfg(not(target_os = "windows"))]
