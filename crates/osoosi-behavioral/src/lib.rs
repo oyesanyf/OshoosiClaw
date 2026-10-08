@@ -47,10 +47,11 @@ pub use log_reader::{BehavioralLogReader, LogEvent};
 pub use process_tree::{ProcessRelationship, ProcessTreeEmbedder};
 pub use rl_engine::{
     ActionScope, ActionTier, AdvantageSummary, AdvantageTracker, ByzantineRobustAggregator,
-    DeepQEngine, DigitalTwinSimulator, DoubleDeepQEngine, EDRRuntimeController, EdrAction,
-    EdrRewardEngine, HeuristicPriorScores, IncidentMitreContext, LinUcbBandit, MeshContext,
-    MitigationAction, MitigationTechnique, MultiObjectiveSignals, MultiObjectiveWeights,
-    PrioritizedReplayBuffer, ProcessContext, ProcessLineageVector, RlExecutionMode,
+    DeepQEngine, DigitalTwinSimulator, DoubleDeepQEngine, DuelingQuantileNetwork,
+    EDRRuntimeController, EdrAction, EdrRewardEngine, HeuristicPriorScores, IncidentMitreContext,
+    LinUcbBandit, MeshContext, MitigationAction, MitigationTechnique, MultiObjectiveSignals,
+    MultiObjectiveWeights, NStepTransitionBuffer, PrioritizedReplayBuffer, ProcessContext,
+    ProcessLineageVector, QuantileRegressionDqnEngine, RiskProfile, RlExecutionMode,
     RollbackStrategy, RolloutMetrics, SafetyFilter, SafetyGuardrail, SharedBilinearBandit,
     StateFeaturePipeline, StructuredEdrAction, TelemetryLevel, TelemetryPacket,
     TelemetryVelocity, TemporalMetricsSummary, TemporalMetricsTracker, Transition,

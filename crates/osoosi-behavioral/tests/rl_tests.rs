@@ -10,9 +10,10 @@
 
 use osoosi_behavioral::rl_engine::{
     ActionScope, ActionTier, AdvantageTracker, DigitalTwinSimulator, DoubleDeepQEngine,
-    EDRRuntimeController, EdrAction, EdrRewardEngine, HeuristicPriorScores, IncidentMitreContext,
-    LinUcbBandit, MeshContext, MitigationTechnique, PrioritizedReplayBuffer, ProcessContext,
-    ProcessLineageVector, RlExecutionMode, RollbackStrategy, SafetyFilter, SharedBilinearBandit,
+    DuelingQuantileNetwork, EDRRuntimeController, EdrAction, EdrRewardEngine, HeuristicPriorScores,
+    IncidentMitreContext, LinUcbBandit, MeshContext, MitigationTechnique, NStepTransitionBuffer,
+    PrioritizedReplayBuffer, ProcessContext, ProcessLineageVector, QuantileRegressionDqnEngine,
+    RiskProfile, RlExecutionMode, RollbackStrategy, SafetyFilter, SharedBilinearBandit,
     StateFeaturePipeline, StructuredEdrAction, TelemetryLevel, TelemetryPacket, TelemetryVelocity,
     TemporalMetricsTracker, Transition, UnifiedEdrState,
 };
@@ -1152,5 +1153,268 @@ fn test_state_feature_pipeline_unified_32d() {
     assert_eq!(unified_vec[18], 0.1);
     assert_eq!(unified_vec[24], 0.88);
     assert_eq!(unified_vec[31], 0.95);
+}
+
+#[test]
+fn test_quantile_huber_loss_and_quantiles() {
+    let engine = QuantileRegressionDqnEngine::new(10, 5);
+    assert_eq!(engine.tau.len(), 32);
+
+    // Verify tau midpoint probabilities: tau_i = (i + 0.5) / 32
+    for (i, &t) in engine.tau.iter().enumerate() {
+        let expected = (i as f32 + 0.5) / 32.0;
+        assert!(
+            (t - expected).abs() < 1e-6,
+            "tau[{}] mismatch: got {}, expected {}",
+            i,
+            t,
+            expected
+        );
+    }
+    assert_eq!(engine.tau[0], 0.5 / 32.0);
+    assert_eq!(engine.tau[31], 31.5 / 32.0);
+
+    // Check Huber loss with threshold kappa = 1.0
+    let kappa = engine.kappa;
+    assert_eq!(kappa, 1.0);
+
+    let u_small = 0.5f32;
+    let huber_small = if u_small.abs() <= kappa {
+        0.5 * u_small * u_small
+    } else {
+        kappa * (u_small.abs() - 0.5 * kappa)
+    };
+    assert!((huber_small - 0.125).abs() < 1e-6);
+
+    let u_large = 2.0f32;
+    let huber_large = if u_large.abs() <= kappa {
+        0.5 * u_large * u_large
+    } else {
+        kappa * (u_large.abs() - 0.5 * kappa)
+    };
+    assert!((huber_large - 1.5).abs() < 1e-6);
+
+    // Check asymmetric quantile weighting: |tau - I(u < 0)|
+    let tau_high = 0.9f32;
+    let weight_underestimate = (tau_high - 0.0).abs(); // u > 0 (prediction < target)
+    let weight_overestimate = (tau_high - 1.0).abs();  // u < 0 (prediction > target)
+    assert!((weight_underestimate - 0.9).abs() < 1e-6);
+    assert!((weight_overestimate - 0.1).abs() < 1e-6);
+    assert!(weight_underestimate > weight_overestimate);
+}
+
+#[test]
+fn test_dueling_quantile_network_identifiability() {
+    let net = DuelingQuantileNetwork::new(16, 4, 32);
+    let state = vec![0.25f32; 16];
+
+    let theta = net.forward_quantiles(&state);
+    assert_eq!(theta.len(), 4);
+    assert_eq!(theta[0].len(), 32);
+
+    let h1 = net.fc1.forward(&state, true);
+    let h2 = net.fc2.forward(&h1, true);
+    let v = net.fc_val.forward(&h2, false);
+    let adv_flat = net.fc_adv.forward(&h2, false);
+
+    for i in 0..32 {
+        let mut mean_theta_i = 0.0f32;
+        let mut mean_adv_i = 0.0f32;
+        for a in 0..4 {
+            mean_theta_i += theta[a][i];
+            mean_adv_i += adv_flat[a * 32 + i];
+        }
+        mean_theta_i /= 4.0;
+        mean_adv_i /= 4.0;
+
+        // V_i(s) must equal the mean of theta across actions (identifiability constraint)
+        assert!(
+            (mean_theta_i - v[i]).abs() < 1e-5,
+            "Identifiability failed at quantile {}: mean_theta={}, v={}",
+            i,
+            mean_theta_i,
+            v[i]
+        );
+
+        // theta_i(s, a) must match V_i(s) + A_i(s, a) - mean_a A_i(s, a)
+        for a in 0..4 {
+            let expected = v[i] + adv_flat[a * 32 + i] - mean_adv_i;
+            assert!(
+                (theta[a][i] - expected).abs() < 1e-5,
+                "Forward value mismatch at action {}, quantile {}: got {}, expected {}",
+                a,
+                i,
+                theta[a][i],
+                expected
+            );
+        }
+    }
+}
+
+#[test]
+fn test_cvar_risk_averse_avoids_tail_risk() {
+    // Action A has mean 10 with no variance (all 32 quantiles = 10.0)
+    let quantiles_a = vec![10.0f32; 32];
+
+    // Action B has mean 12 with huge tail risk (bottom 8 quantiles = -50.0, top 24 quantiles = 32.7)
+    let mut quantiles_b = Vec::with_capacity(32);
+    for _ in 0..8 {
+        quantiles_b.push(-50.0f32);
+    }
+    for _ in 0..24 {
+        quantiles_b.push(32.7f32);
+    }
+
+    let neutral = RiskProfile::RiskNeutral;
+    let averse = RiskProfile::RiskAverse { alpha: 0.25 };
+    let seeking = RiskProfile::RiskSeeking { alpha: 0.25 };
+
+    let val_neutral_a = neutral.evaluate_distribution(&quantiles_a);
+    let val_neutral_b = neutral.evaluate_distribution(&quantiles_b);
+
+    let val_averse_a = averse.evaluate_distribution(&quantiles_a);
+    let val_averse_b = averse.evaluate_distribution(&quantiles_b);
+
+    let val_seeking_a = seeking.evaluate_distribution(&quantiles_a);
+    let val_seeking_b = seeking.evaluate_distribution(&quantiles_b);
+
+    // Verify RiskNeutral picks Action B: Action B (~12.025) > Action A (10.0)
+    assert_eq!(val_neutral_a, 10.0);
+    assert!(val_neutral_b > 12.0);
+    assert!(
+        val_neutral_b > val_neutral_a,
+        "RiskNeutral should prefer Action B over Action A"
+    );
+
+    // Verify RiskAverse (alpha=0.25) picks Action A: Action A (10.0) > Action B (-50.0)
+    assert_eq!(val_averse_a, 10.0);
+    assert_eq!(val_averse_b, -50.0);
+    assert!(
+        val_averse_a > val_averse_b,
+        "RiskAverse should avoid Action B's tail risk and pick Action A"
+    );
+
+    // Verify RiskSeeking picks Action B (top 8 quantiles = 32.7 > 10.0)
+    assert_eq!(val_seeking_a, 10.0);
+    assert_eq!(val_seeking_b, 32.7);
+    assert!(val_seeking_b > val_seeking_a);
+}
+
+#[test]
+fn test_n_step_transition_buffer_discounting() {
+    let mut buffer = NStepTransitionBuffer::new(3, 0.9);
+
+    let s0 = vec![1.0, 2.0];
+    let s1 = vec![2.0, 3.0];
+    let s2 = vec![3.0, 4.0];
+    let s3 = vec![4.0, 5.0];
+
+    let t0 = Transition::new(s0.clone(), EdrAction::PassiveObserve, 10.0, s1.clone(), false, 1.0);
+    let t1 = Transition::new(s1.clone(), EdrAction::TraceElevation, 5.0, s2.clone(), false, 1.0);
+    let t2 = Transition::new(s2.clone(), EdrAction::MemoryIntrospection, 20.0, s3.clone(), false, 1.0);
+
+    assert!(buffer.push(t0).is_none());
+    assert!(buffer.push(t1).is_none());
+
+    let res = buffer.push(t2);
+    assert!(res.is_some(), "Buffer of size 3 should emit upon 3rd transition");
+
+    let compacted = res.unwrap();
+    // Accumulated reward = 10.0 + 0.9 * 5.0 + 0.9^2 * 20.0 = 10.0 + 4.5 + 16.2 = 30.7
+    assert!(
+        (compacted.reward - 30.7).abs() < 1e-4,
+        "Accumulated reward mismatch: got {}, expected 30.7",
+        compacted.reward
+    );
+    assert_eq!(compacted.state, s0);
+    assert_eq!(compacted.next_state, s3);
+    assert_eq!(compacted.action, EdrAction::PassiveObserve);
+    assert!(!compacted.done);
+
+    let remaining = buffer.flush();
+    assert_eq!(remaining.len(), 2);
+    // t1 accumulated: 5.0 + 0.9 * 20.0 = 23.0
+    assert!((remaining[0].reward - 23.0).abs() < 1e-4);
+    assert_eq!(remaining[0].state, s1);
+    assert_eq!(remaining[0].next_state, s3);
+    // t2 accumulated: 20.0
+    assert!((remaining[1].reward - 20.0).abs() < 1e-4);
+    assert_eq!(remaining[1].state, s2);
+    assert_eq!(remaining[1].next_state, s3);
+}
+
+#[test]
+fn test_qr_dqn_training_step_reduces_loss() {
+    let mut engine = QuantileRegressionDqnEngine::new(4, 2);
+    let state = vec![0.5, 0.2, -0.1, 0.8];
+    let next_state = vec![0.6, 0.3, 0.0, 0.9];
+
+    let batch = vec![
+        Transition::new(
+            state.clone(),
+            EdrAction::PassiveObserve,
+            5.0,
+            next_state.clone(),
+            false,
+            1.0,
+        ),
+        Transition::new(
+            state.clone(),
+            EdrAction::TraceElevation,
+            -2.0,
+            next_state.clone(),
+            false,
+            1.0,
+        ),
+    ];
+
+    let initial_loss = engine.train_step_qr_dqn(&batch, 0.9, 0.01);
+    let mut final_loss = initial_loss;
+    for _ in 0..50 {
+        final_loss = engine.train_step_qr_dqn(&batch, 0.9, 0.01);
+        engine.update_target_network(0.02);
+    }
+
+    assert!(
+        final_loss < initial_loss,
+        "QR-DQN loss should decrease after training: initial={}, final={}",
+        initial_loss,
+        final_loss
+    );
+}
+
+#[test]
+fn test_qr_dqn_checkpoint_roundtrip_and_validation() {
+    let engine = QuantileRegressionDqnEngine::with_warm_priors(16, 5);
+    let json_str = engine.to_json_string().expect("Serialization failed");
+
+    let deserialized = QuantileRegressionDqnEngine::from_json_string(&json_str)
+        .expect("Deserialization failed");
+    assert_eq!(deserialized.state_dim, 16);
+    assert_eq!(deserialized.action_dim, 5);
+    assert_eq!(deserialized.num_quantiles, 32);
+    assert_eq!(deserialized.tau.len(), 32);
+    assert_eq!(deserialized.execution_mode, RlExecutionMode::WarmPriorRl);
+
+    // File roundtrip
+    let temp_dir = std::env::temp_dir();
+    let temp_path = temp_dir.join(format!("qr_dqn_test_{}.json", std::process::id()));
+    engine.save_to_json(&temp_path).expect("File save failed");
+
+    let loaded = QuantileRegressionDqnEngine::load_from_json(&temp_path)
+        .expect("File load failed");
+    let _ = std::fs::remove_file(&temp_path);
+
+    assert_eq!(loaded.state_dim, engine.state_dim);
+    assert_eq!(loaded.num_quantiles, engine.num_quantiles);
+
+    // Corrupted validation
+    let mut corrupted = engine.clone();
+    corrupted.version = 0;
+    assert!(corrupted.validate().is_err());
+
+    let mut corrupted_dim = engine.clone();
+    corrupted_dim.state_dim = 999;
+    assert!(corrupted_dim.validate().is_err());
 }
 

@@ -14,7 +14,7 @@
 
 use rand::Rng;
 use serde::{Deserialize, Serialize};
-use std::collections::HashSet;
+use std::collections::{HashSet, VecDeque};
 use std::sync::Arc;
 use tokio::sync::mpsc;
 use tracing::{info, warn};
@@ -1508,6 +1508,497 @@ impl DoubleDeepQEngine {
     }
 }
 
+/// Risk sensitivity profiles for action evaluation (Conditional Value-at-Risk / CVaR).
+#[derive(Debug, Clone, Copy, PartialEq, Serialize, Deserialize)]
+pub enum RiskProfile {
+    RiskNeutral,
+    RiskAverse { alpha: f32 },
+    RiskSeeking { alpha: f32 },
+}
+
+impl Default for RiskProfile {
+    fn default() -> Self {
+        Self::RiskNeutral
+    }
+}
+
+impl RiskProfile {
+    pub fn evaluate_distribution(&self, quantiles: &[f32]) -> f32 {
+        if quantiles.is_empty() {
+            return 0.0;
+        }
+        match self {
+            Self::RiskNeutral => {
+                quantiles.iter().sum::<f32>() / (quantiles.len() as f32)
+            }
+            Self::RiskAverse { alpha } => {
+                let mut sorted = quantiles.to_vec();
+                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                let alpha_clamped = alpha.clamp(0.0, 1.0);
+                let k = (((alpha_clamped * (sorted.len() as f32)).floor() as usize).max(1)).min(sorted.len());
+                sorted[..k].iter().sum::<f32>() / (k as f32)
+            }
+            Self::RiskSeeking { alpha } => {
+                let mut sorted = quantiles.to_vec();
+                sorted.sort_by(|a, b| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal));
+                let alpha_clamped = alpha.clamp(0.0, 1.0);
+                let k = (((alpha_clamped * (sorted.len() as f32)).floor() as usize).max(1)).min(sorted.len());
+                let start = sorted.len() - k;
+                sorted[start..].iter().sum::<f32>() / (k as f32)
+            }
+        }
+    }
+}
+
+/// Dueling Quantile Network Architecture (Wang et al. 2016 / Dopamine Rainbow/QR-DQN).
+/// Decouples value stream $V(s) \in \mathbb{R}^N$ and advantage stream $A(s, a) \in \mathbb{R}^{K \times N}$
+/// with identifiability constraint: $\theta_i(s, a) = V_i(s) + (A_i(s, a) - \frac{1}{|A|}\sum_{a'} A_i(s, a'))$.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct DuelingQuantileNetwork {
+    pub state_dim: usize,
+    pub action_dim: usize,
+    pub num_quantiles: usize,
+    pub fc1: DenseLayer,
+    pub fc2: DenseLayer,
+    pub fc_val: DenseLayer,
+    pub fc_adv: DenseLayer,
+}
+
+impl DuelingQuantileNetwork {
+    pub fn new(state_dim: usize, action_dim: usize, num_quantiles: usize) -> Self {
+        Self {
+            state_dim,
+            action_dim,
+            num_quantiles,
+            fc1: DenseLayer::new(state_dim, 128),
+            fc2: DenseLayer::new(128, 128),
+            fc_val: DenseLayer::new(128, num_quantiles),
+            fc_adv: DenseLayer::new(128, action_dim * num_quantiles),
+        }
+    }
+
+    pub fn forward_quantiles(&self, state: &[f32]) -> Vec<Vec<f32>> {
+        let h1 = self.fc1.forward(state, true);
+        let h2 = self.fc2.forward(&h1, true);
+        let v = self.fc_val.forward(&h2, false);
+        let adv_flat = self.fc_adv.forward(&h2, false);
+
+        let mut mean_adv = vec![0.0f32; self.num_quantiles];
+        let num_actions = self.action_dim;
+
+        for a in 0..num_actions {
+            let offset = a * self.num_quantiles;
+            for i in 0..self.num_quantiles {
+                mean_adv[i] += adv_flat[offset + i];
+            }
+        }
+        for i in 0..self.num_quantiles {
+            mean_adv[i] /= num_actions as f32;
+        }
+
+        let mut theta = vec![vec![0.0f32; self.num_quantiles]; num_actions];
+        for a in 0..num_actions {
+            let offset = a * self.num_quantiles;
+            for i in 0..self.num_quantiles {
+                theta[a][i] = v[i] + adv_flat[offset + i] - mean_adv[i];
+            }
+        }
+
+        theta
+    }
+
+    pub fn backward_quantiles(
+        &mut self,
+        state: &[f32],
+        grad_quantiles: &[Vec<f32>],
+        lr: f32,
+    ) {
+        let h1 = self.fc1.forward(state, true);
+        let h2 = self.fc2.forward(&h1, true);
+
+        let mut grad_v = vec![0.0f32; self.num_quantiles];
+        let mut grad_adv_flat = vec![0.0f32; self.action_dim * self.num_quantiles];
+
+        let mut sum_grad_quantile = vec![0.0f32; self.num_quantiles];
+        for a in 0..self.action_dim {
+            if a < grad_quantiles.len() {
+                for i in 0..self.num_quantiles {
+                    if i < grad_quantiles[a].len() {
+                        sum_grad_quantile[i] += grad_quantiles[a][i];
+                    }
+                }
+            }
+        }
+
+        for i in 0..self.num_quantiles {
+            grad_v[i] = sum_grad_quantile[i];
+        }
+
+        let inv_a = 1.0 / (self.action_dim as f32);
+        for a in 0..self.action_dim {
+            let offset = a * self.num_quantiles;
+            for i in 0..self.num_quantiles {
+                let g = if a < grad_quantiles.len() && i < grad_quantiles[a].len() {
+                    grad_quantiles[a][i]
+                } else {
+                    0.0
+                };
+                grad_adv_flat[offset + i] = g - inv_a * sum_grad_quantile[i];
+            }
+        }
+
+        let grad_h2_val = self.fc_val.backward(&h2, &grad_v, lr);
+        let grad_h2_adv = self.fc_adv.backward(&h2, &grad_adv_flat, lr);
+
+        let mut grad_z2 = vec![0.0f32; h2.len()];
+        for k in 0..h2.len() {
+            let g = grad_h2_val.get(k).copied().unwrap_or(0.0)
+                + grad_h2_adv.get(k).copied().unwrap_or(0.0);
+            grad_z2[k] = if h2.get(k).copied().unwrap_or(0.0) > 0.0 {
+                g
+            } else {
+                0.0
+            };
+        }
+
+        let grad_h1 = self.fc2.backward(&h1, &grad_z2, lr);
+        let mut grad_z1 = vec![0.0f32; h1.len()];
+        for k in 0..h1.len() {
+            let g = grad_h1.get(k).copied().unwrap_or(0.0);
+            grad_z1[k] = if h1.get(k).copied().unwrap_or(0.0) > 0.0 {
+                g
+            } else {
+                0.0
+            };
+        }
+
+        let _ = self.fc1.backward(state, &grad_z1, lr);
+    }
+
+    pub fn flatten_parameters(&self) -> Vec<f32> {
+        let mut params = Vec::new();
+        params.extend(self.fc1.flatten_parameters());
+        params.extend(self.fc2.flatten_parameters());
+        params.extend(self.fc_val.flatten_parameters());
+        params.extend(self.fc_adv.flatten_parameters());
+        params
+    }
+
+    pub fn load_parameters(&mut self, flat: &[f32]) {
+        let mut offset = 0;
+        offset += self.fc1.load_parameters(&flat[offset..]);
+        offset += self.fc2.load_parameters(&flat[offset..]);
+        offset += self.fc_val.load_parameters(&flat[offset..]);
+        let _ = self.fc_adv.load_parameters(&flat[offset..]);
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.state_dim == 0 || self.action_dim == 0 || self.num_quantiles == 0 {
+            return Err("dimensions must be non-zero".into());
+        }
+        if self.fc1.weights.len() != self.state_dim || self.fc1.biases.len() != 128 {
+            return Err("fc1 dimension mismatch".into());
+        }
+        if self.fc2.weights.len() != 128 || self.fc2.biases.len() != 128 {
+            return Err("fc2 dimension mismatch".into());
+        }
+        if self.fc_val.weights.len() != 128 || self.fc_val.biases.len() != self.num_quantiles {
+            return Err("fc_val dimension mismatch".into());
+        }
+        if self.fc_adv.weights.len() != 128 || self.fc_adv.biases.len() != self.action_dim * self.num_quantiles {
+            return Err("fc_adv dimension mismatch".into());
+        }
+        Ok(())
+    }
+}
+
+/// Quantile Regression Deep Q-Network (QR-DQN, Dabney et al. 2018 / Google Dopamine).
+/// Models the full return distribution via $N=32$ quantile locations $\theta_i(s, a)$
+/// minimizing Quantile Huber Loss with Double DQN target projection.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct QuantileRegressionDqnEngine {
+    #[serde(default = "default_version")]
+    pub version: usize,
+    pub state_dim: usize,
+    pub action_dim: usize,
+    pub num_quantiles: usize,
+    pub online_net: DuelingQuantileNetwork,
+    pub target_net: DuelingQuantileNetwork,
+    pub kappa: f32,
+    pub tau: Vec<f32>,
+    #[serde(default)]
+    pub execution_mode: RlExecutionMode,
+    #[serde(default)]
+    pub step_count: usize,
+}
+
+impl QuantileRegressionDqnEngine {
+    pub fn new(state_dim: usize, action_dim: usize) -> Self {
+        let num_quantiles = 32;
+        let online_net = DuelingQuantileNetwork::new(state_dim, action_dim, num_quantiles);
+        let mut target_net = DuelingQuantileNetwork::new(state_dim, action_dim, num_quantiles);
+        target_net.load_parameters(&online_net.flatten_parameters());
+        let tau: Vec<f32> = (0..num_quantiles)
+            .map(|i| (i as f32 + 0.5) / (num_quantiles as f32))
+            .collect();
+        Self {
+            version: 1,
+            state_dim,
+            action_dim,
+            num_quantiles,
+            online_net,
+            target_net,
+            kappa: 1.0,
+            tau,
+            execution_mode: RlExecutionMode::ColdRl,
+            step_count: 0,
+        }
+    }
+
+    pub fn with_warm_priors(state_dim: usize, action_dim: usize) -> Self {
+        let mut engine = Self::new(state_dim, action_dim);
+        engine.execution_mode = RlExecutionMode::WarmPriorRl;
+        engine.initialize_heuristic_priors();
+        engine
+    }
+
+    pub fn initialize_heuristic_priors(&mut self) {
+        let biases = [1.0f32, 0.5, 0.2, -0.5, -1.0];
+        for (a, &b) in biases.iter().enumerate().take(self.action_dim) {
+            for q in 0..self.num_quantiles {
+                let idx = a * self.num_quantiles + q;
+                if idx < self.online_net.fc_adv.biases.len() {
+                    self.online_net.fc_adv.biases[idx] = b;
+                }
+            }
+        }
+        self.target_net.load_parameters(&self.online_net.flatten_parameters());
+    }
+
+    pub fn forward_all_quantiles(&self, state: &[f32]) -> Vec<Vec<f32>> {
+        self.online_net.forward_quantiles(state)
+    }
+
+    pub fn forward_q_values(&self, state: &[f32]) -> Vec<f32> {
+        self.evaluate_risk_action_values(state, RiskProfile::RiskNeutral)
+    }
+
+    pub fn evaluate_risk_action_values(&self, state: &[f32], risk_profile: RiskProfile) -> Vec<f32> {
+        let quantiles = self.online_net.forward_quantiles(state);
+        quantiles
+            .iter()
+            .map(|dist| risk_profile.evaluate_distribution(dist))
+            .collect()
+    }
+
+    pub fn select_guarded_action(
+        &self,
+        state: &[f32],
+        mask: &[f32; 5],
+        risk_profile: RiskProfile,
+        epsilon: f32,
+    ) -> EdrAction {
+        let mut rng = rand::thread_rng();
+
+        if rng.gen::<f32>() < epsilon {
+            let valid: Vec<usize> = mask
+                .iter()
+                .enumerate()
+                .filter_map(|(i, &m)| {
+                    if m > 0.0 && i < self.action_dim {
+                        Some(i)
+                    } else {
+                        None
+                    }
+                })
+                .collect();
+            if !valid.is_empty() {
+                let chosen = valid[rng.gen_range(0..valid.len())];
+                return EdrAction::from_index(chosen);
+            }
+            return EdrAction::PassiveObserve;
+        }
+
+        let action_values = self.evaluate_risk_action_values(state, risk_profile);
+        let mut best_action = 0;
+        let mut max_val = f32::NEG_INFINITY;
+
+        for i in 0..self.action_dim.min(5) {
+            if mask[i] > 0.0 {
+                let val = action_values.get(i).copied().unwrap_or(f32::NEG_INFINITY);
+                if val > max_val {
+                    max_val = val;
+                    best_action = i;
+                }
+            }
+        }
+
+        EdrAction::from_index(best_action)
+    }
+
+    pub fn train_step_qr_dqn(&mut self, batch: &[Transition], gamma: f32, lr: f32) -> f32 {
+        if self.execution_mode == RlExecutionMode::FrozenTest {
+            return 0.0;
+        }
+        if batch.is_empty() {
+            return 0.0;
+        }
+
+        self.step_count += 1;
+        let mut total_loss = 0.0;
+        let n_quantiles = self.num_quantiles;
+
+        for transition in batch {
+            // Double DQN target selection:
+            // a* = argmax_a mean_i(online_net(s')[a][i])
+            let next_online_quantiles = self.online_net.forward_quantiles(&transition.next_state);
+            let mut best_a = 0;
+            let mut best_mean = f32::NEG_INFINITY;
+            for (a, dist) in next_online_quantiles.iter().enumerate() {
+                let mean_val = if dist.is_empty() {
+                    0.0
+                } else {
+                    dist.iter().sum::<f32>() / (dist.len() as f32)
+                };
+                if mean_val > best_mean {
+                    best_mean = mean_val;
+                    best_a = a;
+                }
+            }
+
+            // Target quantiles from target network:
+            // T theta_j = r + gamma * target_net(s')[a*][j] (if not done, else r)
+            let next_target_quantiles = self.target_net.forward_quantiles(&transition.next_state);
+            let mut target_quantiles = vec![transition.reward; n_quantiles];
+            if !transition.done {
+                if let Some(target_dist) = next_target_quantiles.get(best_a) {
+                    for j in 0..n_quantiles {
+                        let q_target = target_dist.get(j).copied().unwrap_or(0.0);
+                        target_quantiles[j] = transition.reward + gamma * q_target;
+                    }
+                }
+            }
+
+            // Online prediction for (s, a)
+            let current_quantiles = self.online_net.forward_quantiles(&transition.state);
+            let action_idx = transition.get_action_index();
+            let current_dist = current_quantiles
+                .get(action_idx)
+                .cloned()
+                .unwrap_or_else(|| vec![0.0; n_quantiles]);
+
+            let mut grad_theta = vec![vec![0.0f32; n_quantiles]; self.action_dim];
+            let mut transition_loss = 0.0f32;
+
+            for i in 0..n_quantiles {
+                let theta_i = current_dist.get(i).copied().unwrap_or(0.0);
+                let tau_i = self.tau.get(i).copied().unwrap_or((i as f32 + 0.5) / (n_quantiles as f32));
+
+                let mut grad_i_sum = 0.0f32;
+                for j in 0..n_quantiles {
+                    let t_theta_j = target_quantiles[j];
+                    let u = t_theta_j - theta_i;
+
+                    let abs_u = u.abs();
+                    let huber = if abs_u <= self.kappa {
+                        0.5 * u * u
+                    } else {
+                        self.kappa * (abs_u - 0.5 * self.kappa)
+                    };
+
+                    let indicator = if u < 0.0 { 1.0 } else { 0.0 };
+                    let weight = (tau_i - indicator).abs();
+                    let loss_ij = weight * (huber / self.kappa);
+                    transition_loss += loss_ij;
+
+                    let huber_grad = ((theta_i - t_theta_j) / self.kappa).clamp(-1.0, 1.0);
+                    grad_i_sum += weight * huber_grad;
+                }
+
+                if action_idx < self.action_dim {
+                    grad_theta[action_idx][i] = grad_i_sum / (n_quantiles as f32);
+                }
+            }
+
+            total_loss += transition_loss / ((n_quantiles * n_quantiles) as f32);
+
+            self.online_net.backward_quantiles(&transition.state, &grad_theta, lr);
+        }
+
+        total_loss / (batch.len() as f32)
+    }
+
+    pub fn update_target_network(&mut self, polyak_tau: f32) {
+        if self.execution_mode == RlExecutionMode::FrozenTest {
+            return;
+        }
+        let online_w = self.online_net.flatten_parameters();
+        let mut target_w = self.target_net.flatten_parameters();
+        if polyak_tau >= 1.0 {
+            target_w.copy_from_slice(&online_w);
+        } else {
+            for (t, o) in target_w.iter_mut().zip(online_w.iter()) {
+                *t = (1.0 - polyak_tau) * *t + polyak_tau * o;
+            }
+        }
+        self.target_net.load_parameters(&target_w);
+    }
+
+    pub fn validate(&self) -> Result<(), String> {
+        if self.version == 0 {
+            return Err("Invalid version 0".into());
+        }
+        if self.state_dim == 0 || self.action_dim == 0 || self.num_quantiles == 0 {
+            return Err("state_dim, action_dim, and num_quantiles must be non-zero".into());
+        }
+        if self.online_net.state_dim != self.state_dim
+            || self.online_net.action_dim != self.action_dim
+            || self.online_net.num_quantiles != self.num_quantiles
+        {
+            return Err("online_net dimensions mismatch".into());
+        }
+        if self.target_net.state_dim != self.state_dim
+            || self.target_net.action_dim != self.action_dim
+            || self.target_net.num_quantiles != self.num_quantiles
+        {
+            return Err("target_net dimensions mismatch".into());
+        }
+        if self.tau.len() != self.num_quantiles {
+            return Err("tau length does not match num_quantiles".into());
+        }
+        self.online_net.validate()?;
+        self.target_net.validate()?;
+        Ok(())
+    }
+
+    pub fn to_json_string(&self) -> Result<String, serde_json::Error> {
+        serde_json::to_string(self)
+    }
+
+    pub fn from_json_string(s: &str) -> Result<Self, serde_json::Error> {
+        let engine: Self = serde_json::from_str(s)?;
+        if let Err(msg) = engine.validate() {
+            return Err(serde::de::Error::custom(msg));
+        }
+        Ok(engine)
+    }
+
+    pub fn save_to_json(&self, path: impl AsRef<std::path::Path>) -> Result<(), std::io::Error> {
+        let json = serde_json::to_string_pretty(self)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::Other, e.to_string()))?;
+        std::fs::write(path, json)
+    }
+
+    pub fn load_from_json(path: impl AsRef<std::path::Path>) -> Result<Self, std::io::Error> {
+        let contents = std::fs::read_to_string(path)?;
+        let engine: Self = serde_json::from_str(&contents)
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e.to_string()))?;
+        engine.validate()
+            .map_err(|e| std::io::Error::new(std::io::ErrorKind::InvalidData, e))?;
+        Ok(engine)
+    }
+}
+
 /// Linear solver using Gauss-Jordan elimination with partial pivoting for LinUCB.
 fn solve_linear_system(a: &[Vec<f32>], b: &[f32]) -> Option<Vec<f32>> {
     let n = b.len();
@@ -2442,6 +2933,76 @@ impl Transition {
 
     pub fn get_action_index(&self) -> usize {
         self.action_index.unwrap_or_else(|| self.action.to_index())
+    }
+}
+
+/// Multi-Step Return Transition Buffer (n-step learning, n=3).
+/// Maintains a rolling window of $n$ transitions accumulating discounted returns:
+/// $R_t = \sum_{k=0}^{m-1} \gamma^k r_{t+k}$ before emitting to experience replay.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct NStepTransitionBuffer {
+    pub n_steps: usize,
+    pub gamma: f32,
+    pub buffer: VecDeque<Transition>,
+}
+
+impl NStepTransitionBuffer {
+    pub fn new(n_steps: usize, gamma: f32) -> Self {
+        Self {
+            n_steps: n_steps.max(1),
+            gamma,
+            buffer: VecDeque::new(),
+        }
+    }
+
+    pub fn push(&mut self, transition: Transition) -> Option<Transition> {
+        let is_done = transition.done;
+        self.buffer.push_back(transition);
+
+        if self.buffer.len() >= self.n_steps {
+            Some(self.pop_n_step_transition())
+        } else if is_done && !self.buffer.is_empty() {
+            Some(self.pop_n_step_transition())
+        } else {
+            None
+        }
+    }
+
+    fn pop_n_step_transition(&mut self) -> Transition {
+        let first = self.buffer.pop_front().expect("buffer must not be empty");
+        let mut r = first.reward;
+        let mut discount = self.gamma;
+        let mut next_state = first.next_state.clone();
+        let mut done = first.done;
+
+        let lookahead = (self.n_steps - 1).min(self.buffer.len());
+        for k in 0..lookahead {
+            r += discount * self.buffer[k].reward;
+            discount *= self.gamma;
+            next_state = self.buffer[k].next_state.clone();
+            done = self.buffer[k].done;
+            if done {
+                break;
+            }
+        }
+
+        Transition {
+            state: first.state,
+            action: first.action,
+            reward: r,
+            next_state,
+            done,
+            priority: r.abs() + 0.01,
+            action_index: first.action_index,
+        }
+    }
+
+    pub fn flush(&mut self) -> Vec<Transition> {
+        let mut out = Vec::new();
+        while !self.buffer.is_empty() {
+            out.push(self.pop_n_step_transition());
+        }
+        out
     }
 }
 
