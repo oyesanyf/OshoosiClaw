@@ -96,6 +96,7 @@ struct Cli {
 #[derive(Subcommand, Clone)]
 enum Commands {
     /// Start the OpenỌ̀ṣọ́ọ̀sì security agent daemon
+    #[command(name = "start", alias = "run", alias = "daemon")]
     Start {
         /// Also start and open the web dashboard
         #[arg(long, default_value_t = true)]
@@ -274,6 +275,9 @@ enum Commands {
         #[command(subcommand)]
         action: ConsensusAction,
     },
+    /// Dynamically configure Windows Defender exclusions and Firewall rules for the installation directory
+    #[command(name = "setup-defender", alias = "setup_defender", alias = "register-defender", alias = "register_defender", alias = "setup")]
+    SetupDefender,
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -1346,6 +1350,18 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Some(Commands::Consensus { action }) => {
             handle_consensus_command(action).await?;
         }
+        Some(Commands::SetupDefender) => {
+            println!("[+] Dynamically configuring Windows Defender exclusions and Firewall rules for installation directory...");
+            match osoosi_core::firewall::configure_install_folder_exclusions_and_firewall().await {
+                Ok(_) => {
+                    println!("[+] Installation folder and executable exclusions successfully applied.");
+                    println!("[+] Windows Firewall inbound/outbound application and mesh port rules configured.");
+                }
+                Err(e) => {
+                    eprintln!("[-] Error configuring Defender/Firewall: {}", e);
+                }
+            }
+        }
         Some(Commands::Lite) => unreachable!(),
         None => {
             if !cli.grant_access {
@@ -1654,6 +1670,8 @@ async fn handle_grant_access() -> anyhow::Result<()> {
         {
             info!("GrantAccess pre-step: adding Antivirus exclusions for the YARA folder...");
             let _ = provisioner.add_defender_exclusion(Path::new("yara")).await;
+            info!("GrantAccess pre-step: dynamically configuring installation folder Defender exclusions and firewall...");
+            let _ = osoosi_core::firewall::configure_install_folder_exclusions_and_firewall().await;
         }
     }
 
@@ -5511,6 +5529,28 @@ mod tests {
                 assert_eq!(hash, "abcd1234ef");
             }
             _ => panic!("Expected Commands::Consensus with Unignore"),
+        }
+    }
+
+    #[test]
+    fn test_setup_defender_cli_parsing() {
+        for alias in ["setup-defender", "setup_defender", "register-defender", "register_defender", "setup"] {
+            let cli = Cli::try_parse_from(["osoosi", alias]).unwrap();
+            match cli.command {
+                Some(Commands::SetupDefender) => {}
+                _ => panic!("Expected Commands::SetupDefender for alias {}", alias),
+            }
+        }
+    }
+
+    #[test]
+    fn test_start_aliases_cli_parsing() {
+        for alias in ["start", "run", "daemon"] {
+            let cli = Cli::try_parse_from(["osoosi", alias]).unwrap();
+            match cli.command {
+                Some(Commands::Start { .. }) => {}
+                _ => panic!("Expected Commands::Start for alias {}", alias),
+            }
         }
     }
 }

@@ -259,30 +259,123 @@ pub fn clear_firewall_persistence() -> Result<()> {
     Ok(())
 }
 
-/// Open ports required for Oshoosi mesh/control traffic and dashboard access.
-pub async fn open_mesh_ports() -> Result<()> {
-    use tokio::process::Command;
-    use tokio::time::{timeout, Duration};
-
-    let ports = [
-        ("Osoosi-Mesh-Main", 4001_u16, "TCP"),
-        ("Osoosi-Mesh-UDP", 4001_u16, "UDP"),
-        ("Osoosi-Mesh-Control", 9000_u16, "TCP"),
-        ("Osoosi-Mesh-Alt", 9876_u16, "TCP"),
-        ("Osoosi-mDNS", 5353_u16, "UDP"),
-        ("Osoosi-Dashboard", 3030_u16, "TCP"),
-    ];
-
+/// Dynamically configure Windows Defender folder/process exclusions and Firewall rules for the installation directory.
+pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
     #[cfg(target_os = "windows")]
     {
+        use tokio::process::Command;
+        use tokio::time::{timeout, Duration};
         #[allow(unused_imports)]
         use std::os::windows::process::CommandExt;
+
+        let current_exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("osoosi.exe"));
+        let install_dir = current_exe
+            .parent()
+            .unwrap_or_else(|| Path::new("."))
+            .to_path_buf();
+
+        let clean_exe_path = current_exe.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+        let clean_install_dir = install_dir.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+        let exe_name = current_exe
+            .file_name()
+            .map(|f| f.to_string_lossy().to_string())
+            .unwrap_or_else(|| "osoosi.exe".to_string());
+
+        tracing::info!(
+            install_dir = %clean_install_dir,
+            exe_path = %clean_exe_path,
+            "Configuring dynamic install folder Defender exclusions and Windows Firewall rules"
+        );
+
+        // 1. Windows Defender Folder & Process Exclusion
+        let ps_cmd = format!(
+            "Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue; \
+             Add-MpPreference -ExclusionProcess '{}' -ErrorAction SilentlyContinue; \
+             Add-MpPreference -ExclusionProcess '{}' -ErrorAction SilentlyContinue",
+            clean_install_dir.replace('\'', "''"),
+            exe_name.replace('\'', "''"),
+            clean_exe_path.replace('\'', "''")
+        );
+
+        let mut def_cmd = Command::new("powershell.exe");
+        def_cmd.stdout(std::process::Stdio::null());
+        def_cmd.stderr(std::process::Stdio::null());
+        #[cfg(windows)]
+        def_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+        def_cmd.args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &ps_cmd,
+        ]);
+        let _ = timeout(Duration::from_secs(15), def_cmd.status()).await;
+
+        // 2. Windows Firewall Rules Deduplication and Addition
+        let delete_rule = |name: &str| {
+            let mut del_cmd = Command::new("netsh");
+            del_cmd.stdout(std::process::Stdio::null());
+            del_cmd.stderr(std::process::Stdio::null());
+            #[cfg(windows)]
+            del_cmd.creation_flags(0x08000000);
+            del_cmd.args(["advfirewall", "firewall", "delete", "rule", &format!("name=\"{}\"", name)]);
+            del_cmd
+        };
+
+        // Application Rules for the exact current executable
+        let app_rules = [
+            ("Osoosi-Agent-Core", "in"),
+            ("Osoosi-Agent-Core-Out", "out"),
+        ];
+
+        for (rule_name, dir) in app_rules {
+            // Delete prior rule to prevent duplicates
+            let mut del = delete_rule(rule_name);
+            let _ = timeout(Duration::from_secs(10), del.status()).await;
+
+            // Add fresh application rule pointing to current executable
+            let mut add_cmd = Command::new("netsh");
+            add_cmd.stdout(std::process::Stdio::null());
+            add_cmd.stderr(std::process::Stdio::null());
+            #[cfg(windows)]
+            add_cmd.creation_flags(0x08000000);
+            add_cmd.args([
+                "advfirewall",
+                "firewall",
+                "add",
+                "rule",
+                &format!("name=\"{}\"", rule_name),
+                &format!("dir={}", dir),
+                "action=allow",
+                &format!("program=\"{}\"", clean_exe_path),
+                "enable=yes",
+                "profile=any",
+            ]);
+            let _ = timeout(Duration::from_secs(10), add_cmd.status()).await;
+        }
+
+        // Port Rules deduplicated provisioning
+        let ports = [
+            ("Osoosi-Mesh-Main", 4001_u16, "TCP"),
+            ("Osoosi-Mesh-UDP", 4001_u16, "UDP"),
+            ("Osoosi-Mesh-Control", 9000_u16, "TCP"),
+            ("Osoosi-Mesh-Alt", 9876_u16, "TCP"),
+            ("Osoosi-mDNS", 5353_u16, "UDP"),
+            ("Osoosi-Dashboard", 3030_u16, "TCP"),
+        ];
+
         for (name, port, proto) in ports {
+            // Delete prior rule
+            let mut del = delete_rule(name);
+            let _ = timeout(Duration::from_secs(10), del.status()).await;
+
+            // Add rule
             let mut cmd = Command::new("netsh");
             cmd.stdout(std::process::Stdio::null());
             cmd.stderr(std::process::Stdio::null());
             #[cfg(windows)]
-            cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
+            cmd.creation_flags(0x08000000);
             cmd.args([
                 "advfirewall",
                 "firewall",
@@ -302,6 +395,18 @@ pub async fn open_mesh_ports() -> Result<()> {
 
     #[cfg(target_os = "linux")]
     {
+        use tokio::process::Command;
+        use tokio::time::{timeout, Duration};
+
+        let ports = [
+            ("Osoosi-Mesh-Main", 4001_u16, "TCP"),
+            ("Osoosi-Mesh-UDP", 4001_u16, "UDP"),
+            ("Osoosi-Mesh-Control", 9000_u16, "TCP"),
+            ("Osoosi-Mesh-Alt", 9876_u16, "TCP"),
+            ("Osoosi-mDNS", 5353_u16, "UDP"),
+            ("Osoosi-Dashboard", 3030_u16, "TCP"),
+        ];
+
         for (_, port, proto) in ports {
             let port_spec = format!("{}/{}", port, proto.to_lowercase());
             let port_str = port.to_string();
@@ -333,12 +438,29 @@ pub async fn open_mesh_ports() -> Result<()> {
 
     #[cfg(target_os = "macos")]
     {
-        // macOS' Application Firewall is app-signing oriented.
+        let ports = [
+            ("Osoosi-Mesh-Main", 4001_u16, "TCP"),
+            ("Osoosi-Mesh-UDP", 4001_u16, "UDP"),
+            ("Osoosi-Mesh-Control", 9000_u16, "TCP"),
+            ("Osoosi-Mesh-Alt", 9876_u16, "TCP"),
+            ("Osoosi-mDNS", 5353_u16, "UDP"),
+            ("Osoosi-Dashboard", 3030_u16, "TCP"),
+        ];
         for (name, port, _) in ports {
-            tracing::info!("Firewall provisioning note: allow TCP/UDP {} for {} on macOS via pf/Application Firewall policy.", port, name);
+            tracing::info!(
+                "Firewall provisioning note: allow TCP/UDP {} for {} on macOS via pf/Application Firewall policy.",
+                port,
+                name
+            );
         }
     }
+
     Ok(())
+}
+
+/// Open ports required for Oshoosi mesh/control traffic and dashboard access.
+pub async fn open_mesh_ports() -> Result<()> {
+    configure_install_folder_exclusions_and_firewall().await
 }
 
 pub fn block_process_network(process_id: Option<u32>, image_path: Option<&str>) -> Result<String> {
@@ -957,5 +1079,17 @@ mod tests {
         assert!(!is_blockable_ip(&"127.0.0.1".parse().unwrap()));
         assert!(!is_blockable_ip(&"192.168.1.1".parse().unwrap()));
         assert!(!is_blockable_ip(&"10.0.0.1".parse().unwrap()));
+    }
+
+    #[tokio::test]
+    async fn test_configure_install_folder_exclusions_and_firewall() {
+        let res = configure_install_folder_exclusions_and_firewall().await;
+        assert!(res.is_ok(), "Configuring exclusions and firewall should succeed without error");
+    }
+
+    #[tokio::test]
+    async fn test_open_mesh_ports() {
+        let res = open_mesh_ports().await;
+        assert!(res.is_ok(), "open_mesh_ports should succeed without error");
     }
 }

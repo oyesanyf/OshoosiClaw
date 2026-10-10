@@ -209,11 +209,19 @@ if (-not $SkipBuild) {
 # =============================================================================
 Write-Host "`n>>> [2/6] Re-signing Agent Configurations..." -ForegroundColor Yellow
 if (Test-Path $TargetExe) {
-    & $TargetExe sign-configs
-    if ($LASTEXITCODE -ne 0) {
-        Write-Warning "sign-configs returned non-zero code ($LASTEXITCODE), continuing..."
-    } else {
-        Write-Host "       -> Configurations re-signed successfully." -ForegroundColor Green
+    # If Application Control is enforced, binary must be signed before it can execute
+    if (-not $SkipSigning) {
+        Invoke-AuthenticodeSigning -Files @($TargetExe) -Thumbprint $CertThumbprint -Timestamp $TimestampServer | Out-Null
+    }
+    try {
+        & $TargetExe sign-configs
+        if ($LASTEXITCODE -ne 0) {
+            Write-Warning "sign-configs returned non-zero code ($LASTEXITCODE), continuing..."
+        } else {
+            Write-Host "       -> Configurations re-signed successfully." -ForegroundColor Green
+        }
+    } catch {
+        Write-Warning "Failed to execute $TargetExe sign-configs: $_. Continuing pipeline..."
     }
 } else {
     Write-Error "Target binary not found at $TargetExe. Cannot sign configs."

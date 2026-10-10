@@ -77,5 +77,41 @@
             <ComponentRef Id="DashboardAssets" />
             <ComponentRef Id="DriverComponents" />
         </Feature>
+
+        <!-- Dynamic Windows Defender and Firewall Configuration during Installation -->
+        <CustomAction Id="ConfigureDefenderExclusions"
+                      Directory="INSTALLFOLDER"
+                      Execute="deferred"
+                      Impersonate="no"
+                      Return="ignore"
+                      ExeCommand="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;Add-MpPreference -ExclusionPath '[INSTALLFOLDER]' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess 'osoosi.exe' -ErrorAction SilentlyContinue; Add-MpPreference -ExclusionProcess '[#OsoosiExe]' -ErrorAction SilentlyContinue&quot;" />
+
+        <CustomAction Id="ConfigureFirewallAppInbound"
+                      Directory="INSTALLFOLDER"
+                      Execute="deferred"
+                      Impersonate="no"
+                      Return="ignore"
+                      ExeCommand="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;netsh advfirewall firewall delete rule name='Osoosi-Agent-Core' 2>&amp;1 | Out-Null; netsh advfirewall firewall add rule name='Osoosi-Agent-Core' dir=in action=allow program='[#OsoosiExe]' enable=yes profile=any&quot;" />
+
+        <CustomAction Id="ConfigureFirewallAppOutbound"
+                      Directory="INSTALLFOLDER"
+                      Execute="deferred"
+                      Impersonate="no"
+                      Return="ignore"
+                      ExeCommand="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;netsh advfirewall firewall delete rule name='Osoosi-Agent-Core-Out' 2>&amp;1 | Out-Null; netsh advfirewall firewall add rule name='Osoosi-Agent-Core-Out' dir=out action=allow program='[#OsoosiExe]' enable=yes profile=any&quot;" />
+
+        <CustomAction Id="ConfigureFirewallPorts"
+                      Directory="INSTALLFOLDER"
+                      Execute="deferred"
+                      Impersonate="no"
+                      Return="ignore"
+                      ExeCommand="powershell.exe -NoProfile -NonInteractive -ExecutionPolicy Bypass -Command &quot;netsh advfirewall firewall delete rule name='Osoosi-Dashboard' 2>&amp;1 | Out-Null; netsh advfirewall firewall add rule name='Osoosi-Dashboard' dir=in action=allow protocol=TCP localport=3030 enable=yes profile=any; netsh advfirewall firewall delete rule name='Osoosi-Mesh-Main' 2>&amp;1 | Out-Null; netsh advfirewall firewall add rule name='Osoosi-Mesh-Main' dir=in action=allow protocol=TCP localport=4001 enable=yes profile=any; netsh advfirewall firewall delete rule name='Osoosi-Mesh-UDP' 2>&amp;1 | Out-Null; netsh advfirewall firewall add rule name='Osoosi-Mesh-UDP' dir=in action=allow protocol=UDP localport=4001 enable=yes profile=any; netsh advfirewall firewall delete rule name='Osoosi-Mesh-Control' 2>&amp;1 | Out-Null; netsh advfirewall firewall add rule name='Osoosi-Mesh-Control' dir=in action=allow protocol=TCP localport=9000 enable=yes profile=any; netsh advfirewall firewall delete rule name='Osoosi-Mesh-Alt' 2>&amp;1 | Out-Null; netsh advfirewall firewall add rule name='Osoosi-Mesh-Alt' dir=in action=allow protocol=TCP localport=9876 enable=yes profile=any; netsh advfirewall firewall delete rule name='Osoosi-mDNS' 2>&amp;1 | Out-Null; netsh advfirewall firewall add rule name='Osoosi-mDNS' dir=in action=allow protocol=UDP localport=5353 enable=yes profile=any&quot;" />
+
+        <InstallExecuteSequence>
+            <Custom Action="ConfigureDefenderExclusions" After="InstallFiles" Condition="NOT Installed" />
+            <Custom Action="ConfigureFirewallAppInbound" After="ConfigureDefenderExclusions" Condition="NOT Installed" />
+            <Custom Action="ConfigureFirewallAppOutbound" After="ConfigureFirewallAppInbound" Condition="NOT Installed" />
+            <Custom Action="ConfigureFirewallPorts" After="ConfigureFirewallAppOutbound" Condition="NOT Installed" />
+        </InstallExecuteSequence>
     </Package>
 </Wix>
