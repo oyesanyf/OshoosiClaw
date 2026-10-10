@@ -32,6 +32,49 @@ use dashmap::DashMap;
 pub mod ipv6_guard;
 use ipv6_guard::Ipv6SuspensionGuard;
 
+/// Standardized REST API error response constructors
+pub fn api_error(
+    status_code: StatusCode,
+    error_code: impl Into<String>,
+    message: impl Into<String>,
+    user_guidance: impl Into<String>,
+) -> (StatusCode, Json<serde_json::Value>) {
+    let msg = message.into();
+    let code = error_code.into();
+    let guidance = user_guidance.into();
+    let val = json!({
+        "status": "error",
+        "error_code": code,
+        "message": msg.clone(),
+        "user_guidance": guidance,
+        "error": msg.clone(),
+        "ok": false,
+        "msg": msg,
+        "success": false,
+    });
+    (status_code, Json(val))
+}
+
+pub fn api_error_json(
+    error_code: impl Into<String>,
+    message: impl Into<String>,
+    user_guidance: impl Into<String>,
+) -> Json<serde_json::Value> {
+    let msg = message.into();
+    let code = error_code.into();
+    let guidance = user_guidance.into();
+    Json(json!({
+        "status": "error",
+        "error_code": code,
+        "message": msg.clone(),
+        "user_guidance": guidance,
+        "error": msg.clone(),
+        "ok": false,
+        "msg": msg,
+        "success": false,
+    }))
+}
+
 /// In-memory state and metrics for the SkyRL EDR Self-Improvement & Tinker API.
 pub struct SkyRlServerState {
     pub dqn: DeepQEngine,
@@ -1101,10 +1144,11 @@ async fn post_model_pull(
     }
 
     if target_models.is_empty() {
-        return Json(json!({
-            "status": "error",
-            "error": "No model specified and download_all_calibrated is false"
-        }));
+        return api_error_json(
+            "NO_MODEL_SPECIFIED",
+            "No model specified and download_all_calibrated is false",
+            "Provide a valid model name or set download_all_calibrated to true.",
+        );
     }
 
     let reasoning_url = ai_cfg.reasoning_url.clone();
@@ -1435,11 +1479,17 @@ async fn allow_peer(
     match &state.join_gate {
         Some(gate) => match gate.allow(&peer_id).await {
             Ok(()) => Json(json!({"ok": true, "message": "Peer approved"})),
-            Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+            Err(e) => api_error_json(
+                "PEER_ALLOW_FAILED",
+                e.to_string(),
+                "Verify peer multiaddress format and network connectivity.",
+            ),
         },
-        None => {
-            Json(json!({"ok": false, "error": "Join gate not active (run agent with dashboard)"}))
-        }
+        None => api_error_json(
+            "JOIN_GATE_INACTIVE",
+            "Join gate not active (run agent with dashboard)",
+            "Start the agent daemon with the join gate enabled to manage peer approvals.",
+        ),
     }
 }
 
@@ -1450,11 +1500,17 @@ async fn deny_peer(
     match &state.join_gate {
         Some(gate) => match gate.deny(&peer_id) {
             Ok(()) => Json(json!({"ok": true, "message": "Peer denied"})),
-            Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+            Err(e) => api_error_json(
+                "PEER_DENY_FAILED",
+                e.to_string(),
+                "Verify peer ID in pending joins list.",
+            ),
         },
-        None => {
-            Json(json!({"ok": false, "error": "Join gate not active (run agent with dashboard)"}))
-        }
+        None => api_error_json(
+            "JOIN_GATE_INACTIVE",
+            "Join gate not active (run agent with dashboard)",
+            "Start the agent daemon with the join gate enabled to manage peering requests.",
+        ),
     }
 }
 
@@ -1475,16 +1531,26 @@ async fn release_quarantined_peer(
     headers: HeaderMap,
 ) -> Json<Value> {
     if let Err(msg) = authorize_quarantine_release(remote, &headers) {
-        return Json(json!({"ok": false, "error": msg}));
+        return api_error_json(
+            "UNAUTHORIZED_QUARANTINE_RELEASE",
+            msg,
+            "Provide the authorized administrative quarantine key or connect via loopback localhost.",
+        );
     }
     match &state.join_gate {
         Some(gate) => match gate.release_peer(&peer_id) {
             Ok(()) => Json(json!({"ok": true, "message": "Peer released from quarantine"})),
-            Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+            Err(e) => api_error_json(
+                "PEER_RELEASE_FAILED",
+                e.to_string(),
+                "Verify that the peer is currently in quarantine status.",
+            ),
         },
-        None => {
-            Json(json!({"ok": false, "error": "Join gate not active (run agent with dashboard)"}))
-        }
+        None => api_error_json(
+            "JOIN_GATE_INACTIVE",
+            "Join gate not active (run agent with dashboard)",
+            "Start the agent daemon with the join gate enabled to manage quarantine releases.",
+        ),
     }
 }
 
@@ -1495,18 +1561,28 @@ async fn mark_quarantine_false_positive(
     headers: HeaderMap,
 ) -> Json<Value> {
     if let Err(msg) = authorize_quarantine_release(remote, &headers) {
-        return Json(json!({"ok": false, "error": msg}));
+        return api_error_json(
+            "UNAUTHORIZED_QUARANTINE_FP",
+            msg,
+            "Provide the authorized administrative quarantine key or connect via loopback localhost.",
+        );
     }
     match &state.join_gate {
         Some(gate) => match gate.mark_false_positive(&peer_id) {
             Ok(()) => {
                 Json(json!({"ok": true, "message": "Peer released and marked false positive"}))
             }
-            Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+            Err(e) => api_error_json(
+                "PEER_FP_MARK_FAILED",
+                e.to_string(),
+                "Verify that the peer ID exists in the quarantine list.",
+            ),
         },
-        None => {
-            Json(json!({"ok": false, "error": "Join gate not active (run agent with dashboard)"}))
-        }
+        None => api_error_json(
+            "JOIN_GATE_INACTIVE",
+            "Join gate not active (run agent with dashboard)",
+            "Start the agent daemon with the join gate enabled.",
+        ),
     }
 }
 
@@ -1776,16 +1852,18 @@ async fn post_traffic_conversation(
     let human_instruction = req.human_instruction.trim();
     let traffic_data = req.traffic_data.trim();
     if human_instruction.is_empty() || traffic_data.is_empty() {
-        return Json(json!({
-            "status": "fail",
-            "msg": "human_instruction and traffic_data are required"
-        }));
+        return api_error_json(
+            "INVALID_INPUT",
+            "human_instruction and traffic_data are required",
+            "Provide both human_instruction and traffic_data in the JSON request body.",
+        );
     }
     if !traffic_data.contains("<packet>") {
-        return Json(json!({
-            "status": "fail",
-            "msg": "traffic_data must include '<packet>' marker"
-        }));
+        return api_error_json(
+            "MISSING_PACKET_MARKER",
+            "traffic_data must include '<packet>' marker",
+            "Wrap captured packet data with the '<packet>' delimiter.",
+        );
     }
 
     match &state.backend {
@@ -1796,10 +1874,11 @@ async fn post_traffic_conversation(
             }
             Json(out)
         }
-        None => Json(json!({
-            "status": "fail",
-            "msg": "backend not active; run agent with dashboard backend"
-        })),
+        None => api_error_json(
+            "BACKEND_INACTIVE",
+            "backend not active; run agent with dashboard backend",
+            "Start the agent daemon with the active orchestrator to analyze captured traffic.",
+        ),
     }
 }
 
@@ -2109,9 +2188,17 @@ async fn post_approve_action(
     match &state.backend {
         Some(orch) => match orch.approve_action(&req.threat_id).await {
             Ok(_) => Json(json!({ "status": "success", "msg": "Action approved and executed" })),
-            Err(e) => Json(json!({ "status": "fail", "msg": e.to_string() })),
+            Err(e) => api_error_json(
+                "ACTION_APPROVAL_FAILED",
+                e.to_string(),
+                "Verify threat ID status in pending actions ledger.",
+            ),
         },
-        None => Json(json!({ "status": "fail", "msg": "backend not active" })),
+        None => api_error_json(
+            "BACKEND_INACTIVE",
+            "backend not active",
+            "Ensure the OpenỌ̀ṣọ́ọ̀sì orchestrator is running to execute containment actions.",
+        ),
     }
 }
 
@@ -2122,9 +2209,17 @@ async fn post_reject_action(
     match &state.backend {
         Some(orch) => match orch.reject_action(&req.threat_id).await {
             Ok(_) => Json(json!({ "status": "success", "msg": "Action rejected" })),
-            Err(e) => Json(json!({ "status": "fail", "msg": e.to_string() })),
+            Err(e) => api_error_json(
+                "ACTION_REJECTION_FAILED",
+                e.to_string(),
+                "Verify threat ID status in pending actions ledger.",
+            ),
         },
-        None => Json(json!({ "status": "fail", "msg": "backend not active" })),
+        None => api_error_json(
+            "BACKEND_INACTIVE",
+            "backend not active",
+            "Ensure the OpenỌ̀ṣọ́ọ̀sì orchestrator is running.",
+        ),
     }
 }
 
@@ -2188,10 +2283,11 @@ async fn post_autonomy_settings(
 
     if let Err(e) = osoosi_types::save_autonomy_config(&cfg) {
         warn!("Failed to persist autonomy configuration: {}", e);
-        return Json(json!({
-            "status": "error",
-            "message": format!("Failed to save configuration: {}", e),
-        }));
+        return api_error_json(
+            "CONFIG_SAVE_FAILED",
+            format!("Failed to save configuration: {}", e),
+            "Check disk write permissions for the configuration directory and try again.",
+        );
     }
 
     // Re-sign critical configuration files with cryptographic integrity manager
@@ -2265,9 +2361,17 @@ async fn post_mesh_broadcast(
     match &state.backend {
         Some(orch) => match orch.broadcast_intelligence(req.summary).await {
             Ok(()) => Json(json!({ "ok": true })),
-            Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
+            Err(e) => api_error_json(
+                "BROADCAST_FAILED",
+                e.to_string(),
+                "Verify wire mesh connectivity and peer availability.",
+            ),
         },
-        None => Json(json!({ "ok": false, "error": "Backend not active" })),
+        None => api_error_json(
+            "BACKEND_INACTIVE",
+            "Backend not active",
+            "Start the OpenỌ̀ṣọ́ọ̀sì daemon to broadcast intelligence over the P2P wire mesh.",
+        ),
     }
 }
 
@@ -2370,7 +2474,14 @@ async fn get_yara_status(State(state): State<DashboardState>) -> Json<Value> {
             Json(serde_json::to_value(&status).unwrap_or(json!({})))
         }
         None => Json(json!({
+            "status": "error",
+            "error_code": "BACKEND_UNAVAILABLE",
+            "message": "Backend orchestrator not initialized",
+            "user_guidance": "Start the OpenỌ̀ṣọ́ọ̀sì backend orchestrator to initialize the YARA manager.",
             "error": "Backend orchestrator not initialized",
+            "ok": false,
+            "msg": "Backend orchestrator not initialized",
+            "success": false,
             "total_rules": 0,
             "custom_rules": 0,
             "generated_rules": 0,
@@ -2395,16 +2506,18 @@ async fn post_yara_reload(State(state): State<DashboardState>) -> Json<Value> {
                         "status": status,
                     }))
                 }
-                Err(e) => Json(json!({
-                    "success": false,
-                    "error": e.to_string(),
-                })),
+                Err(e) => api_error_json(
+                    "YARA_RELOAD_FAILED",
+                    e.to_string(),
+                    "Check custom YARA rule files syntax in the rules directory.",
+                ),
             }
         }
-        None => Json(json!({
-            "success": false,
-            "error": "Backend orchestrator not initialized",
-        })),
+        None => api_error_json(
+            "BACKEND_NOT_INITIALIZED",
+            "Backend orchestrator not initialized",
+            "Initialize the EDR backend to manage YARA scanning rules.",
+        ),
     }
 }
 
@@ -2420,16 +2533,18 @@ async fn post_yara_update(State(state): State<DashboardState>) -> Json<Value> {
                         "status": status,
                     }))
                 }
-                Err(e) => Json(json!({
-                    "success": false,
-                    "error": e.to_string(),
-                })),
+                Err(e) => api_error_json(
+                    "YARA_UPDATE_FAILED",
+                    e.to_string(),
+                    "Verify internet connectivity to community YARA feed endpoints.",
+                ),
             }
         }
-        None => Json(json!({
-            "success": false,
-            "error": "Backend orchestrator not initialized",
-        })),
+        None => api_error_json(
+            "BACKEND_NOT_INITIALIZED",
+            "Backend orchestrator not initialized",
+            "Initialize the EDR backend to update YARA rules.",
+        ),
     }
 }
 
@@ -2573,7 +2688,11 @@ async fn post_scan_trigger(State(state): State<DashboardState>) -> Json<Value> {
             );
             Json(json!({ "status": "success", "scanned": count }))
         }
-        None => Json(json!({ "status": "fail", "msg": "Backend not active" })),
+        None => api_error_json(
+            "BACKEND_INACTIVE",
+            "Backend not active",
+            "Start the OpenỌ̀ṣọ́ọ̀sì daemon to trigger on-demand malware scanning.",
+        ),
     }
 }
 
@@ -2621,10 +2740,18 @@ async fn post_manual_false_positive(
             );
             match res {
                 Ok(_) => Json(json!({ "status": "success", "msg": "Marked false positive" })),
-                Err(e) => Json(json!({ "status": "fail", "msg": e.to_string() })),
+                Err(e) => api_error_json(
+                    "FP_MARK_FAILED",
+                    e.to_string(),
+                    "Verify file hash or process name format.",
+                ),
             }
         }
-        None => Json(json!({ "status": "fail", "msg": "Backend not active" })),
+        None => api_error_json(
+            "BACKEND_INACTIVE",
+            "Backend not active",
+            "Start the OpenỌ̀ṣọ́ọ̀sì daemon to record manual false positive patterns.",
+        ),
     }
 }
 
@@ -2654,7 +2781,11 @@ pub async fn get_consensus_findings(
         Some(orch) => {
             match orch.memory().get_consensus_findings(limit) {
                 Ok(findings) => Json(json!(findings)),
-                Err(e) => Json(json!({"error": e.to_string()})),
+                Err(e) => api_error_json(
+                    "CONSENSUS_FINDINGS_FETCH_FAILED",
+                    format!("Failed to retrieve consensus findings: {}", e),
+                    "Verify memory telemetry store is initialized and query parameters are valid.",
+                ),
             }
         }
         None => Json(json!([])),
@@ -2670,7 +2801,11 @@ pub async fn get_clean_ignored_hashes(
         Some(orch) => {
             match orch.memory().get_clean_ignored_hashes(limit) {
                 Ok(hashes) => Json(json!(hashes)),
-                Err(e) => Json(json!({"error": e.to_string()})),
+                Err(e) => api_error_json(
+                    "CLEAN_HASHES_FETCH_FAILED",
+                    format!("Failed to retrieve clean ignored hashes: {}", e),
+                    "Verify memory telemetry store is initialized and query parameters are valid.",
+                ),
             }
         }
         None => Json(json!([])),
@@ -2686,10 +2821,20 @@ pub async fn post_consensus_evaluate(
             let p = std::path::Path::new(&payload.path);
             match orch.evaluate_program_consensus(p).await {
                 Ok(finding) => (StatusCode::OK, Json(json!({"status": "ok", "finding": finding}))),
-                Err(e) => (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))),
+                Err(e) => api_error(
+                    StatusCode::BAD_REQUEST,
+                    "CONSENSUS_EVAL_FAILED",
+                    e.to_string(),
+                    "Verify target executable exists and is readable.",
+                ),
             }
         }
-        None => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Backend not available"}))),
+        None => api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "BACKEND_UNAVAILABLE",
+            "Backend not available",
+            "Start the OpenỌ̀ṣọ́ọ̀sì backend orchestrator to evaluate binary consensus.",
+        ),
     }
 }
 
@@ -2706,10 +2851,20 @@ pub async fn post_consensus_ignore_hash(
                 "dashboard_manual",
             ) {
                 Ok(()) => (StatusCode::OK, Json(json!({"status": "ok", "hash": payload.hash}))),
-                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))),
+                Err(e) => api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "CONSENSUS_IGNORE_FAILED",
+                    e.to_string(),
+                    "Verify database file integrity.",
+                ),
             }
         }
-        None => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Backend not available"}))),
+        None => api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "BACKEND_UNAVAILABLE",
+            "Backend not available",
+            "Start the OpenỌ̀ṣọ́ọ̀sì backend orchestrator to manage consensus ignore list.",
+        ),
     }
 }
 
@@ -2721,10 +2876,20 @@ pub async fn delete_consensus_ignore_hash(
         Some(orch) => {
             match orch.memory().remove_clean_ignored_hash(&hash) {
                 Ok(removed) => (StatusCode::OK, Json(json!({"status": "ok", "removed": removed}))),
-                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))),
+                Err(e) => api_error(
+                    StatusCode::INTERNAL_SERVER_ERROR,
+                    "CONSENSUS_REMOVE_FAILED",
+                    e.to_string(),
+                    "Verify database file integrity.",
+                ),
             }
         }
-        None => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Backend not available"}))),
+        None => api_error(
+            StatusCode::SERVICE_UNAVAILABLE,
+            "BACKEND_UNAVAILABLE",
+            "Backend not available",
+            "Start the OpenỌ̀ṣọ́ọ̀sì backend orchestrator to remove clean ignore hashes.",
+        ),
     }
 }
 
@@ -2749,10 +2914,18 @@ async fn post_quarantine_action(
                     "msg": format!("File quarantined to {}", dest.display()),
                     "quarantine_path": dest.to_string_lossy(),
                 })),
-                Err(e) => Json(json!({ "status": "fail", "msg": e.to_string() })),
+                Err(e) => api_error_json(
+                    "QUARANTINE_FAILED",
+                    e.to_string(),
+                    "Check administrative permissions and verify file is not locked.",
+                ),
             }
         }
-        None => Json(json!({ "status": "fail", "msg": "Backend not active" })),
+        None => api_error_json(
+            "BACKEND_INACTIVE",
+            "Backend not active",
+            "Start the OpenỌ̀ṣọ́ọ̀sì daemon to perform quarantine actions.",
+        ),
     }
 }
 
@@ -2819,7 +2992,11 @@ async fn post_blocking_rule(
 ) -> Json<Value> {
     let trimmed_path = req.path.trim();
     if trimmed_path.is_empty() {
-        return Json(json!({ "ok": false, "error": "Target path cannot be empty" }));
+        return api_error_json(
+            "EMPTY_TARGET_PATH",
+            "Target path cannot be empty",
+            "Provide a valid absolute or relative executable path to block.",
+        );
     }
 
     // 1. Compute/validate the BLAKE3 hash
@@ -2848,7 +3025,11 @@ async fn post_blocking_rule(
     let kind = match req.kind.to_lowercase().as_str() {
         "executable" => osoosi_types::BlockingKind::Executable,
         "shredding" => osoosi_types::BlockingKind::Shredding,
-        _ => return Json(json!({ "ok": false, "error": "Invalid blocking kind" })),
+        _ => return api_error_json(
+            "INVALID_BLOCKING_KIND",
+            "Invalid blocking kind",
+            "Supported blocking kinds are 'executable' or 'shredding'.",
+        ),
     };
     let rule = osoosi_types::BlockingRule {
         path: trimmed_path.to_string(),
@@ -2861,7 +3042,11 @@ async fn post_blocking_rule(
         Some(orch) => {
             // Add rule to blocking manager
             if let Err(e) = orch.blocking_manager.add_rule(rule.clone()).await {
-                return Json(json!({ "ok": false, "error": e.to_string() }));
+                return api_error_json(
+                    "BLOCKING_RULE_ADD_FAILED",
+                    e.to_string(),
+                    "Verify file path accessibility and blocking manager status.",
+                );
             }
 
             // Sync to Ring-0 kernel driver if connected
@@ -2942,12 +3127,20 @@ async fn post_blocking_unlock(
 ) -> Json<Value> {
     let trimmed_path = req.path.trim();
     if trimmed_path.is_empty() {
-        return Json(json!({ "ok": false, "error": "Path cannot be empty" }));
+        return api_error_json(
+            "EMPTY_PATH",
+            "Path cannot be empty",
+            "Specify the blocked path you wish to unlock.",
+        );
     }
     match &state.backend {
         Some(orch) => match orch.blocking_manager.remove_rule(trimmed_path).await {
             Ok(_) => Json(json!({ "ok": true, "message": "Blocking rule removed (unlocked)" })),
-            Err(e) => Json(json!({ "ok": false, "error": e.to_string() })),
+            Err(e) => api_error_json(
+                "UNLOCK_FAILED",
+                e.to_string(),
+                "Verify that the rule exists in the active blocklist.",
+            ),
         },
         None => {
             let mut rules = state.mock_blocking_rules.write().await;
@@ -3524,12 +3717,11 @@ pub async fn post_bootstrap_peers(
         for peer in peers {
             let trimmed = peer.trim();
             if trimmed.is_empty() {
-                return (
+                return api_error(
                     StatusCode::BAD_REQUEST,
-                    Json(json!({
-                        "ok": false,
-                        "error": "Peer address cannot be empty"
-                    })),
+                    "EMPTY_PEER_ADDRESS",
+                    "Peer address cannot be empty",
+                    "Provide a valid multiaddress format (e.g. /ip4/<ip>/tcp/<port> or /dns4/<domain>/tcp/<port>).",
                 ).into_response();
             }
             if !trimmed.starts_with("/ip4/")
@@ -3538,12 +3730,11 @@ pub async fn post_bootstrap_peers(
                 && !trimmed.starts_with("/dns6/")
                 && !trimmed.starts_with("/ip6/")
             {
-                return (
+                return api_error(
                     StatusCode::BAD_REQUEST,
-                    Json(json!({
-                        "ok": false,
-                        "error": format!("Invalid peer multiaddr '{}': must start with /ip4/, /dns4/, /dns/, or /ip6/", trimmed)
-                    })),
+                    "INVALID_PEER_MULTIADDR",
+                    format!("Invalid peer multiaddr '{}': must start with /ip4/, /dns4/, /dns/, or /ip6/", trimmed),
+                    "Ensure peer address starts with /ip4/, /dns4/, /dns/, /dns6/, or /ip6/.",
                 ).into_response();
             }
         }
@@ -3570,12 +3761,11 @@ pub async fn post_bootstrap_peers(
         req.auto_bootstrap_duckdns,
     ) {
         tracing::error!("Failed to save bootstrap wire config: {}", e);
-        return (
+        return api_error(
             StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "ok": false,
-                "error": format!("Failed to update config: {}", e)
-            })),
+            "CONFIG_UPDATE_FAILED",
+            format!("Failed to update config: {}", e),
+            "Check disk write permissions for the wire bootstrap configuration file.",
         ).into_response();
     }
 
@@ -3697,10 +3887,18 @@ async fn post_threat_false_positive(
                 Ok(_) => Json(
                     json!({"ok": true, "message": "Threat marked as false positive and remediated"}),
                 ),
-                Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+                Err(e) => api_error_json(
+                    "FP_HANDLE_FAILED",
+                    e.to_string(),
+                    "Verify threat ID status in detection memory.",
+                ),
             }
         }
-        None => Json(json!({"ok": false, "error": "Backend not running"})),
+        None => api_error_json(
+            "BACKEND_NOT_RUNNING",
+            "Backend not running",
+            "Ensure the OpenỌ̀ṣọ́ọ̀sì daemon is active to remediate false positives.",
+        ),
     }
 }
 
@@ -3714,9 +3912,17 @@ async fn post_threat_true_positive(
             Ok(_) => {
                 Json(json!({"ok": true, "message": "Threat confirmed as true positive and shared"}))
             }
-            Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+            Err(e) => api_error_json(
+                "TP_HANDLE_FAILED",
+                e.to_string(),
+                "Verify threat ID status in detection memory.",
+            ),
         },
-        None => Json(json!({"ok": false, "error": "Backend not running"})),
+        None => api_error_json(
+            "BACKEND_NOT_RUNNING",
+            "Backend not running",
+            "Ensure the OpenỌ̀ṣọ́ọ̀sì daemon is active to reinforce threat intelligence.",
+        ),
     }
 }
 
@@ -3731,10 +3937,18 @@ async fn post_threat_confirm(
                 Ok(_) => {
                     Json(json!({"ok": true, "message": "Threat confirmed and entangled in Morphic Hyper-Web"}))
                 }
-                Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+                Err(e) => api_error_json(
+                    "THREAT_CONFIRM_FAILED",
+                    e.to_string(),
+                    "Verify threat ID status in detection memory.",
+                ),
             }
         }
-        None => Json(json!({"ok": false, "error": "Backend not running"})),
+        None => api_error_json(
+            "BACKEND_NOT_RUNNING",
+            "Backend not running",
+            "Ensure the OpenỌ̀ṣọ́ọ̀sì daemon is active to entangle threat response.",
+        ),
     }
 }
 
@@ -3765,7 +3979,11 @@ async fn post_behavioral_feedback(
                     )
                     .await
                 {
-                    return Json(json!({"ok": false, "error": e.to_string()}));
+                    return api_error_json(
+                        "FEEDBACK_TP_FAILED",
+                        e.to_string(),
+                        "Check process and hash parameters.",
+                    );
                 }
             } else if req.process_name.is_some() || req.file_hash.is_some() {
                 if let Err(e) = orch
@@ -3775,12 +3993,20 @@ async fn post_behavioral_feedback(
                     )
                     .await
                 {
-                    return Json(json!({"ok": false, "error": e.to_string()}));
+                    return api_error_json(
+                        "FEEDBACK_FP_FAILED",
+                        e.to_string(),
+                        "Check process and hash parameters.",
+                    );
                 }
             }
             Json(json!({"ok": true, "message": if req.is_suspicious { "Threat reported and entanglement initiated" } else { "Feedback recorded" }}))
         }
-        None => Json(json!({"ok": false, "error": "Backend not running"})),
+        None => api_error_json(
+            "BACKEND_NOT_RUNNING",
+            "Backend not running",
+            "Ensure the OpenỌ̀ṣọ́ọ̀sì daemon is active to record behavioral feedback.",
+        ),
     }
 }
 
@@ -3806,7 +4032,15 @@ async fn get_behavioral_analyze(
                 .await
             {
                 Ok(prompts) => Json(json!({"ok": true, "prompts": prompts})),
-                Err(e) => Json(json!({"ok": false, "error": e.to_string(), "prompts": []})),
+                Err(e) => {
+                    let mut err_val = api_error_json(
+                        "INVESTIGATIVE_PROMPTS_FAILED",
+                        format!("Failed to generate investigative prompts: {}", e),
+                        "Verify behavioral analyzer configuration and event history.",
+                    ).0;
+                    err_val["prompts"] = json!([]);
+                    Json(err_val)
+                }
             }
         }
         None => Json(json!({
@@ -3840,7 +4074,11 @@ async fn post_behavioral_deep_dive(
                 .await
             {
                 Ok(r) => Json(json!({"ok": true, "report": r})),
-                Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+                Err(e) => api_error_json(
+                    "BEHAVIORAL_DEEP_DIVE_FAILED",
+                    format!("Failed to perform deep behavioral analysis: {}", e),
+                    "Check system health and retry deep dive investigation.",
+                ),
             }
         }
         None => Json(json!({
@@ -3876,7 +4114,11 @@ async fn post_agent_trigger_patch(State(state): State<DashboardState>) -> Json<V
             orch.trigger_patch_discovery();
             Json(json!({"ok": true, "message": "Patch discovery triggered"}))
         }
-        None => Json(json!({"ok": false, "error": "Backend not running"})),
+        None => api_error_json(
+            "BACKEND_NOT_RUNNING",
+            "Backend not running",
+            "Ensure the OpenỌ̀ṣọ́ọ̀sì daemon is active to trigger autonomous patch discovery.",
+        ),
     }
 }
 
@@ -3886,7 +4128,11 @@ async fn post_agent_trigger_baseline(State(state): State<DashboardState>) -> Jso
             orch.trigger_baseline();
             Json(json!({"ok": true, "message": "Baseline scan triggered"}))
         }
-        None => Json(json!({"ok": false, "error": "Backend not running"})),
+        None => api_error_json(
+            "BACKEND_NOT_RUNNING",
+            "Backend not running",
+            "Ensure the OpenỌ̀ṣọ́ọ̀sì daemon is active to verify cryptographic baselines.",
+        ),
     }
 }
 
@@ -3896,7 +4142,11 @@ async fn post_agent_trigger_restore_point(State(state): State<DashboardState>) -
             orch.trigger_restore_point();
             Json(json!({"ok": true, "message": "Restore point creation triggered"}))
         }
-        None => Json(json!({"ok": false, "error": "Backend not running"})),
+        None => api_error_json(
+            "BACKEND_NOT_RUNNING",
+            "Backend not running",
+            "Ensure the OpenỌ̀ṣọ́ọ̀sì daemon is active to snapshot restore points.",
+        ),
     }
 }
 
@@ -3909,16 +4159,28 @@ async fn post_triage_decide(
             use std::str::FromStr;
             let action = match osoosi_types::ResponseAction::from_str(&req.action) {
                 Ok(a) => a,
-                Err(_) => return Json(json!({"ok": false, "error": "Invalid action"})),
+                Err(_) => return api_error_json(
+                    "INVALID_ACTION",
+                    "Invalid action",
+                    "Valid triage actions are Allow, Block, Terminate, or Quarantine.",
+                ),
             };
             match orch.triage_decide(&req.threat_id, action).await {
                 Ok(result) => Json(
                     json!({"ok": result, "message": if result { format!("Triage action {} applied", req.action) } else { "Threat not found or already triaged".to_string() }}),
                 ),
-                Err(e) => Json(json!({"ok": false, "error": e.to_string()})),
+                Err(e) => api_error_json(
+                    "TRIAGE_DECIDE_FAILED",
+                    e.to_string(),
+                    "Verify threat ID status in detection memory.",
+                ),
             }
         }
-        None => Json(json!({"ok": false, "error": "Backend not running"})),
+        None => api_error_json(
+            "BACKEND_NOT_RUNNING",
+            "Backend not running",
+            "Ensure the OpenỌ̀ṣọ́ọ̀sì daemon is active to execute triage decisions.",
+        ),
     }
 }
 async fn get_analyst_chat(State(state): State<DashboardState>) -> Json<Value> {
@@ -4734,8 +4996,16 @@ async fn post_skyrl_adapter(
     State(state): State<DashboardState>,
     Json(req): Json<SkyrlAdapterRequest>,
 ) -> Json<Value> {
+    let trimmed = req.adapter.trim();
+    if trimmed.is_empty() {
+        return api_error_json(
+            "INVALID_ADAPTER",
+            "Adapter name cannot be empty",
+            "Provide a valid LoRA adapter name (e.g., edr-reasoning-lora-v1).",
+        );
+    }
     let mut skyrl = state.skyrl.write().await;
-    skyrl.active_lora = req.adapter.clone();
+    skyrl.active_lora = trimmed.to_string();
     Json(json!({
         "status": "success",
         "active_lora_adapter": skyrl.active_lora,
@@ -4859,6 +5129,10 @@ async fn get_mitre_technique_detail(
         (
             axum::http::StatusCode::NOT_FOUND,
             Json(json!({
+                "status": "error",
+                "error_code": "TECHNIQUE_NOT_FOUND",
+                "message": "Technique not found",
+                "user_guidance": "Verify the MITRE ATT&CK technique identifier (e.g. T1059.001).",
                 "error": "Technique not found",
                 "id": id
             })),
@@ -4880,6 +5154,10 @@ async fn get_mitre_stix() -> Result<(axum::http::HeaderMap, String), (axum::http
         return Err((
             axum::http::StatusCode::NOT_FOUND,
             Json(json!({
+                "status": "error",
+                "error_code": "STIX_BUNDLE_NOT_FOUND",
+                "message": "Combined MITRE ATT&CK + ATLAS STIX bundle not found",
+                "user_guidance": "Run an on-demand STIX update or verify file path.",
                 "error": "Combined MITRE ATT&CK + ATLAS STIX bundle not found",
                 "path": path.display().to_string()
             })),
@@ -4898,6 +5176,10 @@ async fn get_mitre_stix() -> Result<(axum::http::HeaderMap, String), (axum::http
         Err(e) => Err((
             axum::http::StatusCode::INTERNAL_SERVER_ERROR,
             Json(json!({
+                "status": "error",
+                "error_code": "STIX_READ_FAILED",
+                "message": format!("Failed to read STIX bundle: {}", e),
+                "user_guidance": "Check filesystem read access and bundle integrity.",
                 "error": format!("Failed to read STIX bundle: {}", e)
             })),
         )),
@@ -4925,6 +5207,10 @@ async fn get_mitre_stix_status() -> (axum::http::StatusCode, Json<serde_json::Va
         return (
             axum::http::StatusCode::NOT_FOUND,
             Json(json!({
+                "status": "error",
+                "error_code": "STIX_BUNDLE_NOT_FOUND",
+                "message": "STIX bundle not found",
+                "user_guidance": "Trigger an on-demand STIX update to generate or download the catalog.",
                 "error": "STIX bundle not found",
                 "synced": false,
                 "path": path.display().to_string()
@@ -4983,13 +5269,16 @@ async fn get_mitre_stix_status() -> (axum::http::StatusCode, Json<serde_json::Va
                 })),
             )
         }
-        Err(e) => (
-            axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-            Json(json!({
-                "error": format!("Failed reading STIX bundle: {}", e),
-                "synced": false
-            })),
-        ),
+        Err(e) => {
+            let (status, mut val) = api_error(
+                axum::http::StatusCode::INTERNAL_SERVER_ERROR,
+                "STIX_READ_FAILED",
+                format!("Failed reading STIX bundle: {}", e),
+                "Check filesystem read permissions for STIX data directory.",
+            );
+            val.0["synced"] = serde_json::json!(false);
+            (status, val)
+        }
     }
 }
 
@@ -5046,12 +5335,11 @@ async fn post_mitre_stix_update(
     let bytes = match std::fs::read(&bundle_path) {
         Ok(b) => b,
         Err(e) => {
-            return (
+            return api_error(
                 axum::http::StatusCode::INTERNAL_SERVER_ERROR,
-                Json(json!({
-                    "ok": false,
-                    "error": format!("Failed reading STIX bundle: {}", e)
-                })),
+                "STIX_READ_FAILED",
+                format!("Failed reading STIX bundle: {}", e),
+                "Check disk access and integrity for STIX bundle path.",
             );
         }
     };
@@ -5580,13 +5868,16 @@ async fn get_log_view(
                 ).into_response()
             }
         }
-        Err(e) => (
-            StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": e.to_string(),
-                "file": file
-            })),
-        ).into_response(),
+        Err(e) => {
+            let (status, mut val) = api_error(
+                StatusCode::BAD_REQUEST,
+                "LOG_VIEW_FAILED",
+                e.to_string(),
+                "Check file name and line range parameters.",
+            );
+            val.0["file"] = serde_json::json!(file);
+            (status, val).into_response()
+        }
     }
 }
 
@@ -5632,16 +5923,16 @@ pub async fn post_agent_anomalies_enforce(
         let m = query_params.get("mode").cloned().unwrap_or_else(|| "enforce".to_string());
         (direct_tel, m)
     } else {
-        return (
+        return api_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": "Invalid ToolCallTelemetry payload"
-            })),
-        );
+            "INVALID_TELEMETRY_PAYLOAD",
+            "Invalid ToolCallTelemetry payload",
+            "Ensure payload conforms to ToolCallTelemetry schema with session_id and tool_name.",
+        ).into_response();
     };
 
     let decision = state.agent_anomaly_detector.enforce_policy(&telemetry, &mode).await;
-    (StatusCode::OK, Json(json!(decision)))
+    (StatusCode::OK, Json(json!(decision))).into_response()
 }
 
 pub async fn get_agent_anomalies_findings(
@@ -5703,12 +5994,12 @@ pub async fn post_agent_anomalies_embed(
         };
         temp_engine.embed_tool_call(&tool, &params)
     } else {
-        return (
+        return api_error(
             StatusCode::BAD_REQUEST,
-            Json(json!({
-                "error": "Either 'text' or 'tool_name' must be provided in request payload."
-            })),
-        );
+            "MISSING_EMBED_INPUT",
+            "Either 'text' or 'tool_name' must be provided in request payload.",
+            "Provide either 'text' or 'tool_name' in the request JSON.",
+        ).into_response();
     };
 
     let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -5722,7 +6013,7 @@ pub async fn post_agent_anomalies_embed(
             "l2_norm": l2_norm,
             "status": "ok"
         })),
-    )
+    ).into_response()
 }
 
 pub async fn post_agent_anomalies_simulate_test(
@@ -7326,6 +7617,168 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
+    }
+
+    #[tokio::test]
+    async fn test_standardized_error_response_schema() {
+        // 1. Direct constructor assertions for api_error
+        let (status, Json(val)) = api_error(
+            StatusCode::BAD_REQUEST,
+            "TEST_ERROR_CODE",
+            "Something went wrong",
+            "Please check system settings.",
+        );
+        assert_eq!(status, StatusCode::BAD_REQUEST);
+        assert_eq!(val["status"], "error");
+        assert_eq!(val["error_code"], "TEST_ERROR_CODE");
+        assert_eq!(val["message"], "Something went wrong");
+        assert_eq!(val["user_guidance"], "Please check system settings.");
+        assert_eq!(val["error"], "Something went wrong");
+        assert_eq!(val["ok"], false);
+        assert_eq!(val["msg"], "Something went wrong");
+        assert_eq!(val["success"], false);
+
+        // 2. Direct constructor assertions for api_error_json
+        let Json(val2) = api_error_json(
+            "JSON_ERR_CODE",
+            "JSON level failure",
+            "Retry after checking connection.",
+        );
+        assert_eq!(val2["status"], "error");
+        assert_eq!(val2["error_code"], "JSON_ERR_CODE");
+        assert_eq!(val2["message"], "JSON level failure");
+        assert_eq!(val2["user_guidance"], "Retry after checking connection.");
+        assert_eq!(val2["error"], "JSON level failure");
+        assert_eq!(val2["ok"], false);
+        assert_eq!(val2["msg"], "JSON level failure");
+        assert_eq!(val2["success"], false);
+
+        // 3. Router endpoint verification - Consensus evaluate with no backend
+        let state = DashboardState::new(None, None);
+        let app = dashboard_router(state, std::path::PathBuf::from("dashboard/dist"));
+
+        let req = axum::http::Request::builder()
+            .uri("/api/consensus/evaluate")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"path":"C:\\test.exe"}"#))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let resp_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(resp_json["status"], "error");
+        assert_eq!(resp_json["error_code"], "BACKEND_UNAVAILABLE");
+        assert_eq!(resp_json["message"], "Backend not available");
+        assert_eq!(
+            resp_json["user_guidance"],
+            "Start the OpenỌ̀ṣọ́ọ̀sì backend orchestrator to evaluate binary consensus."
+        );
+        assert_eq!(resp_json["ok"], false);
+        assert_eq!(resp_json["success"], false);
+
+        // 4. Router endpoint verification - Model pull with no model name
+        let req2 = axum::http::Request::builder()
+            .uri("/api/models/pull")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{}"#))
+            .unwrap();
+        let resp2 = app.clone().oneshot(req2).await.unwrap();
+        assert_eq!(resp2.status(), StatusCode::OK);
+        let bytes2 = axum::body::to_bytes(resp2.into_body(), usize::MAX).await.unwrap();
+        let resp_json2: serde_json::Value = serde_json::from_slice(&bytes2).unwrap();
+        assert_eq!(resp_json2["status"], "error");
+        assert_eq!(resp_json2["error_code"], "NO_MODEL_SPECIFIED");
+        assert_eq!(resp_json2["message"], "No model specified and download_all_calibrated is false");
+        assert_eq!(
+            resp_json2["user_guidance"],
+            "Provide a valid model name or set download_all_calibrated to true."
+        );
+        assert_eq!(resp_json2["ok"], false);
+        assert_eq!(resp_json2["success"], false);
+
+        // 5. Router endpoint verification - YARA status with no backend
+        let req3 = axum::http::Request::builder()
+            .uri("/api/yara/status")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp3 = app.clone().oneshot(req3).await.unwrap();
+        assert_eq!(resp3.status(), StatusCode::OK);
+        let bytes3 = axum::body::to_bytes(resp3.into_body(), usize::MAX).await.unwrap();
+        let resp_json3: serde_json::Value = serde_json::from_slice(&bytes3).unwrap();
+        assert_eq!(resp_json3["status"], "error");
+        assert_eq!(resp_json3["error_code"], "BACKEND_UNAVAILABLE");
+        assert_eq!(resp_json3["message"], "Backend orchestrator not initialized");
+        assert_eq!(
+            resp_json3["user_guidance"],
+            "Start the OpenỌ̀ṣọ́ọ̀sì backend orchestrator to initialize the YARA manager."
+        );
+        assert_eq!(resp_json3["ok"], false);
+        assert_eq!(resp_json3["total_rules"], 0);
+
+        // 6. Router endpoint verification - Agent anomalies embed with missing input
+        let req4 = axum::http::Request::builder()
+            .uri("/api/agent-anomalies/embed")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{}"#))
+            .unwrap();
+        let resp4 = app.clone().oneshot(req4).await.unwrap();
+        assert_eq!(resp4.status(), StatusCode::BAD_REQUEST);
+        let bytes4 = axum::body::to_bytes(resp4.into_body(), usize::MAX).await.unwrap();
+        let resp_json4: serde_json::Value = serde_json::from_slice(&bytes4).unwrap();
+        assert_eq!(resp_json4["status"], "error");
+        assert_eq!(resp_json4["error_code"], "MISSING_EMBED_INPUT");
+        assert_eq!(resp_json4["ok"], false);
+        assert_eq!(resp_json4["success"], false);
+
+        // 7. Router endpoint verification - Agent anomalies enforce with invalid payload
+        let req5 = axum::http::Request::builder()
+            .uri("/api/agent-anomalies/enforce")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"invalid":"payload"}"#))
+            .unwrap();
+        let resp5 = app.clone().oneshot(req5).await.unwrap();
+        assert_eq!(resp5.status(), StatusCode::BAD_REQUEST);
+        let bytes5 = axum::body::to_bytes(resp5.into_body(), usize::MAX).await.unwrap();
+        let resp_json5: serde_json::Value = serde_json::from_slice(&bytes5).unwrap();
+        assert_eq!(resp_json5["status"], "error");
+        assert_eq!(resp_json5["error_code"], "INVALID_TELEMETRY_PAYLOAD");
+        assert_eq!(resp_json5["ok"], false);
+        assert_eq!(resp_json5["success"], false);
+
+        // 8. Router endpoint verification - Logs view with path traversal
+        let req6 = axum::http::Request::builder()
+            .uri("/api/logs/view?file=../secrets.txt")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp6 = app.clone().oneshot(req6).await.unwrap();
+        assert_eq!(resp6.status(), StatusCode::BAD_REQUEST);
+        let bytes6 = axum::body::to_bytes(resp6.into_body(), usize::MAX).await.unwrap();
+        let resp_json6: serde_json::Value = serde_json::from_slice(&bytes6).unwrap();
+        assert_eq!(resp_json6["status"], "error");
+        assert_eq!(resp_json6["error_code"], "LOG_VIEW_FAILED");
+        assert_eq!(resp_json6["ok"], false);
+        assert_eq!(resp_json6["file"], "../secrets.txt");
+
+        // 9. Router endpoint verification - SkyRL adapter with empty adapter name
+        let req7 = axum::http::Request::builder()
+            .uri("/skyrl/v1/adapter")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"adapter":"   "}"#))
+            .unwrap();
+        let resp7 = app.clone().oneshot(req7).await.unwrap();
+        assert_eq!(resp7.status(), StatusCode::OK);
+        let bytes7 = axum::body::to_bytes(resp7.into_body(), usize::MAX).await.unwrap();
+        let resp_json7: serde_json::Value = serde_json::from_slice(&bytes7).unwrap();
+        assert_eq!(resp_json7["status"], "error");
+        assert_eq!(resp_json7["error_code"], "INVALID_ADAPTER");
+        assert_eq!(resp_json7["ok"], false);
     }
 }
 

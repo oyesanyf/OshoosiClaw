@@ -314,97 +314,102 @@ function setupNav() {
     navItems.forEach(item => {
         item.addEventListener('click', (e) => {
             e.preventDefault();
-            const view = item.getAttribute('data-view');
-            
-            // Update active state in sidebar
-            navItems.forEach(i => i.classList.remove('active'));
-            item.classList.add('active');
-            
-            // Switch views
-            document.querySelectorAll('.view-content').forEach(v => v.classList.remove('active'));
-            
-            if (view === 'dashboard') {
-                document.getElementById('dashboard-view').classList.add('active');
-                viewTitle.innerText = "Detection Overview";
-            } else if (view === 'threats') {
-                document.getElementById('threats-view').classList.add('active');
-                viewTitle.innerText = "Threat Intelligence";
-                renderThreatsView(state.threats);
-            } else if (view === 'mesh') {
-                document.getElementById('mesh-view').classList.add('active');
-                viewTitle.innerText = "Mesh Network";
-                renderMeshView(state.mesh || { peer_count: state.peer_count });
-                fetchBootstrapPeers();
-            } else if (view === 'gossip') {
-                document.getElementById('gossip-view').classList.add('active');
-                viewTitle.innerText = "Inter-Node Gossip Feed";
-                renderGossipView();
-            } else if (view === 'malware') {
-                document.getElementById('malware-view').classList.add('active');
-                viewTitle.innerText = "Malware Scanner";
-                renderMalwareView(state.malwareDetections || []);
-            } else if (view === 'repair') {
-                document.getElementById('repair-view').classList.add('active');
-                viewTitle.innerText = "Repair Engine";
-                renderRepairView(state.repairStatus || null);
-            } else if (view === 'process-map') {
-                document.getElementById('process-map-view').classList.add('active');
-                viewTitle.innerText = "Attack Graph & Process Map";
-                renderProcessMapView();
-            } else if (view === 'otel-map') {
-                document.getElementById('otel-map-view').classList.add('active');
-                viewTitle.innerText = "Global Telemetry Mesh Map";
-                renderOtelMapView();
-                if (state.otelNetwork) {
-                    setTimeout(() => {
-                        if (state.otelNetwork && state.current_view === 'otel-map') {
-                            state.otelNetwork.fit({ animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
-                            state.otelNetwork.redraw();
-                        }
-                    }, 50);
+            try {
+                const view = item.getAttribute('data-view');
+                
+                // Update active state in sidebar
+                navItems.forEach(i => i.classList.remove('active'));
+                item.classList.add('active');
+                
+                // Switch views
+                document.querySelectorAll('.view-content').forEach(v => v.classList.remove('active'));
+                
+                if (view === 'dashboard') {
+                    document.getElementById('dashboard-view').classList.add('active');
+                    viewTitle.innerText = "Detection Overview";
+                } else if (view === 'threats') {
+                    document.getElementById('threats-view').classList.add('active');
+                    viewTitle.innerText = "Threat Intelligence";
+                    renderThreatsView(state.threats);
+                } else if (view === 'mesh') {
+                    document.getElementById('mesh-view').classList.add('active');
+                    viewTitle.innerText = "Mesh Network";
+                    renderMeshView(state.mesh || { peer_count: state.peer_count });
+                    fetchBootstrapPeers();
+                } else if (view === 'gossip') {
+                    document.getElementById('gossip-view').classList.add('active');
+                    viewTitle.innerText = "Inter-Node Gossip Feed";
+                    renderGossipView();
+                } else if (view === 'malware') {
+                    document.getElementById('malware-view').classList.add('active');
+                    viewTitle.innerText = "Malware Scanner";
+                    renderMalwareView(state.malwareDetections || []);
+                } else if (view === 'repair') {
+                    document.getElementById('repair-view').classList.add('active');
+                    viewTitle.innerText = "Repair Engine";
+                    renderRepairView(state.repairStatus || null);
+                } else if (view === 'process-map') {
+                    document.getElementById('process-map-view').classList.add('active');
+                    viewTitle.innerText = "Attack Graph & Process Map";
+                    renderProcessMapView();
+                } else if (view === 'otel-map') {
+                    document.getElementById('otel-map-view').classList.add('active');
+                    viewTitle.innerText = "Global Telemetry Mesh Map";
+                    renderOtelMapView();
+                    if (state.otelNetwork) {
+                        setTimeout(() => {
+                            if (state.otelNetwork && state.current_view === 'otel-map') {
+                                state.otelNetwork.fit({ animation: { duration: 400, easingFunction: 'easeInOutQuad' } });
+                                state.otelNetwork.redraw();
+                            }
+                        }, 50);
+                    }
+                } else if (view === 'zone') {
+                    document.getElementById('zone-view').classList.add('active');
+                    viewTitle.innerText = "Zone Security Gateway";
+                    renderZoneView();
+                } else if (view === 'approvals') {
+                    document.getElementById('approvals-view').classList.add('active');
+                    viewTitle.innerText = "Response Approval Queue";
+                    renderApprovalsView();
+                } else if (view === 'story') {
+                    document.getElementById('story-view').classList.add('active');
+                    viewTitle.innerText = "Forensic Storyboard";
+                    renderStoryView();
+                } else if (view === 'skyrl') {
+                    document.getElementById('skyrl-view').classList.add('active');
+                    viewTitle.innerText = "SkyRL Self-Improvement & Policy Training";
+                    renderSkyrlView();
+                } else if (view === 'history') {
+                    document.getElementById('history-view').classList.add('active');
+                    viewTitle.innerText = "Forensic Audit & Threat History";
+                    renderHistoryView(state.historyPage);
+                    fetchRotatedLogFiles();
+                } else if (view === 'mitre') {
+                    document.getElementById('mitre-view').classList.add('active');
+                    viewTitle.innerText = "MITRE ATT&CK® Enterprise Matrix";
+                    renderMitreView();
+                } else if (view === 'agent-anomalies') {
+                    document.getElementById('agent-anomalies-view').classList.add('active');
+                    viewTitle.innerText = "Agent Anomaly Detection (AAD)";
+                    renderAgentAnomaliesView();
+                } else if (view === 'utilities') {
+                    document.getElementById('utilities-view').classList.add('active');
+                    viewTitle.innerText = "Utilities & Host AI Calibration";
+                    renderUtilitiesView();
+                } else {
+                    document.getElementById('other-view').classList.add('active');
+                    viewTitle.innerText = item.querySelector('span').innerText;
                 }
-            } else if (view === 'zone') {
-                document.getElementById('zone-view').classList.add('active');
-                viewTitle.innerText = "Zone Security Gateway";
-                renderZoneView();
-            } else if (view === 'approvals') {
-                document.getElementById('approvals-view').classList.add('active');
-                viewTitle.innerText = "Response Approval Queue";
-                renderApprovalsView();
-            } else if (view === 'story') {
-                document.getElementById('story-view').classList.add('active');
-                viewTitle.innerText = "Forensic Storyboard";
-                renderStoryView();
-            } else if (view === 'skyrl') {
-                document.getElementById('skyrl-view').classList.add('active');
-                viewTitle.innerText = "SkyRL Self-Improvement & Policy Training";
-                renderSkyrlView();
-            } else if (view === 'history') {
-                document.getElementById('history-view').classList.add('active');
-                viewTitle.innerText = "Forensic Audit & Threat History";
-                renderHistoryView(state.historyPage);
-                fetchRotatedLogFiles();
-            } else if (view === 'mitre') {
-                document.getElementById('mitre-view').classList.add('active');
-                viewTitle.innerText = "MITRE ATT&CK® Enterprise Matrix";
-                renderMitreView();
-            } else if (view === 'agent-anomalies') {
-                document.getElementById('agent-anomalies-view').classList.add('active');
-                viewTitle.innerText = "Agent Anomaly Detection (AAD)";
-                renderAgentAnomaliesView();
-            } else if (view === 'utilities') {
-                document.getElementById('utilities-view').classList.add('active');
-                viewTitle.innerText = "Utilities & Host AI Calibration";
-                renderUtilitiesView();
-            } else {
-                document.getElementById('other-view').classList.add('active');
-                viewTitle.innerText = item.querySelector('span').innerText;
+                
+                if (window.location.hash !== '#' + view) {
+                    history.pushState ? history.pushState(null, null, '#' + view) : (window.location.hash = '#' + view);
+                }
+                state.current_view = view;
+            } catch (err) {
+                console.error('Navigation error:', err);
+                showUserError('Navigation', err);
             }
-            
-            if (window.location.hash !== '#' + view) {
-                history.pushState ? history.pushState(null, null, '#' + view) : (window.location.hash = '#' + view);
-            }
-            state.current_view = view;
         });
     });
 
@@ -546,7 +551,7 @@ async function updateDashboard() {
             fetchAPI('/skyrl/v1/status')
         ]);
 
-        if (status) {
+        if (status && status.uptime !== undefined) {
             state.uptime = status.uptime;
             state.node_id = status.node_id;
             state.chain_verified = status.chain_verified;
@@ -554,10 +559,11 @@ async function updateDashboard() {
             updateStats('chain-verified', status.chain_verified ? "Verified ✅" : "Unverified ⚠️");
             
             const nodeIdShort = status.node_id ? status.node_id.substring(0, 12) + '...' : '...';
-            document.getElementById('node-id-short').innerText = nodeIdShort;
+            const nodeEl = document.getElementById('node-id-short');
+            if (nodeEl) nodeEl.innerText = nodeIdShort;
         }
 
-        if (threats) {
+        if (Array.isArray(threats)) {
             const visibleThreats = threats.filter(t => !state.suppressedThreatKeys.has(threatKey(t)));
             const currentHash = JSON.stringify(visibleThreats);
             if (currentHash !== state.lastThreatsHash) {
@@ -568,7 +574,7 @@ async function updateDashboard() {
             }
         }
 
-        if (mesh) {
+        if (mesh && typeof mesh === 'object' && mesh.peer_count !== undefined) {
             state.mesh = mesh;
             state.peer_count = mesh.peer_count;
             state.gossip_count = mesh.gossip_count || 0;
@@ -579,17 +585,21 @@ async function updateDashboard() {
             updateMeshConnectionIndicators(mesh.peer_count, mesh.gossip_count);
         }
 
-        if (malwareDetections) {
+        if (Array.isArray(malwareDetections)) {
             state.malwareDetections = malwareDetections;
         }
 
-        if (repairStatus) {
+        if (repairStatus && typeof repairStatus === 'object') {
             state.repairStatus = repairStatus;
         }
 
-        if (activity) {
-            const currentHash = JSON.stringify(activity); if (currentHash !== state.lastActivityHash) { state.activity = activity;
-            state.lastActivityHash = currentHash; renderActivity(activity); }
+        if (Array.isArray(activity)) {
+            const currentHash = JSON.stringify(activity);
+            if (currentHash !== state.lastActivityHash) {
+                state.activity = activity;
+                state.lastActivityHash = currentHash;
+                renderActivity(activity);
+            }
         }
 
         if (telemetryData) {
@@ -600,7 +610,7 @@ async function updateDashboard() {
             renderDetectionStats(detectionStats);
         }
 
-        if (skyrlStatus) {
+        if (skyrlStatus && typeof skyrlStatus === 'object' && !Array.isArray(skyrlStatus)) {
             state.skyrlStatus = skyrlStatus;
             updateSkyrlStats(skyrlStatus);
             if (state.current_view === 'skyrl') {
@@ -684,13 +694,25 @@ async function updateDashboard() {
         }
 
         // Update global indicator
-        document.getElementById('agent-status-text').innerText = "Agent Online";
-        document.querySelector('.status-dot').className = "status-dot online";
+        const statusText = document.getElementById('agent-status-text');
+        const statusDot = document.querySelector('.status-dot');
+        if (status && status.live === true) {
+            if (statusText) statusText.innerText = "Agent Online";
+            if (statusDot) statusDot.className = "status-dot online";
+        } else if (status && status.live === false) {
+            if (statusText) statusText.innerText = "Agent Standalone (Daemon Inactive)";
+            if (statusDot) statusDot.className = "status-dot";
+        } else {
+            if (statusText) statusText.innerText = "Agent Offline (Reconnecting...)";
+            if (statusDot) statusDot.className = "status-dot";
+        }
 
     } catch (error) {
         console.error("Failed to update dashboard:", error);
-        document.getElementById('agent-status-text').innerText = "Agent Offline";
-        document.querySelector('.status-dot').className = "status-dot";
+        const statusText = document.getElementById('agent-status-text');
+        const statusDot = document.querySelector('.status-dot');
+        if (statusText) statusText.innerText = "Agent Offline";
+        if (statusDot) statusDot.className = "status-dot";
     } finally {
         state._pollInFlight = false;
     }
@@ -732,7 +754,163 @@ function suppressThreatLocally(threatId) {
 }
 
 /**
- * Helper to fetch from API
+ * Toast notification system with structured user guidance and error cards
+ */
+function showSkyrlToast(message, type = 'info', guidance = null, errorCode = null) {
+    let container = document.getElementById('skyrl-toast-container');
+    if (!container) {
+        container = document.createElement('div');
+        container.id = 'skyrl-toast-container';
+        container.className = 'skyrl-toast-container';
+        document.body.appendChild(container);
+    }
+
+    // Auto-extract structured fields if message is an object
+    let msgText = message;
+    if (message && typeof message === 'object') {
+        msgText = message.message || message.msg || message.error || JSON.stringify(message);
+        if (!guidance && message.user_guidance) guidance = message.user_guidance;
+        if (!errorCode && message.error_code) errorCode = message.error_code;
+    }
+
+    const toast = document.createElement('div');
+    toast.className = `skyrl-toast ${type}`;
+    
+    let iconName = 'info';
+    if (type === 'success') iconName = 'check-circle-2';
+    else if (type === 'error') iconName = 'alert-octagon';
+    else if (type === 'warning') iconName = 'alert-triangle';
+
+    if (guidance || errorCode) {
+        toast.innerHTML = `
+            <div style="display:flex; flex-direction:column; gap:6px; max-width:400px; width:100%;">
+                <div style="display:flex; align-items:center; gap:8px;">
+                    <i data-lucide="${iconName}" style="width: 16px; height: 16px; flex-shrink: 0;"></i>
+                    <span style="font-weight:600; font-size:13px; color:var(--text-header);">${escapeHtml(msgText)}</span>
+                    ${errorCode ? `<span class="badge ${type === 'error' ? 'red' : 'yellow'}" style="font-size:10px; margin-left:auto; font-family:monospace;">${escapeHtml(errorCode)}</span>` : ''}
+                </div>
+                ${guidance ? `<div style="font-size:11px; color:var(--text-muted); padding-left:24px; border-left:2px solid var(--accent-blue); line-height:1.4;">💡 <strong style="color:var(--accent-blue);">Guidance:</strong> ${escapeHtml(guidance)}</div>` : ''}
+            </div>
+        `;
+    } else {
+        toast.innerHTML = `
+            <i data-lucide="${iconName}" style="width: 16px; height: 16px; flex-shrink: 0;"></i>
+            <span>${escapeHtml(msgText)}</span>
+        `;
+    }
+
+    container.appendChild(toast);
+    if (window.lucide) window.lucide.createIcons();
+
+    const duration = (type === 'error' || guidance) ? 6000 : 3500;
+    setTimeout(() => {
+        toast.classList.add('fade-out');
+        setTimeout(() => {
+            if (toast.parentNode) {
+                toast.parentNode.removeChild(toast);
+            }
+        }, 300);
+    }, duration);
+}
+
+/**
+ * Standardized User Error Reporting: formats errors cleanly with actionable guidance
+ */
+function showUserError(context, errorOrPayload, options = {}) {
+    let message = 'An unexpected error occurred.';
+    let guidance = null;
+    let errorCode = null;
+
+    if (typeof errorOrPayload === 'string') {
+        message = errorOrPayload;
+    } else if (errorOrPayload && typeof errorOrPayload === 'object') {
+        message = errorOrPayload.message || errorOrPayload.msg || errorOrPayload.error || errorOrPayload.statusText || message;
+        guidance = errorOrPayload.user_guidance || errorOrPayload.guidance || null;
+        errorCode = errorOrPayload.error_code || errorOrPayload.code || null;
+    }
+
+    if (errorOrPayload instanceof Error) {
+        message = errorOrPayload.message || message;
+    }
+
+    const title = context ? `[${context}] ${message}` : message;
+    console.error(`[UserError] ${title}`, { errorCode, guidance, errorOrPayload });
+
+    showSkyrlToast(title, 'error', guidance, errorCode);
+
+    if (options.containerId) {
+        renderViewFallbackCard(options.containerId, context || 'View', {
+            message,
+            user_guidance: guidance,
+            error_code: errorCode
+        });
+    }
+}
+
+/**
+ * Render resilient fallback notification card inside a view container
+ */
+function renderViewFallbackCard(containerOrId, viewName, error) {
+    const msg = (error && (error.message || error.msg || error.error)) || String(error || 'Unexpected rendering failure');
+    const guidance = (error && error.user_guidance) || 'Verify daemon connectivity at http://127.0.0.1:3030 and refresh view.';
+    const code = (error && error.error_code) || 'VIEW_RENDER_ERROR';
+
+    const el = typeof containerOrId === 'string' ? document.getElementById(containerOrId) : containerOrId;
+    if (!el) {
+        showSkyrlToast(`[${viewName}] ${msg}`, 'error', guidance, code);
+        return;
+    }
+
+    const existing = el.querySelector('.oshoosi-view-fallback-card');
+    if (existing) {
+        const msgEl = existing.querySelector('.fallback-msg');
+        if (msgEl) msgEl.innerText = msg;
+        return;
+    }
+
+    const card = document.createElement('div');
+    card.className = 'oshoosi-view-fallback-card';
+    card.style.cssText = 'margin: 20px; padding: 20px; border-radius: 12px; background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.3); color: var(--text-primary); backdrop-filter: blur(8px);';
+    card.innerHTML = `
+        <div style="display:flex; align-items:center; justify-content:space-between; margin-bottom:12px;">
+            <div style="display:flex; align-items:center; gap:10px; color:var(--accent-red); font-weight:600; font-size:15px;">
+                <i data-lucide="alert-triangle" style="width:20px; height:20px;"></i>
+                <span>${escapeHtml(viewName)} View Notice</span>
+            </div>
+            <span class="badge red" style="font-size:11px; font-family:monospace;">${escapeHtml(code)}</span>
+        </div>
+        <div class="fallback-msg" style="font-size:13px; color:var(--text-secondary); margin-bottom:12px; line-height:1.5;">
+            ${escapeHtml(msg)}
+        </div>
+        <div style="padding:10px 14px; background:rgba(0,0,0,0.3); border-radius:8px; border-left:3px solid var(--accent-blue); font-size:12px; color:var(--text-muted); margin-bottom:14px;">
+            <strong style="color:var(--accent-blue);">Actionable Guidance:</strong> ${escapeHtml(guidance)}
+        </div>
+        <button class="btn btn-sm btn-outline" onclick="updateDashboard()" style="display:inline-flex; align-items:center; gap:6px; cursor:pointer;">
+            <i data-lucide="refresh-cw" style="width:13px; height:13px;"></i> Retry View
+        </button>
+    `;
+    el.prepend(card);
+    if (window.lucide) window.lucide.createIcons();
+}
+
+/**
+ * Universal notification helper: routes to user error card or toast
+ */
+function showNotification(message, type = 'info', guidance = null, errorCode = null) {
+    if (type === 'error') {
+        showUserError('', message);
+    } else {
+        showSkyrlToast(message, type, guidance, errorCode);
+    }
+}
+
+window.showSkyrlToast = showSkyrlToast;
+window.showUserError = showUserError;
+window.renderViewFallbackCard = renderViewFallbackCard;
+window.showNotification = showNotification;
+
+/**
+ * Helper to fetch from API with SLA timeout and structured error decoding
  */
 async function fetchAPI(endpoint) {
     const controller = new AbortController();
@@ -740,7 +918,15 @@ async function fetchAPI(endpoint) {
     try {
         const response = await fetch(`${API_BASE}${endpoint}`, { signal: controller.signal });
         clearTimeout(timeoutId);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
+        if (!response.ok) {
+            const errData = await response.json().catch(() => null);
+            if (errData && errData.status === 'error') {
+                console.warn(`API Error [${errData.error_code || response.status}] on ${endpoint}: ${errData.message} | Guidance: ${errData.user_guidance}`);
+            } else {
+                console.warn(`HTTP ${response.status} fetching ${endpoint}`);
+            }
+            return null;
+        }
         return await response.json();
     } catch (err) {
         clearTimeout(timeoutId);
@@ -754,7 +940,7 @@ async function fetchAPI(endpoint) {
 }
 
 /**
- * Helper to POST to API
+ * Helper to POST to API with standardized error object return on failure
  */
 async function postAPI(endpoint, payload = {}) {
     const controller = new AbortController();
@@ -767,12 +953,34 @@ async function postAPI(endpoint, payload = {}) {
             signal: controller.signal
         });
         clearTimeout(timeoutId);
-        if (!response.ok) throw new Error(`HTTP ${response.status}`);
-        return await response.json();
+        const data = await response.json().catch(() => null);
+        if (!response.ok) {
+            if (data && (data.status === 'error' || data.error || data.message)) {
+                return data;
+            }
+            return {
+                status: 'error',
+                error_code: `HTTP_${response.status}`,
+                message: `HTTP ${response.status} ${response.statusText || ''}`.trim(),
+                user_guidance: 'Check daemon status and backend logs for details.',
+                error: `HTTP ${response.status}`,
+                ok: false,
+                success: false
+            };
+        }
+        return data || { ok: true, success: true };
     } catch (err) {
         clearTimeout(timeoutId);
         console.warn(`Error in postAPI ${endpoint}:`, err);
-        return null;
+        return {
+            status: 'error',
+            error_code: err.name === 'AbortError' ? 'TIMEOUT_ERROR' : 'NETWORK_ERROR',
+            message: err.message || 'Network request failed',
+            user_guidance: 'Ensure the OpenỌ̀ṣọ́ọ̀sì daemon is active at http://127.0.0.1:3030.',
+            error: err.message || 'Network request failed',
+            ok: false,
+            success: false
+        };
     }
 }
 
@@ -785,7 +993,7 @@ function updateStats(id, value) {
 }
 
 function escapeHtml(str) {
-    if (!str) return '';
+    if (str === null || str === undefined) return '';
     return String(str)
         .replace(/&/g, '&amp;')
         .replace(/</g, '&lt;')
@@ -798,11 +1006,18 @@ function escapeHtml(str) {
  * Render detection engines voter cards
  */
 function renderDetectionStats(stats) {
-    const container = document.getElementById('detection-engines-grid');
-    if (!container) return;
+    try {
+        const container = document.getElementById('detection-engines-grid');
+        if (!container) return;
 
-    if (!stats || typeof stats !== 'object' || Object.keys(stats).length === 0) {
-        container.innerHTML = `
+        if (stats && (stats.status === 'error' || stats.ok === false)) {
+            container.innerHTML = '';
+            renderViewFallbackCard(container, 'Detection Engines', stats);
+            return;
+        }
+
+        if (!stats || typeof stats !== 'object' || Array.isArray(stats) || Object.keys(stats).length === 0) {
+            container.innerHTML = `
             <div class="voter-card">
                 <div class="voter-header">
                     <span class="voter-name">Ai-Security-Audit-Voter</span>
@@ -848,23 +1063,23 @@ function renderDetectionStats(stats) {
                 </div>
             </div>
         `;
-        if (window.lucide) lucide.createIcons();
-        return;
-    }
+            if (window.lucide) lucide.createIcons();
+            return;
+        }
 
-    let html = '';
-    for (const [name, info] of Object.entries(stats)) {
-        const isActive = info?.active !== false;
-        const isAi = name.toLowerCase().includes('ai');
-        const badgeColor = isActive ? (isAi ? 'purple' : 'green') : 'red';
-        const badgeLabel = isActive ? 'Active' : 'Offline';
-        const desc = isAi 
-            ? 'MITRE ATLAS™ AI Defense (AML.T0043, AML.T0044, AML.T0048, AML.T0040)' 
-            : (info?.description || (name.toLowerCase().includes('sigma') ? 'Host security event & Sysmon rule matching' : (name.toLowerCase().includes('yara') ? 'Binary pattern & C2 beacon detection' : 'Zero-Trust Policy Consensus Voter')));
-        
-        const weight = typeof info?.weight === 'number' ? info.weight : (isAi ? 1.0 : (name.toLowerCase().includes('yara') ? 0.9 : 0.85));
+        let html = '';
+        for (const [name, info] of Object.entries(stats)) {
+            const isActive = (info && typeof info === 'object') ? info.active !== false : true;
+            const isAi = name.toLowerCase().includes('ai');
+            const badgeColor = isActive ? (isAi ? 'purple' : 'green') : 'red';
+            const badgeLabel = isActive ? 'Active' : 'Offline';
+            const desc = isAi 
+                ? 'MITRE ATLAS™ AI Defense (AML.T0043, AML.T0044, AML.T0048, AML.T0040)' 
+                : ((info && typeof info === 'object' && info.description) || (name.toLowerCase().includes('sigma') ? 'Host security event & Sysmon rule matching' : (name.toLowerCase().includes('yara') ? 'Binary pattern & C2 beacon detection' : 'Zero-Trust Policy Consensus Voter')));
+            
+            const weight = (info && typeof info === 'object' && typeof info.weight === 'number') ? info.weight : (isAi ? 1.0 : (name.toLowerCase().includes('yara') ? 0.9 : 0.85));
 
-        html += `
+            html += `
             <div class="voter-card">
                 <div class="voter-header">
                     <span class="voter-name">${escapeHtml(name)}</span>
@@ -877,9 +1092,15 @@ function renderDetectionStats(stats) {
                 </div>
             </div>
         `;
+        }
+        container.innerHTML = html;
+        if (window.lucide) lucide.createIcons();
+    } catch (err) {
+        console.error('[renderDetectionStats] Error:', err);
+        const container = document.getElementById('detection-engines-grid');
+        if (container) container.innerHTML = '';
+        renderViewFallbackCard('detection-engines-grid', 'Detection Engines', err);
     }
-    container.innerHTML = html;
-    if (window.lucide) lucide.createIcons();
 }
 
 /**
@@ -936,11 +1157,19 @@ function formatThreatTitle(t) {
  * Render threat timeline items
  */
 function renderThreats(threats) {
-    const list = document.getElementById('threat-list');
-    if (!list) return;
+    try {
+        const list = document.getElementById('threat-list');
+        if (!list) return;
+
+        if (threats && (threats.status === 'error' || threats.ok === false)) {
+            list.innerHTML = '';
+            renderViewFallbackCard(list, 'Threats Feed', threats);
+            return;
+        }
     
-    if (!threats || threats.length === 0) {
-        list.innerHTML = `
+        const safeThreats = Array.isArray(threats) ? threats : [];
+        if (safeThreats.length === 0) {
+            list.innerHTML = `
             <div class="card glass p-3 text-center" style="border: 1px solid rgba(0, 255, 136, 0.2); background: rgba(0, 255, 136, 0.03); border-radius: 10px; padding: 16px;">
                 <div style="font-size: 14px; font-weight: 600; color: var(--accent-green); margin-bottom: 6px;">
                     🛡️ Zero Active Threats or Tampering Detected
@@ -950,11 +1179,11 @@ function renderThreats(threats) {
                 </div>
             </div>
         `;
-        if (window.lucide) lucide.createIcons();
-        return;
-    }
+            if (window.lucide) lucide.createIcons();
+            return;
+        }
 
-    const displayThreats = threats.slice(0, 30); const filtered = threats.filter(t => {
+    const displayThreats = safeThreats.slice(0, 30); const filtered = safeThreats.filter(t => {
         if (!state.searchQuery) return true;
         const q = state.searchQuery;
         return (t.type && t.type.toLowerCase().includes(q)) || 
@@ -1027,17 +1256,24 @@ function renderThreats(threats) {
         toggleAllBtn.innerText = allExp ? 'Collapse All' : 'Expand All';
     }
 
-    lucide.createIcons();
+    if (window.lucide) lucide.createIcons();
+    } catch (err) {
+        console.error('[renderThreats] Error:', err);
+        const list = document.getElementById('threat-list');
+        if (list) list.innerHTML = '';
+        renderViewFallbackCard('threat-list', 'Threats Feed', err);
+    }
 }
 
 /**
  * Render activity feed items
  */
 function renderActivity(activity) {
-    const list = document.getElementById('activity-feed');
+    try {
+        const list = document.getElementById('activity-feed');
     if (!list) return;
     
-    let items = (activity && activity.length > 0) ? activity : [
+    let items = (Array.isArray(activity) && activity.length > 0) ? activity : [
         {
             summary: "Telemetry Ingestion Pipeline active: Sysmon & WFP stream verified",
             type: "TELEMETRY",
@@ -1086,18 +1322,30 @@ function renderActivity(activity) {
         toggleAllBtn.innerText = allExp ? 'Collapse All' : 'Expand All';
     }
 
-    lucide.createIcons();
+    if (window.lucide) lucide.createIcons();
+    } catch (err) {
+        console.error('[renderActivity] Error:', err);
+        renderViewFallbackCard('activity-feed', 'Activity Feed', err);
+    }
 }
 
 /**
  * Render detailed threats view
  */
 function renderThreatsView(threats) {
-    const list = document.getElementById('threat-view-list') || document.getElementById('threats-data-list');
-    if (!list) return;
+    try {
+        const list = document.getElementById('threat-view-list') || document.getElementById('threats-data-list');
+        if (!list) return;
 
-    if (!threats || threats.length === 0) {
-        list.innerHTML = `
+        if (threats && (threats.status === 'error' || threats.ok === false)) {
+            list.innerHTML = '';
+            renderViewFallbackCard(list, 'Threats View', threats);
+            return;
+        }
+
+        const safeThreats = Array.isArray(threats) ? threats : [];
+        if (safeThreats.length === 0) {
+            list.innerHTML = `
             <div class="card glass p-4 text-center" style="border: 1px solid rgba(0, 255, 136, 0.2); background: rgba(0, 255, 136, 0.03); border-radius: 12px; padding: 24px;">
                 <div style="font-size: 16px; font-weight: 600; color: var(--accent-green); margin-bottom: 8px;">
                     🛡️ Zero Active Threats or Tampering Detected
@@ -1113,29 +1361,29 @@ function renderThreatsView(threats) {
                 </div>
             </div>
         `;
-        if (window.lucide) lucide.createIcons();
-        return;
-    }
+            if (window.lucide) lucide.createIcons();
+            return;
+        }
 
-    const filtered = threats.filter(t => {
-        if (!state.searchQuery) return true;
-        const q = state.searchQuery;
-        return (t.type && t.type.toLowerCase().includes(q)) || 
-               (t.id && t.id.toLowerCase().includes(q)) ||
-               (t.file_path && t.file_path.toLowerCase().includes(q)) ||
-               (t.reason && t.reason.toLowerCase().includes(q)) ||
-               (t.display_title && t.display_title.toLowerCase().includes(q)) ||
-               (t.mitre_technique && t.mitre_technique.toLowerCase().includes(q));
-    });
+        const filtered = safeThreats.filter(t => {
+            if (!state.searchQuery) return true;
+            const q = state.searchQuery;
+            return (t.type && t.type.toLowerCase().includes(q)) || 
+                   (t.id && t.id.toLowerCase().includes(q)) ||
+                   (t.file_path && t.file_path.toLowerCase().includes(q)) ||
+                   (t.reason && t.reason.toLowerCase().includes(q)) ||
+                   (t.display_title && t.display_title.toLowerCase().includes(q)) ||
+                   (t.mitre_technique && t.mitre_technique.toLowerCase().includes(q));
+        });
 
-    if (filtered.length === 0) {
-        list.innerHTML = '<p class="placeholder-text">No matches found for "' + escapeHtml(state.searchQuery) + '".</p>';
-        return;
-    }
+        if (filtered.length === 0) {
+            list.innerHTML = '<p class="placeholder-text">No matches found for "' + escapeHtml(state.searchQuery) + '".</p>';
+            return;
+        }
 
-    const groups = {};
-    const sourceToRender = state.searchQuery ? filtered : threats;
-    sourceToRender.forEach(t => {
+        const groups = {};
+        const sourceToRender = state.searchQuery ? filtered : safeThreats;
+        sourceToRender.forEach(t => {
         const key = `${t.display_title || t.type || 'Threat'}-${t.source_node || 'Unknown'}`;
         if (!groups[key]) groups[key] = [];
         groups[key].push(t);
@@ -1209,14 +1457,21 @@ function renderThreatsView(threats) {
         const allExp = filtered.every(t => state.expandedDetails.has('full-' + t.id));
         toggleAllViewBtn.innerText = allExp ? 'Collapse All' : 'Expand All';
     }
-    lucide.createIcons();
+    if (window.lucide) lucide.createIcons();
+    } catch (err) {
+        console.error('[renderThreatsView] Error:', err);
+        const list = document.getElementById('threat-view-list') || document.getElementById('threats-data-list');
+        if (list) list.innerHTML = '';
+        renderViewFallbackCard('threats-view', 'Threats', err);
+    }
 }
 
 /**
  * Render mesh network view
  */
 async function renderMeshView(mesh) {
-    const list = document.getElementById('mesh-data-list');
+    try {
+        const list = document.getElementById('mesh-data-list');
     if (!list) return;
 
     let pendingJoins = [];
@@ -1450,19 +1705,56 @@ async function renderMeshView(mesh) {
     if (window.lucide) {
         lucide.createIcons();
     }
+    } catch (err) {
+        console.error('[renderMeshView] Error:', err);
+        renderViewFallbackCard('mesh-view', 'Mesh Network', err);
+    }
 }
 
 window.meshAllowPeer = async function(id) {
-    await fetch(`${API_BASE}/pending-joins/${id}/allow`, { method: 'POST' });
-    updateDashboard();
+    try {
+        const res = await fetch(`${API_BASE}/pending-joins/${id}/allow`, { method: 'POST' });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Mesh Allow Peer', data || `HTTP ${res.status}`);
+            return;
+        }
+        showSkyrlToast(`Peer ${id} approved and admitted to mesh.`, 'success');
+        updateDashboard();
+    } catch (e) {
+        showUserError('Mesh Allow Peer', e);
+    }
 };
 window.meshDenyPeer = async function(id) {
-    await fetch(`${API_BASE}/pending-joins/${id}/deny`, { method: 'POST' });
-    updateDashboard();
+    try {
+        const res = await fetch(`${API_BASE}/pending-joins/${id}/deny`, { method: 'POST' });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Mesh Deny Peer', data || `HTTP ${res.status}`);
+            return;
+        }
+        showSkyrlToast(`Peer ${id} denied and dropped.`, 'info');
+        updateDashboard();
+    } catch (e) {
+        showUserError('Mesh Deny Peer', e);
+    }
 };
 window.meshReleasePeer = async function(id) {
-    await fetch(`${API_BASE}/quarantined-peers/${id}/release`, { method: 'POST', headers: {'x-osoosi-quarantine-key': 'admin'} });
-    updateDashboard();
+    try {
+        const res = await fetch(`${API_BASE}/quarantined-peers/${id}/release`, {
+            method: 'POST',
+            headers: {'x-osoosi-quarantine-key': 'admin'}
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Mesh Release Peer', data || `HTTP ${res.status}`);
+            return;
+        }
+        showSkyrlToast(`Peer ${id} released from quarantine.`, 'success');
+        updateDashboard();
+    } catch (e) {
+        showUserError('Mesh Release Peer', e);
+    }
 };
 
 /**
@@ -1508,6 +1800,10 @@ async function fetchBootstrapPeers() {
     } catch (err) {
         clearTimeout(timeoutId);
         console.warn('Failed to fetch bootstrap peers:', err);
+        const list = document.getElementById('bootstrap-peers-list');
+        if (list && (!state.bootstrapPeers || state.bootstrapPeers.length === 0)) {
+            list.innerHTML = `<div style="font-size:12px; color:var(--accent-red); padding:8px 4px;">Failed to fetch bootstrap peers: ${escapeHtml(err.message || 'Network error')}</div>`;
+        }
     }
 }
 
@@ -1554,18 +1850,18 @@ function addBootstrapPeer() {
     if (!input) return;
     let val = input.value.trim();
     if (!val) {
-        alert("Please enter a multiaddr (e.g. /dns4/myedr.duckdns.org/tcp/4001 or /ip4/71.194.142.20/tcp/4001)");
+        showUserError("Bootstrap Peers", "Please enter a multiaddr (e.g. /dns4/myedr.duckdns.org/tcp/4001 or /ip4/71.194.142.20/tcp/4001)");
         return;
     }
     if (!val.startsWith('/')) {
         val = '/' + val;
     }
     if (!val.startsWith('/ip4/') && !val.startsWith('/dns4/') && !val.startsWith('/dns/') && !val.startsWith('/dns6/') && !val.startsWith('/ip6/')) {
-        alert("Bootstrap peer multiaddr must start with /ip4/, /dns4/, /dns/, or /ip6/ (e.g. /dns4/myedr.duckdns.org/tcp/4001 or /ip4/71.194.142.20/tcp/4001)");
+        showUserError("Bootstrap Peers", "Bootstrap peer multiaddr must start with /ip4/, /dns4/, /dns/, /dns6/, or /ip6/ (e.g. /dns4/myedr.duckdns.org/tcp/4001 or /ip4/71.194.142.20/tcp/4001)");
         return;
     }
     if (val.startsWith('/ip4/127.0.0.1') || val.startsWith('/ip4/0.0.0.0') || val.startsWith('/dns4/localhost')) {
-        alert("⚠️ Loopback address entered! In 'Remote Bootstrap Peers', enter the external/public address of the remote node you want to connect to (e.g. /ip4/71.194.142.20/tcp/4001).\n\nNodes on internal networks must dial the remote node, not themselves or localhost.");
+        showUserError("Bootstrap Peers", "Loopback address entered! In 'Remote Bootstrap Peers', enter the external/public address of the remote node you want to connect to (e.g. /ip4/71.194.142.20/tcp/4001). Nodes on internal networks must dial the remote node, not themselves or localhost.");
         return;
     }
     const myWanAddr = document.getElementById('this-node-wan-addr')?.value?.trim() || state.myWanMultiaddr;
@@ -1573,12 +1869,12 @@ function addBootstrapPeer() {
         const normVal = val.toLowerCase().replace(/\/+$/, '');
         const normWan = myWanAddr.toLowerCase().replace(/\/+$/, '');
         if (normVal === normWan || normVal.startsWith(normWan + '/')) {
-            alert("⚠️ That is THIS node's own address! In 'Remote Bootstrap Peers', enter the address of the OTHER node you want to connect to (e.g. /ip4/71.194.142.20/tcp/4001).\n\nNodes on internal networks must dial the remote node, not themselves.");
+            showUserError("Bootstrap Peers", "That is THIS node's own address! In 'Remote Bootstrap Peers', enter the address of the OTHER node you want to connect to (e.g. /ip4/71.194.142.20/tcp/4001). Nodes on internal networks must dial the remote node, not themselves.");
             return;
         }
     }
     if (state.bootstrapPeers.includes(val)) {
-        alert("This peer address is already configured.");
+        showUserError("Bootstrap Peers", "This peer address is already configured.");
         return;
     }
 
@@ -1627,15 +1923,15 @@ async function saveBootstrapPeers() {
                 statusMsg.innerText = "✓ Config saved and dialed!";
                 setTimeout(() => { if (statusMsg) statusMsg.innerText = ""; }, 4000);
             }
-            showNotification("Bootstrap peers updated and dialed!", "success");
+            showSkyrlToast("Bootstrap peers updated and dialed!", "success");
             updateDashboard();
         } else {
-            const err = data.error || "Failed to update bootstrap peers";
+            const err = data.error || data.message || "Failed to update bootstrap peers";
             if (statusMsg) {
                 statusMsg.style.color = "var(--accent-red)";
                 statusMsg.innerText = `Error: ${err}`;
             }
-            showNotification(err, "error");
+            showUserError("Bootstrap Peers", data || err);
         }
     } catch (e) {
         clearTimeout(timeoutId);
@@ -1646,7 +1942,7 @@ async function saveBootstrapPeers() {
             statusMsg.style.color = "var(--accent-red)";
             statusMsg.innerText = errMsg;
         }
-        showNotification(errMsg, "error");
+        showUserError("Bootstrap Peers", e);
     }
 }
 
@@ -1656,16 +1952,16 @@ function copyThisNodeWanAddr() {
     const text = input.value || '';
     if (navigator.clipboard && navigator.clipboard.writeText) {
         navigator.clipboard.writeText(text).then(() => {
-            showNotification("WAN Multiaddr copied to clipboard!", "success");
+            showSkyrlToast("WAN Multiaddr copied to clipboard!", "success");
         }).catch(() => {
-            input.select();
-            document.execCommand('copy');
-            showNotification("WAN Multiaddr copied to clipboard!", "success");
+            if (typeof input.select === 'function') input.select();
+            if (document.execCommand) document.execCommand('copy');
+            showSkyrlToast("WAN Multiaddr copied to clipboard!", "success");
         });
     } else {
-        input.select();
-        document.execCommand('copy');
-        showNotification("WAN Multiaddr copied to clipboard!", "success");
+        if (typeof input.select === 'function') input.select();
+        if (document.execCommand) document.execCommand('copy');
+        showSkyrlToast("WAN Multiaddr copied to clipboard!", "success");
     }
 }
 
@@ -1691,13 +1987,13 @@ async function saveDuckDnsDomain() {
         });
         const data = await res.json().catch(() => ({ ok: false, error: `HTTP ${res.status}` }));
         if (res.ok && data.ok) {
-            alert("DuckDNS domain updated successfully!");
+            showSkyrlToast("DuckDNS domain updated successfully!", "success");
             await fetchBootstrapPeers();
         } else {
-            alert(data.error || "Failed to update DuckDNS domain");
+            showUserError("DuckDNS Configuration", data || "Failed to update DuckDNS domain");
         }
     } catch (err) {
-        alert(`Error saving DuckDNS domain: ${err.message}`);
+        showUserError("DuckDNS Configuration", err);
     }
 }
 
@@ -1712,15 +2008,20 @@ window.fetchBootstrapPeers = fetchBootstrapPeers;
 /**
  * Render malware scanner view with drill-down details
  */
-/**
- * Render malware scanner view with drill-down details
- */
 function renderMalwareView(detections) {
-    const list = document.getElementById('malware-data-list');
-    if (!list) return;
+    try {
+        const list = document.getElementById('malware-data-list');
+        if (!list) return;
 
+        if (detections && (detections.status === 'error' || detections.ok === false)) {
+            list.innerHTML = '';
+            renderViewFallbackCard('malware-view', 'Malware Scanner', detections);
+            return;
+        }
+
+        const safeDetections = Array.isArray(detections) ? detections : [];
     // Filter detections by state.suppressedThreatKeys
-    const visibleDetections = (detections || []).filter(det => {
+    const visibleDetections = safeDetections.filter(det => {
         if (!det) return false;
         const hash = det.file_hash || '';
         const path = det.file_path || '';
@@ -1745,7 +2046,7 @@ function renderMalwareView(detections) {
     fetchYaraStatus();
     fetchConsensusLedger();
 
-    if (!visibleDetections || visibleDetections.length === 0) {
+    if (visibleDetections.length === 0) {
         list.innerHTML = `
             <div class="card glass shadow-glow p-4 text-center" style="border: 1px solid rgba(0, 255, 136, 0.2); background: rgba(0, 255, 136, 0.03); border-radius: 12px; padding: 24px;">
                 <div style="font-size: 16px; font-weight: 600; color: var(--accent-green); margin-bottom: 8px;">
@@ -1825,6 +2126,12 @@ function renderMalwareView(detections) {
         </div>
     `}).join('');
     if (window.lucide) lucide.createIcons();
+    } catch (err) {
+        console.error('[renderMalwareView] Error:', err);
+        const list = document.getElementById('malware-data-list');
+        if (list) list.innerHTML = '';
+        renderViewFallbackCard('malware-view', 'Malware Scanner', err);
+    }
 }
 
 window.toggleMalwareDetails = function(id) {
@@ -1851,12 +2158,16 @@ window.triggerMalwareScan = async function(btn) {
     showSkyrlToast('Triggering on-demand malware scan on active endpoints...', 'info');
     try {
         const res = await fetch(`${API_BASE}/scan-trigger`, { method: 'POST' });
-        const data = await res.json();
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Malware Scan', data || `HTTP ${res.status}`);
+            return;
+        }
         showSkyrlToast(`Malware scan complete: ${data.scanned || 0} file(s) evaluated.`, 'success');
         await updateDashboard();
     } catch(e) {
         console.warn('Scan trigger failed:', e);
-        showSkyrlToast('Scan trigger failed: ' + (e.message || e), 'error');
+        showUserError('Malware Scan', e);
     } finally {
         if (button) {
             button.disabled = false;
@@ -1877,14 +2188,14 @@ window.triggerYaraReload = async function() {
     showSkyrlToast('Hot-reloading local YARA rules across all directories...', 'info');
     try {
         const res = await postAPI('/yara/reload', {});
-        if (res && res.success) {
-            showSkyrlToast(`YARA hot-reload complete: ${res.reloaded_rules} rules active!`, 'success');
-            if (res.status) renderYaraStatus(res.status);
+        if (res && (res.success || res.status === 'success' || res.reloaded_rules !== undefined)) {
+            showSkyrlToast(`YARA hot-reload complete: ${res.reloaded_rules || 0} rules active!`, 'success');
+            if (res.status && typeof res.status === 'object') renderYaraStatus(res.status);
         } else {
-            showSkyrlToast(`YARA hot-reload failed: ${res ? res.error : 'Unknown error'}`, 'error');
+            showUserError('YARA Hot-Reload', res || 'Hot-reload failed');
         }
     } catch (e) {
-        showSkyrlToast(`YARA reload error: ${e.message}`, 'error');
+        showUserError('YARA Hot-Reload', e);
     } finally {
         if (btn) {
             btn.disabled = false;
@@ -1905,14 +2216,14 @@ window.triggerYaraFeedUpdate = async function() {
     showSkyrlToast('Fetching latest community YARA threat feeds...', 'info');
     try {
         const res = await postAPI('/yara/update', {});
-        if (res && res.success) {
-            showSkyrlToast(`Threat feeds updated: ${res.updated_rules} rules active!`, 'success');
-            if (res.status) renderYaraStatus(res.status);
+        if (res && (res.success || res.status === 'success' || res.updated_rules !== undefined)) {
+            showSkyrlToast(`Threat feeds updated: ${res.updated_rules || 0} rules active!`, 'success');
+            if (res.status && typeof res.status === 'object') renderYaraStatus(res.status);
         } else {
-            showSkyrlToast(`Threat feed update skipped or offline`, 'warning');
+            showUserError('YARA Threat Feeds', res || 'Feed update skipped or offline');
         }
     } catch (e) {
-        showSkyrlToast(`Feed update error: ${e.message}`, 'error');
+        showUserError('YARA Threat Feeds', e);
     } finally {
         if (btn) {
             btn.disabled = false;
@@ -1934,28 +2245,41 @@ async function fetchYaraStatus() {
 }
 
 function renderYaraStatus(status) {
-    const totalEl = document.getElementById('stat-yara-total');
-    const customEl = document.getElementById('stat-yara-custom');
-    const genEl = document.getElementById('stat-yara-generated');
-    const feedEl = document.getElementById('stat-yara-feeds');
-    const reloadEl = document.getElementById('yara-last-reloaded');
-    const syncEl = document.getElementById('yara-last-feed-update');
-    const stateEl = document.getElementById('yara-engine-state');
-
-    if (totalEl) totalEl.textContent = status.total_rules != null ? status.total_rules.toLocaleString() : '0';
-    if (customEl) customEl.textContent = status.custom_rules != null ? status.custom_rules.toLocaleString() : '0';
-    if (genEl) genEl.textContent = status.generated_rules != null ? status.generated_rules.toLocaleString() : '0';
-    if (feedEl) feedEl.textContent = status.feed_rules != null ? status.feed_rules.toLocaleString() : '0';
-    if (reloadEl) reloadEl.textContent = status.last_reloaded_at ? new Date(status.last_reloaded_at).toLocaleTimeString() : 'Never';
-    if (syncEl) syncEl.textContent = status.last_feed_update_at ? new Date(status.last_feed_update_at).toLocaleTimeString() : 'Local only';
-    if (stateEl) {
-        if (status.is_updating) {
-            stateEl.textContent = 'Updating Feeds...';
-            stateEl.style.color = 'var(--accent-yellow)';
-        } else {
-            stateEl.textContent = 'Active (Anti-Staleness Online)';
-            stateEl.style.color = 'var(--accent-green)';
+    try {
+        if (!status || typeof status !== 'object') return;
+        if (status.status === 'error' || status.ok === false) {
+            const stateEl = document.getElementById('yara-engine-state');
+            if (stateEl) {
+                stateEl.textContent = 'Engine Offline / Error';
+                stateEl.style.color = 'var(--accent-red)';
+            }
+            return;
         }
+        const totalEl = document.getElementById('stat-yara-total');
+        const customEl = document.getElementById('stat-yara-custom');
+        const genEl = document.getElementById('stat-yara-generated');
+        const feedEl = document.getElementById('stat-yara-feeds');
+        const reloadEl = document.getElementById('yara-last-reloaded');
+        const syncEl = document.getElementById('yara-last-feed-update');
+        const stateEl = document.getElementById('yara-engine-state');
+
+        if (totalEl) totalEl.textContent = status.total_rules != null ? status.total_rules.toLocaleString() : '0';
+        if (customEl) customEl.textContent = status.custom_rules != null ? status.custom_rules.toLocaleString() : '0';
+        if (genEl) genEl.textContent = status.generated_rules != null ? status.generated_rules.toLocaleString() : '0';
+        if (feedEl) feedEl.textContent = status.feed_rules != null ? status.feed_rules.toLocaleString() : '0';
+        if (reloadEl) reloadEl.textContent = status.last_reloaded_at ? new Date(status.last_reloaded_at).toLocaleTimeString() : 'Never';
+        if (syncEl) syncEl.textContent = status.last_feed_update_at ? new Date(status.last_feed_update_at).toLocaleTimeString() : 'Local only';
+        if (stateEl) {
+            if (status.is_updating) {
+                stateEl.textContent = 'Updating Feeds...';
+                stateEl.style.color = 'var(--accent-yellow)';
+            } else {
+                stateEl.textContent = 'Active (Anti-Staleness Online)';
+                stateEl.style.color = 'var(--accent-green)';
+            }
+        }
+    } catch (e) {
+        console.warn('Failed to render YARA status:', e);
     }
 }
 
@@ -1977,107 +2301,151 @@ async function fetchConsensusLedger() {
         }
     } catch (err) {
         console.warn('Failed to fetch consensus ledger:', err);
+        showUserError('Consensus Ledger', err);
     }
 }
 
 function renderConsensusFindings(findings) {
-    const list = document.getElementById('consensus-findings-table-body');
-    const statTotal = document.getElementById('stat-consensus-total');
-    const statMalicious = document.getElementById('stat-consensus-malicious');
+    try {
+        const list = document.getElementById('consensus-findings-table-body');
+        const statTotal = document.getElementById('stat-consensus-total');
+        const statMalicious = document.getElementById('stat-consensus-malicious');
 
-    if (statTotal) statTotal.textContent = (findings || []).length.toString();
-    const malCount = (findings || []).filter(f => f.is_malicious).length;
-    if (statMalicious) statMalicious.textContent = malCount.toString();
+        if (findings && (findings.status === 'error' || findings.ok === false)) {
+            showUserError('Consensus Findings', findings);
+            if (statTotal) statTotal.textContent = '0';
+            if (statMalicious) statMalicious.textContent = '0';
+            if (list) {
+                list.innerHTML = `
+                    <tr>
+                        <td colspan="7" style="text-align: center; color: var(--accent-red); padding: 20px;">
+                            Failed to load consensus findings: ${escapeHtml(findings.message || findings.error || 'Backend error')}
+                        </td>
+                    </tr>
+                `;
+            }
+            return;
+        }
 
-    if (!list) return;
+        const safeFindings = Array.isArray(findings) ? findings : [];
+        if (statTotal) statTotal.textContent = safeFindings.length.toString();
+        const malCount = safeFindings.filter(f => f && f.is_malicious).length;
+        if (statMalicious) statMalicious.textContent = malCount.toString();
 
-    if (!findings || findings.length === 0) {
-        list.innerHTML = `
-            <tr>
-                <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">
-                    Zero consensus findings recorded yet. Files will be recorded upon multi-detector evaluation.
-                </td>
-            </tr>
-        `;
-        return;
+        if (!list) return;
+
+        if (safeFindings.length === 0) {
+            list.innerHTML = `
+                <tr>
+                    <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">
+                        Zero consensus findings recorded yet. Files will be recorded upon multi-detector evaluation.
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        list.innerHTML = safeFindings.map(f => {
+            if (!f) return '';
+            const dateStr = f.timestamp ? (new Date(f.timestamp).toLocaleTimeString() || f.timestamp) : '—';
+            const rawPath = f.file_path || 'Direct Telemetry Event';
+            const displayPath = escapeHtml(rawPath);
+            const shortHash = f.sha256 ? `${escapeHtml(f.sha256.substring(0, 14))}...` : '—';
+            const fullHash = escapeHtml(f.sha256 || '');
+            const verdictBadge = f.is_malicious 
+                ? `<span class="badge red" style="font-weight:600;"><i data-lucide="shield-alert" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i> MALICIOUS</span>`
+                : `<span class="badge green" style="font-weight:600;"><i data-lucide="shield-check" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i> BENIGN / CLEAN</span>`;
+            
+            const scorePercent = typeof f.consensus_score === 'number' ? (f.consensus_score * 100).toFixed(0) + '%' : '—';
+            
+            const actionBadge = f.is_malicious
+                ? `<span class="badge orange" title="${escapeHtml(f.action_taken || '')}"><i data-lucide="box" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i> Contained / Sandboxed</span>`
+                : `<span class="badge blue" title="${escapeHtml(f.action_taken || '')}"><i data-lucide="check" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i> Clean (Ignored)</span>`;
+
+            const breakdown = escapeHtml(f.detector_breakdown || f.rationale || 'Consensus Multi-Model');
+
+            return `
+                <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.04);">
+                    <td style="padding: 10px 14px; color: var(--text-muted); font-size: 12px;">${dateStr}</td>
+                    <td style="padding: 10px 14px; font-weight: 500;" title="${displayPath}">
+                        <div style="max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${displayPath}</div>
+                    </td>
+                    <td style="padding: 10px 14px; font-family: monospace; font-size: 11px; color: var(--accent-blue);" title="${fullHash}">${shortHash}</td>
+                    <td style="padding: 10px 14px;">${verdictBadge}</td>
+                    <td style="padding: 10px 14px; text-align: center; font-weight: 600;">${scorePercent}</td>
+                    <td style="padding: 10px 14px;">${actionBadge}</td>
+                    <td style="padding: 10px 14px; font-size: 11px; color: var(--text-muted);">
+                        <div style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${breakdown}">${breakdown}</div>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        if (window.lucide) window.lucide.createIcons();
+    } catch (err) {
+        console.warn('Failed to render consensus findings:', err);
     }
-
-    list.innerHTML = findings.map(f => {
-        const dateStr = f.timestamp ? (new Date(f.timestamp).toLocaleTimeString() || f.timestamp) : '—';
-        const rawPath = f.file_path || 'Direct Telemetry Event';
-        const displayPath = escapeHtml(rawPath);
-        const shortHash = f.sha256 ? `${escapeHtml(f.sha256.substring(0, 14))}...` : '—';
-        const fullHash = escapeHtml(f.sha256 || '');
-        const verdictBadge = f.is_malicious 
-            ? `<span class="badge red" style="font-weight:600;"><i data-lucide="shield-alert" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i> MALICIOUS</span>`
-            : `<span class="badge green" style="font-weight:600;"><i data-lucide="shield-check" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i> BENIGN / CLEAN</span>`;
-        
-        const scorePercent = typeof f.consensus_score === 'number' ? (f.consensus_score * 100).toFixed(0) + '%' : '—';
-        
-        const actionBadge = f.is_malicious
-            ? `<span class="badge orange" title="${escapeHtml(f.action_taken || '')}"><i data-lucide="box" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i> Contained / Sandboxed</span>`
-            : `<span class="badge blue" title="${escapeHtml(f.action_taken || '')}"><i data-lucide="check" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i> Clean (Ignored)</span>`;
-
-        const breakdown = escapeHtml(f.detector_breakdown || f.rationale || 'Consensus Multi-Model');
-
-        return `
-            <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.04);">
-                <td style="padding: 10px 14px; color: var(--text-muted); font-size: 12px;">${dateStr}</td>
-                <td style="padding: 10px 14px; font-weight: 500;" title="${displayPath}">
-                    <div style="max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${displayPath}</div>
-                </td>
-                <td style="padding: 10px 14px; font-family: monospace; font-size: 11px; color: var(--accent-blue);" title="${fullHash}">${shortHash}</td>
-                <td style="padding: 10px 14px;">${verdictBadge}</td>
-                <td style="padding: 10px 14px; text-align: center; font-weight: 600;">${scorePercent}</td>
-                <td style="padding: 10px 14px;">${actionBadge}</td>
-                <td style="padding: 10px 14px; font-size: 11px; color: var(--text-muted);">
-                    <div style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${breakdown}">${breakdown}</div>
-                </td>
-            </tr>
-        `;
-    }).join('');
-
-    if (window.lucide) window.lucide.createIcons();
 }
 
 function renderCleanHashes(cleanHashes) {
-    const list = document.getElementById('clean-hashes-table-body');
-    const statClean = document.getElementById('stat-consensus-clean-hashes');
+    try {
+        const list = document.getElementById('clean-hashes-table-body');
+        const statClean = document.getElementById('stat-consensus-clean-hashes');
 
-    if (statClean) statClean.textContent = (cleanHashes || []).length.toString();
-    if (!list) return;
+        if (cleanHashes && (cleanHashes.status === 'error' || cleanHashes.ok === false)) {
+            showUserError('Clean Hashes', cleanHashes);
+            if (statClean) statClean.textContent = '0';
+            if (list) {
+                list.innerHTML = `
+                    <tr>
+                        <td colspan="4" style="text-align: center; color: var(--accent-red); padding: 20px;">
+                            Failed to load clean hashes: ${escapeHtml(cleanHashes.message || cleanHashes.error || 'Backend error')}
+                        </td>
+                    </tr>
+                `;
+            }
+            return;
+        }
 
-    if (!cleanHashes || cleanHashes.length === 0) {
-        list.innerHTML = `
-            <tr>
-                <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">
-                    No clean hashes registered. Clean consensus decisions will automatically register here.
-                </td>
-            </tr>
-        `;
-        return;
+        const safeHashes = Array.isArray(cleanHashes) ? cleanHashes : [];
+        if (statClean) statClean.textContent = safeHashes.length.toString();
+        if (!list) return;
+
+        if (safeHashes.length === 0) {
+            list.innerHTML = `
+                <tr>
+                    <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">
+                        No clean hashes registered. Clean consensus decisions will automatically register here.
+                    </td>
+                </tr>
+            `;
+            return;
+        }
+
+        list.innerHTML = safeHashes.map(h => {
+            if (!h) return '';
+            const dateStr = h.created_at ? (new Date(h.created_at).toLocaleString() || h.created_at) : '—';
+            const hash = escapeHtml(h.hash || '');
+            const source = escapeHtml(h.source || 'Consensus Quorum');
+
+            return `
+                <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.04);">
+                    <td style="padding: 10px 14px; color: var(--text-muted); font-size: 12px;">${dateStr}</td>
+                    <td style="padding: 10px 14px; font-family: monospace; font-size: 12px; color: var(--accent-green); word-break: break-all;">${hash}</td>
+                    <td style="padding: 10px 14px; font-size: 12px; color: var(--text-muted);">${source}</td>
+                    <td style="padding: 10px 14px; text-align: right;">
+                        <button class="btn-text" style="color:var(--accent-red); font-size:11px; cursor:pointer;" onclick="removeCleanHash('${hash}')">
+                            <i data-lucide="trash-2" style="width:12px; height:12px; vertical-align:middle; margin-right:3px;"></i> Remove
+                        </button>
+                    </td>
+                </tr>
+            `;
+        }).join('');
+
+        if (window.lucide) window.lucide.createIcons();
+    } catch (err) {
+        console.warn('Failed to render clean hashes:', err);
     }
-
-    list.innerHTML = cleanHashes.map(h => {
-        const dateStr = h.created_at ? (new Date(h.created_at).toLocaleString() || h.created_at) : '—';
-        const hash = escapeHtml(h.hash || '');
-        const source = escapeHtml(h.source || 'Consensus Quorum');
-
-        return `
-            <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.04);">
-                <td style="padding: 10px 14px; color: var(--text-muted); font-size: 12px;">${dateStr}</td>
-                <td style="padding: 10px 14px; font-family: monospace; font-size: 12px; color: var(--accent-green); word-break: break-all;">${hash}</td>
-                <td style="padding: 10px 14px; font-size: 12px; color: var(--text-muted);">${source}</td>
-                <td style="padding: 10px 14px; text-align: right;">
-                    <button class="btn-text" style="color:var(--accent-red); font-size:11px; cursor:pointer;" onclick="removeCleanHash('${hash}')">
-                        <i data-lucide="trash-2" style="width:12px; height:12px; vertical-align:middle; margin-right:3px;"></i> Remove
-                    </button>
-                </td>
-            </tr>
-        `;
-    }).join('');
-
-    if (window.lucide) window.lucide.createIcons();
 }
 
 async function triggerEvaluateConsensus() {
@@ -2085,34 +2453,35 @@ async function triggerEvaluateConsensus() {
     if (!input) return;
     const filePath = input.value.trim();
     if (!filePath) {
-        showNotification('Please enter a target executable file path to evaluate.', 'error');
+        showUserError('Consensus Evaluation', 'Please enter a target executable file path to evaluate.');
         return;
     }
 
-    showNotification('Evaluating file across multi-model consensus engines...', 'info');
+    showSkyrlToast('Evaluating file across multi-model consensus engines...', 'info');
 
     try {
         const res = await fetch(`${API_BASE}/consensus/evaluate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ file_path: filePath })
+            body: JSON.stringify({ path: filePath, file_path: filePath })
         });
 
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error || `HTTP ${res.status}`);
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Consensus Evaluation', data || `HTTP ${res.status}`);
+            return;
         }
 
-        const finding = await res.json();
+        const finding = data.finding || data;
         const verdictMsg = finding.is_malicious
-            ? `Consensus: MALICIOUS (Score: ${(finding.consensus_score * 100).toFixed(0)}%). Action: ${finding.action_taken}`
-            : `Consensus: CLEAN / BENIGN (Score: ${(finding.consensus_score * 100).toFixed(0)}%). Hash added to bypass list.`;
+            ? `Consensus: MALICIOUS (Score: ${((finding.consensus_score || 0) * 100).toFixed(0)}%). Action: ${finding.action_taken || 'Alerted'}`
+            : `Consensus: CLEAN / BENIGN (Score: ${((finding.consensus_score || 0) * 100).toFixed(0)}%). Hash added to bypass list.`;
         
-        showNotification(verdictMsg, finding.is_malicious ? 'error' : 'success');
+        showSkyrlToast(verdictMsg, finding.is_malicious ? 'error' : 'success');
         input.value = '';
         fetchConsensusLedger();
     } catch (err) {
-        showNotification(`Consensus evaluation failed: ${err.message}`, 'error');
+        showUserError('Consensus Evaluation', err);
     }
 }
 
@@ -2121,7 +2490,7 @@ async function triggerAddCleanHash() {
     if (!input) return;
     const hash = input.value.trim().toLowerCase();
     if (!hash || hash.length !== 64) {
-        showNotification('Please provide a valid 64-character SHA-256 hexadecimal hash.', 'error');
+        showUserError('Clean Hash Bypass', 'Please provide a valid 64-character SHA-256 hexadecimal hash.');
         return;
     }
 
@@ -2132,16 +2501,17 @@ async function triggerAddCleanHash() {
             body: JSON.stringify({ hash: hash, notes: 'Manual UI Whitelist' })
         });
 
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error || `HTTP ${res.status}`);
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Clean Hash Bypass', data || `HTTP ${res.status}`);
+            return;
         }
 
-        showNotification(`Hash ${hash.substring(0, 12)}... added to clean-ignore bypass list.`, 'success');
+        showSkyrlToast(`Hash ${hash.substring(0, 12)}... added to clean-ignore bypass list.`, 'success');
         input.value = '';
         fetchConsensusLedger();
     } catch (err) {
-        showNotification(`Failed to register clean hash: ${err.message}`, 'error');
+        showUserError('Clean Hash Bypass', err);
     }
 }
 
@@ -2152,15 +2522,16 @@ async function removeCleanHash(hash) {
             method: 'DELETE'
         });
 
-        if (!res.ok) {
-            const err = await res.json().catch(() => ({}));
-            throw new Error(err.error || `HTTP ${res.status}`);
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Remove Clean Hash', data || `HTTP ${res.status}`);
+            return;
         }
 
-        showNotification(`Hash ${hash.substring(0, 12)}... removed from clean bypass list.`, 'info');
+        showSkyrlToast(`Hash ${hash.substring(0, 12)}... removed from clean bypass list.`, 'info');
         fetchConsensusLedger();
     } catch (err) {
-        showNotification(`Failed to remove clean hash: ${err.message}`, 'error');
+        showUserError('Remove Clean Hash', err);
     }
 }
 
@@ -2217,11 +2588,15 @@ window.markMalwareFP = async function(btn) {
 
     try {
         // POST to /api/false-positive
-        await fetch(`${API_BASE}/false-positive`, {
+        const res1 = await fetch(`${API_BASE}/false-positive`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ hash: hash || null, process_name: name || null, file_path: path || null })
         });
+        const d1 = await res1.json().catch(() => null);
+        if (!res1.ok || (d1 && d1.status === 'error')) {
+            showUserError('False Positive Recording', d1 || `HTTP ${res1.status}`);
+        }
 
         // POST to /api/behavioral/feedback
         await fetch(`${API_BASE}/behavioral/feedback`, {
@@ -2231,6 +2606,7 @@ window.markMalwareFP = async function(btn) {
         });
     } catch(e) {
         console.warn('FP marking network call error:', e);
+        showUserError('False Positive Recording', e);
     }
 
     // Update dashboard
@@ -2257,8 +2633,8 @@ window.quarantineMalware = async function(btn) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ file_path: path })
         });
-        const data = await res.json();
-        if (data.status === 'success') {
+        const data = await res.json().catch(() => null);
+        if (res.ok && data && (data.status === 'success' || data.ok)) {
             btn.innerHTML = 'Quarantined ✅';
             btn.style.borderColor = 'var(--accent-green)';
             btn.style.color = 'var(--accent-green)';
@@ -2266,13 +2642,13 @@ window.quarantineMalware = async function(btn) {
         } else {
             btn.disabled = false;
             btn.innerHTML = 'Quarantine';
-            showSkyrlToast(`Quarantine failed: ${data.msg || 'Unknown error'}`, 'error');
+            showUserError('Quarantine Malware', data || `HTTP ${res.status}`);
         }
     } catch(e) {
         btn.disabled = false;
         btn.innerHTML = 'Quarantine';
         console.warn('Quarantine failed:', e);
-        showSkyrlToast(`Quarantine request failed: ${e.message}`, 'error');
+        showUserError('Quarantine Malware', e);
     }
     setTimeout(updateDashboard, 800);
 };
@@ -2293,10 +2669,17 @@ function quarantineMalware(filePath) {
  * Render repair engine view with detailed patch verification, OS kernel integrity, and CVE status
  */
 function renderRepairView(repairStatus) {
-    const container = document.getElementById('repair-data');
-    if (!container) return;
+    try {
+        const container = document.getElementById('repair-data');
+        if (!container) return;
 
-    const pending = repairStatus?.pending_count || 0;
+        if (repairStatus && (repairStatus.status === 'error' || repairStatus.ok === false)) {
+            container.innerHTML = '';
+            renderViewFallbackCard(container, 'Self-Repair & OS Integrity', repairStatus);
+            return;
+        }
+
+        const pending = repairStatus?.pending_count || 0;
     const lastCve = repairStatus?.last_cve || 'CVE-2024-38063 (Evaluated & Mitigated)';
     const lastState = repairStatus?.last_state || 'Attested & Continuous';
     const lastSig = repairStatus?.last_sig ? (repairStatus.last_sig.slice(0, 18) + '...') : 'Ed25519-Hardware-Root';
@@ -2378,6 +2761,16 @@ function renderRepairView(repairStatus) {
         </div>
     `;
     if (window.lucide) lucide.createIcons();
+    } catch (err) {
+        console.error('[renderRepairView] Error:', err);
+        const container = document.getElementById('repair-data');
+        if (container) {
+            container.innerHTML = '';
+            renderViewFallbackCard(container, 'Self-Repair & OS Integrity', err);
+        } else {
+            renderViewFallbackCard('repair-view', 'Self-Repair & OS Integrity', err);
+        }
+    }
 }
 
 window.triggerPatchDiscovery = async function(btn) {
@@ -2388,11 +2781,16 @@ window.triggerPatchDiscovery = async function(btn) {
     }
     showSkyrlToast('Triggering autonomous patch discovery cycle...', 'info');
     try {
-        await fetch(`${API_BASE}/agent/trigger-patch`, { method: 'POST' });
+        const res = await fetch(`${API_BASE}/agent/trigger-patch`, { method: 'POST' });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Patch Discovery', data || `HTTP ${res.status}`);
+            return;
+        }
         showSkyrlToast('Patch discovery executed. Verification complete.', 'success');
         updateDashboard();
     } catch(e) {
-        showSkyrlToast('Patch discovery failed: ' + e.message, 'error');
+        showUserError('Patch Discovery', e);
     } finally {
         if (btn) {
             btn.disabled = false;
@@ -2410,11 +2808,16 @@ window.triggerBaselineVerification = async function(btn) {
     }
     showSkyrlToast('Verifying cryptographic system baseline...', 'info');
     try {
-        await fetch(`${API_BASE}/agent/trigger-baseline`, { method: 'POST' });
+        const res = await fetch(`${API_BASE}/agent/trigger-baseline`, { method: 'POST' });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Baseline Verification', data || `HTTP ${res.status}`);
+            return;
+        }
         showSkyrlToast('Baseline verification passed: Merkle chain valid.', 'success');
         updateDashboard();
     } catch(e) {
-        showSkyrlToast('Baseline verification failed: ' + e.message, 'error');
+        showUserError('Baseline Verification', e);
     } finally {
         if (btn) {
             btn.disabled = false;
@@ -2432,11 +2835,16 @@ window.triggerRestorePoint = async function(btn) {
     }
     showSkyrlToast('Creating secure cryptographic restore point...', 'info');
     try {
-        await fetch(`${API_BASE}/agent/trigger-restore-point`, { method: 'POST' });
+        const res = await fetch(`${API_BASE}/agent/trigger-restore-point`, { method: 'POST' });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Restore Point Creation', data || `HTTP ${res.status}`);
+            return;
+        }
         showSkyrlToast('Restore point saved successfully.', 'success');
         updateDashboard();
     } catch(e) {
-        showSkyrlToast('Failed to create restore point: ' + e.message, 'error');
+        showUserError('Restore Point Creation', e);
     } finally {
         if (btn) {
             btn.disabled = false;
@@ -2450,7 +2858,8 @@ window.triggerRestorePoint = async function(btn) {
  * Render Process Map (Attack Graph)
  */
 async function renderProcessMapView() {
-    const container = document.getElementById('attack-graph');
+    try {
+        const container = document.getElementById('attack-graph');
     const loading = document.getElementById('graph-loading');
     if (!container) return;
 
@@ -2483,6 +2892,12 @@ async function renderProcessMapView() {
             nodes: new vis.DataSet(graphData.nodes),
             edges: new vis.DataSet(graphData.edges)
         });
+    }
+    } catch (err) {
+        console.error('[renderProcessMapView] Error:', err);
+        const loading = document.getElementById('graph-loading');
+        if (loading) loading.style.display = 'none';
+        renderViewFallbackCard('process-map-view', 'Attack Graph / Process Map', err);
     }
 }
 
@@ -2680,7 +3095,8 @@ document.addEventListener('keydown', function(e) {
  * Render OpenTelemetry Mesh Map
  */
 async function renderOtelMapView(forceRefresh = false) {
-    const container = document.getElementById('otel-mesh-map');
+    try {
+        const container = document.getElementById('otel-mesh-map');
     const loading = document.getElementById('otel-map-loading');
     if (!container) return;
 
@@ -2718,6 +3134,12 @@ async function renderOtelMapView(forceRefresh = false) {
     } else {
         // Soft update: apply current filter and update nodes without resetting viewport or restarting physics
         applyMeshFilter(false);
+    }
+    } catch (err) {
+        console.error('[renderOtelMapView] Error:', err);
+        const loading = document.getElementById('otel-map-loading');
+        if (loading) loading.style.display = 'none';
+        renderViewFallbackCard('otel-map-view', 'OTel Network Map', err);
     }
 }
 
@@ -3259,7 +3681,7 @@ function formatTimestamp(iso) {
  */
 function updateTelemetryChart(data) {
     const ctx = document.getElementById('telemetry-chart');
-    if (!ctx) return;
+    if (!ctx || typeof Chart === 'undefined') return;
 
     let chartLabels = [];
     let chartValues = [];
@@ -3333,7 +3755,8 @@ document.addEventListener('DOMContentLoaded', init);
  * Render Zone Overview
  */
 async function renderZoneView() {
-    let cachedZone = null;
+    try {
+        let cachedZone = null;
     try {
         const cachedRaw = localStorage.getItem('last_zone_summary');
         if (cachedRaw) {
@@ -3726,6 +4149,10 @@ async function renderZoneView() {
     if (window.lucide) {
         lucide.createIcons();
     }
+    } catch (err) {
+        console.error('[renderZoneView] Error:', err);
+        renderViewFallbackCard('zone-view', 'Zone Architecture', err);
+    }
 }
 
 window.autoRemediateGap = async function(gapId, triggerBtn) {
@@ -3743,11 +4170,15 @@ window.autoRemediateGap = async function(gapId, triggerBtn) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ gap_id: gapId })
         });
-        if (!res.ok) {
-            console.error(`Auto-remediation failed: HTTP ${res.status}`);
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Zone Auto-Remediation', data || `HTTP ${res.status}`);
+        } else {
+            showSkyrlToast('Security gap auto-remediated successfully.', 'success');
         }
     } catch (e) {
         console.error('Failed to auto-remediate gap:', e);
+        showUserError('Zone Auto-Remediation', e);
     } finally {
         state.isRemediating = false;
         await renderZoneView();
@@ -3769,11 +4200,15 @@ window.autoRemediateAllGaps = async function(triggerBtn) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ gap_id: 'all' })
         });
-        if (!res.ok) {
-            console.error(`Auto-remediation of all gaps failed: HTTP ${res.status}`);
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Zone Auto-Remediation', data || `HTTP ${res.status}`);
+        } else {
+            showSkyrlToast('All eligible security gaps remediated.', 'success');
         }
     } catch (e) {
         console.error('Failed to auto-remediate all gaps:', e);
+        showUserError('Zone Auto-Remediation', e);
     } finally {
         state.isRemediating = false;
         await renderZoneView();
@@ -3784,13 +4219,21 @@ window.autoRemediateAllGaps = async function(triggerBtn) {
  * Render Approval Queue
  */
 async function renderApprovalsView() {
-    fetchAutonomySettings();
-    fetchBlockingRules();
-    const approvals = await fetchAPI('/pending-actions');
-    const list = document.getElementById('approval-list');
-    if (!list) return;
+    try {
+        fetchAutonomySettings();
+        fetchBlockingRules();
+        const approvals = await fetchAPI('/pending-actions');
+        const list = document.getElementById('approval-list');
+        if (!list) return;
 
-    if (!approvals || approvals.length === 0) {
+        if (approvals && (approvals.status === 'error' || approvals.ok === false)) {
+            list.innerHTML = '';
+            renderViewFallbackCard('approvals-view', 'Response Approval Queue', approvals);
+            return;
+        }
+
+        const safeApprovals = Array.isArray(approvals) ? approvals : [];
+    if (safeApprovals.length === 0) {
         list.innerHTML = `
             <div class="card glass shadow-glow p-4 text-center" style="border: 1px solid rgba(0, 255, 136, 0.2); background: rgba(0, 255, 136, 0.03); border-radius: 12px; padding: 24px;">
                 <div style="font-size: 16px; font-weight: 600; color: var(--accent-green); margin-bottom: 8px;">
@@ -3810,7 +4253,7 @@ async function renderApprovalsView() {
         return;
     }
 
-    list.innerHTML = approvals.map(app => `
+    list.innerHTML = safeApprovals.map(app => `
         <div class="timeline-item">
             <div class="item-icon" style="background-color: rgba(255, 165, 0, 0.1); color: orange;">
                 <i data-lucide="help-circle"></i>
@@ -3826,24 +4269,50 @@ async function renderApprovalsView() {
         </div>
     `).join('');
     if (window.lucide) lucide.createIcons();
+    } catch (err) {
+        console.error('[renderApprovalsView] Error:', err);
+        const list = document.getElementById('approval-list');
+        if (list) list.innerHTML = '';
+        renderViewFallbackCard('approvals-view', 'Response Approval Queue', err);
+    }
 }
 
 window.approveAction = async function(id) {
-    const res = await fetch(`${API_BASE}/approve-action`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ threat_id: id })
-    });
-    if (res.ok) renderApprovalsView();
+    try {
+        const res = await fetch(`${API_BASE}/approve-action`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ threat_id: id })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Approve Action', data || `HTTP ${res.status}`);
+            return;
+        }
+        showSkyrlToast(`Action for threat ${id} approved and executed.`, 'success');
+        renderApprovalsView();
+    } catch (e) {
+        showUserError('Approve Action', e);
+    }
 };
 
 window.rejectAction = async function(id) {
-    const res = await fetch(`${API_BASE}/reject-action`, {
-        method: 'POST',
-        headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ threat_id: id })
-    });
-    if (res.ok) renderApprovalsView();
+    try {
+        const res = await fetch(`${API_BASE}/reject-action`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ threat_id: id })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Reject Action', data || `HTTP ${res.status}`);
+            return;
+        }
+        showSkyrlToast(`Action for threat ${id} rejected.`, 'info');
+        renderApprovalsView();
+    } catch (e) {
+        showUserError('Reject Action', e);
+    }
 };
 
 /**
@@ -3939,8 +4408,8 @@ async function submitBlocklistRule() {
             body: JSON.stringify(payload)
         });
 
-        const data = await res.json();
-        if (res.ok && data.ok) {
+        const data = await res.json().catch(() => null);
+        if (res.ok && data && data.ok) {
             if (statusSpan) {
                 statusSpan.style.color = 'var(--accent-green)';
                 statusSpan.innerText = broadcast 
@@ -3955,19 +4424,18 @@ async function submitBlocklistRule() {
                 if (statusSpan) statusSpan.innerText = '';
             }, 4000);
         } else {
-            const err = data.error || 'Failed to register rule';
+            showUserError('Blocklist Manager', data || 'Failed to register rule');
             if (statusSpan) {
                 statusSpan.style.color = 'var(--accent-red)';
-                statusSpan.innerText = err;
+                statusSpan.innerText = data?.message || data?.error || 'Failed to register rule';
             }
-            showSkyrlToast(`Blocklist rule error: ${err}`, 'error');
         }
     } catch (e) {
         if (statusSpan) {
             statusSpan.style.color = 'var(--accent-red)';
             statusSpan.innerText = e.message || 'Network error';
         }
-        showSkyrlToast(`Failed to add blocklist rule: ${e.message}`, 'error');
+        showUserError('Blocklist Manager', e);
     }
 }
 
@@ -3979,15 +4447,15 @@ async function unlockRule(encodedPath) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ path })
         });
-        const data = await res.json();
-        if (res.ok && data.ok) {
+        const data = await res.json().catch(() => null);
+        if (res.ok && data && data.ok) {
             showSkyrlToast(`Rule removed / unlocked for ${path}`, 'success');
             await fetchBlockingRules();
         } else {
-            showSkyrlToast(`Failed to unlock rule: ${data.error || 'Unknown error'}`, 'error');
+            showUserError('Blocklist Unlock', data || 'Failed to unlock rule');
         }
     } catch (e) {
-        showSkyrlToast(`Unlock error: ${e.message}`, 'error');
+        showUserError('Blocklist Unlock', e);
     }
 }
 
@@ -4135,11 +4603,9 @@ window.applyAutonomyPreset = async function(presetName) {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ mode: presetName })
         });
-        const data = await res.json();
-        if (data.status === 'success' || data.mode) {
-            if (typeof showSkyrlToast === 'function') {
-                showSkyrlToast(`Autonomy defense policy preset switched to: ${presetName.toUpperCase()}`, 'success');
-            }
+        const data = await res.json().catch(() => null);
+        if (res.ok && data && (data.status === 'success' || data.mode)) {
+            showSkyrlToast(`Autonomy defense policy preset switched to: ${presetName.toUpperCase()}`, 'success');
             await fetchAutonomySettings();
             const statusEl = document.getElementById('autonomy-save-status');
             if (statusEl) {
@@ -4148,15 +4614,11 @@ window.applyAutonomyPreset = async function(presetName) {
                 setTimeout(() => { if (statusEl) statusEl.innerText = ''; }, 3500);
             }
         } else {
-            if (typeof showSkyrlToast === 'function') {
-                showSkyrlToast(`Failed to activate preset: ${data.message || 'Unknown error'}`, 'error');
-            }
+            showUserError('Autonomy Defense Policy', data || 'Failed to activate preset');
         }
     } catch (e) {
         console.error('Failed to apply autonomy preset:', e);
-        if (typeof showSkyrlToast === 'function') {
-            showSkyrlToast(`Preset error: ${e.message}`, 'error');
-        }
+        showUserError('Autonomy Defense Policy', e);
     } finally {
         if (btn) {
             btn.disabled = false;
@@ -4192,11 +4654,9 @@ window.saveCustomAutonomySettings = async function() {
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
         });
-        const data = await res.json();
-        if (data.status === 'success' || data.mode) {
-            if (typeof showSkyrlToast === 'function') {
-                showSkyrlToast('Autonomous defense policy successfully updated and cryptographically signed.', 'success');
-            }
+        const data = await res.json().catch(() => null);
+        if (res.ok && data && (data.status === 'success' || data.mode)) {
+            showSkyrlToast('Autonomous defense policy successfully updated and cryptographically signed.', 'success');
             await fetchAutonomySettings();
             const statusEl = document.getElementById('autonomy-save-status');
             if (statusEl) {
@@ -4205,15 +4665,11 @@ window.saveCustomAutonomySettings = async function() {
                 setTimeout(() => { if (statusEl) statusEl.innerText = ''; }, 3500);
             }
         } else {
-            if (typeof showSkyrlToast === 'function') {
-                showSkyrlToast(`Save failed: ${data.message || 'Unknown error'}`, 'error');
-            }
+            showUserError('Autonomy Policy Settings', data || 'Save failed');
         }
     } catch (e) {
         console.error('Failed to save autonomy settings:', e);
-        if (typeof showSkyrlToast === 'function') {
-            showSkyrlToast(`Save error: ${e.message}`, 'error');
-        }
+        showUserError('Autonomy Policy Settings', e);
     } finally {
         if (saveBtn) {
             saveBtn.disabled = false;
@@ -4245,15 +4701,17 @@ window.markFalsePositive = async function(threatId) {
         const res = await fetch(`${API_BASE}/threats/${threatId}/false-positive`, {
             method: 'POST'
         });
-        const data = await res.json();
-        if (data.ok) {
+        const data = await res.json().catch(() => null);
+        if (res.ok && data && (data.ok || data.status === 'success')) {
+            showSkyrlToast('Threat marked as False Positive. Suppressed across mesh.', 'success');
             suppressThreatLocally(threatId);
             setTimeout(updateDashboard, 250);
         } else {
-            alert("Error: " + data.error);
+            showUserError('Threat False Positive', data || `HTTP ${res.status}`);
         }
     } catch (err) {
         console.error("Failed to mark false positive:", err);
+        showUserError('Threat False Positive', err);
     }
 };
 
@@ -4265,15 +4723,16 @@ window.markTruePositive = async function(threatId) {
         const res = await fetch(`${API_BASE}/threats/${threatId}/true-positive`, {
             method: 'POST'
         });
-        const data = await res.json();
-        if (data.ok) {
-            alert("Threat confirmed. Intelligence reinforced across mesh.");
+        const data = await res.json().catch(() => null);
+        if (res.ok && data && (data.ok || data.status === 'success')) {
+            showSkyrlToast('Threat confirmed as True Positive. Intelligence reinforced across mesh.', 'success');
             updateDashboard();
         } else {
-            alert("Error: " + data.error);
+            showUserError('Threat Confirmation', data || `HTTP ${res.status}`);
         }
     } catch (err) {
         console.error("Failed to mark true positive:", err);
+        showUserError('Threat Confirmation', err);
     }
 };
 
@@ -4453,27 +4912,24 @@ window.toggleMalwareDetails = function(id) {
 window.confirmThreat = async function(id) {
     if (!confirm('Are you sure you want to isolate this node and terminate the offending process?')) return;
     try {
-        await fetch(`${API_BASE}/threats/confirm/${id}`, { method: 'POST' });
-        showNotification('Response initiated: Node isolated.', 'info');
+        const res = await fetch(`${API_BASE}/threats/confirm/${id}`, { method: 'POST' });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Threat Response Isolation', data || `HTTP ${res.status}`);
+            return;
+        }
+        showSkyrlToast('Response initiated: Node isolated and offending process terminated.', 'success');
         updateDashboard();
     } catch (e) {
-        showNotification('Failed to confirm threat.', 'error');
+        showUserError('Threat Response Isolation', e);
     }
 };
-
-function showNotification(msg, type = 'info') {
-    if (typeof showSkyrlToast === 'function') {
-        showSkyrlToast(msg, type);
-    }
-    console.log(`[Dashboard] ${type.toUpperCase()}: ${msg}`);
-}
-window.showNotification = showNotification;
 
 window.submitManualTP = async function() {
     const proc = document.getElementById('manual-tp-proc').value.trim();
     const hash = document.getElementById('manual-tp-hash').value.trim();
     if (!proc && !hash) {
-        alert("Please provide at least a process name or a hash.");
+        showUserError('Manual Threat Intel', 'Please provide at least a process name or a cryptographic hash.');
         return;
     }
     
@@ -4489,17 +4945,18 @@ window.submitManualTP = async function() {
                 is_suspicious: true
             })
         });
-        const data = await res.json();
-        if (data.ok) {
-            alert("Threat reported. Morphic Entanglement sequence initiated.");
+        const data = await res.json().catch(() => null);
+        if (res.ok && data && (data.ok || data.status === 'success')) {
+            showSkyrlToast("Threat reported. Morphic Entanglement sequence initiated.", 'success');
             document.getElementById('manual-tp-proc').value = '';
             document.getElementById('manual-tp-hash').value = '';
             updateDashboard();
         } else {
-            alert("Error: " + data.error);
+            showUserError('Manual Threat Intel', data || `HTTP ${res.status}`);
         }
     } catch (err) {
         console.error("Failed to submit manual TP:", err);
+        showUserError('Manual Threat Intel', err);
     }
 };
 
@@ -4507,7 +4964,7 @@ window.submitManualFP = async function() {
     const proc = document.getElementById('manual-fp-proc').value.trim();
     const hash = document.getElementById('manual-fp-hash').value.trim();
     if (!proc && !hash) {
-        alert("Please provide at least a process name or a hash.");
+        showUserError('Manual Whitelist Suppression', 'Please provide at least a process name or a cryptographic hash.');
         return;
     }
     
@@ -4521,17 +4978,18 @@ window.submitManualFP = async function() {
                 is_suspicious: false
             })
         });
-        const data = await res.json();
-        if (data.ok) {
-            alert("Manual suppression policy applied.");
+        const data = await res.json().catch(() => null);
+        if (res.ok && data && (data.ok || data.status === 'success')) {
+            showSkyrlToast("Manual suppression policy applied successfully.", 'success');
             document.getElementById('manual-fp-proc').value = '';
             document.getElementById('manual-fp-hash').value = '';
             updateDashboard();
         } else {
-            alert("Error: " + data.error);
+            showUserError('Manual Whitelist Suppression', data || `HTTP ${res.status}`);
         }
     } catch (err) {
         console.error("Failed to submit manual FP:", err);
+        showUserError('Manual Whitelist Suppression', err);
     }
 };
 
@@ -4545,7 +5003,8 @@ window.investigateNode = function(nodeId) {
  * Render Forensic Story view
  */
 async function renderStoryView() {
-    const container = document.getElementById('story-container');
+    try {
+        const container = document.getElementById('story-container');
     if (!container) return;
 
     function getFallbackStory() {
@@ -4590,6 +5049,10 @@ async function renderStoryView() {
         container.innerHTML = formatStory(story?.story);
         if (window.lucide) lucide.createIcons();
     }
+    } catch (err) {
+        console.error('[renderStoryView] Error:', err);
+        renderViewFallbackCard('story-view', 'Forensic Story', err);
+    }
 }
 
 /**
@@ -4613,18 +5076,28 @@ window.markGossipFalsePositive = async function(threatId, processName, hash) {
     if (!confirm(`Mark this peer gossip threat as False Positive? This will stop active responses and update the mesh.`)) return;
     try {
         if (threatId) {
-            await fetch(`${API_BASE}/threats/${threatId}/false-positive`, { method: 'POST' });
+            const res1 = await fetch(`${API_BASE}/threats/${threatId}/false-positive`, { method: 'POST' });
+            const d1 = await res1.json().catch(() => null);
+            if (!res1.ok || (d1 && d1.status === 'error')) {
+                showUserError('Gossip False Positive', d1 || `HTTP ${res1.status}`);
+            }
         }
         if (hash || processName) {
-            await fetch(`${API_BASE}/false-positive`, {
+            const res2 = await fetch(`${API_BASE}/false-positive`, {
                 method: 'POST',
                 headers: { 'Content-Type': 'application/json' },
                 body: JSON.stringify({ hash: hash || null, process_name: processName || null })
             });
+            const d2 = await res2.json().catch(() => null);
+            if (!res2.ok || (d2 && d2.status === 'error')) {
+                showUserError('Gossip False Positive', d2 || `HTTP ${res2.status}`);
+            }
         }
+        showSkyrlToast('Peer gossip threat allowlisted and suppressed across mesh.', 'success');
         setTimeout(renderGossipView, 250);
     } catch (err) {
         console.error("Failed to mark gossip false positive:", err);
+        showUserError('Gossip False Positive', err);
     }
 };
 
@@ -4633,11 +5106,18 @@ window.markGossipRemediated = async function(threatId) {
     if (!confirm(`Confirm and entangle this peer threat across the Morphic Hyper-Web?`)) return;
     try {
         if (threatId) {
-            await fetch(`${API_BASE}/threats/confirm/${threatId}`, { method: 'POST' });
+            const res = await fetch(`${API_BASE}/threats/confirm/${threatId}`, { method: 'POST' });
+            const data = await res.json().catch(() => null);
+            if (!res.ok || (data && data.status === 'error')) {
+                showUserError('Gossip Threat Confirmation', data || `HTTP ${res.status}`);
+                return;
+            }
         }
+        showSkyrlToast('Peer threat confirmed and remediated across mesh.', 'success');
         setTimeout(renderGossipView, 250);
     } catch (err) {
         console.error("Failed to confirm/remediate gossip threat:", err);
+        showUserError('Gossip Threat Confirmation', err);
     }
 };
 
@@ -4645,7 +5125,8 @@ window.markGossipRemediated = async function(threatId) {
  * Render the Gossip Feed view (P2P mesh intelligence sharing)
  */
 async function renderGossipView() {
-    const list = document.getElementById('gossip-feed-list');
+    try {
+        const list = document.getElementById('gossip-feed-list');
     if (!list) return;
 
     // 1. Fetch live gossip feed from dedicated /gossip endpoint
@@ -4656,7 +5137,7 @@ async function renderGossipView() {
     } else {
         // Fallback to recent activity if /gossip is empty
         const activity = await fetchAPI('/activity');
-        if (activity && activity.length > 0) {
+        if (Array.isArray(activity) && activity.length > 0) {
             gossipEvents = activity.filter(a => 
                 (a.type && (a.type.includes('MESH') || a.type.includes('CONSENSUS') || a.type.includes('INTEL') || a.type.includes('THREAT'))) || 
                 (a.summary && a.summary.toLowerCase().includes('mesh'))
@@ -4901,49 +5382,17 @@ async function renderGossipView() {
     }).join('');
 
     if (window.lucide) lucide.createIcons();
+    } catch (err) {
+        console.error('[renderGossipView] Error:', err);
+        renderViewFallbackCard('gossip-view', 'P2P Gossip Feed', err);
+    }
 }
 
 /* =========================================================================
  * SkyRL Self-Improvement & Policy Training
  * ========================================================================= */
 
-/**
- * Toast notification for SkyRL operations
- */
-function showSkyrlToast(message, type = 'info') {
-    let container = document.getElementById('skyrl-toast-container');
-    if (!container) {
-        container = document.createElement('div');
-        container.id = 'skyrl-toast-container';
-        container.className = 'skyrl-toast-container';
-        document.body.appendChild(container);
-    }
-
-    const toast = document.createElement('div');
-    toast.className = `skyrl-toast ${type}`;
-    
-    let iconName = 'info';
-    if (type === 'success') iconName = 'check-circle-2';
-    else if (type === 'error') iconName = 'alert-octagon';
-    else if (type === 'warning') iconName = 'alert-triangle';
-
-    toast.innerHTML = `
-        <i data-lucide="${iconName}" style="width: 16px; height: 16px; flex-shrink: 0;"></i>
-        <span>${escapeHtml(message)}</span>
-    `;
-
-    container.appendChild(toast);
-    if (window.lucide) window.lucide.createIcons();
-
-    setTimeout(() => {
-        toast.classList.add('fade-out');
-        setTimeout(() => {
-            if (toast.parentNode) {
-                toast.parentNode.removeChild(toast);
-            }
-        }, 300);
-    }, 3500);
-}
+// Note: showSkyrlToast is defined and exported at the top of app.js with rich user guidance and fallback support
 
 /**
  * Update the 6 SkyRL Stats cards
@@ -4990,7 +5439,7 @@ function updateSkyrlStats(status) {
             "base-policy"
         ];
         
-        const currentOptions = Array.from(loraSelect.options).map(o => o.value);
+        const currentOptions = Array.from(loraSelect.options || []).map(o => o.value);
         const needsUpdate = available.length !== currentOptions.length || !available.every((v, i) => v === currentOptions[i]);
 
         if (needsUpdate) {
@@ -5006,11 +5455,16 @@ function updateSkyrlStats(status) {
             loraSelect.addEventListener('change', async (e) => {
                 const selected = e.target.value;
                 try {
-                    await fetch(`${API_BASE}/skyrl/v1/adapter`, {
+                    const res = await fetch(`${API_BASE}/skyrl/v1/adapter`, {
                         method: 'POST',
                         headers: { 'Content-Type': 'application/json' },
                         body: JSON.stringify({ adapter: selected })
                     });
+                    const data = await res.json().catch(() => null);
+                    if (!res.ok || (data && data.status === 'error')) {
+                        showUserError('SkyRL LoRA Adapter', data || `HTTP ${res.status}`);
+                        return;
+                    }
                     showSkyrlToast(`Active LoRA adapter switched to: ${selected}`, 'info');
                     if (state.skyrlStatus) {
                         state.skyrlStatus.active_lora_adapter = selected;
@@ -5019,6 +5473,7 @@ function updateSkyrlStats(status) {
                     if (adapterLabel) adapterLabel.innerText = selected;
                 } catch (err) {
                     console.warn("Failed to set adapter on backend:", err);
+                    showUserError('SkyRL LoRA Adapter', err);
                 }
             });
         }
@@ -5163,20 +5618,25 @@ function updateSkyrlCharts(status) {
  * Render the dedicated SkyRL Self-Improvement & Policy Training view
  */
 async function renderSkyrlView() {
-    initSkyrlCharts();
+    try {
+        initSkyrlCharts();
 
-    // Fetch fresh status if not yet loaded
-    if (!state.skyrlStatus) {
-        state.skyrlStatus = await fetchAPI('/skyrl/v1/status');
-    }
+        // Fetch fresh status if not yet loaded
+        if (!state.skyrlStatus) {
+            state.skyrlStatus = await fetchAPI('/skyrl/v1/status');
+        }
 
-    if (state.skyrlStatus) {
-        updateSkyrlStats(state.skyrlStatus);
-        updateSkyrlCharts(state.skyrlStatus);
-    }
+        if (state.skyrlStatus) {
+            updateSkyrlStats(state.skyrlStatus);
+            updateSkyrlCharts(state.skyrlStatus);
+        }
 
-    if (window.lucide) {
-        window.lucide.createIcons();
+        if (window.lucide) {
+            window.lucide.createIcons();
+        }
+    } catch (err) {
+        console.error('[renderSkyrlView] Error:', err);
+        renderViewFallbackCard('skyrl-view', 'SkyRL Self-Improvement', err);
     }
 }
 
@@ -5205,11 +5665,11 @@ window.triggerSkyrlTraining = async function() {
             })
         });
 
-        if (!res.ok) {
-            throw new Error(`HTTP ${res.status}`);
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('SkyRL Training', data || `HTTP ${res.status}`);
+            return;
         }
-
-        const data = await res.json();
         
         // Update history and chart
         if (typeof data.loss === 'number') {
@@ -5239,7 +5699,7 @@ window.triggerSkyrlTraining = async function() {
 
     } catch (err) {
         console.error("SkyRL training error:", err);
-        showSkyrlToast(`Training batch failed: ${err.message}`, 'error');
+        showUserError('SkyRL Training', err);
     } finally {
         state.isTrainingSkyrl = false;
         if (btn) {
@@ -5277,11 +5737,11 @@ window.simulateSkyrlStep = async function() {
             body: JSON.stringify(payload)
         });
 
-        if (!res.ok) {
-            throw new Error(`HTTP ${res.status}`);
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('SkyRL Gym Step', data || `HTTP ${res.status}`);
+            return;
         }
-
-        const data = await res.json();
 
         // Update reward chart
         if (typeof data.reward === 'number') {
@@ -5307,7 +5767,7 @@ window.simulateSkyrlStep = async function() {
 
     } catch (err) {
         console.error("SkyRL Gym step error:", err);
-        showSkyrlToast(`Gym step failed: ${err.message}`, 'error');
+        showUserError('SkyRL Gym Step', err);
     } finally {
         state.isSteppingSkyrl = false;
         if (btn) {
@@ -5349,17 +5809,18 @@ window.simulateSkyrlGenerate = async function() {
             body: JSON.stringify(payload)
         });
 
-        if (!res.ok) {
-            throw new Error(`HTTP ${res.status}`);
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('SkyRL Policy Inference', data || `HTTP ${res.status}`);
+            return;
         }
 
-        const data = await res.json();
         renderThoughtTraceFeed(data.thought_trace, data.explanation, null, false, null, data.action, data.guarded, data.lora_adapter);
         showSkyrlToast(`Policy reasoning complete: Action [${data.action}] (Guarded = ${data.guarded})`, 'info');
 
     } catch (err) {
         console.error("SkyRL generation error:", err);
-        showSkyrlToast(`Inference failed: ${err.message}`, 'error');
+        showUserError('SkyRL Policy Inference', err);
     } finally {
         state.isGeneratingSkyrl = false;
         if (btn) {
@@ -5507,9 +5968,9 @@ window.syncWireStix = async function(btn) {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' }
         });
+        const data = await res.json().catch(() => null);
 
-        if (res.ok) {
-            const data = await res.json();
+        if (res.ok && data && data.status !== 'error') {
             const count = data.object_count || 26381;
             const hash = data.manifest?.blake3_hash ? data.manifest.blake3_hash.substring(0, 12) : '';
             if (bannerText) {
@@ -5519,11 +5980,14 @@ window.syncWireStix = async function(btn) {
             mitreDataCache = null;
             await renderMitreView();
         } else {
-            throw new Error(`Server returned HTTP ${res.status}`);
+            showUserError('STIX 2.1 Wire Mesh Sync', data || `HTTP ${res.status}`);
+            if (bannerText) {
+                bannerText.innerText = "⚠️ STIX Wire Mesh Sync Failed";
+            }
         }
     } catch (err) {
         console.error("Failed to sync STIX over wire mesh:", err);
-        showSkyrlToast(`Wire STIX sync failed: ${err.message}`, 'error');
+        showUserError('STIX 2.1 Wire Mesh Sync', err);
         if (bannerText) {
             bannerText.innerText = "⚠️ STIX Wire Mesh Sync Failed";
         }
@@ -5537,7 +6001,8 @@ window.syncWireStix = async function(btn) {
 };
 
 async function renderMitreView() {
-    const container = document.getElementById('mitre-matrix-container');
+    try {
+        const container = document.getElementById('mitre-matrix-container');
     if (!container) return;
 
     updateStixStatusBanner();
@@ -5577,7 +6042,7 @@ async function renderMitreView() {
     // Populate Tactic Filter Dropdown if not already populated
     const tacticFilter = document.getElementById('mitre-tactic-filter');
     if (tacticFilter && tacticFilter.options.length <= 1) {
-        data.tactics.forEach(t => {
+        (data.tactics || []).forEach(t => {
             const opt = document.createElement('option');
             opt.value = t.id;
             opt.innerText = `${t.id}: ${t.name}`;
@@ -5591,6 +6056,10 @@ async function renderMitreView() {
     }
 
     applyMitreFiltersAndRender();
+    } catch (err) {
+        console.error('[renderMitreView] Error:', err);
+        renderViewFallbackCard('mitre-view', 'MITRE ATT&CK / ATLAS Matrix', err);
+    }
 }
 
 function setupMitreFilters() {
@@ -5637,132 +6106,138 @@ function setupMitreFilters() {
 }
 
 function applyMitreFiltersAndRender() {
-    if (!mitreDataCache) return;
-    const container = document.getElementById('mitre-matrix-container');
-    if (!container) return;
+    try {
+        if (!mitreDataCache) return;
+        const container = document.getElementById('mitre-matrix-container');
+        if (!container) return;
 
-    const searchInput = document.getElementById('mitre-search');
-    const frameworkFilter = document.getElementById('mitre-framework-filter');
-    const tacticFilter = document.getElementById('mitre-tactic-filter');
-    const statusFilter = document.getElementById('mitre-status-filter');
-    const countEl = document.getElementById('mitre-filter-count');
+        const searchInput = document.getElementById('mitre-search');
+        const frameworkFilter = document.getElementById('mitre-framework-filter');
+        const tacticFilter = document.getElementById('mitre-tactic-filter');
+        const statusFilter = document.getElementById('mitre-status-filter');
+        const countEl = document.getElementById('mitre-filter-count');
 
-    const searchVal = (searchInput?.value || '').trim().toLowerCase();
-    const frameworkVal = frameworkFilter?.value || 'all';
-    const tacticVal = tacticFilter?.value || 'all';
-    const statusVal = statusFilter?.value || 'all';
+        const searchVal = (searchInput?.value || '').trim().toLowerCase();
+        const frameworkVal = frameworkFilter?.value || 'all';
+        const tacticVal = tacticFilter?.value || 'all';
+        const statusVal = statusFilter?.value || 'all';
 
-    let totalVisible = 0;
-    const activeDetections = mitreDataCache.active_detections_by_tactic || {};
-    const activeDetectionsByTech = mitreDataCache.active_detections_by_technique || {};
+        let totalVisible = 0;
+        const activeDetections = mitreDataCache.active_detections_by_tactic || {};
+        const activeDetectionsByTech = mitreDataCache.active_detections_by_technique || {};
 
-    let html = '';
+        let html = '';
 
-    mitreDataCache.tactics.forEach(tactic => {
-        if (tacticVal !== 'all' && tactic.id !== tacticVal && tactic.name.toLowerCase() !== tacticVal.toLowerCase()) {
-            return;
-        }
-
-        // Filter techniques under this tactic
-        const techniquesForTactic = (mitreDataCache.techniques || []).filter(t => {
-            if (t.tactic_id !== tactic.id && t.tactic_name.toLowerCase() !== tactic.name.toLowerCase()) {
-                return false;
+        (mitreDataCache.tactics || []).forEach(tactic => {
+            if (tacticVal !== 'all' && tactic.id !== tacticVal && tactic.name.toLowerCase() !== tacticVal.toLowerCase()) {
+                return;
             }
 
-            const isAtlas = t.is_atlas || t.id.startsWith('AML.');
-            if (frameworkVal === 'atlas') {
-                if (!isAtlas) return false;
-            } else if (frameworkVal === 'enterprise') {
-                if (isAtlas) return false;
-            }
-
-            if (searchVal) {
-                const matchId = t.id.toLowerCase().includes(searchVal);
-                const matchName = t.name.toLowerCase().includes(searchVal);
-                const matchVoter = (t.voter || '').toLowerCase().includes(searchVal);
-                const matchAction = (t.consensus_action || '').toLowerCase().includes(searchVal);
-                const matchGroups = (t.groups || []).some(g => g.toLowerCase().includes(searchVal));
-                const matchSubs = (t.subtechniques || []).some(s => s.id.toLowerCase().includes(searchVal) || s.name.toLowerCase().includes(searchVal));
-                if (!matchId && !matchName && !matchVoter && !matchAction && !matchGroups && !matchSubs) {
+            // Filter techniques under this tactic
+            const techniquesForTactic = (mitreDataCache.techniques || []).filter(t => {
+                if (t.tactic_id !== tactic.id && t.tactic_name.toLowerCase() !== tactic.name.toLowerCase()) {
                     return false;
                 }
-            }
 
-            if (statusVal === 'covered') {
-                const isCovered = (t.detection_mechanisms && t.detection_mechanisms.length > 0) || (t.mitigations && t.mitigations.length > 0);
-                if (!isCovered) return false;
-            } else if (statusVal === 'alerts') {
-                const techAlertCount = activeDetectionsByTech[t.id] || 0;
-                if (techAlertCount === 0) return false;
-            }
+                const isAtlas = t.is_atlas || t.id.startsWith('AML.');
+                if (frameworkVal === 'atlas') {
+                    if (!isAtlas) return false;
+                } else if (frameworkVal === 'enterprise') {
+                    if (isAtlas) return false;
+                }
 
-            return true;
+                if (searchVal) {
+                    const matchId = t.id.toLowerCase().includes(searchVal);
+                    const matchName = t.name.toLowerCase().includes(searchVal);
+                    const matchVoter = (t.voter || '').toLowerCase().includes(searchVal);
+                    const matchAction = (t.consensus_action || '').toLowerCase().includes(searchVal);
+                    const matchGroups = (t.groups || []).some(g => g.toLowerCase().includes(searchVal));
+                    const matchSubs = (t.subtechniques || []).some(s => s.id.toLowerCase().includes(searchVal) || s.name.toLowerCase().includes(searchVal));
+                    if (!matchId && !matchName && !matchVoter && !matchAction && !matchGroups && !matchSubs) {
+                        return false;
+                    }
+                }
+
+                if (statusVal === 'covered') {
+                    const isCovered = (t.detection_mechanisms && t.detection_mechanisms.length > 0) || (t.mitigations && t.mitigations.length > 0);
+                    if (!isCovered) return false;
+                } else if (statusVal === 'alerts') {
+                    const techAlertCount = activeDetectionsByTech[t.id] || 0;
+                    if (techAlertCount === 0) return false;
+                }
+
+                return true;
+            });
+
+            totalVisible += techniquesForTactic.length;
+
+            const tacticAlertCount = activeDetections[tactic.id] || 0;
+
+            html += `
+                <div class="mitre-tactic-col" data-tactic-id="${tactic.id}">
+                    <div class="mitre-tactic-header">
+                        <div style="display: flex; justify-content: space-between; align-items: center;">
+                            <span class="mitre-tactic-id">${tactic.id}</span>
+                            ${tacticAlertCount > 0 ? `<span class="badge red" style="font-size: 10px;">${tacticAlertCount} alert${tacticAlertCount > 1 ? 's' : ''}</span>` : ''}
+                        </div>
+                        <div class="mitre-tactic-name">${tactic.name}</div>
+                        <div class="mitre-tactic-count">
+                            <span>${techniquesForTactic.length} technique${techniquesForTactic.length !== 1 ? 's' : ''}</span>
+                            <span class="badge green" style="font-size: 9px; padding: 1px 5px;">Active</span>
+                        </div>
+                    </div>
+                    <div class="mitre-techniques-list">
+                        ${techniquesForTactic.length === 0 ? '<div style="font-size: 11px; color: var(--text-muted); text-align: center; padding: 20px 8px;">No matching techniques</div>' : ''}
+                        ${techniquesForTactic.map(tech => {
+                            const techAlertCount = activeDetectionsByTech[tech.id] || 0;
+                            const hasAlert = techAlertCount > 0;
+                            const subCount = tech.subtechniques?.length || 0;
+                            const isAtlas = tech.is_atlas || tech.id.startsWith('AML.');
+                            const voter = tech.voter;
+                            const action = tech.consensus_action;
+                            const sigmaCount = tech.sigma_rules?.length || 0;
+
+                            return `
+                                <div class="mitre-technique-card ${hasAlert ? 'has-alerts' : ''}" data-tech-id="${tech.id}" onclick="openMitreTechniqueModalById('${tech.id}')">
+                                    <div class="mitre-tech-header">
+                                        <span class="mitre-tech-id">${tech.id}</span>
+                                        ${isAtlas ? '<span class="badge magenta" style="font-size: 9px; padding: 1px 4px; background: rgba(255, 0, 128, 0.15); color: #ff3399; border: 1px solid rgba(255, 0, 128, 0.3);">ATLAS</span>' : ''}
+                                        ${hasAlert ? `<span class="badge red" style="font-size: 9px; padding: 1px 4px;">${techAlertCount > 1 ? techAlertCount + ' Alerts' : 'Alert'}</span>` : '<span class="badge green" style="font-size: 9px; padding: 1px 4px;">Protected</span>'}
+                                    </div>
+                                    <div class="mitre-tech-title">${tech.name}</div>
+                                    <div class="mitre-tech-badges">
+                                        ${voter ? `<span class="badge cyan" style="font-size: 9px; padding: 1px 4px; background: rgba(0, 210, 255, 0.12); color: #00d2ff; border: 1px solid rgba(0, 210, 255, 0.25);">${voter}</span>` : ''}
+                                        ${action ? `<span class="badge yellow" style="font-size: 9px; padding: 1px 4px; background: rgba(255, 170, 0, 0.12); color: #ffaa00; border: 1px solid rgba(255, 170, 0, 0.25);">${action}</span>` : ''}
+                                        ${sigmaCount > 0 ? `<span class="badge blue" style="font-size: 9px; padding: 1px 4px;" title="${sigmaCount} Sigma rules">${sigmaCount}σ</span>` : ''}
+                                        ${subCount > 0 ? `<span class="badge blue" style="font-size: 9px; padding: 1px 4px;">.${subCount} sub</span>` : ''}
+                                        ${tech.groups && tech.groups.length > 0 ? `<span class="badge purple" style="font-size: 9px; padding: 1px 4px;">${tech.groups[0]}</span>` : ''}
+                                    </div>
+                                </div>
+                            `;
+                        }).join('')}
+                    </div>
+                </div>
+            `;
         });
 
-        totalVisible += techniquesForTactic.length;
+        container.innerHTML = html;
 
-        const tacticAlertCount = activeDetections[tactic.id] || 0;
+        if (countEl) {
+            countEl.innerText = `Showing ${totalVisible} technique${totalVisible !== 1 ? 's' : ''}`;
+        }
 
-        html += `
-            <div class="mitre-tactic-col" data-tactic-id="${tactic.id}">
-                <div class="mitre-tactic-header">
-                    <div style="display: flex; justify-content: space-between; align-items: center;">
-                        <span class="mitre-tactic-id">${tactic.id}</span>
-                        ${tacticAlertCount > 0 ? `<span class="badge red" style="font-size: 10px;">${tacticAlertCount} alert${tacticAlertCount > 1 ? 's' : ''}</span>` : ''}
-                    </div>
-                    <div class="mitre-tactic-name">${tactic.name}</div>
-                    <div class="mitre-tactic-count">
-                        <span>${techniquesForTactic.length} technique${techniquesForTactic.length !== 1 ? 's' : ''}</span>
-                        <span class="badge green" style="font-size: 9px; padding: 1px 5px;">Active</span>
-                    </div>
-                </div>
-                <div class="mitre-techniques-list">
-                    ${techniquesForTactic.length === 0 ? '<div style="font-size: 11px; color: var(--text-muted); text-align: center; padding: 20px 8px;">No matching techniques</div>' : ''}
-                    ${techniquesForTactic.map(tech => {
-                        const techAlertCount = activeDetectionsByTech[tech.id] || 0;
-                        const hasAlert = techAlertCount > 0;
-                        const subCount = tech.subtechniques?.length || 0;
-                        const isAtlas = tech.is_atlas || tech.id.startsWith('AML.');
-                        const voter = tech.voter;
-                        const action = tech.consensus_action;
-                        const sigmaCount = tech.sigma_rules?.length || 0;
-
-                        return `
-                            <div class="mitre-technique-card ${hasAlert ? 'has-alerts' : ''}" data-tech-id="${tech.id}" onclick="openMitreTechniqueModalById('${tech.id}')">
-                                <div class="mitre-tech-header">
-                                    <span class="mitre-tech-id">${tech.id}</span>
-                                    ${isAtlas ? '<span class="badge magenta" style="font-size: 9px; padding: 1px 4px; background: rgba(255, 0, 128, 0.15); color: #ff3399; border: 1px solid rgba(255, 0, 128, 0.3);">ATLAS</span>' : ''}
-                                    ${hasAlert ? `<span class="badge red" style="font-size: 9px; padding: 1px 4px;">${techAlertCount > 1 ? techAlertCount + ' Alerts' : 'Alert'}</span>` : '<span class="badge green" style="font-size: 9px; padding: 1px 4px;">Protected</span>'}
-                                </div>
-                                <div class="mitre-tech-title">${tech.name}</div>
-                                <div class="mitre-tech-badges">
-                                    ${voter ? `<span class="badge cyan" style="font-size: 9px; padding: 1px 4px; background: rgba(0, 210, 255, 0.12); color: #00d2ff; border: 1px solid rgba(0, 210, 255, 0.25);">${voter}</span>` : ''}
-                                    ${action ? `<span class="badge yellow" style="font-size: 9px; padding: 1px 4px; background: rgba(255, 170, 0, 0.12); color: #ffaa00; border: 1px solid rgba(255, 170, 0, 0.25);">${action}</span>` : ''}
-                                    ${sigmaCount > 0 ? `<span class="badge blue" style="font-size: 9px; padding: 1px 4px;" title="${sigmaCount} Sigma rules">${sigmaCount}σ</span>` : ''}
-                                    ${subCount > 0 ? `<span class="badge blue" style="font-size: 9px; padding: 1px 4px;">.${subCount} sub</span>` : ''}
-                                    ${tech.groups && tech.groups.length > 0 ? `<span class="badge purple" style="font-size: 9px; padding: 1px 4px;">${tech.groups[0]}</span>` : ''}
-                                </div>
-                            </div>
-                        `;
-                    }).join('')}
-                </div>
-            </div>
-        `;
-    });
-
-    container.innerHTML = html;
-
-    if (countEl) {
-        countEl.innerText = `Showing ${totalVisible} technique${totalVisible !== 1 ? 's' : ''}`;
-    }
-
-    if (window.lucide) {
-        window.lucide.createIcons();
+        if (window.lucide) {
+            window.lucide.createIcons();
+        }
+    } catch (err) {
+        console.error('[applyMitreFiltersAndRender] Error:', err);
+        renderViewFallbackCard('mitre-matrix-container', 'MITRE ATT&CK Matrix', err);
     }
 }
 
 async function openMitreTechniqueModalById(techId) {
-    if (!mitreDataCache) {
+    try {
+        if (!mitreDataCache) {
         try {
             const res = await fetch(`${API_BASE}/mitre/matrix`);
             if (res.ok) {
@@ -5946,6 +6421,10 @@ async function openMitreTechniqueModalById(techId) {
 
     modal.style.display = 'flex';
     if (window.lucide) window.lucide.createIcons();
+    } catch (err) {
+        console.error('[openMitreTechniqueModalById] Error:', err);
+        showUserError('MITRE Technique Details', err);
+    }
 }
 window.openMitreTechniqueModalById = openMitreTechniqueModalById;
 window.navigateToMitre = function() {
@@ -6321,6 +6800,7 @@ async function renderHistoryView(page = 1) {
         if (window.lucide) lucide.createIcons();
     } catch (err) {
         console.error("renderHistoryView error:", err);
+        renderViewFallbackCard('history-view', 'Forensic History', err);
         if (tableBody) {
             tableBody.innerHTML = `
                 <tr>
@@ -6344,21 +6824,26 @@ function toggleHistoryDetail(idx) {
  * Trigger CSV export download
  */
 function downloadHistoryExport() {
-    const params = new URLSearchParams({
-        format: 'csv',
-        category: state.historyCategory || 'all',
-        severity: state.historySeverity || 'all',
-    });
-    if (state.historySearch) {
-        params.set('search', state.historySearch);
+    try {
+        const params = new URLSearchParams({
+            format: 'csv',
+            category: state.historyCategory || 'all',
+            severity: state.historySeverity || 'all',
+        });
+        if (state.historySearch) {
+            params.set('search', state.historySearch);
+        }
+        const url = `${API_BASE}/history/export?${params.toString()}`;
+        const link = document.createElement('a');
+        link.href = url;
+        link.setAttribute('download', 'oshoosi_forensic_history.csv');
+        document.body.appendChild(link);
+        link.click();
+        document.body.removeChild(link);
+    } catch (err) {
+        console.error('Failed to export history:', err);
+        showUserError('History Export', err);
     }
-    const url = `${API_BASE}/history/export?${params.toString()}`;
-    const link = document.createElement('a');
-    link.href = url;
-    link.setAttribute('download', 'oshoosi_forensic_history.csv');
-    document.body.appendChild(link);
-    link.click();
-    document.body.removeChild(link);
 }
 
 /**
@@ -6373,8 +6858,9 @@ async function fetchRotatedLogFiles() {
     try {
         const res = await fetch(`${API_BASE}/logs/files`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
-        const files = await res.json();
-        state.logFiles = files || [];
+        const rawFiles = await res.json();
+        const files = Array.isArray(rawFiles) ? rawFiles : [];
+        state.logFiles = files;
 
         if (badgeEl) badgeEl.innerText = `${files.length} Files`;
         if (countEl) countEl.innerText = files.length;
@@ -6422,6 +6908,10 @@ async function fetchRotatedLogFiles() {
         }
     } catch (err) {
         console.error("fetchRotatedLogFiles error:", err);
+        showUserError('Log Files', err);
+        if (listEl) {
+            listEl.innerHTML = `<div style="font-size: 12px; color: var(--accent-red, #ff4d4d); text-align: center; padding: 16px;">Failed to load log files: ${escapeHtml(err.message)}</div>`;
+        }
     }
 }
 
@@ -6457,7 +6947,7 @@ async function fetchLogTail() {
             throw new Error(errData.error || `HTTP ${res.status}`);
         }
         const data = await res.json();
-        const lines = data.lines || [];
+        const lines = Array.isArray(data?.lines) ? data.lines : [];
 
         if (lines.length === 0) {
             contentEl.innerText = `[${file}] No lines returned${state.logSearchQuery ? ` matching "${state.logSearchQuery}"` : ''}.`;
@@ -6480,6 +6970,7 @@ async function fetchLogTail() {
         contentEl.scrollTop = contentEl.scrollHeight;
     } catch (err) {
         contentEl.innerHTML = `<span style="color: #ff6b6b;">Failed to load logs: ${escapeHtml(err.message)}</span>`;
+        showUserError('Log Viewer', err);
     }
 }
 
@@ -6512,8 +7003,11 @@ async function fetchSupervisorStatus() {
         // Update header badge
         const topText = document.getElementById('supervisor-top-text');
         const topDot = document.getElementById('supervisor-indicator-dot');
+        const healthScore = (typeof data.health_score === 'number' && !isNaN(data.health_score))
+            ? `${Math.round(data.health_score)}%`
+            : 'Active';
         if (topText) {
-            topText.innerText = `SUPERVISOR: ${Math.round(data.health_score)}% 🧠`;
+            topText.innerText = `SUPERVISOR: ${healthScore} 🧠`;
             topText.style.color = regimeColor;
         }
         if (topDot) {
@@ -6529,117 +7023,130 @@ async function fetchSupervisorStatus() {
 
 function renderSupervisorModal(data, regimeColor, regimeBadgeClass) {
     if (!data) return;
-
-    const modalScore = document.getElementById('supervisor-modal-score');
-    if (modalScore) {
-        modalScore.innerText = `${data.health_score.toFixed(1)} / 100`;
-        modalScore.style.color = regimeColor || '#10b981';
+    if (data.status === 'error' || data.ok === false) {
+        showUserError('Supervisor Metrics', data);
+        return;
     }
+    try {
+        const modalScore = document.getElementById('supervisor-modal-score');
+        if (modalScore) {
+            const scoreVal = (typeof data.health_score === 'number' && !isNaN(data.health_score)) ? data.health_score.toFixed(1) : '100.0';
+            modalScore.innerText = `${scoreVal} / 100`;
+            modalScore.style.color = regimeColor || '#10b981';
+        }
 
-    const modalRegime = document.getElementById('supervisor-modal-regime');
-    if (modalRegime) {
-        modalRegime.innerText = (data.regime || 'OPTIMAL').toUpperCase();
-        modalRegime.className = `badge ${regimeBadgeClass || 'green'}`;
-        modalRegime.style.color = regimeColor || '#10b981';
-        modalRegime.style.borderColor = regimeColor || '#10b981';
-    }
+        const modalRegime = document.getElementById('supervisor-modal-regime');
+        if (modalRegime) {
+            modalRegime.innerText = (data.regime || 'OPTIMAL').toUpperCase();
+            modalRegime.className = `badge ${regimeBadgeClass || 'green'}`;
+            modalRegime.style.color = regimeColor || '#10b981';
+            modalRegime.style.borderColor = regimeColor || '#10b981';
+        }
 
-    const modalConflict = document.getElementById('supervisor-modal-conflict');
-    if (modalConflict) {
-        const isHigh = data.conflict_metric > 0.50;
-        modalConflict.innerText = `${data.conflict_metric.toFixed(3)} ${isHigh ? '⚠️ High (Possible Pipeline Blinding)' : '✅ Nominal'}`;
-        modalConflict.style.color = isHigh ? '#ef4444' : '#38bdf8';
-    }
+        const modalConflict = document.getElementById('supervisor-modal-conflict');
+        if (modalConflict) {
+            const conflictVal = (typeof data.conflict_metric === 'number' && !isNaN(data.conflict_metric)) ? data.conflict_metric : 0.0;
+            const isHigh = conflictVal > 0.50;
+            modalConflict.innerText = `${conflictVal.toFixed(3)} ${isHigh ? '⚠️ High (Possible Pipeline Blinding)' : '✅ Nominal'}`;
+            modalConflict.style.color = isHigh ? '#ef4444' : '#38bdf8';
+        }
 
-    const sensorsGrid = document.getElementById('supervisor-sensors-grid');
-    if (sensorsGrid && Array.isArray(data.sensors)) {
-        sensorsGrid.innerHTML = data.sensors.map(s => {
-            const pct = Math.round(s.health_score * 100);
-            let barColor = '#10b981';
-            if (pct < 40) barColor = '#ef4444';
-            else if (pct < 70) barColor = '#f97316';
-            else if (pct < 85) barColor = '#eab308';
+        const sensorsGrid = document.getElementById('supervisor-sensors-grid');
+        if (sensorsGrid && Array.isArray(data.sensors)) {
+            sensorsGrid.innerHTML = data.sensors.map(s => {
+                const sScore = (typeof s.health_score === 'number' && !isNaN(s.health_score)) ? s.health_score : 1.0;
+                const pct = Math.round(sScore * 100);
+                let barColor = '#10b981';
+                if (pct < 40) barColor = '#ef4444';
+                else if (pct < 70) barColor = '#f97316';
+                else if (pct < 85) barColor = '#eab308';
 
-            return `
-                <div style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--glass-border); border-radius: 10px; padding: 12px 14px;">
-                    <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
-                        <span style="font-weight: 600; font-size: 13px; color: var(--text-header);">${escapeHtml(s.name)}</span>
-                        <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700; color: ${barColor};">${pct}%</span>
+                const rawVal = (typeof s.raw_value === 'number' && !isNaN(s.raw_value)) ? s.raw_value.toFixed(1) : (s.raw_value ?? '0');
+                const confPct = (typeof s.confidence === 'number' && !isNaN(s.confidence)) ? Math.round(s.confidence * 100) : 100;
+
+                return `
+                    <div style="background: rgba(0, 0, 0, 0.3); border: 1px solid var(--glass-border); border-radius: 10px; padding: 12px 14px;">
+                        <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 6px;">
+                            <span style="font-weight: 600; font-size: 13px; color: var(--text-header);">${escapeHtml(s.name)}</span>
+                            <span style="font-family: 'JetBrains Mono', monospace; font-size: 12px; font-weight: 700; color: ${barColor};">${pct}%</span>
+                        </div>
+                        <div style="background: rgba(255,255,255,0.08); border-radius: 4px; height: 6px; width: 100%; overflow: hidden; margin-bottom: 8px;">
+                            <div style="background: ${barColor}; height: 100%; width: ${pct}%;"></div>
+                        </div>
+                        <div style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">
+                            ${escapeHtml(s.details)}
+                        </div>
+                        <div style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; color: var(--text-muted);">
+                            <span>Reading: <strong>${rawVal} ${escapeHtml(s.unit || '')}</strong></span>
+                            <span>Confidence: <strong>${confPct}%</strong></span>
+                        </div>
                     </div>
-                    <div style="background: rgba(255,255,255,0.08); border-radius: 4px; height: 6px; width: 100%; overflow: hidden; margin-bottom: 8px;">
-                        <div style="background: ${barColor}; height: 100%; width: ${pct}%;"></div>
-                    </div>
-                    <div style="font-size: 12px; color: var(--text-muted); line-height: 1.4;">
-                        ${escapeHtml(s.details)}
-                    </div>
-                    <div style="display: flex; justify-content: space-between; margin-top: 6px; font-size: 11px; color: var(--text-muted);">
-                        <span>Reading: <strong>${s.raw_value.toFixed(1)} ${escapeHtml(s.unit)}</strong></span>
-                        <span>Confidence: <strong>${Math.round(s.confidence * 100)}%</strong></span>
-                    </div>
-                </div>
+                `;
+            }).join('');
+        }
+
+        const invariantsList = document.getElementById('supervisor-invariants-list');
+        if (invariantsList) {
+            const pass = data.invariants_passing;
+            const icon = pass ? '✅' : '❌';
+            const color = pass ? '#10b981' : '#ef4444';
+            invariantsList.innerHTML = `
+                <div style="display: flex; align-items: center; gap: 8px;"><span>${icon}</span> <span style="color: ${color};">Zero-Harm Invariant:</span> <span>Core Windows OS infrastructure (PIDs 0, 1, 4) strictly protected.</span></div>
+                <div style="display: flex; align-items: center; gap: 8px;"><span>${icon}</span> <span style="color: ${color};">Non-Destructive Invariant:</span> <span>Security telemetry binaries (sysmon64.exe, osoosi.exe, msmpeng.exe) zero-tamper integrity.</span></div>
+                <div style="display: flex; align-items: center; gap: 8px;"><span>${icon}</span> <span style="color: ${color};">Consensus Quorum Invariant:</span> <span>Multi-detector policy voters active with Byzantine quorum agreement.</span></div>
+                <div style="display: flex; align-items: center; gap: 8px;"><span>${icon}</span> <span style="color: ${color};">RL Stability Invariant:</span> <span>Covariance condition number bounded and exploration decay monotonic.</span></div>
             `;
-        }).join('');
-    }
+        }
 
-    const invariantsList = document.getElementById('supervisor-invariants-list');
-    if (invariantsList) {
-        const pass = data.invariants_passing;
-        const icon = pass ? '✅' : '❌';
-        const color = pass ? '#10b981' : '#ef4444';
-        invariantsList.innerHTML = `
-            <div style="display: flex; align-items: center; gap: 8px;"><span>${icon}</span> <span style="color: ${color};">Zero-Harm Invariant:</span> <span>Core Windows OS infrastructure (PIDs 0, 1, 4) strictly protected.</span></div>
-            <div style="display: flex; align-items: center; gap: 8px;"><span>${icon}</span> <span style="color: ${color};">Non-Destructive Invariant:</span> <span>Security telemetry binaries (sysmon64.exe, osoosi.exe, msmpeng.exe) zero-tamper integrity.</span></div>
-            <div style="display: flex; align-items: center; gap: 8px;"><span>${icon}</span> <span style="color: ${color};">Consensus Quorum Invariant:</span> <span>Multi-detector policy voters active with Byzantine quorum agreement.</span></div>
-            <div style="display: flex; align-items: center; gap: 8px;"><span>${icon}</span> <span style="color: ${color};">RL Stability Invariant:</span> <span>Covariance condition number bounded and exploration decay monotonic.</span></div>
-        `;
-    }
+        const diagText = document.getElementById('supervisor-diagnostic-text');
+        if (diagText) {
+            diagText.innerText = data.diagnostic_narrative || 'Nominal supervisor operations.';
+        }
 
-    const diagText = document.getElementById('supervisor-diagnostic-text');
-    if (diagText) {
-        diagText.innerText = data.diagnostic_narrative || 'Nominal supervisor operations.';
-    }
+        // Render Hardware-Aware AI Model Router
+        if (data.hardware_selection) {
+            const hw = data.hardware_selection;
+            const tierBadge = document.getElementById('hw-tier-badge');
+            if (tierBadge) {
+                tierBadge.innerText = hw.hardware_tier_label || 'ENTERPRISE / HIGH-THROUGHPUT';
+            }
+            const cpuProfile = document.getElementById('hw-cpu-profile');
+            if (cpuProfile) {
+                cpuProfile.innerText = hw.cpu_cores != null ? `${hw.cpu_cores} Cores | Active Compute` : 'CPU Topology Active';
+            }
+            const ramProfile = document.getElementById('hw-ram-profile');
+            if (ramProfile) {
+                const total = typeof hw.total_ram_gb === 'number' ? hw.total_ram_gb.toFixed(1) : (hw.total_ram_gb ?? '0');
+                const free = typeof hw.free_ram_gb === 'number' ? hw.free_ram_gb.toFixed(1) : (hw.free_ram_gb ?? '0');
+                ramProfile.innerText = `${total} GB RAM (${free} GB Free)`;
+            }
+            const gpuProfile = document.getElementById('hw-gpu-profile');
+            if (gpuProfile) {
+                gpuProfile.innerText = (hw.gpu_vram_mb && hw.gpu_vram_mb > 0) ? `GPU Active (${hw.gpu_vram_mb} MB VRAM)` : 'Standard CPU Execution';
+            }
+            const devBadge = document.getElementById('hw-device-badge');
+            if (devBadge) {
+                devBadge.innerText = hw.recommended_device || 'Hybrid GPU/CPU Offload';
+            }
+            const fastBadge = document.getElementById('hw-fast-model-badge');
+            if (fastBadge) {
+                fastBadge.innerText = hw.fast_model || 'deepseek-r1:1.5b';
+            }
+            const deepBadge = document.getElementById('hw-deep-model-badge');
+            if (deepBadge) {
+                deepBadge.innerText = hw.deep_model || 'deepseek-r1:32b';
+            }
+            const rationaleText = document.getElementById('hw-rationale-text');
+            if (rationaleText) {
+                rationaleText.innerText = hw.rationale || 'Selected optimal models matching available hardware profile.';
+            }
+        }
 
-    // Render Hardware-Aware AI Model Router
-    if (data.hardware_selection) {
-        const hw = data.hardware_selection;
-        const tierBadge = document.getElementById('hw-tier-badge');
-        if (tierBadge) {
-            tierBadge.innerText = hw.hardware_tier_label || 'ENTERPRISE / HIGH-THROUGHPUT';
+        if (window.lucide) {
+            window.lucide.createIcons();
         }
-        const cpuProfile = document.getElementById('hw-cpu-profile');
-        if (cpuProfile) {
-            cpuProfile.innerText = hw.cpu_cores != null ? `${hw.cpu_cores} Cores | Active Compute` : 'CPU Topology Active';
-        }
-        const ramProfile = document.getElementById('hw-ram-profile');
-        if (ramProfile) {
-            const total = typeof hw.total_ram_gb === 'number' ? hw.total_ram_gb.toFixed(1) : (hw.total_ram_gb ?? '0');
-            const free = typeof hw.free_ram_gb === 'number' ? hw.free_ram_gb.toFixed(1) : (hw.free_ram_gb ?? '0');
-            ramProfile.innerText = `${total} GB RAM (${free} GB Free)`;
-        }
-        const gpuProfile = document.getElementById('hw-gpu-profile');
-        if (gpuProfile) {
-            gpuProfile.innerText = (hw.gpu_vram_mb && hw.gpu_vram_mb > 0) ? `GPU Active (${hw.gpu_vram_mb} MB VRAM)` : 'Standard CPU Execution';
-        }
-        const devBadge = document.getElementById('hw-device-badge');
-        if (devBadge) {
-            devBadge.innerText = hw.recommended_device || 'Hybrid GPU/CPU Offload';
-        }
-        const fastBadge = document.getElementById('hw-fast-model-badge');
-        if (fastBadge) {
-            fastBadge.innerText = hw.fast_model || 'deepseek-r1:1.5b';
-        }
-        const deepBadge = document.getElementById('hw-deep-model-badge');
-        if (deepBadge) {
-            deepBadge.innerText = hw.deep_model || 'deepseek-r1:32b';
-        }
-        const rationaleText = document.getElementById('hw-rationale-text');
-        if (rationaleText) {
-            rationaleText.innerText = hw.rationale || 'Selected optimal models matching available hardware profile.';
-        }
-    }
-
-    if (window.lucide) {
-        window.lucide.createIcons();
+    } catch (e) {
+        console.warn('Failed to render supervisor modal:', e);
     }
 }
 
@@ -6830,6 +7337,7 @@ async function renderAgentAnomaliesView() {
         }
     } catch (err) {
         console.error('Failed to render Agent Anomalies view:', err);
+        renderViewFallbackCard('agent-anomalies-view', 'Agent Anomalies (AAD)', err);
     }
 }
 
@@ -6842,11 +7350,15 @@ async function triggerAgentAnomalySimulation() {
     }
     try {
         const res = await postAPI('/agent-anomalies/simulate-test', {});
-        if (res && res.status === 'success') {
+        if (res && (res.status === 'success' || res.ok)) {
+            showSkyrlToast('Agent turn simulated and evaluated across OWASP ASI categories.', 'success');
             await renderAgentAnomaliesView();
+        } else {
+            showUserError('Agent Anomaly Simulation', res);
         }
     } catch (err) {
         console.error('Error triggering agent anomaly simulation:', err);
+        showUserError('Agent Anomaly Simulation', err);
     } finally {
         if (btn) {
             btn.disabled = false;
@@ -6868,10 +7380,15 @@ window.triggerAgentAnomalySimulation = triggerAgentAnomalySimulation;
 let modelPullPollInterval = null;
 
 function renderUtilitiesView() {
-    loadCalibratedModels();
-    pollModelPullProgress();
-    if (window.lucide) {
-        window.lucide.createIcons();
+    try {
+        loadCalibratedModels();
+        pollModelPullProgress();
+        if (window.lucide) {
+            window.lucide.createIcons();
+        }
+    } catch (err) {
+        console.error('[renderUtilitiesView] Error:', err);
+        renderViewFallbackCard('utilities-view', 'System Utilities & Host AI', err);
     }
 }
 
@@ -6887,11 +7404,12 @@ async function loadCalibratedModels(forceRefresh = false) {
     }
 
     try {
-        const resp = await fetch('/api/models/calibrated');
-        if (!resp.ok) {
-            throw new Error(`HTTP ${resp.status}`);
+        const resp = await fetch(`${API_BASE}/models/calibrated`);
+        const data = await resp.json().catch(() => null);
+        if (!resp.ok || (data && data.status === 'error')) {
+            showUserError('Host AI Calibration', data || `HTTP ${resp.status}`, { containerId: 'utilities-view' });
+            throw new Error(data?.message || `HTTP ${resp.status}`);
         }
-        const data = await resp.json();
 
         // 1. Hardware Summary
         if (summaryText && data.system_resources) {
@@ -7019,17 +7537,26 @@ async function downloadCalibratedModel(modelName) {
     }
 
     try {
-        const resp = await fetch('/api/models/pull', {
+        const resp = await fetch(`${API_BASE}/models/pull`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ model: modelName })
         });
-        const res = await resp.json();
-        console.log('Model pull initiated:', res);
+        const res = await resp.json().catch(() => null);
+        if (!resp.ok || (res && res.status === 'error')) {
+            showUserError('Model Pull', res || `HTTP ${resp.status}`);
+            if (btn) {
+                btn.disabled = false;
+                btn.innerHTML = '<i data-lucide="download" style="width:13px; height:13px;"></i> Retry Pull';
+                if (window.lucide) window.lucide.createIcons();
+            }
+            return;
+        }
+        showSkyrlToast(`Model pull initiated for ${modelName}. Tracking progress...`, 'info');
         pollModelPullProgress();
     } catch (err) {
         console.error('Failed to initiate model pull:', err);
-        alert(`Failed to initiate pull for ${modelName}: ${err.message}`);
+        showUserError('Model Pull', err);
         if (btn) {
             btn.disabled = false;
             btn.innerHTML = '<i data-lucide="download" style="width:13px; height:13px;"></i> Retry Pull';
@@ -7047,17 +7574,26 @@ async function downloadAllCalibratedModels() {
     }
 
     try {
-        const resp = await fetch('/api/models/pull', {
+        const resp = await fetch(`${API_BASE}/models/pull`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ download_all_calibrated: true })
         });
-        const res = await resp.json();
-        console.log('Batch download initiated:', res);
+        const res = await resp.json().catch(() => null);
+        if (!resp.ok || (res && res.status === 'error')) {
+            showUserError('Batch Model Pull', res || `HTTP ${resp.status}`);
+            if (allBtn) {
+                allBtn.disabled = false;
+                allBtn.innerHTML = '<i data-lucide="download-cloud" style="width:16px; height:16px;"></i> Download Calibrated Models for This Host';
+                if (window.lucide) window.lucide.createIcons();
+            }
+            return;
+        }
+        showSkyrlToast('Batch download initiated for calibrated host models.', 'info');
         pollModelPullProgress();
     } catch (err) {
         console.error('Failed to trigger batch calibrated download:', err);
-        alert(`Failed to trigger download: ${err.message}`);
+        showUserError('Batch Model Pull', err);
         if (allBtn) {
             allBtn.disabled = false;
             allBtn.innerHTML = '<i data-lucide="download-cloud" style="width:16px; height:16px;"></i> Download Calibrated Models for This Host';
@@ -7086,7 +7622,7 @@ async function pollModelPullProgress() {
     if (!card || !body) return;
 
     try {
-        const resp = await fetch('/api/models/pull-status');
+        const resp = await fetch(`${API_BASE}/models/pull-status`);
         if (!resp.ok) return;
         const progressMap = await resp.json();
         const entries = Object.values(progressMap);
