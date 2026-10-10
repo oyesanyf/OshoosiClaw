@@ -542,6 +542,18 @@ impl PolicyEngine {
             return None;
         }
 
+        // Fast clean-ignored hash bypass: If hash is in the clean ignore list, skip round
+        if let Some(h) = preferred_hash_from_event(event) {
+            if self.memory.is_hash_clean_ignored(&h) {
+                debug!(
+                    target: CONSENSUS_LOG_TARGET,
+                    hash = %h,
+                    "[CONSENSUS] round bypassed (Hash is in clean ignore list)"
+                );
+                return None;
+            }
+        }
+
         // NEW: Known-Good Bypass (Analyst False Positives)
         // If the binary has been explicitly marked as a false positive by an analyst,
         // we bypass the consensus engine entirely to save CPU and stop log spam.
@@ -743,6 +755,23 @@ impl PolicyEngine {
                 path = %image_path,
                 "[CONSENSUS] clean (all voters abstained)"
             );
+            if let Some(hash) = preferred_hash_from_event(event) {
+                let proc_name = process_name_from_event(event);
+                let _ = self.memory.mark_hash_clean_ignored(&hash, proc_name.as_deref(), Some(image_path), "consensus_clean");
+                let finding = osoosi_types::ConsensusFinding {
+                    id: format!("CONS-BENIGN-{}", &hash[..hash.len().min(12)]),
+                    hash_blake3: hash.clone(),
+                    process_name: proc_name,
+                    file_path: Some(image_path.to_string()),
+                    verdict: "benign".to_string(),
+                    confidence: 0.0,
+                    detector_count: 0,
+                    voters_summary: "All voters abstained / nominal behavior".to_string(),
+                    action_taken: "ignored_and_allowed".to_string(),
+                    evaluated_at: chrono::Utc::now(),
+                };
+                let _ = self.memory.record_consensus_finding(&finding);
+            }
             return None;
         }
 
@@ -867,6 +896,21 @@ impl PolicyEngine {
             action = ?signature.recommended_action,
             "[CONSENSUS] round COMPLETE — threat signature emitted"
         );
+
+        // Record malicious consensus finding in ledger
+        let finding = osoosi_types::ConsensusFinding {
+            id: signature.id.clone(),
+            hash_blake3: signature.hash_blake3.clone().unwrap_or_else(|| hash.clone()),
+            process_name: signature.process_name.clone(),
+            file_path: Some(image_path.to_string()),
+            verdict: "malicious".to_string(),
+            confidence: signature.confidence,
+            detector_count: signature.detector_count,
+            voters_summary: signature.reason.clone().unwrap_or_default(),
+            action_taken: format!("{:?}", signature.recommended_action),
+            evaluated_at: chrono::Utc::now(),
+        };
+        let _ = self.memory.record_consensus_finding(&finding);
 
         self.consensus_cache.insert(cache_key, (signature.clone(), std::time::Instant::now()));
         Some(signature)

@@ -3344,6 +3344,11 @@ impl EdrOrchestrator {
                                 event.path, event.hash
                             );
 
+                            if orchestrator.memory.is_hash_clean_ignored(&event.hash) {
+                                debug!("File Monitor: skipping clean-ignored hash: {} ({})", event.hash, event.path);
+                                return;
+                            }
+
                             let path = std::path::Path::new(&event.path);
                             if !path.exists() {
                                 debug!("File Monitor: skipping vanished/ephemeral file: {}", event.path);
@@ -3512,6 +3517,28 @@ impl EdrOrchestrator {
                                                     "File Monitor: Decision model evaluated {} as benign (prob={:.2}, action='{}'). Alert suppressed.",
                                                     result.file_path, decision.verdict_probability, decision.containment_action
                                                 );
+                                                let _ = orchestrator.memory.mark_hash_clean_ignored(
+                                                    &event.hash,
+                                                    file_stem,
+                                                    Some(&event.path),
+                                                    "decision_model_benign",
+                                                );
+                                                let finding = osoosi_types::ConsensusFinding {
+                                                    id: format!("CONS-BENIGN-{}", &event.hash[..event.hash.len().min(12)]),
+                                                    hash_blake3: event.hash.clone(),
+                                                    process_name: file_stem.map(|s| s.to_string()),
+                                                    file_path: Some(event.path.clone()),
+                                                    verdict: "benign".to_string(),
+                                                    confidence: decision.verdict_probability as f32,
+                                                    detector_count: 1,
+                                                    voters_summary: format!(
+                                                        "Decision Model ({}): verdict={}, action={}, severity={}",
+                                                        decision.provider_used, decision.verdict, decision.containment_action, decision.threat_severity
+                                                    ),
+                                                    action_taken: "ignored_and_allowed".to_string(),
+                                                    evaluated_at: chrono::Utc::now(),
+                                                };
+                                                let _ = orchestrator.memory.record_consensus_finding(&finding);
                                                 return;
                                             } else if decision.verdict == "malicious"
                                                 || decision.containment_action == "isolate"
@@ -3522,6 +3549,33 @@ impl EdrOrchestrator {
                                                     result.file_path, result.magika_label, result.ml_score,
                                                     decision.verdict, decision.verdict_probability
                                                 );
+                                                let finding = osoosi_types::ConsensusFinding {
+                                                    id: format!("CONS-MALICIOUS-{}", &event.hash[..event.hash.len().min(12)]),
+                                                    hash_blake3: event.hash.clone(),
+                                                    process_name: file_stem.map(|s| s.to_string()),
+                                                    file_path: Some(event.path.clone()),
+                                                    verdict: "malicious".to_string(),
+                                                    confidence: decision.verdict_probability as f32,
+                                                    detector_count: 1,
+                                                    voters_summary: format!(
+                                                        "Decision Model ({}): verdict={}, action={}, severity={}",
+                                                        decision.provider_used, decision.verdict, decision.containment_action, decision.threat_severity
+                                                    ),
+                                                    action_taken: "contained_and_quarantined".to_string(),
+                                                    evaluated_at: chrono::Utc::now(),
+                                                };
+                                                let _ = orchestrator.memory.record_consensus_finding(&finding);
+
+                                                if is_executable && decision.verdict_probability >= 0.85 {
+                                                    let p_clone = path.to_path_buf();
+                                                    tokio::spawn(async move {
+                                                        let executor = crate::secured_executor::get_forensic_executor().await;
+                                                        let cmd = std::process::Command::new(&p_clone);
+                                                        info!("Forensic Detonation: Running suspicious program in isolated sandbox: {:?}", p_clone);
+                                                        let _ = executor.execute(cmd).await;
+                                                    });
+                                                }
+
                                                 if decision.action_probability >= autonomy.action_confidence_threshold as f64 {
                                                     should_hard_block = true;
                                                 }
@@ -4143,11 +4197,45 @@ impl EdrOrchestrator {
         Ok(result)
     }
 
+    pub async fn process_security_event_internal(
+        &self,
+        event: osoosi_types::HostSecurityEvent,
+    ) -> anyhow::Result<()> {
+        self.process_telemetry(event).await
+    }
+
     pub async fn process_telemetry(
         &self,
         mut event: osoosi_types::HostSecurityEvent,
     ) -> anyhow::Result<()> {
         use osoosi_types::ResponseAction;
+
+        // Fast Clean-Ignored Hash Bypass
+        let hash_opt = event.data.get("hash_blake3")
+            .or_else(|| event.data.get("Hash"))
+            .or_else(|| event.data.get("hash"))
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string())
+            .or_else(|| {
+                event.data.get("Hashes").and_then(|v| v.as_str()).and_then(|hashes| {
+                    for prefix in ["SHA256=", "SHA256:", "SHA1=", "SHA1:", "MD5=", "MD5:"] {
+                        if let Some(val) = hashes.split(',').map(str::trim).find_map(|p| p.strip_prefix(prefix)) {
+                            let val = val.trim();
+                            if !val.is_empty() {
+                                return Some(val.to_ascii_lowercase());
+                            }
+                        }
+                    }
+                    None
+                })
+            });
+
+        if let Some(ref h) = hash_opt {
+            if self.memory.is_hash_clean_ignored(h) {
+                debug!("Telemetry: Bypassing clean ignored hash: {}", h);
+                return Ok(());
+            }
+        }
 
         // Synthetic Canary Fast-Path & Suppression:
         // Update canary correlation, suppress from RL feature vector & baseline drift,
@@ -4551,6 +4639,26 @@ impl EdrOrchestrator {
                 );
                 ResponseAction::Alert
             };
+
+            // Dynamic forensic sandbox execution if confidence >= 0.85
+            if signature.confidence >= 0.85 {
+                let target_path = event.data.get("Image")
+                    .or_else(|| event.data.get("TargetFilename"))
+                    .or_else(|| event.data.get("ImagePath"))
+                    .or_else(|| event.data.get("NewProcessName"))
+                    .and_then(|v| v.as_str());
+                if let Some(tp) = target_path {
+                    let tp_buf = std::path::PathBuf::from(tp);
+                    if tp_buf.exists() && tp_buf.is_file() {
+                        tokio::spawn(async move {
+                            let executor = crate::secured_executor::get_forensic_executor().await;
+                            let cmd = std::process::Command::new(&tp_buf);
+                            info!("Forensic Detonation: Running suspicious program in isolated sandbox: {:?}", tp_buf);
+                            let _ = executor.execute(cmd).await;
+                        });
+                    }
+                }
+            }
 
             match effective_action {
                 ResponseAction::Isolate => {
@@ -8536,6 +8644,189 @@ impl EdrOrchestrator {
         }
     }
 
+    /// Evaluates a program or file through multi-detector consensus:
+    /// - Computes Blake3 hash
+    /// - If hash is already marked clean/ignored, returns cached benign finding
+    /// - Scans with malware_scanner (YARA-X + ML + PE metadata)
+    /// - Evaluates with decision model
+    /// - If malicious: applies containment, triggers isolated forensic sandbox execution if high confidence, and records to ledger
+    /// - If benign: marks hash as clean ignored, records to ledger, and allows execution
+    pub async fn evaluate_program_consensus(
+        &self,
+        file_path: &std::path::Path,
+    ) -> anyhow::Result<osoosi_types::ConsensusFinding> {
+        Self::evaluate_program_consensus_internal(
+            &self.memory,
+            &self.malware_scanner,
+            &self.decision_engine,
+            &self.blocking_manager,
+            file_path,
+        ).await
+    }
+
+    pub async fn evaluate_program_consensus_internal(
+        memory: &osoosi_memory::MemoryStore,
+        malware_scanner: &osoosi_model::MalwareScanner,
+        decision_engine: &osoosi_behavioral::decision_model::ClefDecisionEngine,
+        blocking_manager: &crate::blocking_manager::BlockingManager,
+        file_path: &std::path::Path,
+    ) -> anyhow::Result<osoosi_types::ConsensusFinding> {
+        if !file_path.exists() {
+            anyhow::bail!("File does not exist: {:?}", file_path);
+        }
+
+        let bytes = std::fs::read(file_path)?;
+        let hash = blake3::hash(&bytes).to_hex().to_string().to_ascii_lowercase();
+        let file_stem = file_path.file_stem().and_then(|s| s.to_str()).map(|s| s.to_string());
+        let file_path_str = file_path.to_string_lossy().to_string();
+
+        // 1. Check clean-ignore database first (fast path)
+        if memory.is_hash_clean_ignored(&hash) {
+            info!("Consensus Evaluation: Hash {} is already in clean ignore ledger. Bypassing.", hash);
+            return Ok(osoosi_types::ConsensusFinding {
+                id: format!("CONS-CACHED-{}", &hash[..hash.len().min(12)]),
+                hash_blake3: hash,
+                process_name: file_stem,
+                file_path: Some(file_path_str),
+                verdict: "benign".to_string(),
+                confidence: 0.0,
+                detector_count: 0,
+                voters_summary: "Hash is in clean-ignored database".to_string(),
+                action_taken: "ignored_and_allowed".to_string(),
+                evaluated_at: chrono::Utc::now(),
+            });
+        }
+
+        // 2. Scan with malware scanner
+        let scan_opt = malware_scanner.scan_file(file_path).await;
+        let is_signed = crate::win_trust::is_trusted_signed_binary(file_path);
+        let (ml_score, is_malware, yara_matches, magika_label) = match scan_opt {
+            Some(ref res) => (
+                res.ml_score,
+                res.is_malware,
+                res.yara_matches.join(", "),
+                res.magika_label.clone(),
+            ),
+            None => (0.0, false, "none".to_string(), "unknown".to_string()),
+        };
+
+        let yara_str = if yara_matches.is_empty() { "none".to_string() } else { yara_matches };
+        let state_text = format!(
+            "Target: File | Path: {} | Magika: {} | ML Score: {:.2} | YARA: {} | IsSigned: {} | Invariants: Nominal",
+            file_path_str, magika_label, ml_score, yara_str, is_signed
+        );
+
+        let autonomy = osoosi_types::load_autonomy_config();
+        let (verdict, confidence, action, summary) = if decision_engine.is_enabled() {
+            match decision_engine.evaluate_security_incident(&state_text).await {
+                Ok(decision) => {
+                    let is_mal = decision.verdict == "malicious"
+                        || decision.containment_action == "isolate"
+                        || decision.containment_action == "quarantine";
+                    let v = if is_mal { "malicious".to_string() } else { "benign".to_string() };
+                    let conf = decision.verdict_probability as f32;
+                    let act = if is_mal {
+                        if conf >= 0.85 {
+                            "contained_and_quarantined".to_string()
+                        } else {
+                            "alert_only".to_string()
+                        }
+                    } else {
+                        "ignored_and_allowed".to_string()
+                    };
+                    (
+                        v,
+                        conf,
+                        act,
+                        format!(
+                            "Decision Model ({}): verdict={}, action={}, severity={}",
+                            decision.provider_used, decision.verdict, decision.containment_action, decision.threat_severity
+                        ),
+                    )
+                }
+                Err(e) => {
+                    warn!("Decision engine failed for consensus evaluation: {}. Falling back to ML/YARA.", e);
+                    let is_mal = is_malware && (ml_score >= 0.80 || yara_str != "none");
+                    let v = if is_mal { "malicious".to_string() } else { "benign".to_string() };
+                    let conf = ml_score as f32;
+                    let act = if is_mal { "contained_and_quarantined".to_string() } else { "ignored_and_allowed".to_string() };
+                    (v, conf, act, format!("Heuristic scan (ML: {:.2}, YARA: {})", ml_score, yara_str))
+                }
+            }
+        } else {
+            let is_mal = is_malware && (ml_score >= 0.80 || yara_str != "none");
+            let v = if is_mal { "malicious".to_string() } else { "benign".to_string() };
+            let conf = ml_score as f32;
+            let act = if is_mal { "contained_and_quarantined".to_string() } else { "ignored_and_allowed".to_string() };
+            (v, conf, act, format!("Malware scanner (ML: {:.2}, YARA: {})", ml_score, yara_str))
+        };
+
+        if verdict == "malicious" {
+            // High-confidence malicious detonation in forensic sandbox
+            let is_executable = magika_label.contains("exe")
+                || magika_label.contains("pe")
+                || magika_label.contains("elf")
+                || file_path_str.ends_with(".exe");
+
+            if confidence >= 0.85 && is_executable {
+                let p_clone = file_path.to_path_buf();
+                tokio::spawn(async move {
+                    let executor = crate::secured_executor::get_forensic_executor().await;
+                    let cmd = std::process::Command::new(&p_clone);
+                    info!("Forensic Detonation: Running suspicious program in isolated sandbox: {:?}", p_clone);
+                    let _ = executor.execute(cmd).await;
+                });
+            }
+
+            // Apply containment
+            if confidence >= autonomy.action_confidence_threshold {
+                let rule = osoosi_types::BlockingRule {
+                    path: file_path_str.clone(),
+                    kind: osoosi_types::BlockingKind::Executable,
+                };
+                let _ = blocking_manager.add_rule(rule).await;
+            }
+
+            let finding = osoosi_types::ConsensusFinding {
+                id: format!("CONS-MALICIOUS-{}", &hash[..hash.len().min(12)]),
+                hash_blake3: hash,
+                process_name: file_stem,
+                file_path: Some(file_path_str),
+                verdict: "malicious".to_string(),
+                confidence,
+                detector_count: if yara_str != "none" { 2 } else { 1 },
+                voters_summary: summary,
+                action_taken: action,
+                evaluated_at: chrono::Utc::now(),
+            };
+            let _ = memory.record_consensus_finding(&finding);
+            Ok(finding)
+        } else {
+            // Benign: mark hash as clean ignored and record finding
+            let _ = memory.mark_hash_clean_ignored(
+                &hash,
+                file_stem.as_deref(),
+                Some(&file_path_str),
+                "consensus_evaluation",
+            );
+            let finding = osoosi_types::ConsensusFinding {
+                id: format!("CONS-BENIGN-{}", &hash[..hash.len().min(12)]),
+                hash_blake3: hash,
+                process_name: file_stem,
+                file_path: Some(file_path_str),
+                verdict: "benign".to_string(),
+                confidence,
+                detector_count: 0,
+                voters_summary: summary,
+                action_taken: "ignored_and_allowed".to_string(),
+                evaluated_at: chrono::Utc::now(),
+            };
+            let _ = memory.record_consensus_finding(&finding);
+            Ok(finding)
+        }
+    }
+
+
 
     /// Trigger an immediate filesystem baseline scan.
     pub fn trigger_baseline(&self) {
@@ -9374,6 +9665,47 @@ mod tests {
         assert_eq!(loaded["tpm_remediated"], true);
         assert_eq!(loaded["memory_shield_remediated"], true);
         assert_eq!(loaded["egress_remediated"], true);
+    }
+
+    #[tokio::test]
+    async fn test_evaluate_program_consensus_benign_and_ignore() {
+        let temp_dir = std::env::temp_dir().join(format!("osoosi_consensus_test_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let temp_file = temp_dir.join("benign_tool.txt");
+        std::fs::write(&temp_file, b"Hello world benign consensus program").unwrap();
+
+        let memory = osoosi_memory::MemoryStore::new(":memory:").unwrap();
+        let malware_scanner = osoosi_model::MalwareScanner::new(std::path::Path::new("dummy.onnx"));
+        let decision_cfg = osoosi_types::load_decision_model_config();
+        let decision_engine = osoosi_behavioral::decision_model::ClefDecisionEngine::new(decision_cfg);
+        let executor = std::sync::Arc::new(crate::secured_executor::DirectExecutor::new());
+        let provisioner = std::sync::Arc::new(osoosi_telemetry::AgentProvisioner::new(executor));
+        let blocking_manager = crate::blocking_manager::BlockingManager::new(provisioner);
+
+        let finding = EdrOrchestrator::evaluate_program_consensus_internal(
+            &memory,
+            &malware_scanner,
+            &decision_engine,
+            &blocking_manager,
+            &temp_file,
+        ).await.unwrap();
+
+        assert_eq!(finding.verdict, "benign");
+        assert_eq!(finding.action_taken, "ignored_and_allowed");
+        assert!(memory.is_hash_clean_ignored(&finding.hash_blake3));
+
+        // Subsequent evaluation should return cached from clean-ignored ledger
+        let cached = EdrOrchestrator::evaluate_program_consensus_internal(
+            &memory,
+            &malware_scanner,
+            &decision_engine,
+            &blocking_manager,
+            &temp_file,
+        ).await.unwrap();
+        assert_eq!(cached.action_taken, "ignored_and_allowed");
+        assert!(cached.id.starts_with("CONS-CACHED-"));
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
 

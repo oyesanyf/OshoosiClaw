@@ -4,7 +4,7 @@ use axum::{
     extract::{Path, Query, State},
     http::{HeaderMap, Method, Request, StatusCode},
     response::{IntoResponse, Response},
-    routing::{get, post},
+    routing::{delete, get, post},
     Json, Router,
 };
 use serde::{Deserialize, Serialize};
@@ -740,6 +740,11 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/agent-anomalies/summary", get(get_agent_anomalies_summary))
         .route("/api/agent-anomalies/embed", post(post_agent_anomalies_embed))
         .route("/api/agent-anomalies/simulate-test", post(post_agent_anomalies_simulate_test))
+        .route("/api/consensus/findings", get(get_consensus_findings))
+        .route("/api/consensus/clean-hashes", get(get_clean_ignored_hashes))
+        .route("/api/consensus/evaluate", post(post_consensus_evaluate))
+        .route("/api/consensus/ignore-hash", post(post_consensus_ignore_hash))
+        .route("/api/consensus/ignore-hash/:hash", delete(delete_consensus_ignore_hash))
         .with_state(state);
 
     let cors = CorsLayer::new()
@@ -2620,6 +2625,106 @@ async fn post_manual_false_positive(
             }
         }
         None => Json(json!({ "status": "fail", "msg": "Backend not active" })),
+    }
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConsensusLimitQuery {
+    pub limit: Option<usize>,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConsensusEvaluateRequest {
+    pub path: String,
+}
+
+#[derive(Debug, Deserialize)]
+pub struct ConsensusIgnoreHashRequest {
+    pub hash: String,
+    pub process_name: Option<String>,
+    pub file_path: Option<String>,
+}
+
+pub async fn get_consensus_findings(
+    State(state): State<DashboardState>,
+    Query(query): Query<ConsensusLimitQuery>,
+) -> Json<Value> {
+    let limit = query.limit.unwrap_or(50);
+    match &state.backend {
+        Some(orch) => {
+            match orch.memory().get_consensus_findings(limit) {
+                Ok(findings) => Json(json!(findings)),
+                Err(e) => Json(json!({"error": e.to_string()})),
+            }
+        }
+        None => Json(json!([])),
+    }
+}
+
+pub async fn get_clean_ignored_hashes(
+    State(state): State<DashboardState>,
+    Query(query): Query<ConsensusLimitQuery>,
+) -> Json<Value> {
+    let limit = query.limit.unwrap_or(50);
+    match &state.backend {
+        Some(orch) => {
+            match orch.memory().get_clean_ignored_hashes(limit) {
+                Ok(hashes) => Json(json!(hashes)),
+                Err(e) => Json(json!({"error": e.to_string()})),
+            }
+        }
+        None => Json(json!([])),
+    }
+}
+
+pub async fn post_consensus_evaluate(
+    State(state): State<DashboardState>,
+    Json(payload): Json<ConsensusEvaluateRequest>,
+) -> (StatusCode, Json<Value>) {
+    match &state.backend {
+        Some(orch) => {
+            let p = std::path::Path::new(&payload.path);
+            match orch.evaluate_program_consensus(p).await {
+                Ok(finding) => (StatusCode::OK, Json(json!({"status": "ok", "finding": finding}))),
+                Err(e) => (StatusCode::BAD_REQUEST, Json(json!({"error": e.to_string()}))),
+            }
+        }
+        None => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Backend not available"}))),
+    }
+}
+
+pub async fn post_consensus_ignore_hash(
+    State(state): State<DashboardState>,
+    Json(payload): Json<ConsensusIgnoreHashRequest>,
+) -> (StatusCode, Json<Value>) {
+    match &state.backend {
+        Some(orch) => {
+            match orch.memory().mark_hash_clean_ignored(
+                &payload.hash,
+                payload.process_name.as_deref(),
+                payload.file_path.as_deref(),
+                "dashboard_manual",
+            ) {
+                Ok(()) => (StatusCode::OK, Json(json!({"status": "ok", "hash": payload.hash}))),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))),
+            }
+        }
+        None => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Backend not available"}))),
+    }
+}
+
+pub async fn delete_consensus_ignore_hash(
+    State(state): State<DashboardState>,
+    Path(hash): Path<String>,
+) -> (StatusCode, Json<Value>) {
+    match &state.backend {
+        Some(orch) => {
+            match orch.memory().remove_clean_ignored_hash(&hash) {
+                Ok(removed) => (StatusCode::OK, Json(json!({"status": "ok", "removed": removed}))),
+                Err(e) => (StatusCode::INTERNAL_SERVER_ERROR, Json(json!({"error": e.to_string()}))),
+            }
+        }
+        None => (StatusCode::SERVICE_UNAVAILABLE, Json(json!({"error": "Backend not available"}))),
     }
 }
 
@@ -7168,6 +7273,59 @@ mod tests {
 
         let spinners_only = "pulling manifest ⠋ \npulling manifest ⠙ \n";
         assert_eq!(sanitize_pull_error(spinners_only), "Model pull failed");
+    }
+
+    #[tokio::test]
+    async fn test_consensus_api_routes() {
+        let state = DashboardState::new(None, None);
+        let app = dashboard_router(state, std::path::PathBuf::from("dashboard/dist"));
+
+        // 1. GET /api/consensus/findings
+        let req = axum::http::Request::builder()
+            .uri("/api/consensus/findings")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        // 2. GET /api/consensus/clean-hashes
+        let req = axum::http::Request::builder()
+            .uri("/api/consensus/clean-hashes")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+
+        // 3. POST /api/consensus/evaluate with no backend -> SERVICE_UNAVAILABLE
+        let req = axum::http::Request::builder()
+            .uri("/api/consensus/evaluate")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"path":"C:\\test.exe"}"#))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
+
+        // 4. POST /api/consensus/ignore-hash with no backend -> SERVICE_UNAVAILABLE
+        let req = axum::http::Request::builder()
+            .uri("/api/consensus/ignore-hash")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(r#"{"hash":"abc123"}"#))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
+
+        // 5. DELETE /api/consensus/ignore-hash/abc123 with no backend -> SERVICE_UNAVAILABLE
+        let req = axum::http::Request::builder()
+            .uri("/api/consensus/ignore-hash/abc123")
+            .method(axum::http::Method::DELETE)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::SERVICE_UNAVAILABLE);
     }
 }
 

@@ -431,6 +431,21 @@ impl GossipFeedItem {
     }
 }
 
+/// A recorded consensus verdict for an evaluated program or event.
+#[derive(Debug, Clone, PartialEq, serde::Serialize, serde::Deserialize)]
+pub struct ConsensusFinding {
+    pub id: String,
+    pub hash_blake3: String,
+    pub process_name: Option<String>,
+    pub file_path: Option<String>,
+    pub verdict: String, // "malicious" or "benign"
+    pub confidence: f32,
+    pub detector_count: u32,
+    pub voters_summary: String,
+    pub action_taken: String, // e.g. "contained_and_quarantined", "detonated_in_sandbox", "ignored_and_allowed"
+    pub evaluated_at: chrono::DateTime<chrono::Utc>,
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;

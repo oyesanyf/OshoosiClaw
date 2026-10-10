@@ -268,6 +268,45 @@ enum Commands {
         #[arg(long = "model", hide = true)]
         model_flag: Option<String>,
     },
+    /// Consensus-Gated Execution & Hash Ledger
+    #[command(name = "consensus", about = "Consensus-Gated Execution & Hash Ledger")]
+    Consensus {
+        #[command(subcommand)]
+        action: ConsensusAction,
+    },
+}
+
+#[derive(Subcommand, Clone, Debug)]
+pub enum ConsensusAction {
+    /// Evaluate a file through multi-detector consensus (detonates in sandbox if malicious, adds to ignore list if benign)
+    Evaluate {
+        #[arg(short, long)]
+        file: String,
+    },
+    /// List recorded consensus findings
+    Findings {
+        #[arg(short, long, default_value_t = 20)]
+        limit: usize,
+    },
+    /// List active clean-ignored hashes
+    CleanHashes {
+        #[arg(short, long, default_value_t = 50)]
+        limit: usize,
+    },
+    /// Add a hash to the clean-ignore list
+    Ignore {
+        #[arg(short = 'H', long)]
+        hash: String,
+        #[arg(short, long)]
+        process: Option<String>,
+        #[arg(long)]
+        path: Option<String>,
+    },
+    /// Remove a hash from the clean-ignore list
+    Unignore {
+        #[arg(short = 'H', long)]
+        hash: String,
+    },
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -1303,6 +1342,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Some(Commands::PullModel { model, model_flag }) => {
             let target_model = model.or(model_flag);
             handle_pull_model_command(target_model).await?;
+        }
+        Some(Commands::Consensus { action }) => {
+            handle_consensus_command(action).await?;
         }
         Some(Commands::Lite) => unreachable!(),
         None => {
@@ -4227,6 +4269,100 @@ async fn handle_decision_command(action: DecisionAction) -> anyhow::Result<()> {
     Ok(())
 }
 
+async fn handle_consensus_command(action: ConsensusAction) -> anyhow::Result<()> {
+    let orchestrator = Arc::new(EdrOrchestrator::new().await?);
+
+    match action {
+        ConsensusAction::Evaluate { file } => {
+            println!("================================================================================");
+            println!("       OpenỌ̀ṣọ́ọ̀sì Consensus-Gated Execution Evaluation");
+            println!("================================================================================");
+            let p = std::path::Path::new(&file);
+            println!("Target Path: {}", p.display());
+            let finding = orchestrator.evaluate_program_consensus(p).await?;
+            println!("Finding ID:     {}", finding.id);
+            println!("Hash (Blake3):  {}", finding.hash_blake3);
+            println!("Process Name:   {}", finding.process_name.as_deref().unwrap_or("—"));
+            println!("Verdict:        {}", finding.verdict);
+            println!("Confidence:     {:.2}%", finding.confidence * 100.0);
+            println!("Detectors:      {}", finding.detector_count);
+            println!("Action Taken:   {}", finding.action_taken);
+            println!("Evidence:       {}", finding.voters_summary);
+            println!("Evaluated At:   {}", finding.evaluated_at.to_rfc3339());
+            println!("================================================================================");
+        }
+        ConsensusAction::Findings { limit } => {
+            println!("================================================================================");
+            println!("       OpenỌ̀ṣọ́ọ̀sì Consensus Evaluation Ledger (Most Recent {})", limit);
+            println!("================================================================================");
+            let findings = orchestrator.memory().get_consensus_findings(limit)?;
+            if findings.is_empty() {
+                println!("No consensus findings recorded yet.");
+            } else {
+                for (idx, f) in findings.iter().enumerate() {
+                    let verdict_label = if f.verdict == "malicious" {
+                        format!("MALICIOUS [{}]", f.action_taken)
+                    } else {
+                        "BENIGN [IGNORED/ALLOWED]".to_string()
+                    };
+                    println!(
+                        "[{:02}] {} | Hash: {} | Conf: {:.0}% | Time: {}",
+                        idx + 1,
+                        verdict_label,
+                        &f.hash_blake3[..f.hash_blake3.len().min(16)],
+                        f.confidence * 100.0,
+                        f.evaluated_at.to_rfc3339()
+                    );
+                    if let Some(ref p) = f.file_path {
+                        println!("     Path: {}", p);
+                    }
+                    if !f.voters_summary.is_empty() {
+                        println!("     Evidence: {}", f.voters_summary);
+                    }
+                }
+            }
+            println!("================================================================================");
+        }
+        ConsensusAction::CleanHashes { limit } => {
+            println!("================================================================================");
+            println!("       OpenỌ̀ṣọ́ọ̀sì Active Clean-Ignored Hashes (Most Recent {})", limit);
+            println!("================================================================================");
+            let list = orchestrator.memory().get_clean_ignored_hashes(limit)?;
+            if list.is_empty() {
+                println!("No clean hashes in ignore list.");
+            } else {
+                for (idx, item) in list.iter().enumerate() {
+                    let hash = item.get("hash_blake3").and_then(|v| v.as_str()).unwrap_or("—");
+                    let proc = item.get("process_name").and_then(|v| v.as_str()).unwrap_or("—");
+                    let src = item.get("source").and_then(|v| v.as_str()).unwrap_or("—");
+                    let time = item.get("marked_at").and_then(|v| v.as_str()).unwrap_or("—");
+                    println!("[{:02}] Hash: {} | Process: {} | Source: {} | Marked: {}", idx + 1, hash, proc, src, time);
+                }
+            }
+            println!("================================================================================");
+        }
+        ConsensusAction::Ignore { hash, process, path } => {
+            orchestrator.memory().mark_hash_clean_ignored(
+                &hash,
+                process.as_deref(),
+                path.as_deref(),
+                "cli_manual",
+            )?;
+            println!("Successfully added hash '{}' to clean-ignore list.", hash);
+        }
+        ConsensusAction::Unignore { hash } => {
+            let removed = orchestrator.memory().remove_clean_ignored_hash(&hash)?;
+            if removed {
+                println!("Successfully removed hash '{}' from clean-ignore list.", hash);
+            } else {
+                println!("Hash '{}' not found in clean-ignore list.", hash);
+            }
+        }
+    }
+
+    Ok(())
+}
+
 async fn handle_yara_command(action: YaraAction) -> anyhow::Result<()> {
     let dashboard_port = std::env::var("OSOOSI_DASHBOARD_PORT")
         .ok()
@@ -5325,6 +5461,56 @@ mod tests {
                 assert_eq!(model_flag, Some("embeddinggemma:latest".to_string()));
             }
             _ => panic!("Expected Commands::PullModel"),
+        }
+    }
+
+    #[test]
+    fn test_consensus_cli_parsing() {
+        let cli_eval = Cli::try_parse_from(["osoosi", "consensus", "evaluate", "--file", "C:\\bin\\program.exe"]).unwrap();
+        match cli_eval.command {
+            Some(Commands::Consensus { action: ConsensusAction::Evaluate { file } }) => {
+                assert_eq!(file, "C:\\bin\\program.exe");
+            }
+            _ => panic!("Expected Commands::Consensus with Evaluate"),
+        }
+
+        let cli_findings = Cli::try_parse_from(["osoosi", "consensus", "findings", "--limit", "15"]).unwrap();
+        match cli_findings.command {
+            Some(Commands::Consensus { action: ConsensusAction::Findings { limit } }) => {
+                assert_eq!(limit, 15);
+            }
+            _ => panic!("Expected Commands::Consensus with Findings"),
+        }
+
+        let cli_clean = Cli::try_parse_from(["osoosi", "consensus", "clean-hashes", "--limit", "25"]).unwrap();
+        match cli_clean.command {
+            Some(Commands::Consensus { action: ConsensusAction::CleanHashes { limit } }) => {
+                assert_eq!(limit, 25);
+            }
+            _ => panic!("Expected Commands::Consensus with CleanHashes"),
+        }
+
+        let cli_ignore = Cli::try_parse_from([
+            "osoosi", "consensus", "ignore",
+            "--hash", "abcd1234ef",
+            "--process", "my_app.exe",
+            "--path", "C:\\Apps\\my_app.exe",
+        ]).unwrap();
+        match cli_ignore.command {
+            Some(Commands::Consensus { action: ConsensusAction::Ignore { hash, process, path } }) => {
+                assert_eq!(hash, "abcd1234ef");
+                assert_eq!(process, Some("my_app.exe".to_string()));
+                assert_eq!(path, Some("C:\\Apps\\my_app.exe".to_string()));
+            }
+            _ => panic!("Expected Commands::Consensus with Ignore"),
+        }
+
+        let cli_unignore = Cli::try_parse_from(["osoosi", "consensus", "unignore", "-H", "abcd1234ef"]).unwrap();
+        match cli_unignore.command {
+            Some(Commands::Consensus { action: ConsensusAction::Unignore { hash } }) => {
+                assert_eq!(hash, "abcd1234ef");
+            }
+            _ => panic!("Expected Commands::Consensus with Unignore"),
         }
     }
 }

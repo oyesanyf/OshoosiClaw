@@ -742,6 +742,120 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Consensus Ledger & Hash Gating Card -->
+                <div class="card glass shadow-glow mt-4">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <i data-lucide="scale" style="width:18px; color:var(--accent-purple);"></i>
+                            <h3 style="margin:0;">Consensus Ledger &amp; Hash-Gated Execution</h3>
+                            <span class="badge purple" style="font-size:11px;">Consensus Quorum Gated</span>
+                        </div>
+                        <div class="header-actions" style="display:flex; align-items:center; gap:8px;">
+                            <button class="btn-text" id="consensus-refresh-btn" onclick="fetchConsensusLedger()"><i data-lucide="refresh-cw" style="width:14px; margin-right:4px;"></i> Refresh</button>
+                            <button class="btn-text" id="toggle-consensus-panel-btn" onclick="toggleConsensusPanel()" style="font-size:12px; cursor:pointer;">Collapse</button>
+                        </div>
+                    </div>
+                    <div class="card-body" id="consensus-panel-body">
+                        <!-- Summary Stats & Controls -->
+                        <div style="display:grid; grid-template-columns:repeat(auto-fit, minmax(180px, 1fr)); gap:16px; margin-bottom:20px;">
+                            <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px;">
+                                <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Evaluated Decisions</div>
+                                <div id="stat-consensus-total" style="font-size:20px; font-weight:700; color:var(--accent-blue); margin-top:4px;">0</div>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px;">
+                                <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Malicious Contained</div>
+                                <div id="stat-consensus-malicious" style="font-size:20px; font-weight:700; color:var(--accent-red); margin-top:4px;">0</div>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px;">
+                                <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Clean-Ignored Hashes</div>
+                                <div id="stat-consensus-clean-hashes" style="font-size:20px; font-weight:700; color:var(--accent-green); margin-top:4px;">0</div>
+                            </div>
+                            <div style="background:rgba(255,255,255,0.03); border:1px solid rgba(255,255,255,0.08); border-radius:10px; padding:12px;">
+                                <div style="font-size:11px; color:var(--text-muted); text-transform:uppercase;">Sandbox Execution</div>
+                                <div id="stat-consensus-sandbox" style="font-size:20px; font-weight:700; color:var(--accent-purple); margin-top:4px;">Active</div>
+                            </div>
+                        </div>
+
+                        <!-- Manual Consensus Evaluation Form -->
+                        <div style="background:rgba(255,255,255,0.02); border:1px solid rgba(255,255,255,0.06); border-radius:10px; padding:14px; margin-bottom:20px;">
+                            <div style="font-size:12px; font-weight:600; color:var(--text-header); margin-bottom:8px; display:flex; align-items:center; gap:6px;">
+                                <i data-lucide="play-circle" style="width:14px; color:var(--accent-blue);"></i> On-Demand Consensus Evaluation &amp; Hash Register
+                            </div>
+                            <div style="display:flex; flex-wrap:wrap; gap:10px;">
+                                <div style="flex:1; min-width:260px; display:flex; gap:6px;">
+                                    <input type="text" id="consensus-eval-filepath" placeholder="Enter executable file path to evaluate (e.g. C:\Tools\proc.exe)" style="flex:1; padding:8px 12px; background:rgba(0,0,0,0.3); border:1px solid var(--glass-border); border-radius:6px; color:var(--text-primary); font-size:12px;">
+                                    <button class="btn-primary" onclick="triggerEvaluateConsensus()" style="padding:8px 14px; font-size:12px; white-space:nowrap; cursor:pointer;">
+                                        <i data-lucide="cpu" style="width:12px; margin-right:4px;"></i> Evaluate
+                                    </button>
+                                </div>
+                                <div style="flex:1; min-width:260px; display:flex; gap:6px;">
+                                    <input type="text" id="consensus-add-hash" placeholder="SHA-256 Hash to manually ignore" style="flex:1; padding:8px 12px; background:rgba(0,0,0,0.3); border:1px solid var(--glass-border); border-radius:6px; color:var(--text-primary); font-size:12px; font-family:monospace;">
+                                    <button class="btn-text" onclick="triggerAddCleanHash()" style="padding:8px 14px; font-size:12px; border:1px solid rgba(16,185,129,0.3); color:var(--accent-green); white-space:nowrap; cursor:pointer;">
+                                        <i data-lucide="shield-check" style="width:12px; margin-right:4px;"></i> Ignore Hash
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Consensus Findings Table -->
+                        <div style="margin-bottom:24px;">
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                                <h4 style="margin:0; font-size:14px; color:var(--text-header); display:flex; align-items:center; gap:6px;">
+                                    <i data-lucide="history" style="width:15px; color:var(--accent-blue);"></i> Consensus Decision Ledger (SQLite)
+                                </h4>
+                                <span style="font-size:11px; color:var(--text-muted);">Decisions persisted across node restarts</span>
+                            </div>
+                            <div style="overflow-x: auto;">
+                                <table class="data-table" style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;">
+                                    <thead>
+                                        <tr style="border-bottom: 1px solid var(--glass-border); background: rgba(255, 255, 255, 0.02); color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
+                                            <th style="padding: 10px 14px; width: 140px;">Timestamp</th>
+                                            <th style="padding: 10px 14px;">File / Target</th>
+                                            <th style="padding: 10px 14px; width: 180px;">SHA-256</th>
+                                            <th style="padding: 10px 14px; width: 140px;">Consensus Verdict</th>
+                                            <th style="padding: 10px 14px; width: 90px; text-align: center;">Score</th>
+                                            <th style="padding: 10px 14px; width: 180px;">Action Taken</th>
+                                            <th style="padding: 10px 14px; width: 150px;">Breakdown</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="consensus-findings-table-body">
+                                        <tr>
+                                            <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">Loading consensus findings...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Clean-Ignored Hash Registry Table -->
+                        <div>
+                            <div style="display:flex; justify-content:space-between; align-items:center; margin-bottom:10px;">
+                                <h4 style="margin:0; font-size:14px; color:var(--text-header); display:flex; align-items:center; gap:6px;">
+                                    <i data-lucide="check-circle-2" style="width:15px; color:var(--accent-green);"></i> Clean-Ignored Hash Registry (Bypassed from Analysis)
+                                </h4>
+                                <span style="font-size:11px; color:var(--text-muted);">Verified clean hashes bypass repetitive inspection</span>
+                            </div>
+                            <div style="overflow-x: auto;">
+                                <table class="data-table" style="width: 100%; border-collapse: collapse; text-align: left; font-size: 13px;">
+                                    <thead>
+                                        <tr style="border-bottom: 1px solid var(--glass-border); background: rgba(255, 255, 255, 0.02); color: var(--text-muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px;">
+                                            <th style="padding: 10px 14px; width: 140px;">Added At</th>
+                                            <th style="padding: 10px 14px;">SHA-256 Hash</th>
+                                            <th style="padding: 10px 14px; width: 200px;">Source / Rationale</th>
+                                            <th style="padding: 10px 14px; width: 120px; text-align: right;">Action</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="clean-hashes-table-body">
+                                        <tr>
+                                            <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">Loading clean hash registry...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Repair Engine View -->

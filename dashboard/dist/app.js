@@ -661,6 +661,7 @@ async function updateDashboard() {
                 'mesh-panel-body': 'toggle-mesh-panel-btn',
                 'gossip-panel-body': 'toggle-gossip-panel-btn',
                 'malware-panel-body': 'toggle-malware-panel-btn',
+                'consensus-panel-body': 'toggle-consensus-panel-btn',
                 'repair-panel-body': 'toggle-repair-panel-btn',
                 'story-panel-body': 'toggle-story-panel-btn'
             };
@@ -1742,6 +1743,7 @@ function renderMalwareView(detections) {
     });
 
     fetchYaraStatus();
+    fetchConsensusLedger();
 
     if (!visibleDetections || visibleDetections.length === 0) {
         list.innerHTML = `
@@ -1956,6 +1958,221 @@ function renderYaraStatus(status) {
         }
     }
 }
+
+/**
+ * Consensus Ledger & Hash-Gated Execution Logic
+ */
+async function fetchConsensusLedger() {
+    try {
+        const [findings, cleanHashes] = await Promise.all([
+            fetchAPI('/consensus/findings'),
+            fetchAPI('/consensus/clean-hashes')
+        ]);
+
+        if (findings) {
+            renderConsensusFindings(findings);
+        }
+        if (cleanHashes) {
+            renderCleanHashes(cleanHashes);
+        }
+    } catch (err) {
+        console.warn('Failed to fetch consensus ledger:', err);
+    }
+}
+
+function renderConsensusFindings(findings) {
+    const list = document.getElementById('consensus-findings-table-body');
+    const statTotal = document.getElementById('stat-consensus-total');
+    const statMalicious = document.getElementById('stat-consensus-malicious');
+
+    if (statTotal) statTotal.textContent = (findings || []).length.toString();
+    const malCount = (findings || []).filter(f => f.is_malicious).length;
+    if (statMalicious) statMalicious.textContent = malCount.toString();
+
+    if (!list) return;
+
+    if (!findings || findings.length === 0) {
+        list.innerHTML = `
+            <tr>
+                <td colspan="7" style="text-align: center; color: var(--text-muted); padding: 20px;">
+                    Zero consensus findings recorded yet. Files will be recorded upon multi-detector evaluation.
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    list.innerHTML = findings.map(f => {
+        const dateStr = f.timestamp ? (new Date(f.timestamp).toLocaleTimeString() || f.timestamp) : '—';
+        const rawPath = f.file_path || 'Direct Telemetry Event';
+        const displayPath = escapeHtml(rawPath);
+        const shortHash = f.sha256 ? `${escapeHtml(f.sha256.substring(0, 14))}...` : '—';
+        const fullHash = escapeHtml(f.sha256 || '');
+        const verdictBadge = f.is_malicious 
+            ? `<span class="badge red" style="font-weight:600;"><i data-lucide="shield-alert" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i> MALICIOUS</span>`
+            : `<span class="badge green" style="font-weight:600;"><i data-lucide="shield-check" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i> BENIGN / CLEAN</span>`;
+        
+        const scorePercent = typeof f.consensus_score === 'number' ? (f.consensus_score * 100).toFixed(0) + '%' : '—';
+        
+        const actionBadge = f.is_malicious
+            ? `<span class="badge orange" title="${escapeHtml(f.action_taken || '')}"><i data-lucide="box" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i> Contained / Sandboxed</span>`
+            : `<span class="badge blue" title="${escapeHtml(f.action_taken || '')}"><i data-lucide="check" style="width:12px;height:12px;vertical-align:middle;margin-right:2px;"></i> Clean (Ignored)</span>`;
+
+        const breakdown = escapeHtml(f.detector_breakdown || f.rationale || 'Consensus Multi-Model');
+
+        return `
+            <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.04);">
+                <td style="padding: 10px 14px; color: var(--text-muted); font-size: 12px;">${dateStr}</td>
+                <td style="padding: 10px 14px; font-weight: 500;" title="${displayPath}">
+                    <div style="max-width: 260px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;">${displayPath}</div>
+                </td>
+                <td style="padding: 10px 14px; font-family: monospace; font-size: 11px; color: var(--accent-blue);" title="${fullHash}">${shortHash}</td>
+                <td style="padding: 10px 14px;">${verdictBadge}</td>
+                <td style="padding: 10px 14px; text-align: center; font-weight: 600;">${scorePercent}</td>
+                <td style="padding: 10px 14px;">${actionBadge}</td>
+                <td style="padding: 10px 14px; font-size: 11px; color: var(--text-muted);">
+                    <div style="max-width: 220px; overflow: hidden; text-overflow: ellipsis; white-space: nowrap;" title="${breakdown}">${breakdown}</div>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    if (window.lucide) window.lucide.createIcons();
+}
+
+function renderCleanHashes(cleanHashes) {
+    const list = document.getElementById('clean-hashes-table-body');
+    const statClean = document.getElementById('stat-consensus-clean-hashes');
+
+    if (statClean) statClean.textContent = (cleanHashes || []).length.toString();
+    if (!list) return;
+
+    if (!cleanHashes || cleanHashes.length === 0) {
+        list.innerHTML = `
+            <tr>
+                <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 20px;">
+                    No clean hashes registered. Clean consensus decisions will automatically register here.
+                </td>
+            </tr>
+        `;
+        return;
+    }
+
+    list.innerHTML = cleanHashes.map(h => {
+        const dateStr = h.created_at ? (new Date(h.created_at).toLocaleString() || h.created_at) : '—';
+        const hash = escapeHtml(h.hash || '');
+        const source = escapeHtml(h.source || 'Consensus Quorum');
+
+        return `
+            <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.04);">
+                <td style="padding: 10px 14px; color: var(--text-muted); font-size: 12px;">${dateStr}</td>
+                <td style="padding: 10px 14px; font-family: monospace; font-size: 12px; color: var(--accent-green); word-break: break-all;">${hash}</td>
+                <td style="padding: 10px 14px; font-size: 12px; color: var(--text-muted);">${source}</td>
+                <td style="padding: 10px 14px; text-align: right;">
+                    <button class="btn-text" style="color:var(--accent-red); font-size:11px; cursor:pointer;" onclick="removeCleanHash('${hash}')">
+                        <i data-lucide="trash-2" style="width:12px; height:12px; vertical-align:middle; margin-right:3px;"></i> Remove
+                    </button>
+                </td>
+            </tr>
+        `;
+    }).join('');
+
+    if (window.lucide) window.lucide.createIcons();
+}
+
+async function triggerEvaluateConsensus() {
+    const input = document.getElementById('consensus-eval-filepath');
+    if (!input) return;
+    const filePath = input.value.trim();
+    if (!filePath) {
+        showNotification('Please enter a target executable file path to evaluate.', 'error');
+        return;
+    }
+
+    showNotification('Evaluating file across multi-model consensus engines...', 'info');
+
+    try {
+        const res = await fetch(`${API_BASE}/consensus/evaluate`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ file_path: filePath })
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${res.status}`);
+        }
+
+        const finding = await res.json();
+        const verdictMsg = finding.is_malicious
+            ? `Consensus: MALICIOUS (Score: ${(finding.consensus_score * 100).toFixed(0)}%). Action: ${finding.action_taken}`
+            : `Consensus: CLEAN / BENIGN (Score: ${(finding.consensus_score * 100).toFixed(0)}%). Hash added to bypass list.`;
+        
+        showNotification(verdictMsg, finding.is_malicious ? 'error' : 'success');
+        input.value = '';
+        fetchConsensusLedger();
+    } catch (err) {
+        showNotification(`Consensus evaluation failed: ${err.message}`, 'error');
+    }
+}
+
+async function triggerAddCleanHash() {
+    const input = document.getElementById('consensus-add-hash');
+    if (!input) return;
+    const hash = input.value.trim().toLowerCase();
+    if (!hash || hash.length !== 64) {
+        showNotification('Please provide a valid 64-character SHA-256 hexadecimal hash.', 'error');
+        return;
+    }
+
+    try {
+        const res = await fetch(`${API_BASE}/consensus/ignore-hash`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ hash: hash, notes: 'Manual UI Whitelist' })
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${res.status}`);
+        }
+
+        showNotification(`Hash ${hash.substring(0, 12)}... added to clean-ignore bypass list.`, 'success');
+        input.value = '';
+        fetchConsensusLedger();
+    } catch (err) {
+        showNotification(`Failed to register clean hash: ${err.message}`, 'error');
+    }
+}
+
+async function removeCleanHash(hash) {
+    if (!hash) return;
+    try {
+        const res = await fetch(`${API_BASE}/consensus/ignore-hash/${encodeURIComponent(hash)}`, {
+            method: 'DELETE'
+        });
+
+        if (!res.ok) {
+            const err = await res.json().catch(() => ({}));
+            throw new Error(err.error || `HTTP ${res.status}`);
+        }
+
+        showNotification(`Hash ${hash.substring(0, 12)}... removed from clean bypass list.`, 'info');
+        fetchConsensusLedger();
+    } catch (err) {
+        showNotification(`Failed to remove clean hash: ${err.message}`, 'error');
+    }
+}
+
+function toggleConsensusPanel() {
+    togglePanel('consensus-panel-body', 'toggle-consensus-panel-btn');
+}
+
+window.fetchConsensusLedger = fetchConsensusLedger;
+window.triggerEvaluateConsensus = triggerEvaluateConsensus;
+window.triggerAddCleanHash = triggerAddCleanHash;
+window.removeCleanHash = removeCleanHash;
+window.toggleConsensusPanel = toggleConsensusPanel;
 
 window.markMalwareFP = async function(btn) {
     if (!btn) return;

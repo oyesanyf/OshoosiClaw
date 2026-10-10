@@ -2,7 +2,7 @@
 
 use chrono::{DateTime, Utc};
 use osoosi_types::{
-    ActionState, Kev, MalwareSample, PeerAnnounce, PeerStatus, PendingJoinRequest, QuarantinedPeer,
+    ActionState, ConsensusFinding, Kev, MalwareSample, PeerAnnounce, PeerStatus, PendingJoinRequest, QuarantinedPeer,
     ReputationScore, ResponseAction, ThreatSignature,
 };
 use rusqlite::{params, Connection};
@@ -20,6 +20,7 @@ pub struct MemoryStore {
     conn: Mutex<Connection>,
     bloom_filter: Mutex<bloomfilter::Bloom<String>>,
     status_cache: parking_lot::RwLock<std::collections::HashMap<String, String>>,
+    clean_hashes_cache: parking_lot::RwLock<std::collections::HashSet<String>>,
 }
 
 fn normalize_asset_path(path: &str) -> String {
@@ -69,10 +70,27 @@ impl MemoryStore {
             conn: lock,
             bloom_filter: Mutex::new(bloom),
             status_cache: parking_lot::RwLock::new(std::collections::HashMap::new()),
+            clean_hashes_cache: parking_lot::RwLock::new(std::collections::HashSet::new()),
         };
         s.init_db()?;
         s.repopulate_bloom_filter()?;
+        s.load_clean_hashes_cache()?;
         Ok(s)
+    }
+
+    fn load_clean_hashes_cache(&self) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare("SELECT hash_blake3 FROM known_clean_hashes")?;
+        let rows = stmt.query_map([], |row| row.get::<_, String>(0))?;
+        let mut cache = self.clean_hashes_cache.write();
+        for hash_res in rows {
+            if let Ok(hash) = hash_res {
+                if !hash.is_empty() {
+                    cache.insert(hash);
+                }
+            }
+        }
+        Ok(())
     }
 
     fn init_db(&self) -> anyhow::Result<()> {
@@ -396,6 +414,51 @@ impl MemoryStore {
             info!("Migrating 'kev' table: adding 'version_end_excluding' column...");
             let _ = conn.execute("ALTER TABLE kev ADD COLUMN version_end_excluding TEXT", []);
         }
+
+        // Consensus Findings table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS consensus_findings (
+                id TEXT PRIMARY KEY,
+                hash_blake3 TEXT NOT NULL,
+                process_name TEXT,
+                file_path TEXT,
+                verdict TEXT NOT NULL,
+                confidence REAL NOT NULL,
+                detector_count INTEGER NOT NULL,
+                voters_summary TEXT,
+                action_taken TEXT NOT NULL,
+                evaluated_at TEXT NOT NULL
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consensus_findings_hash ON consensus_findings(hash_blake3)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consensus_findings_verdict ON consensus_findings(verdict)",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_consensus_findings_time ON consensus_findings(evaluated_at)",
+            [],
+        )?;
+
+        // Known Clean Hashes table
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS known_clean_hashes (
+                hash_blake3 TEXT PRIMARY KEY,
+                process_name TEXT,
+                file_path TEXT,
+                marked_at TEXT NOT NULL,
+                source TEXT NOT NULL
+            )",
+            [],
+        )?;
+        conn.execute(
+            "CREATE INDEX IF NOT EXISTS idx_known_clean_hashes ON known_clean_hashes(hash_blake3)",
+            [],
+        )?;
 
         Ok(())
     }
@@ -1620,6 +1683,148 @@ impl MemoryStore {
         let exists = stmt.exists(params![kind, value])?;
         Ok(exists)
     }
+
+    /// Record a consensus evaluation finding in SQLite.
+    pub fn record_consensus_finding(&self, finding: &ConsensusFinding) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        conn.execute(
+            "INSERT OR REPLACE INTO consensus_findings (
+                id, hash_blake3, process_name, file_path, verdict,
+                confidence, detector_count, voters_summary, action_taken, evaluated_at
+            ) VALUES (?1, ?2, ?3, ?4, ?5, ?6, ?7, ?8, ?9, ?10)",
+            params![
+                finding.id,
+                finding.hash_blake3,
+                finding.process_name,
+                finding.file_path,
+                finding.verdict,
+                finding.confidence,
+                finding.detector_count,
+                finding.voters_summary,
+                finding.action_taken,
+                finding.evaluated_at.to_rfc3339(),
+            ],
+        )?;
+        Ok(())
+    }
+
+    /// Retrieve the most recent consensus findings up to `limit`.
+    pub fn get_consensus_findings(&self, limit: usize) -> anyhow::Result<Vec<ConsensusFinding>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT id, hash_blake3, process_name, file_path, verdict,
+                    confidence, detector_count, voters_summary, action_taken, evaluated_at
+             FROM consensus_findings
+             ORDER BY evaluated_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            let evaluated_at_str: String = row.get(9)?;
+            let evaluated_at = chrono::DateTime::parse_from_rfc3339(&evaluated_at_str)
+                .map(|dt| dt.with_timezone(&chrono::Utc))
+                .unwrap_or_else(|_| chrono::Utc::now());
+            Ok(ConsensusFinding {
+                id: row.get(0)?,
+                hash_blake3: row.get(1)?,
+                process_name: row.get(2)?,
+                file_path: row.get(3)?,
+                verdict: row.get(4)?,
+                confidence: row.get(5)?,
+                detector_count: row.get(6)?,
+                voters_summary: row.get::<_, Option<String>>(7)?.unwrap_or_default(),
+                action_taken: row.get(8)?,
+                evaluated_at,
+            })
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
+
+    /// Mark a hash as clean and ignored:
+    /// - Inserts into `known_clean_hashes`
+    /// - Caches in fast in-memory `clean_hashes_cache`
+    /// - Inserts into `ai_overrides` with `verdict = 0` (clean)
+    /// - Registers in `false_positive_patterns`
+    pub fn mark_hash_clean_ignored(
+        &self,
+        hash: &str,
+        process_name: Option<&str>,
+        file_path: Option<&str>,
+        source: &str,
+    ) -> anyhow::Result<()> {
+        let clean_hash = hash.trim().to_ascii_lowercase();
+        if clean_hash.is_empty() {
+            return Ok(());
+        }
+        let conn = self.conn.lock();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT OR REPLACE INTO known_clean_hashes (hash_blake3, process_name, file_path, marked_at, source)
+             VALUES (?1, ?2, ?3, ?4, ?5)",
+            params![clean_hash, process_name, file_path, now, source],
+        )?;
+        self.clean_hashes_cache.write().insert(clean_hash.clone());
+
+        let _ = self.record_ai_override_locked(&conn, &clean_hash, 0, "Consensus marked clean", source);
+
+        let proc = process_name.unwrap_or("");
+        let _ = conn.execute(
+            "INSERT OR REPLACE INTO false_positive_patterns (process_name, hash_blake3, source_node, marked_at)
+             VALUES (?1, ?2, ?3, ?4)",
+            params![proc, clean_hash, source, now],
+        );
+
+        Ok(())
+    }
+
+    /// Fast lookup in memory cache to see if hash is marked clean and ignored.
+    pub fn is_hash_clean_ignored(&self, hash: &str) -> bool {
+        let target = hash.trim().to_ascii_lowercase();
+        if target.is_empty() {
+            return false;
+        }
+        self.clean_hashes_cache.read().contains(&target)
+    }
+
+    /// Remove a clean ignored hash from `known_clean_hashes` and in-memory cache.
+    pub fn remove_clean_ignored_hash(&self, hash: &str) -> anyhow::Result<bool> {
+        let target = hash.trim().to_ascii_lowercase();
+        let conn = self.conn.lock();
+        let affected = conn.execute(
+            "DELETE FROM known_clean_hashes WHERE hash_blake3 = ?1",
+            params![target],
+        )?;
+        self.clean_hashes_cache.write().remove(&target);
+        Ok(affected > 0)
+    }
+
+    /// Retrieve list of clean ignored hashes up to `limit`.
+    pub fn get_clean_ignored_hashes(&self, limit: usize) -> anyhow::Result<Vec<serde_json::Value>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare(
+            "SELECT hash_blake3, process_name, file_path, marked_at, source
+             FROM known_clean_hashes
+             ORDER BY marked_at DESC
+             LIMIT ?1",
+        )?;
+        let rows = stmt.query_map(params![limit as i64], |row| {
+            Ok(serde_json::json!({
+                "hash_blake3": row.get::<_, String>(0)?,
+                "process_name": row.get::<_, Option<String>>(1)?,
+                "file_path": row.get::<_, Option<String>>(2)?,
+                "marked_at": row.get::<_, String>(3)?,
+                "source": row.get::<_, String>(4)?,
+            }))
+        })?;
+        let mut out = Vec::new();
+        for r in rows {
+            out.push(r?);
+        }
+        Ok(out)
+    }
 }
 
 #[cfg(test)]
@@ -1741,5 +1946,73 @@ mod tests {
         let conf = threats[0]["confidence"].as_f64().unwrap();
         // High confidence (24/25 = 0.96) must be preserved
         assert!(conf >= 0.96 - 1e-4);
+    }
+
+    #[test]
+    fn test_consensus_findings_record_and_query() {
+        let mem = MemoryStore::new(":memory:").unwrap();
+
+        let finding = ConsensusFinding {
+            id: "CONS-TEST-001".to_string(),
+            hash_blake3: "abcd1234ef567890".to_string(),
+            process_name: Some("test_runner.exe".to_string()),
+            file_path: Some("C:\\bin\\test_runner.exe".to_string()),
+            verdict: "malicious".to_string(),
+            confidence: 0.92,
+            detector_count: 3,
+            voters_summary: "YaraX hit; ML malware score 0.95".to_string(),
+            action_taken: "contained_and_quarantined".to_string(),
+            evaluated_at: Utc::now(),
+        };
+
+        assert!(mem.record_consensus_finding(&finding).is_ok());
+
+        let findings = mem.get_consensus_findings(10).unwrap();
+        assert_eq!(findings.len(), 1);
+        assert_eq!(findings[0].id, "CONS-TEST-001");
+        assert_eq!(findings[0].hash_blake3, "abcd1234ef567890");
+        assert_eq!(findings[0].verdict, "malicious");
+        assert_eq!(findings[0].action_taken, "contained_and_quarantined");
+        assert!((findings[0].confidence - 0.92).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_mark_clean_ignored_hash_lifecycle() {
+        let mem = MemoryStore::new(":memory:").unwrap();
+
+        let hash = "deadbeef12345678cafe";
+        assert!(!mem.is_hash_clean_ignored(hash));
+
+        // Mark clean
+        assert!(mem.mark_hash_clean_ignored(
+            hash,
+            Some("clean_app.exe"),
+            Some("C:\\Tools\\clean_app.exe"),
+            "consensus_clean",
+        ).is_ok());
+
+        // Fast lookup
+        assert!(mem.is_hash_clean_ignored(hash));
+        assert!(mem.is_hash_clean_ignored("DEADBEEF12345678CAFE")); // Case-insensitive
+
+        // Verify ai_overrides and false_positive_patterns registered
+        let ai_override = mem.get_ai_override(hash).unwrap();
+        assert_eq!(ai_override, Some(false)); // 0 = false = clean
+
+        assert!(mem.is_false_positive_pattern(Some("clean_app.exe"), Some(hash)).unwrap());
+
+        // Query clean hashes list
+        let clean_list = mem.get_clean_ignored_hashes(10).unwrap();
+        assert_eq!(clean_list.len(), 1);
+        assert_eq!(clean_list[0]["hash_blake3"].as_str().unwrap(), hash);
+        assert_eq!(clean_list[0]["process_name"].as_str().unwrap(), "clean_app.exe");
+
+        // Remove
+        let removed = mem.remove_clean_ignored_hash(hash).unwrap();
+        assert!(removed);
+        assert!(!mem.is_hash_clean_ignored(hash));
+
+        let clean_list_empty = mem.get_clean_ignored_hashes(10).unwrap();
+        assert_eq!(clean_list_empty.len(), 0);
     }
 }
