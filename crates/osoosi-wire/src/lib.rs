@@ -13,8 +13,10 @@ pub mod tarpit;
 
 pub use confidential::*;
 pub use ghost_node::*;
+pub use holograph::*;
 pub use join_gate::JoinGate;
 pub use mesh::*;
+pub use osoosi_types::GhostShardData;
 pub use reconciliation::*;
 pub use tarpit::*;
 

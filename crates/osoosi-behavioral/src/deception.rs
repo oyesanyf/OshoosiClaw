@@ -229,4 +229,11 @@ impl EntanglementEngine {
     pub fn get_spider(&self, pid: u32) -> Option<&MorphicSpider> {
         self.spiders.get(&pid)
     }
+
+    pub fn list_entanglements(&self) -> Vec<(u32, String)> {
+        self.spiders
+            .iter()
+            .map(|(pid, spider)| (*pid, spider.process_name.clone()))
+            .collect()
+    }
 }

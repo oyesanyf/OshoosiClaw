@@ -1170,6 +1170,41 @@
                         </div>
                     </div>
                 </div>
+                <div id="zone-deception-container" class="card glass shadow-glow mt-4">
+                    <div class="card-header" style="display:flex; justify-content:space-between; align-items:center;">
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <i data-lucide="ghost" style="color:var(--accent-purple);"></i>
+                            <h3>Morphic Deception Lattice &amp; Honey-Trap Defense</h3>
+                        </div>
+                        <div style="display:flex; align-items:center; gap:8px;">
+                            <button class="btn-primary btn-sm flex items-center gap-2" onclick="deployDeceptionTraps()"><i data-lucide="shield" style="width:14px; height:14px;"></i> Deploy Honey-Traps</button>
+                            <button class="action-btn primary flex items-center gap-2" style="font-size:12px; padding:4px 10px;" onclick="activateMeshHologram('127.0.0.1')"><i data-lucide="globe" style="width:14px; height:14px;"></i> Activate Mesh Hologram</button>
+                        </div>
+                    </div>
+                    <div id="zone-deception-body" class="card-body">
+                        <div id="deception-status-content" class="stats-grid" style="grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); gap: 12px; margin-bottom: 12px;">
+                            <div class="stat-card glass">
+                                <span class="stat-label">Active Ghost Decoys</span>
+                                <span class="stat-value" id="deception-ghost-count" style="font-size:20px; color:var(--accent-purple);">0</span>
+                            </div>
+                            <div class="stat-card glass">
+                                <span class="stat-label">Holograph Shards</span>
+                                <span class="stat-value" id="deception-shard-count" style="font-size:20px; color:var(--accent-blue);">0</span>
+                            </div>
+                            <div class="stat-card glass">
+                                <span class="stat-label">Canary Honey-Files</span>
+                                <span class="stat-value" id="deception-canary-count" style="font-size:20px; color:var(--accent-green);">0</span>
+                            </div>
+                            <div class="stat-card glass">
+                                <span class="stat-label">Morphic Entanglements</span>
+                                <span class="stat-value" id="deception-entangle-count" style="font-size:20px; color:var(--accent-orange);">0</span>
+                            </div>
+                        </div>
+                        <div id="deception-details" style="font-size: 12px; color: var(--text-muted);">
+                            Active honey-files and virtual decoy ports divert adversaries into isolated labyrinth nodes.
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- Approval Queue View -->

@@ -67,4 +67,22 @@ impl HolographEngine {
         let index = (hash % mesh_nodes.len() as u64) as usize;
         mesh_nodes[index].clone()
     }
+
+    /// Return all active shards managed locally.
+    pub fn list_shards(&self) -> Vec<GhostShardData> {
+        let guard = match self.shards.read() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.values().flat_map(|shards| shards.iter().cloned()).collect()
+    }
+
+    /// Return count of all active shards managed locally.
+    pub fn shard_count(&self) -> usize {
+        let guard = match self.shards.read() {
+            Ok(g) => g,
+            Err(poisoned) => poisoned.into_inner(),
+        };
+        guard.values().map(|v| v.len()).sum()
+    }
 }

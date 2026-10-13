@@ -98,6 +98,14 @@ impl Default for LocalClefWeights {
     }
 }
 
+/// Persistent state for Reinforcement Learning feedback adjustments.
+#[derive(Debug, Clone, Serialize, Deserialize)]
+pub struct RlFeedbackState {
+    pub temperature_delta: i64,
+    pub logit_biases: HashMap<String, f64>,
+    pub feedback_count: u64,
+}
+
 /// Hermetic, sub-5ms local non-autoregressive Clef decision engine with RLCD feedback.
 #[derive(Debug, Clone)]
 pub struct LocalDecisionEngine {
@@ -114,15 +122,49 @@ impl LocalDecisionEngine {
     pub fn new(model_dir: impl AsRef<Path>) -> Self {
         let dir = model_dir.as_ref().to_path_buf();
         let weights = Self::load_weights(&dir).unwrap_or_default();
+        let feedback_state = Self::load_rl_feedback_state(&dir);
+        let logit_biases = Arc::new(dashmap::DashMap::new());
+        let rl_feedback_count = Arc::new(AtomicU64::new(0));
+        let temperature_delta = Arc::new(AtomicI64::new(0));
+
+        if let Some(state) = feedback_state {
+            temperature_delta.store(state.temperature_delta, Ordering::Relaxed);
+            rl_feedback_count.store(state.feedback_count, Ordering::Relaxed);
+            for (k, v) in state.logit_biases {
+                logit_biases.insert(k, v);
+            }
+            tracing::info!(
+                "[DECISION] Restored RL feedback state from disk (feedback_count={}, temperature_delta={})",
+                state.feedback_count, state.temperature_delta
+            );
+        }
+
         Self {
             weights,
             model_dir: dir,
             rl_feedback_history: Arc::new(dashmap::DashMap::new()),
-            rl_feedback_count: Arc::new(AtomicU64::new(0)),
+            rl_feedback_count,
             cumulative_rl_reward_fixed: Arc::new(AtomicI64::new(0)),
-            logit_biases: Arc::new(dashmap::DashMap::new()),
-            temperature_delta: Arc::new(AtomicI64::new(0)),
+            logit_biases,
+            temperature_delta,
         }
+    }
+
+    fn load_rl_feedback_state(dir: &Path) -> Option<RlFeedbackState> {
+        let candidates = [
+            dir.join("rl_feedback_state.json"),
+            PathBuf::from("models/clef/rl_feedback_state.json"),
+        ];
+        for path in &candidates {
+            if path.exists() {
+                if let Ok(content) = std::fs::read_to_string(path) {
+                    if let Ok(state) = serde_json::from_str::<RlFeedbackState>(&content) {
+                        return Some(state);
+                    }
+                }
+            }
+        }
+        None
     }
 
     fn load_weights(dir: &Path) -> Option<LocalClefWeights> {
@@ -204,6 +246,7 @@ impl LocalDecisionEngine {
         // Calibrate logit bias for actual outcome
         let mut entry = self.logit_biases.entry(actual_clean.clone()).or_insert(0.0);
         *entry = (*entry + effective_reward * 0.15).clamp(-5.0, 5.0);
+        drop(entry);
 
         // Bound feedback history cache to prevent memory leak
         if self.rl_feedback_history.len() > 10_000 {
@@ -218,6 +261,24 @@ impl LocalDecisionEngine {
             "[DECISION-RLCD] Recorded feedback for {}: reward={:.2}, effective={:.2}, outcome='{}'",
             decision_id, reward, effective_reward, actual_outcome
         );
+
+        // Persist RL feedback state to survive restarts
+        let state = RlFeedbackState {
+            temperature_delta: self.temperature_delta.load(Ordering::Relaxed),
+            logit_biases: self.logit_biases.iter().map(|kv| (kv.key().clone(), *kv.value())).collect(),
+            feedback_count: self.rl_feedback_count.load(Ordering::Relaxed),
+        };
+        let target_path = if self.model_dir.exists() {
+            self.model_dir.join("rl_feedback_state.json")
+        } else {
+            PathBuf::from("models/clef/rl_feedback_state.json")
+        };
+        if let Some(parent) = target_path.parent() {
+            let _ = std::fs::create_dir_all(parent);
+        }
+        if let Ok(json_str) = serde_json::to_string_pretty(&state) {
+            let _ = std::fs::write(&target_path, json_str);
+        }
     }
 
     pub fn rl_feedback_count(&self) -> u64 {

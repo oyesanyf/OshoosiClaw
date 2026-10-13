@@ -360,6 +360,8 @@ pub struct PolicyEngine {
     consensus_cache: Arc<DashMap<String, (ThreatSignature, std::time::Instant)>>,
     /// Multi-tool consensus voters
     voters: Arc<tokio::sync::RwLock<Vec<Box<dyn ThreatVoter + Send + Sync>>>>,
+    /// Reinforcement Learning dynamic weight multipliers for individual voters
+    pub voter_weight_multipliers: Arc<DashMap<String, f32>>,
     /// Global policy config (noise suppression, trusted paths)
     pub config: osoosi_types::PolicyConfig,
     /// Shared threat feed fetcher
@@ -383,6 +385,7 @@ impl PolicyEngine {
             global_intel_rules: Arc::new(DashMap::new()),
             consensus_cache: Arc::new(DashMap::new()),
             voters: Arc::new(tokio::sync::RwLock::new(Vec::new())),
+            voter_weight_multipliers: Arc::new(DashMap::new()),
             config,
             fetcher: Arc::new(crate::feed::ThreatFeedFetcher::new()),
             intel_broadcaster: Arc::new(tokio::sync::RwLock::new(None)),
@@ -511,9 +514,51 @@ impl PolicyEngine {
         let mut out = serde_json::Map::new();
         let voters = self.voters.read().await;
         for voter in &*voters {
-            out.insert(voter.name(), voter.stats());
+            let mut s = voter.stats();
+            let mult = self
+                .voter_weight_multipliers
+                .get(&voter.name())
+                .map(|v| *v)
+                .unwrap_or(1.0)
+                .clamp(0.25, 2.5);
+            if let serde_json::Value::Object(ref mut map) = s {
+                map.insert("weight_multiplier".to_string(), serde_json::json!(mult));
+            } else {
+                s = serde_json::json!({
+                    "raw": s,
+                    "weight_multiplier": mult,
+                });
+            }
+            out.insert(voter.name(), s);
         }
         serde_json::Value::Object(out)
+    }
+
+    /// Adjust voter weights based on feedback (+delta for TP, -delta for FP, clamped [0.25, 2.5]).
+    pub fn update_voter_weights_from_feedback(&self, is_true_positive: bool, delta: f32) {
+        let mut names: std::collections::HashSet<String> = self
+            .voter_weight_multipliers
+            .iter()
+            .map(|kv| kv.key().clone())
+            .collect();
+        if let Ok(voters) = self.voters.try_read() {
+            for v in voters.iter() {
+                names.insert(v.name());
+            }
+        }
+        for name in names {
+            let current = self
+                .voter_weight_multipliers
+                .get(&name)
+                .map(|v| *v)
+                .unwrap_or(1.0);
+            let next = if is_true_positive {
+                (current + delta).clamp(0.25, 2.5)
+            } else {
+                (current - delta).clamp(0.25, 2.5)
+            };
+            self.voter_weight_multipliers.insert(name, next);
+        }
     }
 
     pub async fn scan_event(&self, event: &HostSecurityEvent) -> Option<ThreatSignature> {
@@ -654,7 +699,16 @@ impl PolicyEngine {
         };
 
         for (vname, res_opt) in results {
-            if let Some(res) = res_opt {
+            if let Some(mut res) = res_opt {
+                let mult = self
+                    .voter_weight_multipliers
+                    .get(&vname)
+                    .map(|v| *v)
+                    .unwrap_or(1.0)
+                    .clamp(0.25, 2.5);
+                if res.weight > 0.0 {
+                    res.weight *= mult;
+                }
                 if res.weight < 0.0 {
                     if vname == "NSRL-Veto" {
                         nsrl_vetoed = true;

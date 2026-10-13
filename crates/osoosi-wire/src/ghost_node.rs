@@ -1,3 +1,4 @@
+use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
 use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
@@ -8,29 +9,60 @@ use tracing::{info, warn};
 pub struct GhostNodeManager {
     node_id: String,
     mesh_tx: Arc<Mutex<Option<Sender<crate::MeshCommand>>>>,
+    active_services: Arc<dashmap::DashMap<String, u16>>,
+    total_interactions: Arc<AtomicU64>,
 }
 
 impl GhostNodeManager {
     pub fn new(node_id: String, mesh_tx: Arc<Mutex<Option<Sender<crate::MeshCommand>>>>) -> Self {
-        Self { node_id, mesh_tx }
+        Self {
+            node_id,
+            mesh_tx,
+            active_services: Arc::new(dashmap::DashMap::new()),
+            total_interactions: Arc::new(AtomicU64::new(0)),
+        }
     }
 
     /// Spin up a "Coy" deception service that alerts the mesh while teasing the attacker.
     pub async fn spawn_ghost_service(&self, port: u16, service_name: &str) {
-        let addr = format!("0.0.0.0:{}", port);
-        let listener = match TcpListener::bind(&addr).await {
-            Ok(l) => l,
-            Err(_) => return,
+        let fallback_port = match port {
+            22 => 2222,
+            80 => 8088,
+            445 => 4450,
+            3389 => 3390,
+            p => p.wrapping_add(10000),
+        };
+
+        let (listener, bound_port) = match TcpListener::bind(format!("0.0.0.0:{}", port)).await {
+            Ok(l) => (l, port),
+            Err(e) => {
+                warn!(
+                    "Coy Deception: Primary port {} unavailable for '{}' ({}); attempting decoy fallback port {}",
+                    port, service_name, e, fallback_port
+                );
+                match TcpListener::bind(format!("0.0.0.0:{}", fallback_port)).await {
+                    Ok(l) => (l, fallback_port),
+                    Err(e2) => {
+                        warn!(
+                            "Coy Deception: Fallback port {} also unavailable for '{}': {}",
+                            fallback_port, service_name, e2
+                        );
+                        return;
+                    }
+                }
+            }
         };
 
         info!(
-            "Coy Deception: Ghost service '{}' active on {}",
-            service_name, addr
+            "Coy Deception: Ghost service '{}' active on 0.0.0.0:{}",
+            service_name, bound_port
         );
+        self.active_services.insert(service_name.to_string(), bound_port);
 
         let service_name = service_name.to_string();
         let node_id = self.node_id.clone();
         let mesh_tx = self.mesh_tx.clone();
+        let total_interactions = self.total_interactions.clone();
 
         tokio::spawn(async move {
             let dp = osoosi_dp::DifferentialPrivacy::new(osoosi_dp::PrivacyConfig {
@@ -42,6 +74,7 @@ impl GhostNodeManager {
             loop {
                 match listener.accept().await {
                     Ok((mut socket, addr)) => {
+                        total_interactions.fetch_add(1, Ordering::Relaxed);
                         let jitter = dp.laplace_noise();
                         let noisy_addr = if jitter > 0.5 {
                             addr.to_string()
@@ -94,6 +127,17 @@ impl GhostNodeManager {
                 }
             }
         });
+    }
+
+    pub fn get_status(&self) -> serde_json::Value {
+        let mut services = serde_json::Map::new();
+        for item in self.active_services.iter() {
+            services.insert(item.key().clone(), serde_json::json!(item.value()));
+        }
+        serde_json::json!({
+            "active_services": services,
+            "total_interactions": self.total_interactions.load(Ordering::Relaxed),
+        })
     }
 
     pub async fn start_all_deceptions(&self) {

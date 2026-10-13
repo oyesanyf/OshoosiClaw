@@ -119,4 +119,25 @@ impl CanaryManager {
         ];
         decoys.contains(&name)
     }
+
+    /// Return the paths of all currently deployed Ghost Trap decoy files.
+    pub fn list_canaries(&self) -> Vec<String> {
+        let decoys = [
+            "passwords_2025.txt",
+            "client_billing_records.xlsx",
+            "id_rsa_backup",
+            "aws_credentials_old.ini",
+            "salary_list.pdf",
+        ];
+        let mut result = Vec::new();
+        for dir in &self.base_dirs {
+            for name in &decoys {
+                let p = dir.join(name);
+                if p.exists() {
+                    result.push(p.to_string_lossy().to_string());
+                }
+            }
+        }
+        result
+    }
 }

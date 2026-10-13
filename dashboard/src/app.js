@@ -398,8 +398,12 @@ function setupNav() {
                     viewTitle.innerText = "Utilities & Host AI Calibration";
                     renderUtilitiesView();
                 } else {
-                    document.getElementById('other-view').classList.add('active');
-                    viewTitle.innerText = item.querySelector('span').innerText;
+                    const otherView = document.getElementById('other-view') || document.getElementById('dashboard-view');
+                    if (otherView) {
+                        otherView.classList.add('active');
+                    }
+                    const span = item.querySelector('span');
+                    viewTitle.innerText = span ? span.innerText : "Overview";
                 }
                 
                 if (window.location.hash !== '#' + view) {
@@ -1078,6 +1082,7 @@ function renderDetectionStats(stats) {
                 : ((info && typeof info === 'object' && info.description) || (name.toLowerCase().includes('sigma') ? 'Host security event & Sysmon rule matching' : (name.toLowerCase().includes('yara') ? 'Binary pattern & C2 beacon detection' : 'Zero-Trust Policy Consensus Voter')));
             
             const weight = (info && typeof info === 'object' && typeof info.weight === 'number') ? info.weight : (isAi ? 1.0 : (name.toLowerCase().includes('yara') ? 0.9 : 0.85));
+            const multiplier = (info && typeof info === 'object' && typeof info.weight_multiplier === 'number') ? info.weight_multiplier : 1.0;
 
             html += `
             <div class="voter-card">
@@ -1088,6 +1093,7 @@ function renderDetectionStats(stats) {
                 <div class="voter-desc">${escapeHtml(desc)}</div>
                 <div class="voter-badges">
                     <span class="badge blue">Weight: ${weight.toFixed(2)}</span>
+                    ${multiplier !== 1.0 ? `<span class="badge purple">RL Weight: ${multiplier.toFixed(2)}x</span>` : ''}
                     ${isAi ? '<span class="badge purple">ATLAS Verified</span>' : '<span class="badge green">Online</span>'}
                 </div>
             </div>
@@ -1669,7 +1675,7 @@ async function renderMeshView(mesh) {
                 <div class="item-info">
                     <div class="item-title">${escapeHtml(pj.peer_id)}</div>
                     <div class="item-meta">
-                        <span><i data-lucide="map-pin"></i> ${escapeHtml(pj.address || 'Unknown')}</span>
+                        <span><i data-lucide="map-pin"></i> ${escapeHtml(pj.multiaddr || pj.address || 'Unknown')}</span>
                         <span><i data-lucide="clock"></i> Discovered ${formatTimestamp(pj.discovered_at)}</span>
                     </div>
                     <div class="item-actions" style="margin-top:8px;">
@@ -1695,6 +1701,8 @@ async function renderMeshView(mesh) {
                     </div>
                     <div class="item-actions" style="margin-top:8px;">
                         <button class="action-btn" onclick="meshReleasePeer('${qp.peer_id}')">Release</button>
+                        <button class="action-btn warning" onclick="markPeerFalsePositive('${qp.peer_id}')">False Positive</button>
+                        <button class="action-btn primary" onclick="entanglePeer('${qp.peer_id}')">Entangle</button>
                     </div>
                 </div>
             </div>
@@ -1756,6 +1764,128 @@ window.meshReleasePeer = async function(id) {
         showUserError('Mesh Release Peer', e);
     }
 };
+
+window.markPeerFalsePositive = async function(id) {
+    try {
+        const res = await fetch(`${API_BASE}/quarantined-peers/${encodeURIComponent(id)}/false-positive`, {
+            method: 'POST',
+            headers: {'x-osoosi-quarantine-key': 'admin'}
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Quarantine False Positive', data || `HTTP ${res.status}`);
+            return;
+        }
+        showSkyrlToast(`Peer ${id} marked false positive and restored.`, 'success');
+        updateDashboard();
+    } catch (e) {
+        showUserError('Quarantine False Positive', e);
+    }
+};
+
+window.entanglePeer = async function(peerId) {
+    try {
+        const res = await fetch(`${API_BASE}/deception/entangle`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ peer_id: peerId, process_name: `peer-${peerId}` })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Entangle Peer', data || `HTTP ${res.status}`);
+            return;
+        }
+        showSkyrlToast(`Peer ${peerId} entangled across Morphic Deception Lattice!`, 'success');
+        updateDashboard();
+        if (typeof renderDeceptionCard === 'function') renderDeceptionCard();
+    } catch (e) {
+        showUserError('Entangle Peer', e);
+    }
+};
+
+window.deployDeceptionTraps = async function() {
+    try {
+        const res = await fetch(`${API_BASE}/deception/deploy-traps`, { method: 'POST' });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Deploy Canary Traps', data || `HTTP ${res.status}`);
+            return;
+        }
+        showSkyrlToast(`Ghost Traps deployed: ${data.traps_deployed || 0} canaries active!`, 'success');
+        if (typeof renderDeceptionCard === 'function') renderDeceptionCard();
+    } catch (e) {
+        showUserError('Deploy Canary Traps', e);
+    }
+};
+
+window.activateMeshHologram = async function(targetIp) {
+    try {
+        const ip = targetIp || '127.0.0.1';
+        const res = await fetch(`${API_BASE}/deception/activate-hologram`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ attacker_ip: ip })
+        });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Activate Holographic Lattice', data || `HTTP ${res.status}`);
+            return;
+        }
+        showSkyrlToast(`Holographic Mesh Lattice activated against ${ip}!`, 'success');
+        if (typeof renderDeceptionCard === 'function') renderDeceptionCard();
+    } catch (e) {
+        showUserError('Activate Holographic Lattice', e);
+    }
+};
+
+async function renderDeceptionCard() {
+    try {
+        const res = await fetch(`${API_BASE}/deception/status`);
+        if (!res.ok) return;
+        const data = await res.json();
+        
+        const ghostCountEl = document.getElementById('deception-ghost-count');
+        const shardCountEl = document.getElementById('deception-shard-count');
+        const canaryCountEl = document.getElementById('deception-canary-count');
+        const entangleCountEl = document.getElementById('deception-entangle-count');
+        const detailsEl = document.getElementById('deception-details');
+
+        const activeServices = (data.ghost_nodes && data.ghost_nodes.active_services) || {};
+        const ghostServicesCount = Object.keys(activeServices).length;
+        const totalInteractions = data.total_interactions || (data.ghost_nodes && data.ghost_nodes.total_interactions) || 0;
+        const shards = data.holograph_shards || [];
+        const shardCount = data.shard_count !== undefined ? data.shard_count : shards.length;
+        const canaries = data.canary_files || [];
+        const canaryCount = data.canary_count !== undefined ? data.canary_count : canaries.length;
+        const entanglements = data.morphic_entanglements || [];
+        const entangleCount = entanglements.length;
+
+        if (ghostCountEl) ghostCountEl.textContent = ghostServicesCount > 0 ? `${ghostServicesCount} (${totalInteractions} hits)` : '0';
+        if (shardCountEl) shardCountEl.textContent = shardCount;
+        if (canaryCountEl) canaryCountEl.textContent = canaryCount;
+        if (entangleCountEl) entangleCountEl.textContent = entangleCount;
+
+        if (detailsEl) {
+            let details = [];
+            if (ghostServicesCount > 0) {
+                const srvs = Object.entries(activeServices).map(([s, p]) => `${s}:${p}`).join(', ');
+                details.push(`Active Ghost Services: ${srvs}`);
+            }
+            if (canaryCount > 0) {
+                details.push(`${canaryCount} canary tripwires deployed on disk.`);
+            }
+            if (entangleCount > 0) {
+                details.push(`${entangleCount} hostile processes trapped in morphic entanglement.`);
+            }
+            if (details.length === 0) {
+                details.push("Deploy canary honey-files or holographic shards to actively lure and deceive intruders.");
+            }
+            detailsEl.textContent = details.join(' · ');
+        }
+    } catch (err) {
+        console.error('[renderDeceptionCard] Error:', err);
+    }
+}
 
 /**
  * WAN Mesh & Bootstrap Peer Management
@@ -4144,6 +4274,10 @@ async function renderZoneView() {
                 </div>
             `;
         }
+    }
+
+    if (typeof renderDeceptionCard === 'function') {
+        renderDeceptionCard();
     }
 
     if (window.lucide) {

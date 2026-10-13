@@ -28,6 +28,17 @@ impl CoLogFilter {
         }
     }
 
+    #[allow(dead_code)]
+    pub fn with_threshold(mut self, threshold: f32) -> Self {
+        self.anomaly_threshold = threshold;
+        self
+    }
+
+    #[allow(dead_code)]
+    pub fn set_threshold(&mut self, threshold: f32) {
+        self.anomaly_threshold = threshold;
+    }
+
     /// Process a new event and return an anomaly score (0.0 to 1.0).
     pub fn process(&mut self, event: &LogEvent) -> f32 {
         let template = self.extract_template(event);

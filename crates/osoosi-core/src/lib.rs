@@ -1098,7 +1098,7 @@ pub struct EdrOrchestrator {
     /// Shield Layer for Taint/SSRF/Policy protection
     shield: Arc<crate::shield::ShieldLayer>,
     /// Holographic Deception Sharding (HDS) Engine
-    holograph: Arc<osoosi_wire::holograph::HolographEngine>,
+    pub holograph: Arc<osoosi_wire::holograph::HolographEngine>,
     /// Relativistic Guard (Einstein Engine)
     relativistic: Arc<crate::relativistic::RelativisticGuard>,
     /// Behavioral Classifier (SecureBERT + Rules + Feedback)
@@ -1137,8 +1137,9 @@ pub struct EdrOrchestrator {
     #[allow(dead_code)]
     self_healing: Arc<crate::self_healing::SelfHealingEngine>,
     /// Ghost Node: Active deception manager
-    #[allow(dead_code)]
-    ghost_nodes: Arc<osoosi_wire::GhostNodeManager>,
+    pub ghost_nodes: Arc<osoosi_wire::GhostNodeManager>,
+    /// Ghost Trap Canary System
+    pub canary: Arc<crate::canary::CanaryManager>,
     /// Host execution layer (Always Direct for maintenance)
     host_executor: Arc<dyn SecuredExecutor>,
     /// Task execution layer (Direct or OpenShell for analysis)
@@ -1730,6 +1731,7 @@ impl EdrOrchestrator {
             node_id.clone(),
             mesh_command_tx.clone(),
         ));
+        let canary = Arc::new(crate::canary::CanaryManager::new());
         let nsrl_cache = Arc::new(dashmap::DashMap::new());
         let remediation = Arc::new(crate::remediation::RemediationController::new());
         let causal_ai = Arc::new(crate::causal_ai::CausalEngine::new());
@@ -2142,6 +2144,7 @@ impl EdrOrchestrator {
             causal_ai,
             self_healing,
             ghost_nodes,
+            canary,
             behavioral_engine,
             gemma_cortex,
             blocking_manager,
@@ -2288,6 +2291,7 @@ impl EdrOrchestrator {
             let orch_delta = orch.clone();
             let orch_tripwire = orch.clone();
             let orch_skill = orch.clone();
+            let orch_shard = orch.clone();
             let gossip_counter = self.mesh_gossip_count_atomic.clone();
             let g1 = gossip_counter.clone();
             let g2 = gossip_counter.clone();
@@ -2392,9 +2396,17 @@ impl EdrOrchestrator {
                                 });
                             }
                         },
-                        move |_shard| {
+                        move |shard| {
                             g3.fetch_add(1, Ordering::Relaxed);
-                        }, // Ghost shards — placeholder for future distributed deception storage
+                            orch_shard.holograph.add_shard(shard.clone());
+                            if orch_shard.holograph.should_mirror(&shard.attacker_ip, shard.virtual_port).is_some() {
+                                let ghost_mgr = orch_shard.ghost_nodes.clone();
+                                let port = shard.virtual_port;
+                                tokio::spawn(async move {
+                                    ghost_mgr.spawn_ghost_service(port, "Holograph-Mirror").await;
+                                });
+                            }
+                        },
                         move |intel| {
                             g4.fetch_add(1, Ordering::Relaxed);
                             // Global Intel: Persist peer threat intelligence and mark hashes
@@ -3352,6 +3364,47 @@ impl EdrOrchestrator {
                             let path = std::path::Path::new(&event.path);
                             if !path.exists() {
                                 debug!("File Monitor: skipping vanished/ephemeral file: {}", event.path);
+                                return;
+                            }
+
+                            if orchestrator.canary.is_canary(path) {
+                                warn!("CANARY_TRIPWIRE_ALERT: Honey-file access detected at {:?} (Hash: {})", event.path, event.hash);
+                                orchestrator.audit.log(
+                                    "CANARY_TRIPWIRE_ALERT",
+                                    serde_json::json!({
+                                        "path": event.path,
+                                        "hash": event.hash,
+                                        "node_id": orchestrator.trust.did().to_string(),
+                                    }),
+                                );
+                                let mut sig = osoosi_types::ThreatSignature::new(orchestrator.trust.did().to_string());
+                                sig.add_reason(format!("Canary Honey-File tripwire triggered on {:?}", path));
+                                sig.confidence = 1.0;
+                                sig.action_state = osoosi_types::ActionState::Pending;
+                                sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                                let _ = orchestrator.memory.log_threat(&sig);
+
+                                let alert = osoosi_types::MeshTripwireAlert {
+                                    source_node_id: orchestrator.trust.did().to_string(),
+                                    timestamp_utc: chrono::Utc::now().timestamp_millis(),
+                                    trigger: osoosi_types::TarpitArtifact::PoisonedCredential {
+                                        hash: event.hash.clone(),
+                                        token_type: format!("Canary Honey-File: {:?}", path.file_name().unwrap_or_default()),
+                                    },
+                                    offender: osoosi_types::OffendingProcess {
+                                        pid: 0,
+                                        name: "Unknown Process".to_string(),
+                                        executable_path: event.path.clone(),
+                                        blake3_hash: event.hash.clone(),
+                                        command_line: Some(format!("Canary honey-file tripwire on {}", event.path)),
+                                    },
+                                    cryptographic_signature: Vec::new(),
+                                    merkle_proof: None,
+                                };
+                                let tx_guard = orchestrator.mesh_command_tx.lock().await;
+                                if let Some(ref tx) = *tx_guard {
+                                    let _ = tx.try_send(osoosi_wire::MeshCommand::BroadcastTripwire(alert));
+                                }
                                 return;
                             }
                             let file_stem = path.file_name().and_then(|n| n.to_str());
@@ -7836,35 +7889,32 @@ impl EdrOrchestrator {
     /// Spawns distributed ghost shards to trap an identified attacker.
     pub async fn activate_mesh_hologram(&self, attacker_ip: &str) -> anyhow::Result<()> {
         use std::sync::atomic::Ordering;
-        let peer_count = self.mesh_peer_count.load(Ordering::Relaxed);
-        if peer_count == 0 {
-            warn!("HDS: Cannot activate sharding without mesh peers.");
-            return Ok(());
-        }
-
-        let mesh_members = vec![self.trust.did().to_string()]; // Simplified for prototype
+        let _peer_count = self.mesh_peer_count.load(Ordering::Relaxed);
+        let mesh_members = vec![self.trust.did().to_string()]; // Local node participates
 
         let ports = vec![22, 80, 443, 3306, 5432];
-        let tx_guard = self.mesh_command_tx.lock().await;
-        if let Some(ref tx) = *tx_guard {
-            for port in ports {
-                let owner = osoosi_wire::holograph::HolographEngine::calculate_shard_assignment(
-                    attacker_ip,
-                    port,
-                    &mesh_members,
-                );
+        for port in ports {
+            let owner = osoosi_wire::holograph::HolographEngine::calculate_shard_assignment(
+                attacker_ip,
+                port,
+                &mesh_members,
+            );
 
-                let shard = osoosi_types::GhostShardData {
-                    attacker_ip: attacker_ip.to_string(),
-                    virtual_port: port,
-                    deception_type: match port {
-                        22 => osoosi_types::DeceptionType::SshDelay,
-                        80 | 443 => osoosi_types::DeceptionType::HttpLabyrinth,
-                        _ => osoosi_types::DeceptionType::DbSimulation,
-                    },
-                    shard_owner: owner,
-                };
+            let shard = osoosi_types::GhostShardData {
+                attacker_ip: attacker_ip.to_string(),
+                virtual_port: port,
+                deception_type: match port {
+                    22 => osoosi_types::DeceptionType::SshDelay,
+                    80 | 443 => osoosi_types::DeceptionType::HttpLabyrinth,
+                    _ => osoosi_types::DeceptionType::DbSimulation,
+                },
+                shard_owner: owner,
+            };
 
+            self.holograph.add_shard(shard.clone());
+
+            let tx_guard = self.mesh_command_tx.lock().await;
+            if let Some(ref tx) = *tx_guard {
                 let _ = tx.try_send(osoosi_wire::MeshCommand::BroadcastGhostShard(shard));
             }
         }
@@ -8614,13 +8664,25 @@ impl EdrOrchestrator {
             let request = queue.remove(pos);
             info!("Action approved: {} (ID: {})", request.action, threat_id);
             self.decision_engine.record_rl_feedback(threat_id, 1.0, &request.action);
+            self.policy.update_voter_weights_from_feedback(true, 0.05);
             self.audit.log(
                 "ACTION_APPROVED",
                 serde_json::json!({"id": threat_id, "action": request.action}),
             );
 
-            // In a real implementation, we would re-trigger the action here.
-            // For now, we simulate success as the dashboard expects.
+            // If a corresponding threat is stored in memory, entangle and broadcast to mesh
+            if let Ok(threats) = self.memory.get_threats_for_training(100) {
+                if let Some(t) = threats.into_iter().find(|t| t.id == threat_id) {
+                    if let Some(ref proc_name) = t.process_name {
+                        let pid = self.find_pid_by_name(proc_name).await.unwrap_or(0);
+                        if pid > 4 {
+                            self.entangle_process(pid, proc_name).await;
+                        }
+                    }
+                    self.broadcast_threat_to_mesh(t).await;
+                }
+            }
+
             Ok(())
         } else {
             anyhow::bail!("Pending action not found")
@@ -8634,6 +8696,7 @@ impl EdrOrchestrator {
             let request = queue.remove(pos);
             info!("Action rejected: {} (ID: {})", request.action, threat_id);
             self.decision_engine.record_rl_feedback(threat_id, -1.0, "allow");
+            self.policy.update_voter_weights_from_feedback(false, 0.05);
             self.audit.log(
                 "ACTION_REJECTED",
                 serde_json::json!({"id": threat_id, "action": request.action}),
@@ -8642,6 +8705,40 @@ impl EdrOrchestrator {
         } else {
             anyhow::bail!("Pending action not found")
         }
+    }
+
+    /// Apply SkyRL reinforcement learning policy updates to consensus voters & decision engine.
+    pub async fn apply_skyrl_policy_update(&self, mean_loss: f64, mean_reward: f64) {
+        let is_positive = mean_reward >= 0.0;
+        self.policy.update_voter_weights_from_feedback(is_positive, 0.02);
+        self.decision_engine.record_rl_feedback("skyrl-continuous", mean_reward, if is_positive { "malicious" } else { "benign" });
+        info!(
+            "[SKYRL-INTEGRATION] Applied RL policy update: mean_loss={:.4}, mean_reward={:.4}, voter_weight_nudge={:+0.02}",
+            mean_loss, mean_reward, if is_positive { 0.02 } else { -0.02 }
+        );
+    }
+
+    /// Retrieve full status of deception mesh: Ghost Nodes, Holograph Shards, Canary Honey-files, and Entanglements.
+    pub async fn get_deception_status(&self) -> serde_json::Value {
+        let ghost_status = self.ghost_nodes.get_status();
+        let shards = self.holograph.list_shards();
+        let canaries = self.canary.list_canaries();
+        let entanglements = {
+            let eng = self.deception_engine.read().await;
+            eng.list_entanglements()
+        };
+
+        serde_json::json!({
+            "ghost_nodes": ghost_status,
+            "holograph_shards": shards,
+            "shard_count": self.holograph.shard_count(),
+            "canary_files": canaries,
+            "canary_count": canaries.len(),
+            "morphic_entanglements": entanglements.iter().map(|(pid, name)| {
+                serde_json::json!({ "pid": pid, "process_name": name })
+            }).collect::<Vec<_>>(),
+            "total_interactions": ghost_status.get("total_interactions").and_then(|v| v.as_u64()).unwrap_or(0),
+        })
     }
 
     /// Evaluates a program or file through multi-detector consensus:
