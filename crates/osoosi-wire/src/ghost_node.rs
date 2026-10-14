@@ -4,7 +4,7 @@ use tokio::io::AsyncWriteExt;
 use tokio::net::TcpListener;
 use tokio::sync::mpsc::Sender;
 use tokio::sync::Mutex;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 pub struct GhostNodeManager {
     node_id: String,
@@ -36,8 +36,8 @@ impl GhostNodeManager {
         let (listener, bound_port) = match TcpListener::bind(format!("0.0.0.0:{}", port)).await {
             Ok(l) => (l, port),
             Err(e) => {
-                warn!(
-                    "Coy Deception: Primary port {} unavailable for '{}' ({}); attempting decoy fallback port {}",
+                debug!(
+                    "Coy Deception: Primary port {} in use by OS for '{}' ({}); binding decoy fallback port {}",
                     port, service_name, e, fallback_port
                 );
                 match TcpListener::bind(format!("0.0.0.0:{}", fallback_port)).await {

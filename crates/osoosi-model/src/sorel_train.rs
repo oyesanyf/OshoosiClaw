@@ -103,6 +103,57 @@ impl SorelTrainer {
         Ok(())
     }
 
+    pub fn train_from_features(
+        &mut self,
+        samples: &[(Vec<f32>, f32)],
+        epochs: usize,
+        batch_size: usize,
+        learning_rate: f64,
+    ) -> Result<()> {
+        let mut sgd = SGD::new(self.varmap.all_vars(), learning_rate)?;
+
+        for epoch in 0..epochs {
+            let mut total_loss = 0.0f32;
+            let mut batch_count = 0;
+
+            for chunk in samples.chunks(batch_size) {
+                let mut batch_features = Vec::with_capacity(chunk.len());
+                let mut batch_labels = Vec::with_capacity(chunk.len());
+
+                for (features, label) in chunk {
+                    batch_features.push(Tensor::from_vec(features.clone(), (1, 2381), &self.device)?);
+                    batch_labels.push(*label);
+                }
+
+                if batch_features.is_empty() {
+                    continue;
+                }
+
+                let x = Tensor::cat(&batch_features, 0)?;
+                let y = Tensor::from_vec(batch_labels, (batch_features.len(), 1), &self.device)?;
+
+                let logits = self.model.forward(&x)?;
+                let loss = binary_crossentropy(&logits, &y)?;
+
+                sgd.backward_step(&loss)?;
+
+                total_loss += loss.to_vec0::<f32>()?;
+                batch_count += 1;
+            }
+
+            if batch_count > 0 {
+                info!(
+                    "Epoch {}/{}: Avg Loss = {:.4}",
+                    epoch + 1,
+                    epochs,
+                    total_loss / batch_count as f32
+                );
+            }
+        }
+
+        Ok(())
+    }
+
     pub fn save<P: AsRef<Path>>(&self, path: P) -> Result<()> {
         self.model.save(path)?;
         Ok(())

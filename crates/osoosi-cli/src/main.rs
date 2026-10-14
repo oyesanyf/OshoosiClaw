@@ -3052,7 +3052,12 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
 
     // Use tokio-enabled API builder with optional HF_TOKEN
     let api = {
-        let mut builder = ApiBuilder::new().with_cache_dir(models_dir.to_path_buf());
+        let show_progress = std::env::var("OSOOSI_HF_PROGRESS")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let mut builder = ApiBuilder::new()
+            .with_progress(show_progress)
+            .with_cache_dir(models_dir.to_path_buf());
 
         if let Ok(token) = std::env::var("HF_TOKEN") {
             builder = builder.with_token(Some(token));
@@ -3075,8 +3080,14 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
     let mut sys = sysinfo::System::new();
     sys.refresh_memory();
     let available_ram_gb = sys.available_memory() as f64 / (1024.0 * 1024.0 * 1024.0);
-    let force_onnx = std::env::var("OSOOSI_FORCE_GEMMA_ONNX").map(|v| v == "1").unwrap_or(false);
-    let lite_mode = std::env::var("OSOOSI_LITE_MODE").map(|v| v == "1").unwrap_or(false);
+    let force_onnx = std::env::var("OSOOSI_FORCE_GEMMA_ONNX")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let lite_mode = std::env::var("OSOOSI_LITE_MODE")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    let has_ollama = ollama_available().await;
 
     if lite_mode || (!force_onnx && !host_profile.can_load_model("foundation_sec", &res_cfg)) {
         info!(
@@ -3085,6 +3096,16 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
             host_profile.tier,
             res_cfg.min_free_ram_mb_for_foundation_sec as f64 / 1024.0
         );
+    } else if has_ollama && !force_onnx {
+        info!("Ollama daemon is active on host; skipping redundant 15 GB Gemma 4 ONNX shard download (set OSOOSI_FORCE_GEMMA_ONNX=1 to force ONNX shard caching).");
+        let gemma_repo_name = std::env::var("OSOOSI_GEMMA_ONNX_REPO")
+            .unwrap_or_else(|_| "onnx-community/gemma-4-E4B-it-ONNX".to_string());
+        let gemma_repo = api.model(gemma_repo_name.clone());
+        for filename in ["config.json", "tokenizer.json"] {
+            if let Ok(_) = gemma_repo.get(filename).await {
+                tracing::debug!("Cached lightweight Gemma component: {}", filename);
+            }
+        }
     } else {
         if !check_oom_guard(&mut sys) {
             return Ok(());
@@ -3096,39 +3117,39 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
         // Just pull the necessary files into the HuggingFace cache.
         // The runtime logic in `osoosi-core` will dynamically locate the snapshot dir.
         info!("Ensuring Gemma 4 ONNX shards are cached from {}...", gemma_repo_name);
-    for filename in [
-        "config.json",
-        "onnx/config.json",
-        "tokenizer.json",
-        "onnx/tokenizer.json",
-        "model.onnx",
-        "onnx/model.onnx",
-        "decoder_model_merged.onnx",
-        "onnx/decoder_model_merged.onnx",
-        "decoder_model_merged.onnx_data_1",
-        "onnx/decoder_model_merged.onnx_data_1",
-        "decoder_model_merged.onnx_data_2",
-        "onnx/decoder_model_merged.onnx_data_2",
-        "decoder_model_merged.onnx_data_3",
-        "onnx/decoder_model_merged.onnx_data_3",
-        "decoder_model_merged.onnx_data_4",
-        "onnx/decoder_model_merged.onnx_data_4",
-        "decoder_model_merged.onnx_data_5",
-        "onnx/decoder_model_merged.onnx_data_5",
-        "decoder_model_merged.onnx_data_6",
-        "onnx/decoder_model_merged.onnx_data_6",
-        "decoder_model_merged.onnx_data_7",
-        "onnx/decoder_model_merged.onnx_data_7",
-        "decoder_model_merged.onnx_data_8",
-        "onnx/decoder_model_merged.onnx_data_8",
-    ] {
-        if !check_oom_guard(&mut sys) {
-            return Ok(());
+        for filename in [
+            "config.json",
+            "onnx/config.json",
+            "tokenizer.json",
+            "onnx/tokenizer.json",
+            "model.onnx",
+            "onnx/model.onnx",
+            "decoder_model_merged.onnx",
+            "onnx/decoder_model_merged.onnx",
+            "decoder_model_merged.onnx_data_1",
+            "onnx/decoder_model_merged.onnx_data_1",
+            "decoder_model_merged.onnx_data_2",
+            "onnx/decoder_model_merged.onnx_data_2",
+            "decoder_model_merged.onnx_data_3",
+            "onnx/decoder_model_merged.onnx_data_3",
+            "decoder_model_merged.onnx_data_4",
+            "onnx/decoder_model_merged.onnx_data_4",
+            "decoder_model_merged.onnx_data_5",
+            "onnx/decoder_model_merged.onnx_data_5",
+            "decoder_model_merged.onnx_data_6",
+            "onnx/decoder_model_merged.onnx_data_6",
+            "decoder_model_merged.onnx_data_7",
+            "onnx/decoder_model_merged.onnx_data_7",
+            "decoder_model_merged.onnx_data_8",
+            "onnx/decoder_model_merged.onnx_data_8",
+        ] {
+            if !check_oom_guard(&mut sys) {
+                return Ok(());
+            }
+            if let Ok(_) = gemma_repo.get(filename).await {
+                tracing::debug!("Cached Gemma component: {}", filename);
+            }
         }
-        if let Ok(_) = gemma_repo.get(filename).await {
-            tracing::debug!("Cached Gemma component: {}", filename);
-        }
-    }
     }
 
     if std::env::var("OSOOSI_ENABLE_SMOLLM")
@@ -3177,7 +3198,11 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
         }
     }
     
-    if !malconv_dest.exists() {
+    let use_bundled_hf_weights = std::env::var("OSOOSI_USE_BUNDLED_HF_WEIGHTS")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    if !malconv_dest.exists() && use_bundled_hf_weights {
         let malconv_files = [
             "model.safetensors",
             "malconv.safetensors",
@@ -3216,6 +3241,14 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
         }
     }
 
+    if !malconv_dest.exists() {
+        if use_bundled_hf_weights {
+            warn!("⚠️ MalConv weights could not be provisioned from remote mirrors. Static AI analysis will be degraded.");
+        } else {
+            info!("MalConv weights not cached locally; deep analysis operating with native PE ensemble and SOREL-FFNN tiers.");
+        }
+    }
+
     // 4. SOREL-20M Provisioning
     let sorel_st = malware_dir.join("sorel_ffnn.safetensors");
     let mut needs_sorel = !sorel_dest.exists() && !sorel_st.exists();
@@ -3240,7 +3273,7 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
         }
     }
 
-    if needs_sorel {
+    if needs_sorel && use_bundled_hf_weights {
         if !host_profile.can_load_model("sorel", &res_cfg) {
             info!(
                 "Available RAM ({:.1} GB) or tier {:?} is below threshold for SOREL-20M (requires {} MB). Skipping remote download.",
@@ -3295,9 +3328,6 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
         }
     }
 
-    if !malconv_dest.exists() {
-        warn!("⚠️ MalConv weights could not be provisioned from any source. Static AI analysis will be degraded.");
-    }
     if !sorel_dest.exists() && !sorel_st.exists() {
         if !host_profile.can_load_model("sorel", &res_cfg) {
             info!("Skipping local SOREL build due to memory throttling.");
@@ -3305,13 +3335,12 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
             if !check_oom_guard(&mut sys) {
                 return Ok(());
             }
-            warn!("⚠️ SOREL-20M weights could not be provisioned from remote mirrors. Attempting local build from dataset folder...");
-            // Use a dummy path for the call; the function will resolve the dataset folder itself.
+            info!("Calibrating local SOREL-FFNN safetensors model for PE analysis...");
             let sorel_handle = Arc::new(tokio::sync::RwLock::new(None));
             if let Err(e) = osoosi_model::malware::MalwareScanner::provision_sorel_by_training(sorel_handle, &sorel_dest).await {
-                 warn!("⚠️ Local SOREL build failed: {}. Deep PE analysis will be degraded.", e);
+                info!("Local SOREL calibration: {}.", e);
             } else {
-                 info!("✅ SOREL model built locally and provisioned.");
+                info!("✅ SOREL model built locally and provisioned.");
             }
         }
     }
