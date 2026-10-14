@@ -402,8 +402,36 @@ impl AgentAnomalyDetector {
         q.iter().take(limit).cloned().collect()
     }
 
+    /// Dynamically scans host processes, sockets, and agent trees using native in-process `siquery`
+    /// and populates active session metadata with verified agent processes.
+    pub fn sync_siquery_host_agents(&self) -> Vec<crate::classifier::AgentClassificationRecord> {
+        let discovered = self.classifier.run_siquery_host_scan();
+        for rec in &discovered {
+            if rec.is_verified_agent {
+                let session_id = format!("agent_pid_{}", rec.subject_id);
+                let agent_id = rec
+                    .inferred_workspace_root
+                    .clone()
+                    .unwrap_or_else(|| format!("agent_pid_{}", rec.subject_id));
+
+                self.session_meta
+                    .entry(session_id.clone())
+                    .or_insert_with(|| SessionMeta {
+                        session_id,
+                        agent_id,
+                        total_calls: 1,
+                        flagged_anomalies: 0,
+                        last_active: rec.last_updated,
+                        highest_severity: AlertSeverity::Low,
+                    });
+            }
+        }
+        discovered
+    }
+
     /// Returns session tracking summaries for all active agent sessions.
     pub fn get_session_summaries(&self) -> Vec<AgentSessionSummary> {
+        self.sync_siquery_host_agents();
         self.session_meta
             .iter()
             .map(|entry| {
@@ -468,6 +496,7 @@ impl AgentAnomalyDetector {
 
     /// Returns containment status metrics, discovered agents, and recent mesh watchouts.
     pub async fn get_containment_status(&self) -> serde_json::Value {
+        self.sync_siquery_host_agents();
         let mut status = self.containment_ring.get_status_summary().await;
         let discovered_agents: Vec<crate::classifier::AgentClassificationRecord> =
             self.classifier.records.iter().map(|r| r.value().clone()).collect();

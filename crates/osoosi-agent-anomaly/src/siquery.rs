@@ -141,7 +141,7 @@ impl SiqueryEngine {
         if !is_pragma && (need_processes || need_sockets || need_mmap || need_envs || need_pipes || need_sysinfo || need_hosts) {
             let mut sys = System::new();
             if need_processes || need_envs || need_mmap || need_pipes {
-                sys.refresh_processes();
+                sys.refresh_processes_specifics(sysinfo::ProcessRefreshKind::everything());
             }
             if need_sysinfo {
                 sys.refresh_cpu();
@@ -1104,5 +1104,30 @@ mod tests {
         let engine = SiqueryEngine::new();
         let res = engine.execute_query("DROP TABLE processes;");
         assert!(res.is_err(), "Mutating SQL queries must be rejected");
+    }
+
+    #[test]
+    fn test_live_host_agent_inspection() {
+        let engine = SiqueryEngine::new();
+
+        // 1. Check processes with sockets on 443 or 11434 or loopback
+        let query1 = "SELECT DISTINCT p.pid, p.name, p.path, p.cmdline, p.parent, s.remote_address, s.remote_port, s.local_address, s.local_port \
+                      FROM processes p JOIN process_open_sockets s ON p.pid = s.pid \
+                      WHERE s.remote_port = 443 OR s.remote_port = 11434 OR s.local_address = '127.0.0.1';";
+        let rows1 = engine.execute_query(query1).unwrap_or_default();
+        assert!(!rows1.is_empty(), "Live host inspection must find processes with open sockets");
+
+        // 2. Check process tree + sockets + child fanout
+        let query2 = "SELECT p.pid, p.name, p.cmdline, p.cwd, p.parent, \
+                             COUNT(DISTINCT c.pid) AS child_count, \
+                             COUNT(DISTINCT s.remote_port) AS socket_count \
+                      FROM processes p \
+                      JOIN processes c ON c.parent = p.pid \
+                      JOIN process_open_sockets s ON p.pid = s.pid \
+                      WHERE s.remote_port = 443 OR s.local_address = '127.0.0.1' \
+                      GROUP BY p.pid \
+                      HAVING child_count >= 1;";
+        let rows2 = engine.execute_query(query2).unwrap_or_default();
+        assert!(!rows2.is_empty(), "Live host inspection must find process trees with children and sockets");
     }
 }

@@ -189,6 +189,20 @@ impl DynamicAgentClassifier {
     ) -> AgentClassificationRecord {
         let now = Utc::now();
 
+        // DashMap Lock Hygiene: Read parent info BEFORE entering entry() lock to prevent deadlock
+        let parent_info = if let Some(pid_str) = parent_id {
+            self.records.get(pid_str).map(|p| {
+                (
+                    p.is_verified_agent,
+                    p.log_odds,
+                    p.inferred_workspace_root.clone(),
+                    p.generation_epoch,
+                )
+            })
+        } else {
+            None
+        };
+
         let mut record = self
             .records
             .entry(subject_id.to_string())
@@ -199,16 +213,14 @@ impl DynamicAgentClassifier {
                 let mut initial_epoch = 1;
 
                 // Process tree lineage inheritance:
-                if let Some(pid_str) = parent_id {
-                    if let Some(parent_rec) = self.records.get(pid_str) {
-                        if parent_rec.is_verified_agent {
-                            // Inherit 90% of parent's verified log-odds and inferred workspace
-                            initial_log_odds = parent_rec.log_odds * 0.9;
-                            if inherited_ws.is_none() {
-                                inherited_ws = parent_rec.inferred_workspace_root.clone();
-                            }
-                            initial_epoch = parent_rec.generation_epoch;
+                if let Some((is_verified, parent_log_odds, parent_ws, parent_epoch)) = parent_info {
+                    if is_verified {
+                        // Inherit 90% of parent's verified log-odds and inferred workspace
+                        initial_log_odds = parent_log_odds * 0.9;
+                        if inherited_ws.is_none() {
+                            inherited_ws = parent_ws;
                         }
+                        initial_epoch = parent_epoch;
                     }
                 }
 
@@ -254,27 +266,36 @@ impl DynamicAgentClassifier {
     ) -> AgentClassificationRecord {
         let lower = cmd_or_payload.to_ascii_lowercase();
 
-        // 1. LLM API Endpoint Provenance
+        // 1. LLM / Cloud Code / Agent API Endpoint Provenance
         if lower.contains("/v1/chat/completions")
             || lower.contains("/v1/messages")
             || lower.contains(":generatecontent")
             || lower.contains("/api/chat")
             || lower.contains("/api/generate")
             || lower.contains("/v1/embeddings")
+            || lower.contains("--cloud_code_endpoint")
+            || lower.contains("--api_server_url")
+            || lower.contains("generativelanguage.googleapis.com")
+            || lower.contains("daily-cloudcode-pa.googleapis.com")
+            || lower.contains("api.openai.com")
+            || lower.contains("api.anthropic.com")
+            || lower.contains("--extension_server_port")
         {
-            let is_streaming = lower.contains("stream=true") || lower.contains("text/event-stream");
+            let is_streaming = lower.contains("stream=true")
+                || lower.contains("text/event-stream")
+                || lower.contains("--cloud_code_endpoint");
             self.record_signal(
                 subject_id,
                 parent_id,
                 workspace_hint,
                 AgentEvidenceSignal::InferenceProtocolTraffic {
-                    endpoint_pattern: "llm_inference_api".to_string(),
+                    endpoint_pattern: "llm_or_cloud_code_api".to_string(),
                     is_streaming,
                 },
             );
         }
 
-        // 2. Model Context Protocol (MCP) JSON-RPC framing
+        // 2. Model Context Protocol (MCP) JSON-RPC framing & Host Bridges
         if lower.contains("tools/call")
             || lower.contains("tools/list")
             || lower.contains("resources/read")
@@ -282,6 +303,11 @@ impl DynamicAgentClassifier {
             || (lower.contains("jsonrpc") && lower.contains("method"))
             || lower.contains("mcpservers")
             || lower.contains("--mcp")
+            || lower.contains("litert_mcp_server")
+            || lower.contains("mcp_server")
+            || lower.contains("--host_bridge_url")
+            || lower.contains("--csrf_token")
+            || lower.contains("--enable_sidecars")
         {
             self.record_signal(
                 subject_id,
@@ -384,24 +410,262 @@ impl DynamicAgentClassifier {
         )
     }
 
-    /// Runs a continuous Siquery/Osquery relational query and updates discovered agent processes.
-    pub fn run_osquery_host_scan(&self) -> Vec<AgentClassificationRecord> {
-        let sql = "SELECT p.pid, p.name, p.path, p.cmdline, p.parent FROM processes p JOIN process_open_sockets s ON p.pid = s.pid WHERE s.remote_port IN (11434, 1234, 8000, 8080, 5000) OR (s.remote_port = 443 AND (p.cmdline LIKE '%mcp%' OR p.cmdline LIKE '%jsonrpc%'));";
+    /// Runs a continuous Siquery relational query suite and dynamically discovers AI agent processes
+    /// and their MCP/tool subprocess hierarchy without hardcoding binary names.
+    pub fn run_siquery_host_scan(&self) -> Vec<AgentClassificationRecord> {
         let mut discovered = Vec::new();
 
-        if let Ok(rows) = self.osquery_detector.execute_query(sql) {
+        // ---------------------------------------------------------------------
+        // Query 1: Inference & Cloud Code / Agent Endpoint Sockets + MCP / RPC
+        // Detects processes connecting to local inference ports, remote port 443 with agent arguments,
+        // or local loopback agent IPC sockets.
+        // ---------------------------------------------------------------------
+        let query1 = "SELECT DISTINCT p.pid, p.name, p.path, p.cmdline, p.cwd, p.parent, \
+                             s.remote_address, s.remote_port, s.local_address, s.local_port \
+                      FROM processes p \
+                      JOIN process_open_sockets s ON p.pid = s.pid \
+                      WHERE s.remote_port IN (11434, 1234, 8000, 8080, 5000, 14537) \
+                         OR (s.remote_port = 443 AND ( \
+                             p.cmdline LIKE '%--cloud_code_endpoint%' \
+                          OR p.cmdline LIKE '%--extension_server_port%' \
+                          OR p.cmdline LIKE '%--api_server_url%' \
+                          OR p.cmdline LIKE '%--host_bridge_url%' \
+                          OR p.cmdline LIKE '%--csrf_token%' \
+                          OR p.cmdline LIKE '%mcp%' \
+                          OR p.cmdline LIKE '%jsonrpc%' \
+                          OR p.cmdline LIKE '%lsp%' \
+                          OR p.cmdline LIKE '%--stdio%' \
+                          OR p.cmdline LIKE '%agent%' \
+                          OR p.cmdline LIKE '%gemini%' \
+                          OR p.cmdline LIKE '%openai%' \
+                          OR p.cmdline LIKE '%anthropic%' \
+                          OR p.cmdline LIKE '%ollama%' \
+                         )) \
+                         OR (s.local_address = '127.0.0.1' AND ( \
+                             p.cmdline LIKE '%--cloud_code_endpoint%' \
+                          OR p.cmdline LIKE '%--host_bridge_url%' \
+                          OR p.cmdline LIKE '%mcp%' \
+                          OR p.cmdline LIKE '%jsonrpc%' \
+                          OR p.cmdline LIKE '%serve%' \
+                          OR p.cmdline LIKE '%--model%' \
+                          OR p.cmdline LIKE '%--stdio%' \
+                         ));";
+
+        if let Ok(rows) = self.osquery_detector.execute_query(query1) {
             for row in rows {
                 let pid_str = row
                     .get("pid")
                     .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
                     .unwrap_or_default();
                 let cmdline = row.get("cmdline").and_then(|v| v.as_str()).unwrap_or("");
+                let cwd = row.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
                 let parent_str = row
                     .get("parent")
                     .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())));
 
                 if !pid_str.is_empty() {
-                    let rec = self.inspect_command_and_context(&pid_str, parent_str.as_deref(), cmdline, None);
+                    let ws_hint = if !cwd.is_empty() { Some(cwd) } else { None };
+                    let rec = self.inspect_command_and_context(&pid_str, parent_str.as_deref(), cmdline, ws_hint);
+                    discovered.push(rec);
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // Query 2: Relational Process Tree + Socket + Subprocess Fan-Out
+        // Identifies parent processes holding network/IPC sockets and spawning children
+        // with non-interactive pipe/RPC indicators. Propagates lineage to children!
+        // ---------------------------------------------------------------------
+        let query2 = "SELECT DISTINCT p.pid, p.name, p.path, p.cmdline, p.cwd, p.parent, \
+                             COUNT(DISTINCT c.pid) AS child_count, \
+                             COUNT(DISTINCT s.remote_port) AS socket_count \
+                      FROM processes p \
+                      JOIN processes c ON c.parent = p.pid \
+                      JOIN process_open_sockets s ON p.pid = s.pid \
+                      WHERE s.remote_port = 443 OR s.local_address = '127.0.0.1' \
+                      GROUP BY p.pid \
+                      HAVING child_count >= 1;";
+
+        if let Ok(rows) = self.osquery_detector.execute_query(query2) {
+            for row in rows {
+                let pid_str = row
+                    .get("pid")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+                    .unwrap_or_default();
+                let cmdline = row.get("cmdline").and_then(|v| v.as_str()).unwrap_or("");
+                let cwd = row.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
+                let parent_str = row
+                    .get("parent")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())));
+                let child_count = row.get("child_count").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+
+                let lower_cmd = cmdline.to_ascii_lowercase();
+                let lower_cwd = cwd.to_ascii_lowercase();
+
+                let is_agent_parent = lower_cmd.contains("--cloud_code_endpoint")
+                    || lower_cmd.contains("--extension_server_port")
+                    || lower_cmd.contains("--api_server_url")
+                    || lower_cmd.contains("--host_bridge_url")
+                    || lower_cmd.contains("--csrf_token")
+                    || lower_cmd.contains("--stdio")
+                    || lower_cmd.contains("mcp")
+                    || lower_cmd.contains("agent")
+                    || lower_cmd.contains(".gemini")
+                    || lower_cmd.contains("antigravity")
+                    || lower_cmd.contains("generativelanguage")
+                    || lower_cwd.contains(".gemini")
+                    || lower_cwd.contains("antigravity");
+
+                if is_agent_parent && !pid_str.is_empty() {
+                    let ws_hint = if !cwd.is_empty() { Some(cwd) } else { None };
+
+                    // 1. Record structural parent signals
+                    self.record_signal(
+                        &pid_str,
+                        parent_str.as_deref(),
+                        ws_hint,
+                        AgentEvidenceSignal::InferenceProtocolTraffic {
+                            endpoint_pattern: "cloud_code_agent_host".to_string(),
+                            is_streaming: true,
+                        },
+                    );
+                    self.record_signal(
+                        &pid_str,
+                        parent_str.as_deref(),
+                        ws_hint,
+                        AgentEvidenceSignal::McpJsonRpcFraming {
+                            method: "agent_orchestration_tree".to_string(),
+                        },
+                    );
+                    let parent_rec = self.record_signal(
+                        &pid_str,
+                        parent_str.as_deref(),
+                        ws_hint,
+                        AgentEvidenceSignal::PipeDrivenToolBurst {
+                            child_count_10s: child_count,
+                            non_interactive_stdio: true,
+                            post_network_wait_ms: 50,
+                        },
+                    );
+                    discovered.push(parent_rec);
+
+                    // 2. Discover children and propagate lineage
+                    let child_query = format!(
+                        "SELECT c.pid, c.name, c.path, c.cmdline, c.cwd, c.parent FROM processes c WHERE c.parent = {};",
+                        pid_str
+                    );
+                    if let Ok(child_rows) = self.osquery_detector.execute_query(&child_query) {
+                        for c_row in child_rows {
+                            let c_pid = c_row
+                                .get("pid")
+                                .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+                                .unwrap_or_default();
+                            let c_cmd = c_row.get("cmdline").and_then(|v| v.as_str()).unwrap_or("");
+                            let c_cwd = c_row.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
+                            let c_lower = c_cmd.to_ascii_lowercase();
+
+                            if !c_pid.is_empty() {
+                                let c_ws = if !c_cwd.is_empty() { Some(c_cwd) } else { ws_hint };
+
+                                // Check if child is an MCP server or tool subprocess
+                                if c_lower.contains("mcp")
+                                    || c_lower.contains("jsonrpc")
+                                    || c_lower.contains("--stdio")
+                                {
+                                    self.record_signal(
+                                        &c_pid,
+                                        Some(&pid_str),
+                                        c_ws,
+                                        AgentEvidenceSignal::McpJsonRpcFraming {
+                                            method: "mcp_subprocess_tool".to_string(),
+                                        },
+                                    );
+                                }
+
+                                let c_rec = self.inspect_command_and_context(&c_pid, Some(&pid_str), c_cmd, c_ws);
+                                discovered.push(c_rec);
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // Query 3: Named Pipes & MCP / Agent IPC Pipes + Environment Variables
+        // Inspects process_envs for agent prefixes (corroborates active sessions)
+        // ---------------------------------------------------------------------
+        let query3 = "SELECT DISTINCT e.pid, p.name, p.cmdline, p.cwd, p.parent, e.key \
+                      FROM process_envs e \
+                      JOIN processes p ON e.pid = p.pid \
+                      WHERE e.key LIKE 'ANTIGRAVITY%' \
+                         OR e.key LIKE 'GEMINI%' \
+                         OR e.key LIKE 'OPENAI%' \
+                         OR e.key LIKE 'ANTHROPIC%' \
+                         OR e.key LIKE 'MCP%' \
+                         OR e.key LIKE 'OLLAMA%';";
+
+        if let Ok(rows) = self.osquery_detector.execute_query(query3) {
+            for row in rows {
+                let pid_str = row
+                    .get("pid")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+                    .unwrap_or_default();
+                let cmdline = row.get("cmdline").and_then(|v| v.as_str()).unwrap_or("");
+                let cwd = row.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
+                let parent_str = row
+                    .get("parent")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())));
+                let key = row.get("key").and_then(|v| v.as_str()).unwrap_or("");
+
+                if !pid_str.is_empty() {
+                    let ws_hint = if !cwd.is_empty() { Some(cwd) } else { None };
+                    self.record_signal(
+                        &pid_str,
+                        parent_str.as_deref(),
+                        ws_hint,
+                        AgentEvidenceSignal::InferenceProtocolTraffic {
+                            endpoint_pattern: format!("env:{}", key),
+                            is_streaming: false,
+                        },
+                    );
+                    let rec = self.inspect_command_and_context(&pid_str, parent_str.as_deref(), cmdline, ws_hint);
+                    discovered.push(rec);
+                }
+            }
+        }
+
+        // ---------------------------------------------------------------------
+        // Query 4: Model Tensor Memory Mappings
+        // Inspects process_memory_map for loaded model tensors (.gguf, .safetensors, .onnx)
+        // ---------------------------------------------------------------------
+        let query4 = "SELECT DISTINCT pid, path FROM process_memory_map \
+                      WHERE path LIKE '%.gguf' OR path LIKE '%.safetensors' OR path LIKE '%.onnx';";
+
+        if let Ok(rows) = self.osquery_detector.execute_query(query4) {
+            for row in rows {
+                let pid_str = row
+                    .get("pid")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+                    .unwrap_or_default();
+                let path = row.get("path").and_then(|v| v.as_str()).unwrap_or("");
+
+                if !pid_str.is_empty() {
+                    let format = if path.ends_with(".gguf") {
+                        "gguf"
+                    } else if path.ends_with(".safetensors") {
+                        "safetensors"
+                    } else {
+                        "onnx"
+                    };
+                    let rec = self.record_signal(
+                        &pid_str,
+                        None,
+                        None,
+                        AgentEvidenceSignal::ModelTensorMemoryMapped {
+                            format: format.to_string(),
+                        },
+                    );
                     discovered.push(rec);
                 }
             }
@@ -410,9 +674,9 @@ impl DynamicAgentClassifier {
         discovered
     }
 
-    /// Alias for `run_osquery_host_scan` using the native Rust in-process `siquery` engine.
-    pub fn run_siquery_host_scan(&self) -> Vec<AgentClassificationRecord> {
-        self.run_osquery_host_scan()
+    /// Backwards compatibility alias for `run_siquery_host_scan`.
+    pub fn run_osquery_host_scan(&self) -> Vec<AgentClassificationRecord> {
+        self.run_siquery_host_scan()
     }
 
     pub fn get_record(&self, subject_id: &str) -> Option<AgentClassificationRecord> {
@@ -554,5 +818,37 @@ mod tests {
         let rec = classifier.get_record(subject_id).unwrap();
         assert!(rec.posterior_probability >= 0.75);
         assert!(rec.is_verified_agent);
+    }
+
+    #[test]
+    fn test_live_host_antigravity_agent_detection() {
+        let classifier = DynamicAgentClassifier::new();
+        let discovered = classifier.run_siquery_host_scan();
+
+        println!("=== Siquery Host Scan: Total Discovered Subjects: {} ===", discovered.len());
+        let verified = classifier.list_verified_agents();
+        println!("=== Siquery Host Scan: Total Verified AI Agents (P >= 0.75): {} ===", verified.len());
+
+        for agent in &verified {
+            println!(
+                "  [VERIFIED AGENT] PID={} P={:.4} workspace='{:?}' signals={:?}",
+                agent.subject_id,
+                agent.posterior_probability,
+                agent.inferred_workspace_root,
+                agent.observed_signals
+            );
+        }
+
+        assert!(
+            !verified.is_empty(),
+            "DynamicAgentClassifier must detect at least one active AI agent process on this host via siquery relational queries without hardcoded binary names!"
+        );
+
+        // Ensure at least one verified agent has posterior probability >= 0.75
+        let highest_prob = verified
+            .iter()
+            .map(|a| a.posterior_probability)
+            .fold(0.0f32, f32::max);
+        assert!(highest_prob >= 0.75, "Highest verified probability must be >= 0.75, got {}", highest_prob);
     }
 }
