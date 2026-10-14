@@ -144,6 +144,7 @@ impl AgentTrajectory {
 /// Threat voter tracking agentic escapes and anomalous AI runtime subprocess executions.
 pub struct AgenticPolicyVoter {
     trajectories: Arc<DashMap<u32, AgentTrajectory>>,
+    pub agent_beliefs: Arc<DashMap<u32, f64>>,
     ai_runtime_regex: Regex,
     command_interpreter_regex: Regex,
     recon_lolbin_regex: Regex,
@@ -187,12 +188,92 @@ impl AgenticPolicyVoter {
 
         Self {
             trajectories: Arc::new(DashMap::new()),
+            agent_beliefs: Arc::new(DashMap::new()),
             ai_runtime_regex,
             command_interpreter_regex,
             recon_lolbin_regex,
             canary_var_regex,
             shell_injection_regex,
         }
+    }
+
+    /// Dynamically computes the Bayesian AI agent probability for a subject process.
+    /// Incorporates protocol framing (Inference APIs, MCP JSON-RPC, Model Tensors, OTel spans),
+    /// actuation cadence (ETW velocity burst, ephemeral lifetime), and lineage,
+    /// WITHOUT relying solely on binary names.
+    pub fn compute_dynamic_agent_score(&self, pid: u32, event: &HostSecurityEvent) -> f64 {
+        if pid == 0 {
+            return 0.0;
+        }
+
+        let mut belief = self.agent_beliefs.get(&pid).map(|b| *b).unwrap_or(0.20);
+
+        let parent_image = event.data.get("ParentImage").and_then(|v| v.as_str()).unwrap_or("");
+        let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
+        let cmd_line = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("");
+        let lower = format!("{} {} {}", image, parent_image, cmd_line).to_ascii_lowercase();
+
+        // 1. LLM API / Inference Endpoints
+        if lower.contains("/v1/chat/completions")
+            || lower.contains("/v1/messages")
+            || lower.contains(":generatecontent")
+            || lower.contains("/api/chat")
+            || lower.contains("/api/generate")
+            || lower.contains("11434")
+            || lower.contains("ollama")
+        {
+            belief += 0.45;
+        }
+
+        // 2. MCP JSON-RPC framing
+        if lower.contains("tools/call")
+            || lower.contains("tools/list")
+            || lower.contains("resources/read")
+            || lower.contains("prompts/get")
+            || (lower.contains("jsonrpc") && lower.contains("method"))
+            || lower.contains("mcpservers")
+            || lower.contains("--mcp")
+        {
+            belief += 0.45;
+        }
+
+        // 3. Tensor / Model formats
+        if lower.contains(".gguf") || lower.contains(".safetensors") || lower.contains(".onnx") {
+            belief += 0.35;
+        }
+
+        // 4. OpenTelemetry GenAI spans
+        if lower.contains("gen_ai.") || lower.contains("openinference.") || lower.contains("adrian_tool_intent") {
+            belief += 0.40;
+        }
+
+        // 5. ETW Velocity / Actuation Cadence
+        let velocity = event.data.get("ChildSpawnVelocity3s")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        let is_velocity_anomaly = event.data.get("IsVelocityAnomaly")
+            .and_then(|v| v.as_bool())
+            .unwrap_or(false);
+
+        if velocity >= 3 || is_velocity_anomaly {
+            belief += 0.25;
+        }
+
+        let lifetime_ms = event.data.get("ProcessLifetimeMs")
+            .and_then(|v| v.as_u64())
+            .unwrap_or(0);
+        if lifetime_ms > 0 && lifetime_ms < 4000 {
+            belief += 0.15;
+        }
+
+        // 6. Known runtime interpreter prior
+        if self.is_ai_runtime(image) || self.is_ai_runtime(parent_image) {
+            belief += 0.60;
+        }
+
+        let final_belief = belief.clamp(0.0, 1.0);
+        self.agent_beliefs.insert(pid, final_belief);
+        final_belief
     }
 
     /// Check if an image path matches known AI agent runtimes.
@@ -308,9 +389,24 @@ impl AgenticPolicyVoter {
             });
         }
 
-        // 2. Identify if Parent or Current process is an AI Agent Runtime
-        let parent_is_ai = self.is_ai_runtime(parent_image);
-        let self_is_ai = self.is_ai_runtime(image);
+        // 2. Identify if Parent or Current process is an AI Agent Runtime via Bayesian Scoring
+        let current_pid = event.data.get("ProcessId")
+            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok())))
+            .unwrap_or(0) as u32;
+
+        let parent_agent_score = if parent_pid != 0 {
+            self.compute_dynamic_agent_score(parent_pid, event)
+        } else {
+            0.0
+        };
+        let self_agent_score = if current_pid != 0 {
+            self.compute_dynamic_agent_score(current_pid, event)
+        } else {
+            0.0
+        };
+
+        let parent_is_ai = parent_agent_score >= 0.70 || self.is_ai_runtime(parent_image);
+        let self_is_ai = self_agent_score >= 0.70 || self.is_ai_runtime(image);
 
         if !parent_is_ai && !self_is_ai {
             // Neither parent nor current process is an AI runtime
@@ -747,5 +843,25 @@ mod tests {
         assert!(vote_slash.is_some());
         let v_slash = vote_slash.unwrap();
         assert!(v_slash.confidence >= 0.90);
+    }
+
+    #[test]
+    fn test_dynamic_bayesian_agent_scoring_without_hardcoded_binary_name() {
+        let voter = AgenticPolicyVoter::new();
+
+        // Process named "custom_daemon.exe" (NOT in ai_runtime_regex!) but making MCP JSON-RPC calls
+        let mut ev_mcp = create_test_event(
+            "C:\\Services\\custom_daemon.exe",
+            "C:\\Windows\\System32\\WindowsPowerShell\\v1.0\\powershell.exe",
+            "powershell.exe -enc SQBFAFgA... --mcp tools/call jsonrpc",
+            9001,
+        );
+        ev_mcp.data["ChildSpawnVelocity3s"] = json!(4);
+        ev_mcp.data["IsVelocityAnomaly"] = json!(true);
+
+        let vote = voter.evaluate_event(&ev_mcp);
+        assert!(vote.is_some(), "Dynamic Bayesian scoring should discover custom_daemon as agent via MCP framing + ETW velocity");
+        let v = vote.unwrap();
+        assert!(v.confidence >= 0.90);
     }
 }

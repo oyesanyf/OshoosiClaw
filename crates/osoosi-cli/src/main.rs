@@ -87,6 +87,9 @@ struct Cli {
     /// Do not launch web browser on start (skip heavy browser process)
     #[arg(long, global = true, alias = "no-dashboard", alias = "no_browser", alias = "nobrowser", alias = "no-broswer", alias = "nobroswer")]
     pub no_browser: bool,
+    /// Start the OpenỌ̀ṣọ́ọ̀sì security agent daemon (alias for `start` subcommand)
+    #[arg(long, global = true)]
+    pub start: bool,
     /// Enable debug logging (sets log level to DEBUG). Allowed before or after subcommands, e.g. `osoosi sandbox status --debug`
     #[arg(short, long, global = true)]
     debug: bool,
@@ -712,6 +715,16 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         Some(Commands::Service { ref action }) => {
             return service::handle_service_action(action);
         },
+        _ if cli.start => Commands::Start {
+            dashboard: true,
+            no_dashboard: false,
+            lite: cli.lite,
+            no_browser: cli.no_browser,
+            sandbox: false,
+            sandbox_name: "osoosi".to_string(),
+            sandbox_deploy_gateway: false,
+            wsl: false,
+        },
         Some(other) => other,
         None if cli.grant_access => Commands::GrantAccess,
         None => Commands::Start {
@@ -940,6 +953,13 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 osoosi_telemetry::AgentProvisioner::new(orchestrator.secured_executor());
             if let Err(e) = provisioner.provision_firewall().await {
                 warn!("Warning: Failed to verify/apply firewall rules: {}. Mesh connectivity may be degraded.", e);
+            }
+            if let Err(e) = provisioner.provision_osquery_if_missing().await {
+                warn!("Warning: Osquery auto-provisioning encountered an issue: {}", e);
+            }
+            #[cfg(target_os = "windows")]
+            if let Err(e) = provisioner.provision_sysmon_if_missing().await {
+                warn!("Warning: Sysmon auto-provisioning encountered an issue: {}", e);
             }
 
             // Start components

@@ -4,11 +4,28 @@
 //! based on Google's Gemini Enterprise Agent AAD architecture and the OWASP Top 10
 //! for Agentic Applications (2026).
 
+pub mod agentjacking_guard;
+pub mod atlas_arm;
+pub mod breakout_defense;
+pub mod classifier;
+pub mod containment_ring;
 pub mod detector;
+pub mod rasp;
 pub mod reasoner;
 pub mod screener;
 pub mod types;
 
+pub use agentjacking_guard::{
+    AgentjackingGuard, AgentjackingPhase, AgentjackingVerdict, LogSanitizer, SessionTaintState,
+};
+pub use breakout_defense::{
+    validate_agent_egress_url, validate_agent_filesystem_access, BreakoutDefenseCoordinator,
+    UnifiedBreakoutEvaluation,
+};
+pub use classifier::{
+    AgentClassificationRecord, AgentEvidenceSignal, DynamicAgentClassifier, OsqueryAgentDetector,
+};
+pub use containment_ring::{compute_ring_hmac, AgentContainmentRing, ContainmentAuditEntry};
 pub use detector::AgentAnomalyDetector;
 pub use reasoner::SemanticReasoningEngine;
 pub use screener::{ScreenerResult, SessionWindow, StatisticalScreener};

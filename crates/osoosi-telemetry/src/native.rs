@@ -5,6 +5,16 @@ use osoosi_types::{HostSecurityEvent, HostEventSource};
 use tokio::sync::mpsc;
 use tracing::{error, info, warn};
 use chrono::Utc;
+use dashmap::DashMap;
+use std::sync::Arc;
+
+#[derive(Debug, Clone)]
+pub struct ProcessMeta {
+    pub pid: u32,
+    pub image_name: String,
+    pub started_at: std::time::Instant,
+    pub child_spawn_times: Vec<std::time::Instant>,
+}
 
 pub struct NativeTelemetryEngine {
     tx: mpsc::Sender<HostSecurityEvent>,
@@ -96,6 +106,8 @@ impl NativeTelemetryEngine {
             // --- 2b. Kernel Process Provider (Direct Port) ---
             let tx_k = tx.clone();
             let computer_k = computer.clone();
+            let active_processes: Arc<DashMap<u32, ProcessMeta>> = Arc::new(DashMap::new());
+            let active_procs_cb = active_processes.clone();
             let kernel_process_provider = Provider::by_guid("22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716")
                 .add_callback(move |event, schema_locator| {
                     let event_id = event.event_id();
@@ -103,11 +115,15 @@ impl NativeTelemetryEngine {
                     if event_id == 1 || event_id == 2 {
                         if let Ok(schema) = schema_locator.event_schema(event) {
                             let parser = Parser::create(event, &schema);
-                            let pid: u32 = parser.try_parse("ProcessID").unwrap_or(0);
-                            let parent_pid: u32 = parser.try_parse("ParentProcessID").unwrap_or(0);
-                            let image: String = parser.try_parse("ImageName").unwrap_or_else(|_| parser.try_parse("CommandLine").unwrap_or_default());
-                            
-                            let sysmon_id = if event_id == 1 { 1 } else { 5 };
+                            let pid: u32 = parser.try_parse("ProcessID")
+                                .or_else(|_| parser.try_parse("ProcessId"))
+                                .unwrap_or(0);
+                            let parent_pid: u32 = parser.try_parse("ParentProcessID")
+                                .or_else(|_| parser.try_parse("ParentProcessId"))
+                                .unwrap_or(0);
+                            let image: String = parser.try_parse("ImageName")
+                                .or_else(|_| parser.try_parse("ImageFileName"))
+                                .unwrap_or_else(|_| parser.try_parse("CommandLine").unwrap_or_default());
                             
                             let mut data = serde_json::Map::new();
                             data.insert("ProcessId".to_string(), serde_json::json!(pid));
@@ -116,16 +132,61 @@ impl NativeTelemetryEngine {
                             if let Ok(cmd) = parser.try_parse::<String>("CommandLine") {
                                 data.insert("CommandLine".to_string(), serde_json::json!(cmd));
                             }
-                            
-                            let ev = HostSecurityEvent {
-                                source: HostEventSource::WindowsEventLog,
-                                event_id: sysmon_id,
-                                timestamp: Utc::now(),
-                                computer: computer_k.clone(),
-                                data: serde_json::Value::Object(data),
-                                causal_parent: None,
-                            };
-                            let _ = tx_k.blocking_send(ev);
+
+                            if event_id == 1 {
+                                let now = std::time::Instant::now();
+                                let mut parent_image = String::new();
+                                let mut velocity_3s = 0usize;
+
+                                if parent_pid != 0 {
+                                    if let Some(mut parent_meta) = active_procs_cb.get_mut(&parent_pid) {
+                                        parent_image = parent_meta.image_name.clone();
+                                        parent_meta.child_spawn_times.retain(|t| now.duration_since(*t).as_secs() < 3);
+                                        parent_meta.child_spawn_times.push(now);
+                                        velocity_3s = parent_meta.child_spawn_times.len();
+                                    }
+                                }
+
+                                if !parent_image.is_empty() {
+                                    data.insert("ParentImage".to_string(), serde_json::json!(parent_image));
+                                }
+                                data.insert("ChildSpawnVelocity3s".to_string(), serde_json::json!(velocity_3s));
+                                data.insert("IsVelocityAnomaly".to_string(), serde_json::json!(velocity_3s > 5));
+
+                                active_procs_cb.insert(pid, ProcessMeta {
+                                    pid,
+                                    image_name: image.clone(),
+                                    started_at: now,
+                                    child_spawn_times: Vec::new(),
+                                });
+
+                                let ev = HostSecurityEvent {
+                                    source: HostEventSource::WindowsEventLog,
+                                    event_id: 1, // Sysmon ProcessCreate
+                                    timestamp: Utc::now(),
+                                    computer: computer_k.clone(),
+                                    data: serde_json::Value::Object(data),
+                                    causal_parent: None,
+                                };
+                                let _ = tx_k.blocking_send(ev);
+                            } else {
+                                let lifetime_ms = if let Some((_, meta)) = active_procs_cb.remove(&pid) {
+                                    meta.started_at.elapsed().as_millis() as u64
+                                } else {
+                                    0u64
+                                };
+                                data.insert("ProcessLifetimeMs".to_string(), serde_json::json!(lifetime_ms));
+
+                                let ev = HostSecurityEvent {
+                                    source: HostEventSource::WindowsEventLog,
+                                    event_id: 5, // Sysmon ProcessTerminate
+                                    timestamp: Utc::now(),
+                                    computer: computer_k.clone(),
+                                    data: serde_json::Value::Object(data),
+                                    causal_parent: None,
+                                };
+                                let _ = tx_k.blocking_send(ev);
+                            }
                         }
                     }
                 })

@@ -80,6 +80,7 @@ impl AgentProvisioner {
         self.provision_behavioral_model().await?;
         #[cfg(target_os = "windows")]
         self.provision_sysmon_if_missing().await?;
+        self.provision_osquery_if_missing().await?;
         Ok(())
     }
 
@@ -427,6 +428,93 @@ impl AgentProvisioner {
         Ok(())
     }
 
+    /// Dynamically acquire, extract, and configure Osquery if missing.
+    pub async fn provision_osquery_if_missing(&self) -> anyhow::Result<()> {
+        info!("Checking Osquery presence and configuration...");
+
+        // Ensure config/osquery.conf exists
+        let config_path = PathBuf::from("config").join("osquery.conf");
+        if !config_path.exists() {
+            if let Some(parent) = config_path.parent() {
+                let _ = std::fs::create_dir_all(parent);
+            }
+            const DEFAULT_OSQUERY_CONF: &str = r#"{
+  "options": {
+    "logger_path": "logs/osquery",
+    "disable_events": "false",
+    "schedule_splay_percent": "10"
+  },
+  "schedule": {
+    "ai_agent_inference_sockets": {
+      "query": "SELECT p.pid, p.name, p.path, p.cmdline, p.parent, s.remote_address, s.remote_port, s.state FROM processes p JOIN process_open_sockets s ON p.pid = s.pid WHERE s.remote_port IN (11434, 1234, 8000, 8080, 5000) OR (s.remote_port = 443 AND (p.cmdline LIKE '%mcp%' OR p.cmdline LIKE '%jsonrpc%'));",
+      "interval": 30,
+      "description": "Continuous relational discovery of processes with active LLM inference sockets or streaming MCP connections"
+    },
+    "ai_agent_mcp_pipe_hierarchy": {
+      "query": "SELECT p.pid, p.name, p.parent, p.cmdline, c.pid AS child_pid, c.name AS child_name, c.cmdline AS child_cmdline FROM processes p JOIN processes c ON c.parent = p.pid WHERE p.pid IN (SELECT pid FROM pipes WHERE name LIKE '%mcp%' OR name LIKE '%AnonymousPipe%' OR flags LIKE '%PIPE%');",
+      "interval": 30,
+      "description": "Continuous discovery of agent processes spawning child subprocesses via non-interactive stdio / MCP JSON-RPC pipes"
+    },
+    "ai_agent_breakout_sensitive_access": {
+      "query": "SELECT p.pid, p.name, p.parent, p.cmdline, p.cwd FROM processes p WHERE p.cmdline LIKE '%169.254.169.254%' OR p.cmdline LIKE '%\\config\\SAM%' OR p.cmdline LIKE '%comsvcs.dll%' OR p.cmdline LIKE '%MiniDump%';",
+      "interval": 15,
+      "description": "Detection of hard AI agent breakout indicators: AWS metadata SSRF, SAM credential dumping, and minidump scraping"
+    }
+  }
+}
+"#;
+            let _ = std::fs::write(&config_path, DEFAULT_OSQUERY_CONF);
+            info!("Created default Osquery configuration at '{}'.", config_path.display());
+        }
+
+        // Check if osqueryi exists locally or in system path
+        let osqueryi_local = PathBuf::from("tools").join("osquery").join("osqueryi.exe");
+        let osqueryi_system = PathBuf::from(r"C:\Program Files\osquery\osqueryi.exe");
+
+        #[cfg(target_os = "windows")]
+        {
+            if !osqueryi_local.exists() && !osqueryi_system.exists() {
+                info!("Osquery binary not found. Auto-provisioning official Osquery Windows MSI...");
+                let tools_dir = PathBuf::from("tools").join("osquery");
+                let _ = std::fs::create_dir_all(&tools_dir);
+
+                let msi_path = PathBuf::from("tools").join("osquery_temp.msi");
+                let extract_dir = PathBuf::from("tools").join("osquery_extract_temp");
+                let download_url = "https://github.com/osquery/osquery/releases/download/5.13.1/osquery-5.13.1.msi";
+
+                if let Err(e) = self.download_with_resume(download_url, &msi_path).await {
+                    warn!("Failed to download Osquery MSI: {}", e);
+                } else if msi_path.exists() {
+                    let mut cmd = Command::new("msiexec.exe");
+                    cmd.args(["/a", msi_path.to_str().unwrap_or(""), "/qn", &format!("TARGETDIR={}", extract_dir.display())]);
+                    let _ = self.executor.execute(cmd).await;
+
+                    if extract_dir.exists() {
+                        for entry in walkdir::WalkDir::new(&extract_dir).into_iter().filter_map(|e| e.ok()) {
+                            if entry.path().extension().and_then(|ext| ext.to_str()) == Some("exe") {
+                                if let Some(file_name) = entry.path().file_name() {
+                                    let dest = tools_dir.join(file_name);
+                                    let _ = std::fs::copy(entry.path(), &dest);
+                                    info!("Provisioned Osquery binary: '{}'", dest.display());
+                                }
+                            }
+                        }
+                        let _ = std::fs::remove_dir_all(&extract_dir);
+                    }
+                    let _ = std::fs::remove_file(&msi_path);
+                }
+            } else {
+                info!("Osquery binary is available.");
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            info!("Osquery check complete on non-Windows host.");
+        }
+
+        Ok(())
+    }
 
     /// Provision Firewall rules for the Oshoosi Mesh.
     pub async fn provision_firewall(&self) -> anyhow::Result<()> {

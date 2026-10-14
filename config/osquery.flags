@@ -1,0 +1,5 @@
+--config_path=config/osquery.conf
+--logger_path=logs/osquery
+--disable_events=false
+--schedule_splay_percent=10
+--enable_syslog=false

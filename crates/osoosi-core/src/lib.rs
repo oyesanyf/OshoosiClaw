@@ -2799,22 +2799,37 @@ impl EdrOrchestrator {
             }
         });
 
-        // 8. Agent Anomaly Detection (AAD) findings listener
+        // 8a. Osquery relational discovery loop for AI agents (every 30s)
+        let osquery_orch = self.clone();
+        tokio::spawn(async move {
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(30));
+            loop {
+                interval.tick().await;
+                let records = osquery_orch.agent_anomaly_detector.classifier.run_osquery_host_scan();
+                if !records.is_empty() {
+                    debug!("Osquery relational scan identified {} active AI agent candidates", records.len());
+                }
+            }
+        });
+
+        // 8b. Agent Anomaly Detection (AAD) findings listener & P2P Mesh Watch-Out Broadcast
         let aad_orch = self.clone();
         let mut aad_rx = self.agent_anomaly_detector.subscribe_findings();
         tokio::spawn(async move {
             info!("Agent Anomaly Detection (AAD) findings listener active.");
             while let Ok(finding) = aad_rx.recv().await {
-                if finding.severity == osoosi_agent_anomaly::AlertSeverity::Critical {
+                if finding.severity == osoosi_agent_anomaly::AlertSeverity::Critical
+                    || finding.severity == osoosi_agent_anomaly::AlertSeverity::High
+                {
                     warn!(
-                        "CRITICAL Agent Anomaly Detected [{}]: {} (Agent: {}, Session: {})",
+                        "Agent Anomaly Threat [{}]: {} (Agent: {}, Session: {})",
                         finding.risk_category.as_code(),
                         finding.rationale,
                         finding.agent_id,
                         finding.session_id
                     );
                     aad_orch.audit.log(
-                        "AGENT_ANOMALY_CRITICAL",
+                        "AGENT_ANOMALY_THREAT",
                         serde_json::json!({
                             "id": finding.id,
                             "agent_id": finding.agent_id,
@@ -2828,6 +2843,50 @@ impl EdrOrchestrator {
                             "evidence": finding.evidence,
                         }),
                     );
+
+                    let threat_sig = osoosi_types::ThreatSignature {
+                        id: format!("aad-{}", finding.id),
+                        cve_id: None,
+                        hash_blake3: None,
+                        process_name: Some(finding.agent_id.clone()),
+                        parent_process: None,
+                        version: None,
+                        confidence: finding.confidence_score as f32,
+                        detector_count: 1,
+                        detected_at: chrono::Utc::now(),
+                        source_node: aad_orch.trust.did().to_string(),
+                        signature: None,
+                        public_key: None,
+                        merkle_proof: None,
+                        recommended_action: osoosi_types::ResponseAction::Isolate,
+                        reason: Some(format!("[AAD Consensus] {}: {}", finding.risk_category.as_code(), finding.rationale)),
+                        predicted_next: Some("Autonomous containment engaged to sever breakout limb.".to_string()),
+                        epsilon: None,
+                        require_approval: false,
+                        action_state: osoosi_types::ActionState::Executed,
+                        is_signed: false,
+                        mitre_tactic: Some("TA0002".to_string()),
+                        mitre_technique: Some("AML.T0043".to_string()),
+                        mitre_technique_name: Some("Adversarial AI / Agentic Breakout".to_string()),
+                    };
+
+                    let _ = aad_orch.memory.log_threat(&threat_sig);
+                    aad_orch.record_gossip_threat(&threat_sig, "AGENT_BREAKOUT_ISOLATED");
+
+                    // Broadcast over libp2p GossipSub wire mesh
+                    let tx_guard = aad_orch.mesh_command_tx.lock().await;
+                    if let Some(ref tx) = *tx_guard {
+                        let _ = tx.send(osoosi_wire::MeshCommand::Broadcast(threat_sig.clone())).await;
+                    }
+
+                    // Publish over decentralized Nostr BitChat mesh
+                    let nostr = aad_orch.nostr_mesh.clone();
+                    let sig_nostr = threat_sig.clone();
+                    tokio::spawn(async move {
+                        if let Err(e) = nostr.broadcast_threat(sig_nostr).await {
+                            debug!("Failed to broadcast AAD threat via Nostr relay: {}", e);
+                        }
+                    });
                 }
             }
         });

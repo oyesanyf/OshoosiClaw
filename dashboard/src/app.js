@@ -7333,11 +7333,27 @@ document.addEventListener('DOMContentLoaded', () => {
 
 async function renderAgentAnomaliesView() {
     try {
-        const [summary, findings, sessions] = await Promise.all([
+        const [summary, findings, sessions, containment] = await Promise.all([
             fetchAPI('/agent-anomalies/summary'),
             fetchAPI('/agent-anomalies/findings?limit=50'),
-            fetchAPI('/agent-anomalies/sessions')
+            fetchAPI('/agent-anomalies/sessions'),
+            fetchAPI('/agent-anomalies/containment-status').catch(() => null)
         ]);
+
+        const contData = containment || (summary && summary.containment_ring) || {};
+        const metrics = contData.metrics || {};
+
+        const ghostjackingEl = document.getElementById('aad-ghostjacking-defanged');
+        const ssrfEl = document.getElementById('aad-ssrf-blocked');
+        const pathEl = document.getElementById('aad-path-blocked');
+        const autotomyEl = document.getElementById('aad-autotomy-severances');
+        const meshBroadcastsEl = document.getElementById('aad-mesh-broadcasts');
+
+        if (ghostjackingEl) ghostjackingEl.innerText = metrics.ghostjacking_defanged || 0;
+        if (ssrfEl) ssrfEl.innerText = metrics.ssrf_blocked || 0;
+        if (pathEl) pathEl.innerText = metrics.path_breakouts_blocked || 0;
+        if (autotomyEl) autotomyEl.innerText = metrics.autotomy_severances || 0;
+        if (meshBroadcastsEl) meshBroadcastsEl.innerText = metrics.mesh_broadcasts || 0;
 
         if (summary) {
             const sessionsEl = document.getElementById('aad-monitored-sessions');
@@ -7371,6 +7387,61 @@ async function renderAgentAnomaliesView() {
                             <span style="font-size: 12px; color: var(--text-primary);">${name}</span>
                             <span class="${badgeClass}" style="font-size: 11px; padding: 2px 6px;">${count}</span>
                         </div>
+                    `;
+                }).join('');
+            }
+        }
+
+        // Discovered Autonomous Agents Table (Bayesian Discovery & Osquery)
+        const discoveredAgents = contData.discovered_agents || (summary && summary.discovered_agents) || [];
+        const discoveredCountEl = document.getElementById('aad-discovered-agents-count');
+        const discoveredTableBody = document.getElementById('aad-discovered-agents-table-body');
+
+        if (discoveredCountEl) discoveredCountEl.innerText = `${discoveredAgents.length} Discovered`;
+        if (discoveredTableBody) {
+            if (discoveredAgents.length === 0) {
+                discoveredTableBody.innerHTML = `
+                    <tr>
+                        <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px 0;">
+                            No autonomous agents discovered. Scanning MCP pipes, LLM sockets, and OTel traces...
+                        </td>
+                    </tr>
+                `;
+            } else {
+                discoveredTableBody.innerHTML = discoveredAgents.map(ag => {
+                    const probPct = Math.round((ag.agent_probability || 0) * 100);
+                    const probBadge = probPct >= 80 ? 'badge purple' : (probPct >= 50 ? 'badge blue' : 'badge gray');
+                    const provPills = (ag.protocol_provenance || []).map(p =>
+                        `<span class="badge blue" style="font-size: 10px; margin-right: 4px; padding: 1px 5px;">${escapeHtml(p)}</span>`
+                    ).join('') || '<span style="color:var(--text-muted); font-size:11px;">Inferred</span>';
+
+                    const isQuarantined = ag.containment_state === 'Quarantined' || ag.containment_state === 'Severed';
+                    const ringBadge = isQuarantined ? 'badge red' : 'badge green';
+
+                    return `
+                        <tr style="border-bottom: 1px solid rgba(255,255,255,0.04);">
+                            <td style="padding: 10px 14px; font-size: 12px;">
+                                <div style="font-weight: 600; color: var(--text-primary);">${escapeHtml(ag.process_name || 'unknown')}</div>
+                                <div style="font-size: 11px; color: var(--text-muted); font-family: monospace;">PID: ${ag.pid}</div>
+                            </td>
+                            <td style="padding: 10px 14px; font-size: 12px;">
+                                <div style="font-weight: 500; color: #a855f7;">${escapeHtml(ag.agent_role || 'GenericAgent')}</div>
+                                <div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(ag.framework || 'Autonomous')}</div>
+                            </td>
+                            <td style="padding: 10px 14px; text-align: center; font-size: 12px;">
+                                <span class="${probBadge}" style="font-size: 11px;">${probPct}%</span>
+                            </td>
+                            <td style="padding: 10px 14px; font-size: 11px;">
+                                ${provPills}
+                            </td>
+                            <td style="padding: 10px 14px; text-align: center; font-size: 12px;">
+                                <div style="font-size: 11px;">${ag.child_spawn_velocity_3s || 0} spawns/3s</div>
+                                <div style="font-size: 10px; color: var(--text-muted);">${ag.lifetime_ms ? Math.round(ag.lifetime_ms / 1000) + 's' : 'active'}</div>
+                            </td>
+                            <td style="padding: 10px 14px; text-align: center; font-size: 12px;">
+                                <span class="${ringBadge}" style="font-size: 11px;">${escapeHtml(ag.containment_state || 'PassThrough')}</span>
+                            </td>
+                        </tr>
                     `;
                 }).join('');
             }
@@ -7463,6 +7534,43 @@ async function renderAgentAnomaliesView() {
                         `;
                     }).join('');
                 }
+            }
+        }
+
+        // P2P Mesh & Nostr Swarm Watch-Out Feed
+        const watchouts = contData.recent_mesh_watchouts || [];
+        const watchoutCountEl = document.getElementById('aad-mesh-watchout-count');
+        const watchoutList = document.getElementById('aad-mesh-watchout-list');
+
+        if (watchoutCountEl) watchoutCountEl.innerText = `${watchouts.length} Broadcasts`;
+        if (watchoutList) {
+            if (watchouts.length === 0) {
+                watchoutList.innerHTML = `
+                    <div style="text-align: center; color: var(--text-muted); padding: 25px 0;">
+                        <i data-lucide="radio" style="width: 28px; height: 28px; margin: 0 auto 8px; color: #06b6d4; opacity: 0.6;"></i>
+                        <div>No active swarm watch-outs. Mesh peers operating normally.</div>
+                    </div>
+                `;
+            } else {
+                watchoutList.innerHTML = watchouts.map(w => {
+                    const formattedTime = w.timestamp ? new Date(w.timestamp).toLocaleTimeString() : 'Just now';
+                    return `
+                        <div style="background: rgba(6,182,212,0.05); border: 1px solid rgba(6,182,212,0.2); border-left: 3px solid #06b6d4; padding: 10px 12px; border-radius: 8px; margin-bottom: 8px;">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 4px;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <span class="badge cyan" style="font-size: 10px;">P2P GOSSIPSUB</span>
+                                    <span style="font-weight: 600; color: #06b6d4; font-size: 12px;">${escapeHtml(w.risk_type || 'AgentBreakout')}</span>
+                                    <span style="font-size: 11px; color: var(--text-muted);">Source: ${escapeHtml(w.source_agent_id || 'unknown')}</span>
+                                    ${w.hmac_verified ? '<span class="badge green" style="font-size: 9px;">HMAC-SHA256 Verified</span>' : ''}
+                                </div>
+                                <span style="font-size: 11px; color: var(--text-muted);">${formattedTime}</span>
+                            </div>
+                            <div style="font-size: 12px; color: var(--text-primary);">
+                                Epoch: ${w.epoch || 1} · Swarm notification distributed across BitChat Nostr mesh and libp2p GossipSub.
+                            </div>
+                        </div>
+                    `;
+                }).join('');
             }
         }
 

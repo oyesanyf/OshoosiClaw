@@ -811,6 +811,7 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/agent-anomalies/findings", get(get_agent_anomalies_findings))
         .route("/api/agent-anomalies/sessions", get(get_agent_anomalies_sessions))
         .route("/api/agent-anomalies/summary", get(get_agent_anomalies_summary))
+        .route("/api/agent-anomalies/containment-status", get(get_agent_anomalies_containment_status))
         .route("/api/agent-anomalies/embed", post(post_agent_anomalies_embed))
         .route("/api/agent-anomalies/simulate-test", post(post_agent_anomalies_simulate_test))
         .route("/api/consensus/findings", get(get_consensus_findings))
@@ -6132,6 +6133,13 @@ pub async fn get_agent_anomalies_summary(
     (StatusCode::OK, Json(summary))
 }
 
+pub async fn get_agent_anomalies_containment_status(
+    State(state): State<DashboardState>,
+) -> impl IntoResponse {
+    let status = state.agent_anomaly_detector.get_containment_status().await;
+    (StatusCode::OK, Json(status))
+}
+
 #[derive(Debug, Deserialize)]
 pub struct AgentEmbedRequest {
     pub text: Option<String>,
@@ -6219,13 +6227,31 @@ pub async fn post_agent_anomalies_simulate_test(
     };
     let finding = state.agent_anomaly_detector.evaluate_immediate(&attack).await;
 
+    // 3. SAM credential dump / SSRF breakout attempt
+    let breakout = osoosi_agent_anomaly::ToolCallTelemetry {
+        session_id: "agent-sim-session-01".to_string(),
+        agent_id: "google-gemini-inventory-worker".to_string(),
+        trace_id: Some("sim-trace-03".to_string()),
+        tool_name: "read_file".to_string(),
+        call_parameters: json!({
+            "path": "C:\\Windows\\System32\\config\\SAM",
+            "remote_url": "http://169.254.169.254/latest/meta-data/"
+        }),
+        execution_duration_ms: 12,
+        timestamp: now + chrono::Duration::milliseconds(100),
+        tokens_used: Some(450),
+        is_error: false,
+        error_message: None,
+    };
+    let breakout_finding = state.agent_anomaly_detector.evaluate_immediate(&breakout).await;
+
     (
         StatusCode::OK,
         Json(json!({
             "status": "success",
-            "message": "Simulation executed: 1 benign turn, 1 inventory scraping attack turn.",
-            "simulated_calls": 2,
-            "detected_finding": finding,
+            "message": "Simulation executed: 1 benign turn, 1 inventory scraping attack turn, 1 SAM credential / SSRF breakout turn.",
+            "simulated_calls": 3,
+            "detected_finding": breakout_finding.or(finding),
         })),
     )
 }
@@ -7605,7 +7631,7 @@ mod tests {
         let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let sim_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(sim_res["status"], "success");
-        assert_eq!(sim_res["simulated_calls"], 2);
+        assert_eq!(sim_res["simulated_calls"], 3);
 
         // 7. POST /api/agent-anomalies/embed with text
         let embed_req_text = serde_json::json!({
@@ -7647,6 +7673,19 @@ mod tests {
         assert_eq!(embed_res_tool["status"], "ok");
         assert_eq!(embed_res_tool["dimension"], 128);
         assert_eq!(embed_res_tool["embedding"].as_array().unwrap().len(), 128);
+
+        // 9. GET /api/agent-anomalies/containment-status
+        let req = axum::http::Request::builder()
+            .uri("/api/agent-anomalies/containment-status")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let cont_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(cont_res["metrics"].is_object());
+        assert!(cont_res["discovered_agents"].is_array());
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

@@ -70,7 +70,8 @@ osoosi.toml.sig
 crates/osoosi-telemetry/tools/
 
 # ---------- Runtime Data ----------
-/data/
+/data/*
+!/data/atlas_stix/
 /runs/
 runs/
 /models/

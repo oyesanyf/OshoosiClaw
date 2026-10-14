@@ -87,7 +87,7 @@
                 </a>
                 <a href="#" class="nav-item" data-view="agent-anomalies">
                     <i data-lucide="bot"></i>
-                    <span>Agent Anomaly Detection</span>
+                    <span>AI Agents &amp; Containment</span>
                 </a>
             </nav>
             <div class="sidebar-footer">
@@ -1682,6 +1682,82 @@
                     </div>
                 </div>
 
+                <!-- Breakout Defense & Multi-Ring Containment Grid -->
+                <div class="stats-grid mb-4">
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">GhostJacking Defanged</span>
+                            <i data-lucide="ghost" class="stat-icon" style="color: #a855f7;"></i>
+                        </div>
+                        <div class="stat-value" id="aad-ghostjacking-defanged">0</div>
+                        <div class="stat-subtext">Unicode smuggling / Phase 3 vetoes</div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">SSRF Blocked</span>
+                            <i data-lucide="shield-x" class="stat-icon" style="color: #ef4444;"></i>
+                        </div>
+                        <div class="stat-value" id="aad-ssrf-blocked">0</div>
+                        <div class="stat-subtext">RFC1918 / Cloud metadata / Loopback</div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">Path / ADS Traversal Blocked</span>
+                            <i data-lucide="folder-x" class="stat-icon" style="color: #f59e0b;"></i>
+                        </div>
+                        <div class="stat-value" id="aad-path-blocked">0</div>
+                        <div class="stat-subtext">Path::join / NTFS ADS / SAM access</div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">Autotomy Severances</span>
+                            <i data-lucide="scissors" class="stat-icon" style="color: #ec4899;"></i>
+                        </div>
+                        <div class="stat-value" id="aad-autotomy-severances">0</div>
+                        <div class="stat-subtext">Rogue agent limb isolation / terminated</div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">P2P Mesh Broadcasts</span>
+                            <i data-lucide="radio" class="stat-icon" style="color: #06b6d4;"></i>
+                        </div>
+                        <div class="stat-value" id="aad-mesh-broadcasts">0</div>
+                        <div class="stat-subtext">GossipSub &amp; Nostr swarm watch-outs</div>
+                    </div>
+                </div>
+
+                <!-- Discovered Autonomous Agents (Zero-Hardcode Bayesian Discovery) -->
+                <div class="card glass shadow-glow mb-4">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <h4 style="font-size: 15px; font-weight: 600; color: var(--text-header); display: flex; align-items: center; gap: 8px;">
+                            <i data-lucide="radar" style="width: 16px; height: 16px; color: #06b6d4;"></i>
+                            Discovered Autonomous AI Agents (Bayesian Protocol Discovery &amp; Osquery)
+                        </h4>
+                        <span id="aad-discovered-agents-count" class="badge blue" style="font-size: 11px;">0 Discovered</span>
+                    </div>
+                    <div class="card-body" style="padding: 0; overflow-x: auto;">
+                        <table class="data-table" style="width: 100%; border-collapse: collapse;">
+                            <thead>
+                                <tr>
+                                    <th style="padding: 10px 14px; text-align: left; font-size: 12px;">PID / Process</th>
+                                    <th style="padding: 10px 14px; text-align: left; font-size: 12px;">Agent Role / Framework</th>
+                                    <th style="padding: 10px 14px; text-align: center; font-size: 12px;">Agent Probability</th>
+                                    <th style="padding: 10px 14px; text-align: left; font-size: 12px;">Protocol Provenance</th>
+                                    <th style="padding: 10px 14px; text-align: center; font-size: 12px;">Velocity / Lifetime</th>
+                                    <th style="padding: 10px 14px; text-align: center; font-size: 12px;">Containment Ring</th>
+                                </tr>
+                            </thead>
+                            <tbody id="aad-discovered-agents-table-body">
+                                <tr>
+                                    <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px 0;">
+                                        No autonomous agents discovered. Scanning MCP pipes, LLM sockets, and OTel traces...
+                                    </td>
+                                </tr>
+                            </tbody>
+                        </table>
+                    </div>
+                </div>
+
                 <!-- OWASP Top 10 Breakdown Bar -->
                 <div class="card glass shadow-glow mb-4">
                     <div class="card-header">
@@ -1698,7 +1774,7 @@
                 </div>
 
                 <!-- Two-Column Layout: Live Findings Feed & Active Sessions -->
-                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px;">
+                <div style="display: grid; grid-template-columns: 1fr 1fr; gap: 20px; margin-bottom: 20px;">
                     <!-- Real-time Timeline Feed of Anomaly Findings -->
                     <div class="card glass shadow-glow">
                         <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
@@ -1743,6 +1819,23 @@
                                     </tr>
                                 </tbody>
                             </table>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- P2P Mesh & Nostr Swarm Watch-Out Feed -->
+                <div class="card glass shadow-glow mb-4">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center;">
+                        <h4 style="font-size: 15px; font-weight: 600; color: var(--text-header); display: flex; align-items: center; gap: 8px;">
+                            <i data-lucide="radio" style="width: 16px; height: 16px; color: #06b6d4;"></i>
+                            P2P GossipSub &amp; Nostr Mesh Threat Watch-Out Feed
+                        </h4>
+                        <span id="aad-mesh-watchout-count" class="badge cyan" style="font-size: 11px;">0 Broadcasts</span>
+                    </div>
+                    <div class="card-body" style="max-height: 280px; overflow-y: auto; padding: 12px;" id="aad-mesh-watchout-list">
+                        <div style="text-align: center; color: var(--text-muted); padding: 25px 0;">
+                            <i data-lucide="radio" style="width: 28px; height: 28px; margin: 0 auto 8px; color: #06b6d4; opacity: 0.6;"></i>
+                            <div>No active swarm watch-outs. Mesh peers operating normally.</div>
                         </div>
                     </div>
                 </div>
