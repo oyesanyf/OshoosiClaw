@@ -819,6 +819,9 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/consensus/evaluate", post(post_consensus_evaluate))
         .route("/api/consensus/ignore-hash", post(post_consensus_ignore_hash))
         .route("/api/consensus/ignore-hash/:hash", delete(delete_consensus_ignore_hash))
+        .route("/api/siquery/query", post(post_siquery_query))
+        .route("/api/siquery/tables", get(get_siquery_tables))
+        .route("/api/siquery/edr-status", get(get_siquery_edr_status))
         .with_state(state);
 
     let cors = CorsLayer::new()
@@ -6256,6 +6259,167 @@ pub async fn post_agent_anomalies_simulate_test(
     )
 }
 
+#[derive(Debug, Deserialize)]
+pub struct SiqueryQueryRequest {
+    pub query: String,
+    pub format: Option<String>,
+}
+
+pub async fn post_siquery_query(
+    Json(payload): Json<SiqueryQueryRequest>,
+) -> Response {
+    let sql = payload.query.trim();
+    if sql.is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "status": "error",
+                "error": "Query cannot be empty"
+            })),
+        ).into_response();
+    }
+
+    let start_time = std::time::Instant::now();
+    let engine = osoosi_agent_anomaly::SiqueryEngine::new();
+    let format = payload.format.as_deref().unwrap_or("json").to_ascii_lowercase();
+
+    match format.as_str() {
+        "csv" => {
+            match engine.execute_csv(sql) {
+                Ok(csv) => {
+                    let elapsed = start_time.elapsed().as_millis() as u64;
+                    (
+                        StatusCode::OK,
+                        Json(json!({
+                            "status": "ok",
+                            "query": sql,
+                            "execution_duration_ms": elapsed,
+                            "csv": csv,
+                        })),
+                    ).into_response()
+                }
+                Err(e) => (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "status": "error",
+                        "error": e,
+                    })),
+                ).into_response(),
+            }
+        }
+        "pretty" => {
+            match engine.execute_pretty(sql) {
+                Ok(pretty) => {
+                    let elapsed = start_time.elapsed().as_millis() as u64;
+                    (
+                        StatusCode::OK,
+                        Json(json!({
+                            "status": "ok",
+                            "query": sql,
+                            "execution_duration_ms": elapsed,
+                            "pretty": pretty,
+                        })),
+                    ).into_response()
+                }
+                Err(e) => (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "status": "error",
+                        "error": e,
+                    })),
+                ).into_response(),
+            }
+        }
+        _ => {
+            match engine.execute_query(sql) {
+                Ok(rows) => {
+                    let count = rows.len();
+                    let elapsed = start_time.elapsed().as_millis() as u64;
+                    (
+                        StatusCode::OK,
+                        Json(json!({
+                            "status": "ok",
+                            "query": sql,
+                            "execution_duration_ms": elapsed,
+                            "count": count,
+                            "rows": rows,
+                        })),
+                    ).into_response()
+                }
+                Err(e) => (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "status": "error",
+                        "error": e,
+                    })),
+                ).into_response(),
+            }
+        }
+    }
+}
+
+pub async fn get_siquery_tables() -> impl IntoResponse {
+    let tables = osoosi_agent_anomaly::SiqueryEngine::list_tables();
+    (
+        StatusCode::OK,
+        Json(json!({
+            "status": "ok",
+            "tables": tables,
+            "total": tables.len(),
+        })),
+    )
+}
+
+pub async fn get_siquery_edr_status(State(state): State<DashboardState>) -> impl IntoResponse {
+    match &state.backend {
+        Some(orch) => {
+            let cached = {
+                let guard = orch.siquery_last_telemetry.read();
+                guard.clone()
+            };
+            let telemetry = match cached {
+                Some(t) => t,
+                None => orch.run_siquery_edr_audit_sweep().await,
+            };
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "status": "ok",
+                    "live": true,
+                    "telemetry": telemetry,
+                })),
+            ).into_response()
+        }
+        None => {
+            let engine = osoosi_agent_anomaly::SiqueryEngine::new();
+            let proc_count = engine.execute_query("SELECT pid FROM processes;").map(|r| r.len()).unwrap_or(0);
+            let wmi_services_count = engine.execute_query("SELECT name FROM wmi_services;").map(|r| r.len()).unwrap_or(0);
+            let sockets_count = engine.execute_query("SELECT local_port FROM tcp_sockets;").map(|r| r.len()).unwrap_or(0);
+            let hotfixes_count = engine.execute_query("SELECT hotfix_id FROM wmi_hotfixes;").map(|r| r.len()).unwrap_or(0);
+            let shares_count = engine.execute_query("SELECT name FROM wmi_shares;").map(|r| r.len()).unwrap_or(0);
+
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "status": "ok",
+                    "live": false,
+                    "telemetry": {
+                        "timestamp": chrono::Utc::now().to_rfc3339(),
+                        "mode": "adhoc_dashboard",
+                        "processes_count": proc_count,
+                        "wmi_services_count": wmi_services_count,
+                        "tcp_sockets_count": sockets_count,
+                        "hotfixes_count": hotfixes_count,
+                        "shares_count": shares_count,
+                        "audit_findings_count": 0,
+                        "findings": []
+                    }
+                })),
+            ).into_response()
+        }
+    }
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -7987,6 +8151,116 @@ mod tests {
         assert_eq!(resp_json7["status"], "error");
         assert_eq!(resp_json7["error_code"], "INVALID_ADAPTER");
         assert_eq!(resp_json7["ok"], false);
+    }
+
+    #[tokio::test]
+    async fn test_siquery_dashboard_endpoints() {
+        let state = DashboardState::new(None, None);
+        let temp_dir = std::env::temp_dir().join(format!("dash_test_siquery_{}", uuid::Uuid::new_v4()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let app = dashboard_router(state.clone(), temp_dir.clone());
+
+        // 1. GET /api/siquery/tables
+        let req = axum::http::Request::builder()
+            .uri("/api/siquery/tables")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), StatusCode::OK);
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let json_val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
+        assert_eq!(json_val["status"], "ok");
+        assert_eq!(json_val["total"], 41);
+        let tables = json_val["tables"].as_array().expect("tables must be an array");
+        assert_eq!(tables.len(), 41);
+        assert!(tables.iter().any(|t| t == "processes"));
+        assert!(tables.iter().any(|t| t == "wmi_os_version"));
+
+        // 2. POST /api/siquery/query (JSON format)
+        let query_payload = serde_json::json!({
+            "query": "SELECT computer_name, cpu_logical_cores FROM system_info;"
+        });
+        let req2 = axum::http::Request::builder()
+            .uri("/api/siquery/query")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&query_payload).unwrap()))
+            .unwrap();
+        let resp2 = app.clone().oneshot(req2).await.unwrap();
+        assert_eq!(resp2.status(), StatusCode::OK);
+        let bytes2 = axum::body::to_bytes(resp2.into_body(), usize::MAX).await.unwrap();
+        let json_val2: serde_json::Value = serde_json::from_slice(&bytes2).unwrap();
+        assert_eq!(json_val2["status"], "ok");
+        assert_eq!(json_val2["count"], 1);
+        assert!(json_val2["rows"].as_array().is_some());
+
+        // 3. POST /api/siquery/query (CSV format)
+        let csv_payload = serde_json::json!({
+            "query": "SELECT computer_name, cpu_logical_cores FROM system_info;",
+            "format": "csv"
+        });
+        let req3 = axum::http::Request::builder()
+            .uri("/api/siquery/query")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&csv_payload).unwrap()))
+            .unwrap();
+        let resp3 = app.clone().oneshot(req3).await.unwrap();
+        assert_eq!(resp3.status(), StatusCode::OK);
+        let bytes3 = axum::body::to_bytes(resp3.into_body(), usize::MAX).await.unwrap();
+        let json_val3: serde_json::Value = serde_json::from_slice(&bytes3).unwrap();
+        assert_eq!(json_val3["status"], "ok");
+        let csv_text = json_val3["csv"].as_str().expect("csv must be string");
+        assert!(csv_text.contains('|'));
+
+        // 4. POST /api/siquery/query (Pretty ASCII format)
+        let pretty_payload = serde_json::json!({
+            "query": "SELECT computer_name, cpu_logical_cores FROM system_info;",
+            "format": "pretty"
+        });
+        let req4 = axum::http::Request::builder()
+            .uri("/api/siquery/query")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&pretty_payload).unwrap()))
+            .unwrap();
+        let resp4 = app.clone().oneshot(req4).await.unwrap();
+        assert_eq!(resp4.status(), StatusCode::OK);
+        let bytes4 = axum::body::to_bytes(resp4.into_body(), usize::MAX).await.unwrap();
+        let json_val4: serde_json::Value = serde_json::from_slice(&bytes4).unwrap();
+        assert_eq!(json_val4["status"], "ok");
+        let pretty_text = json_val4["pretty"].as_str().expect("pretty must be string");
+        assert!(pretty_text.contains('+'));
+        assert!(pretty_text.contains('|'));
+
+        // 5. POST /api/siquery/query (Empty query -> 400 Bad Request)
+        let empty_payload = serde_json::json!({
+            "query": "   "
+        });
+        let req5 = axum::http::Request::builder()
+            .uri("/api/siquery/query")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&empty_payload).unwrap()))
+            .unwrap();
+        let resp5 = app.clone().oneshot(req5).await.unwrap();
+        assert_eq!(resp5.status(), StatusCode::BAD_REQUEST);
+
+        // 6. GET /api/siquery/edr-status
+        let req6 = axum::http::Request::builder()
+            .uri("/api/siquery/edr-status")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp6 = app.clone().oneshot(req6).await.unwrap();
+        assert_eq!(resp6.status(), StatusCode::OK);
+        let bytes6 = axum::body::to_bytes(resp6.into_body(), usize::MAX).await.unwrap();
+        let json_val6: serde_json::Value = serde_json::from_slice(&bytes6).unwrap();
+        assert_eq!(json_val6["status"], "ok");
+        assert!(json_val6.get("telemetry").is_some());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
 

@@ -1188,6 +1188,10 @@ pub struct EdrOrchestrator {
     pub decision_engine: Arc<osoosi_behavioral::decision_model::ClefDecisionEngine>,
     /// Native Rust Agent Anomaly Detection (AAD) engine (OWASP Agentic Top 10)
     pub agent_anomaly_detector: Arc<osoosi_agent_anomaly::AgentAnomalyDetector>,
+    /// Native in-process relational SQL engine for host discovery & telemetry audits (siquery-rs parity)
+    pub siquery_engine: Arc<osoosi_agent_anomaly::SiqueryEngine>,
+    /// Cached latest siquery EDR multi-table audit sweep telemetry
+    pub siquery_last_telemetry: Arc<parking_lot::RwLock<Option<serde_json::Value>>>,
 }
 
 impl EdrOrchestrator {
@@ -1343,6 +1347,224 @@ impl EdrOrchestrator {
     /// Generate an AI forensic narrative of the current session's events.
     pub async fn generate_story(&self) -> String {
         self.storyteller.summarize_ai(&self.audit).await
+    }
+
+    /// Executes a comprehensive 6-sweep EDR security and host audit using the in-process Siquery relational engine.
+    /// Evaluates anomalies across processes, sockets, services, DNS hosts, proxy settings, shares, accounts, and memory maps.
+    pub async fn run_siquery_edr_audit_sweep(&self) -> serde_json::Value {
+        let engine = self.siquery_engine.clone();
+        let start = std::time::Instant::now();
+        let mut anomalies = Vec::new();
+
+        // --- Sweep 1: Processes & Open Sockets & AI Agent Breakout Check ---
+        let proc_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM processes;");
+        let total_processes = proc_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+
+        let sock_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM process_open_sockets;");
+        let total_sockets = sock_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+
+        if let Ok(suspicious_procs) = engine.execute_query(
+            "SELECT p.pid, p.name, p.path, p.cmdline, s.remote_address, s.remote_port \
+             FROM processes p JOIN process_open_sockets s ON p.pid = s.pid \
+             WHERE p.cmdline LIKE '%169.254.169.254%' \
+                OR p.cmdline LIKE '%\\config\\SAM%' \
+                OR p.cmdline LIKE '%comsvcs.dll%' \
+                OR p.cmdline LIKE '%MiniDump%' \
+             LIMIT 10;"
+        ) {
+            for row in suspicious_procs {
+                let pid = row.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as u32;
+                let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("unknown");
+                let cmd = row.get("cmdline").and_then(|v| v.as_str()).unwrap_or("");
+                let reason = format!("Siquery EDR Sweep: Suspicious breakout pattern in process PID {} ({}): {}", pid, name, cmd);
+                warn!("{}", reason);
+
+                let _ = self.memory.log_threat_event("SIQUERY_PROCESS_BREAKOUT_ANOMALY", pid, 0);
+                self.audit.log("SIQUERY_PROCESS_BREAKOUT", serde_json::json!({
+                    "pid": pid,
+                    "name": name,
+                    "cmdline": cmd,
+                    "reason": reason
+                }));
+                anomalies.push(serde_json::json!({
+                    "sweep": "processes_sockets",
+                    "severity": "CRITICAL",
+                    "pid": pid,
+                    "name": name,
+                    "details": reason,
+                }));
+            }
+        }
+
+        // --- Sweep 2: Service Persistence & Unsigned Path Audit ---
+        let serv_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM wmi_services;");
+        let total_services = serv_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+
+        if let Ok(rogue_services) = engine.execute_query(
+            "SELECT name, display_name, path_name, start_mode, state, process_id \
+             FROM wmi_services \
+             WHERE state = 'Running' AND ( \
+                 path_name LIKE '%\\AppData\\Local\\Temp\\%' \
+                 OR path_name LIKE '%\\Users\\Public\\%' \
+                 OR path_name LIKE '%powershell%-enc%' \
+                 OR path_name LIKE '%cmd.exe /c%' \
+             ) LIMIT 10;"
+        ) {
+            for svc in rogue_services {
+                let name = svc.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let path_name = svc.get("path_name").and_then(|v| v.as_str()).unwrap_or("");
+                let clean_path = path_name.trim_matches('"').split_whitespace().next().unwrap_or(path_name);
+                let is_signed = crate::win_trust::is_trusted_signed_binary(std::path::Path::new(clean_path));
+
+                if !is_signed {
+                    let reason = format!("Siquery EDR Sweep: Untrusted service binary running from suspicious location: {} ({})", name, path_name);
+                    warn!("{}", reason);
+
+                    let _ = self.memory.log_threat_event("SIQUERY_SERVICE_PERSISTENCE_ANOMALY", 0, 0);
+                    self.audit.log("SIQUERY_SERVICE_PERSISTENCE", serde_json::json!({
+                        "service": name,
+                        "path": path_name,
+                        "trusted_signature": false
+                    }));
+                    anomalies.push(serde_json::json!({
+                        "sweep": "wmi_services",
+                        "severity": "HIGH",
+                        "name": name,
+                        "path": path_name,
+                        "details": reason
+                    }));
+                }
+            }
+        }
+
+        // --- Sweep 3: Network Hijacking, MITM Proxy & Hosts Tampering ---
+        if let Ok(tampered_hosts) = engine.execute_query(
+            "SELECT address, hostnames FROM etc_hosts \
+             WHERE address NOT IN ('127.0.0.1', '::1', '255.255.255.255', '0.0.0.0') \
+               AND (hostnames LIKE '%microsoft.com%' OR hostnames LIKE '%windowsupdate.com%' OR hostnames LIKE '%github.com%' OR hostnames LIKE '%virustotal.com%') \
+             LIMIT 5;"
+        ) {
+            for row in tampered_hosts {
+                let addr = row.get("address").and_then(|v| v.as_str()).unwrap_or("");
+                let hostnames = row.get("hostnames").and_then(|v| v.as_str()).unwrap_or("");
+                let reason = format!("Siquery EDR Sweep: DNS hosts file redirection detected: {} -> {}", hostnames, addr);
+                warn!("{}", reason);
+
+                self.audit.log("SIQUERY_HOSTS_TAMPERING", serde_json::json!({
+                    "address": addr,
+                    "hostnames": hostnames
+                }));
+                anomalies.push(serde_json::json!({
+                    "sweep": "etc_hosts",
+                    "severity": "CRITICAL",
+                    "address": addr,
+                    "hostnames": hostnames,
+                    "details": reason
+                }));
+            }
+        }
+
+        if let Ok(proxies) = engine.execute_query("SELECT url, protocol, enabled FROM proxies WHERE enabled = '1';") {
+            for px in proxies {
+                let url = px.get("url").and_then(|v| v.as_str()).unwrap_or("");
+                if !url.is_empty() && (url.contains("127.0.0.1:8080") || url.contains(":8888") || url.contains(":9999")) {
+                    let reason = format!("Siquery EDR Sweep: Suspicious active local intercepting proxy detected: {}", url);
+                    warn!("{}", reason);
+                    anomalies.push(serde_json::json!({
+                        "sweep": "proxies",
+                        "severity": "HIGH",
+                        "url": url,
+                        "details": reason
+                    }));
+                }
+            }
+        }
+
+        // --- Sweep 4: Account & Lateral Movement Audit ---
+        if let Ok(rogue_shares) = engine.execute_query(
+            "SELECT name, path, description, type FROM wmi_shares \
+             WHERE name NOT IN ('ADMIN$', 'C$', 'D$', 'E$', 'IPC$', 'print$') \
+               AND (path LIKE '%\\Users\\%' OR path LIKE '%\\Windows\\System32%') \
+             LIMIT 5;"
+        ) {
+            for row in rogue_shares {
+                let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let path = row.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                let reason = format!("Siquery EDR Sweep: Sensitive system/user directory exposed over SMB share: {} ({})", name, path);
+                warn!("{}", reason);
+                anomalies.push(serde_json::json!({
+                    "sweep": "wmi_shares",
+                    "severity": "MEDIUM",
+                    "share": name,
+                    "path": path,
+                    "details": reason
+                }));
+            }
+        }
+
+        // --- Sweep 5: Host Inventory & Hotfixes Telemetry ---
+        let hotfix_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM wmi_hotfixes;");
+        let total_hotfixes = hotfix_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+
+        let drives_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM logical_drives;");
+        let total_drives = drives_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+
+        let os_ver_row = engine.execute_query("SELECT name, version, build, arch FROM os_version LIMIT 1;").ok().and_then(|mut r| if !r.is_empty() { Some(r.remove(0)) } else { None });
+        let sys_info_row = engine.execute_query("SELECT computer_name, cpu_brand, cpu_logical_cores, physical_memory FROM system_info LIMIT 1;").ok().and_then(|mut r| if !r.is_empty() { Some(r.remove(0)) } else { None });
+        let uptime_row = engine.execute_query("SELECT days, hours, minutes, total_seconds FROM uptime LIMIT 1;").ok().and_then(|mut r| if !r.is_empty() { Some(r.remove(0)) } else { None });
+
+        // --- Sweep 6: Process Memory Map Module Check ---
+        if let Ok(unbacked_mods) = engine.execute_query(
+            "SELECT m.pid, p.name, m.path, m.permissions \
+             FROM process_memory_map m JOIN processes p ON m.pid = p.pid \
+             WHERE m.path LIKE '%\\Temp\\%' OR m.path LIKE '%\\Users\\Public\\%' \
+             LIMIT 10;"
+        ) {
+            for row in unbacked_mods {
+                let pid = row.get("pid").and_then(|v| v.as_i64()).unwrap_or(0) as u32;
+                let proc_name = row.get("name").and_then(|v| v.as_str()).unwrap_or("");
+                let mod_path = row.get("path").and_then(|v| v.as_str()).unwrap_or("");
+                let is_signed = crate::win_trust::is_trusted_signed_binary(std::path::Path::new(mod_path));
+
+                if !is_signed {
+                    let reason = format!("Siquery EDR Sweep: Process PID {} ({}) loaded unsigned module from temp directory: {}", pid, proc_name, mod_path);
+                    warn!("{}", reason);
+                    anomalies.push(serde_json::json!({
+                        "sweep": "process_memory_map",
+                        "severity": "HIGH",
+                        "pid": pid,
+                        "process": proc_name,
+                        "module": mod_path,
+                        "details": reason
+                    }));
+                }
+            }
+        }
+
+        let elapsed_ms = start.elapsed().as_millis() as u64;
+
+        let telemetry = serde_json::json!({
+            "status": "ok",
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "execution_duration_ms": elapsed_ms,
+            "metrics": {
+                "processes_count": total_processes,
+                "sockets_count": total_sockets,
+                "services_count": total_services,
+                "hotfixes_count": total_hotfixes,
+                "logical_drives_count": total_drives,
+            },
+            "host": {
+                "os": os_ver_row,
+                "system": sys_info_row,
+                "uptime": uptime_row,
+            },
+            "anomalies_detected": anomalies.len(),
+            "anomalies": anomalies,
+        });
+
+        *self.siquery_last_telemetry.write() = Some(telemetry.clone());
+        telemetry
     }
 
     /// Explicitly trigger a patch discovery cycle.
@@ -2105,6 +2327,10 @@ impl EdrOrchestrator {
         let agent_anomaly_detector = Arc::new(osoosi_agent_anomaly::AgentAnomalyDetector::new(50, 200, None));
         info!("[AAD] Native Rust Agent Anomaly Detection (OWASP Top 10) initialized.");
 
+        let siquery_engine = Arc::new(osoosi_agent_anomaly::SiqueryEngine::new());
+        let siquery_last_telemetry = Arc::new(parking_lot::RwLock::new(None));
+        info!("[SIQUERY] Native in-process relational SQL engine initialized (41 tables).");
+
         let orch = Self {
             memory,
             mesh_peer_count,
@@ -2175,6 +2401,8 @@ impl EdrOrchestrator {
             forensics,
             decision_engine,
             agent_anomaly_detector,
+            siquery_engine,
+            siquery_last_telemetry,
         };
 
         // Start background log retention loop (hourly rotation and pruning)
@@ -2888,6 +3116,19 @@ impl EdrOrchestrator {
                         }
                     });
                 }
+            }
+        });
+
+        // 8c. Continuous Siquery EDR Relational Multi-Table Audit Sweep (every 45s)
+        let siquery_orch = self.clone();
+        tokio::spawn(async move {
+            info!("Siquery EDR Relational Multi-Table Audit Engine activated.");
+            // Initial sweep immediately on boot
+            let _ = siquery_orch.run_siquery_edr_audit_sweep().await;
+            let mut interval = tokio::time::interval(std::time::Duration::from_secs(45));
+            loop {
+                interval.tick().await;
+                let _ = siquery_orch.run_siquery_edr_audit_sweep().await;
             }
         });
 

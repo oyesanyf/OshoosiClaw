@@ -5719,6 +5719,7 @@ dependencies = [
  "url",
  "uuid",
  "windows-sys 0.61.2",
+ "winreg 0.52.0",
 ]
 
 [[package]]
@@ -5808,6 +5809,7 @@ dependencies = [
  "hf-hub 0.4.3",
  "libloading",
  "ort",
+ "osoosi-agent-anomaly",
  "osoosi-behavioral",
  "osoosi-core",
  "osoosi-dashboard",

@@ -288,6 +288,31 @@ enum Commands {
     /// Dynamically configure Windows Defender exclusions and Firewall rules for the installation directory
     #[command(name = "setup-defender", alias = "setup_defender", alias = "register-defender", alias = "register_defender", alias = "setup")]
     SetupDefender,
+    /// Native in-process relational SQL query engine for host and process telemetry (siquery-rs parity)
+    #[command(name = "siquery", about = "Native in-process relational SQL query engine for host and process telemetry")]
+    Siquery {
+        /// Execute a SQL query (e.g. 'SELECT pid, name, path FROM processes LIMIT 10;')
+        #[arg(short = 'q', long = "query")]
+        query: Option<String>,
+        /// List all available relational tables
+        #[arg(short = 'l', long = "list")]
+        list: bool,
+        /// Display table schema for a specific table
+        #[arg(short = 's', long = "schema")]
+        schema: Option<String>,
+        /// Display schemas for all tables when used with --schema
+        #[arg(short = 'A', long = "all")]
+        all: bool,
+        /// Format output as JSON
+        #[arg(long = "json")]
+        json: bool,
+        /// Format output as pipe-separated CSV
+        #[arg(long = "csv")]
+        csv: bool,
+        /// Format output as ASCII box table (default for queries)
+        #[arg(long = "pretty")]
+        pretty: bool,
+    },
 }
 
 #[derive(Subcommand, Clone, Debug)]
@@ -1410,6 +1435,73 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
                 Err(e) => {
                     eprintln!("[-] Error configuring Defender/Firewall: {}", e);
                 }
+            }
+        }
+        Some(Commands::Siquery {
+            query,
+            list,
+            schema,
+            all,
+            json,
+            csv,
+            pretty,
+        }) => {
+            let engine = osoosi_agent_anomaly::SiqueryEngine::new();
+
+            if list {
+                let tables = osoosi_agent_anomaly::SiqueryEngine::list_tables();
+                println!("Available siquery tables ({} total):", tables.len());
+                for t in tables {
+                    println!("  - {}", t);
+                }
+            } else if all {
+                for t in osoosi_agent_anomaly::SiqueryEngine::list_tables() {
+                    println!("--- Table: {} ---", t);
+                    match engine.get_table_schema(t) {
+                        Ok(s) => println!("{}", s),
+                        Err(e) => eprintln!("Error getting schema for {}: {}", t, e),
+                    }
+                    println!();
+                }
+            } else if let Some(ref t) = schema {
+                match engine.get_table_schema(t) {
+                    Ok(s) => println!("{}", s),
+                    Err(e) => {
+                        eprintln!("Error: {}", e);
+                        std::process::exit(1);
+                    }
+                }
+            } else if let Some(ref sql) = query {
+                if json {
+                    match engine.execute_json(sql) {
+                        Ok(res) => println!("{}", res),
+                        Err(e) => {
+                            eprintln!("Query error: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                } else if csv {
+                    match engine.execute_csv(sql) {
+                        Ok(res) => print!("{}", res),
+                        Err(e) => {
+                            eprintln!("Query error: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                } else {
+                    let _ = pretty;
+                    match engine.execute_pretty(sql) {
+                        Ok(res) => println!("{}", res),
+                        Err(e) => {
+                            eprintln!("Query error: {}", e);
+                            std::process::exit(1);
+                        }
+                    }
+                }
+            } else {
+                println!("OpenỌ̀ṣọ́ọ̀sì Siquery In-Process Relational SQL Engine");
+                println!("Usage: osoosi siquery -q <QUERY> | -l | -s <TABLE> | -s -A");
+                println!("Use 'osoosi siquery --help' for options.");
             }
         }
         Some(Commands::Lite) => unreachable!(),

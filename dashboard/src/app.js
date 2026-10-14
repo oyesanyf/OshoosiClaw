@@ -53,7 +53,11 @@ const state = {
     blockingRules: [],
     supervisorStatus: null,
     bootstrapPeers: [],
-    myWanMultiaddr: ''
+    myWanMultiaddr: '',
+    // Siquery state
+    siqueryTables: [],
+    siqueryFilter: '',
+    siqueryLastRaw: null
 };
 
 let updateInterval = null;
@@ -397,6 +401,10 @@ function setupNav() {
                     document.getElementById('utilities-view').classList.add('active');
                     viewTitle.innerText = "Utilities & Host AI Calibration";
                     renderUtilitiesView();
+                } else if (view === 'siquery') {
+                    document.getElementById('siquery-view').classList.add('active');
+                    viewTitle.innerText = "Siquery-RS Live EDR SQL Console & 41-Table Inspector";
+                    renderSiqueryView();
                 } else {
                     const otherView = document.getElementById('other-view') || document.getElementById('dashboard-view');
                     if (otherView) {
@@ -430,6 +438,8 @@ function setupNav() {
                 'agent-anomalies': 'agent-anomalies',
                 'agent-anomaly': 'agent-anomalies',
                 'aad': 'agent-anomalies',
+                'siquery': 'siquery',
+                'sql': 'siquery',
             };
             const resolvedView = aliasMap[hash] || hash;
             const target = document.querySelector(`.nav-item[data-view="${resolvedView}"]`);
@@ -7949,6 +7959,346 @@ window.loadCalibratedModels = loadCalibratedModels;
 window.downloadCalibratedModel = downloadCalibratedModel;
 window.downloadAllCalibratedModels = downloadAllCalibratedModels;
 window.copyTerminalCommand = copyTerminalCommand;
+
+// ==========================================
+// Siquery-RS Live EDR SQL Console (41-Table Parity)
+// ==========================================
+
+const SIQUERY_PRESETS = {
+    processes: "SELECT pid, name, ppid, cpu_percent, memory_rss_mb, path FROM processes ORDER BY memory_rss_mb DESC LIMIT 15;",
+    sockets: "SELECT local_address, local_port, remote_address, remote_port, state, pid FROM tcp_sockets WHERE state = 'LISTEN' LIMIT 20;",
+    services: "SELECT name, display_name, start_mode, state, path_name FROM wmi_services WHERE start_mode = 'Auto' LIMIT 20;",
+    network: "SELECT name, ipv4_addresses, mac_address, status FROM network_adapters LIMIT 15;",
+    hotfixes: "SELECT hotfix_id, description, installed_by, installed_on FROM wmi_hotfixes ORDER BY installed_on DESC LIMIT 20;",
+    users: "SELECT name, sid, disabled, lock_out, password_changeable FROM user_accounts LIMIT 20;",
+    hosts: "SELECT ip_address, hostname FROM etc_hosts;",
+    memory: "SELECT pid, base_address, region_size, state, protect, mapped_file FROM process_memory_map LIMIT 20;"
+};
+
+async function renderSiqueryView() {
+    await Promise.all([
+        fetchSiqueryTables(),
+        refreshSiqueryTelemetry()
+    ]);
+    if (window.lucide) window.lucide.createIcons();
+}
+
+async function fetchSiqueryTables() {
+    try {
+        const res = await fetch(`${API_BASE}/siquery/tables`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (data && data.tables) {
+            state.siqueryTables = data.tables;
+            const badge = document.getElementById('siquery-table-count-badge');
+            if (badge) badge.innerText = `${data.tables.length} Tables`;
+            const statBadge = document.getElementById('siquery-stat-tables');
+            if (statBadge) statBadge.innerText = data.tables.length;
+            renderSiqueryTableList(data.tables);
+        }
+    } catch (err) {
+        console.error('Failed to fetch siquery tables:', err);
+    }
+}
+
+function renderSiqueryTableList(tables) {
+    const container = document.getElementById('siquery-table-list');
+    if (!container) return;
+
+    const filter = (state.siqueryFilter || '').toLowerCase().trim();
+    const filtered = tables.filter(t => t.toLowerCase().includes(filter));
+
+    if (filtered.length === 0) {
+        container.innerHTML = `<div style="font-size: 12px; color: var(--text-muted); text-align: center; padding: 20px;">No tables matching "${escapeHtml(filter)}"</div>`;
+        return;
+    }
+
+    container.innerHTML = filtered.map(tbl => {
+        return `
+            <div onclick="selectSiqueryTable('${escapeHtml(tbl)}')" style="display: flex; align-items: center; justify-content: space-between; padding: 7px 10px; border-radius: 6px; background: rgba(255, 255, 255, 0.02); border: 1px solid var(--glass-border); cursor: pointer; transition: all 0.15s ease;" onmouseenter="this.style.background='rgba(14, 165, 233, 0.1)'; this.style.borderColor='rgba(14, 165, 233, 0.3)';" onmouseleave="this.style.background='rgba(255, 255, 255, 0.02)'; this.style.borderColor='var(--glass-border)';">
+                <div style="display: flex; align-items: center; gap: 8px;">
+                    <i data-lucide="database" style="width: 13px; height: 13px; color: var(--accent-blue);"></i>
+                    <span style="font-family: monospace; font-size: 12px; font-weight: 500; color: var(--text-header);">${escapeHtml(tbl)}</span>
+                </div>
+                <span style="font-size: 10px; color: var(--text-muted); font-family: monospace;">SELECT</span>
+            </div>
+        `;
+    }).join('');
+
+    if (window.lucide) window.lucide.createIcons();
+}
+
+function filterSiqueryTables() {
+    const input = document.getElementById('siquery-table-search-input');
+    if (input) {
+        state.siqueryFilter = input.value;
+        renderSiqueryTableList(state.siqueryTables || []);
+    }
+}
+
+function selectSiqueryTable(tableName) {
+    const input = document.getElementById('siquery-sql-input');
+    if (input) {
+        input.value = `SELECT * FROM ${tableName} LIMIT 15;`;
+        executeSiquery();
+    }
+}
+
+function applySiqueryPreset(presetName) {
+    const sql = SIQUERY_PRESETS[presetName];
+    if (sql) {
+        const input = document.getElementById('siquery-sql-input');
+        if (input) {
+            input.value = sql;
+            executeSiquery();
+        }
+    }
+}
+
+function clearSiqueryInput() {
+    const input = document.getElementById('siquery-sql-input');
+    if (input) {
+        input.value = '';
+        input.focus();
+    }
+}
+
+async function refreshSiqueryTelemetry() {
+    const btn = document.getElementById('siquery-refresh-sweep-btn');
+    if (btn) {
+        btn.innerHTML = `<i data-lucide="refresh-cw" class="spin" style="width: 14px; height: 14px;"></i> <span>Sweeping...</span>`;
+        if (window.lucide) window.lucide.createIcons();
+    }
+    try {
+        const res = await fetch(`${API_BASE}/siquery/edr-status`);
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (data && data.telemetry) {
+            const tel = data.telemetry;
+            const procElem = document.getElementById('siquery-stat-processes');
+            if (procElem) procElem.innerText = tel.processes_count != null ? tel.processes_count : '-';
+
+            const sockElem = document.getElementById('siquery-stat-sockets');
+            if (sockElem) sockElem.innerText = tel.tcp_sockets_count != null ? tel.tcp_sockets_count : '-';
+
+            const srvElem = document.getElementById('siquery-stat-services');
+            if (srvElem) {
+                const srv = tel.wmi_services_count != null ? tel.wmi_services_count : 0;
+                const sh = tel.shares_count != null ? tel.shares_count : 0;
+                srvElem.innerText = `${srv} / ${sh}`;
+            }
+        }
+    } catch (err) {
+        console.error('Failed to refresh siquery telemetry:', err);
+    } finally {
+        if (btn) {
+            btn.innerHTML = `<i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i> <span>Sweep Telemetry</span>`;
+            if (window.lucide) window.lucide.createIcons();
+        }
+    }
+}
+
+async function executeSiquery() {
+    const input = document.getElementById('siquery-sql-input');
+    const formatSelect = document.getElementById('siquery-format-select');
+    const resultsContainer = document.getElementById('siquery-results-container');
+    const execBadge = document.getElementById('siquery-exec-badge');
+    const runBtn = document.getElementById('siquery-execute-btn');
+
+    if (!input || !resultsContainer) return;
+    const sql = input.value.trim();
+    if (!sql) {
+        resultsContainer.innerHTML = `
+            <div style="padding: 16px; border-radius: 8px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; font-size: 13px;">
+                <i data-lucide="alert-circle" style="width: 14px; height: 14px; display: inline; vertical-align: middle; margin-right: 4px;"></i>
+                SQL query cannot be empty.
+            </div>`;
+        if (window.lucide) window.lucide.createIcons();
+        return;
+    }
+
+    const format = formatSelect ? formatSelect.value : 'json';
+    if (runBtn) {
+        runBtn.disabled = true;
+        runBtn.innerHTML = `<i data-lucide="loader" class="spin" style="width: 13px; height: 13px;"></i> <span>Running...</span>`;
+    }
+    if (window.lucide) window.lucide.createIcons();
+
+    resultsContainer.innerHTML = `
+        <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 280px; color: var(--text-muted); font-size: 13px;">
+            <i data-lucide="loader" class="spin" style="width: 28px; height: 28px; margin-bottom: 8px; color: var(--accent-blue);"></i>
+            <span>Executing SQL query against local system engine...</span>
+        </div>`;
+    if (window.lucide) window.lucide.createIcons();
+
+    try {
+        const res = await fetch(`${API_BASE}/siquery/query`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ query: sql, format: format })
+        });
+        const data = await res.json();
+
+        if (!res.ok || data.status === 'error') {
+            const errText = data.error || `HTTP error ${res.status}`;
+            resultsContainer.innerHTML = `
+                <div style="padding: 16px; border-radius: 8px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #f87171; font-family: monospace; font-size: 13px; white-space: pre-wrap;">
+                    <div style="font-weight: 600; margin-bottom: 6px; display: flex; align-items: center; gap: 6px;">
+                        <i data-lucide="x-circle" style="width: 16px; height: 16px;"></i> Query Execution Failed
+                    </div>
+                    ${escapeHtml(errText)}
+                </div>`;
+            if (execBadge) execBadge.style.display = 'none';
+        } else {
+            state.siqueryLastRaw = data;
+            const duration = data.execution_duration_ms != null ? data.execution_duration_ms : 0;
+
+            if (format === 'csv') {
+                const count = (data.csv ? data.csv.trim().split('\n').length - 1 : 0);
+                if (execBadge) {
+                    execBadge.innerText = `${duration}ms · ${count} rows (CSV)`;
+                    execBadge.style.display = 'inline-block';
+                }
+                renderSiqueryRawText(data.csv, resultsContainer);
+            } else if (format === 'pretty') {
+                if (execBadge) {
+                    execBadge.innerText = `${duration}ms · ASCII Box`;
+                    execBadge.style.display = 'inline-block';
+                }
+                renderSiqueryRawText(data.pretty, resultsContainer);
+            } else {
+                const rows = data.rows || [];
+                if (execBadge) {
+                    execBadge.innerText = `${duration}ms · ${rows.length} rows`;
+                    execBadge.style.display = 'inline-block';
+                }
+                renderSiqueryJsonTable(rows, resultsContainer);
+            }
+        }
+    } catch (err) {
+        resultsContainer.innerHTML = `
+            <div style="padding: 16px; border-radius: 8px; background: rgba(239, 68, 68, 0.1); border: 1px solid rgba(239, 68, 68, 0.3); color: #ef4444; font-size: 13px;">
+                <i data-lucide="alert-circle" style="width: 14px; height: 14px; display: inline; vertical-align: middle; margin-right: 4px;"></i>
+                Network error executing query: ${escapeHtml(err.message)}
+            </div>`;
+        if (execBadge) execBadge.style.display = 'none';
+    } finally {
+        if (runBtn) {
+            runBtn.disabled = false;
+            runBtn.innerHTML = `<i data-lucide="play" style="width: 13px; height: 13px;"></i> <span>Execute SQL</span>`;
+        }
+        if (window.lucide) window.lucide.createIcons();
+    }
+}
+
+function renderSiqueryRawText(text, container) {
+    if (!text || text.trim() === '') {
+        container.innerHTML = `<div style="font-size: 13px; color: var(--text-muted); text-align: center; padding: 30px;">(0 rows returned)</div>`;
+        return;
+    }
+    container.innerHTML = `
+        <pre style="margin: 0; background: rgba(5, 7, 10, 0.95); border: 1px solid var(--glass-border); border-radius: 8px; padding: 14px; font-family: 'Consolas', 'Courier New', monospace; font-size: 12px; line-height: 1.45; color: #a5f3fc; overflow: auto; max-height: 580px; white-space: pre;">${escapeHtml(text)}</pre>
+    `;
+}
+
+function renderSiqueryJsonTable(rows, container) {
+    if (!rows || rows.length === 0) {
+        container.innerHTML = `<div style="font-size: 13px; color: var(--text-muted); text-align: center; padding: 30px;">(0 rows returned)</div>`;
+        return;
+    }
+
+    const columns = Object.keys(rows[0]);
+    const headerHtml = columns.map(c => `<th style="padding: 10px 14px; font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--accent-blue); background: rgba(14, 165, 233, 0.08); border-bottom: 1px solid var(--glass-border); text-align: left; white-space: nowrap;">${escapeHtml(c)}</th>`).join('');
+
+    const bodyHtml = rows.map((r, idx) => {
+        const bg = idx % 2 === 0 ? 'rgba(255, 255, 255, 0.01)' : 'rgba(255, 255, 255, 0.03)';
+        const cells = columns.map(col => {
+            const val = r[col];
+            const strVal = val === null ? '<span style="color: var(--text-muted); font-style: italic;">null</span>' : (typeof val === 'object' ? escapeHtml(JSON.stringify(val)) : escapeHtml(String(val)));
+            return `<td style="padding: 8px 14px; font-family: 'Consolas', 'Courier New', monospace; font-size: 12px; color: var(--text-primary); border-bottom: 1px solid rgba(255, 255, 255, 0.05); white-space: nowrap; max-width: 320px; overflow: hidden; text-overflow: ellipsis;" title="${escapeHtml(String(val ?? ''))}">${strVal}</td>`;
+        }).join('');
+        return `<tr style="background: ${bg}; transition: background 0.15s ease;" onmouseenter="this.style.background='rgba(14, 165, 233, 0.1)';" onmouseleave="this.style.background='${bg}';">${cells}</tr>`;
+    }).join('');
+
+    container.innerHTML = `
+        <div style="overflow-x: auto; max-height: 580px; border: 1px solid var(--glass-border); border-radius: 8px;">
+            <table style="width: 100%; border-collapse: collapse; text-align: left;">
+                <thead><tr>${headerHtml}</tr></thead>
+                <tbody>${bodyHtml}</tbody>
+            </table>
+        </div>
+    `;
+}
+
+function copySiqueryResults() {
+    if (!state.siqueryLastRaw) return;
+    let content = '';
+    if (state.siqueryLastRaw.csv) {
+        content = state.siqueryLastRaw.csv;
+    } else if (state.siqueryLastRaw.pretty) {
+        content = state.siqueryLastRaw.pretty;
+    } else if (state.siqueryLastRaw.rows) {
+        content = JSON.stringify(state.siqueryLastRaw.rows, null, 2);
+    }
+    if (content && navigator.clipboard) {
+        navigator.clipboard.writeText(content).then(() => {
+            const btn = document.getElementById('siquery-copy-btn');
+            if (btn) {
+                const orig = btn.innerHTML;
+                btn.innerHTML = `<i data-lucide="check" style="width: 12px; height: 12px; color: #10b981;"></i> <span>Copied!</span>`;
+                if (window.lucide) window.lucide.createIcons();
+                setTimeout(() => {
+                    btn.innerHTML = orig;
+                    if (window.lucide) window.lucide.createIcons();
+                }, 1800);
+            }
+        });
+    }
+}
+
+function exportSiqueryResults() {
+    if (!state.siqueryLastRaw) return;
+    let content = '';
+    let mime = 'text/plain';
+    let ext = 'txt';
+
+    if (state.siqueryLastRaw.csv) {
+        content = state.siqueryLastRaw.csv;
+        mime = 'text/csv';
+        ext = 'csv';
+    } else if (state.siqueryLastRaw.pretty) {
+        content = state.siqueryLastRaw.pretty;
+        mime = 'text/plain';
+        ext = 'txt';
+    } else if (state.siqueryLastRaw.rows) {
+        content = JSON.stringify(state.siqueryLastRaw.rows, null, 2);
+        mime = 'application/json';
+        ext = 'json';
+    }
+
+    if (!content) return;
+    const blob = new Blob([content], { type: mime });
+    const url = URL.createObjectURL(blob);
+    const a = document.createElement('a');
+    a.href = url;
+    a.download = `siquery_results_${Date.now()}.${ext}`;
+    document.body.appendChild(a);
+    a.click();
+    document.body.removeChild(a);
+    URL.revokeObjectURL(url);
+}
+
+window.renderSiqueryView = renderSiqueryView;
+window.fetchSiqueryTables = fetchSiqueryTables;
+window.filterSiqueryTables = filterSiqueryTables;
+window.selectSiqueryTable = selectSiqueryTable;
+window.applySiqueryPreset = applySiqueryPreset;
+window.clearSiqueryInput = clearSiqueryInput;
+window.refreshSiqueryTelemetry = refreshSiqueryTelemetry;
+window.executeSiquery = executeSiquery;
+window.copySiqueryResults = copySiqueryResults;
+window.exportSiqueryResults = exportSiqueryResults;
+
 
 
 

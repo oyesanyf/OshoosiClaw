@@ -89,6 +89,10 @@
                     <i data-lucide="bot"></i>
                     <span>AI Agents &amp; Containment</span>
                 </a>
+                <a href="#siquery" class="nav-item" data-view="siquery">
+                    <i data-lucide="database"></i>
+                    <span>Siquery SQL Console</span>
+                </a>
             </nav>
             <div class="sidebar-footer">
                 <div class="status-indicator">
@@ -2133,6 +2137,185 @@
                             <button id="history-next-btn" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 6px 12px; border-radius: 6px; font-size: 12px; cursor: pointer;" disabled>
                                 Next &rarr;
                             </button>
+                        </div>
+                    </div>
+                </div>
+            </div>
+
+            <!-- Siquery-RS Live EDR SQL Console & 41-Table Inspector View -->
+            <div id="siquery-view" class="view-content">
+                <!-- Header Banner -->
+                <div class="card glass shadow-glow mb-4" style="border-left: 4px solid var(--accent-blue);">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                        <div>
+                            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                                <h3 style="font-size: 20px; font-weight: 600; color: var(--text-header); margin: 0;">Siquery-RS Live EDR SQL Console &amp; 41-Table Inspector</h3>
+                                <span class="badge blue" style="font-size: 11px;"><i data-lucide="database" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>41 System Tables Active</span>
+                                <span class="badge green" style="font-size: 11px;"><i data-lucide="shield-check" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>Devolutions Parity</span>
+                                <span class="badge purple" style="font-size: 11px;"><i data-lucide="activity" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>EDR Continuous Sweep (45s)</span>
+                            </div>
+                            <p style="color: var(--text-secondary); font-size: 13px; margin-top: 6px; margin-bottom: 0;">
+                                Query operating system telemetry, process trees, sockets, WMI objects, and security posture in real-time via standard ANSI SQL with zero synthetic mocks.
+                            </p>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <button id="siquery-refresh-sweep-btn" class="btn-primary" onclick="refreshSiqueryTelemetry()" style="background: linear-gradient(135deg, #0ea5e9, #2563eb); border: none; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; cursor: pointer; color: #fff;">
+                                <i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i>
+                                <span>Sweep Telemetry</span>
+                            </button>
+                        </div>
+                    </div>
+                </div>
+
+                <!-- Live EDR Status Summary Row -->
+                <div class="stats-grid mb-4">
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">System Tables</span>
+                            <i data-lucide="table" class="stat-icon" style="color: var(--accent-blue);"></i>
+                        </div>
+                        <div class="stat-value" id="siquery-stat-tables">41</div>
+                        <div class="stat-subtext">100% Devolutions Parity</div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">Active Processes</span>
+                            <i data-lucide="cpu" class="stat-icon" style="color: #10b981;"></i>
+                        </div>
+                        <div class="stat-value" id="siquery-stat-processes">-</div>
+                        <div class="stat-subtext">Monitored process threads</div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">Network Sockets</span>
+                            <i data-lucide="network" class="stat-icon" style="color: #6366f1;"></i>
+                        </div>
+                        <div class="stat-value" id="siquery-stat-sockets">-</div>
+                        <div class="stat-subtext">TCP sockets inspected</div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">WMI Services &amp; Shares</span>
+                            <i data-lucide="server" class="stat-icon" style="color: #f59e0b;"></i>
+                        </div>
+                        <div class="stat-value" id="siquery-stat-services">-</div>
+                        <div class="stat-subtext">Windows service objects</div>
+                    </div>
+                </div>
+
+                <!-- Main Siquery Console Layout (41-Table Dictionary + SQL Editor & Results) -->
+                <div style="display: grid; grid-template-columns: 320px 1fr; gap: 16px; margin-bottom: 20px;">
+                    <!-- 41-Table System Dictionary -->
+                    <div class="card glass shadow-glow" style="display: flex; flex-direction: column; height: 750px;">
+                        <div class="card-header" style="padding: 14px 16px; border-bottom: 1px solid var(--glass-border);">
+                            <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <i data-lucide="folder-tree" style="width: 16px; height: 16px; color: var(--accent-blue);"></i>
+                                    <h4 style="margin: 0; font-size: 14px; font-weight: 600;">System Tables</h4>
+                                </div>
+                                <span id="siquery-table-count-badge" style="background: rgba(14, 165, 233, 0.15); color: var(--accent-blue); padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">41 Tables</span>
+                            </div>
+                            <div class="search-bar" style="width: 100%; background: rgba(0, 0, 0, 0.3); height: 32px; border-radius: 6px;">
+                                <i data-lucide="search" style="width: 13px; height: 13px;"></i>
+                                <input type="text" id="siquery-table-search-input" placeholder="Search tables..." style="font-size: 12px;" oninput="filterSiqueryTables()">
+                            </div>
+                        </div>
+                        <div id="siquery-table-list" style="padding: 10px; overflow-y: auto; flex: 1; display: flex; flex-direction: column; gap: 4px;">
+                            <div style="font-size: 12px; color: var(--text-muted); text-align: center; padding: 20px;">Loading tables...</div>
+                        </div>
+                    </div>
+
+                    <!-- SQL Query Console & Results -->
+                    <div style="display: flex; flex-direction: column; gap: 16px;">
+                        <!-- Query Editor Card -->
+                        <div class="card glass shadow-glow" style="padding: 16px;">
+                            <!-- Presets Toolbar -->
+                            <div style="margin-bottom: 12px;">
+                                <div style="font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; color: var(--text-muted); font-weight: 600; margin-bottom: 8px;">
+                                    EDR Security Presets
+                                </div>
+                                <div style="display: flex; flex-wrap: wrap; gap: 6px;">
+                                    <button onclick="applySiqueryPreset('processes')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                                        <i data-lucide="cpu" style="width: 11px; height: 11px;"></i> Top Processes
+                                    </button>
+                                    <button onclick="applySiqueryPreset('sockets')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                                        <i data-lucide="radio" style="width: 11px; height: 11px;"></i> Listening Sockets
+                                    </button>
+                                    <button onclick="applySiqueryPreset('services')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                                        <i data-lucide="cog" style="width: 11px; height: 11px;"></i> WMI Services
+                                    </button>
+                                    <button onclick="applySiqueryPreset('network')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                                        <i data-lucide="network" style="width: 11px; height: 11px;"></i> Network Adapters
+                                    </button>
+                                    <button onclick="applySiqueryPreset('hotfixes')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                                        <i data-lucide="shield" style="width: 11px; height: 11px;"></i> Windows Hotfixes
+                                    </button>
+                                    <button onclick="applySiqueryPreset('users')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                                        <i data-lucide="users" style="width: 11px; height: 11px;"></i> User Accounts
+                                    </button>
+                                    <button onclick="applySiqueryPreset('hosts')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                                        <i data-lucide="file-text" style="width: 11px; height: 11px;"></i> /etc/hosts MITM
+                                    </button>
+                                    <button onclick="applySiqueryPreset('memory')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                                        <i data-lucide="hard-drive" style="width: 11px; height: 11px;"></i> Memory Maps
+                                    </button>
+                                </div>
+                            </div>
+
+                            <!-- SQL Input Area -->
+                            <div style="position: relative; margin-bottom: 12px;">
+                                <textarea id="siquery-sql-input" rows="4" style="width: 100%; background: rgba(5, 7, 10, 0.95); border: 1px solid var(--glass-border); border-radius: 8px; padding: 12px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.5; color: #38bdf8; resize: vertical; outline: none; box-sizing: border-box;" placeholder="Enter SQL query (e.g. SELECT * FROM processes LIMIT 10;)">SELECT pid, name, ppid, cpu_percent, memory_rss_mb, path FROM processes ORDER BY memory_rss_mb DESC LIMIT 15;</textarea>
+                            </div>
+
+                            <!-- Query Actions Toolbar -->
+                            <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
+                                <div style="display: flex; align-items: center; gap: 10px;">
+                                    <label style="font-size: 12px; color: var(--text-muted); font-weight: 500;">Format:</label>
+                                    <select id="siquery-format-select" style="background: rgba(13, 17, 23, 0.8); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 6px 12px; border-radius: 6px; font-size: 12px; outline: none; cursor: pointer;">
+                                        <option value="json" selected>JSON Table</option>
+                                        <option value="pretty">Pretty ASCII</option>
+                                        <option value="csv">CSV (Pipe-Delimited)</option>
+                                    </select>
+                                    <span id="siquery-exec-badge" style="display: none; background: rgba(16, 185, 129, 0.15); color: #10b981; padding: 3px 10px; border-radius: 12px; font-size: 11px; font-weight: 600;">
+                                        0.00ms · 0 rows
+                                    </span>
+                                </div>
+                                <div style="display: flex; gap: 8px;">
+                                    <button id="siquery-clear-btn" onclick="clearSiqueryInput()" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-secondary); padding: 7px 14px; border-radius: 6px; font-size: 12px; cursor: pointer;">
+                                        Clear
+                                    </button>
+                                    <button id="siquery-execute-btn" onclick="executeSiquery()" style="background: linear-gradient(135deg, #0ea5e9, #3b82f6); border: none; color: #fff; padding: 7px 18px; border-radius: 6px; font-size: 13px; font-weight: 600; cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                                        <i data-lucide="play" style="width: 13px; height: 13px;"></i>
+                                        <span>Execute SQL</span>
+                                    </button>
+                                </div>
+                            </div>
+                        </div>
+
+                        <!-- Results Card -->
+                        <div class="card glass shadow-glow" style="flex: 1; display: flex; flex-direction: column; min-height: 440px;">
+                            <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; padding: 12px 18px; border-bottom: 1px solid var(--glass-border);">
+                                <div style="display: flex; align-items: center; gap: 8px;">
+                                    <i data-lucide="terminal" style="width: 16px; height: 16px; color: var(--accent-blue);"></i>
+                                    <h4 style="margin: 0; font-size: 14px; font-weight: 600;">Query Results</h4>
+                                </div>
+                                <div style="display: flex; gap: 8px;">
+                                    <button id="siquery-copy-btn" onclick="copySiqueryResults()" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-secondary); padding: 4px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                                        <i data-lucide="copy" style="width: 12px; height: 12px;"></i>
+                                        <span>Copy</span>
+                                    </button>
+                                    <button id="siquery-export-btn" onclick="exportSiqueryResults()" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-secondary); padding: 4px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: flex; align-items: center; gap: 4px;">
+                                        <i data-lucide="download" style="width: 12px; height: 12px;"></i>
+                                        <span>Export</span>
+                                    </button>
+                                </div>
+                            </div>
+                            <div id="siquery-results-container" style="flex: 1; padding: 16px; overflow: auto; background: rgba(0, 0, 0, 0.2);">
+                                <div style="display: flex; flex-direction: column; align-items: center; justify-content: center; height: 280px; color: var(--text-muted); font-size: 13px;">
+                                    <i data-lucide="database" style="width: 32px; height: 32px; margin-bottom: 8px; opacity: 0.4;"></i>
+                                    <span>Execute a query or click a system table on the left to inspect records</span>
+                                </div>
+                            </div>
                         </div>
                     </div>
                 </div>

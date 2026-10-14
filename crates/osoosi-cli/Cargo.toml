@@ -19,6 +19,7 @@ osoosi-wire = { path = "../osoosi-wire" }
 osoosi-runtime = { path = "../osoosi-runtime" }
 osoosi-forensics = { path = "../osoosi-forensics" }
 osoosi-behavioral = { path = "../osoosi-behavioral" }
+osoosi-agent-anomaly = { path = "../osoosi-agent-anomaly" }
 blake3 = { workspace = true }
 candle-core = { workspace = true }
 clap = { workspace = true }
