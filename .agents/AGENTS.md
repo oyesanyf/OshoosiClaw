@@ -23,6 +23,16 @@
 - **No Lazy Path Exclusions:** Never resolve false positives by adding blind directory or path string exclusions. Accuracy matters: always resolve root causes via genuine signature verification, Windows Catalog lookups, and decision model consensus.
 - **Decision Model Integration:** All candidate detections and automated responses MUST be evaluated by the production decision models (Clef Decision Engine, Strands Decider, Threat Voters) rather than raw isolated heuristics.
 
+## Windows WDAC / Device Guard Primary `signtool.exe` Invariant
+- **Primary Signer Rule:** Always use the native Windows 10 SDK `signtool.exe` (`SHA-256` digest + DigiCert RFC 3161 timestamp) as the primary Authenticode signer for all `.exe`, `.dll`, and `.msi` artifacts. Never rely on `osslsigncode` as the primary signer on Windows, as Windows Device Guard / WDAC rejects non-standard PE signature tables.
+- **Complete Binary Coverage & Verification:** Every build must sign both primary artifacts and all companion binaries in `target/release/` (`osoosi.exe`, `osoosi_inject.dll`, `osoosi-auditor.exe`, `otx-taxii-rs.exe`, `bulk_trainer.exe`, `test-peer.exe`) and assert `(Get-AuthenticodeSignature <path>).SignerCertificate -ne $null`.
+
+## EDR Operational Evaluation & Full-Stack Telemetry Invariants
+- **Monitor Mode vs. Enforce Mode Awareness:** When evaluating live attacks (`edr_tester.py`, Atomic Red Team, `rfc_hunt_swarm.py`), always check whether the daemon is running in **Monitor Mode** (`Action: Logged and Alerted`) or **Enforce Mode** (`Blocked / Quarantined / Process Terminated`). In Monitor Mode, verify detection efficacy via `Consensus Threat Identified` logs, SQLite `threats` / `consensus_findings` persistence, and P2P/Nostr mesh broadcasts.
+- **Daemon Working-Directory Database Resolution:** Before querying SQLite during live monitoring, check the running `osoosi.exe` working directory (`Get-CimInstance Win32_Process`), as `database/osoosi.db` resolves relative to the process CWD (e.g., `target/release/database/osoosi.db` when launched from `target/release`).
+- **DashMap Lock Hygiene:** Never call `.iter()` or `.get()` on a `DashMap` while holding a mutable `.entry()` or `.get_mut()` guard on the same map in the same task; always explicitly `drop(entry)` before iterating.
+- **WebUI Parity Invariant:** Every modification to `dashboard/src/` (`index.html`, `app.js`, `styles.css`) must maintain `0 diff` parity with `dashboard/dist/`.
+
 ## Execution Blueprints (Flash Engine Constraints)
 - **Trigger:** Applies ONLY when running high-speed/Flash models (e.g., Gemini Flash variants).
 - **Exclusion:** Full-scale reasoning engines and simple/trivial single-line queries proceed normally without blueprints.
