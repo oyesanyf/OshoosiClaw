@@ -131,6 +131,65 @@ If you see "PRODUCTION-CRITICAL: All ML models failed to load":
   .\osoosi.exe forensics scan-mft --drive C --dir "Windows\Temp"
   ```
 
+### 10. Windows Service Administration (OsoosiEDR)
+OpenỌ̀ṣọ́ọ̀sì can run continuously as a native Windows Service (`OsoosiEDR`) managed by the Windows Service Control Manager (SCM). The service automatically starts on system boot, auto-recovers after unhandled crashes, and runs silently in the background with `--no-browser`.
+
+#### SCM Service Management Operations
+All operations require an Administrator (Elevated) command prompt or PowerShell session:
+
+| Operational Goal | OpenỌ̀ṣọ́ọ̀sì CLI | Native PowerShell | Native Win32 `sc.exe` |
+| :--- | :--- | :--- | :--- |
+| **Install Service** | `.\osoosi.exe service install` | *N/A* | `sc.exe create OsoosiEDR binPath= "..." start= auto` |
+| **Start Service** | `.\osoosi.exe service start` | `Start-Service OsoosiEDR` | `sc.exe start OsoosiEDR` |
+| **Check Status** | `.\osoosi.exe service status` | `Get-Service OsoosiEDR` | `sc.exe queryex OsoosiEDR` |
+| **Stop Service** | `.\osoosi.exe service stop` | `Stop-Service OsoosiEDR` | `sc.exe stop OsoosiEDR` |
+| **Restart Service** | `.\osoosi.exe service restart` | `Restart-Service OsoosiEDR` | `sc.exe stop OsoosiEDR && sc.exe start OsoosiEDR` |
+| **Delete / Remove** | `.\osoosi.exe service delete` | *N/A* | `sc.exe delete OsoosiEDR` |
+
+#### Operational Modes: Monitor Mode vs. Enforce Mode
+When conducting penetration tests, adversary simulations (`edr_tester.py`), Atomic Red Team drills, or research swarms (`rfc_hunt_swarm.py`), operators must be aware of the daemon's active operational mode:
+
+- **Monitor Mode (`Action: Logged and Alerted`)**:
+  - Configured via `policy.enforce = false` or `autonomy_mode = "audit"` in `osoosi.toml`.
+  - In Monitor Mode, the EDR observes and processes all kernel telemetry, runs EMBER ML feature extraction, and evaluates multi-voter consensus without killing processes or dropping connections.
+  - **Verification Method**: Check daemon logs for `Consensus Threat Identified`, query the SQLite database (`database/osoosi.db`) for entries in the `threats` and `consensus_findings` tables, and verify threat broadcast messages across the P2P wire mesh (`GossipSub`) and Nostr relays.
+  - *Working-Directory Caution*: When querying the database while the service is running, always verify the active daemon CWD (`Get-CimInstance Win32_Process -Filter "Name = 'osoosi.exe'"`), as `database/osoosi.db` resolves relative to the process directory (e.g. `target/release/database/osoosi.db` in release builds).
+- **Enforce Mode (`Blocked / Quarantined / Process Terminated`)**:
+  - Configured via `policy.enforce = true` or `autonomy_mode = "active"` in `osoosi.toml`.
+  - In Enforce Mode, verified threats above the confidence threshold ($> 0.80$) immediately trigger active mitigation: process thread freezing (`ActiveProcessTarpit`), Windows Filtering Platform (WFP) network socket isolation, file quarantine, and process tree termination (`Kill Process Tree`).
+
+### 11. Host-Calibrated Model Provisioning (osoosi pull-model)
+To maximize detection and reasoning performance without exceeding host hardware limits, OpenỌ̀ṣọ́ọ̀sì features an automated hardware diagnostic and model provisioning pipeline:
+
+#### 1. Hardware Inspection (`osoosi check-resources`)
+Run hardware diagnostics to inspect host logical cores, physical RAM, free memory, and GPU VRAM:
+```powershell
+.\osoosi.exe check-resources
+# Aliases: .\osoosi.exe doctor, .\osoosi.exe resources
+```
+This categorizes the machine into one of four hardware tiers:
+- **UltraLite (<4 GB RAM)**: Magika + EMBER v2 static models only; browser UI suppressed.
+- **Lite (4-8 GB RAM)**: SOREL-20M, SecureBERT, and Cloudflare Clef Flash; browser suppressed unless forced.
+- **Standard (8-16 GB RAM)**: Strands Decider 2B and LangGraph Swarm; web browser enabled.
+- **Enterprise (>16 GB RAM)**: Full reasoning models (Qwen 2.5 14B/32B, FoundationSec-8B, EmbeddingGemma 2).
+
+#### 2. Model Pull Pipeline (`osoosi pull-model`)
+Automatically download and configure the model suite recommended for the host tier:
+```powershell
+# Automatically detect tier and pull all calibrated models
+.\osoosi.exe pull-model
+
+# Or pull a specific calibrated model directly
+.\osoosi.exe pull-model qwen2.5:14b
+```
+Operators can also trigger model downloads with one click from the interactive WebUI under the **Utilities** tab (`#utilities-view`).
+
+#### 3. Automatic IPv6 Restoration Guard (`Ipv6SuspensionGuard`)
+Multi-gigabyte downloads from Hugging Face or Cloudflare R2 frequently stall on dual-stack Windows network adapters due to silent IPv6 routing timeouts and broken PMTU discovery:
+- `Ipv6SuspensionGuard` automatically identifies active network adapters and temporarily unbinds IPv6 (`Disable-NetAdapterBinding -ComponentID ms_tcpip6`) during the download session.
+- Transfers seamlessly utilize reliable IPv4 TCP connections at line rate.
+- An RAII Drop guard guarantees that IPv6 bindings (`Enable-NetAdapterBinding`) are automatically restored once the transfer finishes, errors out, or is cancelled.
+
 ---
 
 ## 📈 Performance & Resource Tuning

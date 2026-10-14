@@ -19,7 +19,9 @@
 <p align="center">
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-architecture">Architecture</a> •
+  <a href="#-native-windows-service-lifecycle-osoosiedr">Windows Service (OsoosiEDR)</a> •
   <a href="#-ring-0-windows-driver--linux-ebpf-parity">Ring-0 Driver & eBPF</a> •
+  <a href="#-agent-anomaly-detection-owasp-top-10-agentic-2026--embeddinggemma-2-mrl">Agent Anomaly & EmbeddingGemma 2</a> •
   <a href="#-autonomous-defense-swarm--langgraph">LangGraph Swarm</a> •
   <a href="#-hybrid-decision-engine--strands-decider-2b--clef-flash">Hybrid Decision Engine</a> •
   <a href="#-embedded-velociraptor-forensic-extraction-service">Velociraptor Forensics</a> •
@@ -188,6 +190,175 @@ OpenỌ̀ṣọ́ọ̀sì exposes a dedicated `osoosi driver` subcommand suite f
 # 6. Stop and uninstall the kernel driver service
 .\osoosi.exe driver uninstall
 ```
+
+---
+
+<a id="-native-windows-service-lifecycle-osoosiedr"></a>
+<a id="native-windows-service-lifecycle-osoosiedr"></a>
+## ⚙️ Native Windows Service Lifecycle (OsoosiEDR)
+
+OpenỌ̀ṣọ́ọ̀sì features enterprise-grade background execution via native **Win32 Service Control Manager (SCM)** integration implemented in `crates/osoosi-cli/src/service.rs`. Unlike legacy agents that rely on third-party service wrappers (e.g., NSSM, WinSW), OpenỌ̀ṣọ́ọ̀sì communicates directly with the Windows kernel and SCM via the official Windows API (`StartServiceCtrlDispatcherW`, `RegisterServiceCtrlHandlerExW`, `SetServiceStatus`).
+
+```
+                    WINDOWS SERVICE CONTROL MANAGER (SCM)
+                                      │
+                   ┌──────────────────┴──────────────────┐
+                   ▼                                     ▼
+      sc.exe / Start-Service              osoosi.exe service <action>
+                   │                                     │
+                   └──────────────────┬──────────────────┘
+                                      ▼
+                        OpenỌ̀ṣọ́ọ̀sì SCM Dispatcher
+                     (StartServiceCtrlDispatcherW)
+                                      │
+                   ┌──────────────────┼──────────────────┐
+                   ▼                  ▼                  ▼
+          SERVICE_START_PENDING  SERVICE_RUNNING    SERVICE_STOP_PENDING
+          • Auto CWD Resolution  • EDR Orchestrator • 15s Graceful Drain
+          • Working-Dir Align    • Ring-0 / ETW / RL• DB WAL Flush
+          • --no-browser Flag    • WebUI Port 3030  • notify_service_stop()
+```
+
+### Core Architecture & Operating Invariants
+
+1. **Direct Win32 SCM Dispatcher Loop**:
+   - The service entrypoint (`osoosi.exe service run --no-browser`) invokes `StartServiceCtrlDispatcherW`.
+   - The SCM control handler (`RegisterServiceCtrlHandlerExW`) intercepts `SERVICE_CONTROL_STOP`, `SERVICE_CONTROL_SHUTDOWN`, and `SERVICE_CONTROL_INTERROGATE`.
+   - On shutdown, `SetServiceStatus` reports `SERVICE_STOP_PENDING` with a 15-second grace period (`dwWaitHint: 15000`), cleanly flushing SQLite WAL caches, notifying P2P peers, and unwinding active tarpits.
+2. **Automatic Working-Directory Resolution**:
+   - The Windows SCM always executes background services with the working directory set to `C:\Windows\System32`.
+   - `osoosi` inspects `std::env::current_exe()` at startup and automatically sets its current directory to the parent folder of the binary (or repository root), ensuring `database/osoosi.db`, `models/`, `rules/sigma/`, and `config/osoosi.toml` resolve with 100% path accuracy.
+3. **Dual-Channel Shutdown Multiplexing**:
+   - The runtime multiplexes interactive console interrupts (`tokio::signal::ctrl_c()`) with Windows SCM stop notifications (`notify_service_stop()`) via `tokio::select!`. Both paths trigger identical clean termination routines.
+4. **Resilient Auto-Recovery Policy**:
+   - Registration configures native SCM crash recovery (`reset= 86400`, `actions= restart/5000/restart/5000/restart/5000`): in the event of an unhandled host fault, Windows automatically restarts the EDR daemon after 5 seconds for up to three attempts within a 24-hour window.
+
+### Windows Service Management Commands
+
+| Management Action | OpenỌ̀ṣọ́ọ̀sì CLI | PowerShell Cmdlet | Native Win32 `sc.exe` | Description |
+|:---|:---|:---|:---|:---|
+| **Install Service** | `.\osoosi.exe service install` | *N/A* | `sc.exe create OsoosiEDR binPath= "..." start= auto` | Registers `OsoosiEDR` (`OpenOsoosi Autonomous EDR Service`) with automatic startup and recovery. |
+| **Start Service** | `.\osoosi.exe service start` | `Start-Service OsoosiEDR` | `sc.exe start OsoosiEDR` | Signals SCM to transition service from `STOPPED` to `RUNNING`. |
+| **Stop Service** | `.\osoosi.exe service stop` | `Stop-Service OsoosiEDR` | `sc.exe stop OsoosiEDR` | Dispatches `SERVICE_CONTROL_STOP` and waits up to 15s for orderly shutdown. |
+| **Restart Service** | `.\osoosi.exe service restart` | `Restart-Service OsoosiEDR` | `sc.exe stop OsoosiEDR && sc.exe start OsoosiEDR` | Safely cycles the service daemon, reloading rules, configs, and models. |
+| **Query Status** | `.\osoosi.exe service status` | `Get-Service OsoosiEDR` | `sc.exe queryex OsoosiEDR` | Displays PID, current state (`RUNNING`, `STOPPED`), Win32 exit codes, and memory usage. |
+| **Delete / Remove** | `.\osoosi.exe service delete` | *N/A* | `sc.exe delete OsoosiEDR` | Stops the running daemon and unregisters the service definition from the registry. *(Aliases: `uninstall`, `remove`, `rm`)* |
+| **Run Dispatcher** | `.\osoosi.exe service run` | *N/A* | *Internal* | Internal SCM dispatcher entrypoint (launches orchestrator with `--no-browser`). |
+
+```powershell
+# Complete Administrative Service Lifecycle Example (Elevated PowerShell)
+
+# 1. Install OpenỌ̀ṣọ́ọ̀sì as an automatic Windows Service
+.\osoosi.exe service install
+
+# 2. Start the service
+.\osoosi.exe service start
+
+# 3. Verify operational status and running PID
+.\osoosi.exe service status
+# Output: Service 'OsoosiEDR' is RUNNING (PID: 12480, State: Running, StartType: Automatic)
+
+# 4. Query live health through PowerShell
+Get-Service OsoosiEDR | Format-List Status, Name, DisplayName, StartType
+
+# 5. Stop the service cleanly
+.\osoosi.exe service stop
+```
+
+---
+
+<a id="-agent-anomaly-detection-owasp-top-10-agentic-2026--embeddinggemma-2-mrl"></a>
+<a id="agent-anomaly-detection-owasp-top-10-agentic-2026--embeddinggemma-2-mrl"></a>
+## 🤖 Agent Anomaly Detection (OWASP Top 10 Agentic 2026) & EmbeddingGemma 2 MRL
+
+With the widespread enterprise deployment of autonomous AI agents (Devin, AutoGPT, Claude Computer Use, OpenHands), attackers increasingly target agentic loops rather than traditional binaries. OpenỌ̀ṣọ́ọ̀sì embeds an on-device **Agent Anomaly Detection (AAD)** engine (`crates/osoosi-agent-anomaly`) designed after **Google DeepMind's Gemini Enterprise Agent AAD Specification** and mapped directly to the **OWASP Top 10 for Agentic Applications (2026)**.
+
+```
+                            AGENT TOOL-CALL TELEMETRY (JSON STREAM)
+                                              │
+                                              ▼
+                    ┌──────────────────────────────────────────────────┐
+                    │       Layer 1: Statistical Screener (< 5µs)      │
+                    │  • Sliding Session Window (In-Memory Ring Buffer)│
+                    │  • Call Velocity (> 10 calls/s)                  │
+                    │  • Argument Payload Size Spike (> 50 KB)         │
+                    │  • Cumulative Error Ratio (> 60%)                │
+                    │  • Token Burn Velocity (> 50,000 tokens/min)     │
+                    └─────────────────────────┬────────────────────────┘
+                                              │
+                         ┌────────────────────┴────────────────────┐
+                         ▼                                         ▼
+                 [Pass: Normal Velocity]                   [Anomalous Spike]
+                         │                                         │
+                         ▼                                         ▼
+                   Fast-Path OK                    ┌───────────────────────────────┐
+                   (Zero Delay)                    │  Layer 2: Semantic Reasoner   │
+                                                   │  (EmbeddingGemma 2 + MRL)     │
+                                                   │  • 128-dim Cosine Similarity  │
+                                                   │  • Intent Drift Evaluation    │
+                                                   │  • Reference Threat Clusters  │
+                                                   └───────────────┬───────────────┘
+                                                                   │
+                                                                   ▼
+                                                       Consensus Voter Action
+                                                   (Tarpit / Quarantine / Isolate)
+```
+
+### 1. Two-Layer Behavioral Oversight Architecture
+
+1. **Layer 1: Statistical Screener (`< 5µs` Latency)**:
+   - Evaluates every tool invocation telemetry record (`ToolCallTelemetry`) through an ultra-fast in-memory sliding window (`SessionWindow`, default 60-second horizon).
+   - Enforces mathematical guardrails:
+     - **Call Rate Limit**: Flags bursts exceeding 10 tool calls per second per session.
+     - **Payload Volume**: Intercepts argument strings larger than 50 KB (detects bulk file ingestion and prompt injection payloads).
+     - **Token Exhaustion**: Flags cumulative token velocities exceeding 50,000 tokens/min (sponge attack mitigation).
+     - **Error Burst Rate**: Flags 5 consecutive tool failures or an error ratio exceeding 60% (indicates brute-force probing or tool fuzzing).
+2. **Layer 2: Semantic Reasoner & EmbeddingGemma 2 (MRL)**:
+   - When Layer 1 detects an anomalous velocity, or when an unfamiliar tool call is encountered, telemetry is routed to the semantic reasoner (`crates/osoosi-behavioral::embedding_gemma`).
+   - Uses **Google DeepMind EmbeddingGemma 2** with **Matryoshka Representation Learning (MRL)**:
+     - **MRL Slicing (128 / 256 / 512 / 768 Dimensions)**: Slices embedding representations down to 128 dimensions followed by L2 normalization (`normalize_l2`).
+     - **High Efficiency**: 128-dim vectors provide a **6x speedup** in SIMD cosine similarity calculations (`cosine_similarity`), enabling sub-millisecond distance computations against reference threat vectors with **>98% semantic fidelity**.
+     - **Reference Threat Vectors**: Compares tool invocation embeddings against pre-computed clusters for *Credential Harvesting*, *Remote Code Execution*, *Privilege Escalation*, *Defense Impairment*, and *Data Exfiltration*.
+
+### 2. OWASP Top 10 for Agentic Applications (2026) Coverage Matrix
+
+| OWASP Risk ID | Threat Category | Attack Vector & Manifestation | Layer 1 / 2 Detection Mechanics | Consensus Action |
+|:---|:---|:---|:---|:---|
+| **ASI01** | **Agent Goal / Intent Hijacking** | Indirect prompt injection in ingested web/file content overriding user instructions. | EmbeddingGemma 2 cosine distance to initial prompt intent $> 0.65$. | `ResponseAction::Tarpit` |
+| **ASI02** | **Tool Misuse & Parameter Tampering** | Adversary injects shell metacharacters (`;`, `&&`, `&#124;`) or command substitutions into tool arguments. | Layer 1 argument sanitization + `AiSecurityAuditVoter` pattern matching. | `ResponseAction::Tarpit` |
+| **ASI03** | **Autonomous Privilege Escalation** | Agent attempts to invoke administrative tools or write to restricted system hives without authorization. | Sliding window role check against permitted tool manifest; unbacked thread check. | `ResponseAction::Isolate` |
+| **ASI04** | **Excessive Agency & Unbounded Execution** | Agent performs uncontrolled multi-step actions across file systems or networks without human check. | Sliding window action counter threshold exceeded ($> 50$ mutating actions/session). | `ResponseAction::Alert` |
+| **ASI05** | **Critical Infrastructure / System Breakout** | Agent executes container breakout, Job Object escape, or uncontained child process creation. | Kernel driver pre-operation interception + AppContainer / Job Object violation check. | `ResponseAction::Quarantine` |
+| **ASI06** | **Multi-Agent Cascading Failure & Swarm Poisoning** | Malicious or compromised subagent floods P2P mesh or inter-agent bus with corrupt state updates. | Inter-agent HMAC verification + peer reputation score degradation. | `ResponseAction::Isolate` |
+| **ASI07** | **Agent State / Long-Term Memory Tampering** | Unauthorized writes targeting agent persistent memory (`.agents/memory.md`, SQLite memory store). | Sysmon Event 11 monitoring on agent memory paths + cryptographic hash mismatch. | `ResponseAction::Isolate` |
+| **ASI08** | **Sensitive Context / System Prompt Exfiltration** | Prompt injection inducing the agent to dump its hidden system prompt or API credentials over HTTP. | Egress voter DLP regex scan (`sk-`, `ghp_`, `did:osoosi:`, system prompt canary tokens). | `ResponseAction::Alert` |
+| **ASI09** | **Resource Exhaustion & Denial of Agent Service** | Recursive tool loops, sponge prompts, or massive token expansion starving inference compute. | Layer 1 token velocity screener ($> 50{,}000\text{ tokens/min}$) and rate screener. | `ResponseAction::Tarpit` |
+| **ASI10** | **Rogue Agent Self-Replication & Persistence** | Agent installs scheduled tasks, autostart registry keys, or background worker daemons to survive termination. | Sysmon Event 13 / Event 1 monitoring on persistence directories (`Run`, `RunOnce`, Services). | `ResponseAction::Quarantine` |
+
+### 3. Host-Calibrated Model Provisioning & IPv6 Network Resilience
+
+To ensure that machine learning inference never starves host memory or causes OOM conditions, OpenỌ̀ṣọ́ọ̀sì dynamically audits system hardware and calibrates model provisioning:
+
+```powershell
+# 1. Audit host CPU, RAM, GPU, and get assigned hardware tier
+.\osoosi.exe check-resources
+# Output:
+# Logical CPU Cores     : 16
+# Total System Memory   : 31.84 GB (32608 MB)
+# Available Free Memory : 19.42 GB (19888 MB)
+# GPU Acceleration      : NVIDIA GeForce RTX 4070 Laptop GPU (12140 MB VRAM)
+# Assigned Hardware Tier: Enterprise (>16 GB RAM)
+# Recommended Suite     : qwen2.5:14b, embeddinggemma:latest, fenkohq/foundation-sec-8b
+
+# 2. Pull the calibrated model suite with automatic network resilience
+.\osoosi.exe pull-model
+```
+
+#### Automatic IPv6 Suspension Guard (`Ipv6SuspensionGuard`)
+During multi-gigabyte model downloads from Hugging Face or Cloudflare R2, dual-stack Windows network interfaces frequently encounter silent IPv6 packet drops and TCP window stalls:
+- When `osoosi pull-model` starts (or when models are provisioned via the WebUI `#utilities-view`), `Ipv6SuspensionGuard` temporarily suspends the `ms_tcpip6` component binding on all active network adapters via `Disable-NetAdapterBinding`.
+- All model downloads fall back cleanly to high-throughput IPv4 routes with zero timeouts.
+- An **RAII Drop guard** automatically restores full IPv6 network bindings (`Enable-NetAdapterBinding`) immediately upon download completion, error, or process termination, ensuring host network configuration is never permanently altered.
 
 ---
 
@@ -1067,7 +1238,10 @@ Global flags (may appear **before or after** the subcommand): `--debug` / `-d`, 
 | Subcommand | Function | Key Flags / Arguments |
 |:---|:---|:---|
 | `start` | Launch the autonomous EDR security loop | `--debug`, `--no-dashboard`, `--sandbox`, `--wsl` |
+| `service` | Native Windows Service (SCM) lifecycle management | `install`, `start`, `stop`, `restart`, `status`, `delete` |
 | `driver` | Ring-0 Windows driver management & rule synchronization | `status`, `install`, `uninstall`, `add-rule`, `set-mode`, `clear-rules` |
+| `check-resources` | Audit host CPU, RAM, GPU, and assign hardware tier | *Aliases: `doctor`, `resources`* |
+| `pull-model` | Provision calibrated local AI models with IPv6 resilience | `[model]`, `--force` |
 | `grant-access` | One-time automated endpoint provisioning pipeline | — |
 | `sandbox` | NVIDIA OpenShell installation and status helper | `install`, `status` |
 | `agent` | Launch autonomous LLM reasoning agent | — |
@@ -1706,6 +1880,11 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 
 Recent hardening efforts have focused on autonomous multi-agent defense, hybrid decision models, and production stability:
 
+- **Native Windows Service (`OsoosiEDR`)**: Full SCM lifecycle (`install`, `start`, `stop`, `restart`, `delete`, `status`, `run`) with automatic working-directory resolution and dual `Ctrl+C` / `SERVICE_CONTROL_STOP` shutdown multiplexing.
+- **Closed-Loop RL Per-Voter Weight Calibration & SQLite Persistence**: Persistent `voter_weights` table, automatic local YARA rule hot-synthesis on multi-detector consensus findings, and `SkyRL` DQN checkpoint restoration (`runs/skyrl_checkpoint.json`).
+- **Multi-Class LSASS `CredentialGuardVoter` (`T1003.001`)**: Independent `EvidenceClass::Memory` voter inspecting `comsvcs.dll MiniDump`, `procdump`, `nanodump`, `mimikatz`, `pypykatz`, and `EventID 10` `lsass.exe` access masks (`0x1fffff`, `0x1410`), elevating `T1003.001` consensus confidence to `>0.92`.
+- **Full-Stack Deception & Multi-Transport Mesh (LAN TCP + Cellular Nostr WAN)**: Automatic `GhostNodeManager` honeyport fallback (`22->2222`, `80->8088`, `445->4450`, `3389->3390`), `HolographicMesh` P2P shard mirroring, `CanaryManager` file watcher integration, and cellular hotspot CGNAT traversal over Nostr BitChat relays.
+- **Primary `signtool.exe` WDAC / Device Guard Signing**: Native Windows 10 SDK `signtool.exe` SHA-256 + DigiCert RFC 3161 timestamping across all primary and companion binaries.
 - **LangGraph Autonomous Multi-Agent Defense Swarm (`tools/defense_swarm/`)**: Decoupled Dual-Ring Architecture executing 8-node cyclical StateGraph (`triage`, `de_escalate`, `forensics`, `intel`, `rule_synth` with retry, `remediation` with OS process immunity, `human_review` gate, `mesh_sync`). Integrated with FastAPI REST service on port 4002 and `osoosi swarm` CLI commands.
 - **Strands Decider 2B & Multi-Tiered Hybrid Decision Engine (`crates/osoosi-behavioral`)**: Hybrid non-autoregressive decision fabric uniting in-process Rust Brier gates (< 5ms), Cloudflare Clef Flash (~38ms), and AWS Strands Decider 2B (~115ms) with `cascade`, `consensus`, and `local_first` routing strategies.
 - **Embedded Velociraptor Forensic Extraction Service (`crates/osoosi-forensics`)**: Sub-second process VAD memory RWX extraction, NTFS Master File Table (MFT) rootkit hiding detection, and sanitized VQL builders with zero shell injection vulnerabilities.
