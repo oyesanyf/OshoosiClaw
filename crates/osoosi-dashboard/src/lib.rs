@@ -195,18 +195,41 @@ impl SkyRlServerState {
         }
 
         let batch = replay_buffer.sample_batch(16);
-        let mean_loss = if !batch.is_empty() {
+        let mut mean_loss = if !batch.is_empty() {
             dqn.train_batch(&batch, 0.99, 0.001)
         } else {
             0.05
         };
+
+        // Restore from SkyRL checkpoint if available on disk
+        let mut active_lora = "edr-reasoning-lora-v1".to_string();
+        if std::path::Path::new("runs/skyrl_checkpoint.json").exists() {
+            if let Ok(content) = std::fs::read_to_string("runs/skyrl_checkpoint.json") {
+                if let Ok(v) = serde_json::from_str::<serde_json::Value>(&content) {
+                    if let Some(ep) = v.get("total_episodes").and_then(|x| x.as_u64()) {
+                        total_episodes = ep as usize;
+                    }
+                    if let Some(steps) = v.get("total_steps").and_then(|x| x.as_u64()) {
+                        total_steps = steps as usize;
+                    }
+                    if let Some(loss) = v.get("loss").and_then(|x| x.as_f64()) {
+                        mean_loss = loss as f32;
+                    }
+                    if let Some(lora) = v.get("active_lora").and_then(|x| x.as_str()) {
+                        if !lora.is_empty() {
+                            active_lora = lora.to_string();
+                        }
+                    }
+                }
+            }
+        }
 
         Self {
             dqn,
             replay_buffer,
             safety,
             epsilon: 0.05,
-            active_lora: "edr-reasoning-lora-v1".to_string(),
+            active_lora,
             available_loras: vec![
                 "edr-reasoning-lora-v1".to_string(),
                 "tinker-investigator-v2".to_string(),
@@ -2458,7 +2481,10 @@ async fn post_autonomy_settings(
 async fn get_consensus(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
-            let status = orch.policy_consensus_status();
+            let orch = orch.clone();
+            let status = tokio::task::spawn_blocking(move || orch.policy_consensus_status())
+                .await
+                .unwrap_or_default();
             Json(serde_json::to_value(&status).unwrap_or(json!({})))
         }
         None => Json(json!({})),
@@ -3269,8 +3295,11 @@ async fn post_blocking_unlock(
 async fn get_model_training_status(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
+            let orch = orch.clone();
             let (status, last_attempt, last_success, sample_count, feature_count, last_error) =
-                orch.model_training_status();
+                tokio::task::spawn_blocking(move || orch.model_training_status())
+                    .await
+                    .unwrap_or((None, None, None, 0, 0, None));
             Json(json!({
                 "status": status.unwrap_or_else(|| "unknown".to_string()),
                 "last_attempt": last_attempt,

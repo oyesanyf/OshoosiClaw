@@ -2190,6 +2190,7 @@ impl EdrOrchestrator {
 
     /// Register voters that require an Arc reference to the orchestrator (post-initialization).
     pub async fn post_init_voters(self: &Arc<Self>) {
+        self.policy.add_voter(Box::new(osoosi_policy::voters::CredentialGuardVoter)).await;
         info!(
             target: crate::CONSENSUS_LOG_TARGET,
             "[CONSENSUS] native voters registered and operational"
@@ -4633,6 +4634,45 @@ impl EdrOrchestrator {
                 "Consensus Threat Identified: {} (Confidence: {:.2}, Detectors: {})",
                 signature.id, signature.confidence, signature.detector_count
             );
+
+            // Closed-Loop RL Feedback & Local YARA Hot-Synthesis
+            if signature.confidence >= 0.80 && signature.detector_count >= 2 {
+                if let Some(ref reason_str) = signature.reason {
+                    let mut voters = Vec::new();
+                    let mut chars = reason_str.chars().peekable();
+                    while let Some(c) = chars.next() {
+                        if c == '[' {
+                            let mut tag = String::new();
+                            while let Some(&next_c) = chars.peek() {
+                                if next_c == ']' {
+                                    chars.next();
+                                    break;
+                                }
+                                tag.push(chars.next().unwrap());
+                            }
+                            let trimmed = tag.trim();
+                            if !trimmed.is_empty() && !trimmed.starts_with("Veto") && !trimmed.starts_with("Tags:") {
+                                if !voters.contains(&trimmed.to_string()) {
+                                    voters.push(trimmed.to_string());
+                                }
+                            }
+                        }
+                    }
+                    if !voters.is_empty() {
+                        self.policy.update_specific_voter_weights(&voters, true, 0.02);
+                        info!(
+                            target: crate::CONSENSUS_LOG_TARGET,
+                            voters = ?voters,
+                            "Closed-loop RL: Calibrated weights for {} consensus voters (+0.02 reward)",
+                            voters.len()
+                        );
+                    }
+                }
+
+                if let Some(rule) = crate::yara_gen::generate_yara_from_threat(&signature) {
+                    let _ = self.yara_manager.hot_load_rule(&rule, &signature.id);
+                }
+            }
 
             let _ = self.memory.log_threat(&signature);
             

@@ -460,6 +460,16 @@ impl MemoryStore {
             [],
         )?;
 
+        // Voter Weights table for Closed-Loop RL persistence
+        conn.execute(
+            "CREATE TABLE IF NOT EXISTS voter_weights (
+                voter_name TEXT PRIMARY KEY,
+                weight_multiplier REAL NOT NULL,
+                updated_at TEXT NOT NULL
+            )",
+            [],
+        )?;
+
         Ok(())
     }
 
@@ -1825,6 +1835,40 @@ impl MemoryStore {
         }
         Ok(out)
     }
+
+    /// Persist a voter weight multiplier to SQLite for closed-loop RL calibration.
+    pub fn save_voter_weight(&self, voter_name: &str, weight: f32) -> anyhow::Result<()> {
+        let conn = self.conn.lock();
+        let now = Utc::now().to_rfc3339();
+        conn.execute(
+            "INSERT INTO voter_weights (voter_name, weight_multiplier, updated_at)
+             VALUES (?1, ?2, ?3)
+             ON CONFLICT(voter_name) DO UPDATE SET
+                weight_multiplier = excluded.weight_multiplier,
+                updated_at = excluded.updated_at",
+            rusqlite::params![voter_name, weight as f64, now],
+        )?;
+        Ok(())
+    }
+
+    /// Load all persisted voter weight multipliers from SQLite.
+    pub fn load_voter_weights(&self) -> anyhow::Result<std::collections::HashMap<String, f32>> {
+        let conn = self.conn.lock();
+        let mut stmt = conn.prepare_cached(
+            "SELECT voter_name, weight_multiplier FROM voter_weights"
+        )?;
+        let rows = stmt.query_map([], |row| {
+            let name: String = row.get(0)?;
+            let weight: f64 = row.get(1)?;
+            Ok((name, weight as f32))
+        })?;
+        let mut map = std::collections::HashMap::new();
+        for r in rows {
+            let (name, weight) = r?;
+            map.insert(name, weight);
+        }
+        Ok(map)
+    }
 }
 
 #[cfg(test)]
@@ -2014,5 +2058,26 @@ mod tests {
 
         let clean_list_empty = mem.get_clean_ignored_hashes(10).unwrap();
         assert_eq!(clean_list_empty.len(), 0);
+    }
+
+    #[test]
+    fn test_voter_weight_persistence() {
+        let mem = MemoryStore::new(":memory:").unwrap();
+        let initial = mem.load_voter_weights().unwrap();
+        assert!(initial.is_empty());
+
+        mem.save_voter_weight("Sigma-Engine", 1.25).unwrap();
+        mem.save_voter_weight("CredentialGuard-Memory", 1.50).unwrap();
+
+        let loaded = mem.load_voter_weights().unwrap();
+        assert_eq!(loaded.len(), 2);
+        assert!((loaded.get("Sigma-Engine").unwrap() - 1.25).abs() < 1e-4);
+        assert!((loaded.get("CredentialGuard-Memory").unwrap() - 1.50).abs() < 1e-4);
+
+        // Update existing weight
+        mem.save_voter_weight("Sigma-Engine", 1.35).unwrap();
+        let updated = mem.load_voter_weights().unwrap();
+        assert_eq!(updated.len(), 2);
+        assert!((updated.get("Sigma-Engine").unwrap() - 1.35).abs() < 1e-4);
     }
 }

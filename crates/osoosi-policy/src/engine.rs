@@ -192,6 +192,7 @@ fn classify_vote(
         "CISA-KEV" => (EvidenceClass::ThreatIntel, 0.58, false),
         "NVD-CVE-Lookup" => (EvidenceClass::ThreatIntel, 1.0, true), // High reliability, triggers strong action
         "BehavioralYara" => (EvidenceClass::Behavior, 0.88, true),
+        "CredentialGuard-Memory" => (EvidenceClass::Memory, 0.96, true),
         "YaraX-Signatures" | "YaraX-Memory" | "HollowsHunter-Memory" | "MemoryInspection-Native" => {
             (EvidenceClass::Memory, 1.0, true)
         }
@@ -376,6 +377,12 @@ pub struct PolicyEngine {
 
 impl PolicyEngine {
     pub fn new(memory: Arc<MemoryStore>, config: osoosi_types::PolicyConfig) -> Self {
+        let voter_weight_multipliers = Arc::new(DashMap::new());
+        if let Ok(weights) = memory.load_voter_weights() {
+            for (voter_name, weight) in weights {
+                voter_weight_multipliers.insert(voter_name, weight.clamp(0.25, 2.5));
+            }
+        }
         Self {
             memory,
             _semantic: SemanticEngine::new(),
@@ -385,7 +392,7 @@ impl PolicyEngine {
             global_intel_rules: Arc::new(DashMap::new()),
             consensus_cache: Arc::new(DashMap::new()),
             voters: Arc::new(tokio::sync::RwLock::new(Vec::new())),
-            voter_weight_multipliers: Arc::new(DashMap::new()),
+            voter_weight_multipliers,
             config,
             fetcher: Arc::new(crate::feed::ThreatFeedFetcher::new()),
             intel_broadcaster: Arc::new(tokio::sync::RwLock::new(None)),
@@ -409,6 +416,10 @@ impl PolicyEngine {
             },
             telemetry_controller: None,
         }
+    }
+
+    pub fn new_with_memory(memory: Arc<MemoryStore>, config: osoosi_types::PolicyConfig) -> Self {
+        Self::new(memory, config)
     }
 
     pub async fn set_intel_broadcaster(&self, broadcaster: Arc<dyn Fn(osoosi_types::GlobalIntelligence) + Send + Sync>) {
@@ -534,7 +545,7 @@ impl PolicyEngine {
         serde_json::Value::Object(out)
     }
 
-    /// Adjust voter weights based on feedback (+delta for TP, -delta for FP, clamped [0.25, 2.5]).
+    /// Adjust voter weights based on feedback (+delta for TP, -delta for FP, clamped [0.25, 2.5]) and persist to SQLite.
     pub fn update_voter_weights_from_feedback(&self, is_true_positive: bool, delta: f32) {
         let mut names: std::collections::HashSet<String> = self
             .voter_weight_multipliers
@@ -557,7 +568,26 @@ impl PolicyEngine {
             } else {
                 (current - delta).clamp(0.25, 2.5)
             };
-            self.voter_weight_multipliers.insert(name, next);
+            self.voter_weight_multipliers.insert(name.clone(), next);
+            let _ = self.memory.save_voter_weight(&name, next);
+        }
+    }
+
+    /// Calibrate specific voter weights based on consensus feedback (+delta for TP, -delta for FP, clamped [0.25, 2.5]) and persist to SQLite.
+    pub fn update_specific_voter_weights(&self, voter_names: &[String], is_true_positive: bool, delta: f32) {
+        for name in voter_names {
+            let current = self
+                .voter_weight_multipliers
+                .get(name)
+                .map(|v| *v)
+                .unwrap_or(1.0);
+            let next = if is_true_positive {
+                (current + delta).clamp(0.25, 2.5)
+            } else {
+                (current - delta).clamp(0.25, 2.5)
+            };
+            self.voter_weight_multipliers.insert(name.clone(), next);
+            let _ = self.memory.save_voter_weight(name, next);
         }
     }
 
@@ -1281,6 +1311,44 @@ mod tests {
         tokio::time::advance(std::time::Duration::from_secs(31)).await;
         let res = scan_fut.await.unwrap();
         assert!(res.is_none(), "Timed out voter should be treated as abstain");
+    }
+
+    #[tokio::test]
+    async fn test_credential_guard_voter_and_persistent_weights() {
+        let memory = Arc::new(MemoryStore::new(":memory:").expect("in-memory db"));
+        memory.save_voter_weight("CredentialGuard-Memory", 1.25).unwrap();
+
+        let config = osoosi_types::PolicyConfig::default();
+        let engine = PolicyEngine::new(memory.clone(), config);
+        assert!((engine.voter_weight_multipliers.get("CredentialGuard-Memory").unwrap().value() - 1.25).abs() < 1e-4);
+
+        // Update specific weight
+        engine.update_specific_voter_weights(&["CredentialGuard-Memory".to_string()], true, 0.05);
+        assert!((engine.voter_weight_multipliers.get("CredentialGuard-Memory").unwrap().value() - 1.30).abs() < 1e-4);
+
+        // Verify persisted to SQLite
+        let reloaded = memory.load_voter_weights().unwrap();
+        assert!((reloaded.get("CredentialGuard-Memory").unwrap() - 1.30).abs() < 1e-4);
+
+        // Test CredentialGuardVoter on comsvcs minidump
+        let voter = crate::voters::CredentialGuardVoter;
+        let event = HostSecurityEvent {
+            source: osoosi_types::HostEventSource::WindowsEventLog,
+            event_id: 1,
+            computer: "TEST-HOST".to_string(),
+            data: serde_json::json!({
+                "CommandLine": "rundll32.exe C:\\windows\\System32\\comsvcs.dll, #24 672 C:\\temp\\lsass.dmp full",
+                "Image": "C:\\Windows\\System32\\rundll32.exe",
+            }),
+            timestamp: chrono::Utc::now(),
+            causal_parent: None,
+        };
+
+        let vote = voter.vote(&event).await;
+        assert!(vote.is_some());
+        let res = vote.unwrap();
+        assert!(res.confidence >= 0.95);
+        assert!(res.reason.contains("comsvcs.dll"));
     }
 }
 

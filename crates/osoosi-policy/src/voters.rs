@@ -1668,3 +1668,108 @@ impl ThreatVoter for IocVoter {
         })
     }
 }
+
+/// Multi-Class CredentialGuard Memory Voter (MITRE ATT&CK T1003.001)
+/// Detects LSASS memory dumping and unauthorized access tokens via multi-token correlation.
+#[derive(Default, Clone, Copy)]
+pub struct CredentialGuardVoter;
+
+#[async_trait]
+impl ThreatVoter for CredentialGuardVoter {
+    fn name(&self) -> String {
+        "CredentialGuard-Memory".to_string()
+    }
+
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        // Only inspect Process Create (1) or Process Access (10)
+        if event.event_id != 1 && event.event_id != 10 {
+            return None;
+        }
+
+        let cmdline = event.data.get("CommandLine")
+            .or_else(|| event.data.get("command_line"))
+            .or_else(|| event.data.get("cmdline"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        let image = event.data.get("Image")
+            .or_else(|| event.data.get("image"))
+            .or_else(|| event.data.get("ImagePath"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        let target_image = event.data.get("TargetImage")
+            .or_else(|| event.data.get("target_image"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        let granted_access = event.data.get("GrantedAccess")
+            .or_else(|| event.data.get("granted_access"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        let call_trace = event.data.get("CallTrace")
+            .or_else(|| event.data.get("call_trace"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_ascii_lowercase();
+
+        // 1. comsvcs.dll + (minidump or lsass or #24)
+        if (cmdline.contains("comsvcs.dll") || image.contains("comsvcs.dll"))
+            && (cmdline.contains("minidump") || cmdline.contains("lsass") || cmdline.contains("#24") || cmdline.contains("minidumpwritedump"))
+        {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: Multi-token LSASS credential dumping detected (T1003.001): comsvcs.dll MiniDump invocation: {}", cmdline),
+                weight: 1.2,
+            });
+        }
+
+        // 2. (procdump or nanodump or pypykatz or mimikatz or sekurlsa or lsadump) targeting lsass or -ma
+        let tool_match = ["procdump", "nanodump", "pypykatz", "mimikatz", "sekurlsa", "lsadump", "dumpert"]
+            .iter()
+            .any(|tool| image.contains(tool) || cmdline.contains(tool));
+
+        if tool_match && (cmdline.contains("lsass") || cmdline.contains("-ma") || target_image.ends_with("lsass.exe") || target_image.contains("\\lsass.exe")) {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: Multi-token LSASS credential dumping detected (T1003.001): Known dumper tool pattern targeting LSASS: {}", cmdline),
+                weight: 1.2,
+            });
+        }
+
+        // 3. event_id == 10 where TargetImage ends with lsass.exe and GrantedAccess is 0x1fffff, 0x1410, 0x1010, 0x1438, or 0x143a from non-system processes
+        if event.event_id == 10 && (target_image.ends_with("lsass.exe") || target_image.ends_with("\\lsass.exe")) {
+            let high_priv_access = ["0x1fffff", "0x1410", "0x1010", "0x1438", "0x143a", "0x1400", "0x1f0fff", "0x1f1fff", "0x1f2fff", "0x1f3fff"]
+                .iter()
+                .any(|mask| granted_access.contains(mask));
+
+            // Whitelist legitimate core OS and security services opening LSASS
+            let is_legit_source = image.ends_with("\\csrss.exe")
+                || image.ends_with("\\wininit.exe")
+                || image.ends_with("\\services.exe")
+                || image.ends_with("\\svchost.exe")
+                || image.ends_with("\\msmpeng.exe")
+                || image.ends_with("\\securityhealthservice.exe")
+                || image.ends_with("\\osoosi.exe")
+                || image.ends_with("\\oshoosi.exe");
+
+            if high_priv_access && !is_legit_source {
+                return Some(VoteResult {
+                    confidence: 0.96,
+                    reason: format!(
+                        "[CredentialGuard-Memory]: Multi-token LSASS credential dumping detected (T1003.001): Suspicious ProcessAccess {} to LSASS with GrantedAccess {} (CallTrace: {})",
+                        image, granted_access, call_trace.chars().take(80).collect::<String>()
+                    ),
+                    weight: 1.2,
+                });
+            }
+        }
+
+        None
+    }
+}

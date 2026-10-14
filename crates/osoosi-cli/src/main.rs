@@ -3,6 +3,7 @@ use osoosi_core::{secured_executor::DirectExecutor, EdrOrchestrator};
 use osoosi_policy::ThreatFeedFetcher;
 use osoosi_types::{extract_zip, SecuredExecutor};
 
+pub mod service;
 use hf_hub::api::tokio::ApiBuilder;
 use std::fs;
 use std::path::{Path, PathBuf};
@@ -135,6 +136,12 @@ enum Commands {
     Trust {
         #[command(subcommand)]
         action: TrustAction,
+    },
+    /// Manage the OpenỌ̀ṣọ́ọ̀sì Windows Service lifecycle (install, start, stop, restart, delete, status, run)
+    #[command(name = "service")]
+    Service {
+        #[command(subcommand)]
+        action: service::ServiceAction,
     },
     /// Start the web dashboard UI
     Dashboard {
@@ -548,6 +555,16 @@ fn main() -> anyhow::Result<()> {
         return Ok(());
     }
 
+    // Windows Service CLI handling:
+    // If not 'run', execute the service management command immediately without full daemon boot.
+    if let Some(Commands::Service { ref action }) = cli.command {
+        if *action != service::ServiceAction::Run {
+            return service::handle_service_action(action);
+        }
+        // If 'service run', connect to Windows SCM dispatcher
+        let _ = service::try_start_service_dispatcher();
+    }
+
     set_panic_hook();
     osoosi_types::persist_environment_paths();
     let _ = fs::create_dir_all(resolve_log_directory());
@@ -681,6 +698,19 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             sandbox_name: "osoosi".to_string(),
             sandbox_deploy_gateway: false,
             wsl: false,
+        },
+        Some(Commands::Service { action: service::ServiceAction::Run }) => Commands::Start {
+            dashboard: false,
+            no_dashboard: true,
+            lite: cli.lite,
+            no_browser: true,
+            sandbox: false,
+            sandbox_name: "osoosi".to_string(),
+            sandbox_deploy_gateway: false,
+            wsl: false,
+        },
+        Some(Commands::Service { ref action }) => {
+            return service::handle_service_action(action);
         },
         Some(other) => other,
         None if cli.grant_access => Commands::GrantAccess,
@@ -1363,6 +1393,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
         }
         Some(Commands::Lite) => unreachable!(),
+        Some(Commands::Service { ref action }) => {
+            service::handle_service_action(action)?;
+        }
         None => {
             if !cli.grant_access {
                 println!("No command specified. Use --help for usage.");
@@ -2803,12 +2836,24 @@ fn set_panic_hook() {
 async fn wait_for_shutdown() {
     let mut sigterm =
         tokio::signal::unix::signal(tokio::signal::unix::SignalKind::terminate()).unwrap();
-    tokio::select! { _ = tokio::signal::ctrl_c() => {}, _ = sigterm.recv() => {} }
+    let svc_stop = crate::service::wait_for_service_stop();
+    tokio::select! {
+        _ = tokio::signal::ctrl_c() => info!("Received Ctrl+C signal."),
+        _ = sigterm.recv() => info!("Received SIGTERM signal."),
+        _ = svc_stop => info!("Received Service STOP signal."),
+    }
 }
 
 #[cfg(windows)]
 async fn wait_for_shutdown() {
-    let _ = tokio::signal::ctrl_c().await;
+    let ctrl_c = async {
+        let _ = tokio::signal::ctrl_c().await;
+    };
+    let svc_stop = crate::service::wait_for_service_stop();
+    tokio::select! {
+        _ = ctrl_c => info!("Received Ctrl+C signal."),
+        _ = svc_stop => info!("Received Windows Service STOP control signal."),
+    }
 }
 pub async fn provision_models() -> anyhow::Result<()> {
     ensure_ai_models().await
@@ -5550,6 +5595,32 @@ mod tests {
             match cli.command {
                 Some(Commands::Start { .. }) => {}
                 _ => panic!("Expected Commands::Start for alias {}", alias),
+            }
+        }
+    }
+
+    #[test]
+    fn test_service_cli_parsing() {
+        let actions = [
+            ("install", service::ServiceAction::Install),
+            ("start", service::ServiceAction::Start),
+            ("stop", service::ServiceAction::Stop),
+            ("restart", service::ServiceAction::Restart),
+            ("delete", service::ServiceAction::Delete),
+            ("uninstall", service::ServiceAction::Delete),
+            ("remove", service::ServiceAction::Delete),
+            ("rm", service::ServiceAction::Delete),
+            ("status", service::ServiceAction::Status),
+            ("run", service::ServiceAction::Run),
+        ];
+
+        for (cmd_str, expected_action) in actions {
+            let cli = Cli::try_parse_from(["osoosi", "service", cmd_str]).unwrap();
+            match cli.command {
+                Some(Commands::Service { action }) => {
+                    assert_eq!(action, expected_action);
+                }
+                _ => panic!("Expected Commands::Service for {}", cmd_str),
             }
         }
     }
