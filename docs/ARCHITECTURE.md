@@ -263,6 +263,46 @@ OpenỌ̀ṣọ́ọ̀sì eliminates the post-execution telemetry gap of traditi
   - Combines local low-latency `libp2p` TCP on port `4001` (GossipSub v1.2) for LAN clustering with **Nostr BitChat WebSocket Relays** for cellular hotspot and restrictive Carrier-Grade NAT (CGNAT) traversal.
   - Hotspot nodes behind symmetric NATs or restrictive cellular firewalls publish and receive cryptographically signed threat signatures (Nostr Kind 20001) over decentralized relay pools, ensuring 100% threat synchronization without public IPv4 addresses, UPnP, or external STUN/TURN infrastructure.
 
+### 19. Native Rust `siquery-rs` 41-Table Relational SQL Engine & AgentOctopus Multi-Ring Breakout Defense (`crates/osoosi-agent-anomaly`)
+- **In-Memory Relational SQL Engine (`crates/osoosi-agent-anomaly/src/siquery.rs`)**:
+  - Implements full table and feature parity with Devolutions' `siquery-rs` with zero external dependencies (no external `osqueryi.exe` or MSI).
+  - Built on an in-memory `rusqlite` SQLite engine with read-only SQL execution validation (`execute_query`, `execute_json`, `execute_csv`, `execute_pretty`), rejecting mutating DDL/DML operations (`INSERT`, `UPDATE`, `DELETE`, `DROP`).
+  - **41 Native OS Tables Supported with Real Win32 / Sysinfo Data (Zero Mocks)**:
+    - *Execution & Memory*: `processes`, `process_open_sockets`, `process_open_pipes`, `process_open_files`, `process_memory_map`, `process_envs`. Uses `CreateToolhelp32Snapshot`, `VirtualQueryEx`, and `GetMappedFileNameW`.
+    - *Network & Interfaces*: `interface_addresses`, `network_adapters`, `routes`, `tcp_sockets`, `udp_sockets`, `etc_hosts`, `etc_protocols`, `etc_services`, `dns_resolvers`, `proxies`. Implemented via `GetExtendedTcpTable`, `GetExtendedUdpTable`, `GetAdaptersAddresses`, and `GetIpForwardTable`.
+    - *WMI & System State*: `system_info`, `os_version`, `wmi_os_version`, `wmi_bios`, `wmi_computer_system`, `wmi_services`, `wmi_shares`, `wmi_hotfixes`, `wmi_startup_commands`, `wmi_volume`, `wmi_logical_disk`, `wmi_memory_device`, `wmi_network_adapter`, `wmi_process`, `wmi_product`, `wmi_quick_fix_engineering`, `wmi_user_account`, `wmi_base_board`.
+    - *Identity & Hardware*: `user_accounts`, `groups`, `logged_in_users`, `user_groups`, `certificates`, `bitlocker_info`, `device_guard_policy`.
+    - *Filesystem & Storage*: `logical_drives`, `mounts`, `file_system`, `disks`, `installed_packages`, `uptime`, `time`.
+  - **Lazy Table Population**: Only tables explicitly referenced in the SQL AST are evaluated and populated, minimizing CPU and memory consumption.
+  - **Continuous 45-Second EDR Audit Sweeps (`EdrOrchestrator::run_siquery_edr_audit_sweep`)**:
+    Evaluates 6 core security dimensions in background daemon runtime:
+    1. *Memory Map Forensics*: Flags executable regions (`PAGE_EXECUTE_READWRITE` / `PAGE_EXECUTE_WRITECOPY`) unbacked by disk PE images to catch in-memory hollowing and shellcode loaders.
+    2. *Process-Socket Breakouts*: Correlates listening TCP ports with non-standard parent trees (`processes` JOIN `tcp_sockets`).
+    3. *WMI Persistence & Signature Verification*: Enumerates auto-start services in `wmi_services` and asserts Authenticode digital signatures.
+    4. *DNS & Hosts File Poisoning*: Scans `etc_hosts` for unauthorized domain redirections and loopback MITM tampering.
+    5. *Privileged Users & Share Exposures*: Flags newly created administrative SIDs in `user_accounts` and exposed SMB `wmi_shares`.
+    6. *Hotfix & Patch Latency*: Checks `wmi_hotfixes` against known vulnerability advisories.
+- **AgentOctopus Multi-Ring Agent Containment (`crates/osoosi-agent-anomaly/`)**:
+  - **Zero-Hardcode Bayesian Agent Discovery (`DynamicAgentClassifier`)**:
+    - Discovers running AI agents (Antigravity, MCP servers, OpenAI Codex, Ollama, LangGraph swarms) without static binary name blacklists.
+    - Uses relational `siquery` joins (`processes` JOIN `process_open_sockets` JOIN `pipes` JOIN `process_envs`) and ETW 3-second spawn velocity to compute Bayesian log-odds feature ratios. Normal developer workflows are preserved while uncontained rogue agent processes are flagged.
+  - **4-Ring Fail-Closed Containment (`ArmContainmentRing`)**:
+    - Assigns agent limbs to isolated security rings (`Sandboxed`, `Fuzzing`, `HighPrivilege`, `Quarantined`).
+    - Enforces fail-closed Cedar authorization policies, disallowing lower-privilege or quarantined limbs from accessing high-privilege sinks (e.g. `AccountingLedgerWrite`, kernel APIs).
+  - **Cryptographic Mesh Guard (`MeshGuard`)**:
+    - Enforces inter-agent HMAC-SHA256 signature verification computed against sender `(arm_id, epoch, role)` keys using constant-time equality checks.
+    - Regenerating or isolating an arm monotonically advances its epoch (`N -> N + 1`), immediately invalidating stale or compromised handles across the mesh.
+  - **Breakout Defense Coordinator (`BreakoutDefenseCoordinator`)**:
+    - 4-category active breakout detection: Behavioral, Technical, Operational, and Data breakout gates.
+    - *Path & Sandbox Defense*: Rejects drive letters (`:`), UNC paths (`\\`), percent-encoded traversals (`%2e`, `%2f`, `%5c`), and NTFS Alternate Data Streams (`:`).
+    - *Mathematical IP SSRF Defense*: Parses `Ipv4Addr` and `Ipv6Addr` literals to mathematically block RFC1918, loopback (`127.0.0.0/8`, `::1`), link-local/cloud metadata (`169.254.0.0/16`, `fe80::/10`), CGNAT (`100.64.0.0/10`), unique local IPv6 (`fc00::/7`), and IPv4-mapped IPv6 ranges.
+  - **3-Phase Agentjacking Guard**:
+    - Pre-execution prompt sanitization, execution drift monitoring, and post-execution context isolation.
+  - **16-Tactic MITRE ATLAS STIX 2.1 Arm & 5-Layer RASP**:
+    - Intercepts adversarial ML attacks mapped directly to ATLAS matrix tactics.
+  - **P2P & Nostr Mesh Threat Broadcasting**:
+    - Disseminates `[AI AGENT WATCH-OUT]` consensus warnings across GossipSub (`osoosi-telemetry-v1`) and Nostr relays to protect neighboring mesh nodes.
+
 ## Response Matrix
 
 | Confidence | Action | Description |

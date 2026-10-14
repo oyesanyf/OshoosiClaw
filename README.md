@@ -19,6 +19,8 @@
 <p align="center">
   <a href="#-quick-start">Quick Start</a> •
   <a href="#-architecture">Architecture</a> •
+  <a href="#-siquery-rs-41-table-engine">Siquery-RS 41-Table Engine</a> •
+  <a href="#-agentoctopus-multi-ring-containment">AgentOctopus Multi-Ring Containment</a> •
   <a href="#-native-windows-service-lifecycle-osoosiedr">Windows Service (OsoosiEDR)</a> •
   <a href="#-ring-0-windows-driver--linux-ebpf-parity">Ring-0 Driver & eBPF</a> •
   <a href="#-agent-anomaly-detection-owasp-top-10-agentic-2026--embeddinggemma-2-mrl">Agent Anomaly & EmbeddingGemma 2</a> •
@@ -359,6 +361,43 @@ During multi-gigabyte model downloads from Hugging Face or Cloudflare R2, dual-s
 - When `osoosi pull-model` starts (or when models are provisioned via the WebUI `#utilities-view`), `Ipv6SuspensionGuard` temporarily suspends the `ms_tcpip6` component binding on all active network adapters via `Disable-NetAdapterBinding`.
 - All model downloads fall back cleanly to high-throughput IPv4 routes with zero timeouts.
 - An **RAII Drop guard** automatically restores full IPv6 network bindings (`Enable-NetAdapterBinding`) immediately upon download completion, error, or process termination, ensuring host network configuration is never permanently altered.
+
+---
+
+<a id="-siquery-rs-41-table-engine"></a>
+<a id="siquery-rs-41-table-engine"></a>
+## 🔍 Native Rust `siquery-rs` 41-Table SQL Engine (`crates/osoosi-agent-anomaly/src/siquery.rs`)
+
+OpenỌ̀ṣọ́ọ̀sì embeds a 100% native Rust, in-process relational SQL telemetry engine modeled after Devolutions' `siquery-rs`. Operating entirely via an in-memory SQLite virtual database with zero external dependencies (no external `osqueryi.exe` binary or MSI required), it provides real-time visibility across 41 operating system tables:
+
+- **Process & Execution**: `processes`, `process_open_sockets`, `process_open_pipes`, `process_open_files`, `process_memory_map`, `process_envs`
+- **Network & Connections**: `interface_addresses`, `network_adapters`, `routes`, `tcp_sockets`, `udp_sockets`, `etc_hosts`, `etc_protocols`, `etc_services`, `dns_resolvers`, `proxies`
+- **WMI & Hardware Inventory**: `system_info`, `os_version`, `wmi_os_version`, `wmi_bios`, `wmi_computer_system`, `wmi_services`, `wmi_shares`, `wmi_hotfixes`, `wmi_startup_commands`, `wmi_volume`, `wmi_logical_disk`, `wmi_memory_device`, `wmi_network_adapter`, `wmi_process`, `wmi_product`, `wmi_quick_fix_engineering`, `wmi_user_account`, `wmi_base_board`
+- **Identity & Posture**: `user_accounts`, `groups`, `logged_in_users`, `user_groups`, `certificates`, `bitlocker_info`, `device_guard_policy`
+- **Filesystem & System**: `logical_drives`, `mounts`, `file_system`, `disks`, `installed_packages`, `uptime`, `time`
+
+#### Continuous EDR Telemetry Sweeps
+During daemon runtime, `EdrOrchestrator::run_siquery_edr_audit_sweep()` automatically sweeps the system every 45 seconds across 6 security dimensions:
+1. **Unbacked Memory & Process Hollowing**: Scans `process_memory_map` for executable pages (`PAGE_EXECUTE_READWRITE`) unbacked by disk modules.
+2. **Network Breakout & Socket Anomalies**: Joins `processes` with `tcp_sockets` to flag listening ports opened by anomalous or non-system binaries.
+3. **WMI Persistence Audit**: Validates digital signatures on all auto-start `wmi_services` via Authenticode verification.
+4. **Hosts File & DNS Tampering**: Queries `etc_hosts` to detect local loopback redirections or MITM poisoning.
+5. **Privileged Account & Share Enumeration**: Detects rogue accounts in `user_accounts` and exposed administrative `wmi_shares`.
+6. **Patch & Hotfix Gap Analysis**: Inspects `wmi_hotfixes` to detect unpatched kernel CVE vulnerabilities.
+
+---
+
+<a id="-agentoctopus-multi-ring-containment"></a>
+<a id="agentoctopus-multi-ring-containment"></a>
+## 🐙 AgentOctopus Multi-Ring Containment & Zero-Hardcode Agent Discovery
+
+Built within `crates/osoosi-agent-anomaly`, the **AgentOctopus** containment architecture enforces mathematical, cryptographic, and operational guardrails around local AI workflows:
+
+- **Zero-Hardcode Bayesian Agent Discovery (`DynamicAgentClassifier`)**: Discovers running AI agents (Antigravity, MCP servers, OpenAI Codex, Ollama, LangGraph swarms) without brittle hardcoded process names. Uses relational `siquery` joins (`processes` JOIN `process_open_sockets` JOIN `pipes` JOIN `process_envs`) and ETW 3-second spawn velocity to evaluate log-odds feature ratios, preserving standard developer tooling while isolating rogue processes.
+- **4-Ring Agent Containment (`ArmContainmentRing`)**: Fail-closed operational boundaries mapping each agent arm to cryptographic HMAC-SHA256 epoch tokens, ensuring subagents cannot message higher-privilege sinks or breach isolation.
+- **Breakout Defense Coordinator (`BreakoutDefenseCoordinator`)**: Multi-category defense guarding against behavioral deviations, memory tampering, NTFS Alternate Data Streams (`:`), traversal encodings (`%2e`, `%2f`), and mathematical RFC1918 / loopback / link-local / CGNAT IPv4/IPv6 SSRF attacks.
+- **3-Phase Agentjacking Guard**: Intercepts prompt injection payloads and session drift before agent tool execution.
+- **P2P & Nostr Mesh Threat Broadcasting**: Disseminates `[AI AGENT WATCH-OUT]` consensus warnings across GossipSub (`osoosi-telemetry-v1`) and Nostr relays to protect neighboring mesh nodes.
 
 ---
 
@@ -1836,6 +1875,7 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 | [Velociraptor](https://github.com/Velocidex/velociraptor) | Rapid7 / Velocidex | AGPL 3.0 | Advanced digital forensics & endpoint visibility (VQL) |
 | [WikiSkill](https://github.com/Stahl-G/wikiskill) | Stahl-G | MIT | Autonomous agent skill compilation and self-evolution |
 | [LangGraph](https://github.com/langchain-ai/langgraph) | LangChain Inc. | MIT | Multi-agent cyclical stategraph orchestration |
+| [siquery-rs](https://github.com/Devolutions/siquery-rs) | Devolutions | MIT / Apache 2.0 | Native Rust in-process 41-table relational SQL system information & EDR telemetry engine |
 
 ### Rust Crate Dependencies
 
@@ -1880,6 +1920,8 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 
 Recent hardening efforts have focused on autonomous multi-agent defense, hybrid decision models, and production stability:
 
+- **100% Native Rust `siquery-rs` 41-Table Relational SQL Engine (`crates/osoosi-agent-anomaly/src/siquery.rs`)**: In-memory `rusqlite` SQL engine modeled on Devolutions' `siquery-rs` with zero external `osqueryi.exe` binary or MSI dependencies. Implements all 41 tables (`processes`, `process_open_sockets`, `process_memory_map`, `process_envs`, `pipes`, `etc_hosts`, `etc_protocols`, `etc_services`, `interface_address`, `interface_details`, `proxies`, `system_info`, `os_version`, `logical_drives`, `mounts`, `uptime`, `products`, `users`, `groups`, `logged_in_users`, `logon_sessions`, `launchd`, `launchd_overrides`, and 18 `wmi_*` tables), 45-second continuous `EdrOrchestrator::run_siquery_edr_audit_sweep()` background telemetry sweeps, `osoosi.exe siquery` CLI (`-q`, `-l`, `--schema`, `-A`, `--json`, `--csv`, `--pretty`), and the interactive `#siquery-view` WebUI SQL Console.
+- **AgentOctopus Multi-Ring Breakout Defense & Zero-Hardcode Bayesian Agent Discovery (`crates/osoosi-agent-anomaly/`)**: Ported 4-Ring Agent Containment (`ArmContainmentRing`, `MeshGuard` HMAC-SHA256 epoch verification, `BreakoutDefenseCoordinator` with mathematical IPv4/IPv6 SSRF & `Path::join`/ADS guards, 3-Phase `AgentjackingGuard`, 16-Tactic MITRE ATLAS STIX 2.1 Arm, and 5-Layer RASP). Zero-hardcode `DynamicAgentClassifier` discovers AI agents (e.g. Antigravity, MCP servers, OpenAI Codex, Ollama) purely from relational `siquery` SQL joins (`processes` JOIN `process_open_sockets` JOIN `pipes` JOIN `process_envs`) and ETW 3-second spawn velocity without disrupting normal developer workflows, broadcasting `[AI AGENT WATCH-OUT]` alerts across the libp2p GossipSub and Nostr mesh.
 - **Native Windows Service (`OsoosiEDR`)**: Full SCM lifecycle (`install`, `start`, `stop`, `restart`, `delete`, `status`, `run`) with automatic working-directory resolution and dual `Ctrl+C` / `SERVICE_CONTROL_STOP` shutdown multiplexing.
 - **Closed-Loop RL Per-Voter Weight Calibration & SQLite Persistence**: Persistent `voter_weights` table, automatic local YARA rule hot-synthesis on multi-detector consensus findings, and `SkyRL` DQN checkpoint restoration (`runs/skyrl_checkpoint.json`).
 - **Multi-Class LSASS `CredentialGuardVoter` (`T1003.001`)**: Independent `EvidenceClass::Memory` voter inspecting `comsvcs.dll MiniDump`, `procdump`, `nanodump`, `mimikatz`, `pypykatz`, and `EventID 10` `lsass.exe` access masks (`0x1fffff`, `0x1410`), elevating `T1003.001` consensus confidence to `>0.92`.

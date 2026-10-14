@@ -190,6 +190,53 @@ Multi-gigabyte downloads from Hugging Face or Cloudflare R2 frequently stall on 
 - Transfers seamlessly utilize reliable IPv4 TCP connections at line rate.
 - An RAII Drop guard guarantees that IPv6 bindings (`Enable-NetAdapterBinding`) are automatically restored once the transfer finishes, errors out, or is cancelled.
 
+### 12. Native Rust `siquery-rs` SQL Engine & CLI Operations (`osoosi siquery`)
+
+OpenỌ̀ṣọ́ọ̀sì includes an integrated, zero-dependency in-process SQL engine providing 100% table and feature parity with Devolutions' `siquery-rs`. It enables security operators and autonomous decision models to query all 41 operating system tables through standard ANSI SQL queries without requiring external binaries (`osqueryi.exe`).
+
+#### CLI Execution Patterns
+
+```powershell
+# 1. List all 41 available system tables
+.\osoosi.exe siquery --list
+
+# 2. Inspect the column schema and types for a specific table
+.\osoosi.exe siquery --schema process_memory_map
+.\osoosi.exe siquery --schema wmi_services
+
+# 3. Query all records from a table in JSON format
+.\osoosi.exe siquery --all system_info --json
+
+# 4. Dump entire table in pipe-delimited CSV format
+.\osoosi.exe siquery --all etc_hosts --csv
+
+# 5. Execute relational SQL joins in Pretty ASCII table mode
+.\osoosi.exe siquery --pretty -q "SELECT p.pid, p.name, s.remote_address, s.remote_port, s.state FROM processes p JOIN process_open_sockets s ON p.pid = s.pid WHERE s.state = 'LISTEN' LIMIT 15;"
+
+# 6. Check unbacked executable memory regions (in-memory injection & hollowing detection)
+.\osoosi.exe siquery --json -q "SELECT pid, base_address, region_size, state, protect, mapped_file FROM process_memory_map WHERE protect LIKE '%EXECUTE%' LIMIT 20;"
+
+# 7. Audit auto-start Windows services
+.\osoosi.exe siquery --pretty -q "SELECT name, display_name, start_mode, state, path_name FROM wmi_services WHERE start_mode = 'Auto' LIMIT 20;"
+```
+
+#### Interactive WebUI Console (`#siquery-view`)
+
+Operators can navigate to the **Siquery SQL Console** in the WebUI (`http://127.0.0.1:3030/#siquery`):
+- **41-Table Dictionary**: Filterable list of all 41 operating system tables with one-click query generation (`SELECT * FROM <table> LIMIT 15;`).
+- **One-Click Security Presets**: Quick buttons for Top Processes, Listening Sockets, WMI Services, Network Adapters, Windows Hotfixes, User Accounts, Hosts File MITM, and Memory Maps.
+- **Output Formats**: Live interactive JSON tables with column sorting, raw ASCII monospace terminal output, or pipe-delimited CSV with single-click clipboard copy and file export.
+- **Live EDR Telemetry Summary**: Real-time counters showing active monitored processes, open network sockets, WMI services, shares, and EDR sweep status.
+
+#### REST API Endpoints
+
+| Endpoint | Method | Description |
+|:---|:---|:---|
+| `/api/siquery/tables` | `GET` | Returns an array of all 41 registered system tables and total count. |
+| `/api/siquery/query` | `POST` | Executes SQL queries (`query`, `format: json\|pretty\|csv`) and returns rows with `execution_duration_ms`. |
+| `/api/siquery/edr-status` | `GET` | Returns cached or freshly swept 6-dimension EDR security telemetry. |
+| `/api/agent-anomalies/containment-status` | `GET` | Returns active 4-Ring agent containment states, isolated sessions, and breakout counts. |
+
 ---
 
 ## 📈 Performance & Resource Tuning
