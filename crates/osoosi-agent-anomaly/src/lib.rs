@@ -13,6 +13,7 @@ pub mod detector;
 pub mod rasp;
 pub mod reasoner;
 pub mod screener;
+pub mod siquery;
 pub mod types;
 
 pub use agentjacking_guard::{
@@ -24,11 +25,13 @@ pub use breakout_defense::{
 };
 pub use classifier::{
     AgentClassificationRecord, AgentEvidenceSignal, DynamicAgentClassifier, OsqueryAgentDetector,
+    SiqueryAgentDetector,
 };
 pub use containment_ring::{compute_ring_hmac, AgentContainmentRing, ContainmentAuditEntry};
 pub use detector::AgentAnomalyDetector;
 pub use reasoner::SemanticReasoningEngine;
 pub use screener::{ScreenerResult, SessionWindow, StatisticalScreener};
+pub use siquery::{SiqueryEngine, SiqueryRow};
 pub use types::*;
 
 #[cfg(test)]

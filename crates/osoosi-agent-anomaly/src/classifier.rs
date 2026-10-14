@@ -13,8 +13,6 @@ use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use osoosi_behavioral::{EmbeddingGemma2Engine, MatryoshkaDim};
 use serde::{Deserialize, Serialize};
-use std::path::{Path, PathBuf};
-use std::process::Command;
 use std::sync::Arc;
 
 /// Dynamic signals that provide Bayesian evidence of an autonomous AI agent process.
@@ -151,89 +149,10 @@ pub struct AgentClassificationRecord {
     pub last_updated: DateTime<Utc>,
 }
 
-/// Relational host discovery using Osquery (`osqueryi --json` with embedded engine fallback).
-pub struct OsqueryAgentDetector {
-    osqueryi_path: Option<PathBuf>,
-}
-
-impl Default for OsqueryAgentDetector {
-    fn default() -> Self {
-        Self::new()
-    }
-}
-
-impl OsqueryAgentDetector {
-    pub fn new() -> Self {
-        let candidates = [
-            PathBuf::from("tools").join("osquery").join("osqueryi.exe"),
-            PathBuf::from(r"C:\Program Files\osquery\osqueryi.exe"),
-            PathBuf::from("osqueryi.exe"),
-            PathBuf::from("osqueryi"),
-        ];
-
-        let osqueryi_path = candidates.into_iter().find(|p| p.is_file());
-        Self { osqueryi_path }
-    }
-
-    /// Queries Osquery for processes exhibiting AI agent protocol or MCP socket/pipe characteristics.
-    pub fn execute_query(&self, sql: &str) -> Result<Vec<serde_json::Value>, String> {
-        if let Some(ref bin) = self.osqueryi_path {
-            let mut cmd = Command::new(bin);
-            if Path::new("config/osquery.conf").exists() {
-                cmd.args(["--config_path", "config/osquery.conf"]);
-            }
-            cmd.args(["--json", sql]);
-
-            match cmd.output() {
-                Ok(output) => {
-                    if output.status.success() {
-                        let stdout = String::from_utf8_lossy(&output.stdout);
-                        if let Ok(val) = serde_json::from_str::<serde_json::Value>(&stdout) {
-                            if let Some(arr) = val.as_array() {
-                                return Ok(arr.clone());
-                            }
-                        }
-                    }
-                }
-                Err(e) => {
-                    return Err(format!("Osquery execution failed: {}", e));
-                }
-            }
-        }
-
-        // Embedded zero-dependency relational fallback engine
-        self.execute_embedded_relational_scan(sql)
-    }
-
-    /// Zero-dependency Rust relational scanner matching Osquery schema:
-    /// `processes` JOIN `process_open_sockets` JOIN `pipes`
-    fn execute_embedded_relational_scan(&self, _sql: &str) -> Result<Vec<serde_json::Value>, String> {
-        let mut results = Vec::new();
-        let mut sys = sysinfo::System::new();
-        sys.refresh_processes();
-
-        for (pid, proc) in sys.processes() {
-            let cmdline = proc.cmd().join(" ");
-            let lower_cmd = cmdline.to_ascii_lowercase();
-
-            let is_mcp = lower_cmd.contains("mcp") || lower_cmd.contains("jsonrpc") || lower_cmd.contains("tools/call");
-            let is_tensor = lower_cmd.contains(".gguf") || lower_cmd.contains(".safetensors") || lower_cmd.contains(".onnx");
-            let is_inference_port = lower_cmd.contains("11434") || lower_cmd.contains("1234") || lower_cmd.contains("8000");
-
-            if is_mcp || is_tensor || is_inference_port {
-                results.push(serde_json::json!({
-                    "pid": pid.to_string(),
-                    "name": proc.name(),
-                    "cmdline": cmdline,
-                    "parent": proc.parent().map(|p| p.to_string()).unwrap_or_default(),
-                    "remote_port": if is_inference_port { "11434" } else { "443" },
-                }));
-            }
-        }
-
-        Ok(results)
-    }
-}
+/// 100% Native Rust In-Process Relational Host Discovery Engine.
+pub use crate::siquery::SiqueryEngine;
+pub type OsqueryAgentDetector = SiqueryEngine;
+pub type SiqueryAgentDetector = SiqueryEngine;
 
 /// Dynamic Bayesian Classifier discovering AI agents without hardcoded executable names.
 pub struct DynamicAgentClassifier {
@@ -465,25 +384,35 @@ impl DynamicAgentClassifier {
         )
     }
 
-    /// Runs a continuous Osquery relational query and updates discovered agent processes.
+    /// Runs a continuous Siquery/Osquery relational query and updates discovered agent processes.
     pub fn run_osquery_host_scan(&self) -> Vec<AgentClassificationRecord> {
         let sql = "SELECT p.pid, p.name, p.path, p.cmdline, p.parent FROM processes p JOIN process_open_sockets s ON p.pid = s.pid WHERE s.remote_port IN (11434, 1234, 8000, 8080, 5000) OR (s.remote_port = 443 AND (p.cmdline LIKE '%mcp%' OR p.cmdline LIKE '%jsonrpc%'));";
         let mut discovered = Vec::new();
 
         if let Ok(rows) = self.osquery_detector.execute_query(sql) {
             for row in rows {
-                let pid = row.get("pid").and_then(|v| v.as_str()).unwrap_or("");
+                let pid_str = row
+                    .get("pid")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+                    .unwrap_or_default();
                 let cmdline = row.get("cmdline").and_then(|v| v.as_str()).unwrap_or("");
-                let parent = row.get("parent").and_then(|v| v.as_str());
+                let parent_str = row
+                    .get("parent")
+                    .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())));
 
-                if !pid.is_empty() {
-                    let rec = self.inspect_command_and_context(pid, parent, cmdline, None);
+                if !pid_str.is_empty() {
+                    let rec = self.inspect_command_and_context(&pid_str, parent_str.as_deref(), cmdline, None);
                     discovered.push(rec);
                 }
             }
         }
 
         discovered
+    }
+
+    /// Alias for `run_osquery_host_scan` using the native Rust in-process `siquery` engine.
+    pub fn run_siquery_host_scan(&self) -> Vec<AgentClassificationRecord> {
+        self.run_osquery_host_scan()
     }
 
     pub fn get_record(&self, subject_id: &str) -> Option<AgentClassificationRecord> {

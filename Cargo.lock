@@ -5701,10 +5701,12 @@ dependencies = [
  "dashmap 6.1.0",
  "hex",
  "hmac",
+ "hostname",
  "osoosi-behavioral",
  "rand 0.8.6",
  "regex",
  "reqwest",
+ "rusqlite",
  "serde",
  "serde_json",
  "sha2",
@@ -5716,6 +5718,7 @@ dependencies = [
  "tracing-subscriber",
  "url",
  "uuid",
+ "windows-sys 0.61.2",
 ]
 
 [[package]]

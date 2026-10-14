@@ -428,19 +428,13 @@ impl AgentProvisioner {
         Ok(())
     }
 
-    /// Dynamically acquire, extract, and configure Osquery if missing.
+    /// Dynamically configure Native Rust `siquery` engine and scheduled queries.
     pub async fn provision_osquery_if_missing(&self) -> anyhow::Result<()> {
-        info!("Checking Osquery presence and configuration...");
+        info!("Configuring Native Rust siquery-rs in-process relational SQL engine...");
 
-        // Ensure config/osquery.conf exists
-        let config_path = PathBuf::from("config").join("osquery.conf");
-        if !config_path.exists() {
-            if let Some(parent) = config_path.parent() {
-                let _ = std::fs::create_dir_all(parent);
-            }
-            const DEFAULT_OSQUERY_CONF: &str = r#"{
+        const DEFAULT_SIQUERY_CONF: &str = r#"{
   "options": {
-    "logger_path": "logs/osquery",
+    "logger_path": "logs/siquery",
     "disable_events": "false",
     "schedule_splay_percent": "10"
   },
@@ -463,55 +457,33 @@ impl AgentProvisioner {
   }
 }
 "#;
-            let _ = std::fs::write(&config_path, DEFAULT_OSQUERY_CONF);
-            info!("Created default Osquery configuration at '{}'.", config_path.display());
+
+        // Ensure config directory exists
+        let config_dir = PathBuf::from("config");
+        let _ = std::fs::create_dir_all(&config_dir);
+
+        // Write config/siquery.conf
+        let siquery_conf_path = config_dir.join("siquery.conf");
+        if !siquery_conf_path.exists() {
+            let _ = std::fs::write(&siquery_conf_path, DEFAULT_SIQUERY_CONF);
+            info!("Created default Siquery configuration at '{}'.", siquery_conf_path.display());
         }
 
-        // Check if osqueryi exists locally or in system path
-        let osqueryi_local = PathBuf::from("tools").join("osquery").join("osqueryi.exe");
-        let osqueryi_system = PathBuf::from(r"C:\Program Files\osquery\osqueryi.exe");
-
-        #[cfg(target_os = "windows")]
-        {
-            if !osqueryi_local.exists() && !osqueryi_system.exists() {
-                info!("Osquery binary not found. Auto-provisioning official Osquery Windows MSI...");
-                let tools_dir = PathBuf::from("tools").join("osquery");
-                let _ = std::fs::create_dir_all(&tools_dir);
-
-                let msi_path = PathBuf::from("tools").join("osquery_temp.msi");
-                let extract_dir = PathBuf::from("tools").join("osquery_extract_temp");
-                let download_url = "https://github.com/osquery/osquery/releases/download/5.13.1/osquery-5.13.1.msi";
-
-                if let Err(e) = self.download_with_resume(download_url, &msi_path).await {
-                    warn!("Failed to download Osquery MSI: {}", e);
-                } else if msi_path.exists() {
-                    let mut cmd = Command::new("msiexec.exe");
-                    cmd.args(["/a", msi_path.to_str().unwrap_or(""), "/qn", &format!("TARGETDIR={}", extract_dir.display())]);
-                    let _ = self.executor.execute(cmd).await;
-
-                    if extract_dir.exists() {
-                        for entry in walkdir::WalkDir::new(&extract_dir).into_iter().filter_map(|e| e.ok()) {
-                            if entry.path().extension().and_then(|ext| ext.to_str()) == Some("exe") {
-                                if let Some(file_name) = entry.path().file_name() {
-                                    let dest = tools_dir.join(file_name);
-                                    let _ = std::fs::copy(entry.path(), &dest);
-                                    info!("Provisioned Osquery binary: '{}'", dest.display());
-                                }
-                            }
-                        }
-                        let _ = std::fs::remove_dir_all(&extract_dir);
-                    }
-                    let _ = std::fs::remove_file(&msi_path);
-                }
-            } else {
-                info!("Osquery binary is available.");
-            }
+        // Write config/osquery.conf for backward compatibility
+        let osquery_conf_path = config_dir.join("osquery.conf");
+        if !osquery_conf_path.exists() {
+            let _ = std::fs::write(&osquery_conf_path, DEFAULT_SIQUERY_CONF);
+            info!("Created default Osquery-compatible configuration at '{}'.", osquery_conf_path.display());
         }
 
-        #[cfg(not(target_os = "windows"))]
-        {
-            info!("Osquery check complete on non-Windows host.");
+        // Clean up any legacy external tools/osquery directory if present
+        let tools_osquery_dir = PathBuf::from("tools").join("osquery");
+        if tools_osquery_dir.exists() {
+            let _ = std::fs::remove_dir_all(&tools_osquery_dir);
+            info!("Removed legacy external tools/osquery directory.");
         }
+
+        info!("Native Rust siquery engine active in-process (zero external osqueryi.exe binary required).");
 
         Ok(())
     }

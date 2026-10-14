@@ -7392,7 +7392,7 @@ async function renderAgentAnomaliesView() {
             }
         }
 
-        // Discovered Autonomous Agents Table (Bayesian Discovery & Osquery)
+        // Discovered Autonomous Agents Table (Bayesian Discovery & Siquery-RS (Native Rust SQL))
         const discoveredAgents = contData.discovered_agents || (summary && summary.discovered_agents) || [];
         const discoveredCountEl = document.getElementById('aad-discovered-agents-count');
         const discoveredTableBody = document.getElementById('aad-discovered-agents-table-body');
