@@ -154,21 +154,40 @@ function Invoke-AuthenticodeSigning {
     foreach ($file in $Files) {
         if (Test-Path $file) {
             Write-Host "       Signing '$file' (SHA-256 + RFC 3161 timestamp)..." -ForegroundColor Cyan
+            $signedOk = $false
             try {
-                if ($file -like "*.msi" -and $signtool) {
+                if ($signtool) {
+                    # 1. Primary: signtool with RFC 3161 timestamp
                     & $signtool sign /sha1 $Thumbprint /fd SHA256 /tr $Timestamp /td SHA256 $file | Out-Null
-                    Write-Host "       -> Valid (via signtool): $file" -ForegroundColor Green
-                } else {
-                    $sig = Set-AuthenticodeSignature -FilePath $file -Certificate $Cert -TimestampServer $Timestamp -HashAlgorithm SHA256
-                    if ($sig.Status -eq "UnknownError" -and $signtool) {
-                        & $signtool sign /sha1 $Thumbprint /fd SHA256 /tr $Timestamp /td SHA256 $file | Out-Null
-                        Write-Host "       -> Valid (fallback signtool): $file" -ForegroundColor Green
+                    if ($LASTEXITCODE -eq 0) {
+                        $signedOk = $true
                     } else {
-                        Write-Host "       -> $($sig.Status): $file" -ForegroundColor Green
+                        # 2. Secondary fallback: signtool without timestamp
+                        Write-Warning "       -> Timestamp server failed for $file. Retrying signtool without timestamp..."
+                        & $signtool sign /sha1 $Thumbprint /fd SHA256 $file | Out-Null
+                        if ($LASTEXITCODE -eq 0) {
+                            $signedOk = $true
+                        }
+                    }
+                }
+
+                if (-not $signedOk) {
+                    # 3. Tertiary fallback: Set-AuthenticodeSignature cmdlet
+                    $sig = Set-AuthenticodeSignature -FilePath $file -Certificate $Cert -TimestampServer $Timestamp -HashAlgorithm SHA256
+                    if ($sig.Status -eq "Valid" -or $sig.Status -eq "UnknownError") {
+                        $signedOk = $true
                     }
                 }
             } catch {
                 Write-Warning "       -> Signing failed for $file : $_"
+            }
+
+            # 4. Mandatory Post-Sign Verification: ensure SignerCertificate is present
+            $postSig = Get-AuthenticodeSignature $file
+            if ($postSig.SignerCertificate -ne $null) {
+                Write-Host "       -> Valid (Signed by $($postSig.SignerCertificate.Subject)): $file" -ForegroundColor Green
+            } else {
+                Write-Error "       -> CRITICAL: $file remained unsigned after signing attempts! Status: $($postSig.Status)"
             }
         } else {
             Write-Warning "       -> Target file not found for signing: $file"
@@ -281,8 +300,27 @@ $TargetBinaries = @(
     $DeployMsi
 ) | Where-Object { Test-Path $_ }
 
+# Also discover and include all auxiliary release executables and dlls
+$ReleaseDir = Join-Path $ProjectRoot "target\release"
+$AuxBinaries = @(
+    (Join-Path $ReleaseDir "osoosi_inject.dll"),
+    (Join-Path $ReleaseDir "osoosi-auditor.exe"),
+    (Join-Path $ReleaseDir "otx-taxii-rs.exe"),
+    (Join-Path $ReleaseDir "bulk_trainer.exe"),
+    (Join-Path $ReleaseDir "test-peer.exe")
+) | Where-Object { Test-Path $_ }
+
+# Also find any remaining unsigned top-level .exe or .dll in target\release
+$AnyUnsigned = Get-ChildItem -Path (Join-Path $ReleaseDir "*.exe"), (Join-Path $ReleaseDir "*.dll") -ErrorAction SilentlyContinue |
+    Where-Object {
+        $sig = Get-AuthenticodeSignature $_.FullName
+        $sig.SignerCertificate -eq $null
+    } | Select-Object -ExpandProperty FullName
+
+$AllToSign = @($TargetBinaries + $AuxBinaries + $AnyUnsigned) | Select-Object -Unique
+
 if (-not $SkipSigning) {
-    Invoke-AuthenticodeSigning -Files $TargetBinaries -Thumbprint $CertThumbprint -Timestamp $TimestampServer | Out-Null
+    Invoke-AuthenticodeSigning -Files $AllToSign -Thumbprint $CertThumbprint -Timestamp $TimestampServer | Out-Null
     # Ensure signed MSI is synchronized if RootMsi was signed
     if ((Test-Path $RootMsi) -and (Test-Path $DeployMsi)) {
         Copy-Item -Path $RootMsi -Destination $DeployMsi -Force
