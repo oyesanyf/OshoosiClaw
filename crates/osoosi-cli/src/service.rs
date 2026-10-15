@@ -61,23 +61,81 @@ fn run_sc_cmd(args: &[&str]) -> anyhow::Result<std::process::Output> {
     Ok(output)
 }
 
+/// Resolve the application root directory from the current executable path.
+/// Walks up to 4 levels looking for workspace/installation indicators (`osoosi.toml`, `config/`, `yara/`).
+pub fn resolve_app_root_from_exe(exe: &std::path::Path) -> std::path::PathBuf {
+    let mut current = exe.parent();
+    for _ in 0..4 {
+        if let Some(dir) = current {
+            if dir.join("osoosi.toml").exists()
+                || dir.join("config").is_dir()
+                || dir.join("yara").is_dir()
+            {
+                return dir.to_path_buf();
+            }
+            current = dir.parent();
+        } else {
+            break;
+        }
+    }
+    exe.parent().map(|p| p.to_path_buf()).unwrap_or_else(|| exe.to_path_buf())
+}
+
+/// Ensure that the process working directory is set to the project root or installation root.
+/// When Windows Service Control Manager (SCM) starts a service in Session 0, the default CWD is `C:\Windows\System32`.
+/// Relative paths such as `osoosi.toml`, `config/`, `yara/`, and `database/` must be resolved relative
+/// to the application root directory rather than System32.
+pub fn ensure_service_working_directory() {
+    if let Ok(exe) = std::env::current_exe() {
+        let root = resolve_app_root_from_exe(&exe);
+        if let Err(e) = std::env::set_current_dir(&root) {
+            warn!("Failed to set working directory to {}: {}", root.display(), e);
+        } else {
+            info!("Service working directory set to: {}", root.display());
+        }
+    }
+}
+
 pub fn install_service() -> anyhow::Result<()> {
     let exe = std::env::current_exe()?;
-    let bin_path = format!("\"{}\" service run --no-browser", exe.display());
+    let exe_str = exe.to_string_lossy().replace(r"\\?\", "");
+    let bin_path = format!("\"{}\" service run --no-browser", exe_str);
 
     info!("Installing Windows Service '{}'...", SERVICE_NAME);
     let output = run_sc_cmd(&[
         "create",
         SERVICE_NAME,
-        &format!("binPath= {}", bin_path),
-        "start= auto",
-        &format!("DisplayName= {}", SERVICE_DISPLAY_NAME),
+        "binPath=",
+        &bin_path,
+        "start=",
+        "auto",
+        "DisplayName=",
+        SERVICE_DISPLAY_NAME,
     ])?;
 
     if !output.status.success() {
         let err = String::from_utf8_lossy(&output.stderr);
         let out = String::from_utf8_lossy(&output.stdout);
-        anyhow::bail!("Failed to create service: {} {}", out, err);
+        if out.contains("1073") || out.contains("already exists") || err.contains("1073") {
+            info!("Service '{}' already exists. Updating service configuration...", SERVICE_NAME);
+            let cfg_out = run_sc_cmd(&[
+                "config",
+                SERVICE_NAME,
+                "binPath=",
+                &bin_path,
+                "start=",
+                "auto",
+                "DisplayName=",
+                SERVICE_DISPLAY_NAME,
+            ])?;
+            if !cfg_out.status.success() {
+                let c_err = String::from_utf8_lossy(&cfg_out.stderr);
+                let c_out = String::from_utf8_lossy(&cfg_out.stdout);
+                anyhow::bail!("Failed to update existing service: {} {}", c_out, c_err);
+            }
+        } else {
+            anyhow::bail!("Failed to create service: {} {}", out, err);
+        }
     }
 
     // Set service description
@@ -87,8 +145,10 @@ pub fn install_service() -> anyhow::Result<()> {
     let _ = run_sc_cmd(&[
         "failure",
         SERVICE_NAME,
-        "reset= 86400",
-        "actions= restart/5000/restart/5000/restart/5000",
+        "reset=",
+        "86400",
+        "actions=",
+        "restart/5000/restart/5000/restart/5000",
     ]);
 
     println!("Service '{}' installed successfully.", SERVICE_NAME);
@@ -338,12 +398,8 @@ mod win_scm {
 
     /// Try to start SCM dispatcher. If running in normal console (error 1063), returns false.
     pub fn try_start_service_dispatcher() -> anyhow::Result<bool> {
-        // Ensure working directory is set to the parent folder of the executable
-        if let Ok(exe) = std::env::current_exe() {
-            if let Some(parent) = exe.parent() {
-                let _ = std::env::set_current_dir(parent);
-            }
-        }
+        // Ensure working directory is set to project/install root instead of C:\Windows\System32
+        ensure_service_working_directory();
 
         // Call StartServiceCtrlDispatcherW on a dedicated background thread so the main/tokio thread
         // can proceed, OR test if SCM is connected.
@@ -397,4 +453,55 @@ pub use win_scm::try_start_service_dispatcher;
 #[cfg(not(windows))]
 pub fn try_start_service_dispatcher() -> anyhow::Result<bool> {
     Ok(false)
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_app_root_from_exe_finds_project_root() {
+        let current_exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from(r"target\debug\osoosi.exe"));
+        let root = resolve_app_root_from_exe(&current_exe);
+        assert!(root.exists(), "Resolved root directory must exist: {:?}", root);
+    }
+
+    #[test]
+    fn test_resolve_app_root_nested_path() {
+        let temp = std::env::temp_dir().join(format!("osoosi_test_{}", std::process::id()));
+        let nested_bin = temp.join("target").join("release").join("osoosi.exe");
+        std::fs::create_dir_all(temp.join("config")).unwrap();
+        std::fs::create_dir_all(nested_bin.parent().unwrap()).unwrap();
+        std::fs::write(&nested_bin, b"dummy").unwrap();
+
+        let resolved = resolve_app_root_from_exe(&nested_bin);
+        assert_eq!(resolved, temp, "Should resolve to root directory containing 'config'");
+
+        let _ = std::fs::remove_dir_all(&temp);
+    }
+
+    #[test]
+    fn test_sc_cmd_args_structure() {
+        let exe = std::path::PathBuf::from(r"C:\Program Files\OshoosiClaw\osoosi.exe");
+        let exe_str = exe.to_string_lossy().replace(r"\\?\", "");
+        let bin_path = format!("\"{}\" service run --no-browser", exe_str);
+
+        let sc_create_args = [
+            "create",
+            SERVICE_NAME,
+            "binPath=",
+            &bin_path,
+            "start=",
+            "auto",
+            "DisplayName=",
+            SERVICE_DISPLAY_NAME,
+        ];
+
+        // Ensure that option names and values are separated
+        assert_eq!(sc_create_args[2], "binPath=");
+        assert_eq!(sc_create_args[4], "start=");
+        assert_eq!(sc_create_args[5], "auto");
+        assert_eq!(sc_create_args[6], "DisplayName=");
+        assert_eq!(sc_create_args[7], SERVICE_DISPLAY_NAME);
+    }
 }

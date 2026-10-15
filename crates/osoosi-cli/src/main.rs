@@ -589,6 +589,8 @@ fn main() -> anyhow::Result<()> {
         if *action != service::ServiceAction::Run {
             return service::handle_service_action(action);
         }
+        // Ensure working directory is set to project/install root instead of C:\Windows\System32
+        service::ensure_service_working_directory();
         // If 'service run', connect to Windows SCM dispatcher
         let _ = service::try_start_service_dispatcher();
     }
@@ -728,8 +730,8 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             wsl: false,
         },
         Some(Commands::Service { action: service::ServiceAction::Run }) => Commands::Start {
-            dashboard: false,
-            no_dashboard: true,
+            dashboard: true,
+            no_dashboard: false,
             lite: cli.lite,
             no_browser: true,
             sandbox: false,
