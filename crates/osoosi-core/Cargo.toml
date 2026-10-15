@@ -36,7 +36,7 @@ yara-x = { workspace = true }
 ort = { workspace = true, features = ["load-dynamic"] }
 ndarray = "0.15"
 tokenizers = "0.19.1"
-hf-hub = "0.3.2"
+hf-hub = { workspace = true }
 tokio = { workspace = true, features = ["full"] }
 rand = { workspace = true }
 rand_distr = { workspace = true }
