@@ -162,16 +162,25 @@ function Invoke-AuthenticodeSigning {
             $signedOk = $false
             try {
                 if ($signtool) {
-                    # 1. Primary: signtool with RFC 3161 timestamp
-                    & $signtool sign /sha1 $Thumbprint /fd SHA256 /tr $Timestamp /td SHA256 $file | Out-Null
-                    if ($LASTEXITCODE -eq 0) {
-                        $signedOk = $true
-                    } else {
-                        # 2. Secondary fallback: signtool without timestamp
-                        Write-Warning "       -> Timestamp server failed for $file. Retrying signtool without timestamp..."
+                    if ($Cert.Subject -eq $Cert.Issuer) {
+                        # Self-signed developer certificate: sign directly with SHA-256 so Smart App Control
+                        # validates the local TrustedPublisher/Root store without external CA countersignature mismatch.
                         & $signtool sign /sha1 $Thumbprint /fd SHA256 $file | Out-Null
                         if ($LASTEXITCODE -eq 0) {
                             $signedOk = $true
+                        }
+                    } else {
+                        # 1. Primary: signtool with RFC 3161 timestamp
+                        & $signtool sign /sha1 $Thumbprint /fd SHA256 /tr $Timestamp /td SHA256 $file | Out-Null
+                        if ($LASTEXITCODE -eq 0) {
+                            $signedOk = $true
+                        } else {
+                            # 2. Secondary fallback: signtool without timestamp
+                            Write-Warning "       -> Timestamp server failed for $file. Retrying signtool without timestamp..."
+                            & $signtool sign /sha1 $Thumbprint /fd SHA256 $file | Out-Null
+                            if ($LASTEXITCODE -eq 0) {
+                                $signedOk = $true
+                            }
                         }
                     }
                 }

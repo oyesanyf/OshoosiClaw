@@ -2726,21 +2726,20 @@ async fn get_yara_status(State(state): State<DashboardState>) -> Json<Value> {
 async fn post_yara_reload(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
-            match orch.yara_manager.reload_rules() {
-                Ok(count) => {
-                    let status = orch.yara_manager.get_status();
-                    Json(json!({
-                        "success": true,
-                        "reloaded_rules": count,
-                        "status": status,
-                    }))
+            let status = orch.yara_manager.get_status();
+            let current_count = status.total_rules;
+            let orch_bg = Arc::clone(orch);
+            tokio::task::spawn_blocking(move || {
+                if let Err(e) = orch_bg.yara_manager.reload_rules() {
+                    tracing::warn!("Background YARA reload failed: {}", e);
                 }
-                Err(e) => api_error_json(
-                    "YARA_RELOAD_FAILED",
-                    e.to_string(),
-                    "Check custom YARA rule files syntax in the rules directory.",
-                ),
-            }
+            });
+            Json(json!({
+                "success": true,
+                "reloaded_rules": current_count,
+                "status": status,
+                "message": "YARA rule reload initiated in background"
+            }))
         }
         None => api_error_json(
             "BACKEND_NOT_INITIALIZED",
@@ -2753,21 +2752,20 @@ async fn post_yara_reload(State(state): State<DashboardState>) -> Json<Value> {
 async fn post_yara_update(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
-            match orch.yara_manager.update_feeds_and_reload().await {
-                Ok(count) => {
-                    let status = orch.yara_manager.get_status();
-                    Json(json!({
-                        "success": true,
-                        "updated_rules": count,
-                        "status": status,
-                    }))
+            let status = orch.yara_manager.get_status();
+            let current_count = status.total_rules;
+            let orch_bg = Arc::clone(orch);
+            tokio::spawn(async move {
+                if let Err(e) = orch_bg.yara_manager.update_feeds_and_reload().await {
+                    tracing::warn!("Background YARA feed update failed: {}", e);
                 }
-                Err(e) => api_error_json(
-                    "YARA_UPDATE_FAILED",
-                    e.to_string(),
-                    "Verify internet connectivity to community YARA feed endpoints.",
-                ),
-            }
+            });
+            Json(json!({
+                "success": true,
+                "updated_rules": current_count,
+                "status": status,
+                "message": "YARA community feed update initiated in background"
+            }))
         }
         None => api_error_json(
             "BACKEND_NOT_INITIALIZED",
@@ -2896,25 +2894,31 @@ async fn post_scan_trigger(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
             let traps_dir = std::path::Path::new("traps");
-            let mut count = 0;
+            let mut paths = Vec::new();
             if traps_dir.is_dir() {
                 if let Ok(entries) = std::fs::read_dir(traps_dir) {
                     for entry in entries.flatten() {
                         let path = entry.path();
                         if path.is_file() {
-                            orch.malware_scanner().scan_file(&path).await;
-                            count += 1;
+                            paths.push(path);
                         }
                     }
                 }
             }
-            orch.audit().log(
-                "MALWARE_SCAN_TRIGGERED",
-                json!({
-                    "summary": format!("Malware scan completed on {} trap file(s)", count),
-                    "scanned": count,
-                }),
-            );
+            let count = paths.len();
+            let orch_bg = Arc::clone(orch);
+            tokio::spawn(async move {
+                for path in paths {
+                    orch_bg.malware_scanner().scan_file(&path).await;
+                }
+                orch_bg.audit().log(
+                    "MALWARE_SCAN_TRIGGERED",
+                    json!({
+                        "summary": format!("Malware scan completed on {} trap file(s)", count),
+                        "scanned": count,
+                    }),
+                );
+            });
             Json(json!({ "status": "success", "scanned": count }))
         }
         None => api_error_json(
@@ -5566,45 +5570,51 @@ async fn post_mitre_stix_update(
     let bundle_path = osoosi_types::resolve_stix_bundle_path();
     let url = "https://raw.githubusercontent.com/mitre-atlas/atlas-navigator-data/main/dist/stix-atlas-attack-enterprise.json";
 
-    // Download STIX bundle with strict validation and 60-second timeout
-    let client = reqwest::Client::builder()
-        .timeout(std::time::Duration::from_secs(60))
-        .build();
-    let client = client.unwrap_or_default();
-
-    match client.get(url).send().await {
-        Ok(resp) => {
-            if resp.status().is_success() {
-                match resp.bytes().await {
-                    Ok(bytes) if bytes.len() > 1_000_000 => {
-                        if let Some(parent) = bundle_path.parent() {
-                            let _ = std::fs::create_dir_all(parent);
-                        }
-                        if let Err(e) = std::fs::write(&bundle_path, &bytes) {
-                            warn!("[dashboard] Failed to write STIX bundle to {:?}: {}", bundle_path, e);
-                        } else {
-                            info!("[dashboard] STIX bundle ({} bytes) saved to {:?}", bytes.len(), bundle_path);
-                            // Maintain 100% exact parity across both dist and src
-                            for dist_target in [
-                                std::path::Path::new("dashboard/dist/stix-atlas-attack-enterprise.json"),
-                                std::path::Path::new("dashboard/src/stix-atlas-attack-enterprise.json"),
-                            ] {
-                                if dist_target.parent().map(|p| p.exists()).unwrap_or(false) {
-                                    let _ = std::fs::copy(&bundle_path, dist_target);
+    let bundle_path_bg = bundle_path.clone();
+    let download_fut = async move {
+        let client = reqwest::Client::builder()
+            .timeout(std::time::Duration::from_secs(15))
+            .build()
+            .unwrap_or_default();
+        match client.get(url).send().await {
+            Ok(resp) => {
+                if resp.status().is_success() {
+                    match resp.bytes().await {
+                        Ok(bytes) if bytes.len() > 1_000_000 => {
+                            if let Some(parent) = bundle_path_bg.parent() {
+                                let _ = std::fs::create_dir_all(parent);
+                            }
+                            if let Err(e) = std::fs::write(&bundle_path_bg, &bytes) {
+                                warn!("[dashboard] Failed to write STIX bundle to {:?}: {}", bundle_path_bg, e);
+                            } else {
+                                info!("[dashboard] STIX bundle ({} bytes) saved to {:?}", bytes.len(), bundle_path_bg);
+                                for dist_target in [
+                                    std::path::Path::new("dashboard/dist/stix-atlas-attack-enterprise.json"),
+                                    std::path::Path::new("dashboard/src/stix-atlas-attack-enterprise.json"),
+                                ] {
+                                    if dist_target.parent().map(|p| p.exists()).unwrap_or(false) {
+                                        let _ = std::fs::copy(&bundle_path_bg, dist_target);
+                                    }
                                 }
                             }
                         }
+                        Ok(bytes) => {
+                            warn!("[dashboard] Downloaded STIX bundle suspiciously small ({} bytes); retaining existing file", bytes.len());
+                        }
+                        Err(e) => warn!("[dashboard] Failed reading HTTP response bytes: {}", e),
                     }
-                    Ok(bytes) => {
-                        warn!("[dashboard] Downloaded STIX bundle suspiciously small ({} bytes); retaining existing file", bytes.len());
-                    }
-                    Err(e) => warn!("[dashboard] Failed reading HTTP response bytes: {}", e),
+                } else {
+                    warn!("[dashboard] HTTP download error HTTP {}: retaining existing STIX bundle", resp.status());
                 }
-            } else {
-                warn!("[dashboard] HTTP download error HTTP {}: retaining existing STIX bundle", resp.status());
             }
+            Err(e) => warn!("[dashboard] HTTP download error from {}: {}", url, e),
         }
-        Err(e) => warn!("[dashboard] HTTP download error from {}: {}", url, e),
+    };
+
+    if bundle_path.is_file() {
+        tokio::spawn(download_fut);
+    } else {
+        download_fut.await;
     }
 
     // Read current bundle and compute manifest
@@ -6552,7 +6562,20 @@ pub async fn get_siquery_edr_status(State(state): State<DashboardState>) -> impl
 pub async fn post_siquery_protection_sweep(State(state): State<DashboardState>) -> impl IntoResponse {
     match &state.backend {
         Some(orch) => {
-            let telemetry = orch.run_siquery_edr_audit_sweep().await;
+            let cached = {
+                let guard = orch.siquery_last_telemetry.read();
+                guard.clone()
+            };
+            let telemetry = match cached {
+                Some(t) => {
+                    let orch_bg = Arc::clone(orch);
+                    tokio::spawn(async move {
+                        let _ = orch_bg.run_siquery_edr_audit_sweep().await;
+                    });
+                    t
+                }
+                None => orch.run_siquery_edr_audit_sweep().await,
+            };
             (
                 StatusCode::OK,
                 Json(json!({
