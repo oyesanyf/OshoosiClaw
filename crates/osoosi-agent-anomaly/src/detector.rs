@@ -41,6 +41,7 @@ pub struct AgentAnomalyDetector {
     pub atlas_matrix: Arc<crate::atlas_arm::MitreAtlasMatrix>,
     pub rasp_engine: Arc<crate::rasp::AgentRaspEngine>,
     pub mercury_engine: Arc<crate::mercury_guard::MercuryContainmentEngine>,
+    pub spider_web_engine: Arc<crate::spider_physics::OrbWebContainmentEngine>,
 }
 
 impl AgentAnomalyDetector {
@@ -64,6 +65,7 @@ impl AgentAnomalyDetector {
         let atlas_matrix = Arc::new(crate::atlas_arm::MitreAtlasMatrix::new());
         let rasp_engine = Arc::new(crate::rasp::AgentRaspEngine::default());
         let mercury_engine = Arc::new(crate::mercury_guard::MercuryContainmentEngine::new());
+        let spider_web_engine = crate::spider_physics::global_spider_web_engine();
 
         // Launch cleaner for dormant sessions (prune every 60s, TTL 300s)
         screener.clone().start_cleaner(Duration::from_secs(60), 300);
@@ -82,6 +84,7 @@ impl AgentAnomalyDetector {
             atlas_matrix,
             rasp_engine,
             mercury_engine,
+            spider_web_engine,
         };
 
         // Out-of-band asynchronous processing worker
@@ -252,6 +255,51 @@ impl AgentAnomalyDetector {
             });
         }
 
+        // 4. Spider-Web Continuum Mechanics & Exposure-Bounded Containment Engine
+        let param_str = serde_json::to_string(&telemetry.call_parameters).unwrap_or_default();
+        let requested_bytes = param_str.len() as f64;
+        let spider_verdict = self.spider_web_engine.evaluate_tool_activity(
+            &telemetry.session_id,
+            &telemetry.agent_id,
+            &telemetry.tool_name,
+            &param_str,
+            requested_bytes,
+        );
+
+        let mut spider_finding = None;
+        if !spider_verdict.allowed || spider_verdict.session_terminated {
+            let new_epoch = self.containment_ring.sever_rogue_agent_branch(
+                &telemetry.agent_id,
+                &spider_verdict.rationale,
+                None,
+            ).await;
+
+            self.containment_ring.record_mesh_watchout(
+                &telemetry.agent_id,
+                &telemetry.session_id,
+                "ASI02",
+                &spider_verdict.rationale,
+            ).await;
+
+            spider_finding = Some(AnomalyFinding {
+                id: format!("aad-spider-{}", uuid::Uuid::new_v4().to_string().chars().take(8).collect::<String>()),
+                session_id: telemetry.session_id.clone(),
+                agent_id: telemetry.agent_id.clone(),
+                risk_category: OwaspAgenticRisk::ToolMisuseASI02,
+                severity: AlertSeverity::Critical,
+                confidence_score: 0.99,
+                rationale: format!(
+                    "Spider-Web Sacrificial Fracture ({}): {}. Autotomy advanced epoch to Gen {}.",
+                    spider_verdict.regime.label(),
+                    spider_verdict.rationale,
+                    new_epoch
+                ),
+                recommended_mitigation: "Sever compromised session, revoke ephemeral credentials, and initiate EDR host sweep".to_string(),
+                flagged_at: Utc::now(),
+                evidence: serde_json::to_value(&spider_verdict).unwrap_or_default(),
+            });
+        }
+
         // Layer 1: Fast-path Screener (<5µs)
         let screener_res = self.screener.inspect(telemetry);
 
@@ -272,8 +320,8 @@ impl AgentAnomalyDetector {
             }
         }
 
-        // Prioritize critical breakout or chained abuse finding, otherwise reasoner finding
-        let active_finding = breakout_finding.or(aj_finding).or(maybe_finding);
+        // Prioritize critical breakout or spider-web fracture or chained abuse finding, otherwise reasoner finding
+        let active_finding = breakout_finding.or(spider_finding).or(aj_finding).or(maybe_finding);
 
         if let Some(finding) = &active_finding {
             // Update session metadata with anomaly

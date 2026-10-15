@@ -2967,9 +2967,10 @@ impl EdrOrchestrator {
         self.policy.add_voter(Box::new(osoosi_policy::voters::CredentialGuardVoter)).await;
         self.policy.add_voter(Box::new(osoosi_policy::voters::HarTrafficVoter)).await;
         self.policy.add_voter(Box::new(osoosi_policy::voters::MercuryFluidVoter)).await;
+        self.policy.add_voter(Box::new(osoosi_policy::voters::SpiderWebPhysicsVoter)).await;
         info!(
             target: crate::CONSENSUS_LOG_TARGET,
-            "[CONSENSUS] native voters registered and operational (CredentialGuard + HarTrafficVoter + MercuryFluidVoter)"
+            "[CONSENSUS] native voters registered and operational (CredentialGuard + HarTrafficVoter + MercuryFluidVoter + SpiderWebPhysicsVoter)"
         );
     }
 

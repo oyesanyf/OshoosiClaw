@@ -15,6 +15,7 @@ pub mod rasp;
 pub mod reasoner;
 pub mod screener;
 pub mod siquery;
+pub mod spider_physics;
 pub mod types;
 
 pub use agentjacking_guard::{
@@ -37,6 +38,10 @@ pub use mercury_guard::{
 pub use reasoner::SemanticReasoningEngine;
 pub use screener::{ScreenerResult, SessionWindow, StatisticalScreener};
 pub use siquery::{SiqueryEngine, SiqueryRow};
+pub use spider_physics::{
+    global_spider_web_engine, BusinessPolicyViolation, ContentTrust, ExposureBoundTracker,
+    OrbWebContainmentEngine, SilkRegime, SpiderThreadSector, SpiderWebVerdict,
+};
 pub use types::*;
 
 #[cfg(test)]

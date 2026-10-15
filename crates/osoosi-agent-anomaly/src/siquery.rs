@@ -100,6 +100,7 @@ impl SiqueryEngine {
             "browser_downloads",
             "browser_extensions",
             "browser_history",
+            "business_policy_violations",
             "certificates",
             "coding_tools",
             "cpu_info",
@@ -157,6 +158,7 @@ impl SiqueryEngine {
             "shared_folders",
             "shimcache",
             "smbios_tables",
+            "spider_web_threads",
             "startup_items",
             "system_info",
             "tcp_sockets",
@@ -292,6 +294,8 @@ impl SiqueryEngine {
         let need_sched_tasks = !is_pragma && (is_metadata || lower.contains("scheduled_tasks"));
         let need_shimcache = !is_pragma && (is_metadata || lower.contains("shimcache"));
         let need_smbios = !is_pragma && (is_metadata || lower.contains("smbios_tables"));
+        let need_business_violations = !is_pragma && (is_metadata || lower.contains("business_policy_violations"));
+        let need_spider_threads = !is_pragma && (is_metadata || lower.contains("spider_web_threads"));
         let need_time = !is_pragma && (is_metadata || lower.contains("time"));
         let need_tpm = !is_pragma && (is_metadata || lower.contains("tpm_info"));
         let need_win_events = !is_pragma && (is_metadata || lower.contains("windows_events"));
@@ -311,7 +315,7 @@ impl SiqueryEngine {
             || need_edr || need_env_vars || need_fw || need_open_files || need_pnp || need_registry
             || need_routes || need_sched_tasks || need_shimcache || need_smbios || need_time
             || need_tpm || need_win_events || need_win_sec || need_api_endpoints || need_coding_tools
-            || need_ide_ext;
+            || need_ide_ext || need_business_violations || need_spider_threads;
 
         // Only refresh and populate if not a pure PRAGMA statement and at least one table is needed
         if !is_pragma && any_table_needed {
@@ -554,6 +558,12 @@ impl SiqueryEngine {
             }
             if need_win_sec {
                 Self::populate_windows_security_center(&tx)?;
+            }
+            if need_business_violations {
+                Self::populate_business_policy_violations(&tx)?;
+            }
+            if need_spider_threads {
+                Self::populate_spider_web_threads(&tx)?;
             }
 
             tx.commit().map_err(|e| format!("SQLite commit error: {}", e))?;
@@ -1228,6 +1238,45 @@ impl SiqueryEngine {
 
         CREATE TABLE IF NOT EXISTS windows_security_center (
             type TEXT, name TEXT, state TEXT, path TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS business_policy_violations (
+            id TEXT PRIMARY KEY,
+            session_id TEXT,
+            agent_id TEXT,
+            untrusted_source TEXT,
+            restricted_asset TEXT,
+            target_destination TEXT,
+            action_taken TEXT,
+            credentials_revoked INTEGER,
+            session_terminated INTEGER,
+            edr_investigation_triggered INTEGER,
+            detected_at TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS spider_web_threads (
+            sector_id TEXT PRIMARY KEY,
+            session_id TEXT,
+            agent_id TEXT,
+            scoped_identity_token TEXT,
+            credential_revoked INTEGER,
+            session_terminated INTEGER,
+            content_trust TEXT,
+            strain_epsilon REAL,
+            stress_sigma_mpa REAL,
+            tangent_modulus_gpa REAL,
+            adjacent_stress_coupling REAL,
+            current_regime TEXT,
+            regime_code TEXT,
+            enforced_rate_bps REAL,
+            detect_time_ms REAL,
+            contain_time_ms REAL,
+            max_exposure_bound_bytes REAL,
+            accumulated_exposure_bytes REAL,
+            theoretical_max_exposure_bytes REAL,
+            bound_satisfied INTEGER,
+            edr_investigation_triggered INTEGER,
+            last_updated TEXT
         );
 
         CREATE VIEW IF NOT EXISTS disk_encryption AS SELECT drive_letter, encryption_method, conversion_status, protection_status, lock_status FROM bitlocker_info;
@@ -3453,6 +3502,86 @@ impl SiqueryEngine {
         Ok(())
     }
 
+    /// Populates `business_policy_violations` table with logged out-of-model business gate violations.
+    fn populate_business_policy_violations(conn: &Connection) -> Result<(), String> {
+        let mut stmt = conn
+            .prepare_cached(
+                "INSERT INTO business_policy_violations (
+                    id, session_id, agent_id, untrusted_source, restricted_asset,
+                    target_destination, action_taken, credentials_revoked, session_terminated,
+                    edr_investigation_triggered, detected_at
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let engine = crate::spider_physics::global_spider_web_engine();
+        if let Ok(violations) = engine.violations.read() {
+            for v in violations.iter() {
+                let _ = stmt.execute(rusqlite::params![
+                    v.id,
+                    v.session_id,
+                    v.agent_id,
+                    v.untrusted_source,
+                    v.restricted_asset,
+                    v.target_destination,
+                    v.action_taken,
+                    if v.credentials_revoked { 1i64 } else { 0i64 },
+                    if v.session_terminated { 1i64 } else { 0i64 },
+                    if v.edr_investigation_triggered { 1i64 } else { 0i64 },
+                    v.detected_at.to_rfc3339(),
+                ]);
+            }
+        }
+        Ok(())
+    }
+
+    /// Populates `spider_web_threads` table with active radial/spiral continuum mechanics sectors.
+    fn populate_spider_web_threads(conn: &Connection) -> Result<(), String> {
+        let mut stmt = conn
+            .prepare_cached(
+                "INSERT INTO spider_web_threads (
+                    sector_id, session_id, agent_id, scoped_identity_token,
+                    credential_revoked, session_terminated, content_trust,
+                    strain_epsilon, stress_sigma_mpa, tangent_modulus_gpa, adjacent_stress_coupling,
+                    current_regime, regime_code, enforced_rate_bps, detect_time_ms,
+                    contain_time_ms, max_exposure_bound_bytes, accumulated_exposure_bytes,
+                    theoretical_max_exposure_bytes, bound_satisfied, edr_investigation_triggered,
+                    last_updated
+                ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);",
+            )
+            .map_err(|e| e.to_string())?;
+
+        let engine = crate::spider_physics::global_spider_web_engine();
+        for entry in engine.sectors.iter() {
+            let s = entry.value();
+            let _ = stmt.execute(rusqlite::params![
+                s.sector_id,
+                s.session_id,
+                s.agent_id,
+                s.scoped_identity_token,
+                if s.credential_revoked { 1i64 } else { 0i64 },
+                if s.session_terminated { 1i64 } else { 0i64 },
+                s.content_trust,
+                s.strain_epsilon,
+                s.stress_sigma_mpa,
+                s.tangent_modulus_gpa,
+                s.adjacent_stress_coupling,
+                s.current_regime.label(),
+                s.current_regime.code(),
+                s.exposure_bound.enforced_transfer_rate_bps,
+                s.exposure_bound.detection_time_sec * 1000.0,
+                s.exposure_bound.containment_time_sec * 1000.0,
+                s.exposure_bound.max_allowed_exposure_bytes,
+                s.exposure_bound.accumulated_exposure_bytes,
+                s.exposure_bound.theoretical_max_exposure_bytes,
+                if s.exposure_bound.bound_satisfied { 1i64 } else { 0i64 },
+                if s.edr_investigation_triggered { 1i64 } else { 0i64 },
+                s.last_updated.to_rfc3339(),
+            ]);
+        }
+        Ok(())
+    }
+
     /// Discovers all real user home directories (e.g., C:\Users\<username>) across the system,
     /// filtering out system accounts (Public, Default, etc.) and including USERPROFILE.
     fn get_user_home_dirs() -> Vec<(String, std::path::PathBuf)> {
@@ -5255,7 +5384,7 @@ mod tests {
     fn test_all_tables_queryable() {
         let engine = SiqueryEngine::new();
         let tables = SiqueryEngine::list_tables();
-        assert_eq!(tables.len(), 96, "Must contain exactly 96 tables and views for comprehensive siquery host discovery");
+        assert_eq!(tables.len(), 98, "Must contain exactly 98 tables and views for comprehensive siquery host discovery");
 
         for table in tables {
             let sql = format!("SELECT * FROM {} LIMIT 1;", table);
@@ -5337,7 +5466,7 @@ mod tests {
         for table in edr_tables {
             let sql = format!("SELECT COUNT(*) AS cnt FROM {};", table);
             let rows = engine
-                .execute_query(&sql)
+                .execute_query_rows(&sql)
                 .unwrap_or_else(|e| panic!("Query for {} failed: {}", table, e));
             assert!(!rows.is_empty(), "Query for {} must return a count row", table);
             let count = rows[0]
@@ -5408,6 +5537,26 @@ mod tests {
 
         let ide_rows = engine.execute_query("SELECT * FROM ide_extensions;").unwrap();
         assert!(ide_rows.is_empty() || ide_rows[0].get("ide").is_some());
+    }
+
+    #[test]
+    fn test_spider_web_tables_query() {
+        let engine = SiqueryEngine::new();
+        let tables = [
+            "spider_web_threads",
+            "business_policy_violations",
+        ];
+        for table in tables {
+            let sql = format!("SELECT * FROM {} LIMIT 5;", table);
+            let rows = engine.execute_query(&sql);
+            assert!(rows.is_ok(), "Query on '{}' must succeed without error", table);
+        }
+
+        let threads_rows = engine.execute_query("SELECT * FROM spider_web_threads;").unwrap();
+        assert!(threads_rows.len() >= 3, "spider_web_threads must contain at least 3 seeded baseline sectors");
+
+        let violations_rows = engine.execute_query("SELECT * FROM business_policy_violations;").unwrap();
+        assert!(violations_rows.is_empty() || violations_rows[0].get("id").is_some());
     }
 }
 

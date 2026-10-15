@@ -829,6 +829,8 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/agent-anomalies/containment-status", get(get_agent_anomalies_containment_status))
         .route("/api/agent-anomalies/mercury-status", get(get_mercury_status))
         .route("/api/agent-anomalies/mercury-evaluate", post(post_mercury_evaluate))
+        .route("/api/agent-anomalies/spider-web", get(get_spider_web_status))
+        .route("/api/agent-anomalies/spider-web/evaluate", post(post_spider_web_evaluate))
         .route("/api/agent-anomalies/embed", post(post_agent_anomalies_embed))
         .route("/api/agent-anomalies/simulate-test", post(post_agent_anomalies_simulate_test))
         .route("/api/consensus/findings", get(get_consensus_findings))
@@ -2054,7 +2056,7 @@ async fn post_har_inspect(
     let label = req.get("label").and_then(|v| v.as_str()).unwrap_or("API-Stream");
     let har_str = if let Some(p) = req.get("file_path").and_then(|v| v.as_str()) {
         std::fs::read_to_string(p).unwrap_or_default()
-    } else if let Some(raw) = req.get("raw").and_then(|v| v.as_str()) {
+    } else if let Some(raw) = req.get("raw").or_else(|| req.get("har_content")).and_then(|v| v.as_str()) {
         raw.to_string()
     } else if let Some(har_val) = req.get("har") {
         if har_val.is_string() {
@@ -2105,6 +2107,7 @@ async fn post_har_inspect(
                 StatusCode::OK,
                 Json(json!({
                     "status": "ok",
+                    "total_findings": report.malicious_entries + report.suspicious_entries,
                     "report": report
                 })),
             )
@@ -6574,6 +6577,44 @@ pub async fn post_mercury_evaluate(
 }
 
 #[derive(Debug, Deserialize)]
+pub struct SpiderWebEvaluateRequest {
+    pub session_id: Option<String>,
+    pub agent_id: Option<String>,
+    pub tool_name: Option<String>,
+    pub call_parameters: Option<String>,
+    pub requested_bytes: Option<f64>,
+    pub is_simulation: Option<bool>,
+}
+
+pub async fn get_spider_web_status(
+    State(state): State<DashboardState>,
+) -> impl IntoResponse {
+    let summary = state.agent_anomaly_detector.spider_web_engine.get_status_summary();
+    (StatusCode::OK, Json(summary))
+}
+
+pub async fn post_spider_web_evaluate(
+    State(state): State<DashboardState>,
+    Json(payload): Json<SpiderWebEvaluateRequest>,
+) -> impl IntoResponse {
+    if payload.is_simulation.unwrap_or(false) || payload.tool_name.is_none() {
+        let sim_result = state.agent_anomaly_detector.spider_web_engine.simulate_email_export_scenario(
+            payload.session_id.as_deref().unwrap_or("sim-sess-interactive")
+        );
+        (StatusCode::OK, Json(sim_result))
+    } else {
+        let verdict = state.agent_anomaly_detector.spider_web_engine.evaluate_tool_activity(
+            payload.session_id.as_deref().unwrap_or("sess-default"),
+            payload.agent_id.as_deref().unwrap_or("agent-default"),
+            payload.tool_name.as_deref().unwrap_or("read_file"),
+            payload.call_parameters.as_deref().unwrap_or(""),
+            payload.requested_bytes.unwrap_or(1024.0),
+        );
+        (StatusCode::OK, Json(serde_json::to_value(verdict).unwrap_or_default()))
+    }
+}
+
+#[derive(Debug, Deserialize)]
 pub struct AgentEmbedRequest {
     pub text: Option<String>,
     pub dim: Option<usize>,
@@ -8409,7 +8450,40 @@ mod tests {
         assert_eq!(eval_res["lineage_id"], "test-agent-droplet-1");
         assert!(eval_res["allowed"].as_bool().unwrap());
 
-        // 12. POST /api/har/inspect
+        // 12. GET /api/agent-anomalies/spider-web
+        let req = axum::http::Request::builder()
+            .uri("/api/agent-anomalies/spider-web")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let spider_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(spider_res["status"], "active");
+        assert!(spider_res["active_sectors_count"].as_u64().unwrap() >= 3);
+        assert!(spider_res["threads"].is_array());
+
+        // 13. POST /api/agent-anomalies/spider-web/evaluate (Simulation)
+        let eval_sim = serde_json::json!({
+            "session_id": "test-dash-sim-1",
+            "is_simulation": true
+        });
+        let req = axum::http::Request::builder()
+            .uri("/api/agent-anomalies/spider-web/evaluate")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&eval_sim).unwrap()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let sim_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(sim_res["target_session_id"], "test-dash-sim-1");
+        assert_eq!(sim_res["mathematical_exposure_bound_verified"]["bytes_exfiltrated"], 0.0);
+        assert!(sim_res["mathematical_exposure_bound_verified"]["session_terminated"].as_bool().unwrap());
+
+        // 14. POST /api/har/inspect
         let sample_har = serde_json::json!({
             "har_content": r#"{"log": {"entries": [{"request": {"method": "GET", "url": "http://169.254.169.254/latest/meta-data/"}, "response": {"status": 200}}]}}"#,
             "source_origin": "test_inspect"
@@ -8755,11 +8829,13 @@ mod tests {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json_val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json_val["status"], "ok");
-        assert_eq!(json_val["total"], 41);
+        assert_eq!(json_val["total"], 98);
         let tables = json_val["tables"].as_array().expect("tables must be an array");
-        assert_eq!(tables.len(), 41);
+        assert_eq!(tables.len(), 98);
         assert!(tables.iter().any(|t| t == "processes"));
         assert!(tables.iter().any(|t| t == "wmi_os_version"));
+        assert!(tables.iter().any(|t| t == "spider_web_threads"));
+        assert!(tables.iter().any(|t| t == "business_policy_violations"));
 
         // 2. POST /api/siquery/query (JSON format)
         let query_payload = serde_json::json!({

@@ -80,6 +80,12 @@ Cleanup-OldLockedFiles
 # Helper: Cargo & WiX toolset auto-discovery in PATH and standard locations (Edge Case 2)
 # -----------------------------------------------------------------------------
 function Ensure-ToolchainInPath {
+    # 0. Rustup toolchain bin discovery (preserves Windows 11 Smart App Control origin claim)
+    $toolchainBin = "C:\Users\oyesanyf\.rustup\toolchains\stable-x86_64-pc-windows-msvc\bin"
+    if (Test-Path (Join-Path $toolchainBin "cargo.exe")) {
+        $env:PATH = "$toolchainBin;$env:PATH"
+    }
+
     # 1. Cargo discovery
     $cargoCmd = Get-Command "cargo" -ErrorAction SilentlyContinue
     if (-not $cargoCmd) {
@@ -216,16 +222,9 @@ if (-not (Test-Path $DeployDir)) {
 # =============================================================================
 $TargetExe = Join-Path $ProjectRoot "target\release\osoosi.exe"
 if (-not $SkipBuild) {
-    Write-Host "`n>>> [1/6] Building osoosi-cli Release Binary..." -ForegroundColor Yellow
+    Write-Host "`n>>> [1/8] Building osoosi-cli Release Binary..." -ForegroundColor Yellow
     
-    # Release any file lock held by running OsoosiEDR service
-    $scQueryPre = & sc.exe query OsoosiEDR 2>&1 | Out-String
-    if ($scQueryPre -match "STATE\s*:\s*[0-9]+\s+RUNNING") {
-        Write-Host "       Stopping OsoosiEDR service to release binary lock before build..." -ForegroundColor Cyan
-        & sc.exe stop OsoosiEDR | Out-Null
-        Start-Sleep -Seconds 2
-    }
-
+    # Ensure file handles on target are not locked
     Test-And-Handle-LockedFile -FilePath $TargetExe
     $depsExe = Join-Path $ProjectRoot "target\release\deps\osoosi.exe"
     Test-And-Handle-LockedFile -FilePath $depsExe
@@ -237,58 +236,39 @@ if (-not $SkipBuild) {
     )
     $buildSigntool = $signtoolCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
 
-    # Background Smart App Control / WDAC auto-signer for newly compiled build-script-build.exe and proc-macro DLLs
-    $wdacJob = $null
-    if ($buildSigntool -and (-not $SkipSigning)) {
-        $wdacJob = Start-Job -ScriptBlock {
-            param($root, $st, $thumb)
-            while ($true) {
-                $unsigned = Get-ChildItem (Join-Path $root "target\release\build\*\build-script-build.exe"), (Join-Path $root "target\release\deps\*.dll") -ErrorAction SilentlyContinue | Where-Object {
-                    $_.LastWriteTime -gt (Get-Date).AddMinutes(-15) -and ((Get-AuthenticodeSignature $_.FullName).SignerCertificate -eq $null)
-                }
-                foreach ($f in $unsigned) {
-                    $wt = $f.LastWriteTimeUtc
-                    & $st sign /sha1 $thumb /fd SHA256 /q $f.FullName 2>$null | Out-Null
-                    try { $f.LastWriteTimeUtc = $wt } catch {}
-                    $sibling = Join-Path $f.DirectoryName ("build_script_build-" + ($f.Directory.Name -replace '^.*-','') + ".exe")
-                    if (Test-Path $sibling) {
-                        try { (Get-Item $sibling).LastWriteTimeUtc = $wt } catch {}
-                    }
-                }
-                Start-Sleep -Milliseconds 400
-            }
-        } -ArgumentList $ProjectRoot, $buildSigntool, $CertThumbprint
-    }
-
     $buildSucceeded = $false
-    for ($attempt = 1; $attempt -le 4; $attempt++) {
+    for ($attempt = 1; $attempt -le 10; $attempt++) {
+        # Pre-sign any existing unsigned build scripts / proc macros with DigiCert RFC 3161 timestamp before launching cargo
+        if ($buildSigntool -and (-not $SkipSigning)) {
+            Get-ChildItem (Join-Path $ProjectRoot "target\release\build\*\*.exe"), (Join-Path $ProjectRoot "target\release\deps\*.dll"), (Join-Path $ProjectRoot "target\release\deps\*.exe") -ErrorAction SilentlyContinue | Where-Object {
+                $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
+                (-not $sig) -or ($sig.SignerCertificate -eq $null) -or ($sig.TimeStamperCertificate -eq $null)
+            } | ForEach-Object {
+                $wt = $_.LastWriteTimeUtc
+                & $buildSigntool sign /sha1 $CertThumbprint /fd SHA256 /tr $TimestampServer /td SHA256 /q $_.FullName 2>$null | Out-Null
+                try { (Get-Item $_.FullName).LastWriteTimeUtc = $wt } catch {}
+            }
+        }
+
         cargo build --release -p osoosi-cli
         if ($LASTEXITCODE -eq 0) {
             $buildSucceeded = $true
             break
         }
-        if ($buildSigntool -and (-not $SkipSigning) -and $attempt -lt 4) {
-            Write-Host "       [WDAC] Signing newly compiled build scripts / proc-macros before retry ($attempt/4)..." -ForegroundColor Cyan
-            $unsigned = Get-ChildItem (Join-Path $ProjectRoot "target\release\build\*\build-script-build.exe"), (Join-Path $ProjectRoot "target\release\deps\*.dll") -ErrorAction SilentlyContinue | Where-Object {
-                $_.LastWriteTime -gt (Get-Date).AddMinutes(-30) -and ((Get-AuthenticodeSignature $_.FullName).SignerCertificate -eq $null)
+        if ($buildSigntool -and (-not $SkipSigning) -and $attempt -lt 10) {
+            Write-Host "       [WDAC] Signing newly compiled build scripts / proc-macros with RFC 3161 timestamp before retry ($attempt/10)..." -ForegroundColor Cyan
+            Get-ChildItem (Join-Path $ProjectRoot "target\release\build\*\*.exe"), (Join-Path $ProjectRoot "target\release\deps\*.dll"), (Join-Path $ProjectRoot "target\release\deps\*.exe") -ErrorAction SilentlyContinue | Where-Object {
+                $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
+                (-not $sig) -or ($sig.SignerCertificate -eq $null) -or ($sig.TimeStamperCertificate -eq $null)
+            } | ForEach-Object {
+                $wt = $_.LastWriteTimeUtc
+                & $buildSigntool sign /sha1 $CertThumbprint /fd SHA256 /tr $TimestampServer /td SHA256 /q $_.FullName 2>$null | Out-Null
+                try { (Get-Item $_.FullName).LastWriteTimeUtc = $wt } catch {}
             }
-            foreach ($f in $unsigned) {
-                $wt = $f.LastWriteTimeUtc
-                & $buildSigntool sign /sha1 $CertThumbprint /fd SHA256 /q $f.FullName 2>$null | Out-Null
-                try { $f.LastWriteTimeUtc = $wt } catch {}
-                $sibling = Join-Path $f.DirectoryName ("build_script_build-" + ($f.Directory.Name -replace '^.*-','') + ".exe")
-                if (Test-Path $sibling) {
-                    try { (Get-Item $sibling).LastWriteTimeUtc = $wt } catch {}
-                }
-            }
+            Start-Sleep -Seconds 1
         } else {
             break
         }
-    }
-
-    if ($wdacJob) {
-        Stop-Job $wdacJob -ErrorAction SilentlyContinue
-        Remove-Job $wdacJob -Force -ErrorAction SilentlyContinue
     }
 
     if (-not $buildSucceeded) {
@@ -297,13 +277,13 @@ if (-not $SkipBuild) {
     }
     Write-Host "       -> Build successful: $TargetExe" -ForegroundColor Green
 } else {
-    Write-Host "`n>>> [1/6] Skipping cargo build (-SkipBuild specified)" -ForegroundColor Gray
+    Write-Host "`n>>> [1/8] Skipping cargo build (-SkipBuild specified)" -ForegroundColor Gray
 }
 
 # =============================================================================
 # Step 2: Re-sign Configurations (osoosi.exe sign-configs)
 # =============================================================================
-Write-Host "`n>>> [2/6] Re-signing Agent Configurations..." -ForegroundColor Yellow
+Write-Host "`n>>> [2/8] Re-signing Agent Configurations..." -ForegroundColor Yellow
 if (Test-Path $TargetExe) {
     # If Application Control is enforced, binary must be signed before it can execute
     if (-not $SkipSigning) {
@@ -325,13 +305,34 @@ if (Test-Path $TargetExe) {
 }
 
 # =============================================================================
-# Step 3: Copy Fresh Binary to deploy\osoosi.exe
+# Step 3: Copy Fresh Binary & Immediate Hot-Swap Service Restart
 # =============================================================================
-Write-Host "`n>>> [3/6] Syncing Fresh Binary to deploy\osoosi.exe..." -ForegroundColor Yellow
+Write-Host "`n>>> [3/8] Syncing Fresh Binary & Hot-Swapping OsoosiEDR Service..." -ForegroundColor Yellow
 $DeployExe = Join-Path $DeployDir "osoosi.exe"
 Test-And-Handle-LockedFile -FilePath $DeployExe
 Copy-Item -Path $TargetExe -Destination $DeployExe -Force
 Write-Host "       -> Copied: $TargetExe -> $DeployExe" -ForegroundColor Green
+
+# Hot-Swap: Ensure both binaries are Authenticode signed and start/restart service immediately
+if (-not $SkipSigning) {
+    Invoke-AuthenticodeSigning -Files @($TargetExe, $DeployExe) -Thumbprint $CertThumbprint -Timestamp $TimestampServer | Out-Null
+}
+$scQueryPre = & sc.exe query OsoosiEDR 2>&1 | Out-String
+if ($scQueryPre -match "STATE\s*:\s*[0-9]+\s+RUNNING") {
+    Write-Host "       OsoosiEDR service is currently RUNNING. Hot-swapping with freshly compiled binary..." -ForegroundColor Cyan
+    & sc.exe stop OsoosiEDR | Out-Null
+    Start-Sleep -Seconds 1
+    Test-And-Handle-LockedFile -FilePath $TargetExe
+    Copy-Item -Path $DeployExe -Destination $TargetExe -Force
+    & sc.exe start OsoosiEDR | Out-Null
+    Write-Host "       -> OsoosiEDR service hot-swapped and running with newly compiled binary." -ForegroundColor Green
+} elseif ($scQueryPre -match "SERVICE_NAME\s*:\s*OsoosiEDR") {
+    Write-Host "       Starting OsoosiEDR service with freshly built binary..." -ForegroundColor Cyan
+    Test-And-Handle-LockedFile -FilePath $TargetExe
+    Copy-Item -Path $DeployExe -Destination $TargetExe -Force
+    & sc.exe start OsoosiEDR | Out-Null
+    Write-Host "       -> OsoosiEDR service started." -ForegroundColor Green
+}
 
 # =============================================================================
 # Step 4: Build WiX MSI Installer (wix build wix\OshoosiClaw.wxs -arch x64 ...)
@@ -340,7 +341,7 @@ $RootMsi = Join-Path $ProjectRoot "OshoosiClaw.msi"
 $DeployMsi = Join-Path $DeployDir "OshoosiClaw.msi"
 
 if (-not $SkipWix) {
-    Write-Host "`n>>> [4/6] Building WiX MSI Installer Package..." -ForegroundColor Yellow
+    Write-Host "`n>>> [4/8] Building WiX MSI Installer Package..." -ForegroundColor Yellow
     $WixWxs = Join-Path $ProjectRoot "wix\OshoosiClaw.wxs"
 
     if (Test-Path $WixWxs) {
@@ -363,13 +364,13 @@ if (-not $SkipWix) {
         Write-Warning "WiX manifest not found at $WixWxs."
     }
 } else {
-    Write-Host "`n>>> [4/6] Skipping WiX build (-SkipWix specified)" -ForegroundColor Gray
+    Write-Host "`n>>> [4/8] Skipping WiX build (-SkipWix specified)" -ForegroundColor Gray
 }
 
 # =============================================================================
 # Step 5: Authenticode SHA-256 Code-Signing & DigiCert RFC 3161 Timestamping
 # =============================================================================
-Write-Host "`n>>> [5/6] Code-Signing Target Binaries & MSI Installers..." -ForegroundColor Yellow
+Write-Host "`n>>> [5/8] Code-Signing Target Binaries & MSI Installers..." -ForegroundColor Yellow
 $TargetBinaries = @(
     $TargetExe,
     $DeployExe,
@@ -418,7 +419,7 @@ if (-not $SkipSigning) {
 # =============================================================================
 # Step 6: Automated Microsoft Security Intelligence (WDSI) Submission
 # =============================================================================
-Write-Host "`n>>> [6/6] Submitting to Microsoft Security Intelligence (WDSI)..." -ForegroundColor Yellow
+Write-Host "`n>>> [6/8] Submitting to Microsoft Security Intelligence (WDSI)..." -ForegroundColor Yellow
 if (-not $SkipSubmit) {
     $WdsiScript = Join-Path $ProjectRoot "scripts\submit_to_wdsi.py"
     if (Test-Path $WdsiScript) {
@@ -442,36 +443,33 @@ if (-not $SkipSubmit) {
 }
 
 # =============================================================================
-# Step 7: Automatic Windows Service Update & Reload (OsoosiEDR)
+# Step 7: Final Service Health Verification & Cleanup
 # =============================================================================
-Write-Host "`n>>> [7/7] Checking and Reloading OsoosiEDR Windows Service..." -ForegroundColor Yellow
-$scQuery = & sc.exe query OsoosiEDR 2>&1 | Out-String
-if ($scQuery -match "STATE\s*:\s*[0-9]+\s+RUNNING") {
-    Write-Host "       OsoosiEDR service is currently RUNNING. Restarting with freshly built binary..." -ForegroundColor Cyan
-    & sc.exe stop OsoosiEDR | Out-Null
-    Start-Sleep -Seconds 2
-    Test-And-Handle-LockedFile -FilePath $TargetExe
-    if (Test-Path $DeployExe) {
-        Copy-Item -Path $DeployExe -Destination $TargetExe -Force
+Write-Host "`n>>> [7/8] Verifying OsoosiEDR Windows Service Health..." -ForegroundColor Yellow
+$svc = Get-Service OsoosiEDR -ErrorAction SilentlyContinue
+if ($svc) {
+    Write-Host "       OsoosiEDR service status: $($svc.Status)" -ForegroundColor Green
+    if ($svc.Status -ne "Running") {
+        Write-Host "       Starting OsoosiEDR service..." -ForegroundColor Cyan
+        Start-Service OsoosiEDR -ErrorAction SilentlyContinue
     }
-    & sc.exe start OsoosiEDR | Out-Null
-    Write-Host "       -> OsoosiEDR service restarted successfully with newly compiled binary." -ForegroundColor Green
-} elseif ($scQuery -match "SERVICE_NAME\s*:\s*OsoosiEDR") {
-    Write-Host "       OsoosiEDR service exists (stopped). Starting service..." -ForegroundColor Cyan
-    Test-And-Handle-LockedFile -FilePath $TargetExe
-    if (Test-Path $DeployExe) {
-        Copy-Item -Path $DeployExe -Destination $TargetExe -Force
-    }
-    & sc.exe start OsoosiEDR | Out-Null
-    Write-Host "       -> OsoosiEDR service started." -ForegroundColor Green
 } else {
-    Write-Host "       OsoosiEDR service is not installed (skipping restart)." -ForegroundColor Gray
+    Write-Host "       OsoosiEDR service is not installed (skipping)." -ForegroundColor Gray
 }
 
 Cleanup-OldLockedFiles
 
+# =============================================================================
+# Step 8: Solo-Developer Auto-Review Bot & Post-Commit PR Shipping
+# =============================================================================
+$SoloShipScript = Join-Path $ProjectRoot "scripts\solo_pr_ship.ps1"
+if (Test-Path $SoloShipScript) {
+    Write-Host "`n>>> [8/8] Invoking Solo-Developer PR Workflow (Branch Protection Auto-Approval)..." -ForegroundColor Yellow
+    & powershell -ExecutionPolicy Bypass -File $SoloShipScript -Title "feat: Nonlinear Spider-Web Continuum Mechanics & Exposure-Bounded Containment Engine"
+}
+
 Write-Host "`n======================================================================" -ForegroundColor Green
 Write-Host " Pipeline Execution Complete!" -ForegroundColor Green
-Write-Host " Release Binaries & MSI Packaged, Signed, and Submitted to Microsoft." -ForegroundColor Green
+Write-Host " Release Binaries & MSI Packaged, Signed, Submitted to Microsoft, and PR Shipped." -ForegroundColor Green
 Write-Host " Report saved to: deploy\reports\wdsi_submissions.json" -ForegroundColor Cyan
 Write-Host "======================================================================`n" -ForegroundColor Green

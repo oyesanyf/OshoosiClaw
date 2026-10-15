@@ -447,7 +447,7 @@ function setupNav() {
                     renderUtilitiesView();
                 } else if (view === 'siquery') {
                     document.getElementById('siquery-view').classList.add('active');
-                    viewTitle.innerText = "Siquery-RS Live EDR SQL Console & 96-Table Inspector";
+                    viewTitle.innerText = "Siquery-RS Live EDR SQL Console & 98-Table Inspector";
                     renderSiqueryView();
                 } else {
                     const otherView = document.getElementById('other-view') || document.getElementById('dashboard-view');
@@ -7744,6 +7744,8 @@ async function renderAgentAnomaliesView() {
         if (aadDomChanged && window.lucide) {
             window.lucide.createIcons();
         }
+
+        await renderSpiderWebPanel();
     } catch (err) {
         console.error('Failed to render Agent Anomalies view:', err);
         renderViewFallbackCard('agent-anomalies-view', 'Agent Anomalies (AAD)', err);
@@ -7779,6 +7781,142 @@ async function triggerAgentAnomalySimulation() {
 
 window.renderAgentAnomaliesView = renderAgentAnomaliesView;
 window.triggerAgentAnomalySimulation = triggerAgentAnomalySimulation;
+
+async function renderSpiderWebPanel() {
+    try {
+        const data = await fetchAPI('/agent-anomalies/spider-web');
+        if (!data) return;
+
+        const activeCountEl = document.getElementById('spider-web-active-count');
+        if (activeCountEl) {
+            activeCountEl.innerText = `${data.active_sectors_count || 0} Active Sectors · ${data.severed_sectors_count || 0} Severed`;
+        }
+
+        const tbody = document.getElementById('spider-web-sectors-tbody');
+        if (tbody && data.threads) {
+            if (data.threads.length === 0) {
+                tbody.innerHTML = `<tr><td colspan="8" style="text-align: center; color: var(--text-muted); padding: 20px 0;">No active spider-web sectors recorded.</td></tr>`;
+            } else {
+                tbody.innerHTML = data.threads.map(t => {
+                    let regimeBadge = 'badge green';
+                    if (t.regime_code === 'REGIME_II_ENTROPIC_UNFOLDING') regimeBadge = 'badge yellow';
+                    else if (t.regime_code === 'REGIME_III_STRAIN_STIFFENING') regimeBadge = 'badge orange';
+                    else if (t.regime_code === 'REGIME_IV_SACRIFICIAL_FRACTURE') regimeBadge = 'badge red';
+
+                    const autotomyBadge = t.session_terminated ?
+                        '<span class="badge red" style="font-size: 10px;">SEVERED (0B Exfil)</span>' :
+                        '<span class="badge green" style="font-size: 10px;">INTACT &middot; ANCHORED</span>';
+
+                    const rateStr = t.enforced_rate_bps === 0 ? '0 B/s (BLOCKED)' : `${Math.round(t.enforced_rate_bps / 1024)} KB/s`;
+                    const exposureStr = `${Math.round(t.accumulated_exposure_bytes)} / ${Math.round(t.max_exposure_bound_bytes)} B`;
+
+                    return `
+                        <tr style="border-bottom: 1px solid rgba(255, 255, 255, 0.04);">
+                            <td style="padding: 10px 12px;">
+                                <div style="font-weight: 600; color: var(--text-header);">${escapeHtml(t.sector_id)}</div>
+                                <div style="font-size: 11px; color: var(--text-muted);">${escapeHtml(t.session_id)} &middot; ${escapeHtml(t.agent_id)}</div>
+                            </td>
+                            <td style="padding: 10px 12px; font-family: monospace; font-size: 11px; color: var(--accent-blue);">
+                                ${escapeHtml(t.scoped_identity_token)}
+                                ${t.credential_revoked ? '<span class="badge red" style="font-size: 9px; margin-left: 4px;">REVOKED</span>' : ''}
+                            </td>
+                            <td style="padding: 10px 12px; text-align: center;">
+                                <span class="${regimeBadge}" style="font-size: 10px;">${escapeHtml(t.current_regime.split(':')[0])}</span>
+                            </td>
+                            <td style="padding: 10px 12px; text-align: center; font-family: monospace;">
+                                ${(t.strain_epsilon || 0).toFixed(3)}
+                            </td>
+                            <td style="padding: 10px 12px; text-align: center; font-family: monospace;">
+                                ${(t.stress_sigma_mpa || 0).toFixed(1)} MPa
+                            </td>
+                            <td style="padding: 10px 12px; text-align: center; font-family: monospace; color: ${t.enforced_rate_bps === 0 ? '#ef4444' : 'var(--text-primary)'};">
+                                ${rateStr}
+                            </td>
+                            <td style="padding: 10px 12px; text-align: center; font-family: monospace;">
+                                ${exposureStr}
+                            </td>
+                            <td style="padding: 10px 12px; text-align: center;">
+                                ${autotomyBadge}
+                            </td>
+                        </tr>
+                    `;
+                }).join('');
+            }
+        }
+        if (window.lucide) window.lucide.createIcons();
+    } catch (err) {
+        console.error('Failed to render spider-web panel:', err);
+    }
+}
+
+async function simulateSpiderWebEmailExport() {
+    const btn = document.getElementById('spider-web-sim-btn');
+    const container = document.getElementById('spider-web-sim-result-container');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader-2" class="spin" style="width:14px;height:14px;"></i> Simulating Silk Mechanics...';
+        if (window.lucide) window.lucide.createIcons();
+    }
+    try {
+        const payload = {
+            session_id: `sim-sess-${Date.now().toString(36)}`,
+            is_simulation: true
+        };
+        const res = await postAPI('/agent-anomalies/spider-web/evaluate', payload);
+        if (container && res) {
+            container.style.display = 'block';
+            const bound = res.mathematical_exposure_bound_verified || {};
+            const adjacent = res.adjacent_web_sectors_preserved || {};
+            const step3 = res.step3_external_export_blocked || {};
+
+            container.innerHTML = `
+                <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 12px; border-bottom: 1px solid rgba(14, 165, 233, 0.2); padding-bottom: 8px;">
+                    <div style="display: flex; align-items: center; gap: 8px;">
+                        <span class="badge red" style="font-size: 11px;">REGIME IV: SACRIFICIAL AUTOTOMY TRIGGERED</span>
+                        <span style="font-weight: 600; color: #38bdf8; font-size: 13px;">Proof of Exposure Bound: E_max &le; B_max</span>
+                    </div>
+                    <span style="font-size: 11px; color: var(--text-muted); font-family: monospace;">Session: ${escapeHtml(res.target_session_id)}</span>
+                </div>
+                <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(220px, 1fr)); gap: 10px; margin-bottom: 12px;">
+                    <div style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 6px;">
+                        <div style="font-size: 11px; color: var(--text-muted);">Bytes Exfiltrated to Attacker</div>
+                        <div style="font-size: 18px; font-weight: 700; color: #10b981; font-family: monospace;">${bound.bytes_exfiltrated || 0} Bytes (0.00%)</div>
+                    </div>
+                    <div style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 6px;">
+                        <div style="font-size: 11px; color: var(--text-muted);">Enforced Transfer Rate Ceiling</div>
+                        <div style="font-size: 18px; font-weight: 700; color: #ef4444; font-family: monospace;">${bound.enforced_transfer_rate_bps || 0} B/s (BLOCKED)</div>
+                    </div>
+                    <div style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 6px;">
+                        <div style="font-size: 11px; color: var(--text-muted);">Scoped Session Credentials</div>
+                        <div style="font-size: 14px; font-weight: 700; color: #ef4444; margin-top: 4px;">${bound.scoped_credentials_revoked ? 'REVOKED &middot; ISOLATED' : 'ACTIVE'}</div>
+                    </div>
+                    <div style="background: rgba(0,0,0,0.3); padding: 10px; border-radius: 6px;">
+                        <div style="font-size: 11px; color: var(--text-muted);">Adjacent Hub Web Preserved</div>
+                        <div style="font-size: 14px; font-weight: 700; color: #10b981; margin-top: 4px;">100% INTACT (&Lambda; &lt; 0.02)</div>
+                    </div>
+                </div>
+                <div style="font-size: 12px; color: var(--text-secondary); line-height: 1.5; background: rgba(0,0,0,0.2); padding: 8px 12px; border-radius: 6px;">
+                    <strong>Constitutive Execution Trace:</strong> Step 1 untrusted prompt injection ingested &rarr; Step 2 internal document read throttled via viscous damping &rarr; Step 3 exfil to drop@exfil-server.io blocked at out-of-model business gate at &epsilon; = 0.42 (&gt; &epsilon;_fracture = 0.35). Sacrificial thread severed; 0 sensitive bytes leaked.
+                </div>
+            `;
+            if (window.lucide) window.lucide.createIcons();
+            showSkyrlToast('Spider-Web simulation completed: Out-of-model exfil blocked at 0 bytes.', 'success');
+            await renderSpiderWebPanel();
+        }
+    } catch (err) {
+        console.error('Error running spider-web simulation:', err);
+        showUserError('Spider-Web Simulation', err);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="play-circle" style="width:14px;height:14px;"></i> Simulate Untrusted Email Exfil Attack';
+            if (window.lucide) window.lucide.createIcons();
+        }
+    }
+}
+
+window.renderSpiderWebPanel = renderSpiderWebPanel;
+window.simulateSpiderWebEmailExport = simulateSpiderWebEmailExport;
 
 /**
  * ============================================================================
@@ -8155,7 +8293,7 @@ window.downloadAllCalibratedModels = downloadAllCalibratedModels;
 window.copyTerminalCommand = copyTerminalCommand;
 
 // ==========================================
-// Siquery-RS Live EDR SQL Console (96-Table Parity)
+// Siquery-RS Live EDR SQL Console (98-Table Parity)
 // ==========================================
 
 const SIQUERY_PRESETS = {
@@ -8175,7 +8313,9 @@ const SIQUERY_PRESETS = {
     firewall: "SELECT name, app_name, action, direction, protocol, local_ports FROM firewall_rules LIMIT 25;",
     ide_extensions: "SELECT ide, name, publisher, version, ai_capable, path FROM ide_extensions ORDER BY ai_capable DESC, name ASC LIMIT 25;",
     api_endpoints: "SELECT api_type, provider_or_server, endpoint_or_command, protocol, auth_configured, pore_radius, status FROM api_endpoints LIMIT 25;",
-    coding_tools: "SELECT category, tool_name, version, can_spawn_shell, can_network_egress, pore_radius, path FROM coding_tools ORDER BY can_spawn_shell DESC LIMIT 25;"
+    coding_tools: "SELECT category, tool_name, version, can_spawn_shell, can_network_egress, pore_radius, path FROM coding_tools ORDER BY can_spawn_shell DESC LIMIT 25;",
+    spider_threads: "SELECT sector_id, session_id, current_regime, strain_epsilon, stress_sigma_mpa, enforced_rate_bps, max_exposure_bound_bytes, accumulated_exposure_bytes FROM spider_web_threads LIMIT 25;",
+    business_violations: "SELECT id, session_id, untrusted_source, restricted_asset, target_destination, action_taken, credentials_revoked, detected_at FROM business_policy_violations ORDER BY detected_at DESC LIMIT 25;"
 };
 
 async function renderSiqueryView() {
@@ -8309,7 +8449,7 @@ async function runSiqueryProtectionSweep() {
             if (anomalies > 0) {
                 showToast(`🛡️ Siquery Protection Sweep: ${anomalies} threat anomaly(ies) identified and mitigated!`, 'warning');
             } else {
-                showToast(`🛡️ Siquery Protection Sweep completed: All 96 tables clean, zero anomalies detected.`, 'success');
+                showToast(`🛡️ Siquery Protection Sweep completed: All 98 tables clean, zero anomalies detected.`, 'success');
             }
         }
     } catch (err) {

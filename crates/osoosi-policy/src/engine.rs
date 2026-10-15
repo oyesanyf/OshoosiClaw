@@ -232,6 +232,7 @@ fn classify_vote(
         "Agent-Egress-Voter" => (EvidenceClass::LiveNetwork, 1.0, true),
         "HAR-L7-Inspector" => (EvidenceClass::LiveNetwork, 0.94, true),
         "Mercury-Fluid-Dynamics" => (EvidenceClass::Behavior, 0.95, true),
+        "SpiderWeb-Containment" => (EvidenceClass::Behavior, 0.96, true),
         "Ai-Security-Audit-Voter" => (EvidenceClass::Behavior, 0.95, true),
         "Sigma-Engine" => (EvidenceClass::Behavior, 0.90, true),
         "IOC-Scanner" => (EvidenceClass::ThreatIntel, 1.0, true),
