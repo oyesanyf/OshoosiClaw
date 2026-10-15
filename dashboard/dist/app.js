@@ -1101,6 +1101,15 @@ function escapeHtml(str) {
         .replace(/'/g, '&#039;');
 }
 
+function setHtmlIfChanged(elOrId, html) {
+    const el = typeof elOrId === 'string' ? document.getElementById(elOrId) : elOrId;
+    if (!el) return false;
+    if (el._lastRenderedHtml === html && el.innerHTML !== '') return false;
+    el._lastRenderedHtml = html;
+    el.innerHTML = html;
+    return true;
+}
+
 /**
  * Render detection engines voter cards
  */
@@ -4286,7 +4295,8 @@ async function renderZoneView() {
             `;
         }).join('');
 
-        recs.innerHTML = bannerHtml + itemsHtml;
+        const recsChanged = setHtmlIfChanged(recs, bannerHtml + itemsHtml);
+        if (recsChanged && window.lucide) lucide.createIcons();
     }
 
     // Render Zone Nodes Cluster section into #zone-nodes-list
@@ -4312,7 +4322,7 @@ async function renderZoneView() {
     }
 
     if (nodesList && summary.nodes) {
-        nodesList.innerHTML = summary.nodes.map(n => {
+        let nodesHtml = summary.nodes.map(n => {
             const isRelay = n.node_type === 'message_relay' || n.role === 'Nostr Relay Pool' || String(n.id).startsWith('relay:');
             if (isRelay) {
                 return `
@@ -4393,7 +4403,7 @@ async function renderZoneView() {
         }).join('');
 
         if (hostNodes.length <= 1 && remotePeers === 0) {
-            nodesList.innerHTML += `
+            nodesHtml += `
                 <div class="timeline-item" style="border-left: 2px solid var(--accent-orange); margin-bottom: 8px;">
                     <div class="item-icon" style="background-color: rgba(255, 165, 0, 0.1); color: var(--accent-orange);">
                         <i data-lucide="shield"></i>
@@ -4407,14 +4417,13 @@ async function renderZoneView() {
                 </div>
             `;
         }
+        if (setHtmlIfChanged(nodesList, nodesHtml) && window.lucide) {
+            lucide.createIcons();
+        }
     }
 
     if (typeof renderDeceptionCard === 'function') {
         renderDeceptionCard();
-    }
-
-    if (window.lucide) {
-        lucide.createIcons();
     }
     } catch (err) {
         console.error('[renderZoneView] Error:', err);
@@ -4501,7 +4510,7 @@ async function renderApprovalsView() {
 
         const safeApprovals = Array.isArray(approvals) ? approvals : [];
     if (safeApprovals.length === 0) {
-        list.innerHTML = `
+        const emptyHtml = `
             <div class="card glass shadow-glow p-4 text-center" style="border: 1px solid rgba(0, 255, 136, 0.2); background: rgba(0, 255, 136, 0.03); border-radius: 12px; padding: 24px;">
                 <div style="font-size: 16px; font-weight: 600; color: var(--accent-green); margin-bottom: 8px;">
                     🛡️ Autonomous Response Engine Nominal · Zero Actions Pending Manual Approval
@@ -4516,11 +4525,11 @@ async function renderApprovalsView() {
                 </div>
             </div>
         `;
-        if (window.lucide) lucide.createIcons();
+        if (setHtmlIfChanged(list, emptyHtml) && window.lucide) lucide.createIcons();
         return;
     }
 
-    list.innerHTML = safeApprovals.map(app => `
+    const itemsHtml = safeApprovals.map(app => `
         <div class="timeline-item">
             <div class="item-icon" style="background-color: rgba(255, 165, 0, 0.1); color: orange;">
                 <i data-lucide="help-circle"></i>
@@ -4535,7 +4544,7 @@ async function renderApprovalsView() {
             </div>
         </div>
     `).join('');
-    if (window.lucide) lucide.createIcons();
+    if (setHtmlIfChanged(list, itemsHtml) && window.lucide) lucide.createIcons();
     } catch (err) {
         console.error('[renderApprovalsView] Error:', err);
         const list = document.getElementById('approval-list');
@@ -4599,15 +4608,15 @@ async function fetchBlockingRules() {
         if (!tbody) return;
 
         if (state.blockingRules.length === 0) {
-            tbody.innerHTML = `
+            setHtmlIfChanged(tbody, `
                 <tr>
                     <td colspan="5" style="text-align: center; color: var(--text-muted); padding: 24px;">Zero active manual blocking rules. Add a rule above to enforce pre-exec blocking.</td>
                 </tr>
-            `;
+            `);
             return;
         }
 
-        tbody.innerHTML = state.blockingRules.map(rule => {
+        const rulesHtml = state.blockingRules.map(rule => {
             const kindLower = (rule.kind || 'executable').toLowerCase();
             const kindBadge = kindLower === 'shredding' 
                 ? '<span class="badge purple">Shredding</span>' 
@@ -4629,6 +4638,7 @@ async function fetchBlockingRules() {
                 </tr>
             `;
         }).join('');
+        setHtmlIfChanged(tbody, rulesHtml);
     } catch (e) {
         console.error('Failed to fetch blocking rules:', e);
     }
@@ -5430,7 +5440,8 @@ async function renderGossipView() {
 
     // 2. If still empty, display default peer synchronization packets
     if (gossipEvents.length === 0) {
-        const now = Date.now();
+        if (!state._gossipInitTs) state._gossipInitTs = Date.now();
+        const now = state._gossipInitTs;
         gossipEvents = [
             {
                 id: 'sync-hb-1',
@@ -5521,7 +5532,7 @@ async function renderGossipView() {
     }
 
     // 6. Render timeline items
-    list.innerHTML = filteredEvents.map(event => {
+    const gossipHtml = filteredEvents.map(event => {
         const isThreat = event.is_threat || (event.event_type && event.event_type.includes('THREAT'));
         const eventType = event.event_type || 'GOSSIP_PACKET';
         const sourceNode = event.source_node || 'peer';
@@ -5648,7 +5659,7 @@ async function renderGossipView() {
         `;
     }).join('');
 
-    if (window.lucide) lucide.createIcons();
+    if (setHtmlIfChanged(list, gossipHtml) && window.lucide) lucide.createIcons();
     } catch (err) {
         console.error('[renderGossipView] Error:', err);
         renderViewFallbackCard('gossip-view', 'P2P Gossip Feed', err);
@@ -7489,6 +7500,7 @@ async function renderAgentAnomaliesView() {
         if (autotomyEl) autotomyEl.innerText = metrics.autotomy_severances || 0;
         if (meshBroadcastsEl) meshBroadcastsEl.innerText = metrics.mesh_broadcasts || 0;
 
+        let aadDomChanged = false;
         if (summary) {
             const sessionsEl = document.getElementById('aad-monitored-sessions');
             const anomaliesEl = document.getElementById('aad-total-anomalies');
@@ -7512,7 +7524,7 @@ async function renderAgentAnomaliesView() {
                     "ASI10": "Rogue Agent Drift"
                 };
 
-                tagsContainer.innerHTML = Object.entries(owaspMeta).map(([code, name]) => {
+                const tagsHtml = Object.entries(owaspMeta).map(([code, name]) => {
                     const count = summary.owasp_distribution[code] || 0;
                     const badgeClass = count > 0 ? (code === 'ASI01' || code === 'ASI10' || code === 'ASI07' ? 'badge red' : 'badge yellow') : 'badge gray';
                     return `
@@ -7523,6 +7535,7 @@ async function renderAgentAnomaliesView() {
                         </div>
                     `;
                 }).join('');
+                if (setHtmlIfChanged(tagsContainer, tagsHtml)) aadDomChanged = true;
             }
         }
 
@@ -7533,16 +7546,13 @@ async function renderAgentAnomaliesView() {
 
         if (discoveredCountEl) discoveredCountEl.innerText = `${discoveredAgents.length} Discovered`;
         if (discoveredTableBody) {
-            if (discoveredAgents.length === 0) {
-                discoveredTableBody.innerHTML = `
+            const discHtml = discoveredAgents.length === 0 ? `
                     <tr>
                         <td colspan="6" style="text-align: center; color: var(--text-muted); padding: 30px 0;">
                             No autonomous agents discovered. Scanning MCP pipes, LLM sockets, and OTel traces...
                         </td>
                     </tr>
-                `;
-            } else {
-                discoveredTableBody.innerHTML = discoveredAgents.map(ag => {
+                ` : discoveredAgents.map(ag => {
                     const probPct = Math.round((ag.agent_probability || 0) * 100);
                     const probBadge = probPct >= 80 ? 'badge purple' : (probPct >= 50 ? 'badge blue' : 'badge gray');
                     const provPills = (ag.protocol_provenance || []).map(p =>
@@ -7578,7 +7588,7 @@ async function renderAgentAnomaliesView() {
                         </tr>
                     `;
                 }).join('');
-            }
+            if (setHtmlIfChanged(discoveredTableBody, discHtml)) aadDomChanged = true;
         }
 
         const findingsFeed = document.getElementById('aad-findings-feed');
@@ -7586,15 +7596,12 @@ async function renderAgentAnomaliesView() {
         if (findings && Array.isArray(findings)) {
             if (findingsCountEl) findingsCountEl.innerText = `${findings.length} Flagged`;
             if (findingsFeed) {
-                if (findings.length === 0) {
-                    findingsFeed.innerHTML = `
+                const findingsHtml = findings.length === 0 ? `
                         <div style="text-align: center; color: var(--text-muted); padding: 40px 0;">
                             <i data-lucide="shield-check" style="width: 36px; height: 36px; margin: 0 auto 10px; color: #10b981; opacity: 0.6;"></i>
                             <div>No agent anomalies detected. Runtime behavior nominal.</div>
                         </div>
-                    `;
-                } else {
-                    findingsFeed.innerHTML = findings.map(f => {
+                    ` : findings.map(f => {
                         const sevColor = f.severity === 'Critical' ? '#ef4444' : (f.severity === 'High' ? '#f97316' : '#eab308');
                         const sevBadge = f.severity === 'Critical' ? 'badge red' : (f.severity === 'High' ? 'badge orange' : 'badge yellow');
                         const formattedTime = new Date(f.flagged_at).toLocaleTimeString();
@@ -7629,7 +7636,7 @@ async function renderAgentAnomaliesView() {
                             </div>
                         `;
                     }).join('');
-                }
+                if (setHtmlIfChanged(findingsFeed, findingsHtml)) aadDomChanged = true;
             }
         }
 
@@ -7638,16 +7645,13 @@ async function renderAgentAnomaliesView() {
         if (sessions && Array.isArray(sessions)) {
             if (sessionsCountEl) sessionsCountEl.innerText = `${sessions.length} Active`;
             if (sessionsTable) {
-                if (sessions.length === 0) {
-                    sessionsTable.innerHTML = `
+                const sessionsHtml = sessions.length === 0 ? `
                         <tr>
                             <td colspan="4" style="text-align: center; color: var(--text-muted); padding: 40px 0;">
                                 No agent sessions registered. Telemetry awaiting ingestion.
                             </td>
                         </tr>
-                    `;
-                } else {
-                    sessionsTable.innerHTML = sessions.map(s => {
+                    ` : sessions.map(s => {
                         const sevBadge = s.highest_severity === 'Critical' ? 'badge red' : (s.highest_severity === 'High' ? 'badge orange' : 'badge green');
                         return `
                             <tr style="border-bottom: 1px solid rgba(255,255,255,0.04);">
@@ -7667,7 +7671,7 @@ async function renderAgentAnomaliesView() {
                             </tr>
                         `;
                     }).join('');
-                }
+                if (setHtmlIfChanged(sessionsTable, sessionsHtml)) aadDomChanged = true;
             }
         }
 
@@ -7678,15 +7682,12 @@ async function renderAgentAnomaliesView() {
 
         if (watchoutCountEl) watchoutCountEl.innerText = `${watchouts.length} Broadcasts`;
         if (watchoutList) {
-            if (watchouts.length === 0) {
-                watchoutList.innerHTML = `
+            const watchoutsHtml = watchouts.length === 0 ? `
                     <div style="text-align: center; color: var(--text-muted); padding: 25px 0;">
                         <i data-lucide="radio" style="width: 28px; height: 28px; margin: 0 auto 8px; color: #06b6d4; opacity: 0.6;"></i>
                         <div>No active swarm watch-outs. Mesh peers operating normally.</div>
                     </div>
-                `;
-            } else {
-                watchoutList.innerHTML = watchouts.map(w => {
+                ` : watchouts.map(w => {
                     const formattedTime = w.timestamp ? new Date(w.timestamp).toLocaleTimeString() : 'Just now';
                     return `
                         <div style="background: rgba(6,182,212,0.05); border: 1px solid rgba(6,182,212,0.2); border-left: 3px solid #06b6d4; padding: 10px 12px; border-radius: 8px; margin-bottom: 8px;">
@@ -7705,10 +7706,10 @@ async function renderAgentAnomaliesView() {
                         </div>
                     `;
                 }).join('');
-            }
+            if (setHtmlIfChanged(watchoutList, watchoutsHtml)) aadDomChanged = true;
         }
 
-        if (window.lucide) {
+        if (aadDomChanged && window.lucide) {
             window.lucide.createIcons();
         }
     } catch (err) {

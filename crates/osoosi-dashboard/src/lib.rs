@@ -613,11 +613,15 @@ impl Service<Request<Body>> for SafeServeDir {
                     let candidate = asset_dir.join(&rel_path);
 
                     if candidate.is_file() {
-                        let resp = ServeFile::new(&candidate)
+                        let mut resp = ServeFile::new(&candidate)
                             .oneshot(req)
                             .await
                             .unwrap()
                             .into_response();
+                        resp.headers_mut().insert(
+                            axum::http::header::CACHE_CONTROL,
+                            axum::http::HeaderValue::from_static("no-cache, must-revalidate"),
+                        );
                         Ok(resp)
                     } else if is_static_asset {
                         Ok(Response::builder()
@@ -625,11 +629,15 @@ impl Service<Request<Body>> for SafeServeDir {
                             .body(Body::from("Asset not found"))
                             .unwrap())
                     } else if let Some(ref idx) = index_html {
-                        let resp = ServeFile::new(idx)
+                        let mut resp = ServeFile::new(idx)
                             .oneshot(req)
                             .await
                             .unwrap()
                             .into_response();
+                        resp.headers_mut().insert(
+                            axum::http::header::CACHE_CONTROL,
+                            axum::http::HeaderValue::from_static("no-cache, must-revalidate"),
+                        );
                         Ok(resp)
                     } else {
                         Ok(Response::builder()
@@ -640,11 +648,15 @@ impl Service<Request<Body>> for SafeServeDir {
                 }
                 PathValidation::SpaRoute => {
                     if let Some(ref idx) = index_html {
-                        let resp = ServeFile::new(idx)
+                        let mut resp = ServeFile::new(idx)
                             .oneshot(req)
                             .await
                             .unwrap()
                             .into_response();
+                        resp.headers_mut().insert(
+                            axum::http::header::CACHE_CONTROL,
+                            axum::http::HeaderValue::from_static("no-cache, must-revalidate"),
+                        );
                         Ok(resp)
                     } else {
                         Ok(Response::builder()
