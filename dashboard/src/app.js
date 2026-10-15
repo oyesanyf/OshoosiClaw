@@ -1003,6 +1003,8 @@ function showNotification(message, type = 'info', guidance = null, errorCode = n
     }
 }
 
+const showToast = showSkyrlToast;
+window.showToast = showSkyrlToast;
 window.showSkyrlToast = showSkyrlToast;
 window.showUserError = showUserError;
 window.renderViewFallbackCard = renderViewFallbackCard;
