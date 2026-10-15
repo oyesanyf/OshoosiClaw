@@ -147,6 +147,63 @@ pub struct AgentClassificationRecord {
     pub observed_signals: Vec<String>,
     pub generation_epoch: u64,
     pub last_updated: DateTime<Utc>,
+    #[serde(default)]
+    pub pid: u32,
+    #[serde(default)]
+    pub process_name: String,
+    #[serde(default)]
+    pub agent_role: String,
+    #[serde(default)]
+    pub framework: String,
+    #[serde(default)]
+    pub agent_probability: f32,
+    #[serde(default)]
+    pub protocol_provenance: Vec<String>,
+    #[serde(default)]
+    pub child_spawn_velocity_3s: usize,
+    #[serde(default)]
+    pub containment_state: String,
+}
+
+/// Infers canonical process name, agent role, and framework from cmdline, executable name, and signals.
+pub fn infer_agent_metadata(name: &str, cmdline: &str) -> (String, String, String) {
+    let lower_name = name.to_ascii_lowercase();
+    let lower_cmd = cmdline.to_ascii_lowercase();
+
+    let resolved_name = if !name.is_empty() && name != "unknown" {
+        name.to_string()
+    } else if let Some(first_tok) = cmdline.split_whitespace().next() {
+        let clean = first_tok.trim_matches('"').trim_matches('\'');
+        std::path::Path::new(clean)
+            .file_name()
+            .map(|s| s.to_string_lossy().to_string())
+            .unwrap_or_else(|| "unknown".to_string())
+    } else {
+        "unknown".to_string()
+    };
+
+    let (role, framework) = if lower_cmd.contains("language_server")
+        || lower_cmd.contains("cloud_code")
+        || lower_cmd.contains("antigravity")
+        || lower_name.contains("language_server")
+        || lower_name.contains("antigravity")
+    {
+        ("Coding & Tool Orchestrator".to_string(), "Google Antigravity / CloudCode".to_string())
+    } else if lower_cmd.contains("mcp") || lower_cmd.contains("jsonrpc") || lower_cmd.contains("--stdio") || lower_name.contains("mcp") {
+        ("MCP Tool Server".to_string(), "Model Context Protocol (MCP)".to_string())
+    } else if lower_cmd.contains("ollama") || lower_cmd.contains("llama") || lower_cmd.contains(".gguf") || lower_name.contains("ollama") {
+        ("Local LLM Inference Daemon".to_string(), "Ollama / GGUF Runtime".to_string())
+    } else if lower_cmd.contains("osoosi") || lower_name.contains("osoosi") {
+        ("Autonomous Security Supervisor".to_string(), "OpenOsoosi EDR Cortex (ONNX)".to_string())
+    } else if lower_cmd.contains("python") || lower_cmd.contains("uv") || lower_name.contains("python") {
+        ("Python Automation Agent".to_string(), "Python / Agentic SDK".to_string())
+    } else if lower_cmd.contains("node") || lower_name.contains("node") {
+        ("Node.js Extension Host / Agent".to_string(), "Node.js / V8 Agent Runtime".to_string())
+    } else {
+        ("Autonomous Subprocess".to_string(), "Native OS / Pipe-Driven".to_string())
+    };
+
+    (resolved_name, role, framework)
 }
 
 /// 100% Native Rust In-Process Relational Host Discovery Engine.
@@ -225,6 +282,8 @@ impl DynamicAgentClassifier {
                 }
 
                 let p = (1.0 / (1.0 + (-initial_log_odds).exp())) as f32;
+                let parsed_pid = subject_id.parse::<u32>().unwrap_or(0);
+                let (proc_name, role, framework) = infer_agent_metadata("", "");
                 AgentClassificationRecord {
                     subject_id: subject_id.to_string(),
                     parent_id: parent_id.map(|s| s.to_string()),
@@ -235,6 +294,18 @@ impl DynamicAgentClassifier {
                     observed_signals: Vec::new(),
                     generation_epoch: initial_epoch,
                     last_updated: now,
+                    pid: parsed_pid,
+                    process_name: proc_name,
+                    agent_role: role,
+                    framework,
+                    agent_probability: p,
+                    protocol_provenance: Vec::new(),
+                    child_spawn_velocity_3s: 0,
+                    containment_state: if p >= self.verification_threshold {
+                        "Monitored (Ring-1)".to_string()
+                    } else {
+                        "PassThrough".to_string()
+                    },
                 }
             });
 
@@ -248,8 +319,31 @@ impl DynamicAgentClassifier {
         record.log_odds = (record.log_odds + delta).clamp(-6.0, 8.0);
         let post = (1.0 / (1.0 + (-record.log_odds).exp())) as f32;
         record.posterior_probability = post;
+        record.agent_probability = post;
         record.is_verified_agent = post >= self.verification_threshold;
-        record.observed_signals.push(signal.description());
+        let desc = signal.description();
+        if !record.observed_signals.contains(&desc) {
+            record.observed_signals.push(desc.clone());
+        }
+        if !record.protocol_provenance.contains(&desc) {
+            record.protocol_provenance.push(desc);
+        }
+        if record.pid == 0 {
+            if let Ok(p) = subject_id.parse::<u32>() {
+                record.pid = p;
+            } else if subject_id.starts_with("pid_") {
+                if let Ok(p) = subject_id[4..].parse::<u32>() {
+                    record.pid = p;
+                }
+            }
+        }
+        if record.is_verified_agent {
+            record.containment_state = "Monitored (Ring-1)".to_string();
+        } else if post >= 0.45 {
+            record.containment_state = "Evaluating".to_string();
+        } else {
+            record.containment_state = "PassThrough".to_string();
+        }
         record.last_updated = now;
 
         record.clone()
@@ -368,7 +462,21 @@ impl DynamicAgentClassifier {
         }
 
         // Ensure record exists even if no signals fired (prior P < 0.20)
-        self.records
+        let (proc_name, role, framework) = infer_agent_metadata("", cmd_or_payload);
+        let parsed_pid = subject_id
+            .parse::<u32>()
+            .ok()
+            .or_else(|| {
+                if subject_id.starts_with("pid_") {
+                    subject_id[4..].parse::<u32>().ok()
+                } else {
+                    None
+                }
+            })
+            .unwrap_or(0);
+
+        let mut rec = self
+            .records
             .entry(subject_id.to_string())
             .or_insert_with(|| {
                 AgentClassificationRecord {
@@ -381,9 +489,30 @@ impl DynamicAgentClassifier {
                     observed_signals: Vec::new(),
                     generation_epoch: 1,
                     last_updated: Utc::now(),
+                    pid: parsed_pid,
+                    process_name: proc_name.clone(),
+                    agent_role: role.clone(),
+                    framework: framework.clone(),
+                    agent_probability: 0.18,
+                    protocol_provenance: Vec::new(),
+                    child_spawn_velocity_3s: 0,
+                    containment_state: "PassThrough".to_string(),
                 }
-            })
-            .clone()
+            });
+
+        if (rec.process_name.is_empty() || rec.process_name == "unknown") && proc_name != "unknown" {
+            rec.process_name = proc_name;
+        }
+        if rec.agent_role.is_empty() || rec.agent_role == "Autonomous Subprocess" {
+            rec.agent_role = role;
+        }
+        if rec.framework.is_empty() || rec.framework == "Native OS / Pipe-Driven" {
+            rec.framework = framework;
+        }
+        if rec.pid == 0 && parsed_pid > 0 {
+            rec.pid = parsed_pid;
+        }
+        rec.clone()
     }
 
     /// Classifies structured tool call telemetry.
@@ -457,6 +586,7 @@ impl DynamicAgentClassifier {
                     .get("pid")
                     .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
                     .unwrap_or_default();
+                let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let cmdline = row.get("cmdline").and_then(|v| v.as_str()).unwrap_or("");
                 let cwd = row.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
                 let parent_str = row
@@ -465,7 +595,22 @@ impl DynamicAgentClassifier {
 
                 if !pid_str.is_empty() {
                     let ws_hint = if !cwd.is_empty() { Some(cwd) } else { None };
-                    let rec = self.inspect_command_and_context(&pid_str, parent_str.as_deref(), cmdline, ws_hint);
+                    let mut rec = self.inspect_command_and_context(&pid_str, parent_str.as_deref(), cmdline, ws_hint);
+                    let (p_name, role, framework) = infer_agent_metadata(name, cmdline);
+                    if (rec.process_name.is_empty() || rec.process_name == "unknown") && p_name != "unknown" {
+                        rec.process_name = p_name;
+                    }
+                    if rec.agent_role.is_empty() || rec.agent_role == "Autonomous Subprocess" {
+                        rec.agent_role = role;
+                    }
+                    if rec.framework.is_empty() || rec.framework == "Native OS / Pipe-Driven" {
+                        rec.framework = framework;
+                    }
+                    if let Some(mut existing) = self.records.get_mut(&pid_str) {
+                        existing.process_name = rec.process_name.clone();
+                        existing.agent_role = rec.agent_role.clone();
+                        existing.framework = rec.framework.clone();
+                    }
                     discovered.push(rec);
                 }
             }
@@ -479,12 +624,12 @@ impl DynamicAgentClassifier {
         let query2 = "SELECT DISTINCT p.pid, p.name, p.path, p.cmdline, p.cwd, p.parent, \
                              COUNT(DISTINCT c.pid) AS child_count, \
                              COUNT(DISTINCT s.remote_port) AS socket_count \
-                      FROM processes p \
-                      JOIN processes c ON c.parent = p.pid \
-                      JOIN process_open_sockets s ON p.pid = s.pid \
-                      WHERE s.remote_port = 443 OR s.local_address = '127.0.0.1' \
-                      GROUP BY p.pid \
-                      HAVING child_count >= 1;";
+                       FROM processes p \
+                       JOIN processes c ON c.parent = p.pid \
+                       JOIN process_open_sockets s ON p.pid = s.pid \
+                       WHERE s.remote_port = 443 OR s.local_address = '127.0.0.1' \
+                       GROUP BY p.pid \
+                       HAVING child_count >= 1;";
 
         if let Ok(rows) = self.osquery_detector.execute_query(query2) {
             for row in rows {
@@ -492,6 +637,7 @@ impl DynamicAgentClassifier {
                     .get("pid")
                     .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
                     .unwrap_or_default();
+                let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let cmdline = row.get("cmdline").and_then(|v| v.as_str()).unwrap_or("");
                 let cwd = row.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
                 let parent_str = row
@@ -537,7 +683,7 @@ impl DynamicAgentClassifier {
                             method: "agent_orchestration_tree".to_string(),
                         },
                     );
-                    let parent_rec = self.record_signal(
+                    let mut parent_rec = self.record_signal(
                         &pid_str,
                         parent_str.as_deref(),
                         ws_hint,
@@ -547,6 +693,21 @@ impl DynamicAgentClassifier {
                             post_network_wait_ms: 50,
                         },
                     );
+                    let (p_name, role, framework) = infer_agent_metadata(name, cmdline);
+                    if (parent_rec.process_name.is_empty() || parent_rec.process_name == "unknown") && p_name != "unknown" {
+                        parent_rec.process_name = p_name;
+                    }
+                    if parent_rec.agent_role.is_empty() || parent_rec.agent_role == "Autonomous Subprocess" {
+                        parent_rec.agent_role = role;
+                    }
+                    if parent_rec.framework.is_empty() || parent_rec.framework == "Native OS / Pipe-Driven" {
+                        parent_rec.framework = framework;
+                    }
+                    if let Some(mut existing) = self.records.get_mut(&pid_str) {
+                        existing.process_name = parent_rec.process_name.clone();
+                        existing.agent_role = parent_rec.agent_role.clone();
+                        existing.framework = parent_rec.framework.clone();
+                    }
                     discovered.push(parent_rec);
 
                     // 2. Discover children and propagate lineage
@@ -560,6 +721,7 @@ impl DynamicAgentClassifier {
                                 .get("pid")
                                 .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
                                 .unwrap_or_default();
+                            let c_name = c_row.get("name").and_then(|v| v.as_str()).unwrap_or("");
                             let c_cmd = c_row.get("cmdline").and_then(|v| v.as_str()).unwrap_or("");
                             let c_cwd = c_row.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
                             let c_lower = c_cmd.to_ascii_lowercase();
@@ -582,7 +744,22 @@ impl DynamicAgentClassifier {
                                     );
                                 }
 
-                                let c_rec = self.inspect_command_and_context(&c_pid, Some(&pid_str), c_cmd, c_ws);
+                                let mut c_rec = self.inspect_command_and_context(&c_pid, Some(&pid_str), c_cmd, c_ws);
+                                let (cp_name, c_role, c_framework) = infer_agent_metadata(c_name, c_cmd);
+                                if (c_rec.process_name.is_empty() || c_rec.process_name == "unknown") && cp_name != "unknown" {
+                                    c_rec.process_name = cp_name;
+                                }
+                                if c_rec.agent_role.is_empty() || c_rec.agent_role == "Autonomous Subprocess" {
+                                    c_rec.agent_role = c_role;
+                                }
+                                if c_rec.framework.is_empty() || c_rec.framework == "Native OS / Pipe-Driven" {
+                                    c_rec.framework = c_framework;
+                                }
+                                if let Some(mut existing) = self.records.get_mut(&c_pid) {
+                                    existing.process_name = c_rec.process_name.clone();
+                                    existing.agent_role = c_rec.agent_role.clone();
+                                    existing.framework = c_rec.framework.clone();
+                                }
                                 discovered.push(c_rec);
                             }
                         }
@@ -611,6 +788,7 @@ impl DynamicAgentClassifier {
                     .get("pid")
                     .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
                     .unwrap_or_default();
+                let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let cmdline = row.get("cmdline").and_then(|v| v.as_str()).unwrap_or("");
                 let cwd = row.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
                 let parent_str = row
@@ -629,7 +807,22 @@ impl DynamicAgentClassifier {
                             is_streaming: false,
                         },
                     );
-                    let rec = self.inspect_command_and_context(&pid_str, parent_str.as_deref(), cmdline, ws_hint);
+                    let mut rec = self.inspect_command_and_context(&pid_str, parent_str.as_deref(), cmdline, ws_hint);
+                    let (p_name, role, framework) = infer_agent_metadata(name, cmdline);
+                    if (rec.process_name.is_empty() || rec.process_name == "unknown") && p_name != "unknown" {
+                        rec.process_name = p_name;
+                    }
+                    if rec.agent_role.is_empty() || rec.agent_role == "Autonomous Subprocess" {
+                        rec.agent_role = role;
+                    }
+                    if rec.framework.is_empty() || rec.framework == "Native OS / Pipe-Driven" {
+                        rec.framework = framework;
+                    }
+                    if let Some(mut existing) = self.records.get_mut(&pid_str) {
+                        existing.process_name = rec.process_name.clone();
+                        existing.agent_role = rec.agent_role.clone();
+                        existing.framework = rec.framework.clone();
+                    }
                     discovered.push(rec);
                 }
             }
@@ -658,7 +851,7 @@ impl DynamicAgentClassifier {
                     } else {
                         "onnx"
                     };
-                    let rec = self.record_signal(
+                    let mut rec = self.record_signal(
                         &pid_str,
                         None,
                         None,
@@ -666,6 +859,21 @@ impl DynamicAgentClassifier {
                             format: format.to_string(),
                         },
                     );
+                    let (p_name, role, framework) = infer_agent_metadata("", path);
+                    if (rec.process_name.is_empty() || rec.process_name == "unknown") && p_name != "unknown" {
+                        rec.process_name = p_name;
+                    }
+                    if rec.agent_role.is_empty() || rec.agent_role == "Autonomous Subprocess" {
+                        rec.agent_role = role;
+                    }
+                    if rec.framework.is_empty() || rec.framework == "Native OS / Pipe-Driven" {
+                        rec.framework = framework;
+                    }
+                    if let Some(mut existing) = self.records.get_mut(&pid_str) {
+                        existing.process_name = rec.process_name.clone();
+                        existing.agent_role = rec.agent_role.clone();
+                        existing.framework = rec.framework.clone();
+                    }
                     discovered.push(rec);
                 }
             }

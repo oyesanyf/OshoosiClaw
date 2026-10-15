@@ -33,7 +33,7 @@ quarantine_confidence_threshold = 0.95
 # Minimum confidence for active response (Tarpit, Deception)
 action_confidence_threshold = 0.80
 # Try to replace compromised binaries with clean versions
-auto_replace_malware_binaries = true
+auto_replace_malware_binaries = false
 # Quarantine directory
 quarantine_path = "./quarantine"
 # Paths excluded from quarantine (cloud sync temp folders)

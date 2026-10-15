@@ -498,8 +498,40 @@ impl AgentAnomalyDetector {
     pub async fn get_containment_status(&self) -> serde_json::Value {
         self.sync_siquery_host_agents();
         let mut status = self.containment_ring.get_status_summary().await;
-        let discovered_agents: Vec<crate::classifier::AgentClassificationRecord> =
-            self.classifier.records.iter().map(|r| r.value().clone()).collect();
+        let mut discovered_agents: Vec<crate::classifier::AgentClassificationRecord> = self
+            .classifier
+            .records
+            .iter()
+            .map(|r| r.value().clone())
+            .filter(|r| {
+                r.pid > 0
+                    && !r.process_name.is_empty()
+                    && r.process_name != "unknown"
+                    && (r.is_verified_agent || r.posterior_probability >= 0.45 || !r.observed_signals.is_empty())
+            })
+            .collect();
+
+        // If any records had pid > 0 but unknown process_name, try resolving via sysinfo
+        if discovered_agents.iter().any(|r| r.process_name.is_empty() || r.process_name == "unknown") {
+            let mut sys = sysinfo::System::new();
+            sys.refresh_processes();
+            for ag in &mut discovered_agents {
+                if ag.process_name.is_empty() || ag.process_name == "unknown" {
+                    let pid = sysinfo::Pid::from(ag.pid as usize);
+                    if let Some(p) = sys.process(pid) {
+                        ag.process_name = p.name().to_string();
+                    }
+                }
+            }
+        }
+
+        // Sort descending by posterior_probability
+        discovered_agents.sort_by(|a, b| {
+            b.posterior_probability
+                .partial_cmp(&a.posterior_probability)
+                .unwrap_or(std::cmp::Ordering::Equal)
+        });
+
         if let Some(obj) = status.as_object_mut() {
             obj.insert("discovered_agents".to_string(), serde_json::to_value(&discovered_agents).unwrap_or_default());
             obj.insert("discovered_agent_count".to_string(), serde_json::json!(discovered_agents.len()));

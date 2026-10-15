@@ -5593,6 +5593,46 @@ impl EdrOrchestrator {
             // Real-time Global Immunization: Broadcast threat to the P2P mesh
             self.broadcast_threat_to_mesh(signature.clone()).await;
 
+            let p_name = signature.process_name.clone().or_else(|| {
+                event.data.get("Image")
+                    .and_then(|v| v.as_str())
+                    .and_then(|p| std::path::Path::new(p).file_name())
+                    .map(|n| n.to_string_lossy().to_string())
+            }).unwrap_or_else(|| "unknown".to_string());
+
+            let f_path = event.data.get("Image")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let cmd_line = event.data.get("CommandLine")
+                .or_else(|| event.data.get("ParentCommandLine"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+
+            let hash_val = signature.hash_blake3.clone().or_else(|| {
+                event.data.get("Hashes").and_then(|v| v.as_str()).map(|s| s.to_string())
+            }).unwrap_or_else(|| {
+                if !f_path.is_empty() {
+                    std::fs::read(&f_path)
+                        .map(|b| blake3::hash(&b).to_hex().to_string())
+                        .unwrap_or_else(|_| {
+                            if !cmd_line.is_empty() {
+                                blake3::hash(cmd_line.as_bytes()).to_hex().to_string()
+                            } else {
+                                blake3::hash(signature.id.as_bytes()).to_hex().to_string()
+                            }
+                        })
+                } else if !cmd_line.is_empty() {
+                    blake3::hash(cmd_line.as_bytes()).to_hex().to_string()
+                } else {
+                    blake3::hash(signature.id.as_bytes()).to_hex().to_string()
+                }
+            });
+
+            let src_node = self.trust.did().id.clone();
+
             // Audit log for tamper-evidence
             self.audit.log(
                 "THREAT_DETECTED",
@@ -5602,6 +5642,12 @@ impl EdrOrchestrator {
                     "detector_count": signature.detector_count,
                     "reason": signature.reason,
                     "action": signature.recommended_action,
+                    "process_name": p_name,
+                    "file_path": f_path,
+                    "command_line": cmd_line,
+                    "arguments": cmd_line,
+                    "hash_blake3": hash_val,
+                    "source_node": src_node,
                 }),
             );
 

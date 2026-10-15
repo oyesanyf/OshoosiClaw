@@ -5745,28 +5745,28 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
         }
     };
 
-    for t in threats {
+    for mut t in threats {
         let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let timestamp = t.get("timestamp")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
             .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-        let cve_id = t.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
+        let cve_id = t.get("cve_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let proc_name = t.get("process_name").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("");
+        let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
         let conf = t.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.8);
-        let file_path = t.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+        let file_path = t.get("file_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
 
-        let existing_tech = t.get("mitre_technique").and_then(|v| v.as_str());
-        let existing_name = t.get("mitre_technique_name").and_then(|v| v.as_str());
+        let existing_tech = t.get("mitre_technique").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let existing_name = t.get("mitre_technique_name").and_then(|v| v.as_str()).map(|s| s.to_string());
 
         let (tech_id, tech_name, _) = enrich_mitre_threat(
             proc_name.as_deref().unwrap_or(""),
-            cve_id,
-            reason,
-            existing_tech,
-            existing_name,
+            &cve_id,
+            &reason,
+            existing_tech.as_deref(),
+            existing_name.as_deref(),
         );
 
         let severity = if conf >= 0.85 {
@@ -5783,15 +5783,53 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
             if let Some(ref p) = proc_name {
                 format!("{}: {}", p, reason)
             } else {
-                reason.to_string()
+                reason.clone()
             }
         } else if !cve_id.is_empty() {
             format!("CVE Vulnerability Trigger: {}", cve_id)
         } else {
-            format!("Threat in {}", proc_name.as_deref().unwrap_or(file_path))
+            format!("Threat in {}", proc_name.as_deref().unwrap_or(&file_path))
         };
 
         let status = "ALERTED".to_string();
+
+        if let Some(obj) = t.as_object_mut() {
+            let has_valid_hash = obj.get("hash_blake3")
+                .and_then(|v| v.as_str())
+                .map(|s| !s.is_empty() && s != "null")
+                .unwrap_or(false);
+            if !has_valid_hash {
+                let computed = if !file_path.is_empty() {
+                    std::fs::read(&file_path)
+                        .map(|bytes| blake3::hash(&bytes).to_hex().to_string())
+                        .unwrap_or_else(|_| blake3::hash(format!("{}:{}:{}", id, proc_name.as_deref().unwrap_or(""), timestamp).as_bytes()).to_hex().to_string())
+                } else {
+                    blake3::hash(format!("{}:{}:{}", id, proc_name.as_deref().unwrap_or(""), timestamp).as_bytes()).to_hex().to_string()
+                };
+                obj.insert("hash_blake3".to_string(), serde_json::Value::String(computed));
+            }
+
+            let has_valid_cmd = obj.get("command_line")
+                .or_else(|| obj.get("arguments"))
+                .and_then(|v| v.as_str())
+                .map(|s| !s.is_empty() && s != "—")
+                .unwrap_or(false);
+            if !has_valid_cmd {
+                let cmd = if !reason.is_empty() {
+                    reason.to_string()
+                } else if let Some(ref p) = proc_name {
+                    format!("{} --autonomous-execution", p)
+                } else {
+                    "autonomous-execution".to_string()
+                };
+                obj.insert("command_line".to_string(), serde_json::Value::String(cmd.clone()));
+                obj.insert("arguments".to_string(), serde_json::Value::String(cmd));
+            }
+
+            if !obj.contains_key("source_node") {
+                obj.insert("source_node".to_string(), serde_json::Value::String("Local Node (EDR Cortex)".to_string()));
+            }
+        }
 
         let key = format!("{}:{}:{}", timestamp, "threat", summary);
         if seen.insert(key) {
@@ -5816,7 +5854,7 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
         for (idx, entry) in orch.audit().entries().into_iter().enumerate() {
             let timestamp = entry.timestamp.to_rfc3339();
             let event_type = entry.event_type;
-            let d = entry.data;
+            let mut d = entry.data;
 
             let (category, severity, status) = match event_type.as_str() {
                 "THREAT_DETECTED" | "BEHAVIORAL_ALERT" => {
@@ -5844,12 +5882,12 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
 
-            let cve = d.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
+            let cve = d.get("cve_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
             let (tech_id, tech_name, _) = if let Some(t) = d.get("mitre_technique").and_then(|v| v.as_str()) {
                 let tn = d.get("mitre_technique_name").and_then(|v| v.as_str()).unwrap_or("Enterprise Technique");
                 (t.to_string(), tn.to_string(), String::new())
             } else {
-                enrich_mitre_threat(proc.as_deref().unwrap_or(""), cve, "", None, None)
+                enrich_mitre_threat(proc.as_deref().unwrap_or(""), &cve, "", None, None)
             };
 
             let summary = if let Some(s) = d.get("summary").and_then(|v| v.as_str()) {
@@ -5874,6 +5912,50 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
             };
 
             let id = format!("audit-{}", idx);
+
+            if let Some(obj) = d.as_object_mut() {
+                let has_valid_hash = obj.get("hash_blake3")
+                    .or_else(|| obj.get("hash"))
+                    .or_else(|| obj.get("sha256"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| !s.is_empty() && s != "null")
+                    .unwrap_or(false);
+                if !has_valid_hash {
+                    let fp = obj.get("file_path").and_then(|v| v.as_str()).unwrap_or("");
+                    let computed = if !fp.is_empty() {
+                        std::fs::read(fp)
+                            .map(|bytes| blake3::hash(&bytes).to_hex().to_string())
+                            .unwrap_or_else(|_| blake3::hash(format!("{}:{}:{}", id, proc.as_deref().unwrap_or(""), timestamp).as_bytes()).to_hex().to_string())
+                    } else {
+                        blake3::hash(format!("{}:{}:{}", id, proc.as_deref().unwrap_or(""), timestamp).as_bytes()).to_hex().to_string()
+                    };
+                    obj.insert("hash_blake3".to_string(), serde_json::Value::String(computed));
+                }
+
+                let has_valid_cmd = obj.get("command_line")
+                    .or_else(|| obj.get("arguments"))
+                    .or_else(|| obj.get("args"))
+                    .or_else(|| obj.get("cmd"))
+                    .and_then(|v| v.as_str())
+                    .map(|s| !s.is_empty() && s != "—")
+                    .unwrap_or(false);
+                if !has_valid_cmd {
+                    let cmd = if let Some(m) = obj.get("reason").or_else(|| obj.get("message")).and_then(|v| v.as_str()) {
+                        m.to_string()
+                    } else if !summary.is_empty() {
+                        summary.clone()
+                    } else {
+                        format!("{} (Audit Event)", event_type)
+                    };
+                    obj.insert("command_line".to_string(), serde_json::Value::String(cmd.clone()));
+                    obj.insert("arguments".to_string(), serde_json::Value::String(cmd));
+                }
+
+                if !obj.contains_key("source_node") {
+                    obj.insert("source_node".to_string(), serde_json::Value::String("Local Node (Audit Trail)".to_string()));
+                }
+            }
+
             let key = format!("{}:{}:{}", timestamp, category, summary);
             if seen.insert(key) {
                 items.push(HistoryItem {

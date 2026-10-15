@@ -103,18 +103,16 @@ impl BeliefMass {
     }
 
     /// Compute conflict metric K between two belief mass distributions:
-    /// K = sum_{A ∩ B = ∅} m1(A) * m2(B)
+    /// Asymmetric Pipeline Blinding occurs when one sensor reports Optimal while another
+    /// reports Critical (complete sensor blindness / tamper), or when Critical mass conflicts
+    /// with Optimal/Degraded. Moderate Degraded mass vs Optimal mass is partial degradation,
+    /// not pipeline blinding, so it is weighted with a partial divergence coefficient (0.25).
     pub fn conflict_with(&self, other: &Self) -> f64 {
-        // Disjoint sets:
-        // {Optimal} ∩ {Degraded} = ∅
-        // {Optimal} ∩ {Critical} = ∅
-        // {Degraded} ∩ {Critical} = ∅
-        // Intersection with Θ is never empty (A ∩ Θ = A).
-        let k = self.optimal * (other.degraded + other.critical)
-            + self.degraded * (other.optimal + other.critical)
-            + self.critical * (other.optimal + other.degraded);
-
-        k.clamp(0.0, 1.0)
+        let critical_conflict = self.critical * (other.optimal + other.degraded)
+            + self.optimal * other.critical
+            + self.degraded * other.critical;
+        let moderate_divergence = (self.optimal * other.degraded + self.degraded * other.optimal) * 0.25;
+        (critical_conflict + moderate_divergence).clamp(0.0, 1.0)
     }
 
     /// Combine two belief masses using Dempster's Rule of Combination.
@@ -251,6 +249,8 @@ impl MultiSensorFusionEngine {
         let mut sys = sysinfo::System::new();
         let my_pid = sysinfo::Pid::from(std::process::id() as usize);
         sys.refresh_process(my_pid);
+        sys.refresh_memory();
+        let total_ram_mb = (sys.total_memory() as f64 / (1024.0 * 1024.0)).max(8192.0);
         let mem_working_set_mb = sys
             .process(my_pid)
             .map(|p| p.memory() as f64 / (1024.0 * 1024.0))
@@ -280,11 +280,14 @@ impl MultiSensorFusionEngine {
             }
         }
 
+        let warn_mem_mb = (total_ram_mb * 0.05).max(4096.0);
+        let deg_mem_mb = (total_ram_mb * 0.10).max(8192.0);
+
         let invariant_health = if invariant_tampered {
             0.0
-        } else if mem_working_set_mb > 1500.0 || handle_count > 10_000 {
+        } else if mem_working_set_mb > deg_mem_mb || handle_count > 30_000 {
             0.50
-        } else if mem_working_set_mb > 800.0 || handle_count > 5_000 {
+        } else if mem_working_set_mb > warn_mem_mb || handle_count > 15_000 {
             0.75
         } else {
             0.99
@@ -298,8 +301,11 @@ impl MultiSensorFusionEngine {
             health_score: invariant_health,
             confidence: 0.99,
             details: format!(
-                "Working set: {:.1}MB, Handle count: {}. Core OS PIDs [0, 1, 4] & security binaries (sysmon64, osoosi, msmpeng) zero-tamper: {}",
+                "Working set: {:.1}MB (warn: {:.0}MB, deg: {:.0}MB, host RAM: {:.0}MB), Handle count: {}. Core OS PIDs [0, 1, 4] & security binaries (sysmon64, osoosi, msmpeng) zero-tamper: {}",
                 mem_working_set_mb,
+                warn_mem_mb,
+                deg_mem_mb,
+                total_ram_mb,
                 handle_count,
                 if !invariant_tampered { "VERIFIED" } else { "TAMPERED_ALERT" }
             ),
@@ -1213,6 +1219,48 @@ mod tests {
         assert!(
             score < 60.0,
             "High conflict must reduce health score, got {}",
+            score
+        );
+    }
+
+    #[test]
+    fn test_moderate_degraded_optimal_divergence_does_not_trigger_blinding_penalty() {
+        let fusion = MultiSensorFusionEngine::new();
+
+        // 1 Optimal sensor and 1 Degraded sensor
+        let sensors = vec![
+            SensorReading {
+                sensor_id: "hw_optimal".to_string(),
+                name: "Hardware".to_string(),
+                raw_value: 0.0,
+                unit: "ms".to_string(),
+                health_score: 0.98,
+                confidence: 0.98,
+                details: "Nominal".to_string(),
+            },
+            SensorReading {
+                sensor_id: "inv_degraded".to_string(),
+                name: "Invariant".to_string(),
+                raw_value: 0.0,
+                unit: "MB".to_string(),
+                health_score: 0.50,
+                confidence: 0.99,
+                details: "High memory working set".to_string(),
+            },
+        ];
+
+        let (score, conflict) = fusion.fuse_dempster_shafer(&sensors);
+
+        // Moderate divergence must be <= 0.50, avoiding the pipeline blinding penalty
+        assert!(
+            conflict <= 0.50,
+            "Optimal vs Degraded moderate divergence must not exceed 0.50 conflict threshold, got {}",
+            conflict
+        );
+        // Score should reflect partial degradation (~50-80), not catastrophic emergency (<35)
+        assert!(
+            score >= 50.0,
+            "Moderate degradation should not trigger catastrophic emergency drop, got score {}",
             score
         );
     }
