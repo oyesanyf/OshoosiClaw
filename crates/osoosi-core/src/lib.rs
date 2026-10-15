@@ -2080,7 +2080,7 @@ impl EdrOrchestrator {
             "mode": if monitor_only { "monitor" } else { "enforce" },
             "protection_posture": if monitor_only { "Audit · Multi-Table Monitored" } else { "Armed · Active Protection & Containment" },
             "sweeps_executed": 12,
-            "tables_monitored": 88,
+            "tables_monitored": osoosi_agent_anomaly::SiqueryEngine::list_tables().len(),
             "metrics": {
                 "processes_count": total_processes,
                 "sockets_count": total_sockets,
@@ -2965,9 +2965,11 @@ impl EdrOrchestrator {
     /// Register voters that require an Arc reference to the orchestrator (post-initialization).
     pub async fn post_init_voters(self: &Arc<Self>) {
         self.policy.add_voter(Box::new(osoosi_policy::voters::CredentialGuardVoter)).await;
+        self.policy.add_voter(Box::new(osoosi_policy::voters::HarTrafficVoter)).await;
+        self.policy.add_voter(Box::new(osoosi_policy::voters::MercuryFluidVoter)).await;
         info!(
             target: crate::CONSENSUS_LOG_TARGET,
-            "[CONSENSUS] native voters registered and operational"
+            "[CONSENSUS] native voters registered and operational (CredentialGuard + HarTrafficVoter + MercuryFluidVoter)"
         );
     }
 
@@ -4221,6 +4223,24 @@ impl EdrOrchestrator {
                             if !path.exists() {
                                 debug!("File Monitor: skipping vanished/ephemeral file: {}", event.path);
                                 return;
+                            }
+
+                            // Intercept browser HTTP Archive (.har) logs for Layer-7 threat inspection (event_id: 77)
+                            if event.path.to_ascii_lowercase().ends_with(".har") {
+                                info!("File Monitor: Intercepted .har file modification for Layer-7 inspection: {}", event.path);
+                                let har_sec_event = osoosi_types::HostSecurityEvent {
+                                    source: osoosi_types::HostEventSource::WindowsEventLog,
+                                    event_id: 77,
+                                    timestamp: chrono::Utc::now(),
+                                    computer: orchestrator.trust.did().to_string(),
+                                    data: serde_json::json!({
+                                        "TargetFilename": event.path,
+                                        "FilePath": event.path,
+                                        "EventDescription": "Browser HAR Network Archive Created/Modified",
+                                    }),
+                                    causal_parent: None,
+                                };
+                                let _ = orchestrator.process_security_event_internal(har_sec_event).await;
                             }
 
                             if orchestrator.canary.is_canary(path) {

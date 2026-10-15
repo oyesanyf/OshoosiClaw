@@ -5700,6 +5700,7 @@ dependencies = [
  "hmac 0.12.1",
  "hostname",
  "osoosi-behavioral",
+ "osoosi-policy",
  "rand 0.8.6",
  "regex",
  "reqwest",

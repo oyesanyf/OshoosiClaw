@@ -721,6 +721,8 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             "/api/traffic/analyze-captured",
             get(get_traffic_analyze_captured),
         )
+        .route("/api/har/inspect", post(post_har_inspect))
+        .route("/api/har/entries", get(get_har_entries))
         .route("/api/attack-graph", get(get_attack_graph))
         .route("/api/agent/context", get(get_agent_context))
         .route("/api/agent/trigger-patch", post(post_agent_trigger_patch))
@@ -825,6 +827,8 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/agent-anomalies/sessions", get(get_agent_anomalies_sessions))
         .route("/api/agent-anomalies/summary", get(get_agent_anomalies_summary))
         .route("/api/agent-anomalies/containment-status", get(get_agent_anomalies_containment_status))
+        .route("/api/agent-anomalies/mercury-status", get(get_mercury_status))
+        .route("/api/agent-anomalies/mercury-evaluate", post(post_mercury_evaluate))
         .route("/api/agent-anomalies/embed", post(post_agent_anomalies_embed))
         .route("/api/agent-anomalies/simulate-test", post(post_agent_anomalies_simulate_test))
         .route("/api/consensus/findings", get(get_consensus_findings))
@@ -2022,6 +2026,91 @@ async fn get_traffic_analyze_captured(
             "findings": []
         })),
     }
+}
+
+async fn post_har_inspect(
+    State(state): State<DashboardState>,
+    Json(req): Json<Value>,
+) -> (StatusCode, Json<Value>) {
+    let label = req.get("label").and_then(|v| v.as_str()).unwrap_or("API-Stream");
+    let har_str = if let Some(p) = req.get("file_path").and_then(|v| v.as_str()) {
+        std::fs::read_to_string(p).unwrap_or_default()
+    } else if let Some(raw) = req.get("raw").and_then(|v| v.as_str()) {
+        raw.to_string()
+    } else if let Some(har_val) = req.get("har") {
+        if har_val.is_string() {
+            har_val.as_str().unwrap().to_string()
+        } else {
+            serde_json::to_string(har_val).unwrap_or_default()
+        }
+    } else if req.get("log").is_some() {
+        serde_json::to_string(&req).unwrap_or_default()
+    } else {
+        String::new()
+    };
+
+    if har_str.trim().is_empty() {
+        return (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "status": "error",
+                "message": "HAR content is required: provide 'har', 'raw', 'file_path', or raw W3C HAR object in JSON body"
+            })),
+        );
+    }
+
+    match osoosi_policy::traffic_adapter::parse_and_inspect_har_json(&har_str, label) {
+        Ok(report) => {
+            if let Some(orch) = &state.backend {
+                if report.malicious_entries > 0 || report.highest_threat_score >= 0.75 {
+                    let sec_event = osoosi_types::HostSecurityEvent {
+                        source: osoosi_types::HostEventSource::WindowsEventLog,
+                        event_id: 77,
+                        timestamp: chrono::Utc::now(),
+                        computer: orch.trust.did().to_string(),
+                        data: serde_json::json!({
+                            "TargetFilename": label,
+                            "HarContent": har_str,
+                            "EventDescription": format!("Browser HAR Threat: {} malicious entries ({})", report.malicious_entries, report.detected_vectors.join(", ")),
+                        }),
+                        causal_parent: None,
+                    };
+                    let orch_clone = orch.clone();
+                    tokio::spawn(async move {
+                        let _ = orch_clone.process_security_event_internal(sec_event).await;
+                    });
+                }
+            }
+
+            (
+                StatusCode::OK,
+                Json(json!({
+                    "status": "ok",
+                    "report": report
+                })),
+            )
+        }
+        Err(err) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "status": "error",
+                "message": err
+            })),
+        ),
+    }
+}
+
+async fn get_har_entries() -> Json<Value> {
+    let engine = osoosi_agent_anomaly::SiqueryEngine::new();
+    let rows = engine
+        .execute_query("SELECT id, source_file, started_at, method, url, host, status, mime_type, server_ip, request_bytes, response_bytes, duration_ms, threat_score, threat_tags, verdict FROM har_entries ORDER BY id DESC LIMIT 200;")
+        .unwrap_or_default();
+    let count = rows.len();
+    Json(json!({
+        "status": "ok",
+        "count": count,
+        "entries": rows,
+    }))
 }
 
 fn baseline_attack_graph() -> Value {
@@ -6391,6 +6480,48 @@ pub async fn get_agent_anomalies_containment_status(
 }
 
 #[derive(Debug, Deserialize)]
+pub struct MercuryEvaluateRequest {
+    pub lineage_id: String,
+    pub pore_class: Option<String>,
+    pub target_detail: Option<String>,
+    pub mass_taint: Option<f64>,
+    pub intention_vector: Option<Vec<f64>>,
+    pub was_rejected: Option<bool>,
+}
+
+pub async fn get_mercury_status(
+    State(state): State<DashboardState>,
+) -> impl IntoResponse {
+    let summary = state.agent_anomaly_detector.mercury_engine.get_status_summary();
+    (StatusCode::OK, Json(summary))
+}
+
+pub async fn post_mercury_evaluate(
+    State(state): State<DashboardState>,
+    Json(payload): Json<MercuryEvaluateRequest>,
+) -> impl IntoResponse {
+    let pore = match payload.pore_class.as_deref().unwrap_or("BrowserControl").to_ascii_lowercase().as_str() {
+        "mcp" | "mcptoolserver" => osoosi_agent_anomaly::ActuationPoreClass::McpToolServer,
+        "ai" | "aisdkruntime" | "ollama" | "litert" => osoosi_agent_anomaly::ActuationPoreClass::AiSdkRuntime,
+        "shell" | "osshellinterpreter" | "cmd" | "powershell" => osoosi_agent_anomaly::ActuationPoreClass::OsShellInterpreter,
+        "ipc" | "ipcnamedpipeapi" | "pipe" => osoosi_agent_anomaly::ActuationPoreClass::IpcNamedPipeApi,
+        "ui" | "uicomputeruse" | "computeruse" => osoosi_agent_anomaly::ActuationPoreClass::UiComputerUse,
+        "fs" | "filesystem" | "filesystemstaging" => osoosi_agent_anomaly::ActuationPoreClass::FilesystemStaging,
+        "net" | "network" | "networkegress" => osoosi_agent_anomaly::ActuationPoreClass::NetworkEgress,
+        _ => osoosi_agent_anomaly::ActuationPoreClass::BrowserControl,
+    };
+    let verdict = state.agent_anomaly_detector.mercury_engine.evaluate_droplet(
+        &payload.lineage_id,
+        pore,
+        payload.target_detail.as_deref().unwrap_or("actuation_request"),
+        payload.mass_taint.unwrap_or(0.1),
+        payload.intention_vector.unwrap_or_default(),
+        payload.was_rejected.unwrap_or(false),
+    );
+    (StatusCode::OK, Json(verdict))
+}
+
+#[derive(Debug, Deserialize)]
 pub struct AgentEmbedRequest {
     pub text: Option<String>,
     pub dim: Option<usize>,
@@ -8190,6 +8321,67 @@ mod tests {
         let cont_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert!(cont_res["metrics"].is_object());
         assert!(cont_res["discovered_agents"].is_array());
+
+        // 10. GET /api/agent-anomalies/mercury-status
+        let req = axum::http::Request::builder()
+            .uri("/api/agent-anomalies/mercury-status")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let merc_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(merc_res["status"], "active");
+        assert!(merc_res["active_pores_count"].as_u64().unwrap() >= 8);
+
+        // 11. POST /api/agent-anomalies/mercury-evaluate
+        let eval_droplet = serde_json::json!({
+            "lineage_id": "test-agent-droplet-1",
+            "pore_class": "BrowserControl",
+            "target_detail": "https://suspicious-site.test/login",
+            "mass_taint": 0.25,
+            "intention_vector": [0.1, 0.2, 0.3],
+            "was_rejected": false
+        });
+        let req = axum::http::Request::builder()
+            .uri("/api/agent-anomalies/mercury-evaluate")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&eval_droplet).unwrap()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let eval_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert_eq!(eval_res["lineage_id"], "test-agent-droplet-1");
+        assert!(eval_res["allowed"].as_bool().unwrap());
+
+        // 12. POST /api/har/inspect
+        let sample_har = serde_json::json!({
+            "har_content": r#"{"log": {"entries": [{"request": {"method": "GET", "url": "http://169.254.169.254/latest/meta-data/"}, "response": {"status": 200}}]}}"#,
+            "source_origin": "test_inspect"
+        });
+        let req = axum::http::Request::builder()
+            .uri("/api/har/inspect")
+            .method(axum::http::Method::POST)
+            .header("content-type", "application/json")
+            .body(axum::body::Body::from(serde_json::to_vec(&sample_har).unwrap()))
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let har_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
+        assert!(har_res["total_findings"].as_u64().unwrap() >= 1);
+
+        // 13. GET /api/har/entries
+        let req = axum::http::Request::builder()
+            .uri("/api/har/entries")
+            .method(axum::http::Method::GET)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let resp = app.clone().oneshot(req).await.unwrap();
+        assert_eq!(resp.status(), axum::http::StatusCode::OK);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

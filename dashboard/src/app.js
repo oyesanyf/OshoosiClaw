@@ -8118,7 +8118,10 @@ const SIQUERY_PRESETS = {
     arp: "SELECT address, mac, interface, permanent FROM arp_cache LIMIT 30;",
     autoruns: "SELECT name, path, args, source, location, status FROM autoruns LIMIT 25;",
     drivers: "SELECT name, display_name, path, state, start_mode, signed FROM drivers LIMIT 25;",
-    firewall: "SELECT name, app_name, action, direction, protocol, local_ports FROM firewall_rules LIMIT 25;"
+    firewall: "SELECT name, app_name, action, direction, protocol, local_ports FROM firewall_rules LIMIT 25;",
+    ide_extensions: "SELECT ide, name, publisher, version, ai_capable, path FROM ide_extensions ORDER BY ai_capable DESC, name ASC LIMIT 25;",
+    api_endpoints: "SELECT api_type, provider_or_server, endpoint_or_command, protocol, auth_configured, pore_radius, status FROM api_endpoints LIMIT 25;",
+    coding_tools: "SELECT category, tool_name, version, can_spawn_shell, can_network_egress, pore_radius, path FROM coding_tools ORDER BY can_spawn_shell DESC LIMIT 25;"
 };
 
 async function renderSiqueryView() {
