@@ -46,7 +46,7 @@ tracing-appender = "0.2"
 hostname = "0.4"
 chrono = { version = "0.4", features = ["serde"] }
 uuid = { version = "1", features = ["v4", "serde"] }
-rusqlite = { version = "0.31", features = ["bundled", "serde_json"] }
+rusqlite = { version = "0.40", features = ["bundled", "serde_json"] }
 clap = { version = "4", features = ["derive", "env"] }
 sha2 = "0.10"
 hmac = "0.12"
