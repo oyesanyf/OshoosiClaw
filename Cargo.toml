@@ -76,7 +76,7 @@ walkdir = "2"
 socket2 = "0.5"
 blake3 = "1.5"
 notify = "6"
-libp2p = "0.54"
+libp2p = "0.56"
 futures = "0.3"
 quick-xml = { version = "0.28.2", features = ["serialize"] }
 sysinfo = "0.30"
@@ -88,9 +88,9 @@ tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 libc = "0.2"
 nostr-sdk = "0.33"
-opentelemetry = { version = "0.31", features = ["trace"] }
-opentelemetry_sdk = { version = "0.31", features = ["trace"] }
-tracing-opentelemetry = "0.32"
+opentelemetry = { version = "0.33", features = ["trace"] }
+opentelemetry_sdk = { version = "0.33", features = ["trace"] }
+tracing-opentelemetry = "0.34"
 rayon = "1.10"
 tfhe = { version = "0.6", features = ["integer", "boolean", "shortint"] }
 bincode = "1"
@@ -100,13 +100,12 @@ candle-core = "0.9.1"
 candle-nn = "0.9.1"
 candle-transformers = "0.9.1"
 hf-hub = "0.4"
-git2 = "0.19"
 aya = "0.13"
 evalexpr = "13.1.0"
 ipnetwork = "0.21.1"
 bloomfilter = "1.0.9"
 libloading = "0.8"
-yara-x = "1.15.0"
+yara-x = "1.19.0"
 smoltcp = { version = "0.11", features = ["std", "log", "medium-ethernet", "proto-ipv4", "socket-tcp", "socket-udp", "socket-icmp"] }
 wintun = "0.4"
 managed = "0.8"

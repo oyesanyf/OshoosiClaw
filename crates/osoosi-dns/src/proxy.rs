@@ -12,7 +12,7 @@ use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tracing::{error, info, warn};
-use hickory_proto::op::{Message, MessageType, ResponseCode, Header};
+use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode};
 use hickory_proto::rr::{Name, RData, Record, RecordType};
 use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 use dashmap::DashMap;
@@ -107,8 +107,8 @@ impl DnsShield {
                 }
             };
 
-            let query_id = message.id();
-            let queries = message.queries().to_vec();
+            let query_id = message.id;
+            let queries = message.queries.clone();
 
             if queries.is_empty() {
                 continue;
@@ -235,14 +235,10 @@ impl DnsShield {
 
 /// Build a DNS response that sinkhole the domain to 0.0.0.0
 fn build_sinkhole_response(id: u16, domain: &str, qtype: RecordType) -> Message {
-    let mut response = Message::new();
-    let mut header = Header::new();
-    header.set_id(id);
-    header.set_message_type(MessageType::Response);
-    header.set_response_code(ResponseCode::NoError);
-    header.set_recursion_desired(true);
-    header.set_recursion_available(true);
-    response.set_header(header);
+    let mut response = Message::new(id, MessageType::Response, OpCode::Query);
+    response.metadata.response_code = ResponseCode::NoError;
+    response.metadata.recursion_desired = true;
+    response.metadata.recursion_available = true;
 
     // Add a sinkhole A record pointing to 0.0.0.0
     if qtype == RecordType::A || qtype == RecordType::AAAA {
