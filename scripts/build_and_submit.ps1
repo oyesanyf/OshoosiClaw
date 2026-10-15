@@ -213,10 +213,70 @@ if (-not $SkipBuild) {
     Write-Host "`n>>> [1/6] Building osoosi-cli Release Binary..." -ForegroundColor Yellow
     Test-And-Handle-LockedFile -FilePath $TargetExe
 
-    cargo build --release -p osoosi-cli
-    if ($LASTEXITCODE -ne 0) {
+    $signtoolCandidates = @(
+        "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe",
+        "C:\Program Files (x86)\Windows Kits\10\bin\10.0.22621.0\x64\signtool.exe",
+        "C:\Program Files (x86)\Windows Kits\10\App Certification Kit\signtool.exe"
+    )
+    $buildSigntool = $signtoolCandidates | Where-Object { Test-Path $_ } | Select-Object -First 1
+
+    # Background Smart App Control / WDAC auto-signer for newly compiled build-script-build.exe and proc-macro DLLs
+    $wdacJob = $null
+    if ($buildSigntool -and (-not $SkipSigning)) {
+        $wdacJob = Start-Job -ScriptBlock {
+            param($root, $st, $thumb)
+            while ($true) {
+                $unsigned = Get-ChildItem (Join-Path $root "target\release\build\*\build-script-build.exe"), (Join-Path $root "target\release\deps\*.dll") -ErrorAction SilentlyContinue | Where-Object {
+                    $_.LastWriteTime -gt (Get-Date).AddMinutes(-15) -and ((Get-AuthenticodeSignature $_.FullName).SignerCertificate -eq $null)
+                }
+                foreach ($f in $unsigned) {
+                    $wt = $f.LastWriteTimeUtc
+                    & $st sign /sha1 $thumb /fd SHA256 /q $f.FullName 2>$null | Out-Null
+                    try { $f.LastWriteTimeUtc = $wt } catch {}
+                    $sibling = Join-Path $f.DirectoryName ("build_script_build-" + ($f.Directory.Name -replace '^.*-','') + ".exe")
+                    if (Test-Path $sibling) {
+                        try { (Get-Item $sibling).LastWriteTimeUtc = $wt } catch {}
+                    }
+                }
+                Start-Sleep -Milliseconds 400
+            }
+        } -ArgumentList $ProjectRoot, $buildSigntool, $CertThumbprint
+    }
+
+    $buildSucceeded = $false
+    for ($attempt = 1; $attempt -le 4; $attempt++) {
+        cargo build --release -p osoosi-cli
+        if ($LASTEXITCODE -eq 0) {
+            $buildSucceeded = $true
+            break
+        }
+        if ($buildSigntool -and (-not $SkipSigning) -and $attempt -lt 4) {
+            Write-Host "       [WDAC] Signing newly compiled build scripts / proc-macros before retry ($attempt/4)..." -ForegroundColor Cyan
+            $unsigned = Get-ChildItem (Join-Path $ProjectRoot "target\release\build\*\build-script-build.exe"), (Join-Path $ProjectRoot "target\release\deps\*.dll") -ErrorAction SilentlyContinue | Where-Object {
+                $_.LastWriteTime -gt (Get-Date).AddMinutes(-30) -and ((Get-AuthenticodeSignature $_.FullName).SignerCertificate -eq $null)
+            }
+            foreach ($f in $unsigned) {
+                $wt = $f.LastWriteTimeUtc
+                & $buildSigntool sign /sha1 $CertThumbprint /fd SHA256 /q $f.FullName 2>$null | Out-Null
+                try { $f.LastWriteTimeUtc = $wt } catch {}
+                $sibling = Join-Path $f.DirectoryName ("build_script_build-" + ($f.Directory.Name -replace '^.*-','') + ".exe")
+                if (Test-Path $sibling) {
+                    try { (Get-Item $sibling).LastWriteTimeUtc = $wt } catch {}
+                }
+            }
+        } else {
+            break
+        }
+    }
+
+    if ($wdacJob) {
+        Stop-Job $wdacJob -ErrorAction SilentlyContinue
+        Remove-Job $wdacJob -Force -ErrorAction SilentlyContinue
+    }
+
+    if (-not $buildSucceeded) {
         Write-Error "cargo build failed with exit code $LASTEXITCODE"
-        exit $LASTEXITCODE
+        exit 1
     }
     Write-Host "       -> Build successful: $TargetExe" -ForegroundColor Green
 } else {
