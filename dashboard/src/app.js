@@ -64,6 +64,7 @@ const state = {
     siqueryFilter: '',
     siqueryLastRaw: null
 };
+window.state = state;
 
 let updateInterval = null;
 let supervisorInterval = null;
@@ -76,6 +77,9 @@ function init() {
     setupPasswordResetModal();
     setupNav();
     setupSearch();
+    if (typeof setupMitreFilters === 'function') {
+        setupMitreFilters();
+    }
     setupHistoryEvents();
     
     if (localStorage.getItem('oshoosi_logged_in') === 'true') {
@@ -164,12 +168,15 @@ function setupLogin() {
 
     const storedHash = localStorage.getItem('oshoosi_admin_hash');
     const isFirstTime = !storedHash;
+    const isLocalLoopback = window.location.hostname === '127.0.0.1' || window.location.hostname === 'localhost' || !window.location.hostname;
+    const explicitlyLoggedOut = localStorage.getItem('oshoosi_logged_out') === 'true';
     
     const isLoggedIn = localStorage.getItem('oshoosi_logged_in') === 'true';
-    if (isLoggedIn && storedHash) {
-        overlay.style.display = 'none';
+    if ((isLoggedIn && storedHash) || (isLocalLoopback && !explicitlyLoggedOut)) {
+        localStorage.setItem('oshoosi_logged_in', 'true');
+        if (overlay) overlay.style.display = 'none';
     } else {
-        overlay.style.display = 'flex';
+        if (overlay) overlay.style.display = 'flex';
     }
 
     if (isFirstTime) {
@@ -222,6 +229,7 @@ function setupLogin() {
                 localStorage.setItem('oshoosi_admin_hash', hash);
                 localStorage.setItem('oshoosi_admin_user', username || 'admin');
                 localStorage.setItem('oshoosi_logged_in', 'true');
+                localStorage.removeItem('oshoosi_logged_out');
 
                 overlay.style.opacity = '0';
                 setTimeout(() => {
@@ -237,6 +245,7 @@ function setupLogin() {
             const inputHash = await hashPassword(password);
             if (inputHash === currentHash) {
                 localStorage.setItem('oshoosi_logged_in', 'true');
+                localStorage.removeItem('oshoosi_logged_out');
                 overlay.style.opacity = '0';
                 setTimeout(() => {
                     overlay.style.display = 'none';
@@ -263,6 +272,7 @@ function setupLogin() {
         logoutBtn.addEventListener('click', (e) => {
             e.preventDefault();
             localStorage.setItem('oshoosi_logged_in', 'false');
+            localStorage.setItem('oshoosi_logged_out', 'true');
             window.location.reload();
         });
     }
@@ -345,7 +355,7 @@ function setupPasswordResetModal() {
  * Handle navigation between dashboard views
  */
 function setupNav() {
-    const navItems = document.querySelectorAll('.nav-item');
+    const navItems = document.querySelectorAll('.nav-item[data-view]');
     const viewTitle = document.getElementById('view-title');
     
     navItems.forEach(item => {
@@ -353,6 +363,7 @@ function setupNav() {
             e.preventDefault();
             try {
                 const view = item.getAttribute('data-view');
+                if (!view) return;
                 
                 // Update active state in sidebar
                 navItems.forEach(i => i.classList.remove('active'));
@@ -8487,6 +8498,8 @@ window.copySiqueryResults = copySiqueryResults;
 window.exportSiqueryResults = exportSiqueryResults;
 window.runSiqueryProtectionSweep = runSiqueryProtectionSweep;
 
-
-
-
+if (document.readyState === 'loading') {
+    document.addEventListener('DOMContentLoaded', init);
+} else {
+    init();
+}
