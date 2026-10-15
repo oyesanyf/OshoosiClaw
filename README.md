@@ -227,13 +227,16 @@ OpenỌ̀ṣọ́ọ̀sì features enterprise-grade background execution via nat
    - The service entrypoint (`osoosi.exe service run --no-browser`) invokes `StartServiceCtrlDispatcherW`.
    - The SCM control handler (`RegisterServiceCtrlHandlerExW`) intercepts `SERVICE_CONTROL_STOP`, `SERVICE_CONTROL_SHUTDOWN`, and `SERVICE_CONTROL_INTERROGATE`.
    - On shutdown, `SetServiceStatus` reports `SERVICE_STOP_PENDING` with a 15-second grace period (`dwWaitHint: 15000`), cleanly flushing SQLite WAL caches, notifying P2P peers, and unwinding active tarpits.
-2. **Automatic Working-Directory Resolution**:
+2. **Clone-Path-Agnostic Working-Directory Resolution**:
    - The Windows SCM always executes background services with the working directory set to `C:\Windows\System32`.
-   - `osoosi` inspects `std::env::current_exe()` at startup and automatically sets its current directory to the parent folder of the binary (or repository root), ensuring `database/osoosi.db`, `models/`, `rules/sigma/`, and `config/osoosi.toml` resolve with 100% path accuracy.
-3. **Dual-Channel Shutdown Multiplexing**:
-   - The runtime multiplexes interactive console interrupts (`tokio::signal::ctrl_c()`) with Windows SCM stop notifications (`notify_service_stop()`) via `tokio::select!`. Both paths trigger identical clean termination routines.
-4. **Resilient Auto-Recovery Policy**:
-   - Registration configures native SCM crash recovery (`reset= 86400`, `actions= restart/5000/restart/5000/restart/5000`): in the event of an unhandled host fault, Windows automatically restarts the EDR daemon after 5 seconds for up to three attempts within a 24-hour window.
+   - `osoosi` inspects `std::env::current_exe()` at startup and walks up up to 5 parent directories (`find_project_root_from(&exe)`) to locate `osoosi.toml`, `models/`, `rules/`, and `dashboard/dist/`, ensuring `database/osoosi.db`, `models/`, `rules/sigma/`, and WebUI assets resolve with 100% path accuracy regardless of where the repository was cloned or installed.
+3. **Automatic UAC Elevation & WMI Detached Daemon Fallback**:
+   - Invoking `osoosi service install|start|stop|restart|delete` from an unprivileged shell automatically triggers a Windows UAC elevation prompt (`Start-Process -Verb RunAs`), or seamlessly falls back to spawning a WMI-detached background daemon (`Win32_Process.Create`) outside the parent terminal's Job Object when UAC is unavailable.
+4. **Dedicated WebUI Tokio Runtime & Auto-Launch (`http://127.0.0.1:3030/`)**:
+   - Starting the service (`osoosi service install` or `osoosi service start`) automatically binds the WebUI on a dedicated 4-worker multi-thread Tokio runtime (`osoosi-dashboard-rt`) at `http://127.0.0.1:3030/`—isolated from file-scanner and baseline-hashing workloads—and opens the user's default browser from their interactive session while the service runs in Session 0.
+5. **Dual-Channel Shutdown Multiplexing & Auto-Recovery Policy**:
+   - The runtime multiplexes interactive console interrupts (`tokio::signal::ctrl_c()`) with Windows SCM stop notifications (`notify_service_stop()`) via `tokio::select!`.
+   - Registration configures native SCM crash recovery (`reset= 86400`, `actions= restart/5000/restart/5000/restart/5000`): in the event of an unhandled host fault, Windows automatically restarts the EDR daemon after 5 seconds.
 
 ### Windows Service Management Commands
 

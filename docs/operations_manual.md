@@ -132,10 +132,10 @@ If you see "PRODUCTION-CRITICAL: All ML models failed to load":
   ```
 
 ### 10. Windows Service Administration (OsoosiEDR)
-OpenỌ̀ṣọ́ọ̀sì can run continuously as a native Windows Service (`OsoosiEDR`) managed by the Windows Service Control Manager (SCM). The service automatically starts on system boot, auto-recovers after unhandled crashes, and runs silently in the background with `--no-browser`.
+OpenỌ̀ṣọ́ọ̀sì can run continuously as a native Windows Service (`OsoosiEDR`) managed by the Windows Service Control Manager (SCM). The service automatically starts on system boot, auto-recovers after unhandled crashes, resolves the repository/install root dynamically from `current_exe()`, and serves the interactive WebUI on **`http://127.0.0.1:3030/`** via a dedicated 4-worker Tokio runtime (`osoosi-dashboard-rt`).
 
 #### SCM Service Management Operations
-All operations require an Administrator (Elevated) command prompt or PowerShell session:
+If invoked from a standard (non-Admin) terminal, `osoosi service <action>` automatically requests Windows UAC elevation (`Start-Process -Verb RunAs`), or falls back to spawning a WMI-detached background daemon (`Win32_Process.Create`) if UAC is unavailable—automatically waiting for `http://127.0.0.1:3030/` to become ready and opening the browser in your interactive desktop session:
 
 | Operational Goal | OpenỌ̀ṣọ́ọ̀sì CLI | Native PowerShell | Native Win32 `sc.exe` |
 | :--- | :--- | :--- | :--- |
