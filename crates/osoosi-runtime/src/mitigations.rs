@@ -33,7 +33,7 @@ impl MitigationEngine {
         );
 
         // Load the mitigation policy WASM (this would come from a signed policy file)
-        let wasm_policy = include_bytes!("../../../wasm/mitigation_policy.wasm");
+        let wasm_policy: &[u8] = b"\xff\xfem\x00o\x00d\x00u\x00l\x00e\x00\r\x00\n\x00";
 
         let mut labels = HashSet::new();
         labels.insert(TaintLabel::UntrustedScript);
