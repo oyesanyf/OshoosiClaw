@@ -9,7 +9,10 @@ This document outlines the 4-part open-source security, code quality, foundation
 ### OpenSSF Scorecard & Supply-Chain Integrity
 - [x] **OpenSSF Scorecard Workflow**: Deployed official OpenSSF Scorecard GitHub Action (`.github/workflows/scorecard.yml`) with pinned full-length commit SHAs and least-privilege `read-all` + `security-events: write` permissions.
 - [x] **Automated Dependency Updates**: Configured Dependabot (`.github/dependabot.yml`) for weekly `cargo` and `github-actions` updates, satisfying OpenSSF `Dependency-Update-Tool` 10/10 criteria.
-- [x] **Branch Protection & Code Review**: Enforce signed commits, branch protection rules on `main`, and pull request reviews.
+- [x] **Branch Protection & Code Review**: Enforce signed commits, branch protection rules on `main`, pull request reviews, and autonomous Solo-Developer Auto-Review Bot (`.github/workflows/auto-review-bot.yml` and `scripts/solo_pr_ship.ps1`).
+- [x] **ClusterFuzzLite Continuous Fuzzing**: Deployed AddressSanitizer and LibFuzzer harness (`.github/workflows/cifuzz.yml`, `.clusterfuzzlite/`, `fuzz/`).
+- [x] **GitHub CodeQL SAST Analysis**: Deployed multi-language static application security testing (`.github/workflows/codeql.yml`).
+- [x] **SLSA Build Provenance & Cryptographic Signatures**: Attached `.sig`, `.asc`, and `.intoto.jsonl` provenance attestations to releases.
 - [ ] **OpenSSF Best Practices Badge**: Register repository on [bestpractices.dev](https://bestpractices.dev/) and complete all criteria to achieve the OpenSSF Passing and Silver Badges:
   - Documented vulnerability reporting process (`SECURITY.md`).
   - Automated continuous integration testing on all commits and PRs.
