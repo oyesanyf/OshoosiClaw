@@ -310,6 +310,15 @@ pub fn install_service() -> anyhow::Result<()> {
         "restart/5000/restart/5000/restart/5000",
     ]);
 
+    // Grant Interactive Users (IU) and Authenticated Users (AU) service restart privileges without UAC errors
+    let _ = Command::new("sc.exe")
+        .args([
+            "sdset",
+            SERVICE_NAME,
+            "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPDTLOCRRC;;;IU)(A;;CCLCSWRPWPDTLOCRRC;;;AU)(A;;CCLCSWLOCRRC;;;SU)",
+        ])
+        .output();
+
     println!("Service '{}' installed successfully.", SERVICE_NAME);
     println!("Binary Path: {}", bin_path);
     println!("Startup Type: Automatic");
@@ -601,6 +610,15 @@ mod win_scm {
         let _ = SetServiceStatus(handle, &status);
 
         info!("OsoosiEDR Windows Service is now running under SCM control.");
+
+        // Ensure Interactive Users (IU) and Authenticated Users (AU) can query and restart service
+        let _ = Command::new("sc.exe")
+            .args([
+                "sdset",
+                "OsoosiEDR",
+                "D:(A;;CCLCSWRPWPDTLOCRRC;;;SY)(A;;CCDCLCSWRPWPDTLOCRSDRCWDWO;;;BA)(A;;CCLCSWRPWPDTLOCRRC;;;IU)(A;;CCLCSWRPWPDTLOCRRC;;;AU)(A;;CCLCSWLOCRRC;;;SU)",
+            ])
+            .output();
 
         // Wait until service stop is triggered
         while !SERVICE_STOP_FLAG.load(Ordering::SeqCst) {

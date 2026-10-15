@@ -13,6 +13,7 @@
   <a href="#-mesh-networking"><img src="https://img.shields.io/badge/Wire-ML--KEM--768%20PQC-blueviolet?style=for-the-badge" alt="PQC"/></a>
   <a href="#-architecture"><img src="https://img.shields.io/badge/Hardware-TPM%202.0%20Silicon-blue?style=for-the-badge" alt="TPM 2.0"/></a>
   <a href="#-adversarial-verification"><img src="https://img.shields.io/badge/Adversarial%20%26%20Security%20Tests-205%2B%20Passed-brightgreen?style=for-the-badge" alt="Tests"/></a>
+  <a href="https://securityscorecards.dev/viewer/?uri=github.com/oyesanyf/OshoosiClaw"><img src="https://api.securityscorecards.dev/projects/github.com/oyesanyf/OshoosiClaw/badge" alt="OpenSSF Scorecard"/></a>
   <a href="LICENSE"><img src="https://img.shields.io/badge/License-MIT-green?style=for-the-badge" alt="License"/></a>
 </p>
 
@@ -38,6 +39,7 @@
   <a href="#-high-throughput-p2p-mesh--consensus-stability">Mesh Stability</a> •
   <a href="#-interactive-webui-visual-gallery">Visual Tour</a> •
   <a href="#-autonomous-agent-skill-evolution--wikiskill">WikiSkill Evolution</a> •
+  <a href="#-open-source-security-governance--community-roadmap">Open-Source Governance & Roadmap</a> •
   <a href="#-cli-reference">CLI Reference</a>
 </p>
 
@@ -1974,7 +1976,40 @@ Recent hardening efforts have focused on autonomous multi-agent defense, hybrid 
 - **Unified YARA-X Scanning**: Merged high-priority C2 rules (Cobalt Strike, Sliver) into the main YARA rule set, enabling high-speed, single-pass scanning of all files.
 - **Resilient AI Reasoning**: Integrated **Ollama** as a first-class fallback reasoning engine. If local ONNX/GGUF models fail due to hardware constraints, the agent pivots to Ollama for deep behavioral analysis.
 - **Atomic IOC Engine**: New high-speed indicator scanner providing O(1) constant-time lookups for millions of malicious hashes, IPs, and domains using `HashSet` and `RegexSet`.
-- **In-Memory Telemetry Stats**: Real-time voter statistics are now reported using thread-safe `AtomicU64` counters, visible instantly on the Oshoosi dashboard.
+<a id="-open-source-security-governance--community-roadmap"></a>
+<a id="open-source-security-governance--community-roadmap"></a>
+## 🌐 Open-Source Security, Governance & Community Roadmap
+
+OpenỌ̀ṣọ́ọ̀sì follows a transparent, community-governed foundation roadmap to establish verifiable security, reproducible supply-chain integrity, and foundation incubation.
+
+For the full, actionable checklist and tracking criteria, see [TODO.md](TODO.md) and [MAINTAINERS.md](MAINTAINERS.md).
+
+```mermaid
+flowchart LR
+    A["1. Automated Security<br/>(OpenSSF Scorecard & Best Practices)"] --> B["2. Code Quality<br/>(SonarCloud & DeepSource)"]
+    B --> C["3. Foundation Incubation<br/>(CNCF Sandbox & ASF Incubator)"]
+    C --> D["4. Peer Review<br/>(Show HN, Reddit & Product Hunt)"]
+```
+
+### 1. Automated Security and Best Practices
+- **OpenSSF Scorecard**: Continuous automated supply-chain audit via official GitHub Action (`.github/workflows/scorecard.yml`) with pinned SHAs and least-privilege permissions.
+- **Automated Dependabot**: Weekly dependency analysis (`.github/dependabot.yml`) for `cargo` and `github-actions`.
+- **OpenSSF Best Practices Badge**: Active integration on [bestpractices.dev](https://bestpractices.dev/) verifying cryptographic release manifests, Authenticode signing, and vulnerability disclosure policies.
+
+### 2. Automated Code Quality and Static Analysis
+- **SonarCloud Integration**: Continuous analysis on [sonarcloud.io](https://sonarcloud.io/) targeting Zero Smells, Zero Security Hotspots, and Maintainability A.
+- **DeepSource & CodeFactor**: Automated static analysis, complexity gating, and dead-code prevention on all pull requests.
+- **Hermetic Fuzzing**: Continuous AFL/libFuzzer coverage across Wire protocols, STIX 2.1 deserializers, and PQC ML-KEM-768 decoders.
+
+### 3. Foundation Incubation and Governance
+- **Open Governance**: Core maintainers, consensus rules, and review standards documented in [MAINTAINERS.md](MAINTAINERS.md).
+- **CNCF Sandbox Incubation**: Dual-licensed Apache 2.0 / MIT foundation application via [cncf/sandbox](https://github.com/cncf/sandbox), aligned with CNCF TAG-Security.
+- **Apache Software Foundation (ASF)**: Incubation champion identification and formal proposal to `general@incubator.apache.org`.
+
+### 4. Community Peer Review and Usability
+- **Hacker News (`Show HN`)**: High-visibility technical launch demonstrating air-gapped Rust EDR, Siquery-RS 88-table relational engine, and zero-cloud local reasoning.
+- **Technical Subreddits**: Deep-dive discussions on `r/rust`, `r/netsec`, `r/opensource`, and `r/programming`.
+- **Product Hunt Maker Launch**: Interactive visual showcase of the zero-configuration Windows Service (`OshoosiClaw.msi`) and 100/100 supervisor WebUI.
 
 ---
 

@@ -507,6 +507,7 @@ impl AgentAnomalyDetector {
                 r.pid > 0
                     && !r.process_name.is_empty()
                     && r.process_name != "unknown"
+                    && !r.process_name.eq_ignore_ascii_case("Program")
                     && (r.is_verified_agent || r.posterior_probability >= 0.45 || !r.observed_signals.is_empty())
             })
             .collect();
@@ -524,6 +525,8 @@ impl AgentAnomalyDetector {
                 }
             }
         }
+
+        discovered_agents.retain(|r| !r.process_name.is_empty() && r.process_name != "unknown" && !r.process_name.eq_ignore_ascii_case("Program"));
 
         // Sort descending by posterior_probability
         discovered_agents.sort_by(|a, b| {

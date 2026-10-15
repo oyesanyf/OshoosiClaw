@@ -170,16 +170,65 @@ pub fn infer_agent_metadata(name: &str, cmdline: &str) -> (String, String, Strin
     let lower_name = name.to_ascii_lowercase();
     let lower_cmd = cmdline.to_ascii_lowercase();
 
-    let resolved_name = if !name.is_empty() && name != "unknown" {
+    let resolved_name = if !name.is_empty() && name != "unknown" && !name.eq_ignore_ascii_case("Program") {
         name.to_string()
-    } else if let Some(first_tok) = cmdline.split_whitespace().next() {
-        let clean = first_tok.trim_matches('"').trim_matches('\'');
-        std::path::Path::new(clean)
-            .file_name()
-            .map(|s| s.to_string_lossy().to_string())
-            .unwrap_or_else(|| "unknown".to_string())
     } else {
-        "unknown".to_string()
+        let trimmed_cmd = cmdline.trim();
+        let extracted_path = if trimmed_cmd.starts_with('"') {
+            if let Some(end_quote) = trimmed_cmd[1..].find('"') {
+                Some(&trimmed_cmd[1..=end_quote])
+            } else {
+                None
+            }
+        } else if trimmed_cmd.starts_with("C:\\Program Files")
+            || trimmed_cmd.starts_with("C:\\Program Files (x86)")
+            || trimmed_cmd.to_ascii_lowercase().starts_with("c:\\program files")
+        {
+            if let Some(exe_pos) = trimmed_cmd.to_ascii_lowercase().find(".exe") {
+                Some(&trimmed_cmd[..exe_pos + 4])
+            } else if !name.is_empty() && name != "unknown" && !name.eq_ignore_ascii_case("Program") {
+                None
+            } else {
+                trimmed_cmd.split_whitespace().next()
+            }
+        } else if let Some(exe_pos) = trimmed_cmd.to_ascii_lowercase().find(".exe") {
+            Some(&trimmed_cmd[..exe_pos + 4])
+        } else {
+            trimmed_cmd.split_whitespace().next()
+        };
+
+        let mut candidate = extracted_path
+            .and_then(|p| {
+                let clean = p.trim_matches('"').trim_matches('\'');
+                std::path::Path::new(clean)
+                    .file_name()
+                    .map(|s| s.to_string_lossy().to_string())
+            })
+            .unwrap_or_else(|| {
+                if !name.is_empty() && name != "unknown" && !name.eq_ignore_ascii_case("Program") {
+                    name.to_string()
+                } else {
+                    "system_agent.exe".to_string()
+                }
+            });
+
+        if candidate.is_empty()
+            || candidate.eq_ignore_ascii_case("Program")
+            || candidate == "unknown"
+        {
+            if let Some(exe_pos) = cmdline.to_ascii_lowercase().find(".exe") {
+                let prefix = &cmdline[..exe_pos + 4];
+                let file_part = prefix.rsplit(['\\', '/', ' ']).next().unwrap_or("system_agent.exe");
+                candidate = file_part.trim_matches('"').trim_matches('\'').to_string();
+            }
+            if candidate.is_empty()
+                || candidate.eq_ignore_ascii_case("Program")
+                || candidate == "unknown"
+            {
+                candidate = "system_agent.exe".to_string();
+            }
+        }
+        candidate
     };
 
     let (role, framework) = if lower_cmd.contains("language_server")

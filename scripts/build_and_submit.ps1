@@ -153,8 +153,9 @@ function Invoke-AuthenticodeSigning {
 
     foreach ($file in $Files) {
         if (Test-Path $file) {
+            $isTarget = $TargetBinaries -contains $file
             $existingSig = Get-AuthenticodeSignature $file -ErrorAction SilentlyContinue
-            if ($existingSig -and $existingSig.SignerCertificate -and ($existingSig.SignerCertificate.Thumbprint -eq $Thumbprint)) {
+            if (-not $isTarget -and $existingSig -and $existingSig.SignerCertificate -and ($existingSig.SignerCertificate.Thumbprint -eq $Thumbprint)) {
                 Write-Host "       -> Already signed by $($existingSig.SignerCertificate.Subject): $file" -ForegroundColor Green
                 continue
             }
@@ -162,25 +163,16 @@ function Invoke-AuthenticodeSigning {
             $signedOk = $false
             try {
                 if ($signtool) {
-                    if ($Cert.Subject -eq $Cert.Issuer) {
-                        # Self-signed developer certificate: sign directly with SHA-256 so Smart App Control
-                        # validates the local TrustedPublisher/Root store without external CA countersignature mismatch.
+                    # 1. Primary: signtool with RFC 3161 timestamp
+                    & $signtool sign /sha1 $Thumbprint /fd SHA256 /tr $Timestamp /td SHA256 $file | Out-Null
+                    if ($LASTEXITCODE -eq 0) {
+                        $signedOk = $true
+                    } else {
+                        # 2. Secondary fallback: signtool without timestamp
+                        Write-Warning "       -> Timestamp server failed for $file. Retrying signtool without timestamp..."
                         & $signtool sign /sha1 $Thumbprint /fd SHA256 $file | Out-Null
                         if ($LASTEXITCODE -eq 0) {
                             $signedOk = $true
-                        }
-                    } else {
-                        # 1. Primary: signtool with RFC 3161 timestamp
-                        & $signtool sign /sha1 $Thumbprint /fd SHA256 /tr $Timestamp /td SHA256 $file | Out-Null
-                        if ($LASTEXITCODE -eq 0) {
-                            $signedOk = $true
-                        } else {
-                            # 2. Secondary fallback: signtool without timestamp
-                            Write-Warning "       -> Timestamp server failed for $file. Retrying signtool without timestamp..."
-                            & $signtool sign /sha1 $Thumbprint /fd SHA256 $file | Out-Null
-                            if ($LASTEXITCODE -eq 0) {
-                                $signedOk = $true
-                            }
                         }
                     }
                 }
@@ -436,6 +428,33 @@ if (-not $SkipSubmit) {
     }
 } else {
     Write-Host "       -> Skipping Microsoft submission (-SkipSubmit specified)" -ForegroundColor Gray
+}
+
+# =============================================================================
+# Step 7: Automatic Windows Service Update & Reload (OsoosiEDR)
+# =============================================================================
+Write-Host "`n>>> [7/7] Checking and Reloading OsoosiEDR Windows Service..." -ForegroundColor Yellow
+$scQuery = & sc.exe query OsoosiEDR 2>&1 | Out-String
+if ($scQuery -match "STATE\s*:\s*[0-9]+\s+RUNNING") {
+    Write-Host "       OsoosiEDR service is currently RUNNING. Restarting with freshly built binary..." -ForegroundColor Cyan
+    & sc.exe stop OsoosiEDR | Out-Null
+    Start-Sleep -Seconds 2
+    Test-And-Handle-LockedFile -FilePath $TargetExe
+    if (Test-Path $DeployExe) {
+        Copy-Item -Path $DeployExe -Destination $TargetExe -Force
+    }
+    & sc.exe start OsoosiEDR | Out-Null
+    Write-Host "       -> OsoosiEDR service restarted successfully with newly compiled binary." -ForegroundColor Green
+} elseif ($scQuery -match "SERVICE_NAME\s*:\s*OsoosiEDR") {
+    Write-Host "       OsoosiEDR service exists (stopped). Starting service..." -ForegroundColor Cyan
+    Test-And-Handle-LockedFile -FilePath $TargetExe
+    if (Test-Path $DeployExe) {
+        Copy-Item -Path $DeployExe -Destination $TargetExe -Force
+    }
+    & sc.exe start OsoosiEDR | Out-Null
+    Write-Host "       -> OsoosiEDR service started." -ForegroundColor Green
+} else {
+    Write-Host "       OsoosiEDR service is not installed (skipping restart)." -ForegroundColor Gray
 }
 
 Cleanup-OldLockedFiles

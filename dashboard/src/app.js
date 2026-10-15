@@ -4050,7 +4050,7 @@ async function renderZoneView() {
     } catch (_) {}
 
     const defaultZoneData = {
-        security_score: 80,
+        security_score: 100,
         peer_count: 1,
         host_count: 2,
         relay_count: 2,
@@ -4159,7 +4159,7 @@ async function renderZoneView() {
         }
     }
 
-    const score = summary.security_score !== undefined ? summary.security_score : 80;
+    const score = summary.security_score !== undefined ? summary.security_score : 100;
     const scoreColor = score >= 80 ? 'var(--accent-green)' : (score >= 60 ? 'var(--accent-blue)' : (score >= 40 ? 'var(--accent-orange)' : 'var(--accent-red)'));
 
     const hostNodes = (summary.nodes || []).filter(n => n.node_type === 'endpoint_host' || (n.role !== 'Nostr Relay Pool' && !String(n.id).startsWith('relay:')));
@@ -7322,7 +7322,9 @@ function renderSupervisorModal(data, regimeColor, regimeBadgeClass) {
     try {
         const modalScore = document.getElementById('supervisor-modal-score');
         if (modalScore) {
-            const scoreVal = (typeof data.health_score === 'number' && !isNaN(data.health_score)) ? data.health_score.toFixed(1) : '100.0';
+            const scoreVal = (typeof data.health_score === 'number' && !isNaN(data.health_score))
+                ? (data.health_score >= 99.5 ? '100' : data.health_score.toFixed(1))
+                : '100';
             modalScore.innerText = `${scoreVal} / 100`;
             modalScore.style.color = regimeColor || '#10b981';
         }

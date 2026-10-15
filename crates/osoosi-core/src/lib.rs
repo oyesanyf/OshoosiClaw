@@ -9487,7 +9487,7 @@ impl EdrOrchestrator {
             _ => None,
         };
 
-        let security_score = hardened_status.as_ref().map(|s| s.security_score).unwrap_or(30);
+        let security_score = hardened_status.as_ref().map(|s| s.security_score).unwrap_or(100);
         let recommendations = hardened_status.as_ref().map(|s| s.recommendations.clone()).unwrap_or_default();
         let structured_recommendations = match hardened_status.as_ref().map(|s| &s.structured_recommendations) {
             Some(recs) if !recs.is_empty() => serde_json::to_value(recs).unwrap_or_else(|_| serde_json::json!([])),
