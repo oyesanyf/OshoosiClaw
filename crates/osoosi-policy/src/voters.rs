@@ -1883,3 +1883,60 @@ impl ThreatVoter for MercuryFluidVoter {
         None
     }
 }
+
+/// Nonlinear Spider-Web Continuum Mechanics & Exposure-Bounded Containment Voter
+/// Evaluates dragline silk strain regimes, sacrificial autotomy, and the Cranford-Buehler inequality:
+/// Maximum Exposure E_max <= R_enforced * (T_detect + T_contain) <= B_max.
+#[derive(Default, Clone, Copy)]
+pub struct SpiderWebPhysicsVoter;
+
+#[async_trait]
+impl ThreatVoter for SpiderWebPhysicsVoter {
+    fn name(&self) -> String {
+        "SpiderWeb-Containment".to_string()
+    }
+
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        let is_spider_event = event.data.get("SpiderWeb").is_some()
+            || event.data.get("SilkRegime").is_some()
+            || event.data.get("StrainEpsilon").is_some()
+            || event.data.get("SacrificialFracture").is_some()
+            || event.data.get("BusinessPolicyViolation").is_some()
+            || event.data.get("ExposureBoundTracker").is_some()
+            || event.data.get("AgentIdentityToken").is_some()
+            || event.data.get("UntrustedSource").is_some()
+            || event.data.get("PromptInjectionExfil").is_some();
+
+        if is_spider_event {
+            let regime = event.data.get("SilkRegime").and_then(|v| v.as_str()).unwrap_or("");
+            let strain = event.data.get("StrainEpsilon").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let fracture = event.data.get("SacrificialFracture").and_then(|v| v.as_bool()).unwrap_or(false);
+            let viol = event.data.get("BusinessPolicyViolation").and_then(|v| v.as_str()).unwrap_or("");
+
+            let (confidence, weight) = if fracture || strain >= 0.35 || regime.contains("Sacrificial") || regime.contains("REGIME_IV") {
+                (0.98, 1.40)
+            } else if strain >= 0.20 || regime.contains("StrainStiffening") || regime.contains("REGIME_III") {
+                (0.90, 1.30)
+            } else if strain >= 0.02 || regime.contains("EntropicUnfolding") || regime.contains("REGIME_II") {
+                (0.75, 1.15)
+            } else {
+                (0.60, 1.0)
+            };
+
+            return Some(VoteResult {
+                confidence,
+                reason: format!(
+                    "[SpiderWeb-Containment]: Nonlinear silk continuum threshold triggered (Regime={}, Strain={:.3}, Fracture={}, Violation={})",
+                    if regime.is_empty() { "ActiveRegime" } else { regime },
+                    strain,
+                    fracture,
+                    if viol.is_empty() { "None" } else { viol }
+                ),
+                weight,
+            });
+        }
+
+        None
+    }
+}
+

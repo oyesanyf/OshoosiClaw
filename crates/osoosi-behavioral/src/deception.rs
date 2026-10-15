@@ -92,6 +92,11 @@ pub struct MorphicSpider {
     pub beacons: BeaconGenerator,
     pub is_severed: bool,
     pub active_gaslight: bool,
+    pub strain_epsilon: f64,
+    pub enforced_rate_bps: f64,
+    pub detection_ms: f64,
+    pub containment_ms: f64,
+    pub credentials_revoked: bool,
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -116,7 +121,17 @@ impl MorphicSpider {
             beacons: BeaconGenerator::new("https://oshoosi-intel.io"),
             is_severed: false,
             active_gaslight: false,
+            strain_epsilon: 0.005,
+            enforced_rate_bps: 1_048_576.0,
+            detection_ms: 15.0,
+            containment_ms: 10.0,
+            credentials_revoked: false,
         }
+    }
+
+    /// Computes the theoretical maximum exposure bound E_max = R_enforced * (T_detect + T_contain).
+    pub fn theoretical_exposure_bound_bytes(&self) -> f64 {
+        self.enforced_rate_bps * ((self.detection_ms + self.containment_ms) / 1000.0)
     }
 
     pub fn current_stage(&self) -> EntanglementStage {

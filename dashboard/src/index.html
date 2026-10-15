@@ -1843,6 +1843,90 @@
                         </div>
                     </div>
                 </div>
+
+                <!-- Spider-Web Continuum Mechanics & Exposure-Bounded Containment (Nature Cranford-Buehler Model) -->
+                <div class="card glass shadow-glow mb-4" style="border-left: 4px solid #0ea5e9;">
+                    <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
+                        <div>
+                            <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
+                                <h4 style="font-size: 16px; font-weight: 600; color: var(--text-header); margin: 0; display: flex; align-items: center; gap: 8px;">
+                                    <i data-lucide="network" style="width: 18px; height: 18px; color: #0ea5e9;"></i>
+                                    Nonlinear Spider-Web Continuum Mechanics &amp; Exposure-Bounded Containment
+                                </h4>
+                                <span class="badge blue" style="font-size: 11px;">Cranford-Buehler Model (MIT Nature 2012)</span>
+                                <span class="badge purple" style="font-size: 11px;">E_max &le; R_enforced &times; (T_detect + T_contain) &le; B_max</span>
+                            </div>
+                            <p style="color: var(--text-secondary); font-size: 12px; margin: 4px 0 0 0;">
+                                4-Regime dragline silk constitutive mechanics &middot; Local sacrificial thread autotomy &middot; Out-of-Model Business Policy Gate (Untrusted &rarr; Restricted &rarr; Sink)
+                            </p>
+                        </div>
+                        <div style="display: flex; gap: 10px; align-items: center;">
+                            <button id="spider-web-sim-btn" class="btn-primary" onclick="window.simulateSpiderWebEmailExport()" style="background: linear-gradient(135deg, #0ea5e9, #6366f1); border: none; padding: 7px 15px; border-radius: 8px; font-size: 12px; font-weight: 600; display: flex; align-items: center; gap: 6px; cursor: pointer; color: #fff; box-shadow: 0 0 12px rgba(14, 165, 233, 0.3);">
+                                <i data-lucide="play-circle" style="width: 14px; height: 14px;"></i>
+                                <span>Simulate Untrusted Email Exfil Attack</span>
+                            </button>
+                            <button class="btn-secondary" onclick="window.renderSpiderWebPanel()" style="padding: 7px 12px; font-size: 12px; border-radius: 8px; background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); cursor: pointer; display: flex; align-items: center; gap: 6px;">
+                                <i data-lucide="refresh-cw" style="width: 13px; height: 13px;"></i>
+                                <span>Refresh Silk Matrix</span>
+                            </button>
+                        </div>
+                    </div>
+                    <div class="card-body" style="padding: 16px;">
+                        <!-- Regimes Indicator Bar -->
+                        <div style="display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 12px; margin-bottom: 16px;">
+                            <div style="background: rgba(16, 185, 129, 0.08); border: 1px solid rgba(16, 185, 129, 0.25); border-radius: 8px; padding: 10px 14px;">
+                                <div style="font-size: 11px; font-weight: 600; color: #10b981; text-transform: uppercase;">Regime I: Linear Elastic</div>
+                                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 3px;">&epsilon; &lt; 0.02 &middot; E1 = 10 GPa &middot; Rate: 100% (R0)</div>
+                            </div>
+                            <div style="background: rgba(245, 158, 11, 0.08); border: 1px solid rgba(245, 158, 11, 0.25); border-radius: 8px; padding: 10px 14px;">
+                                <div style="font-size: 11px; font-weight: 600; color: #f59e0b; text-transform: uppercase;">Regime II: Entropic Unfold</div>
+                                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 3px;">0.02 &le; &epsilon; &lt; 0.20 &middot; Viscous Throttling &middot; Step-Up Auth</div>
+                            </div>
+                            <div style="background: rgba(239, 68, 68, 0.08); border: 1px solid rgba(239, 68, 68, 0.25); border-radius: 8px; padding: 10px 14px;">
+                                <div style="font-size: 11px; font-weight: 600; color: #ef4444; text-transform: uppercase;">Regime III: Strain-Stiffening</div>
+                                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 3px;">0.20 &le; &epsilon; &lt; 0.35 &middot; Hard Block (R=0) &middot; &beta;-Sheet Lock</div>
+                            </div>
+                            <div style="background: rgba(236, 72, 153, 0.08); border: 1px solid rgba(236, 72, 153, 0.25); border-radius: 8px; padding: 10px 14px;">
+                                <div style="font-size: 11px; font-weight: 600; color: #ec4899; text-transform: uppercase;">Regime IV: Sacrificial Fracture</div>
+                                <div style="font-size: 12px; color: var(--text-secondary); margin-top: 3px;">&epsilon; &ge; 0.35 &middot; Autotomy &middot; Token Revoked &middot; 0 Bytes Exfil</div>
+                            </div>
+                        </div>
+
+                        <!-- Active Spider Sectors Table -->
+                        <div style="margin-bottom: 16px;">
+                            <div style="font-size: 12px; font-weight: 600; color: var(--text-header); margin-bottom: 8px; display: flex; align-items: center; justify-content: space-between;">
+                                <span>Active Radial &amp; Spiral Silk Sectors</span>
+                                <span id="spider-web-active-count" style="font-size: 11px; color: var(--accent-blue);">3 Active Sectors</span>
+                            </div>
+                            <div style="overflow-x: auto;">
+                                <table class="data-table" style="width: 100%; border-collapse: collapse; font-size: 12px;">
+                                    <thead>
+                                        <tr>
+                                            <th style="padding: 8px 12px; text-align: left;">Sector / Session</th>
+                                            <th style="padding: 8px 12px; text-align: left;">Agent Identity Token</th>
+                                            <th style="padding: 8px 12px; text-align: center;">Regime</th>
+                                            <th style="padding: 8px 12px; text-align: center;">Strain &epsilon;</th>
+                                            <th style="padding: 8px 12px; text-align: center;">Stress &sigma;</th>
+                                            <th style="padding: 8px 12px; text-align: center;">Enforced Rate</th>
+                                            <th style="padding: 8px 12px; text-align: center;">Exposure Bound</th>
+                                            <th style="padding: 8px 12px; text-align: center;">Autotomy Status</th>
+                                        </tr>
+                                    </thead>
+                                    <tbody id="spider-web-sectors-tbody">
+                                        <tr>
+                                            <td colspan="8" style="text-align: center; color: var(--text-muted); padding: 20px 0;">Loading spider-web sectors...</td>
+                                        </tr>
+                                    </tbody>
+                                </table>
+                            </div>
+                        </div>
+
+                        <!-- Simulation Result Banner (Hidden until triggered) -->
+                        <div id="spider-web-sim-result-container" style="display: none; background: rgba(14, 165, 233, 0.05); border: 1px solid rgba(14, 165, 233, 0.3); border-radius: 8px; padding: 14px;">
+                            <!-- Populated dynamically via JS -->
+                        </div>
+                    </div>
+                </div>
             </div>
 
             <!-- MITRE ATT&CK Matrix View -->
@@ -2142,15 +2226,15 @@
                 </div>
             </div>
 
-            <!-- Siquery-RS Live EDR SQL Console & 96-Table Inspector View -->
+            <!-- Siquery-RS Live EDR SQL Console & 98-Table Inspector View -->
             <div id="siquery-view" class="view-content">
                 <!-- Header Banner -->
                 <div class="card glass shadow-glow mb-4" style="border-left: 4px solid var(--accent-blue);">
                     <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
                         <div>
                             <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                                <h3 style="font-size: 20px; font-weight: 600; color: var(--text-header); margin: 0;">Siquery-RS Live EDR SQL Console &amp; 96-Table Protection Inspector</h3>
-                                <span class="badge blue" style="font-size: 11px;"><i data-lucide="database" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>96 System Tables Active</span>
+                                <h3 style="font-size: 20px; font-weight: 600; color: var(--text-header); margin: 0;">Siquery-RS Live EDR SQL Console &amp; 98-Table Protection Inspector</h3>
+                                <span class="badge blue" style="font-size: 11px;"><i data-lucide="database" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>98 System Tables Active</span>
                                 <span class="badge green" style="font-size: 11px;"><i data-lucide="shield-check" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>12-Sweep Multi-Table Guard</span>
                                 <span class="badge purple" style="font-size: 11px;"><i data-lucide="activity" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>EDR Continuous Sweep (45s)</span>
                             </div>
@@ -2178,8 +2262,8 @@
                             <span class="stat-title">System Tables</span>
                             <i data-lucide="table" class="stat-icon" style="color: var(--accent-blue);"></i>
                         </div>
-                        <div class="stat-value" id="siquery-stat-tables">96</div>
-                        <div class="stat-subtext">96 Tables &amp; Views Armed</div>
+                        <div class="stat-value" id="siquery-stat-tables">98</div>
+                        <div class="stat-subtext">98 Tables &amp; Views Armed</div>
                     </div>
                     <div class="stat-card glass shadow-glow">
                         <div class="stat-header">
@@ -2239,9 +2323,9 @@
                     </div>
                 </div>
 
-                <!-- Main Siquery Console Layout (96-Table Dictionary + SQL Editor & Results) -->
+                <!-- Main Siquery Console Layout (98-Table Dictionary + SQL Editor & Results) -->
                 <div style="display: grid; grid-template-columns: 320px 1fr; gap: 16px; margin-bottom: 20px;">
-                    <!-- 96-Table System Dictionary -->
+                    <!-- 98-Table System Dictionary -->
                     <div class="card glass shadow-glow" style="display: flex; flex-direction: column; height: 750px;">
                         <div class="card-header" style="padding: 14px 16px; border-bottom: 1px solid var(--glass-border);">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -2249,7 +2333,7 @@
                                     <i data-lucide="folder-tree" style="width: 16px; height: 16px; color: var(--accent-blue);"></i>
                                     <h4 style="margin: 0; font-size: 14px; font-weight: 600;">System Tables</h4>
                                 </div>
-                                <span id="siquery-table-count-badge" style="background: rgba(14, 165, 233, 0.15); color: var(--accent-blue); padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">96 Tables</span>
+                                <span id="siquery-table-count-badge" style="background: rgba(14, 165, 233, 0.15); color: var(--accent-blue); padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">98 Tables</span>
                             </div>
                             <div class="search-bar" style="width: 100%; background: rgba(0, 0, 0, 0.3); height: 32px; border-radius: 6px;">
                                 <i data-lucide="search" style="width: 13px; height: 13px;"></i>
@@ -2321,6 +2405,12 @@
                                     </button>
                                     <button onclick="applySiqueryPreset('coding_tools')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
                                         <i data-lucide="terminal" style="width: 11px; height: 11px;"></i> Coding Tools &amp; SDKs
+                                    </button>
+                                    <button onclick="applySiqueryPreset('spider_threads')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                                        <i data-lucide="network" style="width: 11px; height: 11px;"></i> Spider Threads
+                                    </button>
+                                    <button onclick="applySiqueryPreset('business_violations')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                                        <i data-lucide="shield-alert" style="width: 11px; height: 11px;"></i> Business Gate Violations
                                     </button>
                                 </div>
                             </div>

@@ -190,52 +190,106 @@ Multi-gigabyte downloads from Hugging Face or Cloudflare R2 frequently stall on 
 - Transfers seamlessly utilize reliable IPv4 TCP connections at line rate.
 - An RAII Drop guard guarantees that IPv6 bindings (`Enable-NetAdapterBinding`) are automatically restored once the transfer finishes, errors out, or is cancelled.
 
-### 12. Native Rust `siquery-rs` SQL Engine & CLI Operations (`osoosi siquery`)
+### 12. Native Rust `siquery-rs` 98-Table SQL Engine & CLI Operations (`osoosi siquery`)
 
-OpenỌ̀ṣọ́ọ̀sì includes an integrated, zero-dependency in-process SQL engine providing 100% table and feature parity with Devolutions' `siquery-rs`. It enables security operators and autonomous decision models to query all 41 operating system tables through standard ANSI SQL queries without requiring external binaries (`osqueryi.exe`).
+OpenỌ̀ṣọ́ọ̀sì includes an integrated, zero-dependency in-process SQL engine providing 100% table and feature parity with Devolutions' `siquery-rs`. It enables security operators and autonomous decision models to query all **98 operating system and AI security tables** through standard ANSI SQL queries without requiring external binaries (`osqueryi.exe`).
 
 #### CLI Execution Patterns
 
 ```powershell
-# 1. List all 41 available system tables
+# 1. List all 98 available system and agent security tables
 .\osoosi.exe siquery --list
 
 # 2. Inspect the column schema and types for a specific table
 .\osoosi.exe siquery --schema process_memory_map
-.\osoosi.exe siquery --schema wmi_services
+.\osoosi.exe siquery --schema spider_web_threads
+.\osoosi.exe siquery --schema business_policy_violations
 
 # 3. Query all records from a table in JSON format
 .\osoosi.exe siquery --all system_info --json
+.\osoosi.exe siquery --all spider_web_threads --json
 
 # 4. Dump entire table in pipe-delimited CSV format
 .\osoosi.exe siquery --all etc_hosts --csv
 
-# 5. Execute relational SQL joins in Pretty ASCII table mode
-.\osoosi.exe siquery --pretty -q "SELECT p.pid, p.name, s.remote_address, s.remote_port, s.state FROM processes p JOIN process_open_sockets s ON p.pid = s.pid WHERE s.state = 'LISTEN' LIMIT 15;"
+# 5. Query active spider-web thread strain and constitutive regimes
+.\osoosi.exe siquery --pretty -q "SELECT thread_id, thread_type, sector_id, current_strain, current_regime, is_fractured FROM spider_web_threads ORDER BY current_strain DESC LIMIT 15;"
 
 # 6. Check unbacked executable memory regions (in-memory injection & hollowing detection)
 .\osoosi.exe siquery --json -q "SELECT pid, base_address, region_size, state, protect, mapped_file FROM process_memory_map WHERE protect LIKE '%EXECUTE%' LIMIT 20;"
 
-# 7. Audit auto-start Windows services
+# 7. Audit out-of-model business policy violations and exfiltration exposure bounds
+.\osoosi.exe siquery --pretty -q "SELECT violation_id, agent_id, tool_name, sensitivity_level, estimated_exfiltration_bytes, exposure_budget_bytes FROM business_policy_violations ORDER BY timestamp_utc DESC LIMIT 10;"
+
+# 8. Audit auto-start Windows services
 .\osoosi.exe siquery --pretty -q "SELECT name, display_name, start_mode, state, path_name FROM wmi_services WHERE start_mode = 'Auto' LIMIT 20;"
 ```
 
 #### Interactive WebUI Console (`#siquery-view`)
 
 Operators can navigate to the **Siquery SQL Console** in the WebUI (`http://127.0.0.1:3030/#siquery`):
-- **41-Table Dictionary**: Filterable list of all 41 operating system tables with one-click query generation (`SELECT * FROM <table> LIMIT 15;`).
-- **One-Click Security Presets**: Quick buttons for Top Processes, Listening Sockets, WMI Services, Network Adapters, Windows Hotfixes, User Accounts, Hosts File MITM, and Memory Maps.
+- **98-Table Dictionary**: Filterable list of all 98 operating system tables with one-click query generation (`SELECT * FROM <table> LIMIT 15;`).
+- **One-Click Security Presets**: Quick buttons for Top Processes, Spider Threads, Business Violations, Mercury Pores, Listening Sockets, WMI Services, Network Adapters, Windows Hotfixes, User Accounts, Hosts File MITM, and Memory Maps.
 - **Output Formats**: Live interactive JSON tables with column sorting, raw ASCII monospace terminal output, or pipe-delimited CSV with single-click clipboard copy and file export.
 - **Live EDR Telemetry Summary**: Real-time counters showing active monitored processes, open network sockets, WMI services, shares, and EDR sweep status.
 
-#### REST API Endpoints
+### 13. Spider-Web Continuum Mechanics & Exposure-Bounded Containment Operations
+
+The spider-web continuum mechanics engine operates automatically within `crates/osoosi-agent-anomaly/src/spider_physics.rs` and is exposed via REST API endpoints:
+
+```powershell
+# Query current spider-web topology, active threads, and business violations
+curl.exe -s http://127.0.0.1:3030/api/agent-anomalies/spider-web | jq .
+
+# Manually evaluate an agent action through the continuum physics gate
+curl.exe -s -X POST http://127.0.0.1:3030/api/agent-anomalies/spider-web/evaluate `
+  -H "Content-Type: application/json" `
+  -d '{\"agent_id\": \"rogue-agent-1\", \"tool_name\": \"export_customers_csv\", \"arguments\": \"{\\\"format\\\": \\\"csv\\\"}\", \"target_path\": \"C:\\\\export.csv\", \"bytes_involved\": 524288}'
+```
+
+#### Verification Criteria:
+- **Linear Elastic Regime ($\epsilon \le 0.15$)**: Rate limit $R_{\text{enforced}} = 1000$ tokens/s. Unrestricted execution.
+- **Entropic Unfolding Regime ($0.15 < \epsilon \le 0.45$)**: Rate limit $R_{\text{enforced}} = 500$ tokens/s. Softening elasticity.
+- **Strain-Stiffening Regime ($0.45 < \epsilon \le 0.85$)**: Rate limit $R_{\text{enforced}} = 50$ tokens/s. Token-bucket rate throttling.
+- **Sacrificial Fracture Regime ($\epsilon > 0.85$)**: Rate limit $R_{\text{enforced}} = 0$ tokens/s. Immediate localized thread severance. Out-of-model exfiltration attempts fracture immediately at 0 bytes leaked.
+
+### 14. W3C HTTP Archive (`.har`) L7 Traffic Inspection Operations
+
+Inspect captured web browser or agent HTTP sessions directly via REST API:
+
+```powershell
+# Submit a HAR log or inspect via raw content
+curl.exe -s -X POST http://127.0.0.1:3030/api/har/inspect `
+  -H "Content-Type: application/json" `
+  -d '{\"har_content\": \"{\\\"log\\\": {\\\"version\\\": \\\"1.2\\\", \\\"entries\\\": []}}\"}'
+```
+
+The inspector extracts MIME types, cookies, request headers, detects prompt injection payloads, token exfiltration, and populates the `har_entries` Siquery table for relational SQL querying.
+
+### 15. Sub-Second Windows Service Hot-Swap & Solo-Developer Shipping
+
+#### Unified Release Build & Submission Command
+```powershell
+powershell -ExecutionPolicy Bypass -File scripts/build_and_submit.ps1
+```
+
+- **Step 1 & 2**: Compiles `osoosi-cli` in release mode and re-signs threat configs.
+- **Step 3 (Sub-Second Hot-Swap)**: Stops `OsoosiEDR`, replaces `target/release/osoosi.exe`, signs with native Windows 10 SDK `signtool.exe`, and restarts `OsoosiEDR` in ~1 second.
+- **Step 4 & 5**: Builds WiX MSI installer (`deploy/OshoosiClaw.msi`).
+- **Step 6 & 7**: Authenticode signs all binaries and submits release artifacts to Microsoft Security Intelligence (WDSI) via `scripts/submit_to_wdsi.py --all --no-launch`.
+- **Step 8**: Invokes `scripts/solo_pr_ship.ps1` to open a temporary branch, run security verification, trigger `github-actions[bot]` review `APPROVED`, and squash-merge into `main`.
+
+#### REST API Endpoints Summary
 
 | Endpoint | Method | Description |
 |:---|:---|:---|
-| `/api/siquery/tables` | `GET` | Returns an array of all 41 registered system tables and total count. |
+| `/api/siquery/tables` | `GET` | Returns an array of all 98 registered system tables and total count. |
 | `/api/siquery/query` | `POST` | Executes SQL queries (`query`, `format: json\|pretty\|csv`) and returns rows with `execution_duration_ms`. |
-| `/api/siquery/edr-status` | `GET` | Returns cached or freshly swept 6-dimension EDR security telemetry. |
+| `/api/siquery/edr-status` | `GET` | Returns cached or freshly swept 8-dimension EDR security telemetry. |
 | `/api/agent-anomalies/containment-status` | `GET` | Returns active 4-Ring agent containment states, isolated sessions, and breakout counts. |
+| `/api/agent-anomalies/spider-web` | `GET` | Returns spider-web continuum sectors, thread strain states, and business violations. |
+| `/api/agent-anomalies/spider-web/evaluate` | `POST` | Evaluates an agent action against 4-regime continuum mechanics and exposure budget ($B_{\max}$). |
+| `/api/har/inspect` | `POST` | Ingests and inspects W3C `.har` L7 traffic, returning total findings and security alerts. |
 
 ---
 
