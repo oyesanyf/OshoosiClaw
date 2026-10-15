@@ -105,6 +105,7 @@ fn should_skip_path(path: &Path, osoosi_dir: &Path, exclude_paths: &[String]) ->
             | "onedrive"
             | "dropbox"
             | "traps"
+            | "backups"
             | "database"
             | "runs"
             | "logs"

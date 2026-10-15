@@ -2374,7 +2374,10 @@ async fn get_deception_status_endpoint(State(state): State<DashboardState>) -> J
 async fn post_deception_deploy_traps(State(state): State<DashboardState>) -> Json<Value> {
     match &state.backend {
         Some(orch) => {
-            let canaries = orch.canary.deploy_canaries();
+            let orch_clone = orch.clone();
+            let canaries = tokio::task::spawn_blocking(move || orch_clone.canary.deploy_canaries())
+                .await
+                .unwrap_or_default();
             Json(json!({
                 "status": "deployed",
                 "traps_deployed": canaries.len(),

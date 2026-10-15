@@ -2149,33 +2149,37 @@
                     <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
                         <div>
                             <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                                <h3 style="font-size: 20px; font-weight: 600; color: var(--text-header); margin: 0;">Siquery-RS Live EDR SQL Console &amp; 41-Table Inspector</h3>
-                                <span class="badge blue" style="font-size: 11px;"><i data-lucide="database" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>41 System Tables Active</span>
-                                <span class="badge green" style="font-size: 11px;"><i data-lucide="shield-check" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>Devolutions Parity</span>
+                                <h3 style="font-size: 20px; font-weight: 600; color: var(--text-header); margin: 0;">Siquery-RS Live EDR SQL Console &amp; 88-Table Protection Inspector</h3>
+                                <span class="badge blue" style="font-size: 11px;"><i data-lucide="database" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>88 System Tables Active</span>
+                                <span class="badge green" style="font-size: 11px;"><i data-lucide="shield-check" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>12-Sweep Multi-Table Guard</span>
                                 <span class="badge purple" style="font-size: 11px;"><i data-lucide="activity" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>EDR Continuous Sweep (45s)</span>
                             </div>
                             <p style="color: var(--text-secondary); font-size: 13px; margin-top: 6px; margin-bottom: 0;">
                                 Query operating system telemetry, process trees, sockets, WMI objects, and security posture in real-time via standard ANSI SQL with zero synthetic mocks.
                             </p>
                         </div>
-                        <div style="display: flex; gap: 10px; align-items: center;">
-                            <button id="siquery-refresh-sweep-btn" class="btn-primary" onclick="refreshSiqueryTelemetry()" style="background: linear-gradient(135deg, #0ea5e9, #2563eb); border: none; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; cursor: pointer; color: #fff;">
+                        <div style="display: flex; gap: 10px; align-items: center; flex-wrap: wrap;">
+                            <button id="siquery-protection-sweep-btn" class="btn-primary" onclick="runSiqueryProtectionSweep()" style="background: linear-gradient(135deg, #10b981, #059669); border: none; padding: 8px 16px; border-radius: 8px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; cursor: pointer; color: #fff; box-shadow: 0 0 15px rgba(16, 185, 129, 0.3);">
+                                <i data-lucide="shield-alert" style="width: 14px; height: 14px;"></i>
+                                <span>Run Active Protection Sweep</span>
+                            </button>
+                            <button id="siquery-refresh-sweep-btn" class="btn-secondary" onclick="refreshSiqueryTelemetry()" style="background: rgba(255, 255, 255, 0.08); border: 1px solid var(--glass-border); padding: 8px 14px; border-radius: 8px; font-size: 13px; font-weight: 600; display: flex; align-items: center; gap: 6px; cursor: pointer; color: var(--text-primary);">
                                 <i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i>
-                                <span>Sweep Telemetry</span>
+                                <span>Refresh</span>
                             </button>
                         </div>
                     </div>
                 </div>
 
                 <!-- Live EDR Status Summary Row -->
-                <div class="stats-grid mb-4">
+                <div class="stats-grid mb-4" style="grid-template-columns: repeat(auto-fit, minmax(200px, 1fr));">
                     <div class="stat-card glass shadow-glow">
                         <div class="stat-header">
                             <span class="stat-title">System Tables</span>
                             <i data-lucide="table" class="stat-icon" style="color: var(--accent-blue);"></i>
                         </div>
-                        <div class="stat-value" id="siquery-stat-tables">41</div>
-                        <div class="stat-subtext">100% Devolutions Parity</div>
+                        <div class="stat-value" id="siquery-stat-tables">88</div>
+                        <div class="stat-subtext">88 Tables &amp; Views Armed</div>
                     </div>
                     <div class="stat-card glass shadow-glow">
                         <div class="stat-header">
@@ -2195,17 +2199,49 @@
                     </div>
                     <div class="stat-card glass shadow-glow">
                         <div class="stat-header">
-                            <span class="stat-title">WMI Services &amp; Shares</span>
-                            <i data-lucide="server" class="stat-icon" style="color: #f59e0b;"></i>
+                            <span class="stat-title">DNS &amp; Resolvers</span>
+                            <i data-lucide="globe" class="stat-icon" style="color: #38bdf8;"></i>
                         </div>
-                        <div class="stat-value" id="siquery-stat-services">-</div>
-                        <div class="stat-subtext">Windows service objects</div>
+                        <div class="stat-value" id="siquery-stat-dns">-</div>
+                        <div class="stat-subtext">Cache &amp; upstream servers</div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">Persistence &amp; Tasks</span>
+                            <i data-lucide="play-circle" class="stat-icon" style="color: #ec4899;"></i>
+                        </div>
+                        <div class="stat-value" id="siquery-stat-autoruns">-</div>
+                        <div class="stat-subtext">Autoruns &amp; scheduled tasks</div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">Kernel Drivers</span>
+                            <i data-lucide="hard-drive" class="stat-icon" style="color: #f59e0b;"></i>
+                        </div>
+                        <div class="stat-value" id="siquery-stat-drivers">-</div>
+                        <div class="stat-subtext">BYOVD &amp; system drivers</div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">Firewall Rules</span>
+                            <i data-lucide="shield" class="stat-icon" style="color: #8b5cf6;"></i>
+                        </div>
+                        <div class="stat-value" id="siquery-stat-firewall">-</div>
+                        <div class="stat-subtext">Active filter policy</div>
+                    </div>
+                    <div class="stat-card glass shadow-glow">
+                        <div class="stat-header">
+                            <span class="stat-title">Protection Posture</span>
+                            <i data-lucide="shield-check" class="stat-icon" style="color: #10b981;"></i>
+                        </div>
+                        <div class="stat-value" id="siquery-stat-protection" style="font-size: 15px; line-height: 1.3;">Armed</div>
+                        <div class="stat-subtext">12-Sweep Multi-Table Guard</div>
                     </div>
                 </div>
 
-                <!-- Main Siquery Console Layout (41-Table Dictionary + SQL Editor & Results) -->
+                <!-- Main Siquery Console Layout (88-Table Dictionary + SQL Editor & Results) -->
                 <div style="display: grid; grid-template-columns: 320px 1fr; gap: 16px; margin-bottom: 20px;">
-                    <!-- 41-Table System Dictionary -->
+                    <!-- 88-Table System Dictionary -->
                     <div class="card glass shadow-glow" style="display: flex; flex-direction: column; height: 750px;">
                         <div class="card-header" style="padding: 14px 16px; border-bottom: 1px solid var(--glass-border);">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -2213,7 +2249,7 @@
                                     <i data-lucide="folder-tree" style="width: 16px; height: 16px; color: var(--accent-blue);"></i>
                                     <h4 style="margin: 0; font-size: 14px; font-weight: 600;">System Tables</h4>
                                 </div>
-                                <span id="siquery-table-count-badge" style="background: rgba(14, 165, 233, 0.15); color: var(--accent-blue); padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">41 Tables</span>
+                                <span id="siquery-table-count-badge" style="background: rgba(14, 165, 233, 0.15); color: var(--accent-blue); padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">88 Tables</span>
                             </div>
                             <div class="search-bar" style="width: 100%; background: rgba(0, 0, 0, 0.3); height: 32px; border-radius: 6px;">
                                 <i data-lucide="search" style="width: 13px; height: 13px;"></i>
@@ -2240,6 +2276,24 @@
                                     </button>
                                     <button onclick="applySiqueryPreset('sockets')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
                                         <i data-lucide="radio" style="width: 11px; height: 11px;"></i> Listening Sockets
+                                    </button>
+                                    <button onclick="applySiqueryPreset('dns')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                                        <i data-lucide="globe" style="width: 11px; height: 11px;"></i> DNS Cache
+                                    </button>
+                                    <button onclick="applySiqueryPreset('dns_resolvers')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                                        <i data-lucide="server" style="width: 11px; height: 11px;"></i> DNS Resolvers
+                                    </button>
+                                    <button onclick="applySiqueryPreset('arp')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                                        <i data-lucide="share-2" style="width: 11px; height: 11px;"></i> ARP Cache (MITM)
+                                    </button>
+                                    <button onclick="applySiqueryPreset('autoruns')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                                        <i data-lucide="play-circle" style="width: 11px; height: 11px;"></i> Autoruns &amp; Tasks
+                                    </button>
+                                    <button onclick="applySiqueryPreset('drivers')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                                        <i data-lucide="hard-drive" style="width: 11px; height: 11px;"></i> Drivers (BYOVD)
+                                    </button>
+                                    <button onclick="applySiqueryPreset('firewall')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
+                                        <i data-lucide="shield" style="width: 11px; height: 11px;"></i> Firewall Rules
                                     </button>
                                     <button onclick="applySiqueryPreset('services')" style="background: rgba(255, 255, 255, 0.05); border: 1px solid var(--glass-border); color: var(--text-primary); padding: 5px 10px; border-radius: 6px; font-size: 11px; cursor: pointer; display: inline-flex; align-items: center; gap: 5px;">
                                         <i data-lucide="cog" style="width: 11px; height: 11px;"></i> WMI Services

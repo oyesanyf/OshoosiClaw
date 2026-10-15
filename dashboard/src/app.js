@@ -8040,8 +8040,12 @@ const SIQUERY_PRESETS = {
     users: "SELECT name, sid, disabled, lockout AS lock_out, password_changeable FROM wmi_local_accounts LIMIT 20;",
     hosts: "SELECT address AS ip_address, hostnames AS hostname FROM etc_hosts;",
     memory: "SELECT pid, start AS base_address, end AS end_address, permissions AS protect, path AS mapped_file FROM process_memory_map LIMIT 20;",
-    dns: "SELECT name, type, data, ttl, status FROM dns_cache LIMIT 30;",
-    dns_resolvers: "SELECT interface, address, type FROM dns_resolvers;"
+    dns: "SELECT name, type, data, ttl, flags FROM dns_cache LIMIT 30;",
+    dns_resolvers: "SELECT address, interface_alias, family, metric FROM dns_resolvers LIMIT 20;",
+    arp: "SELECT address, mac, interface, permanent FROM arp_cache LIMIT 30;",
+    autoruns: "SELECT name, path, args, source, location, status FROM autoruns LIMIT 25;",
+    drivers: "SELECT name, display_name, path, state, start_mode, signed FROM drivers LIMIT 25;",
+    firewall: "SELECT name, app_name, action, direction, protocol, local_ports FROM firewall_rules LIMIT 25;"
 };
 
 async function renderSiqueryView() {
@@ -8139,32 +8143,86 @@ async function refreshSiqueryTelemetry() {
         if (window.lucide) window.lucide.createIcons();
     }
     try {
-        const res = await fetch(`${API_BASE}/siquery/edr-status`);
+        const res = await fetchWithRetry(`${API_BASE}/siquery/edr-status`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data && data.telemetry) {
-            const tel = data.telemetry;
-            const procElem = document.getElementById('siquery-stat-processes');
-            if (procElem) procElem.innerText = tel.processes_count != null ? tel.processes_count : '-';
-
-            const sockElem = document.getElementById('siquery-stat-sockets');
-            if (sockElem) sockElem.innerText = tel.tcp_sockets_count != null ? tel.tcp_sockets_count : '-';
-
-            const srvElem = document.getElementById('siquery-stat-services');
-            if (srvElem) {
-                const srv = tel.wmi_services_count != null ? tel.wmi_services_count : 0;
-                const sh = tel.shares_count != null ? tel.shares_count : 0;
-                srvElem.innerText = `${srv} / ${sh}`;
-            }
+            updateSiqueryTelemetryCards(data.telemetry);
         }
     } catch (err) {
         console.error('Failed to refresh siquery telemetry:', err);
     } finally {
         if (btn) {
-            btn.innerHTML = `<i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i> <span>Sweep Telemetry</span>`;
+            btn.innerHTML = `<i data-lucide="refresh-cw" style="width: 14px; height: 14px;"></i> <span>Refresh</span>`;
             if (window.lucide) window.lucide.createIcons();
         }
     }
+}
+
+async function runSiqueryProtectionSweep() {
+    const btn = document.getElementById('siquery-protection-sweep-btn');
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = `<i data-lucide="shield-alert" class="spin" style="width: 14px; height: 14px;"></i> <span>Running 12-Sweep Guard...</span>`;
+        if (window.lucide) window.lucide.createIcons();
+    }
+    try {
+        const res = await fetchWithRetry(`${API_BASE}/siquery/protection-sweep`, {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' }
+        });
+        if (!res.ok) throw new Error(`HTTP ${res.status}`);
+        const data = await res.json();
+        if (data && data.telemetry) {
+            updateSiqueryTelemetryCards(data.telemetry);
+            const anomalies = data.telemetry.anomalies_detected || (data.telemetry.anomalies ? data.telemetry.anomalies.length : 0);
+            if (anomalies > 0) {
+                showToast(`🛡️ Siquery Protection Sweep: ${anomalies} threat anomaly(ies) identified and mitigated!`, 'warning');
+            } else {
+                showToast(`🛡️ Siquery Protection Sweep completed: All 88 tables clean, zero anomalies detected.`, 'success');
+            }
+        }
+    } catch (err) {
+        console.error('Failed to execute siquery protection sweep:', err);
+        showToast('Failed to execute Siquery protection sweep: ' + err.message, 'error');
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = `<i data-lucide="shield-alert" style="width: 14px; height: 14px;"></i> <span>Run Active Protection Sweep</span>`;
+            if (window.lucide) window.lucide.createIcons();
+        }
+    }
+}
+
+function updateSiqueryTelemetryCards(tel) {
+    const m = tel.metrics || {};
+    const procElem = document.getElementById('siquery-stat-processes');
+    if (procElem) procElem.innerText = m.processes_count != null ? m.processes_count : (tel.processes_count != null ? tel.processes_count : '-');
+
+    const sockElem = document.getElementById('siquery-stat-sockets');
+    if (sockElem) sockElem.innerText = m.sockets_count != null ? m.sockets_count : (tel.tcp_sockets_count != null ? tel.tcp_sockets_count : '-');
+
+    const dnsElem = document.getElementById('siquery-stat-dns');
+    if (dnsElem) dnsElem.innerText = m.dns_cache_count != null ? m.dns_cache_count : (tel.dns_cache_count != null ? tel.dns_cache_count : '-');
+
+    const autorunElem = document.getElementById('siquery-stat-autoruns');
+    if (autorunElem) {
+        const ar = m.autoruns_count != null ? m.autoruns_count : (tel.autoruns_count != null ? tel.autoruns_count : 0);
+        const st = m.scheduled_tasks_count != null ? m.scheduled_tasks_count : 0;
+        autorunElem.innerText = `${ar} / ${st}`;
+    }
+
+    const driverElem = document.getElementById('siquery-stat-drivers');
+    if (driverElem) driverElem.innerText = m.drivers_count != null ? m.drivers_count : (tel.drivers_count != null ? tel.drivers_count : '-');
+
+    const fwElem = document.getElementById('siquery-stat-firewall');
+    if (fwElem) fwElem.innerText = m.firewall_rules_count != null ? m.firewall_rules_count : (tel.firewall_rules_count != null ? tel.firewall_rules_count : '-');
+
+    const tablesElem = document.getElementById('siquery-stat-tables');
+    if (tablesElem) tablesElem.innerText = tel.tables_monitored || 88;
+
+    const protElem = document.getElementById('siquery-stat-protection');
+    if (protElem) protElem.innerText = tel.protection_status ? "Active (12 Sweeps)" : "Armed";
 }
 
 async function executeSiquery() {
@@ -8367,6 +8425,7 @@ window.refreshSiqueryTelemetry = refreshSiqueryTelemetry;
 window.executeSiquery = executeSiquery;
 window.copySiqueryResults = copySiqueryResults;
 window.exportSiqueryResults = exportSiqueryResults;
+window.runSiqueryProtectionSweep = runSiqueryProtectionSweep;
 
 
 

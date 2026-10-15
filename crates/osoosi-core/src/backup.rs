@@ -466,6 +466,9 @@ fn create_fallback_snapshot(_config: &BackupConfig) -> anyhow::Result<String> {
     let _ = std::fs::create_dir_all(backup_dir);
     let snapshot_file = backup_dir.join(format!("restore_point_{}.json", ts_str));
 
+    let db_path = std::path::Path::new("database/osoosi.db");
+    let db_size_bytes = std::fs::metadata(db_path).map(|m| m.len()).unwrap_or(0);
+
     let node_name = hostname::get().unwrap_or_default().to_string_lossy().to_string();
     let snapshot_data = serde_json::json!({
         "timestamp": ts.to_rfc3339(),
@@ -473,18 +476,14 @@ fn create_fallback_snapshot(_config: &BackupConfig) -> anyhow::Result<String> {
         "type": "fallback_state_snapshot",
         "os": std::env::consts::OS,
         "arch": std::env::consts::ARCH,
+        "db_path": "database/osoosi.db",
+        "db_size_bytes": db_size_bytes,
         "status": "State snapshot created successfully",
         "description": format!("Fallback cryptographic state restore point created at {}", ts.to_rfc3339()),
     });
 
     let content = serde_json::to_string_pretty(&snapshot_data)?;
     std::fs::write(&snapshot_file, content)?;
-
-    let db_path = std::path::Path::new("database/osoosi.db");
-    if db_path.exists() {
-        let db_bak = backup_dir.join(format!("osoosi_{}.db.bak", ts_str));
-        let _ = std::fs::copy(db_path, db_bak);
-    }
 
     Ok(format!("State restore point snapshot saved to {}", snapshot_file.display()))
 }
