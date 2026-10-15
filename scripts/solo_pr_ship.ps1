@@ -4,55 +4,154 @@ param(
 )
 $ErrorActionPreference = "Stop"
 
+# Guard against recursive hook invocation
+$env:OSOOSI_SKIP_POST_COMMIT_HOOK = "1"
+
 $branchName = "pr/solo-" + (Get-Date -Format "yyyyMMdd-HHmmss")
-Write-Host "[1/5] Creating feature branch $branchName..." -ForegroundColor Cyan
-git checkout -b $branchName
+Write-Host "[1/5] Setting up feature branch $branchName..." -ForegroundColor Cyan
+
+# Fetch origin/main reference to know exact remote commit
+git fetch origin main --quiet
+
+$uncommitted = (git status --porcelain)
+$headSha = (git rev-parse HEAD).Trim()
+$originMainSha = (git rev-parse origin/main).Trim()
+
+if ($uncommitted) {
+    # Case A: Uncommitted changes exist in working tree
+    Write-Host "Detected uncommitted changes. Staging and committing to $branchName..." -ForegroundColor Yellow
+    git checkout -b $branchName
+    git add -A
+    git commit -m "$Title"
+} elseif ($headSha -ne $originMainSha) {
+    # Case B: Local commit(s) ahead of origin/main (triggered after git commit on main)
+    Write-Host "Detected local commit(s) ahead of origin/main. Branching to $branchName and resetting local main..." -ForegroundColor Yellow
+    git branch $branchName HEAD
+    git reset --hard origin/main
+    git checkout $branchName
+} else {
+    # Case C: Clean working tree and HEAD == origin/main (direct test run)
+    Write-Host "Working tree is clean and HEAD matches origin/main. Creating empty commit on $branchName so PR has content..." -ForegroundColor Yellow
+    git checkout -b $branchName
+    git commit --allow-empty -m "$Title"
+}
+
+Write-Host "Pushing $branchName to origin..." -ForegroundColor Cyan
 git push -u origin $branchName
 
 Write-Host "[2/5] Opening Pull Request against main..." -ForegroundColor Cyan
-$prInfo = python -c "
-import subprocess, urllib.request, json, sys
+$prNumber = python -c "
+import subprocess, urllib.request, urllib.error, json, sys
+
 p = subprocess.Popen(['git', 'credential', 'fill'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
 out, _ = p.communicate('protocol=https\nhost=github.com\n\n')
 token = dict(l.split('=', 1) for l in out.splitlines() if '=' in l).get('password', '')
-payload = json.dumps({'title': sys.argv[1], 'body': sys.argv[2], 'head': sys.argv[3], 'base': 'main'}).encode()
-req = urllib.request.Request('https://api.github.com/repos/oyesanyf/OshoosiClaw/pulls', data=payload, method='POST', headers={'Authorization': f'Bearer {token}', 'User-Agent': 'OshoosiClaw', 'Content-Type': 'application/json'})
-resp = json.loads(urllib.request.urlopen(req).read().decode())
-print(resp['number'])
+
+payload = json.dumps({'title': sys.argv[1], 'body': sys.argv[2], 'head': sys.argv[3], 'base': 'main'}).encode('utf-8')
+req = urllib.request.Request(
+    'https://api.github.com/repos/oyesanyf/OshoosiClaw/pulls',
+    data=payload,
+    method='POST',
+    headers={'Authorization': 'Bearer ' + token, 'User-Agent': 'OshoosiClaw', 'Content-Type': 'application/json'}
+)
+
+try:
+    resp = json.loads(urllib.request.urlopen(req).read().decode())
+    print(resp['number'])
+except urllib.error.HTTPError as e:
+    err_body = e.read().decode('utf-8', errors='replace')
+    sys.stderr.write('HTTP Error ' + str(e.code) + ': ' + err_body + '\n')
+    sys.exit(1)
 " "$Title" "$Body" "$branchName"
 
-$prNumber = $prInfo.Trim()
+$prNumber = $prNumber.Trim()
 Write-Host "[3/5] Opened PR #$prNumber. Waiting for github-actions[bot] Auto-Review..." -ForegroundColor Cyan
 
-for ($i = 0; $i -lt 24; $i++) {
+$approved = $false
+for ($i = 0; $i -lt 30; $i++) {
     Start-Sleep -Seconds 5
-    $approved = python -c "
-import subprocess, urllib.request, json, sys
+    $reviewState = python -c "
+import subprocess, urllib.request, urllib.error, json, sys
+
 p = subprocess.Popen(['git', 'credential', 'fill'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
 out, _ = p.communicate('protocol=https\nhost=github.com\n\n')
 token = dict(l.split('=', 1) for l in out.splitlines() if '=' in l).get('password', '')
-req = urllib.request.Request(f'https://api.github.com/repos/oyesanyf/OshoosiClaw/pulls/{sys.argv[1]}/reviews', headers={'Authorization': f'Bearer {token}', 'User-Agent': 'OshoosiClaw'})
-reviews = json.loads(urllib.request.urlopen(req).read().decode())
-print('APPROVED' if any(r.get('state') == 'APPROVED' for r in reviews) else 'WAITING')
+
+req = urllib.request.Request(
+    'https://api.github.com/repos/oyesanyf/OshoosiClaw/pulls/' + sys.argv[1] + '/reviews',
+    headers={'Authorization': 'Bearer ' + token, 'User-Agent': 'OshoosiClaw'}
+)
+
+try:
+    reviews = json.loads(urllib.request.urlopen(req).read().decode())
+    if any(r.get('state') == 'APPROVED' for r in reviews):
+        print('APPROVED')
+    else:
+        print('WAITING')
+except urllib.error.HTTPError as e:
+    sys.stderr.write('HTTP Error ' + str(e.code) + ': ' + e.read().decode('utf-8', errors='replace') + '\n')
+    print('ERROR')
 " "$prNumber"
-    if ($approved.Trim() -eq "APPROVED") {
+
+    if ($reviewState.Trim() -eq "APPROVED") {
+        $approved = $true
         Write-Host "[4/5] PR #$prNumber APPROVED by github-actions[bot]!" -ForegroundColor Green
         break
+    } else {
+        Write-Host "  Waiting for approval review... (attempt $($i + 1)/30)" -ForegroundColor Gray
     }
+}
+
+if (-not $approved) {
+    Write-Warning "Auto-review timed out after 150 seconds. Proceeding to attempt merge..."
 }
 
 Write-Host "[5/5] Merging PR #$prNumber into main and syncing local branch..." -ForegroundColor Cyan
 python -c "
-import subprocess, urllib.request, json, sys
+import subprocess, urllib.request, urllib.error, json, sys, time
+
 p = subprocess.Popen(['git', 'credential', 'fill'], stdin=subprocess.PIPE, stdout=subprocess.PIPE, text=True)
 out, _ = p.communicate('protocol=https\nhost=github.com\n\n')
 token = dict(l.split('=', 1) for l in out.splitlines() if '=' in l).get('password', '')
-payload = json.dumps({'merge_method': 'squash'}).encode()
-req = urllib.request.Request(f'https://api.github.com/repos/oyesanyf/OshoosiClaw/pulls/{sys.argv[1]}/merge', data=payload, method='PUT', headers={'Authorization': f'Bearer {token}', 'User-Agent': 'OshoosiClaw', 'Content-Type': 'application/json'})
-urllib.request.urlopen(req)
+
+pr_num = sys.argv[1]
+payload = json.dumps({'merge_method': 'squash'}).encode('utf-8')
+merge_url = 'https://api.github.com/repos/oyesanyf/OshoosiClaw/pulls/' + pr_num + '/merge'
+
+for attempt in range(1, 6):
+    req = urllib.request.Request(
+        merge_url,
+        data=payload,
+        method='PUT',
+        headers={'Authorization': 'Bearer ' + token, 'User-Agent': 'OshoosiClaw', 'Content-Type': 'application/json'}
+    )
+    try:
+        resp = json.loads(urllib.request.urlopen(req).read().decode())
+        print('Merge successful:', resp.get('message', 'Merged'))
+        break
+    except urllib.error.HTTPError as e:
+        err_msg = e.read().decode('utf-8', errors='replace')
+        if e.code in (405, 409) and attempt < 5:
+            sys.stderr.write('Merge attempt ' + str(attempt) + '/5 received HTTP ' + str(e.code) + '. Retrying in 3s...\n')
+            time.sleep(3)
+        else:
+            sys.stderr.write('Merge HTTP Error ' + str(e.code) + ': ' + err_msg + '\n')
+            if attempt == 5:
+                sys.exit(1)
 " "$prNumber"
 
+# Switch back to main and pull latest
 git checkout main
 git pull origin main
+
+# Delete local branch
 git branch -D $branchName
+
+# Delete remote branch if still present
+try {
+    git push origin --delete $branchName 2>$null
+} catch {
+    # Ignore if already deleted
+}
+
 Write-Host "Successfully shipped PR #$prNumber with full Bot Code-Review!" -ForegroundColor Green

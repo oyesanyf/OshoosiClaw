@@ -1,0 +1,23 @@
+#!/bin/sh
+# OpenỌ̀ṣọ́ọ̀sì Solo-Developer Automated PR & Bot Code-Review Hook
+# Automatically triggers solo_pr_ship.ps1 when committing directly to main
+
+# Guard 1: Never recurse if invoked from inside solo_pr_ship.ps1
+if [ "$OSOOSI_SKIP_POST_COMMIT_HOOK" = "1" ]; then
+    exit 0
+fi
+
+# Guard 2: Only trigger on branch 'main'
+CURRENT_BRANCH=$(git symbolic-ref --short HEAD 2>/dev/null || echo "")
+if [ "$CURRENT_BRANCH" != "main" ]; then
+    exit 0
+fi
+
+COMMIT_MSG=$(git log -1 --pretty=%s)
+
+echo "======================================================================"
+echo " [OpenỌ̀ṣọ́ọ̀sì] Solo-Developer PR Auto-Shipper Triggered on 'main'"
+echo " Commit: $COMMIT_MSG"
+echo "======================================================================"
+
+powershell.exe -NoProfile -ExecutionPolicy Bypass -File "scripts/solo_pr_ship.ps1" -Title "$COMMIT_MSG"
