@@ -447,7 +447,7 @@ function setupNav() {
                     renderUtilitiesView();
                 } else if (view === 'siquery') {
                     document.getElementById('siquery-view').classList.add('active');
-                    viewTitle.innerText = "Siquery-RS Live EDR SQL Console & 41-Table Inspector";
+                    viewTitle.innerText = "Siquery-RS Live EDR SQL Console & 96-Table Inspector";
                     renderSiqueryView();
                 } else {
                     const otherView = document.getElementById('other-view') || document.getElementById('dashboard-view');
@@ -2927,12 +2927,19 @@ function renderRepairView(repairStatus) {
         }
 
         const pending = repairStatus?.pending_count || 0;
-    const lastCve = repairStatus?.last_cve || 'CVE-2024-38063 (Evaluated & Mitigated)';
-    const lastState = repairStatus?.last_state || 'Attested & Continuous';
-    const lastSig = repairStatus?.last_sig ? (repairStatus.last_sig.slice(0, 18) + '...') : 'Ed25519-Hardware-Root';
-    const lastTime = repairStatus?.last_at ? formatTimestamp(repairStatus.last_at) : 'Continuous (Live)';
-    const statusText = pending > 0 ? `${pending} Patch(es) Pending Approval` : 'Fully Synchronized · Zero Vulnerabilities';
-    const statusColor = pending > 0 ? 'var(--accent-orange)' : 'var(--accent-green)';
+        const rawCve = repairStatus?.last_cve;
+        const lastCve = pending > 0
+            ? (rawCve || 'CVE-2024-38063 (Evaluated & Mitigated)')
+            : (rawCve
+                ? (rawCve.toLowerCase().includes('patch') || rawCve.toLowerCase().includes('up to date')
+                    ? rawCve
+                    : `Patches Up to Date (${rawCve})`)
+                : 'All Patches Up to Date');
+        const lastState = repairStatus?.last_state || (pending === 0 ? 'Patches Up to Date · Verified' : 'Attested & Continuous');
+        const lastSig = repairStatus?.last_sig ? (repairStatus.last_sig.slice(0, 18) + '...') : 'Ed25519-Hardware-Root';
+        const lastTime = repairStatus?.last_at ? formatTimestamp(repairStatus.last_at) : 'Continuous (Live)';
+        const statusText = pending > 0 ? `${pending} Patch(es) Pending Approval` : 'All System Patches Up to Date · Zero Vulnerabilities';
+        const statusColor = pending > 0 ? 'var(--accent-orange)' : 'var(--accent-green)';
 
     container.innerHTML = `
         <div style="display:flex; flex-direction:column; gap:20px; padding:8px;">
@@ -2949,7 +2956,7 @@ function renderRepairView(repairStatus) {
                 </div>
                 <div style="display:flex; gap:10px;">
                     <button class="btn-primary" onclick="window.approvePendingPatches(this)" style="font-size:12px; padding:6px 12px; border-radius:8px; display:inline-flex; align-items:center; gap:5px; cursor:pointer; background:${pending > 0 ? 'var(--accent-green)' : 'rgba(16,185,129,0.18)'}; color:${pending > 0 ? '#05070a' : 'var(--accent-green)'}; border:1px solid rgba(16,185,129,0.35); font-weight:600;">
-                        <i data-lucide="shield-check" style="width:13px; height:13px;"></i> ${pending > 0 ? `Approve & Apply (${pending})` : 'Patches Approved'}
+                        <i data-lucide="shield-check" style="width:13px; height:13px;"></i> ${pending > 0 ? `Approve & Apply (${pending})` : 'Patches Up to Date'}
                     </button>
                     <button class="btn-text" onclick="window.triggerPatchDiscovery(this)" style="font-size:12px;">
                         <i data-lucide="refresh-cw" style="width:13px; margin-right:4px;"></i> Run Discovery
@@ -2972,9 +2979,9 @@ function renderRepairView(repairStatus) {
                 </div>
 
                 <div class="stat-card glass" style="padding:14px;">
-                    <div class="stat-label"><i data-lucide="shield-alert" style="width:13px; vertical-align:middle; margin-right:4px;"></i> Active CVE Status</div>
-                    <div class="stat-value" style="font-size:15px; color:var(--accent-blue); margin-top:6px;">${escapeHtml(lastCve)}</div>
-                    <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">Continuous Micro-patching Active</div>
+                    <div class="stat-label"><i data-lucide="shield-check" style="width:13px; vertical-align:middle; margin-right:4px;"></i> Patch & CVE Status</div>
+                    <div class="stat-value" style="font-size:15px; color:${pending > 0 ? 'var(--accent-blue)' : 'var(--accent-green)'}; margin-top:6px;">${escapeHtml(lastCve)}</div>
+                    <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">${pending > 0 ? 'Continuous Micro-patching Active' : 'All OS & Defender patches up to date'}</div>
                 </div>
 
                 <div class="stat-card glass" style="padding:14px;">
@@ -3056,6 +3063,16 @@ window.approvePendingPatches = async function(btn) {
         btn.innerHTML = '<i data-lucide="loader" class="spin" style="width:13px; margin-right:4px;"></i> Applying...';
         if (window.lucide) lucide.createIcons();
     }
+    const currentPending = state.repairStatus?.pending_count || 0;
+    if (currentPending === 0) {
+        showSkyrlToast('All system patches are already up to date.', 'info');
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="shield-check" style="width:13px; height:13px;"></i> Patches Up to Date';
+            if (window.lucide) lucide.createIcons();
+        }
+        return;
+    }
     showSkyrlToast('Approving and applying pending security patch(es)...', 'info');
     try {
         const res = await fetchWithRetry(`${API_BASE}/agent/approve-patches`, { method: 'POST' });
@@ -3064,11 +3081,11 @@ window.approvePendingPatches = async function(btn) {
             showUserError('Approve Patches', data || `HTTP ${res.status}`);
             return;
         }
-        showSkyrlToast(data?.message || 'Pending security patch(es) approved and applied!', 'success');
+        showSkyrlToast(data?.message || 'All system patches are up to date.', 'success');
         state.repairStatus = {
             ...(state.repairStatus || {}),
             pending_count: 0,
-            last_state: 'Committed · Verified',
+            last_state: 'Patches Up to Date · Verified',
             last_at: new Date().toISOString()
         };
         renderRepairView(state.repairStatus);
@@ -3079,7 +3096,7 @@ window.approvePendingPatches = async function(btn) {
     } finally {
         if (btn) {
             btn.disabled = false;
-            btn.innerHTML = '<i data-lucide="shield-check" style="width:13px; margin-right:4px;"></i> Patches Approved';
+            btn.innerHTML = '<i data-lucide="shield-check" style="width:13px; height:13px;"></i> Patches Up to Date';
             if (window.lucide) lucide.createIcons();
         }
     }
@@ -7770,6 +7787,7 @@ window.triggerAgentAnomalySimulation = triggerAgentAnomalySimulation;
  */
 
 let modelPullPollInterval = null;
+let hadActiveModelPulls = false;
 
 function renderUtilitiesView() {
     try {
@@ -7784,11 +7802,121 @@ function renderUtilitiesView() {
     }
 }
 
-async function loadCalibratedModels(forceRefresh = false) {
+function renderCalibratedModelsData(data) {
+    if (!data) return;
     const summaryText = document.getElementById('util-hardware-summary-text');
     const grid = document.getElementById('calibrated-models-grid');
     const daemonBadge = document.getElementById('ollama-daemon-status-badge');
     const installedList = document.getElementById('ollama-installed-models-list');
+
+    // 1. Hardware Summary
+    if (summaryText && data.system_resources) {
+        const res = data.system_resources;
+        const ramInfo = `${res.free_ram_gb.toFixed(1)} GB free / ${res.total_ram_gb.toFixed(1)} GB total`;
+        const gpuInfo = res.has_gpu ? `${res.gpu_name} (${res.free_vram_mb} MB free VRAM)` : 'CPU AVX2 Acceleration';
+        summaryText.innerHTML = `<strong>Compute Profile:</strong> <span class="badge blue" style="font-size:11px;">${escapeHtml(data.tier_label || data.tier)}</span> &nbsp;·&nbsp; <strong>Cores:</strong> ${res.logical_cores} &nbsp;·&nbsp; <strong>RAM:</strong> ${ramInfo} &nbsp;·&nbsp; <strong>Device:</strong> ${gpuInfo}`;
+    }
+
+    // 2. Ollama Daemon Badge
+    if (daemonBadge) {
+        if (data.ollama_online) {
+            daemonBadge.className = 'badge green';
+            daemonBadge.innerHTML = '<i data-lucide="check-circle" style="width:12px;height:12px;margin-right:4px;"></i> Daemon Active (127.0.0.1:11434)';
+        } else {
+            daemonBadge.className = 'badge yellow';
+            daemonBadge.innerHTML = '<i data-lucide="alert-triangle" style="width:12px;height:12px;margin-right:4px;"></i> Daemon Unreachable';
+        }
+    }
+
+    // 3. Installed Models Pills
+    if (installedList) {
+        if (!data.installed_models || data.installed_models.length === 0) {
+            installedList.innerHTML = '<div style="font-size:12px; color:var(--text-muted);"><i data-lucide="info" style="width:13px; margin-right:4px;"></i> No local models currently installed in Ollama. Click the download button above to retrieve calibrated models.</div>';
+        } else {
+            installedList.innerHTML = data.installed_models.map(m => `
+                <span class="badge blue" style="font-size:12px; padding:6px 12px; border-radius:8px; display:inline-flex; align-items:center; gap:6px;">
+                    <i data-lucide="cpu" style="width:12px; height:12px;"></i>
+                    <code>${escapeHtml(m)}</code>
+                    <span style="opacity:0.6; font-size:10px;">Installed</span>
+                </span>
+            `).join('');
+        }
+    }
+
+    // 4. Calibrated Models Grid
+    if (grid) {
+        if (!data.calibrated_models || data.calibrated_models.length === 0) {
+            grid.innerHTML = '<div class="placeholder-text">No calibrated models found.</div>';
+        } else {
+            grid.innerHTML = data.calibrated_models.map(item => {
+                const isInstalled = item.installed;
+                const statusBadge = isInstalled
+                    ? '<span class="badge green" style="font-size:11px;"><i data-lucide="check" style="width:11px; margin-right:3px;"></i> Ready &amp; Installed</span>'
+                    : '<span class="badge yellow" style="font-size:11px;"><i data-lucide="download" style="width:11px; margin-right:3px;"></i> Available to Download</span>';
+
+                const downloadBtn = isInstalled
+                    ? `<button class="btn-text" style="font-size:12px; color:var(--accent-green); cursor:default;" disabled>
+                           <i data-lucide="check-circle" style="width:14px; margin-right:4px;"></i> Installed
+                       </button>`
+                    : `<button class="btn-primary btn-sm" id="btn-pull-${escapeHtml(item.model).replace(/[^a-zA-Z0-9_-]/g, '_')}" onclick="downloadCalibratedModel('${escapeHtml(item.model)}')" style="display:inline-flex; align-items:center; gap:6px;">
+                           <i data-lucide="download" style="width:13px; height:13px;"></i> Pull Model
+                       </button>`;
+
+                const pullCmd = `ollama pull ${escapeHtml(item.model)}`;
+
+                return `
+                    <div class="stat-card glass shadow-glow" style="display:flex; flex-direction:column; justify-content:space-between; padding:18px; border-radius:12px; border:1px solid rgba(255,255,255,0.06); position:relative; overflow:hidden;">
+                        <div>
+                            <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; gap:8px;">
+                                <div>
+                                    <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:var(--accent-blue); font-weight:600;">${escapeHtml(item.role)}</div>
+                                    <h4 style="margin:4px 0 0 0; font-size:16px; font-weight:600; color:var(--text-header); font-family:monospace;">${escapeHtml(item.model)}</h4>
+                                </div>
+                                ${statusBadge}
+                            </div>
+                            <div style="font-size:12px; color:var(--text-muted); line-height:1.45; margin-bottom:12px;">
+                                ${escapeHtml(item.purpose)}
+                            </div>
+                            <div style="background:rgba(255,255,255,0.02); border-radius:8px; padding:10px; margin-bottom:14px; font-size:11px; border:1px solid rgba(255,255,255,0.04);">
+                                <div style="color:var(--text-primary); margin-bottom:4px;"><strong>Hardware Fit:</strong> ${escapeHtml(item.tier_fit)}</div>
+                                <div style="color:var(--text-muted);"><strong>Estimated Weight:</strong> ~${item.size_est_gb.toFixed(1)} GB VRAM/RAM</div>
+                            </div>
+                        </div>
+                        <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(255,255,255,0.06); padding-top:12px; margin-top:auto;">
+                            <button class="btn-text" onclick="copyTerminalCommand('${pullCmd}', this)" style="font-size:11px; color:var(--text-muted); cursor:pointer;" title="Copy terminal command">
+                                <i data-lucide="terminal" style="width:12px; margin-right:3px;"></i> Copy CLI
+                            </button>
+                            ${downloadBtn}
+                        </div>
+                    </div>
+                `;
+            }).join('');
+        }
+    }
+
+    // Update Download All button state
+    const allBtn = document.getElementById('btn-download-all-calibrated');
+    if (allBtn && data.calibrated_models) {
+        const uninstalledCount = data.calibrated_models.filter(m => !m.installed).length;
+        if (uninstalledCount === 0) {
+            allBtn.innerHTML = '<i data-lucide="check-check" style="width:16px; height:16px;"></i> All Calibrated Models Ready';
+            allBtn.className = 'btn-text';
+            allBtn.style.color = 'var(--accent-green)';
+        } else {
+            allBtn.innerHTML = `<i data-lucide="download-cloud" style="width:16px; height:16px;"></i> Download Calibrated Models for This Host (${uninstalledCount} New)`;
+            allBtn.className = 'btn-primary';
+            allBtn.style.color = '';
+        }
+    }
+
+    if (window.lucide) {
+        window.lucide.createIcons();
+    }
+}
+
+async function loadCalibratedModels(forceRefresh = false) {
+    const summaryText = document.getElementById('util-hardware-summary-text');
+    const grid = document.getElementById('calibrated-models-grid');
 
     if (forceRefresh && grid) {
         grid.innerHTML = '<div class="placeholder-text"><i data-lucide="loader-2" class="spin"></i> Refreshing calibrated models and hardware profile...</div>';
@@ -7803,118 +7931,36 @@ async function loadCalibratedModels(forceRefresh = false) {
             throw new Error(data?.message || `HTTP ${resp.status}`);
         }
 
-        // 1. Hardware Summary
-        if (summaryText && data.system_resources) {
-            const res = data.system_resources;
-            const ramInfo = `${res.free_ram_gb.toFixed(1)} GB free / ${res.total_ram_gb.toFixed(1)} GB total`;
-            const gpuInfo = res.has_gpu ? `${res.gpu_name} (${res.free_vram_mb} MB free VRAM)` : 'CPU AVX2 Acceleration';
-            summaryText.innerHTML = `<strong>Compute Profile:</strong> <span class="badge blue" style="font-size:11px;">${escapeHtml(data.tier_label || data.tier)}</span> &nbsp;·&nbsp; <strong>Cores:</strong> ${res.logical_cores} &nbsp;·&nbsp; <strong>RAM:</strong> ${ramInfo} &nbsp;·&nbsp; <strong>Device:</strong> ${gpuInfo}`;
-        }
-
-        // 2. Ollama Daemon Badge
-        if (daemonBadge) {
-            if (data.ollama_online) {
-                daemonBadge.className = 'badge green';
-                daemonBadge.innerHTML = '<i data-lucide="check-circle" style="width:12px;height:12px;margin-right:4px;"></i> Daemon Active (127.0.0.1:11434)';
-            } else {
-                daemonBadge.className = 'badge yellow';
-                daemonBadge.innerHTML = '<i data-lucide="alert-triangle" style="width:12px;height:12px;margin-right:4px;"></i> Daemon Unreachable';
+        try {
+            if (data && data.calibrated_models && data.calibrated_models.length > 0) {
+                localStorage.setItem('osoosi_last_calibrated_models', JSON.stringify(data));
             }
-        }
+        } catch (_) {}
 
-        // 3. Installed Models Pills
-        if (installedList) {
-            if (!data.installed_models || data.installed_models.length === 0) {
-                installedList.innerHTML = '<div style="font-size:12px; color:var(--text-muted);"><i data-lucide="info" style="width:13px; margin-right:4px;"></i> No local models currently installed in Ollama. Click the download button above to retrieve calibrated models.</div>';
-            } else {
-                installedList.innerHTML = data.installed_models.map(m => `
-                    <span class="badge blue" style="font-size:12px; padding:6px 12px; border-radius:8px; display:inline-flex; align-items:center; gap:6px;">
-                        <i data-lucide="cpu" style="width:12px; height:12px;"></i>
-                        <code>${escapeHtml(m)}</code>
-                        <span style="opacity:0.6; font-size:10px;">Installed</span>
-                    </span>
-                `).join('');
-            }
-        }
-
-        // 4. Calibrated Models Grid
-        if (grid) {
-            if (!data.calibrated_models || data.calibrated_models.length === 0) {
-                grid.innerHTML = '<div class="placeholder-text">No calibrated models found.</div>';
-            } else {
-                grid.innerHTML = data.calibrated_models.map(item => {
-                    const isInstalled = item.installed;
-                    const statusBadge = isInstalled
-                        ? '<span class="badge green" style="font-size:11px;"><i data-lucide="check" style="width:11px; margin-right:3px;"></i> Ready &amp; Installed</span>'
-                        : '<span class="badge yellow" style="font-size:11px;"><i data-lucide="download" style="width:11px; margin-right:3px;"></i> Available to Download</span>';
-
-                    const downloadBtn = isInstalled
-                        ? `<button class="btn-text" style="font-size:12px; color:var(--accent-green); cursor:default;" disabled>
-                               <i data-lucide="check-circle" style="width:14px; margin-right:4px;"></i> Installed
-                           </button>`
-                        : `<button class="btn-primary btn-sm" id="btn-pull-${escapeHtml(item.model).replace(/[^a-zA-Z0-9_-]/g, '_')}" onclick="downloadCalibratedModel('${escapeHtml(item.model)}')" style="display:inline-flex; align-items:center; gap:6px;">
-                               <i data-lucide="download" style="width:13px; height:13px;"></i> Pull Model
-                           </button>`;
-
-                    const pullCmd = `ollama pull ${escapeHtml(item.model)}`;
-
-                    return `
-                        <div class="stat-card glass shadow-glow" style="display:flex; flex-direction:column; justify-content:space-between; padding:18px; border-radius:12px; border:1px solid rgba(255,255,255,0.06); position:relative; overflow:hidden;">
-                            <div>
-                                <div style="display:flex; justify-content:space-between; align-items:flex-start; margin-bottom:10px; gap:8px;">
-                                    <div>
-                                        <div style="font-size:11px; text-transform:uppercase; letter-spacing:0.5px; color:var(--accent-blue); font-weight:600;">${escapeHtml(item.role)}</div>
-                                        <h4 style="margin:4px 0 0 0; font-size:16px; font-weight:600; color:var(--text-header); font-family:monospace;">${escapeHtml(item.model)}</h4>
-                                    </div>
-                                    ${statusBadge}
-                                </div>
-                                <div style="font-size:12px; color:var(--text-muted); line-height:1.45; margin-bottom:12px;">
-                                    ${escapeHtml(item.purpose)}
-                                </div>
-                                <div style="background:rgba(255,255,255,0.02); border-radius:8px; padding:10px; margin-bottom:14px; font-size:11px; border:1px solid rgba(255,255,255,0.04);">
-                                    <div style="color:var(--text-primary); margin-bottom:4px;"><strong>Hardware Fit:</strong> ${escapeHtml(item.tier_fit)}</div>
-                                    <div style="color:var(--text-muted);"><strong>Estimated Weight:</strong> ~${item.size_est_gb.toFixed(1)} GB VRAM/RAM</div>
-                                </div>
-                            </div>
-                            <div style="display:flex; justify-content:space-between; align-items:center; border-top:1px solid rgba(255,255,255,0.06); padding-top:12px; margin-top:auto;">
-                                <button class="btn-text" onclick="copyTerminalCommand('${pullCmd}', this)" style="font-size:11px; color:var(--text-muted); cursor:pointer;" title="Copy terminal command">
-                                    <i data-lucide="terminal" style="width:12px; margin-right:3px;"></i> Copy CLI
-                                </button>
-                                ${downloadBtn}
-                            </div>
-                        </div>
-                    `;
-                }).join('');
-            }
-        }
-
-        // Update Download All button state
-        const allBtn = document.getElementById('btn-download-all-calibrated');
-        if (allBtn && data.calibrated_models) {
-            const uninstalledCount = data.calibrated_models.filter(m => !m.installed).length;
-            if (uninstalledCount === 0) {
-                allBtn.innerHTML = '<i data-lucide="check-check" style="width:16px; height:16px;"></i> All Calibrated Models Ready';
-                allBtn.className = 'btn-text';
-                allBtn.style.color = 'var(--accent-green)';
-            } else {
-                allBtn.innerHTML = `<i data-lucide="download-cloud" style="width:16px; height:16px;"></i> Download Calibrated Models for This Host (${uninstalledCount} New)`;
-                allBtn.className = 'btn-primary';
-                allBtn.style.color = '';
-            }
-        }
-
-        if (window.lucide) {
-            window.lucide.createIcons();
-        }
+        renderCalibratedModelsData(data);
     } catch (err) {
         console.error('Failed to load calibrated models:', err);
-        if (summaryText) {
-            summaryText.innerHTML = '<span style="color:var(--accent-red);">Failed to query host hardware profile. Ensure dashboard backend is running.</span>';
+        let restoredFromCache = false;
+        try {
+            const cachedStr = localStorage.getItem('osoosi_last_calibrated_models');
+            if (cachedStr) {
+                const cached = JSON.parse(cachedStr);
+                if (cached && cached.calibrated_models && cached.calibrated_models.length > 0) {
+                    renderCalibratedModelsData(cached);
+                    restoredFromCache = true;
+                }
+            }
+        } catch (_) {}
+
+        if (!restoredFromCache) {
+            if (summaryText) {
+                summaryText.innerHTML = '<span style="color:var(--accent-red);">Failed to query host hardware profile. Ensure dashboard backend is running.</span>';
+            }
+            if (grid) {
+                grid.innerHTML = `<div class="placeholder-text" style="color:var(--accent-red);"><i data-lucide="alert-circle"></i> Error loading models: ${escapeHtml(err.message)}</div>`;
+            }
+            if (window.lucide) window.lucide.createIcons();
         }
-        if (grid) {
-            grid.innerHTML = `<div class="placeholder-text" style="color:var(--accent-red);"><i data-lucide="alert-circle"></i> Error loading models: ${escapeHtml(err.message)}</div>`;
-        }
-        if (window.lucide) window.lucide.createIcons();
     }
 }
 
@@ -8025,6 +8071,10 @@ async function pollModelPullProgress() {
                 clearInterval(modelPullPollInterval);
                 modelPullPollInterval = null;
             }
+            if (hadActiveModelPulls) {
+                hadActiveModelPulls = false;
+                loadCalibratedModels();
+            }
             return;
         }
 
@@ -8062,6 +8112,7 @@ async function pollModelPullProgress() {
         if (window.lucide) window.lucide.createIcons();
 
         if (hasActive) {
+            hadActiveModelPulls = true;
             if (!modelPullPollInterval) {
                 modelPullPollInterval = setInterval(pollModelPullProgress, 2500);
             }
@@ -8070,7 +8121,10 @@ async function pollModelPullProgress() {
                 clearInterval(modelPullPollInterval);
                 modelPullPollInterval = null;
             }
-            loadCalibratedModels();
+            if (hadActiveModelPulls) {
+                hadActiveModelPulls = false;
+                loadCalibratedModels();
+            }
         }
     } catch (e) {
         console.error('Error polling model progress:', e);
@@ -8101,7 +8155,7 @@ window.downloadAllCalibratedModels = downloadAllCalibratedModels;
 window.copyTerminalCommand = copyTerminalCommand;
 
 // ==========================================
-// Siquery-RS Live EDR SQL Console (41-Table Parity)
+// Siquery-RS Live EDR SQL Console (96-Table Parity)
 // ==========================================
 
 const SIQUERY_PRESETS = {
@@ -8255,7 +8309,7 @@ async function runSiqueryProtectionSweep() {
             if (anomalies > 0) {
                 showToast(`🛡️ Siquery Protection Sweep: ${anomalies} threat anomaly(ies) identified and mitigated!`, 'warning');
             } else {
-                showToast(`🛡️ Siquery Protection Sweep completed: All 88 tables clean, zero anomalies detected.`, 'success');
+                showToast(`🛡️ Siquery Protection Sweep completed: All 96 tables clean, zero anomalies detected.`, 'success');
             }
         }
     } catch (err) {

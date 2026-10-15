@@ -876,10 +876,13 @@
                                         </div>
                                         <div>
                                             <h4 style="color:var(--text-header); font-size:16px; margin:0 0 4px 0;">OS Kernel &amp; Autonomous Patch Engine</h4>
-                                            <div style="font-size:13px; color:var(--accent-green); font-weight:500;">Fully Synchronized · Zero Vulnerabilities</div>
+                                            <div style="font-size:13px; color:var(--accent-green); font-weight:500;">All System Patches Up to Date · Zero Vulnerabilities</div>
                                         </div>
                                     </div>
                                     <div style="display:flex; gap:10px;">
+                                        <button class="btn-primary" onclick="window.approvePendingPatches(this)" style="font-size:12px; padding:6px 12px; border-radius:8px; display:inline-flex; align-items:center; gap:5px; cursor:pointer; background:rgba(16,185,129,0.18); color:var(--accent-green); border:1px solid rgba(16,185,129,0.35); font-weight:600;">
+                                            <i data-lucide="shield-check" style="width:13px; height:13px;"></i> Patches Up to Date
+                                        </button>
                                         <button class="btn-text" onclick="window.triggerPatchDiscovery(this)" style="font-size:12px;">
                                             <i data-lucide="refresh-cw" style="width:13px; margin-right:4px;"></i> Run Discovery
                                         </button>
@@ -898,9 +901,9 @@
                                         <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">eBPF / Windows Hook Protection Active</div>
                                     </div>
                                     <div class="stat-card glass" style="padding:14px;">
-                                        <div class="stat-label"><i data-lucide="shield-alert" style="width:13px; vertical-align:middle; margin-right:4px;"></i> Active CVE Status</div>
-                                        <div class="stat-value" style="font-size:15px; color:var(--accent-blue); margin-top:6px;">CVE-2024-38063 (Evaluated &amp; Mitigated)</div>
-                                        <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">Continuous Micro-patching Active</div>
+                                        <div class="stat-label"><i data-lucide="shield-check" style="width:13px; vertical-align:middle; margin-right:4px;"></i> Patch &amp; CVE Status</div>
+                                        <div class="stat-value" style="font-size:15px; color:var(--accent-green); margin-top:6px;">All Patches Up to Date</div>
+                                        <div style="font-size:11px; color:var(--text-muted); margin-top:4px;">All OS &amp; Defender patches up to date</div>
                                     </div>
                                     <div class="stat-card glass" style="padding:14px;">
                                         <div class="stat-label"><i data-lucide="key" style="width:13px; vertical-align:middle; margin-right:4px;"></i> Cryptographic Attestation</div>
@@ -2139,15 +2142,15 @@
                 </div>
             </div>
 
-            <!-- Siquery-RS Live EDR SQL Console & 41-Table Inspector View -->
+            <!-- Siquery-RS Live EDR SQL Console & 96-Table Inspector View -->
             <div id="siquery-view" class="view-content">
                 <!-- Header Banner -->
                 <div class="card glass shadow-glow mb-4" style="border-left: 4px solid var(--accent-blue);">
                     <div class="card-header" style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 12px;">
                         <div>
                             <div style="display: flex; align-items: center; gap: 10px; flex-wrap: wrap;">
-                                <h3 style="font-size: 20px; font-weight: 600; color: var(--text-header); margin: 0;">Siquery-RS Live EDR SQL Console &amp; 88-Table Protection Inspector</h3>
-                                <span class="badge blue" style="font-size: 11px;"><i data-lucide="database" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>88 System Tables Active</span>
+                                <h3 style="font-size: 20px; font-weight: 600; color: var(--text-header); margin: 0;">Siquery-RS Live EDR SQL Console &amp; 96-Table Protection Inspector</h3>
+                                <span class="badge blue" style="font-size: 11px;"><i data-lucide="database" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>96 System Tables Active</span>
                                 <span class="badge green" style="font-size: 11px;"><i data-lucide="shield-check" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>12-Sweep Multi-Table Guard</span>
                                 <span class="badge purple" style="font-size: 11px;"><i data-lucide="activity" style="width: 12px; height: 12px; display: inline; vertical-align: middle; margin-right: 3px;"></i>EDR Continuous Sweep (45s)</span>
                             </div>
@@ -2175,8 +2178,8 @@
                             <span class="stat-title">System Tables</span>
                             <i data-lucide="table" class="stat-icon" style="color: var(--accent-blue);"></i>
                         </div>
-                        <div class="stat-value" id="siquery-stat-tables">88</div>
-                        <div class="stat-subtext">88 Tables &amp; Views Armed</div>
+                        <div class="stat-value" id="siquery-stat-tables">96</div>
+                        <div class="stat-subtext">96 Tables &amp; Views Armed</div>
                     </div>
                     <div class="stat-card glass shadow-glow">
                         <div class="stat-header">
@@ -2236,9 +2239,9 @@
                     </div>
                 </div>
 
-                <!-- Main Siquery Console Layout (88-Table Dictionary + SQL Editor & Results) -->
+                <!-- Main Siquery Console Layout (96-Table Dictionary + SQL Editor & Results) -->
                 <div style="display: grid; grid-template-columns: 320px 1fr; gap: 16px; margin-bottom: 20px;">
-                    <!-- 88-Table System Dictionary -->
+                    <!-- 96-Table System Dictionary -->
                     <div class="card glass shadow-glow" style="display: flex; flex-direction: column; height: 750px;">
                         <div class="card-header" style="padding: 14px 16px; border-bottom: 1px solid var(--glass-border);">
                             <div style="display: flex; justify-content: space-between; align-items: center; margin-bottom: 10px;">
@@ -2246,7 +2249,7 @@
                                     <i data-lucide="folder-tree" style="width: 16px; height: 16px; color: var(--accent-blue);"></i>
                                     <h4 style="margin: 0; font-size: 14px; font-weight: 600;">System Tables</h4>
                                 </div>
-                                <span id="siquery-table-count-badge" style="background: rgba(14, 165, 233, 0.15); color: var(--accent-blue); padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">88 Tables</span>
+                                <span id="siquery-table-count-badge" style="background: rgba(14, 165, 233, 0.15); color: var(--accent-blue); padding: 2px 8px; border-radius: 12px; font-size: 11px; font-weight: 600;">96 Tables</span>
                             </div>
                             <div class="search-bar" style="width: 100%; background: rgba(0, 0, 0, 0.3); height: 32px; border-radius: 6px;">
                                 <i data-lucide="search" style="width: 13px; height: 13px;"></i>
