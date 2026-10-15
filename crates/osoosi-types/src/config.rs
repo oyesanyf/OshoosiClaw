@@ -863,6 +863,13 @@ pub fn resolve_models_dir() -> PathBuf {
         }
     }
 
+    if let Some(root) = resolve_project_root() {
+        let m = root.join("models");
+        if m.is_dir() {
+            return m;
+        }
+    }
+
     // Fallback to searching upward for 'models' directory
     let mut dir = std::env::current_dir().unwrap_or_else(|_| PathBuf::from("."));
     loop {
@@ -1246,22 +1253,33 @@ pub fn resolve_xori_path() -> PathBuf {
     }
 }
 
-/// Walk up from current_dir to find project/workspace root (osoosi.toml or Cargo.toml with [workspace]).
+/// Walk up from current_dir or current_exe to find project/workspace root (osoosi.toml or Cargo.toml with [workspace]).
 pub fn resolve_project_root() -> Option<PathBuf> {
-    let mut dir = std::env::current_dir().ok()?;
-    loop {
-        if dir.join("osoosi.toml").is_file() {
-            return Some(dir);
-        }
-        if dir.join("Cargo.toml").is_file() {
-            if let Ok(content) = std::fs::read_to_string(dir.join("Cargo.toml")) {
-                if content.contains("[workspace]") {
-                    return Some(dir);
+    for start in [
+        std::env::current_dir().ok(),
+        std::env::current_exe()
+            .ok()
+            .and_then(|p| p.parent().map(|d| d.to_path_buf())),
+    ]
+    .into_iter()
+    .flatten()
+    {
+        let mut dir = Some(start);
+        while let Some(d) = dir {
+            if d.join("osoosi.toml").is_file() {
+                return Some(d);
+            }
+            if d.join("Cargo.toml").is_file() {
+                if let Ok(content) = std::fs::read_to_string(d.join("Cargo.toml")) {
+                    if content.contains("[workspace]") {
+                        return Some(d);
+                    }
                 }
             }
+            dir = d.parent().map(|p| p.to_path_buf());
         }
-        dir = dir.parent()?.to_path_buf();
     }
+    None
 }
 
 /// Resolve config file path: OSOOSI_CONFIG env, ./osoosi.toml, or ~/.config/osoosi/osoosi.toml.

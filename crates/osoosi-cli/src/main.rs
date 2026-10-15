@@ -595,6 +595,10 @@ fn main() -> anyhow::Result<()> {
         let _ = service::try_start_service_dispatcher();
     }
 
+    if !std::path::Path::new("osoosi.toml").exists() {
+        service::ensure_service_working_directory();
+    }
+
     set_panic_hook();
     osoosi_types::persist_environment_paths();
     let _ = fs::create_dir_all(resolve_log_directory());
@@ -637,6 +641,15 @@ fn main() -> anyhow::Result<()> {
 }
 
 async fn async_main(cli: Cli) -> anyhow::Result<()> {
+    if matches!(cli.command, Some(Commands::SetupDefender)) {
+        println!("[*] Configuring Windows Defender exclusions and Firewall rules for installation directory...");
+        match osoosi_core::firewall::configure_install_folder_exclusions_and_firewall().await {
+            Ok(_) => println!("[+] Successfully configured Windows Defender exclusions and Windows Firewall rules."),
+            Err(e) => eprintln!("[-] Warning: Could not fully configure Defender/Firewall rules: {}", e),
+        }
+        return Ok(());
+    }
+
     info!(
         tokio_workers = osoosi_core::tokio_worker_threads(),
         max_blocking = osoosi_core::max_blocking_threads(),
@@ -662,7 +675,13 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
         info!("AI features disabled via config.");
     }
 
-    let is_starting = matches!(cli.command, Some(Commands::Start { .. }) | Some(Commands::Lite) | None);
+    let is_starting = matches!(
+        cli.command,
+        Some(Commands::Start { .. })
+            | Some(Commands::Lite)
+            | Some(Commands::Service { action: service::ServiceAction::Run })
+            | None
+    );
     let is_granting = cli.grant_access || matches!(cli.command, Some(Commands::GrantAccess));
     let is_bootstrapping = matches!(cli.command, Some(Commands::BootstrapModels));
 
@@ -2406,17 +2425,21 @@ async fn handle_driver_command(action: DriverAction) -> anyhow::Result<()> {
                 let driver_path = if let Some(p) = path {
                     std::path::PathBuf::from(p)
                 } else {
-                    let default_dev = std::path::PathBuf::from("driver\\windows\\osoosi_driver.sys");
-                    if default_dev.exists() {
-                        default_dev
-                    } else {
-                        let installed = std::path::PathBuf::from("C:\\Program Files\\OshoosiClaw\\driver\\windows\\osoosi_driver.sys");
-                        if installed.exists() {
-                            installed
-                        } else {
-                            std::path::PathBuf::from("C:\\Program Files\\OshoosiClaw\\driver\\osoosi_driver.sys")
-                        }
-                    }
+                    let app_root = std::env::current_exe()
+                        .ok()
+                        .map(|e| service::resolve_app_root_from_exe(&e))
+                        .unwrap_or_else(|| std::path::PathBuf::from("."));
+                    let candidates = [
+                        app_root.join(r"driver\windows\osoosi_driver.sys"),
+                        app_root.join(r"driver\osoosi_driver.sys"),
+                        std::path::PathBuf::from(r"driver\windows\osoosi_driver.sys"),
+                        std::path::PathBuf::from(r"C:\Program Files\OshoosiClaw\driver\windows\osoosi_driver.sys"),
+                        std::path::PathBuf::from(r"C:\Program Files\OshoosiClaw\driver\osoosi_driver.sys"),
+                    ];
+                    candidates
+                        .into_iter()
+                        .find(|p| p.exists())
+                        .unwrap_or_else(|| app_root.join(r"driver\windows\osoosi_driver.sys"))
                 };
                 println!("Registering kernel service 'OsoosiDriver' pointing to {:?}...", driver_path);
                 let create_status = std::process::Command::new("sc.exe")

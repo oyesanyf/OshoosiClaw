@@ -96,11 +96,11 @@
 
         <!-- Dynamic Windows Defender and Firewall Configuration during Installation -->
         <CustomAction Id="ConfigureDefenderAndFirewall"
-                      Directory="INSTALLFOLDER"
+                      FileRef="OsoosiExe"
                       Execute="deferred"
                       Impersonate="no"
                       Return="ignore"
-                      ExeCommand="&quot;[#OsoosiExe]&quot; setup-defender" />
+                      ExeCommand="setup-defender" />
 
         <InstallExecuteSequence>
             <Custom Action="ConfigureDefenderAndFirewall" After="InstallFiles" Condition="NOT Installed" />

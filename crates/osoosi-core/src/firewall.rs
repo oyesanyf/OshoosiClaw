@@ -288,7 +288,7 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
         );
 
         // 1. Windows Defender Folder & Process Exclusion
-        let ps_cmd = format!(
+        let mut ps_cmd = format!(
             "Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue; \
              Add-MpPreference -ExclusionProcess '{}' -ErrorAction SilentlyContinue; \
              Add-MpPreference -ExclusionProcess '{}' -ErrorAction SilentlyContinue",
@@ -296,6 +296,16 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             exe_name.replace('\'', "''"),
             clean_exe_path.replace('\'', "''")
         );
+
+        if let Some(root) = osoosi_types::resolve_project_root() {
+            let clean_root = root.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+            if clean_root != clean_install_dir {
+                ps_cmd.push_str(&format!(
+                    "; Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue",
+                    clean_root.replace('\'', "''")
+                ));
+            }
+        }
 
         let mut def_cmd = Command::new("powershell.exe");
         def_cmd.stdout(std::process::Stdio::null());

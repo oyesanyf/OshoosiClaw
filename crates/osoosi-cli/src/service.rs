@@ -62,14 +62,15 @@ fn run_sc_cmd(args: &[&str]) -> anyhow::Result<std::process::Output> {
 }
 
 /// Resolve the application root directory from the current executable path.
-/// Walks up to 4 levels looking for workspace/installation indicators (`osoosi.toml`, `config/`, `yara/`).
+/// Walks up to 5 levels looking for workspace/installation indicators (`osoosi.toml`, `config/`, `yara/`, `Cargo.toml`).
 pub fn resolve_app_root_from_exe(exe: &std::path::Path) -> std::path::PathBuf {
     let mut current = exe.parent();
-    for _ in 0..4 {
+    for _ in 0..5 {
         if let Some(dir) = current {
             if dir.join("osoosi.toml").exists()
                 || dir.join("config").is_dir()
                 || dir.join("yara").is_dir()
+                || dir.join("Cargo.toml").exists()
             {
                 return dir.to_path_buf();
             }
@@ -96,7 +97,62 @@ pub fn ensure_service_working_directory() {
     }
 }
 
+/// Helper to ensure the command is running with elevated administrator privileges.
+/// If not elevated on Windows, requests UAC elevation via PowerShell `Start-Process -Verb RunAs`.
+fn ensure_elevated_for_service_action(action_arg: &str) -> anyhow::Result<bool> {
+    #[cfg(windows)]
+    {
+        if osoosi_types::is_elevated() {
+            return Ok(false);
+        }
+        let exe = std::env::current_exe()?;
+        let exe_str = exe.to_string_lossy().replace(r"\\?\", "");
+        println!(
+            "[*] Administrator privileges required for 'osoosi service {}'. Requesting UAC elevation...",
+            action_arg
+        );
+        let ps_cmd = format!(
+            "$p = Start-Process -FilePath '{}' -ArgumentList 'service', '{}' -Verb RunAs -Wait -PassThru; if ($null -eq $p) {{ exit 1 }}; exit $p.ExitCode",
+            exe_str.replace('\'', "''"),
+            action_arg
+        );
+        let status = Command::new("powershell.exe")
+            .args([
+                "-NoProfile",
+                "-NonInteractive",
+                "-ExecutionPolicy",
+                "Bypass",
+                "-Command",
+                &ps_cmd,
+            ])
+            .status()?;
+        if status.success() {
+            println!("[+] Service action '{}' completed successfully.", action_arg);
+            if action_arg != "delete" {
+                if let Ok(state) = query_service_state() {
+                    println!("{}", state);
+                }
+            }
+            return Ok(true);
+        } else {
+            anyhow::bail!(
+                "Elevated 'osoosi service {}' failed or UAC prompt was declined (exit code: {:?}).",
+                action_arg,
+                status.code()
+            );
+        }
+    }
+    #[cfg(not(windows))]
+    {
+        let _ = action_arg;
+        Ok(false)
+    }
+}
+
 pub fn install_service() -> anyhow::Result<()> {
+    if ensure_elevated_for_service_action("install")? {
+        return Ok(());
+    }
     let exe = std::env::current_exe()?;
     let exe_str = exe.to_string_lossy().replace(r"\\?\", "");
     let bin_path = format!("\"{}\" service run --no-browser", exe_str);
@@ -155,10 +211,14 @@ pub fn install_service() -> anyhow::Result<()> {
     println!("Binary Path: {}", bin_path);
     println!("Startup Type: Automatic");
     println!("Recovery: Auto-restart configured");
+    let _ = start_service();
     Ok(())
 }
 
 pub fn start_service() -> anyhow::Result<()> {
+    if ensure_elevated_for_service_action("start")? {
+        return Ok(());
+    }
     info!("Starting Windows Service '{}'...", SERVICE_NAME);
     let output = run_sc_cmd(&["start", SERVICE_NAME])?;
     if !output.status.success() {
@@ -187,6 +247,9 @@ pub fn start_service() -> anyhow::Result<()> {
 }
 
 pub fn stop_service() -> anyhow::Result<()> {
+    if ensure_elevated_for_service_action("stop")? {
+        return Ok(());
+    }
     info!("Stopping Windows Service '{}'...", SERVICE_NAME);
     let output = run_sc_cmd(&["stop", SERVICE_NAME])?;
     if !output.status.success() {
@@ -215,6 +278,9 @@ pub fn stop_service() -> anyhow::Result<()> {
 }
 
 pub fn restart_service() -> anyhow::Result<()> {
+    if ensure_elevated_for_service_action("restart")? {
+        return Ok(());
+    }
     println!("Restarting Windows Service '{}'...", SERVICE_NAME);
     let _ = stop_service();
     std::thread::sleep(Duration::from_secs(1));
@@ -222,6 +288,9 @@ pub fn restart_service() -> anyhow::Result<()> {
 }
 
 pub fn delete_service() -> anyhow::Result<()> {
+    if ensure_elevated_for_service_action("delete")? {
+        return Ok(());
+    }
     info!("Removing Windows Service '{}'...", SERVICE_NAME);
     let _ = stop_service();
     std::thread::sleep(Duration::from_secs(1));
