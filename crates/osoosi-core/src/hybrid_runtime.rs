@@ -54,11 +54,14 @@ pub fn rayon_thread_count() -> usize {
 
 /// Tokio worker thread count for the CLI / orchestrator.
 pub fn tokio_worker_threads() -> usize {
+    let default_workers = std::thread::available_parallelism()
+        .map(|n| (n.get() / 3).clamp(4, 12))
+        .unwrap_or(4);
     std::env::var("OSOOSI_TOKIO_WORKER_THREADS")
         .ok()
         .and_then(|s| s.parse::<usize>().ok())
         .map(|n| n.clamp(2, 32))
-        .unwrap_or(4)
+        .unwrap_or(default_workers)
 }
 
 /// Tokio `spawn_blocking` pool size — high enough for SQLite/ORT helpers, bounded so it does not fight Rayon.

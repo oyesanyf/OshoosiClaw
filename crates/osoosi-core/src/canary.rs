@@ -101,6 +101,12 @@ impl CanaryManager {
                             original_content_hash: "seed".to_string(),
                         });
                     }
+                } else {
+                    deployed.push(GhostCanary {
+                        path: path.clone(),
+                        decoy_type: name.to_string(),
+                        original_content_hash: "seed".to_string(),
+                    });
                 }
             }
         }

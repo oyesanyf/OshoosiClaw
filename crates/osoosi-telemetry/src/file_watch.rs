@@ -77,6 +77,9 @@ fn should_skip_path(path: &Path, osoosi_dir: &Path, exclude_paths: &[String]) ->
 
     for segment in path.components() {
         let seg = segment.as_os_str().to_string_lossy().to_lowercase();
+        if seg.starts_with(".tmp") {
+            return true;
+        }
         match seg.as_ref() {
             ".git"
             | "node_modules"
@@ -85,6 +88,16 @@ fn should_skip_path(path: &Path, osoosi_dir: &Path, exclude_paths: &[String]) ->
             | "$recycle.bin"
             | "system volume information"
             | ".trash"
+            | ".cache"
+            | ".cargo"
+            | ".rustup"
+            | ".vscode"
+            | ".cursor"
+            | ".codex"
+            | "temp"
+            | "tmp"
+            | "windows.old"
+            | "perflogs"
             | "appdata"
             | "windows"
             | "programdata"
@@ -177,7 +190,12 @@ impl FileWatcher {
             while let Some(event) = event_rx.recv().await {
                 if event.kind.is_access() || event.kind.is_create() || event.kind.is_modify() {
                     for path in event.paths {
-                        if !path.is_file() || should_skip_path(&path, &processor_install_dir, &processor_excludes) {
+                        let path_str = path.to_string_lossy().to_string();
+                        let is_trap = processor_traps.contains(&path_str);
+                        if event.kind.is_access() && !is_trap {
+                            continue;
+                        }
+                        if !path.is_file() || (!is_trap && should_skip_path(&path, &processor_install_dir, &processor_excludes)) {
                             continue;
                         }
 
@@ -189,9 +207,7 @@ impl FileWatcher {
                             }
                         }
 
-                        let path_str = path.to_string_lossy().to_string();
-
-                        if processor_traps.contains(&path_str) {
+                        if is_trap {
                             warn!("HONEYTOKEN ACCESS DETECTED: {}!", path_str);
                         }
 

@@ -37,11 +37,14 @@ Thumbs.db
 
 # ---------- Databases (runtime) ----------
 *.db
+*.db.bak
 *.db-shm
 *.db-wal
 *.db-journal
 odidere.db*
 osoosi.db*
+/backups/
+backups/
 
 # ---------- Logs ----------
 logs/

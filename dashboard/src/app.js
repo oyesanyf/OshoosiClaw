@@ -828,6 +828,30 @@ function showSkyrlToast(message, type = 'info', guidance = null, errorCode = nul
 }
 
 /**
+ * Resilient fetch with exponential backoff retry for interactive endpoints
+ */
+async function fetchWithRetry(url, options = {}, retries = 3, delayMs = 450) {
+    let lastError = null;
+    for (let attempt = 0; attempt < retries; attempt++) {
+        try {
+            const resp = await fetch(url, options);
+            if (resp.ok || resp.status < 500) {
+                return resp;
+            }
+            lastError = new Error(`HTTP ${resp.status} ${resp.statusText}`);
+        } catch (err) {
+            lastError = err;
+        }
+        if (attempt < retries - 1) {
+            await new Promise(r => setTimeout(r, delayMs * (attempt + 1)));
+        }
+    }
+    throw lastError || new Error(`Network failure calling ${url}`);
+}
+
+let _lastUserError = { text: '', time: 0 };
+
+/**
  * Standardized User Error Reporting: formats errors cleanly with actionable guidance
  */
 function showUserError(context, errorOrPayload, options = {}) {
@@ -850,7 +874,11 @@ function showUserError(context, errorOrPayload, options = {}) {
     const title = context ? `[${context}] ${message}` : message;
     console.error(`[UserError] ${title}`, { errorCode, guidance, errorOrPayload });
 
-    showSkyrlToast(title, 'error', guidance, errorCode);
+    const now = Date.now();
+    if (_lastUserError.text !== title || (now - _lastUserError.time) > 2500) {
+        _lastUserError = { text: title, time: now };
+        showSkyrlToast(title, 'error', guidance, errorCode);
+    }
 
     if (options.containerId) {
         renderViewFallbackCard(options.containerId, context || 'View', {
@@ -1815,7 +1843,7 @@ window.entanglePeer = async function(peerId) {
 
 window.deployDeceptionTraps = async function() {
     try {
-        const res = await fetch(`${API_BASE}/deception/deploy-traps`, { method: 'POST' });
+        const res = await fetchWithRetry(`${API_BASE}/deception/deploy-traps`, { method: 'POST' });
         const data = await res.json().catch(() => null);
         if (!res.ok || (data && data.status === 'error')) {
             showUserError('Deploy Canary Traps', data || `HTTP ${res.status}`);
@@ -2841,6 +2869,9 @@ function renderRepairView(repairStatus) {
                     </div>
                 </div>
                 <div style="display:flex; gap:10px;">
+                    <button class="btn-primary" onclick="window.approvePendingPatches(this)" style="font-size:12px; padding:6px 12px; border-radius:8px; display:inline-flex; align-items:center; gap:5px; cursor:pointer; background:${pending > 0 ? 'var(--accent-green)' : 'rgba(16,185,129,0.18)'}; color:${pending > 0 ? '#05070a' : 'var(--accent-green)'}; border:1px solid rgba(16,185,129,0.35); font-weight:600;">
+                        <i data-lucide="shield-check" style="width:13px; height:13px;"></i> ${pending > 0 ? `Approve & Apply (${pending})` : 'Patches Approved'}
+                    </button>
                     <button class="btn-text" onclick="window.triggerPatchDiscovery(this)" style="font-size:12px;">
                         <i data-lucide="refresh-cw" style="width:13px; margin-right:4px;"></i> Run Discovery
                     </button>
@@ -2940,6 +2971,41 @@ window.triggerPatchDiscovery = async function(btn) {
     }
 };
 
+window.approvePendingPatches = async function(btn) {
+    if (btn) {
+        btn.disabled = true;
+        btn.innerHTML = '<i data-lucide="loader" class="spin" style="width:13px; margin-right:4px;"></i> Applying...';
+        if (window.lucide) lucide.createIcons();
+    }
+    showSkyrlToast('Approving and applying pending security patch(es)...', 'info');
+    try {
+        const res = await fetchWithRetry(`${API_BASE}/agent/approve-patches`, { method: 'POST' });
+        const data = await res.json().catch(() => null);
+        if (!res.ok || (data && data.status === 'error')) {
+            showUserError('Approve Patches', data || `HTTP ${res.status}`);
+            return;
+        }
+        showSkyrlToast(data?.message || 'Pending security patch(es) approved and applied!', 'success');
+        state.repairStatus = {
+            ...(state.repairStatus || {}),
+            pending_count: 0,
+            last_state: 'Committed · Verified',
+            last_at: new Date().toISOString()
+        };
+        renderRepairView(state.repairStatus);
+        updateDashboard();
+    } catch (err) {
+        console.error('Failed to approve patches:', err);
+        showUserError('Approve Patches', err);
+    } finally {
+        if (btn) {
+            btn.disabled = false;
+            btn.innerHTML = '<i data-lucide="shield-check" style="width:13px; margin-right:4px;"></i> Patches Approved';
+            if (window.lucide) lucide.createIcons();
+        }
+    }
+};
+
 window.triggerBaselineVerification = async function(btn) {
     if (btn) {
         btn.disabled = true;
@@ -2975,7 +3041,7 @@ window.triggerRestorePoint = async function(btn) {
     }
     showSkyrlToast('Creating secure cryptographic restore point...', 'info');
     try {
-        const res = await fetch(`${API_BASE}/agent/trigger-restore-point`, { method: 'POST' });
+        const res = await fetchWithRetry(`${API_BASE}/agent/trigger-restore-point`, { method: 'POST' });
         const data = await res.json().catch(() => null);
         if (!res.ok || (data && data.status === 'error')) {
             showUserError('Restore Point Creation', data || `HTTP ${res.status}`);
@@ -5799,7 +5865,7 @@ window.triggerSkyrlTraining = async function() {
     }
 
     try {
-        const res = await fetch(`${API_BASE}/skyrl/v1/train`, {
+        const res = await fetchWithRetry(`${API_BASE}/skyrl/v1/train`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({
@@ -5853,6 +5919,7 @@ window.triggerSkyrlTraining = async function() {
         }
     }
 };
+window.trainSkyrlPolicy = window.triggerSkyrlTraining;
 
 /**
  * Execute step in EDR Security Gym and display live thought-trace
@@ -5875,7 +5942,7 @@ window.simulateSkyrlStep = async function() {
             is_malicious: true
         };
 
-        const res = await fetch(`${API_BASE}/skyrl/v1/step`, {
+        const res = await fetchWithRetry(`${API_BASE}/skyrl/v1/step`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -5947,7 +6014,7 @@ window.simulateSkyrlGenerate = async function() {
             lora_adapter: selectedLora
         };
 
-        const res = await fetch(`${API_BASE}/skyrl/v1/generate`, {
+        const res = await fetchWithRetry(`${API_BASE}/skyrl/v1/generate`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify(payload)
@@ -7965,14 +8032,16 @@ window.copyTerminalCommand = copyTerminalCommand;
 // ==========================================
 
 const SIQUERY_PRESETS = {
-    processes: "SELECT pid, name, ppid, cpu_percent, memory_rss_mb, path FROM processes ORDER BY memory_rss_mb DESC LIMIT 15;",
-    sockets: "SELECT local_address, local_port, remote_address, remote_port, state, pid FROM tcp_sockets WHERE state = 'LISTEN' LIMIT 20;",
+    processes: "SELECT pid, name, parent AS ppid, ROUND(resident_size / 1048576.0, 2) AS memory_rss_mb, state, path FROM processes ORDER BY resident_size DESC LIMIT 15;",
+    sockets: "SELECT local_address, local_port, remote_address, remote_port, state, pid FROM process_open_sockets WHERE state = 'LISTEN' LIMIT 20;",
     services: "SELECT name, display_name, start_mode, state, path_name FROM wmi_services WHERE start_mode = 'Auto' LIMIT 20;",
-    network: "SELECT name, ipv4_addresses, mac_address, status FROM network_adapters LIMIT 15;",
+    network: "SELECT name, mac_address, status, description FROM wmi_network_adapters LIMIT 15;",
     hotfixes: "SELECT hotfix_id, description, installed_by, installed_on FROM wmi_hotfixes ORDER BY installed_on DESC LIMIT 20;",
-    users: "SELECT name, sid, disabled, lock_out, password_changeable FROM user_accounts LIMIT 20;",
-    hosts: "SELECT ip_address, hostname FROM etc_hosts;",
-    memory: "SELECT pid, base_address, region_size, state, protect, mapped_file FROM process_memory_map LIMIT 20;"
+    users: "SELECT name, sid, disabled, lockout AS lock_out, password_changeable FROM wmi_local_accounts LIMIT 20;",
+    hosts: "SELECT address AS ip_address, hostnames AS hostname FROM etc_hosts;",
+    memory: "SELECT pid, start AS base_address, end AS end_address, permissions AS protect, path AS mapped_file FROM process_memory_map LIMIT 20;",
+    dns: "SELECT name, type, data, ttl, status FROM dns_cache LIMIT 30;",
+    dns_resolvers: "SELECT interface, address, type FROM dns_resolvers;"
 };
 
 async function renderSiqueryView() {

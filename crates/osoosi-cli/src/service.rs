@@ -13,6 +13,7 @@ pub const SERVICE_DESCRIPTION: &str = "OpenỌ̀ṣọ́ọ̀sì Autonomous Endp
 
 static SERVICE_STOP_NOTIFY: OnceLock<Arc<tokio::sync::Notify>> = OnceLock::new();
 static SERVICE_STOP_FLAG: AtomicBool = AtomicBool::new(false);
+static SERVICE_SHUTDOWN_DONE: AtomicBool = AtomicBool::new(false);
 
 /// Notify all waiting tasks that the Windows Service has received a STOP or SHUTDOWN control signal.
 pub fn notify_service_stop() {
@@ -21,6 +22,11 @@ pub fn notify_service_stop() {
         .get_or_init(|| Arc::new(tokio::sync::Notify::new()))
         .clone();
     notify.notify_waiters();
+}
+
+/// Notify the Windows SCM dispatcher that daemon cleanup and socket shutdown is complete.
+pub fn notify_service_shutdown_complete() {
+    SERVICE_SHUTDOWN_DONE.store(true, Ordering::SeqCst);
 }
 
 /// Wait until a Windows Service STOP or SHUTDOWN control signal is received.
@@ -149,9 +155,106 @@ fn ensure_elevated_for_service_action(action_arg: &str) -> anyhow::Result<bool> 
     }
 }
 
+pub fn is_dashboard_port_listening(port: u16) -> bool {
+    use std::net::{SocketAddr, TcpStream};
+    TcpStream::connect_timeout(
+        &SocketAddr::from(([127, 0, 0, 1], port)),
+        Duration::from_millis(300),
+    )
+    .is_ok()
+}
+
+pub fn wait_for_dashboard_ready(port: u16, timeout_secs: u64) -> bool {
+    let start = std::time::Instant::now();
+    let timeout = Duration::from_secs(timeout_secs);
+    while start.elapsed() < timeout {
+        if is_dashboard_port_listening(port) {
+            return true;
+        }
+        std::thread::sleep(Duration::from_millis(400));
+    }
+    false
+}
+
+#[cfg(windows)]
+pub fn spawn_detached_background_daemon() -> anyhow::Result<u32> {
+    use std::os::windows::process::CommandExt;
+    let exe = std::env::current_exe()?;
+    let app_root = resolve_app_root_from_exe(&exe);
+    let exe_clean = exe.to_string_lossy().replace(r"\\?\", "");
+    let root_clean = app_root.to_string_lossy().replace(r"\\?\", "");
+    info!(
+        "Spawning detached background daemon: {} from {}",
+        exe_clean, root_clean
+    );
+
+    // First try WMI Win32_Process.Create so the daemon is spawned by WmiPrvSE.exe
+    // outside any parent terminal/shell Job Object (immune to KILL_ON_JOB_CLOSE).
+    let wmi_script = format!(
+        "$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{{ ShowWindow = [uint16]0 }}; \
+         $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{ \
+             CommandLine = '\"{}\" start --no-browser'; \
+             CurrentDirectory = '{}'; \
+             ProcessStartupInformation = $si \
+         }}; \
+         if ($r.ReturnValue -eq 0 -and $r.ProcessId) {{ Write-Output $r.ProcessId; exit 0 }} else {{ exit 1 }}",
+        exe_clean.replace('\'', "''"),
+        root_clean.replace('\'', "''")
+    );
+    if let Ok(out) = Command::new("powershell.exe")
+        .args([
+            "-NoProfile",
+            "-NonInteractive",
+            "-ExecutionPolicy",
+            "Bypass",
+            "-Command",
+            &wmi_script,
+        ])
+        .creation_flags(0x08000000)
+        .output()
+    {
+        if out.status.success() {
+            if let Ok(pid) = String::from_utf8_lossy(&out.stdout).trim().parse::<u32>() {
+                info!("Detached background daemon spawned via WMI with PID: {}", pid);
+                return Ok(pid);
+            }
+        }
+    }
+
+    let child = Command::new(&exe)
+        .arg("start")
+        .arg("--no-browser")
+        .current_dir(&app_root)
+        // CREATE_NO_WINDOW (0x08000000) | CREATE_NEW_PROCESS_GROUP (0x00000200) | DETACHED_PROCESS (0x00000008)
+        .creation_flags(0x08000000 | 0x00000200 | 0x00000008)
+        .spawn()?;
+    let pid = child.id();
+    info!("Detached background daemon spawned with PID: {}", pid);
+    Ok(pid)
+}
+
+#[cfg(not(windows))]
+pub fn spawn_detached_background_daemon() -> anyhow::Result<u32> {
+    anyhow::bail!("Detached background daemon is currently only implemented for Windows");
+}
+
 pub fn install_service() -> anyhow::Result<()> {
-    if ensure_elevated_for_service_action("install")? {
-        return Ok(());
+    match ensure_elevated_for_service_action("install") {
+        Ok(true) => return Ok(()),
+        Ok(false) => {},
+        Err(e) => {
+            warn!("UAC elevation failed or was declined: {}. Falling back to detached background daemon...", e);
+            if !is_dashboard_port_listening(3030) {
+                let _ = spawn_detached_background_daemon()?;
+            }
+            if wait_for_dashboard_ready(3030, 30) {
+                println!("[+] WebUI active at: http://127.0.0.1:3030/");
+                let _ = Command::new("cmd").args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
+                return Ok(());
+            } else {
+                anyhow::bail!("Detached background daemon started but port 3030 did not become ready.");
+            }
+        }
     }
     let exe = std::env::current_exe()?;
     let exe_str = exe.to_string_lossy().replace(r"\\?\", "");
@@ -216,8 +319,22 @@ pub fn install_service() -> anyhow::Result<()> {
 }
 
 pub fn start_service() -> anyhow::Result<()> {
-    if ensure_elevated_for_service_action("start")? {
-        return Ok(());
+    match ensure_elevated_for_service_action("start") {
+        Ok(true) => return Ok(()),
+        Ok(false) => {},
+        Err(e) => {
+            warn!("UAC elevation failed or was declined: {}. Falling back to detached background daemon...", e);
+            if !is_dashboard_port_listening(3030) {
+                let _ = spawn_detached_background_daemon()?;
+            }
+            if wait_for_dashboard_ready(3030, 30) {
+                println!("[+] WebUI active at: http://127.0.0.1:3030/");
+                let _ = Command::new("cmd").args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
+                return Ok(());
+            } else {
+                anyhow::bail!("Detached background daemon started but port 3030 did not become ready.");
+            }
+        }
     }
     info!("Starting Windows Service '{}'...", SERVICE_NAME);
     let output = run_sc_cmd(&["start", SERVICE_NAME])?;
@@ -226,23 +343,55 @@ pub fn start_service() -> anyhow::Result<()> {
         let err = String::from_utf8_lossy(&output.stderr);
         if out.contains("already running") || out.contains("1056") {
             println!("Service '{}' is already running.", SERVICE_NAME);
-            return Ok(());
+        } else if out.contains("Access is denied") || err.contains("Access is denied") || out.contains("FAILED 5") {
+            warn!("SCM start access denied. Falling back to detached background daemon...");
+            if !is_dashboard_port_listening(3030) {
+                let _ = spawn_detached_background_daemon()?;
+            }
+            if wait_for_dashboard_ready(3030, 30) {
+                println!("[+] WebUI active at: http://127.0.0.1:3030/");
+                let _ = Command::new("cmd").args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
+                return Ok(());
+            } else {
+                anyhow::bail!("Detached daemon started but WebUI port 3030 failed to respond.");
+            }
+        } else {
+            anyhow::bail!("Failed to start service: {} {}", out, err);
         }
-        anyhow::bail!("Failed to start service: {} {}", out, err);
     }
 
     // Wait up to 10s for service to reach RUNNING state
     let start_time = std::time::Instant::now();
+    let mut is_running = false;
     while start_time.elapsed() < Duration::from_secs(10) {
         if let Ok(status) = query_service_state() {
             if status.contains("RUNNING") {
                 println!("Service '{}' is now RUNNING.", SERVICE_NAME);
-                return Ok(());
+                is_running = true;
+                break;
             }
         }
         std::thread::sleep(Duration::from_millis(500));
     }
-    println!("Service start signal sent. Current status:\n{}", query_service_state().unwrap_or_default());
+
+    if !is_running {
+        println!("Service start signal sent. Current status:\n{}", query_service_state().unwrap_or_default());
+    }
+
+    // Wait up to 30s for WebUI port 3030 to be ready
+    println!("[*] Waiting for WebUI (http://127.0.0.1:3030) to bind...");
+    if wait_for_dashboard_ready(3030, 30) {
+        println!("[+] WebUI active at: http://127.0.0.1:3030/");
+        let _ = Command::new("cmd").args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
+    } else {
+        warn!("Port 3030 not ready from Windows Service. Launching detached daemon fallback...");
+        let _ = spawn_detached_background_daemon();
+        if wait_for_dashboard_ready(3030, 20) {
+            println!("[+] WebUI active at: http://127.0.0.1:3030/");
+            let _ = Command::new("cmd").args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
+        }
+    }
+
     Ok(())
 }
 
@@ -262,16 +411,16 @@ pub fn stop_service() -> anyhow::Result<()> {
         anyhow::bail!("Failed to stop service: {} {}", out, err);
     }
 
-    // Wait up to 10s for service to reach STOPPED state
+    // Wait up to 8s for service to reach STOPPED state and PID : 0
     let start_time = std::time::Instant::now();
-    while start_time.elapsed() < Duration::from_secs(10) {
+    while start_time.elapsed() < Duration::from_secs(8) {
         if let Ok(status) = query_service_state() {
-            if status.contains("STOPPED") {
+            if status.contains("STOPPED") && (status.contains("PID                : 0") || !status.contains("PID")) {
                 println!("Service '{}' is now STOPPED.", SERVICE_NAME);
                 return Ok(());
             }
         }
-        std::thread::sleep(Duration::from_millis(500));
+        std::thread::sleep(Duration::from_millis(300));
     }
     println!("Service stop signal sent. Current status:\n{}", query_service_state().unwrap_or_default());
     Ok(())
@@ -288,6 +437,15 @@ pub fn restart_service() -> anyhow::Result<()> {
 }
 
 pub fn delete_service() -> anyhow::Result<()> {
+    if let Ok(output) = run_sc_cmd(&["query", SERVICE_NAME]) {
+        let out = String::from_utf8_lossy(&output.stdout);
+        let err = String::from_utf8_lossy(&output.stderr);
+        if out.contains("1060") || out.contains("does not exist") || err.contains("1060") {
+            println!("[+] Service '{}' is not installed (already removed).", SERVICE_NAME);
+            return Ok(());
+        }
+    }
+
     if ensure_elevated_for_service_action("delete")? {
         return Ok(());
     }
@@ -299,6 +457,10 @@ pub fn delete_service() -> anyhow::Result<()> {
     if !output.status.success() {
         let out = String::from_utf8_lossy(&output.stdout);
         let err = String::from_utf8_lossy(&output.stderr);
+        if out.contains("1060") || out.contains("does not exist") || err.contains("1060") {
+            println!("[+] Service '{}' is not installed (already removed).", SERVICE_NAME);
+            return Ok(());
+        }
         anyhow::bail!("Failed to delete service: {} {}", out, err);
     }
     println!("Service '{}' has been deleted successfully.", SERVICE_NAME);
@@ -449,11 +611,14 @@ mod win_scm {
         status.dwCurrentState = SERVICE_STOP_PENDING;
         status.dwControlsAccepted = 0;
         status.dwCheckPoint = 1;
-        status.dwWaitHint = 10000;
+        status.dwWaitHint = 15000;
         let _ = SetServiceStatus(handle, &status);
 
-        // Wait a short moment for async tasks to clean up
-        std::thread::sleep(Duration::from_millis(500));
+        // Wait up to 8 seconds for daemon async cleanup and socket shutdown to complete
+        let shutdown_start = std::time::Instant::now();
+        while !SERVICE_SHUTDOWN_DONE.load(Ordering::SeqCst) && shutdown_start.elapsed() < Duration::from_secs(8) {
+            std::thread::sleep(Duration::from_millis(100));
+        }
 
         // 4. Report SERVICE_STOPPED
         status.dwCurrentState = SERVICE_STOPPED;

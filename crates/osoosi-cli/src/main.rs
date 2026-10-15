@@ -723,7 +723,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             }
             let _ = ensure_ai_models().await;
         });
-        let _ = osoosi_core::firewall::open_mesh_ports().await;
+        tokio::spawn(async move {
+            let _ = osoosi_core::firewall::open_mesh_ports().await;
+        });
     }
 
     let suppress_ml_warning = is_granting || is_bootstrapping;
@@ -869,6 +871,64 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             println!("[+] Initializing threat detection engines (YARA, Sigma, AI cortex)...");
             let start_instant = std::time::Instant::now();
             let orchestrator = Arc::new(osoosi_core::EdrOrchestrator::new().await?);
+
+            let join_gate = orchestrator.start_p2p_loop().await.ok();
+            // 2. Bind dashboard as soon as the orchestrator exists so the UI can load while loops start.
+            if with_dashboard {
+                info!("Auto-launching dashboard UI...");
+                // Kill any zombie process holding the dashboard port from a previous run
+                let dashboard_port = std::env::var("OSOOSI_DASHBOARD_PORT")
+                    .ok()
+                    .and_then(|s| s.parse::<u16>().ok())
+                    .unwrap_or(3030);
+                kill_port_holder(dashboard_port);
+                let dash_orch = orchestrator.clone();
+                let dash_gate = join_gate.clone();
+                tokio::spawn(async move {
+                    let mut current_port = dashboard_port;
+                    let mut opened_port: Option<u16> = None;
+                    let mut primary_retries = 0u8;
+                    while current_port <= 3040 {
+                        match osoosi_dashboard::spawn_dashboard_with_backend(
+                            current_port,
+                            dash_gate.clone(),
+                            Some(dash_orch.clone()),
+                        )
+                        .await
+                        {
+                            Ok(port) => {
+                                opened_port = Some(port);
+                                break;
+                            }
+                            Err(_) => {
+                                if current_port == dashboard_port && primary_retries < 4 {
+                                    primary_retries += 1;
+                                    kill_port_holder(dashboard_port);
+                                    tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
+                                    continue;
+                                }
+                                warn!("Port {} in use, trying next...", current_port);
+                                current_port += 1;
+                            }
+                        }
+                    }
+                    if let Some(port) = opened_port {
+                        let dash_url = format!("http://127.0.0.1:{}/", port);
+                        println!();
+                        println!("========================================================");
+                        println!("  OpenỌ̀ṣọ́ọ̀sì Web Dashboard: {}", dash_url);
+                        println!("========================================================");
+                        println!("[+] Auto-launching default web browser...");
+                        info!("Dashboard started successfully at {}", dash_url);
+                        tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
+                        try_open_browser(&dash_url, effective_no_browser, lite_mode);
+                    } else {
+                        eprintln!("[-] FAILED to start Dashboard UI after trying ports 3030-3040.");
+                        error!("FAILED to start Dashboard UI after trying ports 3030-3040.");
+                    }
+                });
+            }
+
             orchestrator.post_init_voters().await;
 
             println!("[+] Cryptographic configuration integrity verified.");
@@ -897,56 +957,6 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             tokio::spawn(async move {
                 maint_orch.run_maintenance_loop().await;
             });
-
-            let join_gate = orchestrator.start_p2p_loop().await.ok();
-            // 2. Bind dashboard as soon as the orchestrator exists so the UI can load while loops start.
-            if with_dashboard {
-                info!("Auto-launching dashboard UI...");
-                // Kill any zombie process holding the dashboard port from a previous run
-                let dashboard_port = std::env::var("OSOOSI_DASHBOARD_PORT")
-                    .ok()
-                    .and_then(|s| s.parse::<u16>().ok())
-                    .unwrap_or(3030);
-                kill_port_holder(dashboard_port);
-                let dash_orch = orchestrator.clone();
-                let dash_gate = join_gate.clone();
-                tokio::spawn(async move {
-                    let mut current_port = dashboard_port;
-                    let mut opened_port: Option<u16> = None;
-                    while current_port <= 3040 {
-                        match osoosi_dashboard::spawn_dashboard_with_backend(
-                            current_port,
-                            dash_gate.clone(),
-                            Some(dash_orch.clone()),
-                        )
-                        .await
-                        {
-                            Ok(port) => {
-                                opened_port = Some(port);
-                                break;
-                            }
-                            Err(_) => {
-                                warn!("Port {} in use, trying next...", current_port);
-                                current_port += 1;
-                            }
-                        }
-                    }
-                    if let Some(port) = opened_port {
-                        let dash_url = format!("http://127.0.0.1:{}/", port);
-                        println!();
-                        println!("========================================================");
-                        println!("  OpenỌ̀ṣọ́ọ̀sì Web Dashboard: {}", dash_url);
-                        println!("========================================================");
-                        println!("[+] Auto-launching default web browser...");
-                        info!("Dashboard started successfully at {}", dash_url);
-                        tokio::time::sleep(tokio::time::Duration::from_millis(400)).await;
-                        try_open_browser(&dash_url, effective_no_browser, lite_mode);
-                    } else {
-                        eprintln!("[-] FAILED to start Dashboard UI after trying ports 3030-3040.");
-                        error!("FAILED to start Dashboard UI after trying ports 3030-3040.");
-                    }
-                });
-            }
 
             let nsrl_orch = orchestrator.clone();
 
@@ -1021,6 +1031,9 @@ async fn async_main(cli: Cli) -> anyhow::Result<()> {
             wait_for_shutdown().await;
             info!("Shutting down OpenỌ̀ṣọ́ọ̀sì Agent...");
             let _ = osoosi_core::firewall::remove_all_autoblock_rules();
+            crate::service::notify_service_shutdown_complete();
+            tokio::time::sleep(std::time::Duration::from_millis(150)).await;
+            std::process::exit(0);
         }
         Some(Commands::Status) => {
             println!("Oshoosi Status: Active");
@@ -1891,47 +1904,61 @@ async fn handle_grant_access() -> anyhow::Result<()> {
 fn kill_port_holder(port: u16) {
     #[cfg(target_os = "windows")]
     {
-        // Step 1: find PIDs listening on this port via netstat
+        // Step 1: find PIDs LISTENING on this local port via netstat (ignore client ESTABLISHED connections)
         let output = std::process::Command::new("netstat")
             .args(["-ano", "-p", "TCP"])
             .output();
         let Ok(out) = output else { return };
         let stdout = String::from_utf8_lossy(&out.stdout);
-        let needle = format!(":{} ", port); // trailing space avoids matching :30300
-        let needle_v6 = format!(":{}\r", port);
+        let port_suffix = format!(":{}", port);
         let my_pid = std::process::id();
         let mut pids: std::collections::HashSet<u32> = std::collections::HashSet::new();
 
         for line in stdout.lines() {
-            let has_port = line.contains(&needle) || line.contains(&needle_v6)
-                || line.ends_with(&format!(":{}", port));
-            if !has_port { continue; }
-            if !(line.contains("LISTENING") || line.contains("ESTABLISHED") || line.contains("TIME_WAIT")) { continue; }
-            if let Some(pid_str) = line.split_whitespace().last() {
-                if let Ok(pid) = pid_str.parse::<u32>() {
-                    if pid > 0 && pid != my_pid {
-                        pids.insert(pid);
-                    }
+            let parts: Vec<&str> = line.split_whitespace().collect();
+            // Expected columns: Proto(0) LocalAddress(1) ForeignAddress(2) State(3) PID(4)
+            if parts.len() < 5 {
+                continue;
+            }
+            if !parts[3].eq_ignore_ascii_case("LISTENING") {
+                continue;
+            }
+            if !parts[1].ends_with(&port_suffix) {
+                continue;
+            }
+            if let Ok(pid) = parts[4].parse::<u32>() {
+                if pid > 0 && pid != my_pid {
+                    pids.insert(pid);
                 }
             }
         }
 
-        // Step 2: for each PID, check if the image name is osoosi.exe
+        // Step 2: for each LISTENING PID, check if the image name is osoosi.exe (or edr_webui_server.exe)
+        let mut killed_any = false;
         for pid in pids {
             let wmic = std::process::Command::new("tasklist")
                 .args(["/FI", &format!("PID eq {}", pid), "/FO", "CSV", "/NH"])
                 .output();
             if let Ok(wout) = wmic {
                 let line = String::from_utf8_lossy(&wout.stdout).to_ascii_lowercase();
-                if line.contains("osoosi") {
+                if line.contains("osoosi") || line.contains("edr_webui") {
                     info!("Killing stale osoosi.exe (PID {}) holding port {}...", pid, port);
                     let _ = std::process::Command::new("taskkill")
                         .args(["/F", "/PID", &pid.to_string()])
                         .output();
-                    // Give the OS a moment to release the socket
-                    std::thread::sleep(std::time::Duration::from_millis(500));
+                    killed_any = true;
                 } else {
                     info!("Port {} held by non-osoosi process (PID {}), will try another port.", port, pid);
+                }
+            }
+        }
+
+        if killed_any {
+            // Wait up to 2.5 seconds for the OS kernel to release the TCP listener
+            for _ in 0..10 {
+                std::thread::sleep(std::time::Duration::from_millis(250));
+                if std::net::TcpListener::bind(("0.0.0.0", port)).is_ok() {
+                    break;
                 }
             }
         }

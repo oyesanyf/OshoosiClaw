@@ -2264,7 +2264,7 @@
 
                             <!-- SQL Input Area -->
                             <div style="position: relative; margin-bottom: 12px;">
-                                <textarea id="siquery-sql-input" rows="4" style="width: 100%; background: rgba(5, 7, 10, 0.95); border: 1px solid var(--glass-border); border-radius: 8px; padding: 12px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.5; color: #38bdf8; resize: vertical; outline: none; box-sizing: border-box;" placeholder="Enter SQL query (e.g. SELECT * FROM processes LIMIT 10;)">SELECT pid, name, ppid, cpu_percent, memory_rss_mb, path FROM processes ORDER BY memory_rss_mb DESC LIMIT 15;</textarea>
+                                <textarea id="siquery-sql-input" rows="4" style="width: 100%; background: rgba(5, 7, 10, 0.95); border: 1px solid var(--glass-border); border-radius: 8px; padding: 12px; font-family: 'Consolas', 'Courier New', monospace; font-size: 13px; line-height: 1.5; color: #38bdf8; resize: vertical; outline: none; box-sizing: border-box;" placeholder="Enter SQL query (e.g. SELECT * FROM processes LIMIT 10;)">SELECT pid, name, parent AS ppid, ROUND(resident_size / 1048576.0, 2) AS memory_rss_mb, state, path FROM processes ORDER BY resident_size DESC LIMIT 15;</textarea>
                             </div>
 
                             <!-- Query Actions Toolbar -->
