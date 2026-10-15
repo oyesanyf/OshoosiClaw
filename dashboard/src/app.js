@@ -20,8 +20,13 @@ const state = {
     collapsedPanels: new Set(),
     lastThreatsHash: '',
     lastActivityHash: '',
+    lastDetectionStatsHash: '',
+    lastMeshHash: '',
+    lastMalwareHash: '',
+    lastRepairHash: '',
     gossip_count: 0,
     _pollInFlight: false,
+    _appStarted: false,
     isRemediating: false,
     // SkyRL state
     skyrlLossChart: null,
@@ -61,6 +66,7 @@ const state = {
 };
 
 let updateInterval = null;
+let supervisorInterval = null;
 
 /**
  * Initialize Lucide icons and start polling
@@ -78,6 +84,11 @@ function init() {
 }
 
 function startApp() {
+    if (state._appStarted) {
+        updateDashboard();
+        return;
+    }
+    state._appStarted = true;
     // Immediately render rich verified baseline state across all views to prevent any blank/waiting flicker
     renderDetectionStats({});
     renderThreats(state.threats);
@@ -98,7 +109,9 @@ function startApp() {
     renderHistoryView(1);
     fetchRotatedLogFiles();
     fetchSupervisorStatus();
-    setInterval(fetchSupervisorStatus, 5000);
+    if (!supervisorInterval) {
+        supervisorInterval = setInterval(fetchSupervisorStatus, 5000);
+    }
 
     updateDashboard();
     if (!updateInterval) {
@@ -107,11 +120,31 @@ function startApp() {
 }
 
 async function hashPassword(plainText) {
-    const encoder = new TextEncoder();
-    const data = encoder.encode(plainText);
-    const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
-    const hashArray = Array.from(new Uint8Array(hashBuffer));
-    return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+    try {
+        if (window.crypto && window.crypto.subtle && typeof window.crypto.subtle.digest === 'function') {
+            const encoder = new TextEncoder();
+            const data = encoder.encode(plainText);
+            const hashBuffer = await window.crypto.subtle.digest('SHA-256', data);
+            const hashArray = Array.from(new Uint8Array(hashBuffer));
+            return hashArray.map(b => b.toString(16).padStart(2, '0')).join('');
+        }
+    } catch (_) {}
+    // Fallback deterministic 256-bit hex digest for non-SecureContext HTTP LAN origins
+    let h1 = 0xdeadbeef ^ plainText.length, h2 = 0x41c6ce57 ^ plainText.length;
+    let h3 = 0x811c9dc5 ^ plainText.length, h4 = 0xcbf29ce4 ^ plainText.length;
+    for (let i = 0; i < plainText.length; i++) {
+        const ch = plainText.charCodeAt(i);
+        h1 = Math.imul(h1 ^ ch, 2654435761);
+        h2 = Math.imul(h2 ^ ch, 1597334677);
+        h3 = Math.imul(h3 ^ ch, 16777619);
+        h4 = Math.imul(h4 ^ ch, 2246822507);
+    }
+    h1 = Math.imul(h1 ^ (h1 >>> 16), 2246822507) ^ Math.imul(h2 ^ (h2 >>> 13), 3266489909);
+    h2 = Math.imul(h2 ^ (h2 >>> 16), 2246822507) ^ Math.imul(h1 ^ (h1 >>> 13), 3266489909);
+    h3 = Math.imul(h3 ^ (h3 >>> 16), 2246822507) ^ Math.imul(h4 ^ (h4 >>> 13), 3266489909);
+    h4 = Math.imul(h4 ^ (h4 >>> 16), 2246822507) ^ Math.imul(h3 ^ (h3 >>> 13), 3266489909);
+    return [h1, h2, h3, h4, h1 ^ h3, h2 ^ h4, h1 ^ h4, h2 ^ h3]
+        .map(v => (v >>> 0).toString(16).padStart(8, '0')).join('');
 }
 
 function setupLogin() {
@@ -577,17 +610,20 @@ async function updateDashboard() {
             if (nodeEl) nodeEl.innerText = nodeIdShort;
         }
 
+        let threatsChanged = false;
         if (Array.isArray(threats)) {
             const visibleThreats = threats.filter(t => !state.suppressedThreatKeys.has(threatKey(t)));
             const currentHash = JSON.stringify(visibleThreats);
             if (currentHash !== state.lastThreatsHash) {
                 state.threats = visibleThreats;
                 state.lastThreatsHash = currentHash;
+                threatsChanged = true;
                 updateStats('threat-count', visibleThreats.length);
                 renderThreats(visibleThreats);
             }
         }
 
+        let meshChanged = false;
         if (mesh && typeof mesh === 'object' && mesh.peer_count !== undefined) {
             state.mesh = mesh;
             state.peer_count = mesh.peer_count;
@@ -597,14 +633,31 @@ async function updateDashboard() {
             updateStats('pending-joins', mesh.pending_joins || 0);
             updateStats('quarantined', mesh.quarantined_peers || 0);
             updateMeshConnectionIndicators(mesh.peer_count, mesh.gossip_count);
+            const currentMeshHash = JSON.stringify(mesh);
+            if (currentMeshHash !== state.lastMeshHash) {
+                state.lastMeshHash = currentMeshHash;
+                meshChanged = true;
+            }
         }
 
+        let malwareChanged = false;
         if (Array.isArray(malwareDetections)) {
             state.malwareDetections = malwareDetections;
+            const currentMalwareHash = JSON.stringify(malwareDetections);
+            if (currentMalwareHash !== state.lastMalwareHash) {
+                state.lastMalwareHash = currentMalwareHash;
+                malwareChanged = true;
+            }
         }
 
+        let repairChanged = false;
         if (repairStatus && typeof repairStatus === 'object') {
             state.repairStatus = repairStatus;
+            const currentRepairHash = JSON.stringify(repairStatus);
+            if (currentRepairHash !== state.lastRepairHash) {
+                state.lastRepairHash = currentRepairHash;
+                repairChanged = true;
+            }
         }
 
         if (Array.isArray(activity)) {
@@ -621,7 +674,11 @@ async function updateDashboard() {
         }
 
         if (detectionStats) {
-            renderDetectionStats(detectionStats);
+            const currentDetHash = JSON.stringify(detectionStats);
+            if (currentDetHash !== state.lastDetectionStatsHash) {
+                state.lastDetectionStatsHash = currentDetHash;
+                renderDetectionStats(detectionStats);
+            }
         }
 
         if (skyrlStatus && typeof skyrlStatus === 'object' && !Array.isArray(skyrlStatus)) {
@@ -632,42 +689,42 @@ async function updateDashboard() {
             }
         }
 
-        // Render views
-        if (state.current_view === 'threats' && threats) {
-            renderThreatsView(state.threats);
-        }
-        if (state.current_view === 'mesh') {
-            renderMeshView(state.mesh || mesh);
-        }
-        if (state.current_view === 'gossip') {
-            renderGossipView();
-        }
-        if (state.current_view === 'malware') {
-            renderMalwareView(state.malwareDetections || malwareDetections || []);
-        }
-        if (state.current_view === 'repair') {
-            renderRepairView(state.repairStatus || repairStatus || null);
-        }
-        if (state.current_view === 'process-map') {
-            // Optional: Auto-refresh graph every few polls if needed
-        }
-        if (state.current_view === 'otel-map') {
-            renderOtelMapView(false);
-        }
-        if (state.current_view === 'zone') {
-            renderZoneView();
-        }
-        if (state.current_view === 'approvals') {
-            renderApprovalsView();
-        }
-        if (state.current_view === 'skyrl') {
-            renderSkyrlView();
-        }
-        if (state.current_view === 'mitre') {
-            renderMitreView();
-        }
-        if (state.current_view === 'agent-anomalies') {
-            renderAgentAnomaliesView();
+        // Guard against clobbering active button spinners during background poll
+        const activeButtonSpinning = Boolean(document.querySelector('.view-content.active button:disabled .spin'));
+        if (!activeButtonSpinning) {
+            if (state.current_view === 'threats' && threatsChanged) {
+                renderThreatsView(state.threats);
+            }
+            if (state.current_view === 'mesh' && meshChanged) {
+                renderMeshView(state.mesh || mesh);
+            }
+            if (state.current_view === 'gossip') {
+                renderGossipView();
+            }
+            if (state.current_view === 'malware' && malwareChanged) {
+                renderMalwareView(state.malwareDetections || malwareDetections || []);
+            }
+            if (state.current_view === 'repair' && repairChanged) {
+                renderRepairView(state.repairStatus || repairStatus || null);
+            }
+            if (state.current_view === 'otel-map') {
+                renderOtelMapView(false);
+            }
+            if (state.current_view === 'zone' && !state.isRemediating) {
+                renderZoneView();
+            }
+            if (state.current_view === 'approvals') {
+                renderApprovalsView();
+            }
+            if (state.current_view === 'skyrl') {
+                renderSkyrlView();
+            }
+            if (state.current_view === 'mitre') {
+                updateStixStatusBanner();
+            }
+            if (state.current_view === 'agent-anomalies') {
+                renderAgentAnomaliesView();
+            }
         }
 
         // Ensure collapsed panels retain their display state across polling updates
@@ -3241,7 +3298,7 @@ function initGraph(container, data) {
     }
 
     // Recreate Lucide icons for dynamically added buttons
-    lucide.createIcons();
+    if (window.lucide) lucide.createIcons();
 }
 
 /* ---- Graph interactive controls (global scope) ---- */
@@ -3275,7 +3332,7 @@ window.toggleGraphFullscreen = function() {
         btn.innerHTML = isFullscreen
             ? '<i data-lucide="minimize-2" style="width:14px; margin-right:4px;"></i> Collapse'
             : '<i data-lucide="maximize-2" style="width:14px; margin-right:4px;"></i> Expand';
-        lucide.createIcons();
+        if (window.lucide) lucide.createIcons();
     }
 
     // Resize the vis-network to fill the new container size
