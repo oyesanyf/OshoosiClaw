@@ -401,7 +401,12 @@ if (-not $SkipSigning) {
     }
     # Ensure target/release/osoosi.exe and deploy/osoosi.exe have the exact same clean signature
     if ((Test-Path $DeployExe) -and (Test-Path $TargetExe)) {
-        Copy-Item -Path $DeployExe -Destination $TargetExe -Force
+        $deployHash = (Get-FileHash $DeployExe -Algorithm SHA256).Hash
+        $targetHash = (Get-FileHash $TargetExe -Algorithm SHA256).Hash
+        if ($deployHash -ne $targetHash) {
+            Test-And-Handle-LockedFile -FilePath $TargetExe
+            Copy-Item -Path $DeployExe -Destination $TargetExe -Force
+        }
     }
 } else {
     Write-Host "       -> Skipping code-signing (-SkipSigning specified)" -ForegroundColor Gray

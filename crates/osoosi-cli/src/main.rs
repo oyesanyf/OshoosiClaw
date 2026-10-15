@@ -3011,7 +3011,16 @@ async fn wait_for_shutdown() {
 #[cfg(windows)]
 async fn wait_for_shutdown() {
     let ctrl_c = async {
-        let _ = tokio::signal::ctrl_c().await;
+        match tokio::signal::ctrl_c().await {
+            Ok(()) => {}
+            Err(e) => {
+                warn!(
+                    "Console Ctrl+C handler unavailable (headless/service mode: {}); waiting on service control signal.",
+                    e
+                );
+                std::future::pending::<()>().await;
+            }
+        }
     };
     let svc_stop = crate::service::wait_for_service_stop();
     tokio::select! {
