@@ -325,6 +325,10 @@ if (-not $SkipSigning) {
     if ((Test-Path $RootMsi) -and (Test-Path $DeployMsi)) {
         Copy-Item -Path $RootMsi -Destination $DeployMsi -Force
     }
+    # Ensure target/release/osoosi.exe and deploy/osoosi.exe have the exact same clean signature
+    if ((Test-Path $DeployExe) -and (Test-Path $TargetExe)) {
+        Copy-Item -Path $DeployExe -Destination $TargetExe -Force
+    }
 } else {
     Write-Host "       -> Skipping code-signing (-SkipSigning specified)" -ForegroundColor Gray
 }
