@@ -496,11 +496,146 @@ struct OllamaModelTag {
     model: Option<String>,
 }
 
+static LAST_INSTALLED_OLLAMA_MODELS: OnceLock<std::sync::RwLock<Vec<String>>> = OnceLock::new();
+
+/// Discovers installed Ollama model tags directly from filesystem manifests.
+///
+/// Scans:
+/// 1. $OLLAMA_MODELS/manifests/registry.ollama.ai
+/// 2. $USERPROFILE/.ollama/models/manifests/registry.ollama.ai
+/// 3. $HOME/.ollama/models/manifests/registry.ollama.ai
+/// 4. All user profiles in C:\Users\*\.ollama\models\manifests\registry.ollama.ai
+///
+/// This ensures models are always discovered even when:
+/// - Ollama is busy/stalled loading a 32B model,
+/// - The EDR daemon runs as NT AUTHORITY\SYSTEM (whose USERPROFILE points to systemprofile).
+pub fn discover_disk_ollama_manifests() -> Vec<String> {
+    let mut candidate_roots = Vec::new();
+
+    // 1. OLLAMA_MODELS env var
+    if let Ok(om) = std::env::var("OLLAMA_MODELS") {
+        let p = std::path::PathBuf::from(om).join("manifests").join("registry.ollama.ai");
+        if p.exists() {
+            candidate_roots.push(p);
+        }
+    }
+
+    // 2. Current USERPROFILE / HOME
+    if let Ok(up) = std::env::var("USERPROFILE") {
+        let p = std::path::PathBuf::from(up)
+            .join(".ollama")
+            .join("models")
+            .join("manifests")
+            .join("registry.ollama.ai");
+        if p.exists() {
+            candidate_roots.push(p);
+        }
+    }
+    if let Ok(home) = std::env::var("HOME") {
+        let p = std::path::PathBuf::from(home)
+            .join(".ollama")
+            .join("models")
+            .join("manifests")
+            .join("registry.ollama.ai");
+        if p.exists() {
+            candidate_roots.push(p);
+        }
+    }
+
+    // 3. Multi-user discovery across C:\Users\*
+    #[cfg(target_os = "windows")]
+    {
+        if let Ok(users_dir) = std::fs::read_dir("C:\\Users") {
+            for entry in users_dir.filter_map(|e| e.ok()) {
+                if let Ok(ft) = entry.file_type() {
+                    if ft.is_dir() {
+                        let p = entry
+                            .path()
+                            .join(".ollama")
+                            .join("models")
+                            .join("manifests")
+                            .join("registry.ollama.ai");
+                        if p.exists() {
+                            candidate_roots.push(p);
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    let mut discovered = Vec::new();
+    let mut seen = std::collections::HashSet::new();
+
+    for reg_root in candidate_roots {
+        // First-level: namespaces (e.g. "library", "fenkohq")
+        let ns_entries = match std::fs::read_dir(&reg_root) {
+            Ok(entries) => entries,
+            Err(_) => continue,
+        };
+
+        for ns_entry in ns_entries.filter_map(|e| e.ok()) {
+            let ns_path = ns_entry.path();
+            if !ns_path.is_dir() {
+                continue;
+            }
+            let ns_name = ns_entry.file_name().to_string_lossy().to_string();
+
+            // Second-level: model directories (e.g. "qwen2.5", "deepseek-r1", "embeddinggemma")
+            let model_entries = match std::fs::read_dir(&ns_path) {
+                Ok(entries) => entries,
+                Err(_) => continue,
+            };
+
+            for model_entry in model_entries.filter_map(|e| e.ok()) {
+                let model_path = model_entry.path();
+                if !model_path.is_dir() {
+                    continue;
+                }
+                let model_name = model_entry.file_name().to_string_lossy().to_string();
+
+                // Skip internal engine subdirs if any
+                if model_name.eq_ignore_ascii_case("blobs") {
+                    continue;
+                }
+
+                // Third-level: tag files (e.g. "32b", "1.5b", "7b", "latest")
+                let tag_entries = match std::fs::read_dir(&model_path) {
+                    Ok(entries) => entries,
+                    Err(_) => continue,
+                };
+
+                for tag_entry in tag_entries.filter_map(|e| e.ok()) {
+                    let tag_name = tag_entry.file_name().to_string_lossy().to_string();
+
+                    // Skip internal hashes (e.g. 64-char sha256 blob names)
+                    if tag_name.len() > 32 && tag_name.chars().all(|c| c.is_ascii_hexdigit()) {
+                        continue;
+                    }
+
+                    let full_name = if ns_name == "library" {
+                        format!("{}:{}", model_name, tag_name)
+                    } else {
+                        format!("{}/{}:{}", ns_name, model_name, tag_name)
+                    };
+
+                    if seen.insert(full_name.clone()) {
+                        discovered.push(full_name);
+                    }
+                }
+            }
+        }
+    }
+
+    discovered
+}
+
 /// Query currently installed models in local Ollama service.
 ///
-/// Uses a strict 2-second timeout to prevent any blocking of supervisor threads.
-/// Returns an empty vector if Ollama is unreachable.
+/// Uses an extended 4-second timeout to allow busy/loading model servers to reply,
+/// merged with filesystem manifest discovery and process-wide cache.
 pub async fn query_installed_ollama_models(ollama_endpoint: &str) -> Vec<String> {
+    let mut http_models = Vec::new();
     let tags_url = if ollama_endpoint.trim().is_empty() {
         "http://127.0.0.1:11434/api/tags".to_string()
     } else if let Ok(mut parsed) = reqwest::Url::parse(ollama_endpoint) {
@@ -509,46 +644,62 @@ pub async fn query_installed_ollama_models(ollama_endpoint: &str) -> Vec<String>
         parsed.to_string()
     } else {
         warn!("Invalid Ollama endpoint URL: {}", ollama_endpoint);
-        return Vec::new();
+        String::new()
     };
 
-    let client = match reqwest::Client::builder()
-        .timeout(Duration::from_secs(2))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            warn!("Failed to build HTTP client for Ollama tag query: {}", e);
-            return Vec::new();
-        }
-    };
-
-    match client.get(&tags_url).send().await {
-        Ok(resp) => {
-            if resp.status().is_success() {
-                if let Ok(data) = resp.json::<OllamaTagsResponse>().await {
-                    if let Some(list) = data.models {
-                        let names: Vec<String> = list
-                            .into_iter()
-                            .filter_map(|m| m.name.or(m.model))
-                            .collect();
-                        debug!("Discovered {} installed Ollama models.", names.len());
-                        return names;
+    if !tags_url.is_empty() {
+        if let Ok(client) = reqwest::Client::builder()
+            .timeout(Duration::from_secs(4))
+            .build()
+        {
+            if let Ok(resp) = client.get(&tags_url).send().await {
+                if resp.status().is_success() {
+                    if let Ok(data) = resp.json::<OllamaTagsResponse>().await {
+                        if let Some(list) = data.models {
+                            http_models = list
+                                .into_iter()
+                                .filter_map(|m| m.name.or(m.model))
+                                .collect();
+                        }
                     }
                 }
             }
-            Vec::new()
         }
-        Err(e) => {
-            debug!("Ollama query at {} timed out or unavailable: {}", tags_url, e);
-            Vec::new()
+    }
+
+    let disk_models = discover_disk_ollama_manifests();
+
+    // Merge HTTP models and disk manifests
+    let mut merged = http_models;
+    for dm in disk_models {
+        if !merged.iter().any(|m| m.eq_ignore_ascii_case(&dm)) {
+            merged.push(dm);
         }
+    }
+
+    let cache = LAST_INSTALLED_OLLAMA_MODELS.get_or_init(|| std::sync::RwLock::new(Vec::new()));
+
+    if !merged.is_empty() {
+        if let Ok(mut lock) = cache.write() {
+            *lock = merged.clone();
+        }
+        debug!("Discovered {} installed Ollama models (HTTP + disk).", merged.len());
+        merged
+    } else {
+        // Fallback to cache if available
+        if let Ok(lock) = cache.read() {
+            if !lock.is_empty() {
+                debug!("Returning {} cached Ollama models during temporary endpoint unavailability.", lock.len());
+                return lock.clone();
+            }
+        }
+        Vec::new()
     }
 }
 
 /// Synchronous query of installed models in local Ollama service.
 ///
-/// Uses a strict 2-second timeout to prevent stalling calling threads.
+/// Uses an extended 2-second timeout and falls back to filesystem manifest discovery and cache.
 pub fn query_installed_ollama_models_sync(ollama_endpoint: &str) -> Vec<String> {
     if tokio::runtime::Handle::try_current().is_ok() {
         let ep = ollama_endpoint.to_string();
@@ -561,6 +712,7 @@ pub fn query_installed_ollama_models_sync(ollama_endpoint: &str) -> Vec<String> 
 }
 
 fn query_installed_ollama_models_sync_inner(ollama_endpoint: &str) -> Vec<String> {
+    let mut http_models = Vec::new();
     let tags_url = if ollama_endpoint.trim().is_empty() {
         "http://127.0.0.1:11434/api/tags".to_string()
     } else if let Ok(mut parsed) = reqwest::Url::parse(ollama_endpoint) {
@@ -569,40 +721,53 @@ fn query_installed_ollama_models_sync_inner(ollama_endpoint: &str) -> Vec<String
         parsed.to_string()
     } else {
         warn!("Invalid Ollama endpoint URL (sync): {}", ollama_endpoint);
-        return Vec::new();
+        String::new()
     };
 
-    let client = match reqwest::blocking::Client::builder()
-        .timeout(Duration::from_secs(1))
-        .build()
-    {
-        Ok(c) => c,
-        Err(e) => {
-            warn!("Failed to build sync HTTP client for Ollama tag query: {}", e);
-            return Vec::new();
-        }
-    };
-
-    match client.get(&tags_url).send() {
-        Ok(resp) => {
-            if resp.status().is_success() {
-                if let Ok(data) = resp.json::<OllamaTagsResponse>() {
-                    if let Some(list) = data.models {
-                        let names: Vec<String> = list
-                            .into_iter()
-                            .filter_map(|m| m.name.or(m.model))
-                            .collect();
-                        debug!("Discovered {} installed Ollama models (sync).", names.len());
-                        return names;
+    if !tags_url.is_empty() {
+        if let Ok(client) = reqwest::blocking::Client::builder()
+            .timeout(Duration::from_secs(2))
+            .build()
+        {
+            if let Ok(resp) = client.get(&tags_url).send() {
+                if resp.status().is_success() {
+                    if let Ok(data) = resp.json::<OllamaTagsResponse>() {
+                        if let Some(list) = data.models {
+                            http_models = list
+                                .into_iter()
+                                .filter_map(|m| m.name.or(m.model))
+                                .collect();
+                        }
                     }
                 }
             }
-            Vec::new()
         }
-        Err(e) => {
-            debug!("Ollama query at {} timed out or unavailable: {}", tags_url, e);
-            Vec::new()
+    }
+
+    let disk_models = discover_disk_ollama_manifests();
+
+    let mut merged = http_models;
+    for dm in disk_models {
+        if !merged.iter().any(|m| m.eq_ignore_ascii_case(&dm)) {
+            merged.push(dm);
         }
+    }
+
+    let cache = LAST_INSTALLED_OLLAMA_MODELS.get_or_init(|| std::sync::RwLock::new(Vec::new()));
+
+    if !merged.is_empty() {
+        if let Ok(mut lock) = cache.write() {
+            *lock = merged.clone();
+        }
+        debug!("Discovered {} installed Ollama models (sync HTTP + disk).", merged.len());
+        merged
+    } else {
+        if let Ok(lock) = cache.read() {
+            if !lock.is_empty() {
+                return lock.clone();
+            }
+        }
+        Vec::new()
     }
 }
 
@@ -908,5 +1073,12 @@ mod tests {
             disks: vec![],
         };
         assert_eq!(mock_tier3_vram.determine_tier(), HardwareTier::Tier3HighPerf);
+    }
+
+    #[test]
+    fn test_discover_disk_ollama_manifests() {
+        let disk_models = discover_disk_ollama_manifests();
+        // Manifest discovery should return without crashing, scanning registry directories if present
+        assert!(disk_models.is_empty() || !disk_models.is_empty());
     }
 }

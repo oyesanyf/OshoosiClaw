@@ -4938,7 +4938,16 @@ impl EdrOrchestrator {
     /// so the HTTP endpoint responds in < 20ms without timing out.
     pub async fn approve_pending_patches(&self) -> anyhow::Result<serde_json::Value> {
         let (_, _, _, _, pending, _) = self.repair_status();
-        let approved_count = pending.max(1);
+        if pending == 0 {
+            return Ok(serde_json::json!({
+                "ok": true,
+                "status": "up_to_date",
+                "applied": 0,
+                "pending_count": 0,
+                "message": "All system patches are up to date.",
+            }));
+        }
+        let approved_count = pending;
 
         // Immediately clear pending patches and record commitment
         let _ = self.memory.set_repair_status("pending_count", "0");
