@@ -40,6 +40,7 @@ pub struct AgentAnomalyDetector {
     pub containment_ring: Arc<crate::containment_ring::AgentContainmentRing>,
     pub atlas_matrix: Arc<crate::atlas_arm::MitreAtlasMatrix>,
     pub rasp_engine: Arc<crate::rasp::AgentRaspEngine>,
+    pub mercury_engine: Arc<crate::mercury_guard::MercuryContainmentEngine>,
 }
 
 impl AgentAnomalyDetector {
@@ -62,6 +63,7 @@ impl AgentAnomalyDetector {
         let containment_ring = Arc::new(crate::containment_ring::AgentContainmentRing::new());
         let atlas_matrix = Arc::new(crate::atlas_arm::MitreAtlasMatrix::new());
         let rasp_engine = Arc::new(crate::rasp::AgentRaspEngine::default());
+        let mercury_engine = Arc::new(crate::mercury_guard::MercuryContainmentEngine::new());
 
         // Launch cleaner for dormant sessions (prune every 60s, TTL 300s)
         screener.clone().start_cleaner(Duration::from_secs(60), 300);
@@ -79,6 +81,7 @@ impl AgentAnomalyDetector {
             containment_ring,
             atlas_matrix,
             rasp_engine,
+            mercury_engine,
         };
 
         // Out-of-band asynchronous processing worker

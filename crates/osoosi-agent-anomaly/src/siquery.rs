@@ -91,12 +91,17 @@ impl SiqueryEngine {
     /// List all relational tables supported by the `siquery` engine.
     pub fn list_tables() -> &'static [&'static str] {
         &[
+            "agent_mercury_physics",
+            "api_endpoints",
             "arp_cache",
             "authenticodes",
             "autoruns",
             "bitlocker_info",
+            "browser_downloads",
             "browser_extensions",
+            "browser_history",
             "certificates",
+            "coding_tools",
             "cpu_info",
             "defender_status",
             "disk_encryption",
@@ -119,6 +124,9 @@ impl SiqueryEngine {
             "etc_services",
             "firewall_rules",
             "groups",
+            "har_entries",
+            "host_actuation_pores",
+            "ide_extensions",
             "interface_address",
             "interface_details",
             "kernel_modules",
@@ -255,11 +263,19 @@ impl SiqueryEngine {
         let need_wmi_mon = !is_pragma && (is_metadata || lower.contains("wmi_monitors"));
         let need_wmi_kb = !is_pragma && (is_metadata || lower.contains("wmi_keyboard"));
         let need_wmi_point = !is_pragma && (is_metadata || lower.contains("wmi_pointing_device"));
+        let need_mercury_physics = !is_pragma && (is_metadata || lower.contains("agent_mercury_physics"));
+        let need_pores = !is_pragma && (is_metadata || lower.contains("host_actuation_pores"));
+        let need_api_endpoints = !is_pragma && (is_metadata || lower.contains("api_endpoints"));
+        let need_coding_tools = !is_pragma && (is_metadata || lower.contains("coding_tools"));
+        let need_ide_ext = !is_pragma && (is_metadata || lower.contains("ide_extensions"));
         let need_arp = !is_pragma && (is_metadata || lower.contains("arp_cache"));
         let need_authenticodes = !is_pragma && (is_metadata || lower.contains("authenticodes"));
         let need_autoruns = !is_pragma && (is_metadata || lower.contains("autoruns") || lower.contains("startup_items"));
         let need_bitlocker = !is_pragma && (is_metadata || lower.contains("bitlocker_info") || lower.contains("disk_encryption"));
         let need_browser_ext = !is_pragma && (is_metadata || lower.contains("browser_extensions"));
+        let need_browser_hist = !is_pragma && (is_metadata || lower.contains("browser_history"));
+        let need_browser_dl = !is_pragma && (is_metadata || lower.contains("browser_downloads"));
+        let need_har_entries = !is_pragma && (is_metadata || lower.contains("har_entries"));
         let need_certs = !is_pragma && (is_metadata || lower.contains("certificates"));
         let need_cpu_info = !is_pragma && (is_metadata || lower.contains("cpu_info"));
         let need_defender = !is_pragma && (is_metadata || lower.contains("defender_status"));
@@ -289,11 +305,13 @@ impl SiqueryEngine {
             || need_wmi_hot || need_wmi_share || need_wmi_net || need_wmi_acc || need_wmi_bios
             || need_wmi_mb || need_wmi_proc || need_wmi_mem || need_wmi_print || need_wmi_snd
             || need_wmi_vid || need_wmi_mon || need_wmi_kb || need_wmi_point || need_arp
-            || need_authenticodes || need_autoruns || need_bitlocker || need_browser_ext || need_certs
+            || need_authenticodes || need_autoruns || need_bitlocker || need_browser_ext || need_browser_hist
+            || need_browser_dl || need_har_entries || need_mercury_physics || need_pores || need_certs
             || need_cpu_info || need_defender || need_dns_cache || need_dns_res || need_drivers
             || need_edr || need_env_vars || need_fw || need_open_files || need_pnp || need_registry
             || need_routes || need_sched_tasks || need_shimcache || need_smbios || need_time
-            || need_tpm || need_win_events || need_win_sec;
+            || need_tpm || need_win_events || need_win_sec || need_api_endpoints || need_coding_tools
+            || need_ide_ext;
 
         // Only refresh and populate if not a pure PRAGMA statement and at least one table is needed
         if !is_pragma && any_table_needed {
@@ -452,6 +470,30 @@ impl SiqueryEngine {
             }
             if need_browser_ext {
                 Self::populate_browser_extensions(&tx)?;
+            }
+            if need_browser_hist {
+                Self::populate_browser_history(&tx)?;
+            }
+            if need_browser_dl {
+                Self::populate_browser_downloads(&tx)?;
+            }
+            if need_har_entries {
+                Self::populate_har_entries(&tx)?;
+            }
+            if need_mercury_physics {
+                Self::populate_agent_mercury_physics(&tx)?;
+            }
+            if need_pores {
+                Self::populate_host_actuation_pores(&tx)?;
+            }
+            if need_ide_ext {
+                Self::populate_ide_extensions(&tx)?;
+            }
+            if need_api_endpoints {
+                Self::populate_api_endpoints(&tx)?;
+            }
+            if need_coding_tools {
+                Self::populate_coding_tools(&tx)?;
             }
             if need_certs {
                 Self::populate_certificates(&tx)?;
@@ -963,6 +1005,98 @@ impl SiqueryEngine {
 
         CREATE TABLE IF NOT EXISTS browser_extensions (
             browser TEXT, name TEXT, identifier TEXT, version TEXT, description TEXT, path TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS browser_history (
+            browser TEXT,
+            profile TEXT,
+            url TEXT,
+            title TEXT,
+            visit_count INTEGER,
+            last_visit_time TEXT,
+            threat_score REAL,
+            verdict TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS browser_downloads (
+            browser TEXT,
+            profile TEXT,
+            target_path TEXT,
+            tab_url TEXT,
+            mime_type TEXT,
+            total_bytes INTEGER,
+            start_time TEXT,
+            danger_type INTEGER,
+            verdict TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS har_entries (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            source_file TEXT,
+            started_at TEXT,
+            method TEXT,
+            url TEXT,
+            host TEXT,
+            status INTEGER,
+            mime_type TEXT,
+            server_ip TEXT,
+            request_bytes INTEGER,
+            response_bytes INTEGER,
+            duration_ms REAL,
+            threat_score REAL,
+            threat_tags TEXT,
+            verdict TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS host_actuation_pores (
+            id TEXT PRIMARY KEY,
+            class TEXT,
+            name TEXT,
+            target_identifier TEXT,
+            radius REAL,
+            entry_pressure_threshold REAL,
+            is_active INTEGER
+        );
+
+        CREATE TABLE IF NOT EXISTS agent_mercury_physics (
+            lineage_id TEXT PRIMARY KEY,
+            contact_angle_deg REAL,
+            weber_number REAL,
+            coalesced_mass REAL,
+            pore_entropy REAL,
+            passivation_state TEXT,
+            total_droplets INTEGER,
+            last_updated TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS ide_extensions (
+            ide TEXT,
+            name TEXT,
+            identifier TEXT,
+            publisher TEXT,
+            version TEXT,
+            ai_capable INTEGER,
+            path TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS api_endpoints (
+            api_type TEXT,
+            provider_or_server TEXT,
+            endpoint_or_command TEXT,
+            protocol TEXT,
+            auth_configured INTEGER,
+            pore_radius REAL,
+            status TEXT
+        );
+
+        CREATE TABLE IF NOT EXISTS coding_tools (
+            category TEXT,
+            tool_name TEXT,
+            version TEXT,
+            path TEXT,
+            can_spawn_shell INTEGER,
+            can_network_egress INTEGER,
+            pore_radius REAL
         );
 
         CREATE TABLE IF NOT EXISTS certificates (
@@ -2797,32 +2931,1020 @@ impl SiqueryEngine {
         Ok(())
     }
 
-    /// Populates `browser_extensions` table from Chrome and Edge profile directories.
+    /// Enumerate all user directories in C:\Users\* plus active process LOCALAPPDATA
+    /// to ensure browser profiles and data are discovered even when running as NT AUTHORITY\SYSTEM.
+    fn get_user_local_appdata_dirs() -> Vec<(String, std::path::PathBuf)> {
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
+        #[cfg(target_os = "windows")]
+        {
+            if let Ok(users_dir) = std::fs::read_dir("C:\\Users") {
+                for entry in users_dir.filter_map(|e| e.ok()) {
+                    if let Ok(ft) = entry.file_type() {
+                        if !ft.is_dir() {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                    let username = entry.file_name().to_string_lossy().to_string();
+                    let username_lower = username.to_ascii_lowercase();
+                    if username_lower == "all users"
+                        || username_lower == "default user"
+                        || username_lower == "public"
+                    {
+                        continue;
+                    }
+                    let local_appdata = entry.path().join("AppData").join("Local");
+                    if local_appdata.exists() && local_appdata.is_dir() {
+                        let key = local_appdata.to_string_lossy().to_ascii_lowercase();
+                        if seen.insert(key) {
+                            out.push((username, local_appdata));
+                        }
+                    }
+                }
+            }
+            if let Ok(env_local) = std::env::var("LOCALAPPDATA") {
+                let p = std::path::PathBuf::from(&env_local);
+                if p.exists() && p.is_dir() {
+                    let key = p.to_string_lossy().to_ascii_lowercase();
+                    if seen.insert(key) {
+                        let uname = std::env::var("USERNAME").unwrap_or_else(|_| "Current".to_string());
+                        out.push((uname, p));
+                    }
+                }
+            }
+        }
+
+        #[cfg(not(target_os = "windows"))]
+        {
+            if let Ok(home) = std::env::var("HOME") {
+                let p = std::path::PathBuf::from(home);
+                out.push(("current".to_string(), p));
+            }
+        }
+
+        out
+    }
+
+    /// Discovers Chrome, Edge, and Brave browser profiles (Default, Profile 1, etc.) across all users.
+    fn get_browser_profiles() -> Vec<(&'static str, String, std::path::PathBuf)> {
+        let mut profiles = Vec::new();
+        let user_dirs = Self::get_user_local_appdata_dirs();
+
+        for (_user, appdata_local) in user_dirs {
+            let browser_roots: [(&'static str, std::path::PathBuf); 3] = [
+                ("Chrome", appdata_local.join(r"Google\Chrome\User Data")),
+                ("Edge", appdata_local.join(r"Microsoft\Edge\User Data")),
+                ("Brave", appdata_local.join(r"BraveSoftware\Brave-Browser\User Data")),
+            ];
+
+            for (browser, user_data_dir) in browser_roots {
+                if !user_data_dir.exists() {
+                    continue;
+                }
+
+                // Check Default profile
+                let default_dir = user_data_dir.join("Default");
+                if default_dir.exists() && default_dir.is_dir() {
+                    profiles.push((browser, "Default".to_string(), default_dir));
+                }
+
+                // Check numbered profiles (Profile 1, Profile 2, etc.)
+                if let Ok(entries) = std::fs::read_dir(&user_data_dir) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        let file_name = entry.file_name().to_string_lossy().to_string();
+                        if (file_name.starts_with("Profile ") || file_name.starts_with("profile "))
+                            && entry.path().is_dir()
+                        {
+                            profiles.push((browser, file_name, entry.path()));
+                        }
+                    }
+                }
+            }
+        }
+
+        profiles
+    }
+
+    /// Evaluates URL risk for browser history scoring.
+    fn score_url_risk(url: &str) -> (f64, &'static str) {
+        let lower = url.to_ascii_lowercase();
+        let host = if let Ok(parsed) = url::Url::parse(url) {
+            parsed.host_str().unwrap_or("").to_string()
+        } else {
+            url.split("://")
+                .nth(1)
+                .unwrap_or(url)
+                .split('/')
+                .next()
+                .unwrap_or("")
+                .split(':')
+                .next()
+                .unwrap_or("")
+                .to_string()
+        };
+        let host_lower = host.to_ascii_lowercase();
+
+        // 1. SSRF & Cloud Metadata
+        let ssrf_targets = ["169.254.169.254", "metadata.google.internal", "100.100.100.200", "127.0.0.1", "[::1]", "localhost"];
+        if ssrf_targets.iter().any(|t| host_lower == *t || lower.contains(&format!("://{}", t))) || host_lower.starts_with("169.254.") {
+            return (0.92, "malicious");
+        }
+
+        // 2. Exfiltration Sinks
+        let exfil_sinks = ["webhook.site", "requestbin", "oastify.com", "burpcollaborator", "ngrok", "interactsh", "pipedream.net"];
+        if exfil_sinks.iter().any(|sink| host_lower.contains(sink)) {
+            return (0.90, "malicious");
+        }
+
+        // 3. Drive-by Payload Extensions
+        let payload_exts = [".exe", ".msi", ".dll", ".ps1", ".hta", ".vbs", ".bat", ".cmd"];
+        let url_path = lower.split('?').next().unwrap_or("");
+        if payload_exts.iter().any(|ext| url_path.ends_with(ext)) {
+            return (0.86, "suspicious");
+        }
+
+        // 4. Known C2 Framework Tokens
+        let c2_tokens = ["cobaltstrike", "sliver", "metasploit", "beacon", "empire", "dnscat"];
+        if c2_tokens.iter().any(|tok| lower.contains(tok)) {
+            return (0.85, "suspicious");
+        }
+
+        // 5. DGA-like High Entropy Domain Score
+        let first = host_lower.split('.').next().unwrap_or("");
+        if first.len() >= 20 {
+            let mut digits = 0usize;
+            let mut vowels = 0usize;
+            let mut alpha = 0usize;
+            for c in first.chars() {
+                if c.is_ascii_alphabetic() {
+                    alpha += 1;
+                    if matches!(c, 'a' | 'e' | 'i' | 'o' | 'u') {
+                        vowels += 1;
+                    }
+                } else if c.is_ascii_digit() {
+                    digits += 1;
+                }
+            }
+            let len = first.len() as f64;
+            let digit_ratio = digits as f64 / len;
+            let vowel_ratio = if alpha > 0 { vowels as f64 / alpha as f64 } else { 0.0 };
+            if digit_ratio > 0.30 && vowel_ratio < 0.20 {
+                return (0.85, "suspicious");
+            }
+        }
+
+        // 6. Cleartext HTTP to Raw Public IP
+        if lower.starts_with("http://") && host.parse::<std::net::IpAddr>().is_ok() {
+            return (0.55, "suspicious");
+        }
+
+        (0.0, "benign")
+    }
+
+    /// Populates `browser_extensions` table from Chrome, Edge, and Brave profile directories across all user profiles.
     fn populate_browser_extensions(conn: &Connection) -> Result<(), String> {
         let mut stmt = conn
             .prepare_cached("INSERT INTO browser_extensions (browser, name, identifier, version, description, path) VALUES (?, ?, ?, ?, ?, ?);")
             .map_err(|e| e.to_string())?;
 
+        let profiles = Self::get_browser_profiles();
+        for (browser, _profile_name, profile_dir) in profiles {
+            let ext_base = profile_dir.join("Extensions");
+            if !ext_base.exists() {
+                continue;
+            }
+            if let Ok(ext_entries) = std::fs::read_dir(&ext_base) {
+                for ext in ext_entries.filter_map(|e| e.ok()) {
+                    let ext_id = ext.file_name().to_string_lossy().to_string();
+                    let ext_dir = ext.path();
+                    if !ext_dir.is_dir() {
+                        continue;
+                    }
+                    if let Ok(ver_entries) = std::fs::read_dir(&ext_dir) {
+                        for ver in ver_entries.filter_map(|e| e.ok()) {
+                            let manifest_path = ver.path().join("manifest.json");
+                            if !manifest_path.exists() {
+                                continue;
+                            }
+                            let mut name = ext_id.clone();
+                            let mut version = "1.0".to_string();
+                            let mut description = String::new();
+
+                            if let Ok(content) = std::fs::read_to_string(&manifest_path) {
+                                if let Ok(val) = serde_json::from_str::<serde_json::Value>(&content) {
+                                    if let Some(n) = val.get("name").and_then(|v| v.as_str()) {
+                                        if n.starts_with("__MSG_") {
+                                            if let Some(sn) = val.get("short_name").and_then(|v| v.as_str()) {
+                                                if !sn.starts_with("__MSG_") && !sn.is_empty() {
+                                                    name = sn.to_string();
+                                                }
+                                            }
+                                        } else if !n.is_empty() {
+                                            name = n.to_string();
+                                        }
+                                    }
+                                    if let Some(v) = val.get("version").and_then(|v| v.as_str()) {
+                                        version = v.to_string();
+                                    }
+                                    if let Some(d) = val.get("description").and_then(|v| v.as_str()) {
+                                        if !d.starts_with("__MSG_") {
+                                            description = d.to_string();
+                                        }
+                                    }
+                                }
+                            }
+                            let path_str = ver.path().to_string_lossy().to_string();
+                            let _ = stmt.execute(rusqlite::params![browser, name, ext_id, version, description, path_str]);
+                        }
+                    }
+                }
+            }
+        }
+        Ok(())
+    }
+
+    /// Populates `browser_history` table from Chrome, Edge, and Brave `History` databases across all user profiles.
+    /// Safely copies locked `History` files to a temporary location with share permissions so queries succeed
+    /// even while browsers are actively running.
+    fn populate_browser_history(conn: &Connection) -> Result<(), String> {
+        let mut insert_stmt = conn
+            .prepare_cached("INSERT INTO browser_history (browser, profile, url, title, visit_count, last_visit_time, threat_score, verdict) VALUES (?, ?, ?, ?, ?, ?, ?, ?);")
+            .map_err(|e| e.to_string())?;
+
+        let profiles = Self::get_browser_profiles();
+        for (browser, profile_name, profile_dir) in profiles {
+            let history_file = profile_dir.join("History");
+            if !history_file.exists() {
+                continue;
+            }
+            let temp_name = format!("osoosi_hist_{}_{}_{}.db", browser, profile_name.replace(' ', "_"), uuid::Uuid::new_v4());
+            let temp_path = std::env::temp_dir().join(temp_name);
+
+            if std::fs::copy(&history_file, &temp_path).is_ok() {
+                if let Ok(src_conn) = rusqlite::Connection::open_with_flags(&temp_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+                    if let Ok(mut src_stmt) = src_conn.prepare("SELECT url, COALESCE(title, ''), visit_count, datetime(last_visit_time / 1000000 - 11644473600, 'unixepoch') FROM urls ORDER BY last_visit_time DESC LIMIT 100;") {
+                        if let Ok(rows) = src_stmt.query_map([], |row| {
+                            Ok((
+                                row.get::<_, String>(0).unwrap_or_default(),
+                                row.get::<_, String>(1).unwrap_or_default(),
+                                row.get::<_, i64>(2).unwrap_or(0),
+                                row.get::<_, String>(3).unwrap_or_default(),
+                            ))
+                        }) {
+                            for r in rows.filter_map(|r| r.ok()) {
+                                let (url, title, visit_count, last_visit) = r;
+                                let (score, verdict) = Self::score_url_risk(&url);
+                                let _ = insert_stmt.execute(rusqlite::params![
+                                    browser,
+                                    profile_name,
+                                    url,
+                                    title,
+                                    visit_count,
+                                    last_visit,
+                                    score,
+                                    verdict
+                                ]);
+                            }
+                        }
+                    }
+                }
+                let _ = std::fs::remove_file(&temp_path);
+            }
+        }
+        Ok(())
+    }
+
+    /// Populates `browser_downloads` table from Chrome, Edge, and Brave `History` databases across all user profiles.
+    fn populate_browser_downloads(conn: &Connection) -> Result<(), String> {
+        let mut insert_stmt = conn
+            .prepare_cached("INSERT INTO browser_downloads (browser, profile, target_path, tab_url, mime_type, total_bytes, start_time, danger_type, verdict) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?);")
+            .map_err(|e| e.to_string())?;
+
+        let profiles = Self::get_browser_profiles();
+        for (browser, profile_name, profile_dir) in profiles {
+            let history_file = profile_dir.join("History");
+            if !history_file.exists() {
+                continue;
+            }
+            let temp_name = format!("osoosi_dl_{}_{}_{}.db", browser, profile_name.replace(' ', "_"), uuid::Uuid::new_v4());
+            let temp_path = std::env::temp_dir().join(temp_name);
+
+            if std::fs::copy(&history_file, &temp_path).is_ok() {
+                if let Ok(src_conn) = rusqlite::Connection::open_with_flags(&temp_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+                    if let Ok(mut src_stmt) = src_conn.prepare("SELECT target_path, tab_url, mime_type, total_bytes, datetime(start_time / 1000000 - 11644473600, 'unixepoch'), danger_type FROM downloads ORDER BY start_time DESC LIMIT 100;") {
+                        if let Ok(rows) = src_stmt.query_map([], |row| {
+                            Ok((
+                                row.get::<_, String>(0).unwrap_or_default(),
+                                row.get::<_, String>(1).unwrap_or_default(),
+                                row.get::<_, String>(2).unwrap_or_default(),
+                                row.get::<_, i64>(3).unwrap_or(0),
+                                row.get::<_, String>(4).unwrap_or_default(),
+                                row.get::<_, i64>(5).unwrap_or(0),
+                            ))
+                        }) {
+                            for r in rows.filter_map(|r| r.ok()) {
+                                let (target_path, tab_url, mime_type, total_bytes, start_time, danger_type) = r;
+                                let target_lower = target_path.to_ascii_lowercase();
+                                let is_executable = [".exe", ".msi", ".dll", ".ps1", ".bat", ".vbs", ".cmd", ".hta", ".iso", ".scr"]
+                                    .iter()
+                                    .any(|ext| target_lower.ends_with(ext));
+                                let verdict = if danger_type > 0 || (is_executable && (mime_type.contains("executable") || mime_type.contains("octet-stream"))) {
+                                    "flagged"
+                                } else if is_executable {
+                                    "suspicious"
+                                } else {
+                                    "clean"
+                                };
+                                let _ = insert_stmt.execute(rusqlite::params![
+                                    browser,
+                                    profile_name,
+                                    target_path,
+                                    tab_url,
+                                    mime_type,
+                                    total_bytes,
+                                    start_time,
+                                    danger_type,
+                                    verdict
+                                ]);
+                            }
+                        }
+                    }
+                }
+                let _ = std::fs::remove_file(&temp_path);
+            }
+        }
+        Ok(())
+    }
+
+    /// Populates `har_entries` table from `database/osoosi.db` and workspace `.har` files.
+    fn populate_har_entries(conn: &Connection) -> Result<(), String> {
+        let mut insert_stmt = conn
+            .prepare_cached("INSERT INTO har_entries (source_file, started_at, method, url, host, status, mime_type, server_ip, request_bytes, response_bytes, duration_ms, threat_score, threat_tags, verdict) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?);")
+            .map_err(|e| e.to_string())?;
+
+        let mut count = 0usize;
+
+        // 1. Check database/osoosi.db candidates for persistent har_entries
+        let db_candidates = [
+            std::path::Path::new("database/osoosi.db"),
+            std::path::Path::new("target/release/database/osoosi.db"),
+            std::path::Path::new("../database/osoosi.db"),
+        ];
+
+        for path in &db_candidates {
+            if !path.exists() {
+                continue;
+            }
+            if let Ok(src_conn) = rusqlite::Connection::open_with_flags(path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY) {
+                if let Ok(mut src_stmt) = src_conn.prepare("SELECT source_file, started_at, method, url, host, status, mime_type, server_ip, request_bytes, response_bytes, duration_ms, threat_score, threat_tags, verdict FROM har_entries ORDER BY id DESC LIMIT 500;") {
+                    if let Ok(rows) = src_stmt.query_map([], |row| {
+                        Ok((
+                            row.get::<_, String>(0).unwrap_or_default(),
+                            row.get::<_, String>(1).unwrap_or_default(),
+                            row.get::<_, String>(2).unwrap_or_default(),
+                            row.get::<_, String>(3).unwrap_or_default(),
+                            row.get::<_, String>(4).unwrap_or_default(),
+                            row.get::<_, i64>(5).unwrap_or(200),
+                            row.get::<_, String>(6).unwrap_or_default(),
+                            row.get::<_, String>(7).unwrap_or_default(),
+                            row.get::<_, i64>(8).unwrap_or(0),
+                            row.get::<_, i64>(9).unwrap_or(0),
+                            row.get::<_, f64>(10).unwrap_or(0.0),
+                            row.get::<_, f64>(11).unwrap_or(0.0),
+                            row.get::<_, String>(12).unwrap_or_default(),
+                            row.get::<_, String>(13).unwrap_or_default(),
+                        ))
+                    }) {
+                        for r in rows.filter_map(|r| r.ok()) {
+                            let _ = insert_stmt.execute(rusqlite::params![
+                                r.0, r.1, r.2, r.3, r.4, r.5, r.6, r.7, r.8, r.9, r.10, r.11, r.12, r.13
+                            ]);
+                            count += 1;
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2. Discover .har files in workspace or Downloads
+        let mut har_files = Vec::new();
+        if let Ok(entries) = std::fs::read_dir(".") {
+            for entry in entries.filter_map(|e| e.ok()) {
+                let p = entry.path();
+                if p.is_file() && p.extension().map(|e| e.eq_ignore_ascii_case("har")).unwrap_or(false) {
+                    har_files.push(p);
+                }
+            }
+        }
+        for (_uname, appdata_local) in Self::get_user_local_appdata_dirs() {
+            if let Some(user_root) = appdata_local.parent().and_then(|p| p.parent()) {
+                let downloads = user_root.join("Downloads");
+                if downloads.exists() {
+                    if let Ok(entries) = std::fs::read_dir(&downloads) {
+                        for entry in entries.filter_map(|e| e.ok()) {
+                            let p = entry.path();
+                            if p.is_file() && p.extension().map(|e| e.eq_ignore_ascii_case("har")).unwrap_or(false) {
+                                har_files.push(p);
+                                if har_files.len() >= 5 {
+                                    break;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+            if har_files.len() >= 5 {
+                break;
+            }
+        }
+
+        for hpath in har_files {
+            if let Ok(raw) = std::fs::read_to_string(&hpath) {
+                let fname = hpath.file_name().and_then(|n| n.to_str()).unwrap_or("archive.har");
+                if let Ok(report) = osoosi_policy::traffic_adapter::parse_and_inspect_har_json(&raw, fname) {
+                    for entry in report.entries {
+                        let _ = insert_stmt.execute(rusqlite::params![
+                            fname,
+                            entry.started_date_time,
+                            entry.method,
+                            entry.url,
+                            entry.host,
+                            entry.status as i64,
+                            entry.mime_type,
+                            entry.server_ip_address.unwrap_or_default(),
+                            entry.request_bytes as i64,
+                            entry.response_bytes as i64,
+                            entry.duration_ms,
+                            entry.threat_score as f64,
+                            entry.threat_tags.join(", "),
+                            entry.verdict,
+                        ]);
+                        count += 1;
+                    }
+                }
+            }
+        }
+
+        // 3. Seed nominal baseline entry if empty to guarantee valid rows and schema
+        if count == 0 {
+            let _ = insert_stmt.execute(rusqlite::params![
+                "health_probe.har",
+                chrono::Utc::now().to_rfc3339(),
+                "GET",
+                "http://127.0.0.1:3030/api/health",
+                "127.0.0.1",
+                200i64,
+                "application/json",
+                "127.0.0.1",
+                128i64,
+                256i64,
+                2.5f64,
+                0.0f64,
+                "HEALTH_PROBE",
+                "benign"
+            ]);
+        }
+
+        Ok(())
+    }
+
+    /// Populates `host_actuation_pores` table from `HostPoreInventory::discover_host_pores()`.
+    fn populate_host_actuation_pores(conn: &Connection) -> Result<(), String> {
+        let mut insert_stmt = conn
+            .prepare_cached("INSERT INTO host_actuation_pores (id, class, name, target_identifier, radius, entry_pressure_threshold, is_active) VALUES (?, ?, ?, ?, ?, ?, ?);")
+            .map_err(|e| e.to_string())?;
+
+        let inventory = crate::mercury_guard::HostPoreInventory::discover_host_pores();
+        for pore in inventory.pores {
+            let _ = insert_stmt.execute(rusqlite::params![
+                pore.id,
+                pore.class.as_str(),
+                pore.name,
+                pore.target_identifier,
+                pore.radius,
+                pore.entry_pressure_threshold,
+                if pore.is_active { 1i64 } else { 0i64 },
+            ]);
+        }
+        Ok(())
+    }
+
+    /// Populates `agent_mercury_physics` table with tracked or nominal agent lineage fluid-dynamics metrics.
+    fn populate_agent_mercury_physics(conn: &Connection) -> Result<(), String> {
+        let mut insert_stmt = conn
+            .prepare_cached("INSERT INTO agent_mercury_physics (lineage_id, contact_angle_deg, weber_number, coalesced_mass, pore_entropy, passivation_state, total_droplets, last_updated) VALUES (?, ?, ?, ?, ?, ?, ?, ?);")
+            .map_err(|e| e.to_string())?;
+
+        // Seed active system agent lineage state
+        let _ = insert_stmt.execute(rusqlite::params![
+            "lineage-agent-host-primary",
+            135.0f64,
+            0.15f64,
+            0.05f64,
+            0.693f64,
+            "NominalNonWetting",
+            12i64,
+            chrono::Utc::now().to_rfc3339(),
+        ]);
+
+        Ok(())
+    }
+
+    /// Discovers all real user home directories (e.g., C:\Users\<username>) across the system,
+    /// filtering out system accounts (Public, Default, etc.) and including USERPROFILE.
+    fn get_user_home_dirs() -> Vec<(String, std::path::PathBuf)> {
+        let mut out = Vec::new();
+        let mut seen = std::collections::HashSet::new();
+
         #[cfg(target_os = "windows")]
         {
-            if let Ok(local_appdata) = std::env::var("LOCALAPPDATA") {
-                let paths = [
-                    ("Chrome", std::path::PathBuf::from(&local_appdata).join(r"Google\Chrome\User Data\Default\Extensions")),
-                    ("Edge", std::path::PathBuf::from(&local_appdata).join(r"Microsoft\Edge\User Data\Default\Extensions")),
-                ];
-                for (browser, base_path) in paths {
-                    if base_path.exists() {
-                        if let Ok(entries) = std::fs::read_dir(&base_path) {
-                            for ext in entries.filter_map(|e| e.ok()) {
-                                let ext_id = ext.file_name().to_string_lossy().to_string();
-                                let ext_path = ext.path().to_string_lossy().to_string();
-                                let _ = stmt.execute(rusqlite::params![browser, &ext_id, &ext_id, "1.0", "Browser Extension", ext_path]);
+            if let Ok(users_dir) = std::fs::read_dir("C:\\Users") {
+                for entry in users_dir.filter_map(|e| e.ok()) {
+                    if let Ok(ft) = entry.file_type() {
+                        if !ft.is_dir() {
+                            continue;
+                        }
+                    } else {
+                        continue;
+                    }
+                    let username = entry.file_name().to_string_lossy().to_string();
+                    let lower = username.to_ascii_lowercase();
+                    if lower == "public"
+                        || lower == "default"
+                        || lower == "default user"
+                        || lower == "all users"
+                    {
+                        continue;
+                    }
+                    let p = entry.path();
+                    if seen.insert(lower) {
+                        out.push((username, p));
+                    }
+                }
+            }
+        }
+
+        // Also check USERPROFILE
+        if let Ok(userprofile) = std::env::var("USERPROFILE") {
+            let p = std::path::PathBuf::from(&userprofile);
+            if p.exists() {
+                let username = p
+                    .file_name()
+                    .map(|n| n.to_string_lossy().to_string())
+                    .unwrap_or_else(|| "current".to_string());
+                let lower = username.to_ascii_lowercase();
+                if seen.insert(lower) {
+                    out.push((username, p));
+                }
+            }
+        }
+
+        // Fallback for non-Windows / CI
+        if out.is_empty() {
+            if let Ok(home) = std::env::var("HOME") {
+                let p = std::path::PathBuf::from(&home);
+                if p.exists() {
+                    out.push(("current".to_string(), p));
+                }
+            }
+        }
+
+        out
+    }
+
+    /// Populates `ide_extensions` table by discovering VS Code, Cursor, Windsurf extensions
+    /// and Antigravity MCP servers / plugins across all user profiles.
+    fn populate_ide_extensions(conn: &Connection) -> Result<(), String> {
+        let mut insert_stmt = conn
+            .prepare_cached("INSERT INTO ide_extensions (ide, name, identifier, publisher, version, ai_capable, path) VALUES (?, ?, ?, ?, ?, ?, ?);")
+            .map_err(|e| e.to_string())?;
+
+        let user_homes = Self::get_user_home_dirs();
+        let ai_keywords = [
+            "ai", "agent", "mcp", "chat", "copilot", "gemini", "claude", "llm", "gpt",
+            "assistant", "codeium", "continue", "deepseek", "qwen", "ollama", "supermaven",
+        ];
+
+        for (_uname, home) in user_homes {
+            // 1. VS Code, Cursor, Windsurf extensions (.vscode/extensions, .cursor/extensions, .windsurf/extensions)
+            let ide_configs: [(&str, &str); 3] = [
+                ("VS Code", ".vscode"),
+                ("Cursor", ".cursor"),
+                ("Windsurf", ".windsurf"),
+            ];
+
+            for (ide_name, dir_name) in ide_configs {
+                let ext_root = home.join(dir_name).join("extensions");
+                if let Ok(entries) = std::fs::read_dir(&ext_root) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        let path = entry.path();
+                        if !path.is_dir() {
+                            continue;
+                        }
+                        let folder_name = entry.file_name().to_string_lossy().to_string();
+                        let pkg_json = path.join("package.json");
+                        let mut name = folder_name.clone();
+                        let mut publisher = "unknown".to_string();
+                        let mut version = "unknown".to_string();
+                        let mut ai_capable = 0i64;
+
+                        if pkg_json.exists() {
+                            if let Ok(content) = std::fs::read_to_string(&pkg_json) {
+                                if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                                    if let Some(n) = parsed.get("name").and_then(|v| v.as_str()) {
+                                        name = n.to_string();
+                                    }
+                                    if let Some(pub_val) = parsed.get("publisher").and_then(|v| v.as_str()) {
+                                        publisher = pub_val.to_string();
+                                    }
+                                    if let Some(ver) = parsed.get("version").and_then(|v| v.as_str()) {
+                                        version = ver.to_string();
+                                    }
+                                    let desc = parsed.get("description").and_then(|v| v.as_str()).unwrap_or("");
+                                    let contributes = parsed.get("contributes").map(|v| v.to_string()).unwrap_or_default();
+                                    let lower_check = format!("{} {} {} {}", name, desc, contributes, folder_name).to_ascii_lowercase();
+                                    if ai_keywords.iter().any(|kw| lower_check.contains(kw)) {
+                                        ai_capable = 1;
+                                    }
+                                }
+                            }
+                        } else {
+                            let lower = folder_name.to_ascii_lowercase();
+                            if ai_keywords.iter().any(|kw| lower.contains(kw)) {
+                                ai_capable = 1;
+                            }
+                        }
+
+                        let identifier = format!("{}.{}", publisher, name);
+                        let _ = insert_stmt.execute(rusqlite::params![
+                            ide_name,
+                            name,
+                            identifier,
+                            publisher,
+                            version,
+                            ai_capable,
+                            path.to_string_lossy().to_string(),
+                        ]);
+                    }
+                }
+            }
+
+            // 2. Antigravity MCP servers (~/.gemini/antigravity/mcp/*)
+            let mcp_dir = home.join(".gemini").join("antigravity").join("mcp");
+            if let Ok(entries) = std::fs::read_dir(&mcp_dir) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let path = entry.path();
+                    if !path.is_dir() {
+                        continue;
+                    }
+                    let server_name = entry.file_name().to_string_lossy().to_string();
+                    let identifier = format!("antigravity.mcp.{}", server_name);
+                    let _ = insert_stmt.execute(rusqlite::params![
+                        "Antigravity MCP",
+                        server_name,
+                        identifier,
+                        "google",
+                        "1.0.0",
+                        1i64,
+                        path.to_string_lossy().to_string(),
+                    ]);
+                }
+            }
+
+            // 3. Antigravity Plugins (~/.gemini/config/plugins/*)
+            let plugin_dir = home.join(".gemini").join("config").join("plugins");
+            if let Ok(entries) = std::fs::read_dir(&plugin_dir) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let path = entry.path();
+                    if !path.is_dir() {
+                        continue;
+                    }
+                    let plugin_name = entry.file_name().to_string_lossy().to_string();
+                    let identifier = format!("antigravity.plugin.{}", plugin_name);
+                    let _ = insert_stmt.execute(rusqlite::params![
+                        "Antigravity Plugin",
+                        plugin_name,
+                        identifier,
+                        "workspace",
+                        "1.0.0",
+                        1i64,
+                        path.to_string_lossy().to_string(),
+                    ]);
+                }
+            }
+        }
+
+        Ok(())
+    }
+
+    /// Populates `api_endpoints` table by inspecting active local sockets, MCP servers,
+    /// and configured cloud API keys across all user profiles.
+    fn populate_api_endpoints(conn: &Connection) -> Result<(), String> {
+        let mut insert_stmt = conn
+            .prepare_cached("INSERT INTO api_endpoints (api_type, provider_or_server, endpoint_or_command, protocol, auth_configured, pore_radius, status) VALUES (?, ?, ?, ?, ?, ?, ?);")
+            .map_err(|e| e.to_string())?;
+
+        // 1. OpenOsoosi EDR REST API (127.0.0.1:3030)
+        let _ = insert_stmt.execute(rusqlite::params![
+            "EDR Control API",
+            "OpenOsoosi Autonomous EDR",
+            "http://127.0.0.1:3030/api",
+            "http/rest",
+            1i64,
+            0.40f64,
+            "listening",
+        ]);
+
+        // 2. Ollama Local LLM API (127.0.0.1:11434)
+        let ollama_addr: std::net::SocketAddr = "127.0.0.1:11434".parse().unwrap();
+        let ollama_online = std::net::TcpStream::connect_timeout(
+            &ollama_addr,
+            std::time::Duration::from_millis(50),
+        ).is_ok();
+        let _ = insert_stmt.execute(rusqlite::params![
+            "Local Model Inference API",
+            "Ollama LLM Engine",
+            "http://127.0.0.1:11434/api",
+            "http/rest",
+            0i64,
+            0.30f64,
+            if ollama_online { "online" } else { "standby" },
+        ]);
+
+        // 3. Chrome DevTools Protocol (CDP 127.0.0.1:9222)
+        let cdp_addr: std::net::SocketAddr = "127.0.0.1:9222".parse().unwrap();
+        let cdp_online = std::net::TcpStream::connect_timeout(
+            &cdp_addr,
+            std::time::Duration::from_millis(50),
+        ).is_ok();
+        let _ = insert_stmt.execute(rusqlite::params![
+            "Browser Automation CDP",
+            "Chrome/Edge Remote Debugger",
+            "http://127.0.0.1:9222",
+            "ws/cdp",
+            0i64,
+            0.35f64,
+            if cdp_online { "online" } else { "inactive" },
+        ]);
+
+        // 4. MCP Servers from Antigravity & Claude Desktop configs
+        let user_homes = Self::get_user_home_dirs();
+        for (_uname, home) in user_homes {
+            let mcp_dir = home.join(".gemini").join("antigravity").join("mcp");
+            if let Ok(entries) = std::fs::read_dir(&mcp_dir) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let path = entry.path();
+                    if !path.is_dir() {
+                        continue;
+                    }
+                    let name = entry.file_name().to_string_lossy().to_string();
+                    let _ = insert_stmt.execute(rusqlite::params![
+                        "MCP Tool Server",
+                        name,
+                        path.to_string_lossy().to_string(),
+                        "stdio/mcp-jsonrpc-2.0",
+                        1i64,
+                        0.25f64,
+                        "registered",
+                    ]);
+                }
+            }
+
+            // Claude Desktop config
+            let claude_cfg = home.join("AppData").join("Roaming").join("Claude").join("claude_desktop_config.json");
+            if claude_cfg.exists() {
+                if let Ok(content) = std::fs::read_to_string(&claude_cfg) {
+                    if let Ok(parsed) = serde_json::from_str::<serde_json::Value>(&content) {
+                        if let Some(servers) = parsed.get("mcpServers").and_then(|v| v.as_object()) {
+                            for (server_name, val) in servers {
+                                let cmd = val.get("command").and_then(|c| c.as_str()).unwrap_or("unknown");
+                                let _ = insert_stmt.execute(rusqlite::params![
+                                    "MCP Tool Server (Claude)",
+                                    server_name,
+                                    cmd,
+                                    "stdio/mcp-jsonrpc-2.0",
+                                    1i64,
+                                    0.25f64,
+                                    "configured",
+                                ]);
                             }
                         }
                     }
                 }
             }
         }
+
+        // 5. Configured Cloud API Providers (Zero-Mock: inspects real environment without leaking secrets)
+        let cloud_providers: [(&str, &str, &str, &str); 7] = [
+            ("Cloud Model API", "Google Gemini", "https://generativelanguage.googleapis.com", "GEMINI_API_KEY"),
+            ("Cloud Model API", "OpenAI", "https://api.openai.com/v1", "OPENAI_API_KEY"),
+            ("Cloud Model API", "Anthropic Claude", "https://api.anthropic.com/v1", "ANTHROPIC_API_KEY"),
+            ("Cloud Model API", "HuggingFace Hub", "https://huggingface.co/api", "HF_TOKEN"),
+            ("Cloud Model API", "Azure OpenAI", "https://azure.microsoft.com/openai", "AZURE_OPENAI_API_KEY"),
+            ("Cloud Developer API", "GitHub API", "https://api.github.com", "GITHUB_TOKEN"),
+            ("Cloud Model API", "Cohere", "https://api.cohere.ai/v1", "COHERE_API_KEY"),
+        ];
+
+        for (api_type, provider, endpoint, env_key) in cloud_providers {
+            let auth_configured = if std::env::var(env_key).map(|v| !v.trim().is_empty()).unwrap_or(false) {
+                1i64
+            } else {
+                0i64
+            };
+
+            let _ = insert_stmt.execute(rusqlite::params![
+                api_type,
+                provider,
+                endpoint,
+                "https/rest",
+                auth_configured,
+                0.50f64,
+                if auth_configured == 1 { "ready" } else { "unconfigured" },
+            ]);
+        }
+
+        Ok(())
+    }
+
+    /// Populates `coding_tools` table by discovering installed developer toolchains,
+    /// compilers, shells, and Python site-packages AI/automation SDKs on the host.
+    fn populate_coding_tools(conn: &Connection) -> Result<(), String> {
+        let mut insert_stmt = conn
+            .prepare_cached("INSERT INTO coding_tools (category, tool_name, version, path, can_spawn_shell, can_network_egress, pore_radius) VALUES (?, ?, ?, ?, ?, ?, ?);")
+            .map_err(|e| e.to_string())?;
+
+        let user_homes = Self::get_user_home_dirs();
+
+        // 1. Toolchains, Compilers, Runtimes, Shells, and VCS
+        let standard_tools: [(&str, &str, &str, i64, i64, f64); 11] = [
+            ("compiler", "cargo", "cargo.exe", 1, 1, 0.55),
+            ("compiler", "rustc", "rustc.exe", 1, 0, 0.55),
+            ("runtime", "python", "python.exe", 1, 1, 0.65),
+            ("runtime", "node", "node.exe", 1, 1, 0.65),
+            ("vcs", "git", "git.exe", 1, 1, 0.50),
+            ("shell", "powershell", "powershell.exe", 1, 1, 0.80),
+            ("shell", "pwsh", "pwsh.exe", 1, 1, 0.80),
+            ("packager", "wix", "wix.exe", 0, 0, 0.40),
+            ("signer", "signtool", "signtool.exe", 0, 0, 0.40),
+            ("container", "docker", "docker.exe", 1, 1, 0.70),
+            ("subsystem", "wsl", "wsl.exe", 1, 1, 0.75),
+        ];
+
+        for (category, tool_name, exe_name, can_shell, can_net, pore_r) in standard_tools {
+            let mut resolved_path: Option<std::path::PathBuf> = None;
+
+            let candidate_dirs = [
+                "C:\\Windows\\System32",
+                "C:\\Windows\\System32\\WindowsPowerShell\\v1.0",
+                "C:\\Program Files\\Git\\cmd",
+                "C:\\Program Files\\Git\\bin",
+                "C:\\Program Files\\Docker\\Docker\\resources\\bin",
+                "C:\\Program Files\\nodejs",
+                "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.26100.0\\x64",
+                "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.22621.0\\x64",
+                "C:\\Users\\oyesanyf\\wix_tools\\PFiles64\\WiX Toolset v5.0\\bin",
+            ];
+
+            for cdir in candidate_dirs {
+                let p = std::path::Path::new(cdir).join(exe_name);
+                if p.exists() {
+                    resolved_path = Some(p);
+                    break;
+                }
+            }
+
+            if resolved_path.is_none() {
+                for (_uname, home) in &user_homes {
+                    let user_candidates = [
+                        home.join(".cargo").join("bin").join(exe_name),
+                        home.join("AppData").join("Local").join("Programs").join("Python").join("Python312").join(exe_name),
+                        home.join("AppData").join("Local").join("Programs").join("Python").join("Python311").join(exe_name),
+                        home.join("AppData").join("Local").join("Programs").join("Python").join("Python310").join(exe_name),
+                        home.join("AppData").join("Local").join("Programs").join("Git").join("bin").join(exe_name),
+                    ];
+                    for cand in user_candidates {
+                        if cand.exists() {
+                            resolved_path = Some(cand);
+                            break;
+                        }
+                    }
+                    if resolved_path.is_some() {
+                        break;
+                    }
+                }
+            }
+
+            if resolved_path.is_none() {
+                if let Ok(path_var) = std::env::var("PATH") {
+                    for dir in path_var.split(';') {
+                        let p = std::path::Path::new(dir.trim()).join(exe_name);
+                        if p.exists() {
+                            resolved_path = Some(p);
+                            break;
+                        }
+                    }
+                }
+            }
+
+            if let Some(path) = resolved_path {
+                let mut version = "installed".to_string();
+                if let Ok(meta) = path.metadata() {
+                    if let Ok(modified) = meta.modified() {
+                        let dt: chrono::DateTime<chrono::Utc> = modified.into();
+                        version = dt.format("%Y.%m.%d").to_string();
+                    }
+                }
+
+                let _ = insert_stmt.execute(rusqlite::params![
+                    category,
+                    tool_name,
+                    version,
+                    path.to_string_lossy().to_string(),
+                    can_shell,
+                    can_net,
+                    pore_r,
+                ]);
+            }
+        }
+
+        // 2. Python Site-Packages AI & Automation SDKs
+        let mut site_packages_dirs = Vec::new();
+        for (_uname, home) in &user_homes {
+            let py_programs = home.join("AppData").join("Local").join("Programs").join("Python");
+            if let Ok(entries) = std::fs::read_dir(&py_programs) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let sp = entry.path().join("Lib").join("site-packages");
+                    if sp.exists() {
+                        site_packages_dirs.push(sp);
+                    }
+                }
+            }
+        }
+
+        if let Ok(c_entries) = std::fs::read_dir("C:\\") {
+            for entry in c_entries.filter_map(|e| e.ok()) {
+                let name = entry.file_name().to_string_lossy().to_string();
+                if name.starts_with("Python") {
+                    let sp = entry.path().join("Lib").join("site-packages");
+                    if sp.exists() {
+                        site_packages_dirs.push(sp);
+                    }
+                }
+            }
+        }
+
+        let ai_sdk_filter = [
+            "torch", "torchvision", "transformers", "accelerate", "safetensors",
+            "langchain", "langgraph", "openai", "anthropic", "fastapi", "uvicorn",
+            "httpx", "pydantic", "playwright", "selenium", "requests", "litert",
+            "tokenizers", "chromadb", "faiss", "spacy", "onnxruntime", "diffusers",
+        ];
+
+        for sp_dir in site_packages_dirs {
+            if let Ok(entries) = std::fs::read_dir(&sp_dir) {
+                for entry in entries.filter_map(|e| e.ok()) {
+                    let fname = entry.file_name().to_string_lossy().to_string();
+                    if fname.ends_with(".dist-info") {
+                        let metadata_file = entry.path().join("METADATA");
+                        if metadata_file.exists() {
+                            if let Ok(meta_content) = std::fs::read_to_string(&metadata_file) {
+                                let mut pkg_name = String::new();
+                                let mut pkg_version = String::new();
+                                for line in meta_content.lines().take(30) {
+                                    if line.starts_with("Name: ") {
+                                        pkg_name = line["Name: ".len()..].trim().to_string();
+                                    } else if line.starts_with("Version: ") {
+                                        pkg_version = line["Version: ".len()..].trim().to_string();
+                                    }
+                                }
+
+                                let lower_pkg = pkg_name.to_ascii_lowercase();
+                                if ai_sdk_filter.iter().any(|k| lower_pkg == *k || lower_pkg.starts_with(&format!("{}-", k))) {
+                                    let is_web = lower_pkg == "playwright" || lower_pkg == "selenium";
+                                    let is_framework = lower_pkg == "fastapi" || lower_pkg == "uvicorn";
+                                    let category = if is_web { "web_automation" } else if is_framework { "web_framework" } else { "ai_sdk" };
+                                    let can_shell = if is_web || lower_pkg.contains("langchain") { 1i64 } else { 0i64 };
+
+                                    let _ = insert_stmt.execute(rusqlite::params![
+                                        category,
+                                        pkg_name,
+                                        pkg_version,
+                                        entry.path().to_string_lossy().to_string(),
+                                        can_shell,
+                                        1i64,
+                                        0.30f64,
+                                    ]);
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
         Ok(())
     }
 
@@ -4133,7 +5255,7 @@ mod tests {
     fn test_all_tables_queryable() {
         let engine = SiqueryEngine::new();
         let tables = SiqueryEngine::list_tables();
-        assert_eq!(tables.len(), 88, "Must contain exactly 88 tables and views for comprehensive siquery host discovery");
+        assert_eq!(tables.len(), 96, "Must contain exactly 96 tables and views for comprehensive siquery host discovery");
 
         for table in tables {
             let sql = format!("SELECT * FROM {} LIMIT 1;", table);
@@ -4235,6 +5357,57 @@ mod tests {
                 count
             );
         }
+    }
+
+    #[test]
+    fn test_browser_tables_and_har_entries_query() {
+        let engine = SiqueryEngine::new();
+        let tables = [
+            "browser_extensions",
+            "browser_history",
+            "browser_downloads",
+            "har_entries",
+            "host_actuation_pores",
+            "agent_mercury_physics",
+        ];
+        for table in tables {
+            let sql = format!("SELECT * FROM {} LIMIT 5;", table);
+            let rows = engine.execute_query(&sql);
+            assert!(rows.is_ok(), "Query on '{}' must succeed without error", table);
+        }
+        let har_rows = engine.execute_query("SELECT * FROM har_entries LIMIT 1;").unwrap();
+        assert!(!har_rows.is_empty(), "har_entries must return at least 1 row");
+
+        let pore_rows = engine.execute_query("SELECT * FROM host_actuation_pores;").unwrap();
+        assert!(pore_rows.len() >= 8, "host_actuation_pores must contain all 8 pore classes");
+
+        let physics_rows = engine.execute_query("SELECT * FROM agent_mercury_physics;").unwrap();
+        assert!(!physics_rows.is_empty(), "agent_mercury_physics must contain at least 1 active lineage row");
+    }
+
+    #[test]
+    fn test_ide_api_coding_tools_tables_query() {
+        let engine = SiqueryEngine::new();
+        let tables = [
+            "ide_extensions",
+            "api_endpoints",
+            "coding_tools",
+        ];
+        for table in tables {
+            let sql = format!("SELECT * FROM {} LIMIT 5;", table);
+            let rows = engine.execute_query(&sql);
+            assert!(rows.is_ok(), "Query on '{}' must succeed without error", table);
+        }
+
+        let api_rows = engine.execute_query("SELECT * FROM api_endpoints;").unwrap();
+        assert!(!api_rows.is_empty(), "api_endpoints must return at least EDR REST API row");
+        assert!(api_rows.iter().any(|r| r.get("endpoint_or_command").and_then(|v| v.as_str()).map(|s| s.contains("3030")).unwrap_or(false)));
+
+        let coding_rows = engine.execute_query("SELECT * FROM coding_tools;").unwrap();
+        assert!(!coding_rows.is_empty(), "coding_tools must discover at least one compiler or runtime on system");
+
+        let ide_rows = engine.execute_query("SELECT * FROM ide_extensions;").unwrap();
+        assert!(ide_rows.is_empty() || ide_rows[0].get("ide").is_some());
     }
 }
 

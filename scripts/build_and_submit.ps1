@@ -217,7 +217,18 @@ if (-not (Test-Path $DeployDir)) {
 $TargetExe = Join-Path $ProjectRoot "target\release\osoosi.exe"
 if (-not $SkipBuild) {
     Write-Host "`n>>> [1/6] Building osoosi-cli Release Binary..." -ForegroundColor Yellow
+    
+    # Release any file lock held by running OsoosiEDR service
+    $scQueryPre = & sc.exe query OsoosiEDR 2>&1 | Out-String
+    if ($scQueryPre -match "STATE\s*:\s*[0-9]+\s+RUNNING") {
+        Write-Host "       Stopping OsoosiEDR service to release binary lock before build..." -ForegroundColor Cyan
+        & sc.exe stop OsoosiEDR | Out-Null
+        Start-Sleep -Seconds 2
+    }
+
     Test-And-Handle-LockedFile -FilePath $TargetExe
+    $depsExe = Join-Path $ProjectRoot "target\release\deps\osoosi.exe"
+    Test-And-Handle-LockedFile -FilePath $depsExe
 
     $signtoolCandidates = @(
         "C:\Program Files (x86)\Windows Kits\10\bin\10.0.26100.0\x64\signtool.exe",

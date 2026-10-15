@@ -10,6 +10,7 @@ pub mod breakout_defense;
 pub mod classifier;
 pub mod containment_ring;
 pub mod detector;
+pub mod mercury_guard;
 pub mod rasp;
 pub mod reasoner;
 pub mod screener;
@@ -29,6 +30,10 @@ pub use classifier::{
 };
 pub use containment_ring::{compute_ring_hmac, AgentContainmentRing, ContainmentAuditEntry};
 pub use detector::AgentAnomalyDetector;
+pub use mercury_guard::{
+    ActuationPoreClass, AmalgamRecord, DropletEvent, HostActuationPore, HostPoreInventory,
+    MercuryContainmentEngine, MercuryLineageState, MercuryPhysicsVerdict, PassivationState,
+};
 pub use reasoner::SemanticReasoningEngine;
 pub use screener::{ScreenerResult, SessionWindow, StatisticalScreener};
 pub use siquery::{SiqueryEngine, SiqueryRow};

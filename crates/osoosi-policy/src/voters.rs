@@ -1773,3 +1773,113 @@ impl ThreatVoter for CredentialGuardVoter {
         None
     }
 }
+
+/// Browser & HTTP Archive (HAR) Layer-7 Inspector Voter
+/// Evaluates W3C .har logs and HTTP stream artifacts across prompt injection,
+/// credential exfiltration, SSRF, drive-by payloads, and C2 beaconing.
+pub struct HarTrafficVoter;
+
+#[async_trait]
+impl ThreatVoter for HarTrafficVoter {
+    fn name(&self) -> String {
+        "HAR-L7-Inspector".to_string()
+    }
+
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        let is_har_event = event.event_id == 77
+            || event.data.get("HarContent").is_some()
+            || event
+                .data
+                .get("TargetFilename")
+                .or_else(|| event.data.get("FilePath"))
+                .or_else(|| event.data.get("TargetFile"))
+                .and_then(|v| v.as_str())
+                .map(|s| s.to_ascii_lowercase().ends_with(".har"))
+                .unwrap_or(false);
+
+        if !is_har_event {
+            return None;
+        }
+
+        let har_json = if let Some(content) = event.data.get("HarContent").and_then(|v| v.as_str()) {
+            Some(content.to_string())
+        } else if let Some(target) = event
+            .data
+            .get("TargetFilename")
+            .or_else(|| event.data.get("FilePath"))
+            .or_else(|| event.data.get("TargetFile"))
+            .and_then(|v| v.as_str())
+        {
+            std::fs::read_to_string(target).ok()
+        } else {
+            None
+        };
+
+        if let Some(raw) = har_json {
+            let label = event
+                .data
+                .get("TargetFilename")
+                .or_else(|| event.data.get("FilePath"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("HAR-Inspection");
+            if let Ok(report) = crate::traffic_adapter::parse_and_inspect_har_json(&raw, label) {
+                if report.highest_threat_score >= 0.50 {
+                    return Some(VoteResult {
+                        confidence: report.highest_threat_score.min(0.98),
+                        reason: format!(
+                            "[HAR-L7-Inspector]: {} malicious entries detected across [{}] - {}",
+                            report.malicious_entries,
+                            report.detected_vectors.join(", "),
+                            report.primary_verdict
+                        ),
+                        weight: 1.25,
+                    });
+                }
+            }
+        }
+
+        None
+    }
+}
+
+/// Liquid Mercury Fluid-Dynamics & Multi-Pore Containment Voter
+/// Evaluates agent actuation bursts, pore entropy, and Rayleigh-Plateau impact shattering.
+#[derive(Default, Clone, Copy)]
+pub struct MercuryFluidVoter;
+
+#[async_trait]
+impl ThreatVoter for MercuryFluidVoter {
+    fn name(&self) -> String {
+        "Mercury-Fluid-Dynamics".to_string()
+    }
+
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        let is_mercury_event = event.data.get("MercuryPhysics").is_some()
+            || event.data.get("PoreClass").is_some()
+            || event.data.get("WeberNumber").is_some()
+            || event.data.get("AgentLineageId").is_some()
+            || event.data.get("AgentBreakoutVector").is_some();
+
+        if is_mercury_event {
+            let weber = event.data.get("WeberNumber").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let state = event.data.get("PassivationState").and_then(|v| v.as_str()).unwrap_or("Unknown");
+            let pore = event.data.get("PoreClass").and_then(|v| v.as_str()).unwrap_or("Pore");
+            let confidence = if weber >= 12.0 || state.contains("Passivated") || state.contains("Shattered") {
+                0.96
+            } else {
+                0.85
+            };
+
+            return Some(VoteResult {
+                confidence,
+                reason: format!(
+                    "[Mercury-Fluid-Dynamics]: Multi-pore agent breakout containment trigger (Pore={}, We={:.2}, State={})",
+                    pore, weber, state
+                ),
+                weight: 1.30,
+            });
+        }
+
+        None
+    }
+}
