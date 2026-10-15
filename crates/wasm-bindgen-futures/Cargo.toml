@@ -1,0 +1,22 @@
+[package]
+name = "wasm-bindgen-futures"
+version = "0.4.58"
+edition = "2021"
+license = "MIT OR Apache-2.0"
+description = "Bridging the gap between Rust Futures and JavaScript Promises"
+
+[features]
+default = ["std"]
+futures-core-03-stream = ["js-sys/futures-core-03-stream"]
+std = [
+    "wasm-bindgen/std",
+    "js-sys/std",
+]
+
+[lib]
+name = "wasm_bindgen_futures"
+path = "src/lib.rs"
+
+[dependencies]
+js-sys = { version = "0.3", default-features = false }
+wasm-bindgen = { version = "0.2", default-features = false }

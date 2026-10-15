@@ -153,6 +153,11 @@ function Invoke-AuthenticodeSigning {
 
     foreach ($file in $Files) {
         if (Test-Path $file) {
+            $existingSig = Get-AuthenticodeSignature $file -ErrorAction SilentlyContinue
+            if ($existingSig -and $existingSig.SignerCertificate -and ($existingSig.SignerCertificate.Thumbprint -eq $Thumbprint)) {
+                Write-Host "       -> Already signed by $($existingSig.SignerCertificate.Subject): $file" -ForegroundColor Green
+                continue
+            }
             Write-Host "       Signing '$file' (SHA-256 + RFC 3161 timestamp)..." -ForegroundColor Cyan
             $signedOk = $false
             try {

@@ -1039,7 +1039,7 @@ impl MeshNode {
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Autonat(autonat::Event::StatusChanged { old: _old, new })) => {
                         info!("Oshoosi Mesh: NAT status changed to {:?}", new);
                     }
-                    SwarmEvent::Behaviour(OsoosiBehaviorEvent::Upnp(upnp::Event::NewExternalAddr(addr))) => {
+                    SwarmEvent::Behaviour(OsoosiBehaviorEvent::Upnp(upnp::Event::NewExternalAddr { external_addr: addr, .. })) => {
                         info!("Oshoosi Mesh: UPnP opened external port at {}", addr);
                     }
                     SwarmEvent::Behaviour(OsoosiBehaviorEvent::Upnp(upnp::Event::GatewayNotFound)) => {

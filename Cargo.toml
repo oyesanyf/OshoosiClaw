@@ -76,7 +76,7 @@ walkdir = "2"
 socket2 = "0.5"
 blake3 = "1.5"
 notify = "6"
-libp2p = "0.56"
+libp2p = "0.57"
 futures = "0.3"
 quick-xml = { version = "0.28.2", features = ["serialize"] }
 sysinfo = "0.30"
@@ -87,7 +87,7 @@ axum = { version = "0.7", features = ["macros"] }
 tower = { version = "0.5", features = ["util"] }
 tower-http = { version = "0.5", features = ["fs", "cors"] }
 libc = "0.2"
-nostr-sdk = "0.33"
+nostr-sdk = "0.39"
 opentelemetry = { version = "0.33", features = ["trace"] }
 opentelemetry_sdk = { version = "0.33", features = ["trace"] }
 tracing-opentelemetry = "0.34"
@@ -127,6 +127,9 @@ windows = { version = "0.58", features = [
 winapi = { version = "0.3", features = ["memoryapi", "processthreadsapi", "winnt", "handleapi"] }
 winreg = "0.52"
 pelite = "0.10"
+
+[patch.crates-io]
+wasm-bindgen-futures = { path = "crates/wasm-bindgen-futures" }
 
 [profile.dev]
 debug = 1

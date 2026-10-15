@@ -47,7 +47,7 @@ impl NostrMeshOrchestrator {
             None => Keys::generate(),
         };
 
-        let client = Client::new(&keys);
+        let client = Client::new(keys.clone());
         
         info!("Nostr Mesh Node Initialized. PubKey: {}", keys.public_key());
 
@@ -96,10 +96,9 @@ impl NostrMeshOrchestrator {
         let event = EventBuilder::new(
             KIND_EDR_ALERT,
             content,
-            Vec::<Tag>::new()
         )
         .custom_created_at(Self::randomized_timestamp())
-        .to_event(&self.keys)?;
+        .sign_with_keys(&self.keys)?;
 
         client.send_event(event).await?;
         
@@ -115,7 +114,7 @@ impl NostrMeshOrchestrator {
     {
         let client = self.client.read().await;
         let filter = Filter::new().kind(KIND_EDR_ALERT);
-        let _ = client.subscribe(vec![filter], None).await;
+        let _ = client.subscribe(filter, None).await;
 
         let client_clone = self.client.clone();
         let seen = self.seen_threats.clone();
@@ -129,7 +128,7 @@ impl NostrMeshOrchestrator {
             while let Ok(notification) = notifications.recv().await {
                 if let RelayPoolNotification::Event { event, .. } = notification {
                     if event.kind == KIND_EDR_ALERT {
-                        if event.author() == my_pubkey {
+                        if event.pubkey == my_pubkey {
                             debug!("BitChat: Suppressed local echo from our own Nostr pubkey");
                             continue;
                         }
@@ -191,8 +190,8 @@ impl NostrMeshOrchestrator {
         let event = EventBuilder::new(
             KIND_NODE_HEARTBEAT,
             format!("Node {} is active", node_id),
-            Vec::<Tag>::new()
-        ).to_event(&self.keys)?;
+        )
+        .sign_with_keys(&self.keys)?;
         client.send_event(event).await?;
         Ok(())
     }
