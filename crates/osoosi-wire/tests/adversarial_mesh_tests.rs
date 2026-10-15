@@ -955,7 +955,10 @@ fn test_gossipsub_duplicate_rejection_behavior() {
     // First publish without peers will return InsufficientPeers (since no peers connected)
     let res1 = gs.publish(topic.clone(), payload.clone());
     // In strict mode without peers, first publish returns InsufficientPeers
-    assert!(matches!(res1, Err(gossipsub::PublishError::InsufficientPeers)));
+    assert!(matches!(
+        res1,
+        Err(gossipsub::PublishError::InsufficientPeers)
+    ));
 
     // When a duplicate message is known in the duplicate cache (or published again)
     // duplicate detection is guaranteed by the message ID function
@@ -967,7 +970,8 @@ fn test_gossipsub_duplicate_rejection_behavior() {
     };
     let id1 = (message_id_fn)(&msg);
     let id2 = (message_id_fn)(&msg);
-    assert_eq!(id1, id2, "Message IDs must be deterministic for identical payloads");
+    assert_eq!(
+        id1, id2,
+        "Message IDs must be deterministic for identical payloads"
+    );
 }
-
-
