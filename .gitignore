@@ -21,9 +21,12 @@
 *.dylib
 *.so
 *.wixpdb
+*.exe
+*.dll
 *.msi
-!OshoosiClaw.msi
-!deploy/OshoosiClaw.msi
+*.sfx
+/bin/
+/tests/poison_tests/
 *.locked.*
 
 # ---------- IDE ----------
@@ -107,7 +110,6 @@ error_core.log
 *.zip
 /osoosi_deploy/
 /deploy/*
-!/deploy/OshoosiClaw.msi
 !/deploy/reports/
 !/deploy/reports/*
 
@@ -115,7 +117,8 @@ error_core.log
 /tmp/
 /tmp_stix/
 /runs/
-.cargo/
+.cargo/*
+!.cargo/audit.toml
 .crates.toml
 .crates2.json
 /scratch/
