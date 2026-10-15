@@ -25,6 +25,7 @@
 *.dll
 *.msi
 *.sfx
+*.wasm
 /bin/
 /tests/poison_tests/
 *.locked.*
