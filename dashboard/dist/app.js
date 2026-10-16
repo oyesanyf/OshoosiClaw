@@ -5445,6 +5445,8 @@ async function renderGossipView() {
             const summary = (ev.summary || '').toLowerCase();
             if (pName === 'unknown' || pName === 'unknown process') return false;
             if (summary.includes('execution of non-existing file')) return false;
+            if (summary.includes('suspicious activity') && !ev.process_name) return false;
+            if (ev.event_type === 'MESH_SKILL_BROADCAST' && ev.is_threat) return false;
             if (ev.confidence !== undefined && ev.confidence !== null && ev.confidence < 0.50) return false;
             return true;
         });
@@ -5543,6 +5545,8 @@ async function renderGossipView() {
             const summary = (ev.summary || '').toLowerCase();
             if (pName === 'unknown' || pName === 'unknown process') continue;
             if (summary.includes('execution of non-existing file')) continue;
+            if (summary.includes('suspicious activity') && !ev.process_name) continue;
+            if (ev.event_type === 'MESH_SKILL_BROADCAST') continue;
             if (ev.confidence !== undefined && ev.confidence !== null && ev.confidence < 0.50) continue;
             threatCount++;
             filteredEvents.push(ev);
