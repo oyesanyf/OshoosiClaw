@@ -31,6 +31,18 @@
                                     Wait="no" />
                 </Component>
 
+                <Component Id="InjectDll" Guid="346831b5-1920-4451-befa-efe1def462e1" Bitness="always64">
+                    <File Id="InjectDllFile" Source="target\release\osoosi_inject.dll" KeyPath="yes" />
+                </Component>
+
+                <Component Id="AuditorExe" Guid="9caa2a0e-f1f9-4d75-acc2-ff4902b560d2" Bitness="always64">
+                    <File Id="AuditorExeFile" Source="target\release\osoosi-auditor.exe" KeyPath="yes" />
+                </Component>
+
+                <Component Id="OtxTaxiiExe" Guid="85dc40bf-83d4-4375-8686-5398f2dd0fff" Bitness="always64">
+                    <File Id="OtxTaxiiExeFile" Source="target\release\otx-taxii-rs.exe" KeyPath="yes" />
+                </Component>
+
                 <Component Id="OnnxRuntimeDll" Guid="d2a71bf5-7798-4c17-9154-374cf1ec1b73" Bitness="always64">
                     <File Id="OnnxRuntimeFile" Source="onnxruntime.dll" KeyPath="yes" />
                 </Component>
@@ -81,17 +93,154 @@
                         </Component>
                     </Directory>
                 </Directory>
+
+                <Directory Id="ModelsDir" Name="models">
+                    <Component Id="ModelRootFiles" Guid="773b4481-cd8a-4fc2-bcd9-eaf2114cb7ed" Bitness="always64">
+                        <File Id="EdrCqlPolicyPt" Source="models\edr_cql_policy.pt" KeyPath="yes" />
+                        <File Id="EdrCqlPolicyWeightsJson" Source="models\edr_cql_policy_weights.json" />
+                        <File Id="ThreatModelJson" Source="models\threat_model.json" />
+                    </Component>
+                    <Directory Id="ModelsMalwareDir" Name="malware">
+                        <Component Id="ModelMalwareFiles" Guid="a1703ebc-e3e4-40f1-9fb4-652e6b888b0b" Bitness="always64">
+                            <File Id="MalconvSafetensors" Source="models\malware\malconv.safetensors" KeyPath="yes" />
+                            <File Id="SorelFfnnPt" Source="models\malware\sorel_ffnn.pt" />
+                            <File Id="SorelLightgbmModel" Source="models\malware\sorel_lightgbm.model" />
+                        </Component>
+                    </Directory>
+                    <Directory Id="ModelsClefDir" Name="clef">
+                        <Component Id="ModelClefFiles" Guid="c13912d1-f2ee-44b6-a37c-8c2a87bc7510" Bitness="always64">
+                            <File Id="ClefWeightsJson" Source="models\clef\weights.json" KeyPath="yes" />
+                            <File Id="ClefRlFeedbackJson" Source="models\clef\rl_feedback_state.json" />
+                        </Component>
+                    </Directory>
+                </Directory>
+
+                <Directory Id="ToolsDir" Name="tools">
+                    <Directory Id="ToolsSysmonDir" Name="sysmon">
+                        <Component Id="ToolSysmon" Guid="834340a3-a276-4dfe-a3b2-681be08b39da" Bitness="always64">
+                            <File Id="Sysmon64Exe" Source="tools\sysmon\Sysmon64.exe" KeyPath="yes" />
+                            <File Id="SysmonExe" Source="tools\sysmon\Sysmon.exe" />
+                            <File Id="Sysmon64aExe" Source="tools\sysmon\Sysmon64a.exe" />
+                        </Component>
+                    </Directory>
+                    <Directory Id="ToolsVelociraptorDir" Name="velociraptor">
+                        <Component Id="ToolVelociraptor" Guid="41f9ab47-5e4d-4e65-8568-585f093e9fda" Bitness="always64">
+                            <File Id="VelociraptorExe" Source="tools\velociraptor\velociraptor.exe" KeyPath="yes" />
+                        </Component>
+                    </Directory>
+                    <Directory Id="ToolsHollowsHunterDir" Name="hollows_hunter">
+                        <Component Id="ToolHollowsHunter" Guid="f6508d48-0b75-46a7-8db7-14a4cd8f33d0" Bitness="always64">
+                            <File Id="HollowsHunterExe" Source="tools\hollows_hunter\hollows_hunter.exe" KeyPath="yes" />
+                        </Component>
+                    </Directory>
+                    <Directory Id="ToolsNgrepDir" Name="ngrep">
+                        <Component Id="ToolNgrep" Guid="c4ad9f16-1394-4524-b3d3-c8f9ecf26adb" Bitness="always64">
+                            <File Id="NgrepExe" Source="tools\ngrep\ngrep.exe" KeyPath="yes" />
+                            <File Id="NgrepPcre2Dll" Source="tools\ngrep\pcre2-8.dll" />
+                        </Component>
+                    </Directory>
+                    <Directory Id="ToolsWikiskillDir" Name="wikiskill">
+                        <Component Id="ToolWikiskill" Guid="cc3b1df0-238f-411d-a5a4-3b64d4efc60f" Bitness="always64">
+                            <File Id="WikiskillPyproject" Source="tools\wikiskill\pyproject.toml" KeyPath="yes" />
+                            <File Id="WikiskillReadme" Source="tools\wikiskill\README.md" />
+                            <File Id="WikiskillLicense" Source="tools\wikiskill\LICENSE" />
+                            <File Id="WikiskillNotice" Source="tools\wikiskill\NOTICE.md" />
+                        </Component>
+                    </Directory>
+                </Directory>
+
+                <Directory Id="ExamplesDir" Name="examples">
+                    <Directory Id="ExamplesEdrSkillDir" Name="edr-skill-evolution">
+                        <Component Id="ExamplesEdrFiles" Guid="d4c92bcd-b263-4a3f-a4ea-6343ba9bbe84" Bitness="always64">
+                            <File Id="ExBaselineSkill" Source="examples\edr-skill-evolution\baseline-SKILL.md" KeyPath="yes" />
+                            <File Id="ExRunEvolutionPy" Source="examples\edr-skill-evolution\run_evolution.py" />
+                            <File Id="ExScorerPy" Source="examples\edr-skill-evolution\scorer.py" />
+                            <File Id="ExTasksJson" Source="examples\edr-skill-evolution\tasks.json" />
+                        </Component>
+                    </Directory>
+                </Directory>
+
+                <Directory Id="RunsDir" Name="runs">
+                    <Directory Id="RunsEdrEvolutionDir" Name="edr-evolution">
+                        <Component Id="RunsEdrState" Guid="f0e4a15e-3579-47b3-9ef4-9d68c5c09a58" Bitness="always64">
+                            <File Id="RunsWikiskillState" Source="runs\edr-evolution\.wikiskill-state.json" KeyPath="yes" />
+                            <File Id="RunsConfigJson" Source="runs\edr-evolution\config.json" />
+                            <File Id="RunsConfigSha256Json" Source="runs\edr-evolution\config.sha256.json" />
+                        </Component>
+                        <Directory Id="RunsWikiDir" Name="wiki">
+                            <Component Id="RunsEdrWikiIndex" Guid="5fc37b81-40d0-4b9b-a9c9-6a5955f9a911" Bitness="always64">
+                                <File Id="RunsWikiIndexMd" Source="runs\edr-evolution\wiki\index.md" KeyPath="yes" />
+                            </Component>
+                            <Directory Id="RunsWikiPatternsDir" Name="patterns">
+                                <Component Id="RunsEdrWikiPatterns" Guid="126c0acf-e798-4859-b7a5-2e15b49aeb11" Bitness="always64">
+                                    <File Id="RunsPattern1" Source="runs\edr-evolution\wiki\patterns\3348277deb50aa1d.md" KeyPath="yes" />
+                                    <File Id="RunsPattern2" Source="runs\edr-evolution\wiki\patterns\a9334894c0624a0d.md" />
+                                    <File Id="RunsPattern3" Source="runs\edr-evolution\wiki\patterns\d7002e64340557ef.md" />
+                                </Component>
+                            </Directory>
+                        </Directory>
+                    </Directory>
+                </Directory>
+
+                <Directory Id="YaraDir" Name="yara">
+                    <Directory Id="YaraRulesDir" Name="yara-rules">
+                        <Component Id="YaraRuleFiles" Guid="10dc1c7e-c88c-4ac1-bb13-9402223a4a27" Bitness="always64">
+                            <File Id="YaraRule1" Source="yara\yara-rules\Adobe_Flash_DRM_Use_After_Free.rule" KeyPath="yes" />
+                            <File Id="YaraRule2" Source="yara\yara-rules\AgentTesla.rule" />
+                            <File Id="YaraRule3" Source="yara\yara-rules\Base64_Encoded_Powershell_Directives.rule" />
+                            <File Id="YaraRule4" Source="yara\yara-rules\ClamAV_Emotet_String_Aggregrate.rule" />
+                            <File Id="YaraRule5" Source="yara\yara-rules\CVE_2018_4878_0day_ITW.rule" />
+                            <File Id="YaraRule6" Source="yara\yara-rules\Embedded_PE.rule" />
+                            <File Id="YaraRule7" Source="yara\yara-rules\Excel_Hidden_Macro_Sheet.rule" />
+                            <File Id="YaraRule8" Source="yara\yara-rules\Executable_Converted_to_MSI.rule" />
+                            <File Id="YaraRule9" Source="yara\yara-rules\GlowSpark_Downloader.rule" />
+                            <File Id="YaraRule10" Source="yara\yara-rules\Hex_Encoded_Powershell.rule" />
+                            <File Id="YaraRule11" Source="yara\yara-rules\Hidden_Bee_Elements.rule" />
+                            <File Id="YaraRule12" Source="yara\yara-rules\Hunting_Rule_ShikataGaNai.rule" />
+                            <File Id="YaraRule13" Source="yara\yara-rules\IQY_File.rule" />
+                            <File Id="YaraRule14" Source="yara\yara-rules\IQY_File_With_Pivot_Extension_URL.rule" />
+                            <File Id="YaraRule15" Source="yara\yara-rules\IQY_File_With_Suspicious_URL.rule" />
+                            <File Id="YaraRule16" Source="yara\yara-rules\Microsoft_Excel_Data_Connection.rule" />
+                            <File Id="YaraRule17" Source="yara\yara-rules\Microsoft_Office_Document_with_Embedded_Flash_File.rule" />
+                            <File Id="YaraRule18" Source="yara\yara-rules\Microsoft_XLSX_with_Macrosheet.rule" />
+                            <File Id="YaraRule19" Source="yara\yara-rules\MSIExec_Pivot.rule" />
+                            <File Id="YaraRule20" Source="yara\yara-rules\NTLM_Credentials_Theft_via_PDF_Files.rule" />
+                            <File Id="YaraRule21" Source="yara\yara-rules\PDF_Document_with_Embedded_IQY_File.rule" />
+                            <File Id="YaraRule22" Source="yara\yara-rules\PE.rule" />
+                            <File Id="YaraRule23" Source="yara\yara-rules\RTF_Byte_Nibble_Obfuscation.rule" />
+                            <File Id="YaraRule24" Source="yara\yara-rules\Signed_Executable_With_Custom_Elliptic_Curve_Parameters.rule" />
+                            <File Id="YaraRule25" Source="yara\yara-rules\Symbolic_Link_Files_DLL_Reference_Suspicious_Characteristics.rule" />
+                            <File Id="YaraRule26" Source="yara\yara-rules\Symbolic_Link_Files_Macros_File_Characteristic.rule" />
+                        </Component>
+                    </Directory>
+                </Directory>
             </Directory>
         </StandardDirectory>
 
         <Feature Id="MainFeature" Title="OshoosiClaw Agent Core" Level="1">
             <ComponentRef Id="MainExecutable" />
+            <ComponentRef Id="InjectDll" />
+            <ComponentRef Id="AuditorExe" />
+            <ComponentRef Id="OtxTaxiiExe" />
             <ComponentRef Id="OnnxRuntimeDll" />
             <ComponentRef Id="ConfigFile" />
             <ComponentRef Id="ConfigSig" />
             <ComponentRef Id="ConfigFiles" />
             <ComponentRef Id="DashboardAssets" />
             <ComponentRef Id="DriverComponents" />
+            <ComponentRef Id="ModelRootFiles" />
+            <ComponentRef Id="ModelMalwareFiles" />
+            <ComponentRef Id="ModelClefFiles" />
+            <ComponentRef Id="ToolSysmon" />
+            <ComponentRef Id="ToolVelociraptor" />
+            <ComponentRef Id="ToolHollowsHunter" />
+            <ComponentRef Id="ToolNgrep" />
+            <ComponentRef Id="ToolWikiskill" />
+            <ComponentRef Id="ExamplesEdrFiles" />
+            <ComponentRef Id="RunsEdrState" />
+            <ComponentRef Id="RunsEdrWikiIndex" />
+            <ComponentRef Id="RunsEdrWikiPatterns" />
+            <ComponentRef Id="YaraRuleFiles" />
         </Feature>
 
         <!-- Dynamic Windows Defender and Firewall Configuration during Installation -->

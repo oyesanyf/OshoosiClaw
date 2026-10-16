@@ -20,8 +20,9 @@ impl RemediationController {
         {
             #[allow(unused_imports)]
             use std::os::windows::process::CommandExt;
+            let netsh_bin = osoosi_types::resolve_system_binary("netsh.exe");
             // Block all inbound/outbound except common P2P mesh ports (4001, 8080)
-            let mut cmd1 = Command::new("netsh");
+            let mut cmd1 = Command::new(&netsh_bin);
             cmd1.stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null());
             #[cfg(windows)]
@@ -30,7 +31,7 @@ impl RemediationController {
                 .args(["advfirewall", "firewall", "add", "rule", "name=Oshoosi-Isolation-In", "dir=in", "action=block", "profile=any"])
                 .status();
 
-            let mut cmd2 = Command::new("netsh");
+            let mut cmd2 = Command::new(&netsh_bin);
             cmd2.stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null());
             #[cfg(windows)]
@@ -39,7 +40,7 @@ impl RemediationController {
                 .args(["advfirewall", "firewall", "add", "rule", "name=Oshoosi-Isolation-Out", "dir=out", "action=block", "profile=any"])
                 .status();
 
-            let mut cmd3 = Command::new("netsh");
+            let mut cmd3 = Command::new(&netsh_bin);
             cmd3.stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null());
             #[cfg(windows)]

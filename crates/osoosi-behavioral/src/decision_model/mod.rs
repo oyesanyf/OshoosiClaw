@@ -170,7 +170,9 @@ mod tests {
 
     #[test]
     fn test_rlcd_feedback_ordinal_partial_credit() {
-        let engine = LocalDecisionEngine::new("models/clef");
+        let temp_dir = std::env::temp_dir().join(format!("clef_test_rlcd_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let engine = LocalDecisionEngine::new(&temp_dir);
         let decision_id = "test-dec-42";
 
         // Initial feedback
@@ -187,6 +189,8 @@ mod tests {
         engine.record_rl_feedback(decision_id, -1.0, "benign");
         assert_eq!(engine.rl_feedback_count(), 3);
         assert!(engine.cumulative_rl_reward() < prior_reward);
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
     }
 
     #[test]

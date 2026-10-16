@@ -119,7 +119,8 @@ fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
 
     // Bypass 24-hour frequency limit via registry
     let reg_path = "HKLM\\Software\\Microsoft\\Windows NT\\CurrentVersion\\SystemRestore";
-    let _ = Command::new("reg")
+    let reg_bin = osoosi_types::resolve_system_binary("reg.exe");
+    let _ = Command::new(&reg_bin)
         .args(["add", reg_path, "/v", "SystemRestorePointCreationFrequency", "/t", "REG_DWORD", "/d", "0", "/f"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -145,7 +146,7 @@ fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
     let result: BOOL = unsafe { SRSetRestorePointW(&info, &mut status) };
 
     // Clean up registry key
-    let _ = Command::new("reg")
+    let _ = Command::new(&reg_bin)
         .args(["delete", reg_path, "/v", "SystemRestorePointCreationFrequency", "/f"])
         .stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null())
@@ -237,7 +238,7 @@ fn run_restore_point(_config: &BackupConfig) -> anyhow::Result<String> {
 fn run_full_image(config: &BackupConfig) -> anyhow::Result<String> {
     use std::process::Stdio;
     let target = config.target.trim().trim_end_matches('\\');
-    let status = Command::new("wbadmin")
+    let status = Command::new(osoosi_types::resolve_system_binary("wbadmin.exe"))
         .args([
             "start",
             "backup",
@@ -323,7 +324,7 @@ fn run_file_sync(config: &BackupConfig) -> anyhow::Result<String> {
                 .and_then(|s| s.to_str())
                 .unwrap_or("data")
         );
-        let status = Command::new("robocopy")
+        let status = Command::new(osoosi_types::resolve_system_binary("robocopy.exe"))
             .args([
                 src.as_str(),
                 &dest,

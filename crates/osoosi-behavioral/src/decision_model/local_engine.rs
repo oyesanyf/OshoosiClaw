@@ -151,10 +151,11 @@ impl LocalDecisionEngine {
     }
 
     fn load_rl_feedback_state(dir: &Path) -> Option<RlFeedbackState> {
-        let candidates = [
-            dir.join("rl_feedback_state.json"),
-            PathBuf::from("models/clef/rl_feedback_state.json"),
-        ];
+        let mut candidates = Vec::new();
+        candidates.push(dir.join("rl_feedback_state.json"));
+        if dir.as_os_str().is_empty() {
+            candidates.push(PathBuf::from("models/clef/rl_feedback_state.json"));
+        }
         for path in &candidates {
             if path.exists() {
                 if let Ok(content) = std::fs::read_to_string(path) {

@@ -276,6 +276,11 @@ fn find_in_path_directories(stem: &str) -> Option<PathBuf> {
         }
     }
 
+    let resolved = osoosi_types::resolve_system_binary(stem);
+    if resolved.is_file() {
+        return Some(resolved);
+    }
+
     #[cfg(windows)]
     {
         let sys_root = env::var("SystemRoot")

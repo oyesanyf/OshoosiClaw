@@ -788,11 +788,8 @@ impl PatchEngine {
         #[cfg(not(target_os = "windows"))]
         let check_cmd = "ss -tulpn";
 
-        let net_ok = Command::new(if cfg!(target_os = "windows") {
-            "cmd"
-        } else {
-            "sh"
-        })
+        let cmd_prog = if cfg!(target_os = "windows") { "cmd.exe" } else { "sh" };
+        let net_ok = Command::new(osoosi_types::resolve_system_binary(cmd_prog))
         .args(if cfg!(target_os = "windows") {
             vec!["/C", check_cmd]
         } else {
@@ -944,7 +941,7 @@ impl PatchEngine {
                     let kb_num = kb.trim_start_matches("KB");
                     info!("Attempting wusa rollback for {}...", kb);
                     
-                    let wusa_fut = Command::new("wusa.exe")
+                    let wusa_fut = Command::new(osoosi_types::resolve_system_binary("wusa.exe"))
                         .args([
                             "/uninstall",
                             &format!("/kb:{}", kb_num),
@@ -980,7 +977,7 @@ impl PatchEngine {
                                 "/Quiet"
                             ];
                             
-                            let dism_fut = Command::new("dism.exe").args(dism_args).status();
+                            let dism_fut = Command::new(osoosi_types::resolve_system_binary("dism.exe")).args(dism_args).status();
                             let dism_status = match timeout(Duration::from_secs(600), dism_fut).await {
                                 Ok(res) => res?,
                                 Err(_) => {
@@ -990,7 +987,7 @@ impl PatchEngine {
 
                             if !dism_status.success() {
                                 // Try generic package name if specific one fails
-                                let dism_fallback_fut = Command::new("dism.exe")
+                                let dism_fallback_fut = Command::new(osoosi_types::resolve_system_binary("dism.exe"))
                                     .args(["/Online", "/Remove-Package", &format!("/PackageName:{}", kb), "/NoRestart", "/Quiet"])
                                     .status();
                                 let _ = timeout(Duration::from_secs(300), dism_fallback_fut).await;

@@ -93,7 +93,7 @@ impl AgentProvisioner {
         let mut installed_service: Option<&'static str> = None;
         let mut is_stopped = false;
 
-        let mut check_sysmon64 = Command::new("sc.exe");
+        let mut check_sysmon64 = Command::new(osoosi_types::resolve_system_binary("sc.exe"));
         check_sysmon64.args(["query", "Sysmon64"]);
         if let Ok(output) = self.executor.execute(check_sysmon64).await {
             if output.status.success() {
@@ -106,7 +106,7 @@ impl AgentProvisioner {
         }
 
         if installed_service.is_none() {
-            let mut check_sysmon = Command::new("sc.exe");
+            let mut check_sysmon = Command::new(osoosi_types::resolve_system_binary("sc.exe"));
             check_sysmon.args(["query", "Sysmon"]);
             if let Ok(output) = self.executor.execute(check_sysmon).await {
                 if output.status.success() {
@@ -122,7 +122,7 @@ impl AgentProvisioner {
         if let Some(svc) = installed_service {
             if is_stopped {
                 info!("Sysmon service '{}' is stopped. Starting service...", svc);
-                let mut start_cmd = Command::new("sc.exe");
+                let mut start_cmd = Command::new(osoosi_types::resolve_system_binary("sc.exe"));
                 start_cmd.args(["start", svc]);
                 let _ = self.executor.execute(start_cmd).await;
             }
@@ -258,7 +258,7 @@ impl AgentProvisioner {
         // Check if wevtutil.exe gp Microsoft-Windows-Sysmon returns exit status 0 (publisher exists)
         // while neither Sysmon64 nor Sysmon service is installed.
         info!("Checking for orphaned Sysmon ETW publisher manifest registration...");
-        let mut check_publisher = Command::new("wevtutil.exe");
+        let mut check_publisher = Command::new(osoosi_types::resolve_system_binary("wevtutil.exe"));
         check_publisher.args(["gp", "Microsoft-Windows-Sysmon"]);
         match self.executor.execute(check_publisher).await {
             Ok(output) if output.status.success() => {
@@ -266,7 +266,7 @@ impl AgentProvisioner {
                     "Orphaned Microsoft-Windows-Sysmon manifest detected without corresponding service. \
                     Unregistering manifest to prevent installation collision..."
                 );
-                let mut unreg_cmd = Command::new("wevtutil.exe");
+                let mut unreg_cmd = Command::new(osoosi_types::resolve_system_binary("wevtutil.exe"));
                 unreg_cmd.args(["um", "Microsoft-Windows-Sysmon"]);
                 match self.executor.execute(unreg_cmd).await {
                     Ok(unreg_out) if unreg_out.status.success() => {
@@ -335,7 +335,7 @@ impl AgentProvisioner {
                 Executing self-healing manifest cleanup and forced uninstall before retry..."
             );
 
-            let mut unreg_cmd = Command::new("wevtutil.exe");
+            let mut unreg_cmd = Command::new(osoosi_types::resolve_system_binary("wevtutil.exe"));
             unreg_cmd.args(["um", "Microsoft-Windows-Sysmon"]);
             if let Err(e) = self.executor.execute(unreg_cmd).await {
                 warn!("Remediation: 'wevtutil.exe um Microsoft-Windows-Sysmon' execution failed: {}", e);
@@ -395,7 +395,7 @@ impl AgentProvisioner {
 
         // Post-check: Run sc.exe query Sysmon64 to verify if the service is active.
         info!("Performing post-installation verification: sc.exe query Sysmon64...");
-        let mut post_check = Command::new("sc.exe");
+        let mut post_check = Command::new(osoosi_types::resolve_system_binary("sc.exe"));
         post_check.args(["query", "Sysmon64"]);
         match self.executor.execute(post_check).await {
             Ok(output) if output.status.success() => {
@@ -567,7 +567,7 @@ impl AgentProvisioner {
     async fn ensure_windows_rule(&self, name: &str, port: &str, protocol: &str) -> anyhow::Result<()> {
         #[allow(unused_imports)]
         use std::os::windows::process::CommandExt;
-        let mut check = Command::new("netsh");
+        let mut check = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
         #[cfg(windows)]
         check.creation_flags(0x08000000);
         check.args([
@@ -580,7 +580,7 @@ impl AgentProvisioner {
 
         if !self.executor.execute(check).await?.status.success() {
             info!("Adding firewall rule: {} (Port {}/{})...", name, port, protocol);
-            let mut add = Command::new("netsh");
+            let mut add = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
             #[cfg(windows)]
             add.creation_flags(0x08000000);
             add.args([
@@ -718,7 +718,7 @@ impl AgentProvisioner {
                 if let Some(exe_name) = path.file_name().and_then(|n| n.to_str()) {
                     info!("Enforcing Hard-Block for {}: IFEO Debugger -> blocked.exe", exe_name);
                     
-                    let mut cmd = Command::new("reg");
+                    let mut cmd = Command::new(osoosi_types::resolve_system_binary("reg.exe"));
                     cmd.args([
                         "add",
                         &format!(r"HKLM\SOFTWARE\Microsoft\Windows NT\CurrentVersion\Image File Execution Options\{}", exe_name),

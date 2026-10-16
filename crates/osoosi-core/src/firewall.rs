@@ -287,6 +287,30 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             "Configuring dynamic install folder Defender exclusions and Windows Firewall rules"
         );
 
+        // 0. Pre-create required data directories in install_dir and grant permissions to Users
+        let subfolders = ["database", "logs", "quarantine", "runs", "yara", "models", "config"];
+        for sub in &subfolders {
+            let sub_path = install_dir.join(sub);
+            let _ = std::fs::create_dir_all(&sub_path);
+        }
+        let icacls_exe = osoosi_types::resolve_system_binary("icacls.exe");
+        if icacls_exe.is_file() {
+            let mut perm_cmd = Command::new(&icacls_exe);
+            perm_cmd.stdout(std::process::Stdio::null());
+            perm_cmd.stderr(std::process::Stdio::null());
+            #[cfg(windows)]
+            perm_cmd.creation_flags(0x08000000);
+            perm_cmd.args([
+                &clean_install_dir,
+                "/grant",
+                "*S-1-5-32-545:(OI)(CI)M",
+                "/T",
+                "/C",
+                "/Q",
+            ]);
+            let _ = timeout(Duration::from_secs(10), perm_cmd.status()).await;
+        }
+
         // 1. Windows Defender Folder & Process Exclusion
         let mut ps_cmd = format!(
             "Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue; \
@@ -307,19 +331,8 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             }
         }
 
-        let sys_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
-        let ps_exe = {
-            let p = std::path::PathBuf::from(&sys_root)
-                .join("System32")
-                .join("WindowsPowerShell")
-                .join("v1.0")
-                .join("powershell.exe");
-            if p.is_file() { p } else { std::path::PathBuf::from("powershell.exe") }
-        };
-        let netsh_exe = {
-            let p = std::path::PathBuf::from(&sys_root).join("System32").join("netsh.exe");
-            if p.is_file() { p } else { std::path::PathBuf::from("netsh.exe") }
-        };
+        let ps_exe = osoosi_types::resolve_system_binary("powershell.exe");
+        let netsh_exe = osoosi_types::resolve_system_binary("netsh.exe");
 
         let mut def_cmd = Command::new(&ps_exe);
         def_cmd.stdout(std::process::Stdio::null());
@@ -719,7 +732,7 @@ fn block_windows_program(image_path: Option<&str>) -> Result<String> {
     let in_rule = format!("{}-In", rule_base);
 
     let add_rule = |name: &str, dir: &str| -> Result<()> {
-        let mut cmd = Command::new("netsh");
+        let mut cmd = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
         #[cfg(windows)]
         {
             use std::os::windows::process::CommandExt;
@@ -788,7 +801,7 @@ fn block_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<String> 
     let payload = valid_targets.join(",");
     let name = dns_rule_name(prefix, &payload);
 
-    let mut cmd = Command::new("netsh");
+    let mut cmd = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
     cmd.stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     #[cfg(windows)]
@@ -808,7 +821,7 @@ fn block_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<String> 
     let status = cmd.status()?;
 
     if !status.success() {
-        let mut retry_cmd = Command::new("netsh");
+        let mut retry_cmd = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
         retry_cmd
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());
@@ -844,7 +857,7 @@ fn unblock_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<()> {
     use std::os::windows::process::CommandExt;
     let payload = targets.join(",");
     let name = dns_rule_name(prefix, &payload);
-    let mut cmd = Command::new("netsh");
+    let mut cmd = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
     cmd.stdout(std::process::Stdio::null())
         .stderr(std::process::Stdio::null());
     #[cfg(windows)]
@@ -874,7 +887,7 @@ fn remove_windows_autoblock_rules() -> Result<usize> {
     #[allow(unused_imports)]
     use std::os::windows::process::CommandExt;
     use std::collections::HashSet;
-    let mut show_cmd = Command::new("netsh");
+    let mut show_cmd = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
     #[cfg(windows)]
     show_cmd.creation_flags(0x08000000);
     let output = show_cmd
@@ -892,7 +905,7 @@ fn remove_windows_autoblock_rules() -> Result<usize> {
     }
     let mut removed = 0usize;
     for name in to_delete {
-        let mut del_cmd = Command::new("netsh");
+        let mut del_cmd = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
         del_cmd
             .stdout(std::process::Stdio::null())
             .stderr(std::process::Stdio::null());

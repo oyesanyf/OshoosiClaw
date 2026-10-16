@@ -289,7 +289,7 @@ impl NativeTelemetryEngine {
             info!("🚀 [NATIVE-TELEMETRY] Starting Multi-Engine ETW Session...");
             
             // Clean up any stale session using logman (ferrisetw doesn't expose stop-by-name easily)
-            let _ = std::process::Command::new("logman")
+            let _ = std::process::Command::new(osoosi_types::resolve_system_binary("logman.exe"))
                 .args(&["stop", "OshoosiNativeTelemetry", "-ets"])
                 .output();
             

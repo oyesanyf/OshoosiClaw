@@ -80,7 +80,7 @@ impl BlockingManager {
         
         #[cfg(target_os = "windows")]
         {
-            let _ = std::process::Command::new("taskkill")
+            let _ = std::process::Command::new(osoosi_types::resolve_system_binary("taskkill.exe"))
                 .args(["/F", "/PID", &pid.to_string()])
                 .status();
         }

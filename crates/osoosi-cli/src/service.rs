@@ -60,7 +60,7 @@ pub enum ServiceAction {
 }
 
 fn run_sc_cmd(args: &[&str]) -> anyhow::Result<std::process::Output> {
-    let output = Command::new("sc.exe")
+    let output = Command::new(osoosi_types::resolve_system_binary("sc.exe"))
         .args(args)
         .output()
         .map_err(|e| anyhow::anyhow!("Failed to execute sc.exe: {}", e))?;
@@ -122,7 +122,7 @@ fn ensure_elevated_for_service_action(action_arg: &str) -> anyhow::Result<bool> 
             exe_str.replace('\'', "''"),
             action_arg
         );
-        let status = Command::new("powershell.exe")
+        let status = Command::new(osoosi_types::resolve_system_binary("powershell.exe"))
             .args([
                 "-NoProfile",
                 "-NonInteractive",
@@ -201,7 +201,7 @@ pub fn spawn_detached_background_daemon() -> anyhow::Result<u32> {
         exe_clean.replace('\'', "''"),
         root_clean.replace('\'', "''")
     );
-    if let Ok(out) = Command::new("powershell.exe")
+    if let Ok(out) = Command::new(osoosi_types::resolve_system_binary("powershell.exe"))
         .args([
             "-NoProfile",
             "-NonInteractive",
@@ -249,7 +249,7 @@ pub fn install_service() -> anyhow::Result<()> {
             }
             if wait_for_dashboard_ready(3030, 30) {
                 println!("[+] WebUI active at: http://127.0.0.1:3030/");
-                let _ = Command::new("cmd").args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
+                let _ = Command::new(osoosi_types::resolve_system_binary("cmd.exe")).args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
                 return Ok(());
             } else {
                 anyhow::bail!("Detached background daemon started but port 3030 did not become ready.");
@@ -311,7 +311,7 @@ pub fn install_service() -> anyhow::Result<()> {
     ]);
 
     // Grant Interactive Users (IU) and Authenticated Users (AU) service restart privileges without UAC errors
-    let _ = Command::new("sc.exe")
+    let _ = Command::new(osoosi_types::resolve_system_binary("sc.exe"))
         .args([
             "sdset",
             SERVICE_NAME,
@@ -338,7 +338,7 @@ pub fn start_service() -> anyhow::Result<()> {
             }
             if wait_for_dashboard_ready(3030, 30) {
                 println!("[+] WebUI active at: http://127.0.0.1:3030/");
-                let _ = Command::new("cmd").args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
+                let _ = Command::new(osoosi_types::resolve_system_binary("cmd.exe")).args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
                 return Ok(());
             } else {
                 anyhow::bail!("Detached background daemon started but port 3030 did not become ready.");
@@ -359,7 +359,7 @@ pub fn start_service() -> anyhow::Result<()> {
             }
             if wait_for_dashboard_ready(3030, 30) {
                 println!("[+] WebUI active at: http://127.0.0.1:3030/");
-                let _ = Command::new("cmd").args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
+                let _ = Command::new(osoosi_types::resolve_system_binary("cmd.exe")).args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
                 return Ok(());
             } else {
                 anyhow::bail!("Detached daemon started but WebUI port 3030 failed to respond.");
@@ -391,13 +391,13 @@ pub fn start_service() -> anyhow::Result<()> {
     println!("[*] Waiting for WebUI (http://127.0.0.1:3030) to bind...");
     if wait_for_dashboard_ready(3030, 30) {
         println!("[+] WebUI active at: http://127.0.0.1:3030/");
-        let _ = Command::new("cmd").args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
+        let _ = Command::new(osoosi_types::resolve_system_binary("cmd.exe")).args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
     } else {
         warn!("Port 3030 not ready from Windows Service. Launching detached daemon fallback...");
         let _ = spawn_detached_background_daemon();
         if wait_for_dashboard_ready(3030, 20) {
             println!("[+] WebUI active at: http://127.0.0.1:3030/");
-            let _ = Command::new("cmd").args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
+            let _ = Command::new(osoosi_types::resolve_system_binary("cmd.exe")).args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
         }
     }
 
@@ -612,7 +612,7 @@ mod win_scm {
         info!("OsoosiEDR Windows Service is now running under SCM control.");
 
         // Ensure Interactive Users (IU) and Authenticated Users (AU) can query and restart service
-        let _ = Command::new("sc.exe")
+        let _ = Command::new(osoosi_types::resolve_system_binary("sc.exe"))
             .args([
                 "sdset",
                 "OsoosiEDR",
