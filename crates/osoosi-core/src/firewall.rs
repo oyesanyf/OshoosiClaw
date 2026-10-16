@@ -307,7 +307,21 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             }
         }
 
-        let mut def_cmd = Command::new("powershell.exe");
+        let sys_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+        let ps_exe = {
+            let p = std::path::PathBuf::from(&sys_root)
+                .join("System32")
+                .join("WindowsPowerShell")
+                .join("v1.0")
+                .join("powershell.exe");
+            if p.is_file() { p } else { std::path::PathBuf::from("powershell.exe") }
+        };
+        let netsh_exe = {
+            let p = std::path::PathBuf::from(&sys_root).join("System32").join("netsh.exe");
+            if p.is_file() { p } else { std::path::PathBuf::from("netsh.exe") }
+        };
+
+        let mut def_cmd = Command::new(&ps_exe);
         def_cmd.stdout(std::process::Stdio::null());
         def_cmd.stderr(std::process::Stdio::null());
         #[cfg(windows)]
@@ -324,7 +338,7 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
 
         // 2. Windows Firewall Rules Deduplication and Addition
         let delete_rule = |name: &str| {
-            let mut del_cmd = Command::new("netsh");
+            let mut del_cmd = Command::new(&netsh_exe);
             del_cmd.stdout(std::process::Stdio::null());
             del_cmd.stderr(std::process::Stdio::null());
             #[cfg(windows)]
@@ -345,7 +359,7 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             let _ = timeout(Duration::from_secs(10), del.status()).await;
 
             // Add fresh application rule pointing to current executable
-            let mut add_cmd = Command::new("netsh");
+            let mut add_cmd = Command::new(&netsh_exe);
             add_cmd.stdout(std::process::Stdio::null());
             add_cmd.stderr(std::process::Stdio::null());
             #[cfg(windows)]
@@ -381,7 +395,7 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             let _ = timeout(Duration::from_secs(10), del.status()).await;
 
             // Add rule
-            let mut cmd = Command::new("netsh");
+            let mut cmd = Command::new(&netsh_exe);
             cmd.stdout(std::process::Stdio::null());
             cmd.stderr(std::process::Stdio::null());
             #[cfg(windows)]

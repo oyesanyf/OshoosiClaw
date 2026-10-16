@@ -501,11 +501,44 @@ impl MemoryStore {
         let conn = self.conn.lock();
         let cutoff = (Utc::now() - chrono::Duration::days(days_retention as i64)).to_rfc3339();
         let skip_cutoff = (Utc::now() - chrono::Duration::days(1)).to_rfc3339();
-        let deleted_threats = conn.execute("DELETE FROM threats WHERE detected_at < ?", [&cutoff])?;
-        let deleted_integrity = conn.execute("DELETE FROM file_integrity WHERE last_seen < ?", [&cutoff])?;
-        let deleted_skips = conn.execute("DELETE FROM file_skip_list WHERE added_at < ?", [&skip_cutoff])?;
-        info!("Pruned {} threats, {} integrity records, and {} skip-list entries.", deleted_threats, deleted_integrity, deleted_skips);
-        let _ = conn.execute_batch("VACUUM;");
+
+        let deleted_threats = conn.execute("DELETE FROM threats WHERE detected_at < ?", [&cutoff]).unwrap_or(0);
+        let deleted_integrity = conn.execute("DELETE FROM file_integrity WHERE last_seen < ?", [&cutoff]).unwrap_or(0);
+        let deleted_skips = conn.execute("DELETE FROM file_skip_list WHERE added_at < ?", [&skip_cutoff]).unwrap_or(0);
+        let deleted_consensus = conn.execute("DELETE FROM consensus_findings WHERE evaluated_at < ?", [&cutoff]).unwrap_or(0);
+        let deleted_cve = conn.execute("DELETE FROM cve_cache WHERE cached_at < ?", [&cutoff]).unwrap_or(0);
+        let deleted_training = conn.execute("DELETE FROM training_samples WHERE is_processed = 1 AND created_at < ?", [&cutoff]).unwrap_or(0);
+        let deleted_joins = conn.execute("DELETE FROM pending_joins WHERE discovered_at < ?", [&cutoff]).unwrap_or(0);
+
+        info!(
+            "Pruned DB: {} threats, {} integrity, {} skips, {} consensus, {} CVE cache, {} training samples, {} pending joins.",
+            deleted_threats, deleted_integrity, deleted_skips, deleted_consensus, deleted_cve, deleted_training, deleted_joins
+        );
+
+        // Truncate WAL, rebuild database, optimize query planner, and shrink in-memory SQLite pages
+        let _ = conn.execute_batch("
+            PRAGMA wal_checkpoint(TRUNCATE);
+            VACUUM;
+            PRAGMA optimize;
+            PRAGMA shrink_memory;
+        ");
+        drop(conn);
+
+        // Cap in-memory caches to prevent unbounded growth
+        {
+            let mut status = self.status_cache.write();
+            if status.len() > 10_000 {
+                status.clear();
+                status.shrink_to_fit();
+            }
+        }
+        {
+            let mut clean_hashes = self.clean_hashes_cache.write();
+            if clean_hashes.len() > 50_000 {
+                clean_hashes.shrink_to_fit();
+            }
+        }
+
         Ok(())
     }
 
@@ -2135,5 +2168,64 @@ mod tests {
         let updated = mem.load_voter_weights().unwrap();
         assert_eq!(updated.len(), 2);
         assert!((updated.get("Sigma-Engine").unwrap() - 1.35).abs() < 1e-4);
+    }
+
+    #[test]
+    fn test_vacuum_and_prune_lifecycle() {
+        let mem = MemoryStore::new(":memory:").unwrap();
+
+        // 1. Seed records across tables
+        let past = (chrono::Utc::now() - chrono::Duration::days(45)).to_rfc3339();
+        let recent = chrono::Utc::now().to_rfc3339();
+
+        {
+            let conn = mem.conn.lock();
+            let _ = conn.execute(
+                "INSERT INTO threats (id, cve_id, hash_blake3, detected_at) VALUES ('t1', 'CVE-1', 'hash1', ?)",
+                [&past],
+            );
+            let _ = conn.execute(
+                "INSERT INTO threats (id, cve_id, hash_blake3, detected_at) VALUES ('t2', 'CVE-2', 'hash2', ?)",
+                [&recent],
+            );
+            let _ = conn.execute(
+                "INSERT INTO consensus_findings (id, hash_blake3, verdict, confidence, detector_count, action_taken, evaluated_at) VALUES ('c1', 'h1', 'malicious', 0.95, 3, 'isolate', ?)",
+                [&past],
+            );
+            let _ = conn.execute(
+                "INSERT INTO cve_cache (product, version, cve_id, summary, cached_at) VALUES ('p', 'v', 'cve-old', 'sum', ?)",
+                [&past],
+            );
+            let _ = conn.execute(
+                "INSERT INTO training_samples (model_type, features, label, is_processed, created_at) VALUES ('m', X'0102', 1, 1, ?)",
+                [&past],
+            );
+            let _ = conn.execute(
+                "INSERT INTO pending_joins (peer_id, discovered_at) VALUES ('peer_old', ?)",
+                [&past],
+            );
+        }
+
+        // 2. Execute vacuum_and_prune with 30-day retention
+        assert!(mem.vacuum_and_prune(30).is_ok());
+
+        // 3. Verify old records pruned and recent records retained
+        {
+            let conn = mem.conn.lock();
+            let remaining_threats: i64 = conn.query_row("SELECT count(*) FROM threats", [], |r| r.get(0)).unwrap();
+            assert_eq!(remaining_threats, 1, "Recent threat should remain");
+
+            let remaining_consensus: i64 = conn.query_row("SELECT count(*) FROM consensus_findings", [], |r| r.get(0)).unwrap();
+            assert_eq!(remaining_consensus, 0, "Old consensus finding should be pruned");
+
+            let remaining_cve: i64 = conn.query_row("SELECT count(*) FROM cve_cache", [], |r| r.get(0)).unwrap();
+            assert_eq!(remaining_cve, 0, "Old cve cache entry should be pruned");
+
+            let remaining_samples: i64 = conn.query_row("SELECT count(*) FROM training_samples", [], |r| r.get(0)).unwrap();
+            assert_eq!(remaining_samples, 0, "Old processed training sample should be pruned");
+
+            let remaining_joins: i64 = conn.query_row("SELECT count(*) FROM pending_joins", [], |r| r.get(0)).unwrap();
+            assert_eq!(remaining_joins, 0, "Old pending join should be pruned");
+        }
     }
 }

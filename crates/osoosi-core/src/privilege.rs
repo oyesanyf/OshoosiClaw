@@ -314,9 +314,8 @@ fn windows_grant(status: &mut PrivilegeStatus) {
         )),
     }
 
-    // Step 5: Check for Ollama (AI Behavioral requirement)
-    let ollama_check = Command::new("where").arg("ollama").output();
-    if ollama_check.is_err() || !ollama_check.unwrap().status.success() {
+    // Step 5: Check for Ollama (AI Behavioral requirement) - pure Rust, no where.exe subprocess
+    if crate::tool_paths::resolve_executable("ollama").is_none() {
         status
             .actions_taken
             .push("Ollama NOT FOUND. AI Behavioral Analysis will be disabled.".into());

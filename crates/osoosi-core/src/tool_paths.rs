@@ -6,7 +6,6 @@
 use std::env;
 use std::fs;
 use std::path::PathBuf;
-use std::process::Command;
 use tracing::info;
 
 use serde::{Deserialize, Serialize};
@@ -246,29 +245,57 @@ fn find_openshell_in_local_python_scripts() -> Option<PathBuf> {
     None
 }
 
-/// Resolve `stem` / `stem.exe` using `where` (Windows) or `which` (Unix), then every entry in `PATH`.
+/// Resolve `stem` / `stem.exe` purely in Rust by walking `PATH` and standard system directories (zero `where.exe` subprocesses).
 pub fn resolve_executable(stem: &str) -> Option<PathBuf> {
-    #[cfg(windows)]
-    {
-        for arg in [stem, &format!("{stem}.exe")] {
-            if let Ok(o) = Command::new("where").arg(arg).output() {
-                if o.status.success() {
-                    if let Some(line) = String::from_utf8_lossy(&o.stdout).lines().next() {
-                        let p = PathBuf::from(line.trim());
-                        if p.is_file() {
-                            return Some(p);
-                        }
+    find_in_path_directories(stem)
+}
+
+fn find_in_path_directories(stem: &str) -> Option<PathBuf> {
+    if let Some(path_var) = env::var_os("PATH") {
+        for dir in env::split_paths(&path_var) {
+            #[cfg(windows)]
+            {
+                for name in [
+                    format!("{stem}.exe"),
+                    format!("{stem}.EXE"),
+                    stem.to_string(),
+                ] {
+                    let p = dir.join(&name);
+                    if p.is_file() {
+                        return Some(p);
                     }
+                }
+            }
+            #[cfg(not(windows))]
+            {
+                let p = dir.join(stem);
+                if p.is_file() {
+                    return Some(p);
                 }
             }
         }
     }
-    #[cfg(unix)]
+
+    #[cfg(windows)]
     {
-        if let Ok(o) = Command::new("which").arg(stem).output() {
-            if o.status.success() {
-                if let Ok(s) = String::from_utf8(o.stdout) {
-                    let p = PathBuf::from(s.trim());
+        let sys_root = env::var("SystemRoot")
+            .or_else(|_| env::var("windir"))
+            .unwrap_or_else(|_| r"C:\Windows".to_string());
+        let sys32_candidate = PathBuf::from(&sys_root).join("System32").join(format!("{stem}.exe"));
+        if sys32_candidate.is_file() {
+            return Some(sys32_candidate);
+        }
+
+        if stem.eq_ignore_ascii_case("ollama") {
+            if let Ok(local) = env::var("LOCALAPPDATA") {
+                let p = PathBuf::from(local).join("Programs").join("Ollama").join("ollama.exe");
+                if p.is_file() {
+                    return Some(p);
+                }
+            }
+            for pf_var in ["ProgramFiles", "ProgramFiles(x86)"] {
+                if let Ok(pf) = env::var(pf_var) {
+                    let p = PathBuf::from(pf).join("Ollama").join("ollama.exe");
                     if p.is_file() {
                         return Some(p);
                     }
@@ -276,32 +303,32 @@ pub fn resolve_executable(stem: &str) -> Option<PathBuf> {
             }
         }
     }
-    find_in_path_directories(stem)
-}
 
-fn find_in_path_directories(stem: &str) -> Option<PathBuf> {
-    let path_var = env::var_os("PATH")?;
-    for dir in env::split_paths(&path_var) {
-        #[cfg(windows)]
-        {
-            for name in [
-                format!("{stem}.exe"),
-                format!("{stem}.EXE"),
-                stem.to_string(),
-            ] {
-                let p = dir.join(&name);
-                if p.is_file() {
-                    return Some(p);
-                }
-            }
-        }
-        #[cfg(not(windows))]
-        {
-            let p = dir.join(stem);
-            if p.is_file() {
-                return Some(p);
-            }
-        }
-    }
     None
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_resolve_executable_standard_binaries() {
+        #[cfg(windows)]
+        {
+            let cmd_path = resolve_executable("cmd");
+            assert!(cmd_path.is_some(), "Should resolve cmd.exe on Windows");
+            assert!(cmd_path.unwrap().is_file());
+
+            let netsh_path = resolve_executable("netsh");
+            assert!(netsh_path.is_some(), "Should resolve netsh.exe on Windows");
+            assert!(netsh_path.unwrap().is_file());
+        }
+    }
+
+    #[test]
+    fn test_resolve_executable_nonexistent() {
+        let nonexistent = resolve_executable("non_existent_binary_xyz_12345");
+        assert!(nonexistent.is_none());
+    }
+}
+

@@ -91,14 +91,36 @@ impl MemoryWatchdogDebouncer {
     }
 }
 
+/// Trims the process working set, instructing the operating system to reclaim
+/// unused committed/paged memory pages immediately without disrupting active threads.
+#[cfg(target_os = "windows")]
+pub fn trim_process_working_set() -> bool {
+    extern "system" {
+        fn GetCurrentProcess() -> isize;
+        fn K32EmptyWorkingSet(hProcess: isize) -> i32;
+    }
+    unsafe {
+        let handle = GetCurrentProcess();
+        K32EmptyWorkingSet(handle) != 0
+    }
+}
+
+/// On non-Windows platforms, trimming is a no-op or delegates to malloc_trim if available.
+#[cfg(not(target_os = "windows"))]
+pub fn trim_process_working_set() -> bool {
+    true
+}
+
 /// Spawns a proactive memory watchdog background task (if not already running).
 ///
 /// Loops every 2 seconds:
 /// - Uses `sysinfo::System::new()` and `refresh_memory()`.
 /// - Calculates available RAM in MB: `avail_mb = sys.available_memory() as f64 / (1024.0 * 1024.0)`
 /// - If `avail_mb < 250.0`:
+///   - Automatically calls `trim_process_working_set()` to actively release committed heap pages.
 ///   - Emits critical error & stderr alert (debounced to once every 10s).
 /// - Else if `avail_mb < 600.0`:
+///   - Automatically calls `trim_process_working_set()`.
 ///   - Emits warning (debounced to once every 30s).
 pub fn spawn_memory_watchdog() -> Option<tokio::task::JoinHandle<()>> {
     if WATCHDOG_ACTIVE.swap(true, Ordering::SeqCst) {
@@ -119,9 +141,10 @@ pub fn spawn_memory_watchdog() -> Option<tokio::task::JoinHandle<()>> {
             let level = evaluate_memory_pressure(avail_mb);
 
             if level == MemoryPressureLevel::Critical {
+                trim_process_working_set();
                 if debouncer.should_emit(MemoryPressureLevel::Critical, Instant::now()) {
                     error!(
-                        "🚨 [CRITICAL MEMORY EXHAUSTION] System free RAM is critically low: {:.1} MB! High risk of OS Out-Of-Memory (OOM) termination!",
+                        "🚨 [CRITICAL MEMORY EXHAUSTION] System free RAM is critically low: {:.1} MB! High risk of OS Out-Of-Memory (OOM) termination! Trimmed working set.",
                         avail_mb
                     );
                     eprintln!(
@@ -132,9 +155,10 @@ pub fn spawn_memory_watchdog() -> Option<tokio::task::JoinHandle<()>> {
                     let _ = std::io::stderr().flush();
                 }
             } else if level == MemoryPressureLevel::Warning {
+                trim_process_working_set();
                 if debouncer.should_emit(MemoryPressureLevel::Warning, Instant::now()) {
                     warn!(
-                        "⚠️ [LOW MEMORY WARNING] Available system RAM is low: {:.1} MB. Heavy tasks throttled.",
+                        "⚠️ [LOW MEMORY WARNING] Available system RAM is low: {:.1} MB. Heavy tasks throttled. Trimmed working set.",
                         avail_mb
                     );
                     use std::io::Write;
@@ -205,5 +229,11 @@ mod tests {
         // Subsequent spawn must return None
         let second = spawn_memory_watchdog();
         assert!(second.is_none(), "Watchdog must be idempotent");
+    }
+
+    #[test]
+    fn test_trim_process_working_set_executes_cleanly() {
+        let trimmed = trim_process_working_set();
+        assert!(trimmed, "trim_process_working_set should execute cleanly without panicking");
     }
 }

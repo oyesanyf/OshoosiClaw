@@ -640,13 +640,17 @@ impl AgentProvisioner {
     #[cfg(target_os = "windows")]
     #[allow(dead_code)]
     async fn command_exists_win(&self, cmd: &str) -> bool {
-        let mut check_cmd = Command::new("where");
-        check_cmd.arg(cmd);
-        self.executor
-            .execute(check_cmd)
-            .await
-            .map(|o| o.status.success())
-            .unwrap_or(false)
+        let stem = cmd.trim_end_matches(".exe");
+        if let Some(path_var) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&path_var) {
+                if dir.join(format!("{}.exe", stem)).is_file() || dir.join(cmd).is_file() {
+                    return true;
+                }
+            }
+        }
+        let sys_root = std::env::var("SystemRoot").unwrap_or_else(|_| r"C:\Windows".to_string());
+        let sys32 = std::path::PathBuf::from(sys_root).join("System32");
+        sys32.join(format!("{}.exe", stem)).is_file() || sys32.join(cmd).is_file()
     }
 
     /// Check if a command exists in the system PATH.

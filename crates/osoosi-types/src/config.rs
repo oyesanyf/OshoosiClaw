@@ -1074,6 +1074,44 @@ pub fn resolve_stix_bundle_path() -> PathBuf {
 /// This ensures that even if the agent is run from target/release or a nested directory,
 /// all internal logic and sub-processes correctly resolve their assets.
 pub fn persist_environment_paths() {
+    #[cfg(target_os = "windows")]
+    {
+        let sys_root = std::env::var("SystemRoot")
+            .or_else(|_| std::env::var("windir"))
+            .unwrap_or_else(|_| r"C:\Windows".to_string());
+        let current_path = std::env::var("PATH").unwrap_or_default();
+        let path_lower = current_path.to_ascii_lowercase();
+        let mut additions: Vec<String> = Vec::new();
+
+        let essential_dirs = [
+            format!(r"{}\System32", sys_root),
+            sys_root.clone(),
+            format!(r"{}\System32\Wbem", sys_root),
+            format!(r"{}\System32\WindowsPowerShell\v1.0", sys_root),
+        ];
+        for dir in essential_dirs {
+            if !path_lower.contains(&dir.to_ascii_lowercase()) {
+                additions.push(dir);
+            }
+        }
+        if let Ok(exe) = std::env::current_exe() {
+            if let Some(parent) = exe.parent() {
+                let p_str = parent.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+                if !p_str.is_empty() && !path_lower.contains(&p_str.to_ascii_lowercase()) {
+                    additions.push(p_str);
+                }
+            }
+        }
+        if !additions.is_empty() {
+            let new_path = if current_path.trim().is_empty() {
+                additions.join(";")
+            } else {
+                format!("{};{}", current_path.trim_end_matches(';'), additions.join(";"))
+            };
+            std::env::set_var("PATH", new_path);
+        }
+    }
+
     let models_dir = resolve_models_dir();
     if std::env::var("OSOOSI_MODELS_DIR").is_err() {
         std::env::set_var("OSOOSI_MODELS_DIR", models_dir.to_string_lossy().to_string());
