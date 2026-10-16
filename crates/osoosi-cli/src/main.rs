@@ -2908,6 +2908,15 @@ fn fix_yara_escapes(s: &str) -> String {
 }
 
 fn try_open_browser(url: &str, user_no_browser: bool, lite_mode: bool) {
+    if !(url.starts_with("http://") || url.starts_with("https://")) {
+        tracing::warn!("Refusing to open browser: non-HTTP/HTTPS URL: {}", url);
+        return;
+    }
+    if url.chars().any(|c| c == '&' || c == '|' || c == ';' || c == '`' || c == '$' || c == '"' || c == '\'' || c == '\n' || c == '\r') {
+        tracing::warn!("Refusing to open browser: URL contains forbidden shell characters: {}", url);
+        return;
+    }
+
     if user_no_browser {
         println!("[+] Browser auto-launch disabled by --no-browser.");
         info!("Dashboard web server is active at {}. (Browser auto-launch disabled by --no-browser)", url);
@@ -2932,7 +2941,9 @@ fn try_open_browser(url: &str, user_no_browser: bool, lite_mode: bool) {
     if !opened {
         #[cfg(target_os = "windows")]
         {
-            if url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:") {
+            if (url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:"))
+                && !url.chars().any(|c| c == '&' || c == '|' || c == ';' || c == '`' || c == '$' || c == '"' || c == '\'' || c == '\n' || c == '\r')
+            {
                 let _ = std::process::Command::new("cmd")
                     .args(["/c", "start", "", url])
                     .spawn();

@@ -437,19 +437,15 @@ static BOOLEAN OsoosiIsCriticalSystemImage(_In_ PCUNICODE_STRING ImageFileName) 
         }
 
         if (matchesName) {
-            // For OS core images (csrss, smss, wininit, services, lsass), require \system32\ or \windows\
-            BOOLEAN isOsCore = (i >= 4);
-            if (isOsCore) {
-                if (OsoosiContainsSubstrInsensitive(ImageFileName->Buffer, imgChars, L"\\System32\\", 10) ||
-                    OsoosiContainsSubstrInsensitive(ImageFileName->Buffer, imgChars, L"\\Windows\\", 9)) {
-                    return TRUE;
-                }
-                // An arbitrary binary outside System32/Windows (e.g. C:\temp\lsass.exe) is NOT critical system image!
-                return FALSE;
-            } else {
-                // Dedicated security images (sysmon64, sysmon, osoosi, msmpeng)
+            // Require verified system or program files directory for all critical images
+            if (OsoosiContainsSubstrInsensitive(ImageFileName->Buffer, imgChars, L"\\System32\\", 10) ||
+                OsoosiContainsSubstrInsensitive(ImageFileName->Buffer, imgChars, L"\\SysWOW64\\", 10) ||
+                OsoosiContainsSubstrInsensitive(ImageFileName->Buffer, imgChars, L"\\Program Files\\", 15) ||
+                OsoosiContainsSubstrInsensitive(ImageFileName->Buffer, imgChars, L"\\Windows\\", 9)) {
                 return TRUE;
             }
+            // An arbitrary binary outside System32/SysWOW64/Program Files/Windows (e.g. C:\temp\osoosi.exe) is NOT critical system image!
+            return FALSE;
         }
     }
 

@@ -76,9 +76,9 @@ impl RouteScraper {
                 let mut size = 0u32;
                 let _ = GetIpAddrTable(std::ptr::null_mut(), &mut size, 0);
                 if size > 0 {
-                    let mut buf = vec![0u8; size as usize];
-                    if GetIpAddrTable(buf.as_mut_ptr() as *mut _, &mut size, 0) == 0 {
-                        let table = &*(buf.as_ptr() as *const MIB_IPADDRTABLE);
+                    let mut buffer: Vec<u32> = vec![0u32; (size as usize + 3) / 4];
+                    if GetIpAddrTable(buffer.as_mut_ptr() as *mut _, &mut size, 0) == 0 {
+                        let table = &*(buffer.as_ptr() as *const MIB_IPADDRTABLE);
                         let entries = std::slice::from_raw_parts(
                             &table.table as *const _ as *const MIB_IPADDRROW_XP,
                             table.dwNumEntries as usize,

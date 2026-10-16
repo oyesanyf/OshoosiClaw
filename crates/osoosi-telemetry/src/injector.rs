@@ -56,6 +56,12 @@ pub fn inject_dll(pid: u32, dll_path: &Path) -> Result<(), InjectionError> {
     let path_size = dll_path_wide.len() * std::mem::size_of::<u16>();
 
     unsafe {
+        let kernel32_handle = GetModuleHandleA(s!("kernel32.dll"))
+            .map_err(|_| InjectionError::LoadLibraryNotFound)?;
+            
+        let load_library_addr = GetProcAddress(kernel32_handle, s!("LoadLibraryW"))
+            .ok_or(InjectionError::LoadLibraryNotFound)?;
+
         let process_handle = OpenProcess(
             PROCESS_CREATE_THREAD | PROCESS_QUERY_INFORMATION | PROCESS_VM_OPERATION | PROCESS_VM_WRITE | PROCESS_VM_READ,
             false,
@@ -89,12 +95,6 @@ pub fn inject_dll(pid: u32, dll_path: &Path) -> Result<(), InjectionError> {
             let _ = CloseHandle(process_handle);
             return Err(InjectionError::WriteMemoryFailed);
         }
-
-        let kernel32_handle = GetModuleHandleA(s!("kernel32.dll"))
-            .map_err(|_| InjectionError::LoadLibraryNotFound)?;
-            
-        let load_library_addr = GetProcAddress(kernel32_handle, s!("LoadLibraryW"))
-            .ok_or(InjectionError::LoadLibraryNotFound)?;
 
         let mut thread_id = 0;
         let thread_handle = CreateRemoteThread(

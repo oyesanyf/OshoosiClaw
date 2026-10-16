@@ -826,17 +826,27 @@ impl AgentProvisioner {
             }
             #[cfg(not(target_os = "windows"))]
             {
-                let sh_cmd = format!(
-                    "unzip -o {} -d {} && cp -r {}/*/* {}/ && rm -rf {}",
-                    zip_path.to_string_lossy(),
-                    tmp_extract.to_string_lossy(),
-                    tmp_extract.to_string_lossy(),
-                    target_sub_dir.to_string_lossy(),
-                    tmp_extract.to_string_lossy()
-                );
-                let mut cmd = Command::new("sh");
-                cmd.args(["-c", &sh_cmd]);
+                let mut cmd = Command::new("unzip");
+                cmd.args(["-o", zip_path.to_str().unwrap_or(""), "-d", tmp_extract.to_str().unwrap_or("")]);
                 let _ = self.executor.execute(cmd).await;
+
+                if let Ok(entries) = std::fs::read_dir(&tmp_extract) {
+                    for entry in entries.filter_map(|e| e.ok()) {
+                        let path = entry.path();
+                        if path.is_dir() {
+                            if let Ok(sub_entries) = std::fs::read_dir(&path) {
+                                for sub in sub_entries.filter_map(|s| s.ok()) {
+                                    let dest = target_sub_dir.join(sub.file_name());
+                                    let _ = std::fs::rename(sub.path(), dest);
+                                }
+                            }
+                        } else {
+                            let dest = target_sub_dir.join(entry.file_name());
+                            let _ = std::fs::rename(entry.path(), dest);
+                        }
+                    }
+                }
+                let _ = std::fs::remove_dir_all(&tmp_extract);
             }
             let _ = std::fs::remove_file(&zip_path);
 

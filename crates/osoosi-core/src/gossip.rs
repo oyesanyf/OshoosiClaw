@@ -15,15 +15,22 @@ pub struct GossipSleuth {
     mesh_tx: mpsc::Sender<osoosi_wire::MeshCommand>,
     node_id: String,
     privacy: Arc<crate::privacy::PrivacyLayer>,
+    memory: Arc<osoosi_memory::MemoryStore>,
 }
 
 impl GossipSleuth {
-    pub fn new(mesh_tx: mpsc::Sender<osoosi_wire::MeshCommand>, node_id: String, privacy: Arc<crate::privacy::PrivacyLayer>) -> Self {
+    pub fn new(
+        mesh_tx: mpsc::Sender<osoosi_wire::MeshCommand>,
+        node_id: String,
+        privacy: Arc<crate::privacy::PrivacyLayer>,
+        memory: Arc<osoosi_memory::MemoryStore>,
+    ) -> Self {
         Self {
             fetcher: ThreatFeedFetcher::new(),
             mesh_tx,
             node_id,
             privacy,
+            memory,
         }
     }
 
@@ -49,7 +56,7 @@ impl GossipSleuth {
     }
 
     async fn run_sleuth_iteration(&self) -> anyhow::Result<()> {
-        info!("Gossip Sleuth: Scouting deep-web for zero-day signals...");
+        info!("Gossip Sleuth: Scouting threat feeds and local detections for zero-day signals...");
 
         // 1. Fetch Trending KEVs
         let kevs = self.fetcher.fetch_kev().await.unwrap_or_default();
@@ -58,8 +65,7 @@ impl GossipSleuth {
             self.process_kev_intelligence(kev).await?;
         }
 
-        // 2. Mock "Internet Search" for specific trending zero-days
-        // In a real agent, this would use an LLM-driven search tool or a specialized CVE API.
+        // 2. Discover verified local threats for mesh-wide defense sharing
         self.scout_trending_vulnerabilities().await?;
 
         Ok(())
@@ -106,36 +112,60 @@ impl GossipSleuth {
     }
 
     async fn scout_trending_vulnerabilities(&self) -> anyhow::Result<()> {
-        // Mocking a discovery of a "Zero Day" from a security advisory
-        let mut mock_intel = GlobalIntelligence {
-            source_url: "https://github.com/advisories".to_string(),
-            summary: "Emerging RCE in popular web-server component detected in the wild."
-                .to_string(),
-            defense: Some(ZeroDayDefense {
-                cve_id: "CVE-2026-NEW".to_string(),
-                title: "Mesh-Wide Zero Day Shield".to_string(),
-                description: "Deep-packet inspection rule to block anomalous header smuggling."
-                    .to_string(),
-                severity: 1.0,
-                learned_rule: "rule block_smuggling { strings: $a = \"X-Gossip-Tag: SLEUTH\" ... }"
-                    .to_string(),
-                software_target: "all-web-servers".to_string(),
-                software_version: None,
-                date_learned: Utc::now(),
-            }),
-            priority: 1.0,
-            timestamp: Utc::now(),
-            source_node: self.node_id.clone(),
-            merkle_proof: None,
-            epsilon: None,
-        };
+        let threats = self.memory.get_recent_threats(5).unwrap_or_default();
+        let mut broadcast_count = 0;
 
-        self.privacy.protect_intel(&mut mock_intel);
+        for threat in threats {
+            let conf = threat.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            if conf < 0.85 {
+                continue;
+            }
 
-        let _ = self
-            .mesh_tx
-            .send(osoosi_wire::MeshCommand::BroadcastGlobalIntel(mock_intel))
-            .await;
+            let cve_id_opt = threat.get("cve_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+            let reason_opt = threat.get("reason").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
+            let proc_opt = threat.get("process_name").and_then(|v| v.as_str()).filter(|s| !s.is_empty() && *s != "Unknown Process");
+
+            let has_cve_or_mitre = cve_id_opt.map(|c| c.starts_with("CVE-") || c.starts_with("T1")).unwrap_or(false)
+                || reason_opt.map(|r| r.contains("CVE-") || r.contains("T1") || r.contains("Technique")).unwrap_or(false);
+
+            if (has_cve_or_mitre || proc_opt.is_some()) && conf >= 0.85 {
+                let id_str = cve_id_opt.unwrap_or_else(|| {
+                    proc_opt.unwrap_or("SUSPICIOUS-PROC")
+                });
+                let summary_text = reason_opt.unwrap_or("High-confidence verified intrusion detection signal.");
+
+                let mut intel = GlobalIntelligence {
+                    source_url: format!("threat://{}", self.node_id),
+                    summary: format!("Intrusion Intelligence: {} - {}", id_str, summary_text),
+                    defense: Some(ZeroDayDefense {
+                        cve_id: id_str.to_string(),
+                        title: format!("Defense rule for {}", id_str),
+                        description: summary_text.to_string(),
+                        severity: conf as f32,
+                        learned_rule: format!("rule rule_{} {{ condition: true }}", id_str.replace(['-', '.', ' '], "_")),
+                        software_target: proc_opt.unwrap_or("system").to_string(),
+                        software_version: None,
+                        date_learned: Utc::now(),
+                    }),
+                    priority: conf as f32,
+                    timestamp: Utc::now(),
+                    source_node: self.node_id.clone(),
+                    merkle_proof: None,
+                    epsilon: None,
+                };
+
+                self.privacy.protect_intel(&mut intel);
+                let _ = self
+                    .mesh_tx
+                    .send(osoosi_wire::MeshCommand::BroadcastGlobalIntel(intel))
+                    .await;
+                broadcast_count += 1;
+            }
+        }
+
+        if broadcast_count == 0 {
+            tracing::debug!("Gossip Sleuth: No high-confidence local threats requiring mesh-wide defense broadcast.");
+        }
         Ok(())
     }
 

@@ -9,7 +9,6 @@
 use std::ffi::c_void;
 use windows::core::{s, PCWSTR};
 use windows::Win32::Foundation::{BOOL, HINSTANCE, GENERIC_WRITE};
-use std::sync::Mutex;
 use serde_json::json;
 use windows::Win32::System::Threading::GetCurrentProcessId;
 use windows::Win32::System::LibraryLoader::{GetModuleFileNameW, GetProcAddress, LoadLibraryA};
@@ -17,7 +16,6 @@ use windows::Win32::System::SystemServices::DLL_PROCESS_ATTACH;
 use windows::Win32::Storage::FileSystem::{CreateFileW, WriteFile, FILE_SHARE_NONE, OPEN_EXISTING, FILE_FLAGS_AND_ATTRIBUTES};
 use windows::core::w;
 use retour::GenericDetour;
-use lazy_static::lazy_static;
 
 // --- 1. Define the hook signatures (Detours) ---
 
@@ -78,14 +76,16 @@ type FnSend = unsafe extern "system" fn(
     i32, // flags
 ) -> i32;
 
-lazy_static! {
-    static ref HOOK_BITBLT: Mutex<Option<GenericDetour<FnBitBlt>>> = Mutex::new(None);
-    static ref HOOK_CREATEPROCESSW: Mutex<Option<GenericDetour<FnCreateProcessW>>> = Mutex::new(None);
-    static ref HOOK_NTALLOCATEVIRTUALMEMORY: Mutex<Option<GenericDetour<FnNtAllocateVirtualMemory>>> = Mutex::new(None);
-    static ref HOOK_NTPROTECTVIRTUALMEMORY: Mutex<Option<GenericDetour<FnNtProtectVirtualMemory>>> = Mutex::new(None);
-    static ref HOOK_OPENPROCESS: Mutex<Option<GenericDetour<FnOpenProcess>>> = Mutex::new(None);
-    static ref HOOK_READPROCESSMEMORY: Mutex<Option<GenericDetour<FnReadProcessMemory>>> = Mutex::new(None);
-    static ref HOOK_SEND: Mutex<Option<GenericDetour<FnSend>>> = Mutex::new(None);
+static HOOK_BITBLT: std::sync::OnceLock<GenericDetour<FnBitBlt>> = std::sync::OnceLock::new();
+static HOOK_CREATEPROCESSW: std::sync::OnceLock<GenericDetour<FnCreateProcessW>> = std::sync::OnceLock::new();
+static HOOK_NTALLOCATEVIRTUALMEMORY: std::sync::OnceLock<GenericDetour<FnNtAllocateVirtualMemory>> = std::sync::OnceLock::new();
+static HOOK_NTPROTECTVIRTUALMEMORY: std::sync::OnceLock<GenericDetour<FnNtProtectVirtualMemory>> = std::sync::OnceLock::new();
+static HOOK_OPENPROCESS: std::sync::OnceLock<GenericDetour<FnOpenProcess>> = std::sync::OnceLock::new();
+static HOOK_READPROCESSMEMORY: std::sync::OnceLock<GenericDetour<FnReadProcessMemory>> = std::sync::OnceLock::new();
+static HOOK_SEND: std::sync::OnceLock<GenericDetour<FnSend>> = std::sync::OnceLock::new();
+
+thread_local! {
+    static IN_HOOK: std::cell::Cell<bool> = const { std::cell::Cell::new(false) };
 }
 
 // --- 2. Implement the intercepted logic ---
@@ -136,14 +136,14 @@ extern "system" fn hooked_bitblt(
     y_src: i32,
     rop: windows::Win32::Graphics::Gdi::ROP_CODE,
 ) -> BOOL {
-    // Ported OpenEDR pattern: We can log the attempt or block it based on policy.
-    // For now, we allow it but in a full implementation, we'd check if this process is trusted.
-    
-    // To block: return BOOL(0);
-
-    let hook_guard = HOOK_BITBLT.lock().unwrap();
-    if let Some(hook) = hook_guard.as_ref() {
-        unsafe { hook.call(hdc_dest, x_dest, y_dest, w_dest, h_dest, hdc_src, x_src, y_src, rop) }
+    if let Some(hook) = HOOK_BITBLT.get() {
+        if IN_HOOK.with(|c| c.get()) {
+            return unsafe { hook.call(hdc_dest, x_dest, y_dest, w_dest, h_dest, hdc_src, x_src, y_src, rop) };
+        }
+        IN_HOOK.with(|c| c.set(true));
+        let res = unsafe { hook.call(hdc_dest, x_dest, y_dest, w_dest, h_dest, hdc_src, x_src, y_src, rop) };
+        IN_HOOK.with(|c| c.set(false));
+        res
     } else {
         BOOL(0)
     }
@@ -162,12 +162,25 @@ extern "system" fn hooked_create_process_w(
     startup_info: *const windows::Win32::System::Threading::STARTUPINFOW,
     process_information: *mut windows::Win32::System::Threading::PROCESS_INFORMATION,
 ) -> BOOL {
-    
-    // Inspect command_line and application_name. Block malicious execution.
-
-    let hook_guard = HOOK_CREATEPROCESSW.lock().unwrap();
-    if let Some(hook) = hook_guard.as_ref() {
-        unsafe {
+    if let Some(hook) = HOOK_CREATEPROCESSW.get() {
+        if IN_HOOK.with(|c| c.get()) {
+            return unsafe {
+                hook.call(
+                    application_name,
+                    command_line,
+                    process_attributes,
+                    thread_attributes,
+                    inherit_handles,
+                    creation_flags,
+                    environment,
+                    current_directory,
+                    startup_info,
+                    process_information,
+                )
+            };
+        }
+        IN_HOOK.with(|c| c.set(true));
+        let res = unsafe {
             hook.call(
                 application_name,
                 command_line,
@@ -180,7 +193,9 @@ extern "system" fn hooked_create_process_w(
                 startup_info,
                 process_information,
             )
-        }
+        };
+        IN_HOOK.with(|c| c.set(false));
+        res
     } else {
         BOOL(0)
     }
@@ -195,18 +210,28 @@ extern "system" fn hooked_nt_allocate_virtual_memory(
     allocation_type: windows::Win32::System::Memory::VIRTUAL_ALLOCATION_TYPE,
     protect: windows::Win32::System::Memory::PAGE_PROTECTION_FLAGS,
 ) -> windows::Win32::Foundation::NTSTATUS {
-    
-    // Check if the allocation is PAGE_EXECUTE_READWRITE (0x40), a common indicator of shellcode injection
-    if protect.0 == 0x40 {
-        report_telemetry("NtAllocateVirtualMemory", json!({
-            "Protection": "RWX",
-            "AllocationType": format!("{:?}", allocation_type)
-        }));
-    }
+    if let Some(hook) = HOOK_NTALLOCATEVIRTUALMEMORY.get() {
+        if IN_HOOK.with(|c| c.get()) {
+            return unsafe {
+                hook.call(
+                    process_handle,
+                    base_address,
+                    zero_bits,
+                    region_size,
+                    allocation_type,
+                    protect,
+                )
+            };
+        }
 
-    let hook_guard = HOOK_NTALLOCATEVIRTUALMEMORY.lock().unwrap();
-    if let Some(hook) = hook_guard.as_ref() {
-        unsafe {
+        IN_HOOK.with(|c| c.set(true));
+        if protect.0 == 0x40 {
+            report_telemetry("NtAllocateVirtualMemory", json!({
+                "Protection": "RWX",
+                "AllocationType": format!("{:?}", allocation_type)
+            }));
+        }
+        let res = unsafe {
             hook.call(
                 process_handle,
                 base_address,
@@ -215,7 +240,9 @@ extern "system" fn hooked_nt_allocate_virtual_memory(
                 allocation_type,
                 protect,
             )
-        }
+        };
+        IN_HOOK.with(|c| c.set(false));
+        res
     } else {
         windows::Win32::Foundation::NTSTATUS(-1)
     }
@@ -229,18 +256,27 @@ extern "system" fn hooked_nt_protect_virtual_memory(
     new_protection: u32,
     old_protection: *mut u32,
 ) -> windows::Win32::Foundation::NTSTATUS {
-    
-    // PAGE_EXECUTE_READWRITE (0x40)
-    if new_protection == 0x40 {
-        report_telemetry("NtProtectVirtualMemory", json!({
-            "Protection": "RWX",
-            "NewProtection": format!("{:#x}", new_protection)
-        }));
-    }
+    if let Some(hook) = HOOK_NTPROTECTVIRTUALMEMORY.get() {
+        if IN_HOOK.with(|c| c.get()) {
+            return unsafe {
+                hook.call(
+                    process_handle,
+                    base_address,
+                    region_size,
+                    new_protection,
+                    old_protection,
+                )
+            };
+        }
 
-    let hook_guard = HOOK_NTPROTECTVIRTUALMEMORY.lock().unwrap();
-    if let Some(hook) = hook_guard.as_ref() {
-        unsafe {
+        IN_HOOK.with(|c| c.set(true));
+        if new_protection == 0x40 {
+            report_telemetry("NtProtectVirtualMemory", json!({
+                "Protection": "RWX",
+                "NewProtection": format!("{:#x}", new_protection)
+            }));
+        }
+        let res = unsafe {
             hook.call(
                 process_handle,
                 base_address,
@@ -248,7 +284,9 @@ extern "system" fn hooked_nt_protect_virtual_memory(
                 new_protection,
                 old_protection,
             )
-        }
+        };
+        IN_HOOK.with(|c| c.set(false));
+        res
     } else {
         windows::Win32::Foundation::NTSTATUS(-1)
     }
@@ -260,13 +298,14 @@ extern "system" fn hooked_open_process(
     inherit_handle: BOOL,
     process_id: u32,
 ) -> windows::Win32::Foundation::HANDLE {
-    
-    // Example: Protect LSASS and OshoosiClaw. In a real EDR, we'd check the PID dynamically.
-    // If process_id == lsass_pid && (desired_access & PROCESS_VM_READ) != 0 { return NULL; }
-
-    let hook_guard = HOOK_OPENPROCESS.lock().unwrap();
-    if let Some(hook) = hook_guard.as_ref() {
-        unsafe { hook.call(desired_access, inherit_handle, process_id) }
+    if let Some(hook) = HOOK_OPENPROCESS.get() {
+        if IN_HOOK.with(|c| c.get()) {
+            return unsafe { hook.call(desired_access, inherit_handle, process_id) };
+        }
+        IN_HOOK.with(|c| c.set(true));
+        let res = unsafe { hook.call(desired_access, inherit_handle, process_id) };
+        IN_HOOK.with(|c| c.set(false));
+        res
     } else {
         windows::Win32::Foundation::HANDLE::default()
     }
@@ -280,12 +319,14 @@ extern "system" fn hooked_read_process_memory(
     size: usize,
     number_of_bytes_read: *mut usize,
 ) -> BOOL {
-    
-    // Check if `hprocess` points to a protected process and block if it is.
-
-    let hook_guard = HOOK_READPROCESSMEMORY.lock().unwrap();
-    if let Some(hook) = hook_guard.as_ref() {
-        unsafe { hook.call(hprocess, base_address, buffer, size, number_of_bytes_read) }
+    if let Some(hook) = HOOK_READPROCESSMEMORY.get() {
+        if IN_HOOK.with(|c| c.get()) {
+            return unsafe { hook.call(hprocess, base_address, buffer, size, number_of_bytes_read) };
+        }
+        IN_HOOK.with(|c| c.set(true));
+        let res = unsafe { hook.call(hprocess, base_address, buffer, size, number_of_bytes_read) };
+        IN_HOOK.with(|c| c.set(false));
+        res
     } else {
         BOOL(0)
     }
@@ -298,13 +339,14 @@ extern "system" fn hooked_send(
     len: i32,
     flags: i32,
 ) -> i32 {
-    
-    // Here we can port `libnetmon`'s parser_dns.cpp or parser_http_win.cpp logic
-    // We can read `buf` up to `len` bytes and check for C2 beacon signatures in headers.
-
-    let hook_guard = HOOK_SEND.lock().unwrap();
-    if let Some(hook) = hook_guard.as_ref() {
-        unsafe { hook.call(s, buf, len, flags) }
+    if let Some(hook) = HOOK_SEND.get() {
+        if IN_HOOK.with(|c| c.get()) {
+            return unsafe { hook.call(s, buf, len, flags) };
+        }
+        IN_HOOK.with(|c| c.set(true));
+        let res = unsafe { hook.call(s, buf, len, flags) };
+        IN_HOOK.with(|c| c.set(false));
+        res
     } else {
         -1 // SOCKET_ERROR
     }
@@ -312,60 +354,79 @@ extern "system" fn hooked_send(
 
 // --- 3. Initialization Routine ---
 
+unsafe fn get_module_symbol_address(
+    module: windows::core::PCSTR,
+    symbol: windows::core::PCSTR,
+) -> Result<*const c_void, Box<dyn std::error::Error>> {
+    use windows::Win32::System::LibraryLoader::GetModuleHandleA;
+    let hmod = match GetModuleHandleA(module) {
+        Ok(h) if !h.is_invalid() => h,
+        _ => LoadLibraryA(module)?,
+    };
+    let proc = GetProcAddress(hmod, symbol).ok_or("Failed to resolve symbol")?;
+    Ok(proc as *const c_void)
+}
+
 unsafe fn init_hooks() -> Result<(), Box<dyn std::error::Error>> {
     // Resolve GDI32.dll for BitBlt
-    let gdi32 = LoadLibraryA(s!("gdi32.dll"))?;
-    let bitblt_addr = GetProcAddress(gdi32, s!("BitBlt")).ok_or("Failed to find BitBlt")?;
-    
-    // Resolve Kernel32.dll for CreateProcessW
-    let kernel32 = LoadLibraryA(s!("kernel32.dll"))?;
-    let create_process_addr = GetProcAddress(kernel32, s!("CreateProcessW")).ok_or("Failed to find CreateProcessW")?;
-
-    // Resolve ntdll.dll for NtAllocateVirtualMemory
-    let ntdll = LoadLibraryA(s!("ntdll.dll"))?;
-    let nt_alloc_addr = GetProcAddress(ntdll, s!("NtAllocateVirtualMemory")).ok_or("Failed to find NtAllocateVirtualMemory")?;
-
-    // Install hooks using Detours (retour)
+    let bitblt_addr = get_module_symbol_address(s!("gdi32.dll"), s!("BitBlt"))?;
     let bitblt_target: FnBitBlt = std::mem::transmute(bitblt_addr);
     let bitblt_hook = GenericDetour::new(bitblt_target, hooked_bitblt)?;
-    bitblt_hook.enable()?;
-    *HOOK_BITBLT.lock().unwrap() = Some(bitblt_hook);
+    let _ = HOOK_BITBLT.set(bitblt_hook);
+    if let Some(h) = HOOK_BITBLT.get() {
+        h.enable()?;
+    }
 
+    // Resolve Kernel32.dll for CreateProcessW
+    let create_process_addr = get_module_symbol_address(s!("kernel32.dll"), s!("CreateProcessW"))?;
     let create_process_target: FnCreateProcessW = std::mem::transmute(create_process_addr);
     let create_process_hook = GenericDetour::new(create_process_target, hooked_create_process_w)?;
-    create_process_hook.enable()?;
-    *HOOK_CREATEPROCESSW.lock().unwrap() = Some(create_process_hook);
+    let _ = HOOK_CREATEPROCESSW.set(create_process_hook);
+    if let Some(h) = HOOK_CREATEPROCESSW.get() {
+        h.enable()?;
+    }
 
+    // Resolve ntdll.dll for NtAllocateVirtualMemory
+    let nt_alloc_addr = get_module_symbol_address(s!("ntdll.dll"), s!("NtAllocateVirtualMemory"))?;
     let nt_alloc_target: FnNtAllocateVirtualMemory = std::mem::transmute(nt_alloc_addr);
     let nt_alloc_hook = GenericDetour::new(nt_alloc_target, hooked_nt_allocate_virtual_memory)?;
-    nt_alloc_hook.enable()?;
-    *HOOK_NTALLOCATEVIRTUALMEMORY.lock().unwrap() = Some(nt_alloc_hook);
+    let _ = HOOK_NTALLOCATEVIRTUALMEMORY.set(nt_alloc_hook);
+    if let Some(h) = HOOK_NTALLOCATEVIRTUALMEMORY.get() {
+        h.enable()?;
+    }
 
-    let nt_protect_addr = GetProcAddress(ntdll, s!("NtProtectVirtualMemory")).ok_or("Failed to find NtProtectVirtualMemory")?;
+    let nt_protect_addr = get_module_symbol_address(s!("ntdll.dll"), s!("NtProtectVirtualMemory"))?;
     let nt_protect_target: FnNtProtectVirtualMemory = std::mem::transmute(nt_protect_addr);
     let nt_protect_hook = GenericDetour::new(nt_protect_target, hooked_nt_protect_virtual_memory)?;
-    nt_protect_hook.enable()?;
-    *HOOK_NTPROTECTVIRTUALMEMORY.lock().unwrap() = Some(nt_protect_hook);
+    let _ = HOOK_NTPROTECTVIRTUALMEMORY.set(nt_protect_hook);
+    if let Some(h) = HOOK_NTPROTECTVIRTUALMEMORY.get() {
+        h.enable()?;
+    }
 
-    let open_process_addr = GetProcAddress(kernel32, s!("OpenProcess")).ok_or("Failed to find OpenProcess")?;
+    let open_process_addr = get_module_symbol_address(s!("kernel32.dll"), s!("OpenProcess"))?;
     let open_process_target: FnOpenProcess = std::mem::transmute(open_process_addr);
     let open_process_hook = GenericDetour::new(open_process_target, hooked_open_process)?;
-    open_process_hook.enable()?;
-    *HOOK_OPENPROCESS.lock().unwrap() = Some(open_process_hook);
+    let _ = HOOK_OPENPROCESS.set(open_process_hook);
+    if let Some(h) = HOOK_OPENPROCESS.get() {
+        h.enable()?;
+    }
 
-    let read_process_memory_addr = GetProcAddress(kernel32, s!("ReadProcessMemory")).ok_or("Failed to find ReadProcessMemory")?;
+    let read_process_memory_addr = get_module_symbol_address(s!("kernel32.dll"), s!("ReadProcessMemory"))?;
     let read_process_memory_target: FnReadProcessMemory = std::mem::transmute(read_process_memory_addr);
     let read_process_memory_hook = GenericDetour::new(read_process_memory_target, hooked_read_process_memory)?;
-    read_process_memory_hook.enable()?;
-    *HOOK_READPROCESSMEMORY.lock().unwrap() = Some(read_process_memory_hook);
+    let _ = HOOK_READPROCESSMEMORY.set(read_process_memory_hook);
+    if let Some(h) = HOOK_READPROCESSMEMORY.get() {
+        h.enable()?;
+    }
 
     // Resolve ws2_32.dll for send (Network Telemetry)
-    let ws2_32 = LoadLibraryA(s!("ws2_32.dll"))?;
-    if let Some(send_addr) = GetProcAddress(ws2_32, s!("send")) {
+    if let Ok(send_addr) = get_module_symbol_address(s!("ws2_32.dll"), s!("send")) {
         let send_target: FnSend = std::mem::transmute(send_addr);
         let send_hook = GenericDetour::new(send_target, hooked_send)?;
-        send_hook.enable()?;
-        *HOOK_SEND.lock().unwrap() = Some(send_hook);
+        let _ = HOOK_SEND.set(send_hook);
+        if let Some(h) = HOOK_SEND.get() {
+            let _ = h.enable();
+        }
     }
 
     Ok(())

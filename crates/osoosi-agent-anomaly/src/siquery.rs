@@ -4378,7 +4378,7 @@ impl SiqueryEngine {
                 "C:\\Program Files\\nodejs",
                 "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.26100.0\\x64",
                 "C:\\Program Files (x86)\\Windows Kits\\10\\bin\\10.0.22621.0\\x64",
-                "C:\\Users\\oyesanyf\\wix_tools\\PFiles64\\WiX Toolset v5.0\\bin",
+                "C:\\Program Files\\WiX Toolset v5.0\\bin",
             ];
 
             for cdir in candidate_dirs {
@@ -4397,6 +4397,7 @@ impl SiqueryEngine {
                         home.join("AppData").join("Local").join("Programs").join("Python").join("Python311").join(exe_name),
                         home.join("AppData").join("Local").join("Programs").join("Python").join("Python310").join(exe_name),
                         home.join("AppData").join("Local").join("Programs").join("Git").join("bin").join(exe_name),
+                        home.join("wix_tools").join("PFiles64").join("WiX Toolset v5.0").join("bin").join(exe_name),
                     ];
                     for cand in user_candidates {
                         if cand.exists() {

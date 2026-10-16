@@ -17,12 +17,12 @@ extern "C" {
 }
 const RTLD_NEXT: *mut c_void = -1isize as *mut c_void;
 
+use std::sync::atomic::{AtomicPtr, Ordering};
+
 // Original function pointers
-lazy_static! {
-    static ref REAL_EXECVE: std::sync::Mutex<Option<extern "C" fn(*const c_char, *const *const c_char, *const *const c_char) -> c_int>> = std::sync::Mutex::new(None);
-    static ref REAL_PTRACE: std::sync::Mutex<Option<extern "C" fn(c_int, c_int, *mut c_void, *mut c_void) -> c_int>> = std::sync::Mutex::new(None);
-    static ref REAL_SEND: std::sync::Mutex<Option<extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t>> = std::sync::Mutex::new(None);
-}
+static REAL_EXECVE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static REAL_PTRACE: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
+static REAL_SEND: AtomicPtr<c_void> = AtomicPtr::new(std::ptr::null_mut());
 
 static INIT: Once = Once::new();
 
@@ -34,17 +34,17 @@ unsafe fn init_hooks() {
 
         let orig_execve = dlsym(RTLD_NEXT, execve_sym);
         if !orig_execve.is_null() {
-            *REAL_EXECVE.lock().unwrap() = Some(std::mem::transmute(orig_execve));
+            REAL_EXECVE.store(orig_execve, Ordering::Release);
         }
 
         let orig_ptrace = dlsym(RTLD_NEXT, ptrace_sym);
         if !orig_ptrace.is_null() {
-            *REAL_PTRACE.lock().unwrap() = Some(std::mem::transmute(orig_ptrace));
+            REAL_PTRACE.store(orig_ptrace, Ordering::Release);
         }
 
         let orig_send = dlsym(RTLD_NEXT, send_sym);
         if !orig_send.is_null() {
-            *REAL_SEND.lock().unwrap() = Some(std::mem::transmute(orig_send));
+            REAL_SEND.store(orig_send, Ordering::Release);
         }
     });
 }
@@ -60,13 +60,12 @@ pub unsafe extern "C" fn execve(
     init_hooks();
 
     if !path.is_null() {
-        let path_str = CStr::from_ptr(path).to_string_lossy();
-        // Here Oshoosi can block malicious executions (e.g., reverse shells or cryptominers)
-        // if path_str.contains("nc") || path_str.contains("bash") { ... return -1; }
+        let _path_str = CStr::from_ptr(path).to_string_lossy();
     }
 
-    let lock = REAL_EXECVE.lock().unwrap();
-    if let Some(orig) = *lock {
+    let ptr = REAL_EXECVE.load(Ordering::Acquire);
+    if !ptr.is_null() {
+        let orig: extern "C" fn(*const c_char, *const *const c_char, *const *const c_char) -> c_int = std::mem::transmute(ptr);
         orig(path, argv, envp)
     } else {
         -1
@@ -84,12 +83,9 @@ pub unsafe extern "C" fn ptrace(
 ) -> c_int {
     init_hooks();
 
-    // PTRACE_ATTACH (16) or PTRACE_TRACEME (0) can be intercepted to prevent
-    // unauthorized debuggers or memory dumpers from attaching to protected processes.
-    // if request == 16 /* PTRACE_ATTACH */ { return -1; }
-
-    let lock = REAL_PTRACE.lock().unwrap();
-    if let Some(orig) = *lock {
+    let ptr = REAL_PTRACE.load(Ordering::Acquire);
+    if !ptr.is_null() {
+        let orig: extern "C" fn(c_int, c_int, *mut c_void, *mut c_void) -> c_int = std::mem::transmute(ptr);
         orig(request, pid, addr, data)
     } else {
         -1
@@ -107,11 +103,9 @@ pub unsafe extern "C" fn send(
 ) -> ssize_t {
     init_hooks();
 
-    // Deep packet inspection logic here. We can parse HTTP headers or DNS payloads
-    // out of `buf` up to `len` bytes.
-
-    let lock = REAL_SEND.lock().unwrap();
-    if let Some(orig) = *lock {
+    let ptr = REAL_SEND.load(Ordering::Acquire);
+    if !ptr.is_null() {
+        let orig: extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t = std::mem::transmute(ptr);
         orig(sockfd, buf, len, flags)
     } else {
         -1
