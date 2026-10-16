@@ -199,7 +199,55 @@ impl NativeHost {
             };
         }
 
-        // SSRF Protection
+        // Mathematical IP Range & Hostname SSRF Protection
+        let host = crate::security::extract_host_from_url(url);
+        if host.is_empty() {
+            return HostResponse::Error {
+                message: "Invalid URL: unable to extract host".to_string(),
+            };
+        }
+
+        let blocked_hostnames = [
+            "localhost",
+            "metadata.google.internal",
+            "metadata.aws.internal",
+            "instance-data",
+        ];
+        if blocked_hostnames.contains(&host.as_str()) || host.ends_with(".localhost") {
+            warn!("Host: SSRF BLOCKED hostname '{}' in URL '{}'", host, url);
+            self.audit.log(
+                "SSRF_BLOCKED",
+                serde_json::json!({
+                    "url": url,
+                    "host": host,
+                    "reason": "blocked hostname",
+                    "taint_labels": taint_labels,
+                }),
+            );
+            return HostResponse::Error {
+                message: format!("SSRF Violation: access to host '{}' is blocked", host),
+            };
+        }
+
+        if let Ok(ip) = host.parse::<std::net::IpAddr>() {
+            if is_ssrf_ip(ip) {
+                warn!("Host: SSRF BLOCKED IP literal '{}' in URL '{}'", ip, url);
+                self.audit.log(
+                    "SSRF_BLOCKED",
+                    serde_json::json!({
+                        "url": url,
+                        "ip": ip.to_string(),
+                        "reason": "private or non-routable IP address",
+                        "taint_labels": taint_labels,
+                    }),
+                );
+                return HostResponse::Error {
+                    message: format!("SSRF Violation: access to IP '{}' is blocked", ip),
+                };
+            }
+        }
+
+        // Substring fallback check
         for blocked in &self.ssrf_blocklist {
             if url.contains(blocked) {
                 warn!(
@@ -282,18 +330,10 @@ impl NativeHost {
     }
 
     async fn handle_read_db(&self, query: &str, params: &[String]) -> HostResponse {
-        // SQL injection protection: only allow SELECT from WASM brain
-        let q = query.trim().to_uppercase();
-        if !q.starts_with("SELECT") {
+        // Enforce SQL injection protection: only allow single-statement SELECT without dangerous keywords
+        if !self.security_config.is_query_allowed(query) {
             return HostResponse::Error {
-                message: "Only SELECT queries allowed from WASM brain".to_string(),
-            };
-        }
-        if self.security_config.query_restrict_tables
-            && !self.security_config.is_query_allowed(query)
-        {
-            return HostResponse::Error {
-                message: "Query references disallowed table".to_string(),
+                message: "Only single-statement SELECT queries without administrative or destructive keywords are allowed from WASM brain".to_string(),
             };
         }
 
@@ -325,4 +365,70 @@ impl NativeHost {
             data: serde_json::json!({}),
         }
     }
+}
+
+/// Evaluates an IP address mathematically to block all SSRF ranges.
+fn is_ssrf_ip(ip: std::net::IpAddr) -> bool {
+    match ip {
+        std::net::IpAddr::V4(v4) => is_ssrf_ipv4(v4),
+        std::net::IpAddr::V6(v6) => {
+            // Check for IPv4-mapped IPv6 (::ffff:0:0/96)
+            let segs = v6.segments();
+            if segs[0] == 0 && segs[1] == 0 && segs[2] == 0 && segs[3] == 0 && segs[4] == 0 && segs[5] == 0xffff {
+                let v4 = std::net::Ipv4Addr::new(
+                    (segs[6] >> 8) as u8,
+                    (segs[6] & 0xff) as u8,
+                    (segs[7] >> 8) as u8,
+                    (segs[7] & 0xff) as u8,
+                );
+                return is_ssrf_ipv4(v4);
+            }
+            if v6.is_loopback() || v6.is_unspecified() || v6.is_multicast() {
+                return true;
+            }
+            // Unique local fc00::/7 (fc00:: - fdff:ffff:...)
+            if (segs[0] & 0xfe00) == 0xfc00 {
+                return true;
+            }
+            // Link-local fe80::/10 (fe80:: - febf:ffff:...)
+            if (segs[0] & 0xffc0) == 0xfe80 {
+                return true;
+            }
+            false
+        }
+    }
+}
+
+/// Evaluates an IPv4 address mathematically against RFC1918, loopback, CGNAT, link-local, broadcast, and multicast.
+fn is_ssrf_ipv4(v4: std::net::Ipv4Addr) -> bool {
+    let octets = v4.octets();
+    if v4.is_loopback()       // 127.0.0.0/8
+        || v4.is_unspecified() // 0.0.0.0
+        || v4.is_broadcast()   // 255.255.255.255
+        || v4.is_multicast()   // 224.0.0.0/4
+        || octets[0] == 0      // 0.0.0.0/8
+    {
+        return true;
+    }
+    // RFC1918: 10.0.0.0/8
+    if octets[0] == 10 {
+        return true;
+    }
+    // RFC1918: 172.16.0.0/12 (172.16.0.0 - 172.31.255.255)
+    if octets[0] == 172 && (16..=31).contains(&octets[1]) {
+        return true;
+    }
+    // RFC1918: 192.168.0.0/16
+    if octets[0] == 192 && octets[1] == 168 {
+        return true;
+    }
+    // Link-local / Cloud metadata: 169.254.0.0/16
+    if octets[0] == 169 && octets[1] == 254 {
+        return true;
+    }
+    // Carrier-Grade NAT (CGNAT): 100.64.0.0/10 (100.64.0.0 - 100.127.255.255)
+    if octets[0] == 100 && (64..=127).contains(&octets[1]) {
+        return true;
+    }
+    false
 }

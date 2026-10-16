@@ -480,6 +480,14 @@ pub fn block_process_network(process_id: Option<u32>, image_path: Option<&str>) 
             image_path
         ));
     }
+    if let Some(img) = image_path {
+        if crate::system_check::is_administrative_lolbin(img) {
+            return Err(anyhow!(
+                "Program is an administrative LOLBin or system utility, skipping permanent firewall block: {:?}",
+                img
+            ));
+        }
+    }
     #[cfg(target_os = "windows")]
     {
         let _ = process_id;
@@ -502,6 +510,14 @@ pub fn block_process_network(process_id: Option<u32>, image_path: Option<&str>) 
 pub fn tarpit_process_network(process_id: Option<u32>, image_path: Option<&str>) -> Result<String> {
     if is_program_in_allowlist(image_path) {
         return Err(anyhow!("Program in allowlist, cannot tarpit."));
+    }
+    if let Some(img) = image_path {
+        if crate::system_check::is_administrative_lolbin(img) {
+            return Err(anyhow!(
+                "Program is an administrative LOLBin or system utility, skipping image-based QoS tarpit: {:?}",
+                img
+            ));
+        }
     }
 
     #[cfg(target_os = "windows")]

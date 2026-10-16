@@ -5440,7 +5440,14 @@ async function renderGossipView() {
     let gossipEvents = [];
     const gossipData = await fetchAPI('/gossip');
     if (Array.isArray(gossipData) && gossipData.length > 0) {
-        gossipEvents = gossipData;
+        gossipEvents = gossipData.filter(ev => {
+            const pName = (ev.process_name || '').toLowerCase();
+            const summary = (ev.summary || '').toLowerCase();
+            if (pName === 'unknown' || pName === 'unknown process') return false;
+            if (summary.includes('execution of non-existing file')) return false;
+            if (ev.confidence !== undefined && ev.confidence !== null && ev.confidence < 0.50) return false;
+            return true;
+        });
     } else {
         // Fallback to recent activity if /gossip is empty
         const activity = await fetchAPI('/activity');
@@ -5532,6 +5539,11 @@ async function renderGossipView() {
     for (const ev of gossipEvents) {
         const isThreat = ev.is_threat || (ev.event_type && ev.event_type.includes('THREAT'));
         if (isThreat) {
+            const pName = (ev.process_name || '').toLowerCase();
+            const summary = (ev.summary || '').toLowerCase();
+            if (pName === 'unknown' || pName === 'unknown process') continue;
+            if (summary.includes('execution of non-existing file')) continue;
+            if (ev.confidence !== undefined && ev.confidence !== null && ev.confidence < 0.50) continue;
             threatCount++;
             filteredEvents.push(ev);
         } else if (ev.event_type === 'MESH_HEARTBEAT_ACK' || ev.event_type === 'CONSENSUS_CLOCK_SYNC') {
@@ -5638,9 +5650,13 @@ async function renderGossipView() {
             }
         }
 
-        // Process Name display
-        const processHtml = event.process_name 
-            ? `<span style="font-weight: 700; color: #ffffff; margin-right: 6px;">${escapeHtml(event.process_name)}</span>` 
+        // Process Name display: display MITRE technique or "Security Issue" if process is unknown/system process
+        let displayProcess = event.process_name;
+        if (!displayProcess || displayProcess.toLowerCase() === 'unknown' || displayProcess.toLowerCase() === 'unknown process' || displayProcess.toLowerCase() === 'system process') {
+            displayProcess = event.mitre_technique_name || (event.mitre_technique ? `[${event.mitre_technique}]` : (isThreat ? 'Security Issue' : ''));
+        }
+        const processHtml = displayProcess 
+            ? `<span style="font-weight: 700; color: #ffffff; margin-right: 6px;">${escapeHtml(displayProcess)}</span>` 
             : '';
 
         // Action buttons for active threats

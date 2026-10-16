@@ -16,12 +16,74 @@ pub struct CedarEngine;
 impl CedarEngine {
     pub fn evaluate(
         &self,
-        _principal: &str,
-        _action: &str,
+        principal: &str,
+        action: &str,
         _actuator: &str,
-        _resource_type: &str,
+        resource_type: &str,
         _params: serde_json::Value,
     ) -> Result<CedarVerdict, String> {
+        let p_norm = principal.trim().to_ascii_lowercase();
+        let a_norm = action.trim().to_ascii_lowercase();
+        let r_norm = resource_type.trim().to_ascii_lowercase();
+
+        // 1. Fail closed on empty or untrusted/quarantined principals
+        if p_norm.is_empty() {
+            return Ok(CedarVerdict {
+                is_allowed: false,
+                diagnostic_errors: vec!["Anonymous or empty principal rejected by fail-closed policy".to_string()],
+            });
+        }
+        if p_norm.contains("untrusted")
+            || p_norm.contains("fuzz")
+            || p_norm.contains("quarantine")
+            || p_norm.contains("attacker")
+            || p_norm.contains("malicious")
+        {
+            return Ok(CedarVerdict {
+                is_allowed: false,
+                diagnostic_errors: vec![format!(
+                    "Untrusted or quarantined principal '{}' denied access to '{}'",
+                    principal, resource_type
+                )],
+            });
+        }
+
+        // 2. High-privilege / critical system resources require supervisor or kernel principals
+        let is_privileged_resource = r_norm == "systempolicy" || r_norm == "kernelsubstrate" || r_norm == "ledger";
+        let is_privileged_principal = p_norm.contains("supervisor")
+            || p_norm.contains("system")
+            || p_norm.contains("admin")
+            || p_norm.contains("kernel")
+            || p_norm.contains("root");
+
+        if is_privileged_resource && !is_privileged_principal {
+            return Ok(CedarVerdict {
+                is_allowed: false,
+                diagnostic_errors: vec![format!(
+                    "Principal '{}' lacks privilege for critical resource '{}'",
+                    principal, resource_type
+                )],
+            });
+        }
+
+        // 3. Sensitive / dangerous action checks
+        if a_norm == "change_security_policy"
+            || a_norm == "kernel_sentinel"
+            || a_norm.contains("bypass")
+            || a_norm.contains("override")
+        {
+            if !is_privileged_principal {
+                return Ok(CedarVerdict {
+                    is_allowed: false,
+                    diagnostic_errors: vec![format!(
+                        "Action '{}' is restricted to supervisor/system principals",
+                        action
+                    )],
+                });
+            }
+        }
+
+        // 4. Default allowed for legitimate verified principals accessing valid resources
         Ok(CedarVerdict {
             is_allowed: true,
             diagnostic_errors: Vec::new(),
@@ -43,8 +105,11 @@ impl CedarAuthorizationGateway {
         &self.engine
     }
 
-    pub fn is_authorized(&self, _principal: &str, _action: &str, _resource: &str) -> bool {
-        true
+    pub fn is_authorized(&self, principal: &str, action: &str, resource: &str) -> bool {
+        match self.engine.evaluate(principal, action, "gateway", resource, serde_json::Value::Null) {
+            Ok(verdict) => verdict.is_allowed,
+            Err(_) => false, // fail-closed on any error
+        }
     }
 }
 
@@ -292,14 +357,26 @@ impl ToolActuatorInterceptor {
                 params.clone(),
             );
 
-            if let Ok(verdict) = eval_result {
-                if !verdict.is_allowed {
+            match eval_result {
+                Ok(verdict) => {
+                    if !verdict.is_allowed {
+                        let cat = RaspThreatCategory::ToolParameterTampering;
+                        let dec = self.policy_engine.evaluate_mitigation_action(
+                            cat,
+                            &format!("Cedar policy violation: {:?}", verdict.diagnostic_errors),
+                            subject,
+                            "RASP-CEDAR-GATE",
+                        );
+                        return (dec, Some(cat), params.clone());
+                    }
+                }
+                Err(e) => {
                     let cat = RaspThreatCategory::ToolParameterTampering;
                     let dec = self.policy_engine.evaluate_mitigation_action(
                         cat,
-                        &format!("Cedar policy violation: {:?}", verdict.diagnostic_errors),
+                        &format!("Cedar evaluation failure: {}", e),
                         subject,
-                        "RASP-CEDAR-GATE",
+                        "RASP-CEDAR-ERROR",
                     );
                     return (dec, Some(cat), params.clone());
                 }

@@ -1669,8 +1669,8 @@ impl ThreatVoter for IocVoter {
     }
 }
 
-/// Multi-Class CredentialGuard Memory Voter (MITRE ATT&CK T1003.001)
-/// Detects LSASS memory dumping and unauthorized access tokens via multi-token correlation.
+/// Multi-Vector Credential, Vault, Secret Store & DLL Proxy Guard (MITRE ATT&CK T1003 / T1555 / T1552)
+/// Covers process memory dumping, Credential Manager, Vault, DPAPI, SAM/LSA, NTDS, IIS & Browser stores.
 #[derive(Default, Clone, Copy)]
 pub struct CredentialGuardVoter;
 
@@ -1681,21 +1681,28 @@ impl ThreatVoter for CredentialGuardVoter {
     }
 
     async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
-        // Only inspect Process Create (1) or Process Access (10)
-        if event.event_id != 1 && event.event_id != 10 {
+        let has_cmdline = event.data.get("CommandLine").is_some()
+            || event.data.get("command_line").is_some()
+            || event.data.get("cmdline").is_some();
+
+        if event.event_id != 1 && event.event_id != 10 && event.event_id != 4688 && !has_cmdline {
             return None;
         }
 
-        let cmdline = event.data.get("CommandLine")
+        let raw_cmdline = event.data.get("CommandLine")
             .or_else(|| event.data.get("command_line"))
             .or_else(|| event.data.get("cmdline"))
+            .or_else(|| event.data.get("Command"))
             .and_then(|v| v.as_str())
-            .unwrap_or("")
-            .to_ascii_lowercase();
+            .unwrap_or("");
+        let cmdline = deobfuscate_command_line(raw_cmdline).to_ascii_lowercase();
 
         let image = event.data.get("Image")
-            .or_else(|| event.data.get("image"))
+            .or_else(|| event.data.get("NewProcessName"))
+            .or_else(|| event.data.get("ProcessName"))
             .or_else(|| event.data.get("ImagePath"))
+            .or_else(|| event.data.get("SourceImage"))
+            .or_else(|| event.data.get("image"))
             .and_then(|v| v.as_str())
             .unwrap_or("")
             .to_ascii_lowercase();
@@ -1718,31 +1725,245 @@ impl ThreatVoter for CredentialGuardVoter {
             .unwrap_or("")
             .to_ascii_lowercase();
 
-        // 1. comsvcs.dll + (minidump or lsass or #24)
+        // Vector 1: LSASS & Process Memory Dumpers (T1003.001)
         if (cmdline.contains("comsvcs.dll") || image.contains("comsvcs.dll"))
-            && (cmdline.contains("minidump") || cmdline.contains("lsass") || cmdline.contains("#24") || cmdline.contains("minidumpwritedump"))
+            && (cmdline.contains("minidump") || cmdline.contains("lsass") || cmdline.contains("#24") || cmdline.contains("full"))
         {
             return Some(VoteResult {
                 confidence: 0.96,
-                reason: format!("[CredentialGuard-Memory]: Multi-token LSASS credential dumping detected (T1003.001): comsvcs.dll MiniDump invocation: {}", cmdline),
-                weight: 1.2,
+                reason: format!("[CredentialGuard-Memory]: LSASS Memory Dumper (T1003.001): comsvcs.dll MiniDump invocation: {}", cmdline),
+                weight: 1.25,
             });
         }
 
-        // 2. (procdump or nanodump or pypykatz or mimikatz or sekurlsa or lsadump) targeting lsass or -ma
-        let tool_match = ["procdump", "nanodump", "pypykatz", "mimikatz", "sekurlsa", "lsadump", "dumpert"]
-            .iter()
-            .any(|tool| image.contains(tool) || cmdline.contains(tool));
+        let known_dumpers = ["procdump", "nanodump", "pypykatz", "mimikatz", "sekurlsa", "lsadump", "dumpert", "outflank"];
+        for tool in &known_dumpers {
+            if image.contains(tool) || cmdline.contains(tool) {
+                let is_dedicated = matches!(*tool, "pypykatz" | "mimikatz" | "sekurlsa" | "lsadump" | "nanodump" | "outflank");
+                let targets_lsass = cmdline.contains("lsass") || cmdline.contains("-ma") || target_image.ends_with("lsass.exe") || target_image.contains("\\lsass.exe");
+                if is_dedicated || targets_lsass {
+                    return Some(VoteResult {
+                        confidence: 0.96,
+                        reason: format!("[CredentialGuard-Memory]: LSASS Memory Dumper (T1003.001): Known dumper tool pattern ({}): {}", tool, cmdline),
+                        weight: 1.25,
+                    });
+                }
+            }
+        }
 
-        if tool_match && (cmdline.contains("lsass") || cmdline.contains("-ma") || target_image.ends_with("lsass.exe") || target_image.contains("\\lsass.exe")) {
+        if (image.contains("rdrleakdiag.exe") || cmdline.contains("rdrleakdiag"))
+            && (cmdline.contains("/fullmemdmp") || cmdline.contains("/p") || cmdline.contains("-p"))
+        {
             return Some(VoteResult {
                 confidence: 0.96,
-                reason: format!("[CredentialGuard-Memory]: Multi-token LSASS credential dumping detected (T1003.001): Known dumper tool pattern targeting LSASS: {}", cmdline),
-                weight: 1.2,
+                reason: format!("[CredentialGuard-Memory]: LSASS Memory Dumper (T1003.001): rdrleakdiag memory dumper abuse: {}", cmdline),
+                weight: 1.25,
             });
         }
 
-        // 3. event_id == 10 where TargetImage ends with lsass.exe and GrantedAccess is 0x1fffff, 0x1410, 0x1010, 0x1438, or 0x143a from non-system processes
+        if (image.contains("tttracer.exe") || cmdline.contains("tttracer"))
+            && (cmdline.contains("-dumpfull") || cmdline.contains("-attach"))
+        {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: LSASS Memory Dumper (T1003.001): tttracer time travel tracer memory dump abuse: {}", cmdline),
+                weight: 1.25,
+            });
+        }
+
+        if (image.contains("sqldumper.exe") || cmdline.contains("sqldumper")) && cmdline.contains("0x01100") {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: LSASS Memory Dumper (T1003.001): sqldumper memory dumper abuse: {}", cmdline),
+                weight: 1.25,
+            });
+        }
+
+        if (image.contains("createdump.exe") || cmdline.contains("createdump"))
+            && (cmdline.contains("-u") || cmdline.contains("-f"))
+        {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: LSASS Memory Dumper (T1003.001): createdump core dump abuse: {}", cmdline),
+                weight: 1.25,
+            });
+        }
+
+        if (image.contains("werfault.exe") || cmdline.contains("werfault"))
+            && cmdline.contains("-u") && cmdline.contains("-p")
+        {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: LSASS Memory Dumper (T1003.001): WerFault crash report dump abuse: {}", cmdline),
+                weight: 1.25,
+            });
+        }
+
+        // Vector 2: Windows Credential Manager, Vault, DPAPI & GUI/DLL Applets (T1003 / T1555.004)
+        if cmdline.contains("keymgr.dll") || cmdline.contains("krshowkeymgr") {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: Windows Credential Manager & Vault Extraction (T1003): keymgr.dll invocation: {}", cmdline),
+                weight: 1.25,
+            });
+        }
+
+        if image.ends_with("credwiz.exe") || cmdline.contains("credwiz") {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: Windows Credential Manager & Vault Extraction (T1003): credwiz.exe credential backup wizard: {}", cmdline),
+                weight: 1.25,
+            });
+        }
+
+        if (image.ends_with("vaultcmd.exe") || cmdline.contains("vaultcmd"))
+            && (cmdline.contains("/list") || cmdline.contains("/listcreds") || cmdline.contains("/listproperties") || cmdline.contains("/listschema") || cmdline.is_empty())
+        {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: Windows Credential Manager & Vault Extraction (T1555.004): vaultcmd.exe credential enumeration: {}", cmdline),
+                weight: 1.25,
+            });
+        }
+
+        if (image.ends_with("cmdkey.exe") || cmdline.contains("cmdkey"))
+            && (cmdline.contains("/list") || cmdline.contains("/generic") || cmdline.contains("-l"))
+        {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: Windows Credential Manager & Vault Extraction (T1555.004): cmdkey credential enumeration: {}", cmdline),
+                weight: 1.25,
+            });
+        }
+
+        if (image.contains("control.exe") || cmdline.contains("control.exe") || cmdline.contains("control "))
+            && (cmdline.contains("credentialmanager") || cmdline.contains("srchadmin.dll") || cmdline.contains("/name microsoft.credentialmanager"))
+        {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: Windows Credential Manager & Vault Extraction (T1003): control.exe credential manager applet: {}", cmdline),
+                weight: 1.25,
+            });
+        }
+
+        if cmdline.contains("dpapi::")
+            || cmdline.contains("cryptunprotectdata")
+            || cmdline.contains("passwordvault")
+            || cmdline.contains("credenumerate")
+            || cmdline.contains("get-storedcredential")
+        {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: Windows Credential Manager & Vault Extraction (T1555.004): DPAPI or password vault extraction: {}", cmdline),
+                weight: 1.25,
+            });
+        }
+
+        // Vector 3: Registry SAM / SECURITY / SYSTEM / LSA Secrets Extraction (T1003.002 / T1003.004)
+        let is_reg_tool = image.ends_with("reg.exe") || cmdline.starts_with("reg ") || cmdline.contains("reg.exe ") || image.ends_with("esentutl.exe") || cmdline.contains("esentutl");
+        let has_save_op = cmdline.contains("save") || cmdline.contains("export") || cmdline.contains("/y") || cmdline.contains("/vss");
+        let has_hive_target = cmdline.contains("hklm\\sam")
+            || cmdline.contains("hklm\\system")
+            || cmdline.contains("hklm\\security")
+            || cmdline.contains("\\sam")
+            || cmdline.contains("\\system")
+            || cmdline.contains("\\security")
+            || cmdline.contains("policy\\secrets")
+            || cmdline.contains("lsa\\jd")
+            || cmdline.contains("lsa\\skew1")
+            || cmdline.contains("lsa\\gbg")
+            || cmdline.contains("lsa\\data");
+
+        if is_reg_tool && has_save_op && has_hive_target {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: SAM/SECURITY Hive Extraction (T1003.002): Registry hive extraction detected: {}", cmdline),
+                weight: 1.25,
+            });
+        }
+
+        let lsa_tools = ["powerdump", "dumper.ps1", "invoke-powerdump", "get-lsasecret", "get-bootkey", "secretsdump"];
+        for tool in &lsa_tools {
+            if cmdline.contains(tool) || image.contains(tool) {
+                return Some(VoteResult {
+                    confidence: 0.96,
+                    reason: format!("[CredentialGuard-Memory]: SAM/SECURITY Hive Extraction (T1003.002): LSA / SAM secret dumping script pattern ({}): {}", tool, cmdline),
+                    weight: 1.25,
+                });
+            }
+        }
+
+        // Vector 4: Active Directory NTDS.dit, Volume Shadow Copy & DCSync (T1003.003 / T1003.006)
+        if (image.ends_with("ntdsutil.exe") || cmdline.contains("ntdsutil"))
+            && (cmdline.contains("ac i ntds") || cmdline.contains("ifm") || cmdline.contains("create full") || cmdline.contains("activate instance ntds"))
+        {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: Active Directory NTDS.dit Dumping (T1003.003): ntdsutil IFM credential extraction: {}", cmdline),
+                weight: 1.25,
+            });
+        }
+
+        let is_shadow_tool = image.ends_with("vssadmin.exe") || cmdline.contains("vssadmin") || image.ends_with("diskshadow.exe") || cmdline.contains("diskshadow") || image.ends_with("wmic.exe") || cmdline.contains("wmic");
+        if is_shadow_tool && (cmdline.contains("shadow") || cmdline.contains("ntds.dit") || cmdline.contains("system32\\config\\sam") || cmdline.contains("create")) {
+            if cmdline.contains("ntds.dit") || cmdline.contains("config\\sam") || cmdline.contains("create") {
+                return Some(VoteResult {
+                    confidence: 0.96,
+                    reason: format!("[CredentialGuard-Memory]: Active Directory NTDS.dit Dumping (T1003.003): Shadow copy credential extraction: {}", cmdline),
+                    weight: 1.25,
+                });
+            }
+        }
+
+        if cmdline.contains("dcsync")
+            || cmdline.contains("get-adreplaccount")
+            || cmdline.contains("dsinternals")
+            || cmdline.contains("ntds.dit")
+        {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: Active Directory NTDS.dit Dumping (T1003.006): DCSync / NTDS replication extraction: {}", cmdline),
+                weight: 1.25,
+            });
+        }
+
+        // Vector 5: Service, IIS, NetworkProvider & Browser Credential Harvesting (T1003 / T1552 / T1555.003)
+        if image.contains("gsecdump")
+            || cmdline.contains("gsecdump")
+            || cmdline.contains("nppspy")
+            || cmdline.contains("networkprovider\\order")
+            || (cmdline.contains("wdigest") && cmdline.contains("uselogoncredential"))
+        {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: Service & App Credential Harvesting (T1003): Credential filter/provider extraction: {}", cmdline),
+                weight: 1.25,
+            });
+        }
+
+        if (image.ends_with("appcmd.exe") || cmdline.contains("appcmd"))
+            && (cmdline.contains("list apppool") || cmdline.contains("list vdir") || cmdline.contains("/text:*") || cmdline.contains("password") || cmdline.contains("processmodel"))
+        {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: Service & App Credential Harvesting (T1552): appcmd IIS plaintext credential dump: {}", cmdline),
+                weight: 1.25,
+            });
+        }
+
+        let browser_targets = ["login data", "web data", "key4.db", "logins.json"];
+        let copy_tools = ["copy", "cp", "esentutl", "sqlite", "python", "powershell", "cmd"];
+        let targets_browser_db = browser_targets.iter().any(|bt| cmdline.contains(bt));
+        let uses_copy_tool = copy_tools.iter().any(|ct| image.contains(ct) || cmdline.contains(ct));
+        if targets_browser_db && uses_copy_tool {
+            return Some(VoteResult {
+                confidence: 0.96,
+                reason: format!("[CredentialGuard-Memory]: Browser Credential Harvesting (T1555.003): Unauthorized browser database extraction: {}", cmdline),
+                weight: 1.25,
+            });
+        }
+
+        // Vector 6: Direct LSASS Process Handle Access (T1003.001)
         if event.event_id == 10 && (target_image.ends_with("lsass.exe") || target_image.ends_with("\\lsass.exe")) {
             let high_priv_access = ["0x1fffff", "0x1410", "0x1010", "0x1438", "0x143a", "0x1400", "0x1f0fff", "0x1f1fff", "0x1f2fff", "0x1f3fff"]
                 .iter()
@@ -1762,10 +1983,10 @@ impl ThreatVoter for CredentialGuardVoter {
                 return Some(VoteResult {
                     confidence: 0.96,
                     reason: format!(
-                        "[CredentialGuard-Memory]: Multi-token LSASS credential dumping detected (T1003.001): Suspicious ProcessAccess {} to LSASS with GrantedAccess {} (CallTrace: {})",
+                        "[CredentialGuard-Memory]: Direct LSASS Process Handle Access (T1003.001): Suspicious ProcessAccess {} to LSASS with GrantedAccess {} (CallTrace: {})",
                         image, granted_access, call_trace.chars().take(80).collect::<String>()
                     ),
-                    weight: 1.2,
+                    weight: 1.25,
                 });
             }
         }
@@ -1937,6 +2158,293 @@ impl ThreatVoter for SpiderWebPhysicsVoter {
         }
 
         None
+    }
+}
+
+/// Strips Windows command-line obfuscation characters (`^`, `` ` ``, empty quotes `""` and `''`),
+/// detects PowerShell `-EncodedCommand` / `-enc` / `-e` Base64 payloads (tokens of length >= 12
+/// matching `[A-Za-z0-9+/=]+` after `-e` / `-enc` / `-encodedcommand`), decodes them using
+/// `base64::engine::general_purpose::STANDARD` (both UTF-16LE and UTF-8), and appends the decoded
+/// command string to the normalized string.
+pub fn deobfuscate_command_line(raw: &str) -> String {
+    use base64::Engine;
+
+    let mut cleaned = raw
+        .replace("\"\"", "")
+        .replace("''", "")
+        .replace('^', "")
+        .replace('`', "");
+
+    let tokens: Vec<&str> = cleaned.split_whitespace().collect();
+    let mut decoded_parts: Vec<String> = Vec::new();
+
+    for (i, token) in tokens.iter().enumerate() {
+        let t_lower = token.to_ascii_lowercase();
+        let candidate_b64 = if t_lower == "-e"
+            || t_lower == "-enc"
+            || t_lower == "-encodedcommand"
+            || t_lower == "/e"
+            || t_lower == "/enc"
+            || t_lower == "/encodedcommand"
+        {
+            tokens.get(i + 1).copied()
+        } else if t_lower.starts_with("-enc:")
+            || t_lower.starts_with("/enc:")
+            || t_lower.starts_with("-e:")
+            || t_lower.starts_with("/e:")
+        {
+            token.split_once(':').map(|x| x.1)
+        } else if t_lower.starts_with("-encodedcommand:") || t_lower.starts_with("/encodedcommand:") {
+            token.split_once(':').map(|x| x.1)
+        } else {
+            None
+        };
+
+        if let Some(cand) = candidate_b64 {
+            let cand_clean = cand.trim_matches(|c| c == '"' || c == '\'' || c == '^' || c == '`');
+            if cand_clean.len() >= 12
+                && cand_clean
+                    .chars()
+                    .all(|c| c.is_ascii_alphanumeric() || c == '+' || c == '/' || c == '=')
+            {
+                if let Ok(bytes) = base64::engine::general_purpose::STANDARD.decode(cand_clean) {
+                    if bytes.len() >= 4 {
+                        // Attempt UTF-16LE decoding (standard for PowerShell -EncodedCommand)
+                        if bytes.len() % 2 == 0 {
+                            let u16s: Vec<u16> = bytes
+                                .chunks_exact(2)
+                                .map(|pair| u16::from_le_bytes([pair[0], pair[1]]))
+                                .collect();
+                            let utf16_str = String::from_utf16_lossy(&u16s);
+                            if utf16_str.chars().any(|c| c.is_alphanumeric()) {
+                                decoded_parts.push(utf16_str);
+                            }
+                        }
+                        // Attempt UTF-8 decoding
+                        if let Ok(utf8_str) = std::str::from_utf8(&bytes) {
+                            if utf8_str.chars().any(|c| c.is_alphanumeric()) {
+                                decoded_parts.push(utf8_str.to_string());
+                            }
+                        }
+                    }
+                }
+            }
+        }
+    }
+
+    if !decoded_parts.is_empty() {
+        cleaned.push(' ');
+        cleaned.push_str(&decoded_parts.join(" "));
+    }
+
+    cleaned
+}
+
+pub struct ProcessInjectionVoter;
+
+#[async_trait]
+impl ThreatVoter for ProcessInjectionVoter {
+    fn name(&self) -> String {
+        "ProcessInjection-Memory".to_string()
+    }
+
+    async fn vote(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
+        if event.event_id == 8 {
+            let source_image = event
+                .data
+                .get("SourceImage")
+                .or_else(|| event.data.get("source_image"))
+                .or_else(|| event.data.get("Image"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            let target_image = event
+                .data
+                .get("TargetImage")
+                .or_else(|| event.data.get("target_image"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+
+            if !source_image.is_empty() && !target_image.is_empty() {
+                let src_lower = source_image.to_ascii_lowercase();
+                let tgt_lower = target_image.to_ascii_lowercase();
+
+                let is_trusted_csr = src_lower.ends_with("csrss.exe")
+                    || src_lower.ends_with("wininit.exe")
+                    || src_lower.ends_with("services.exe");
+
+                if src_lower != tgt_lower && !is_trusted_csr {
+                    return Some(VoteResult {
+                        confidence: 0.95,
+                        reason: format!(
+                            "Remote thread injection detected (T1055.001): {} injected thread into {}",
+                            source_image, target_image
+                        ),
+                        weight: 1.25,
+                    });
+                }
+            }
+        } else if event.event_id == 25 {
+            let image = event
+                .data
+                .get("Image")
+                .or_else(|| event.data.get("NewProcessName"))
+                .or_else(|| event.data.get("image"))
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .trim();
+            let proc_str = if image.is_empty() { "process" } else { image };
+            return Some(VoteResult {
+                confidence: 0.98,
+                reason: format!(
+                    "Process image tampering / hollowing detected (T1055.012) on {}",
+                    proc_str
+                ),
+                weight: 1.3,
+            });
+        }
+
+        None
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use chrono::Utc;
+    use osoosi_types::{HostEventSource, HostSecurityEvent};
+    use serde_json::json;
+
+    fn make_proc_event(image: &str, cmdline: &str) -> HostSecurityEvent {
+        HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 1,
+            timestamp: Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "Image": image,
+                "CommandLine": cmdline
+            }),
+            causal_parent: None,
+        }
+    }
+
+    #[tokio::test]
+    async fn test_credential_guard_voter_all_vectors() {
+        let voter = CredentialGuardVoter;
+
+        // 1. rundll32.exe keymgr.dll,KRShowKeyMgr (T1003)
+        let ev1 = make_proc_event("C:\\Windows\\System32\\rundll32.exe", "rundll32.exe keymgr.dll,KRShowKeyMgr");
+        let res1 = voter.vote(&ev1).await;
+        assert!(res1.is_some(), "keymgr.dll KRShowKeyMgr must trigger CredentialGuard");
+        let v1 = res1.unwrap();
+        assert_eq!(v1.confidence, 0.96);
+        assert!(v1.reason.contains("T1003"));
+        assert!(v1.reason.contains("keymgr.dll"));
+
+        // 2. credwiz.exe
+        let ev2 = make_proc_event("C:\\Windows\\System32\\credwiz.exe", "credwiz.exe");
+        let res2 = voter.vote(&ev2).await;
+        assert!(res2.is_some(), "credwiz.exe must trigger CredentialGuard");
+        assert!(res2.unwrap().reason.contains("credwiz.exe"));
+
+        // 3. vaultcmd.exe /listcreds:"Windows Credentials"
+        let ev3 = make_proc_event("C:\\Windows\\System32\\vaultcmd.exe", "vaultcmd.exe /listcreds:\"Windows Credentials\"");
+        let res3 = voter.vote(&ev3).await;
+        assert!(res3.is_some(), "vaultcmd.exe must trigger CredentialGuard");
+        let v3 = res3.unwrap();
+        assert!(v3.reason.contains("T1555.004"));
+
+        // 4. cmdkey.exe /list
+        let ev4 = make_proc_event("C:\\Windows\\System32\\cmdkey.exe", "cmdkey.exe /list");
+        let res4 = voter.vote(&ev4).await;
+        assert!(res4.is_some(), "cmdkey.exe must trigger CredentialGuard");
+        assert!(res4.unwrap().reason.contains("cmdkey"));
+
+        // 5. reg.exe save HKLM\SAM sam.hiv (T1003.002)
+        let ev5 = make_proc_event("C:\\Windows\\System32\\reg.exe", "reg.exe save HKLM\\SAM sam.hiv");
+        let res5 = voter.vote(&ev5).await;
+        assert!(res5.is_some(), "reg save HKLM\\SAM must trigger CredentialGuard");
+        let v5 = res5.unwrap();
+        assert!(v5.reason.contains("T1003.002"));
+
+        // 6. ntdsutil "ac i ntds" "ifm" "create full c:\temp" (T1003.003)
+        let ev6 = make_proc_event("C:\\Windows\\System32\\ntdsutil.exe", "ntdsutil \"ac i ntds\" \"ifm\" \"create full c:\\temp\"");
+        let res6 = voter.vote(&ev6).await;
+        assert!(res6.is_some(), "ntdsutil IFM dump must trigger CredentialGuard");
+        let v6 = res6.unwrap();
+        assert!(v6.reason.contains("T1003.003"));
+
+        // 7. gsecdump -a & appcmd.exe list apppool /text:*
+        let ev7a = make_proc_event("C:\\temp\\gsecdump.exe", "gsecdump -a");
+        assert!(voter.vote(&ev7a).await.is_some(), "gsecdump must trigger CredentialGuard");
+
+        let ev7b = make_proc_event("C:\\Windows\\System32\\inetsrv\\appcmd.exe", "appcmd.exe list apppool /text:*");
+        let res7b = voter.vote(&ev7b).await;
+        assert!(res7b.is_some(), "appcmd.exe credential dump must trigger CredentialGuard");
+        assert!(res7b.unwrap().reason.contains("T1552"));
+
+        // 8. Benign: rundll32.exe shell32.dll,Control_RunDLL (must return None - zero false positives!)
+        let ev_benign = make_proc_event("C:\\Windows\\System32\\rundll32.exe", "rundll32.exe shell32.dll,Control_RunDLL");
+        let res_benign = voter.vote(&ev_benign).await;
+        assert!(res_benign.is_none(), "Benign Control_RunDLL must NOT trigger CredentialGuard");
+    }
+
+    #[test]
+    fn test_deobfuscate_command_line() {
+        // Strip caret and empty quotes
+        let obf1 = "c^m^d.e^x^e /c \"\"wh^o^am^i\"\"";
+        assert_eq!(deobfuscate_command_line(obf1), "cmd.exe /c whoami");
+
+        // PowerShell -EncodedCommand with UTF-16LE payload
+        // "whoami" in UTF-16LE: [119, 0, 104, 0, 111, 0, 97, 0, 109, 0, 105, 0] -> d2hvYW1p
+        // Base64 for "whoami" UTF-16LE: "dwBoAG8AYQBtAGkA"
+        let ps_cmd = "powershell.exe -enc dwBoAG8AYQBtAGkA";
+        let deobf = deobfuscate_command_line(ps_cmd);
+        assert!(deobf.contains("powershell.exe -enc dwBoAG8AYQBtAGkA"));
+        assert!(deobf.contains("whoami"));
+    }
+
+    #[tokio::test]
+    async fn test_process_injection_voter() {
+        let voter = ProcessInjectionVoter;
+
+        // Sysmon Event 8: CreateRemoteThread
+        let ev8 = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 8,
+            timestamp: Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "SourceImage": "C:\\Windows\\Temp\\malware.exe",
+                "TargetImage": "C:\\Windows\\System32\\svchost.exe"
+            }),
+            causal_parent: None,
+        };
+        let res8 = voter.vote(&ev8).await;
+        assert!(res8.is_some());
+        let v8 = res8.unwrap();
+        assert_eq!(v8.confidence, 0.95);
+        assert!(v8.reason.contains("T1055.001"));
+
+        // Sysmon Event 25: ProcessTampering
+        let ev25 = HostSecurityEvent {
+            source: HostEventSource::WindowsEventLog,
+            event_id: 25,
+            timestamp: Utc::now(),
+            computer: "TEST-HOST".to_string(),
+            data: json!({
+                "Image": "C:\\Windows\\System32\\cmd.exe",
+                "Type": "Image is replaced"
+            }),
+            causal_parent: None,
+        };
+        let res25 = voter.vote(&ev25).await;
+        assert!(res25.is_some());
+        let v25 = res25.unwrap();
+        assert_eq!(v25.confidence, 0.98);
+        assert!(v25.reason.contains("T1055.012"));
     }
 }
 

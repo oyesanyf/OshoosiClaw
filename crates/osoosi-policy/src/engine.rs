@@ -60,13 +60,55 @@ struct EvidenceDecision {
 }
 
 fn process_name_from_event(event: &HostSecurityEvent) -> Option<String> {
-    event
-        .data
-        .get("Image")
-        .and_then(|v| v.as_str())
-        .and_then(|p| std::path::Path::new(p).file_name())
-        .and_then(|n| n.to_str())
-        .map(ToOwned::to_owned)
+    if let Some(p) = event_image_path(event) {
+        if let Some(name) = std::path::Path::new(p).file_name().and_then(|n| n.to_str()) {
+            let trimmed = name.trim();
+            if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("unknown") && !trimmed.eq_ignore_ascii_case("unknown process") {
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+
+    // Fallback 1: extract executable from CommandLine / command_line / cmdline / Command
+    for field in &["CommandLine", "command_line", "cmdline", "Command"] {
+        if let Some(cmd) = event.data.get(*field).and_then(|v| v.as_str()) {
+            let trimmed = cmd.trim();
+            if !trimmed.is_empty() {
+                let first_tok = if trimmed.starts_with('"') {
+                    trimmed[1..].split('"').next().unwrap_or(trimmed)
+                } else if trimmed.starts_with('\'') {
+                    trimmed[1..].split('\'').next().unwrap_or(trimmed)
+                } else {
+                    trimmed.split_whitespace().next().unwrap_or(trimmed)
+                };
+                let fname = std::path::Path::new(first_tok)
+                    .file_name()
+                    .and_then(|n| n.to_str())
+                    .unwrap_or(first_tok)
+                    .trim();
+                if !fname.is_empty() && !fname.eq_ignore_ascii_case("unknown") && !fname.eq_ignore_ascii_case("unknown process") {
+                    return Some(fname.to_string());
+                }
+            }
+        }
+    }
+
+    // Fallback 2: TargetFilename / TargetObject / DestinationIp
+    for field in &["TargetFilename", "TargetFilename_name", "TargetObject", "DestinationIp", "DestinationHostname", "QueryName"] {
+        if let Some(val) = event.data.get(*field).and_then(|v| v.as_str()) {
+            let trimmed = val.trim();
+            if !trimmed.is_empty() && !trimmed.eq_ignore_ascii_case("unknown") && !trimmed.eq_ignore_ascii_case("unknown process") {
+                if let Some(fname) = std::path::Path::new(trimmed).file_name().and_then(|n| n.to_str()) {
+                    if !fname.trim().is_empty() {
+                        return Some(fname.trim().to_string());
+                    }
+                }
+                return Some(trimmed.to_string());
+            }
+        }
+    }
+
+    None
 }
 
 fn preferred_hash_from_event(event: &HostSecurityEvent) -> Option<String> {
@@ -87,7 +129,22 @@ fn preferred_hash_from_event(event: &HostSecurityEvent) -> Option<String> {
 }
 
 fn event_image_path(event: &HostSecurityEvent) -> Option<&str> {
-    event.data.get("Image").and_then(|v| v.as_str())
+    for field in &[
+        "Image",
+        "NewProcessName",
+        "ProcessName",
+        "ImagePath",
+        "SourceImage",
+        "TargetImage",
+        "Application",
+    ] {
+        if let Some(val) = event.data.get(*field).and_then(|v| v.as_str()) {
+            if !val.trim().is_empty() && val != "unknown" {
+                return Some(val);
+            }
+        }
+    }
+    None
 }
 
 fn event_stem(event: &HostSecurityEvent) -> String {
@@ -192,7 +249,7 @@ fn classify_vote(
         "CISA-KEV" => (EvidenceClass::ThreatIntel, 0.58, false),
         "NVD-CVE-Lookup" => (EvidenceClass::ThreatIntel, 1.0, true), // High reliability, triggers strong action
         "BehavioralYara" => (EvidenceClass::Behavior, 0.88, true),
-        "CredentialGuard-Memory" => (EvidenceClass::Memory, 0.96, true),
+        "CredentialGuard-Memory" | "ProcessInjection-Memory" => (EvidenceClass::Memory, 0.96, true),
         "YaraX-Signatures" | "YaraX-Memory" | "HollowsHunter-Memory" | "MemoryInspection-Native" => {
             (EvidenceClass::Memory, 1.0, true)
         }
@@ -621,14 +678,18 @@ impl PolicyEngine {
         }
 
         // Fast clean-ignored hash bypass: If hash is in the clean ignore list, skip round
-        if let Some(h) = preferred_hash_from_event(event) {
-            if self.memory.is_hash_clean_ignored(&h) {
-                debug!(
-                    target: CONSENSUS_LOG_TARGET,
-                    hash = %h,
-                    "[CONSENSUS] round bypassed (Hash is in clean ignore list)"
-                );
-                return None;
+        // Invariant: Do NOT skip scan_event via is_hash_clean_ignored for behavioral/command/process/injection/registry events
+        let is_behavioral_or_runtime_event = matches!(event.event_id, 1 | 3 | 7 | 8 | 10 | 12 | 13 | 22 | 25 | 4688);
+        if !is_behavioral_or_runtime_event {
+            if let Some(h) = preferred_hash_from_event(event) {
+                if self.memory.is_hash_clean_ignored(&h) {
+                    debug!(
+                        target: CONSENSUS_LOG_TARGET,
+                        hash = %h,
+                        "[CONSENSUS] round bypassed (Hash is in clean ignore list)"
+                    );
+                    return None;
+                }
             }
         }
 
@@ -936,14 +997,17 @@ impl PolicyEngine {
             }
         }
 
-        // Enrich signature with MITRE ATT&CK Framework metadata if missing
-        if signature.mitre_technique.is_none() {
-            let reason_str = signature.reason.as_deref().unwrap_or("");
-            if let Some((tac, tech, name)) = crate::mitre_kb::extract_mitre_from_text(reason_str) {
+        // Enrich signature with MITRE ATT&CK Framework metadata if missing or generic
+        let reason_str = signature.reason.as_deref().unwrap_or("");
+        if let Some((tac, tech, name)) = crate::mitre_kb::extract_mitre_from_text(reason_str) {
+            let cur_tech = signature.mitre_technique.as_deref().unwrap_or("");
+            if cur_tech.is_empty() || cur_tech == "T1006" || (cur_tech == "T1059" && !tech.starts_with("T1059")) {
                 signature.mitre_tactic = Some(tac);
                 signature.mitre_technique = Some(tech);
                 signature.mitre_technique_name = Some(name);
-            } else if let Some((tac, tech, name)) = crate::mitre_kb::infer_mitre_from_event(event.event_id, image_path, cmdline) {
+            }
+        } else if signature.mitre_technique.is_none() {
+            if let Some((tac, tech, name)) = crate::mitre_kb::infer_mitre_from_event(event.event_id, image_path, cmdline) {
                 signature.mitre_tactic = Some(tac);
                 signature.mitre_technique = Some(tech);
                 signature.mitre_technique_name = Some(name);
@@ -952,7 +1016,30 @@ impl PolicyEngine {
 
         // Align consensus response action with authoritative MITRE technique designation
         if let Some(ref tech_id) = signature.mitre_technique {
-            if let Some(tech_meta) = crate::mitre_kb::lookup_technique(tech_id) {
+            let tech_upper = tech_id.to_ascii_uppercase();
+            let is_system_tampering_or_critical = tech_upper.starts_with("T1006")
+                || tech_upper.starts_with("T1003")
+                || tech_upper.starts_with("T1055")
+                || tech_upper.starts_with("T1136")
+                || tech_upper.starts_with("T1485")
+                || tech_upper.starts_with("T1486")
+                || tech_upper.starts_with("T1489")
+                || tech_upper.starts_with("T1490")
+                || tech_upper.starts_with("T1542")
+                || tech_upper.starts_with("T1543")
+                || tech_upper.starts_with("T1546")
+                || tech_upper.starts_with("T1547")
+                || tech_upper.starts_with("T1552")
+                || tech_upper.starts_with("T1553")
+                || tech_upper.starts_with("T1555")
+                || tech_upper.starts_with("T1556")
+                || tech_upper.starts_with("T1562")
+                || tech_upper.starts_with("T1574")
+                || tech_upper.starts_with("T1601");
+
+            if is_system_tampering_or_critical && signature.confidence >= 0.35 {
+                signature.recommended_action = ResponseAction::Isolate;
+            } else if let Some(tech_meta) = crate::mitre_kb::lookup_technique(tech_id) {
                 match tech_meta.consensus_action.as_str() {
                     "Isolate" => {
                         if signature.confidence >= 0.50 {
@@ -972,6 +1059,38 @@ impl PolicyEngine {
                     _ => {}
                 }
             }
+        }
+
+        let autonomy = osoosi_types::load_autonomy_config();
+        let is_lockdown_mode = autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
+        if is_lockdown_mode && signature.confidence >= autonomy.action_confidence_threshold {
+            signature.recommended_action = ResponseAction::Isolate;
+            signature.require_approval = false;
+        } else if autonomy.auto_quarantine_malware
+            && signature.confidence >= autonomy.action_confidence_threshold
+            && signature.mitre_technique.is_some()
+            && signature.recommended_action == ResponseAction::Alert
+        {
+            signature.recommended_action = ResponseAction::Isolate;
+        }
+
+        // Zero-"Unknown Process" Alert Invariant & Noise Gate:
+        // Never emit an alert for an unknown process, non-existing file heuristic artifacts, or confidence < 0.50.
+        let proc_clean = signature.process_name.as_deref().unwrap_or("").trim();
+        let combined_reason = signature.reason.as_deref().unwrap_or("");
+        if proc_clean.is_empty()
+            || proc_clean.eq_ignore_ascii_case("unknown")
+            || proc_clean.eq_ignore_ascii_case("unknown process")
+            || combined_reason.contains("Execution Of Non-Existing File")
+            || signature.confidence < 0.50
+        {
+            debug!(
+                target: CONSENSUS_LOG_TARGET,
+                proc = %proc_clean,
+                confidence = signature.confidence,
+                "[CONSENSUS] threat suppressed: unknown process, execution of non-existing file, or confidence < 0.50"
+            );
+            return None;
         }
 
         info!(

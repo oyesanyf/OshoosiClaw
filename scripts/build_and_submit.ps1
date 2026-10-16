@@ -239,9 +239,14 @@ if (-not $SkipBuild) {
 
     $buildSucceeded = $false
     for ($attempt = 1; $attempt -le 10; $attempt++) {
+        # Clear ReadOnly attributes in target\release to prevent autocfg / cargo output path errors
+        Get-ChildItem (Join-Path $ProjectRoot "target\release") -Recurse -Force -ErrorAction SilentlyContinue | Where-Object { $_.Attributes -band [System.IO.FileAttributes]::ReadOnly } | ForEach-Object {
+            try { $_.Attributes = $_.Attributes -band (-bnot [System.IO.FileAttributes]::ReadOnly) } catch {}
+        }
+
         # Pre-sign any existing unsigned build scripts / proc macros with DigiCert RFC 3161 timestamp before launching cargo
         if ($buildSigntool -and (-not $SkipSigning)) {
-            Get-ChildItem (Join-Path $ProjectRoot "target\release\build\*\*.exe"), (Join-Path $ProjectRoot "target\release\deps\*.dll"), (Join-Path $ProjectRoot "target\release\deps\*.exe") -ErrorAction SilentlyContinue | Where-Object {
+            Get-ChildItem (Join-Path $ProjectRoot "target\release\build"), (Join-Path $ProjectRoot "target\release\deps") -Include "*.exe","*.dll" -Recurse -ErrorAction SilentlyContinue | Where-Object {
                 $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
                 (-not $sig) -or ($sig.SignerCertificate -eq $null) -or ($sig.TimeStamperCertificate -eq $null)
             } | ForEach-Object {
@@ -258,7 +263,7 @@ if (-not $SkipBuild) {
         }
         if ($buildSigntool -and (-not $SkipSigning) -and $attempt -lt 10) {
             Write-Host "       [WDAC] Signing newly compiled build scripts / proc-macros with RFC 3161 timestamp before retry ($attempt/10)..." -ForegroundColor Cyan
-            Get-ChildItem (Join-Path $ProjectRoot "target\release\build\*\*.exe"), (Join-Path $ProjectRoot "target\release\deps\*.dll"), (Join-Path $ProjectRoot "target\release\deps\*.exe") -ErrorAction SilentlyContinue | Where-Object {
+            Get-ChildItem (Join-Path $ProjectRoot "target\release\build"), (Join-Path $ProjectRoot "target\release\deps") -Include "*.exe","*.dll" -Recurse -ErrorAction SilentlyContinue | Where-Object {
                 $sig = Get-AuthenticodeSignature $_.FullName -ErrorAction SilentlyContinue
                 (-not $sig) -or ($sig.SignerCertificate -eq $null) -or ($sig.TimeStamperCertificate -eq $null)
             } | ForEach-Object {

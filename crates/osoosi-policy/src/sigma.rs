@@ -279,6 +279,9 @@ impl SigmaEngine {
         let is_cased = modifiers.contains(&"cased");
         
         match value {
+            serde_yaml::Value::Null => {
+                patterns.push(FieldPattern::Null);
+            }
             serde_yaml::Value::String(s) => {
                 patterns.push(self.parse_string_pattern(s, modifiers, is_cased));
             }
@@ -290,7 +293,9 @@ impl SigmaEngine {
             }
             serde_yaml::Value::Sequence(seq) => {
                 for item in seq {
-                    if let Some(s) = item.as_str() {
+                    if item.is_null() {
+                        patterns.push(FieldPattern::Null);
+                    } else if let Some(s) = item.as_str() {
                         patterns.push(self.parse_string_pattern(s, modifiers, is_cased));
                     } else if let Some(n) = item.as_i64() {
                         patterns.push(self.parse_string_pattern(&n.to_string(), modifiers, is_cased));
@@ -306,6 +311,9 @@ impl SigmaEngine {
                     patterns.push(self.parse_string_pattern(s, modifiers, is_cased));
                 }
             }
+        }
+        if patterns.is_empty() {
+            return Err(anyhow::anyhow!("Empty pattern list"));
         }
         Ok(patterns)
     }
@@ -519,6 +527,10 @@ impl SigmaEngine {
         for group in &sel.map_alternatives {
             let mut group_matched = true;
             for criterion in group {
+                if criterion.patterns.is_empty() {
+                    group_matched = false;
+                    break;
+                }
                 let field_val = get_event_field_value(event, &criterion.field);
                 let matched = match field_val {
                     Some(ref v) => {
@@ -528,7 +540,16 @@ impl SigmaEngine {
                             criterion.patterns.iter().any(|p| self.match_pattern(v, p))
                         }
                     }
-                    None => criterion.patterns.iter().any(|p| matches!(p, FieldPattern::Null)),
+                    None => {
+                        // Only match FieldPattern::Null if the field actually exists in event.data and is null!
+                        // Do NOT match merely because the telemetry omitted an optional PE metadata field.
+                        let key_is_explicitly_null = event
+                            .data
+                            .get(&criterion.field)
+                            .map_or(false, |v| v.is_null());
+                        key_is_explicitly_null
+                            && criterion.patterns.iter().any(|p| matches!(p, FieldPattern::Null))
+                    }
                 };
                 if !matched {
                     group_matched = false;
@@ -594,14 +615,34 @@ pub fn get_event_field_value(event: &HostSecurityEvent, field: &str) -> Option<S
         }
     }
 
-    // 3. Direct lookup in event.data
+    // 3. Fallback aliases for image and commandline
+    if field_lower == "image" {
+        for alias in &["Image", "NewProcessName", "ProcessName", "ImagePath", "SourceImage"] {
+            if let Some(val) = event.data.get(*alias).and_then(value_to_string) {
+                if !val.is_empty() {
+                    return Some(val);
+                }
+            }
+        }
+    }
+    if field_lower == "commandline" {
+        for alias in &["CommandLine", "command_line", "cmdline", "Command"] {
+            if let Some(val) = event.data.get(*alias).and_then(value_to_string) {
+                if !val.is_empty() {
+                    return Some(crate::voters::deobfuscate_command_line(&val));
+                }
+            }
+        }
+    }
+
+    // 4. Direct lookup in event.data
     if let Some(val) = event.data.get(field) {
         if let Some(s) = value_to_string(val) {
             return Some(s);
         }
     }
 
-    // 4. Case-insensitive lookup in event.data
+    // 5. Case-insensitive lookup in event.data
     if let Some(obj) = event.data.as_object() {
         for (k, v) in obj {
             if k.eq_ignore_ascii_case(field) {
@@ -612,9 +653,9 @@ pub fn get_event_field_value(event: &HostSecurityEvent, field: &str) -> Option<S
         }
     }
 
-    // 5. Special fallback mappings for standard process creation fields
+    // 6. Special fallback mappings for standard process creation fields
     if field_lower == "originalfilename" || field_lower == "original_file_name" {
-        if let Some(img) = event.data.get("Image").and_then(|v| v.as_str()) {
+        if let Some(img) = event.data.get("Image").or_else(|| event.data.get("NewProcessName")).or_else(|| event.data.get("ImagePath")).and_then(|v| v.as_str()) {
             if let Some(fname) = std::path::Path::new(img).file_name().and_then(|n| n.to_str()) {
                 return Some(fname.to_string());
             }

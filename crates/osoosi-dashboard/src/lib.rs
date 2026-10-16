@@ -2055,7 +2055,49 @@ async fn post_har_inspect(
 ) -> (StatusCode, Json<Value>) {
     let label = req.get("label").and_then(|v| v.as_str()).unwrap_or("API-Stream");
     let har_str = if let Some(p) = req.get("file_path").and_then(|v| v.as_str()) {
-        std::fs::read_to_string(p).unwrap_or_default()
+        let p_trimmed = p.trim();
+        // Path traversal, UNC, NTFS Alternate Data Streams (ADS) validation
+        if p_trimmed.contains("..") || p_trimmed.starts_with(r"\\") || p_trimmed.starts_with("//") {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "status": "error",
+                    "message": "Path traversal or UNC paths are not permitted in file_path"
+                })),
+            );
+        }
+        let colon_indices: Vec<usize> = p_trimmed.match_indices(':').map(|(i, _)| i).collect();
+        if colon_indices.len() > 1 || (colon_indices.len() == 1 && colon_indices[0] != 1) {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "status": "error",
+                    "message": "NTFS Alternate Data Streams (ADS) or invalid colon usage not permitted in file_path"
+                })),
+            );
+        }
+        let lower = p_trimmed.to_ascii_lowercase();
+        if !lower.ends_with(".har") && !lower.ends_with(".json") {
+            return (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "status": "error",
+                    "message": "file_path must end with .har or .json"
+                })),
+            );
+        }
+        match std::fs::read_to_string(p_trimmed) {
+            Ok(content) => content,
+            Err(e) => {
+                return (
+                    StatusCode::BAD_REQUEST,
+                    Json(json!({
+                        "status": "error",
+                        "message": format!("Failed to read file_path: {}", e)
+                    })),
+                );
+            }
+        }
     } else if let Some(raw) = req.get("raw").or_else(|| req.get("har_content")).and_then(|v| v.as_str()) {
         raw.to_string()
     } else if let Some(har_val) = req.get("har") {
@@ -4477,10 +4519,50 @@ async fn get_query(
     State(state): State<DashboardState>,
     Query(params): Query<QueryParams>,
 ) -> Json<Value> {
+    let q = params.q.trim();
+    if q.is_empty() {
+        return Json(json!({"ok": true, "results": []}));
+    }
+    let upper = q.to_ascii_uppercase();
+    if !upper.starts_with("SELECT ") && upper != "SELECT" {
+        return api_error_json(
+            "INVALID_QUERY",
+            "Only single-statement SELECT queries are permitted.",
+            "Formulate query starting with SELECT.",
+        );
+    }
+    let statements: Vec<&str> = q.split(';').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    if statements.len() > 1 {
+        return api_error_json(
+            "MULTI_STATEMENT_FORBIDDEN",
+            "Multi-statement SQL queries are not permitted.",
+            "Submit a single SELECT query without semicolon chaining.",
+        );
+    }
+    let dangerous_keywords = [
+        "ATTACH", "DETACH", "PRAGMA", "UNION", "DROP", "DELETE",
+        "UPDATE", "INSERT", "ALTER", "CREATE", "REPLACE", "VACUUM",
+    ];
+    for token in upper.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == ',' || c == ';') {
+        let token = token.trim();
+        if dangerous_keywords.contains(&token) {
+            return api_error_json(
+                "FORBIDDEN_SQL_KEYWORD",
+                format!("Query contains prohibited SQL keyword: {}", token),
+                "Remove destructive or administrative commands from the query.",
+            );
+        }
+    }
     match &state.backend {
         Some(orch) => {
-            let results = orch.memory().query_json(&params.q, &[]).unwrap_or_default();
-            Json(json!({"ok": true, "results": results}))
+            match orch.memory().query_json(&params.q, &[]) {
+                Ok(results) => Json(json!({"ok": true, "results": results})),
+                Err(e) => api_error_json(
+                    "QUERY_EXECUTION_FAILED",
+                    format!("Query error: {}", e),
+                    "Verify SQL syntax against the schema.",
+                ),
+            }
         }
         None => Json(json!({
             "ok": true,
@@ -8829,9 +8911,9 @@ mod tests {
         let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
         let json_val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json_val["status"], "ok");
-        assert_eq!(json_val["total"], 98);
+        assert_eq!(json_val["total"], 100);
         let tables = json_val["tables"].as_array().expect("tables must be an array");
-        assert_eq!(tables.len(), 98);
+        assert_eq!(tables.len(), 100);
         assert!(tables.iter().any(|t| t == "processes"));
         assert!(tables.iter().any(|t| t == "wmi_os_version"));
         assert!(tables.iter().any(|t| t == "spider_web_threads"));

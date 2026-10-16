@@ -3,7 +3,7 @@
 //! Provides capabilities to neutralize threats: network isolation, process termination, and rollback.
 
 use std::process::Command;
-use tracing::{info, warn};
+use tracing::{debug, info, warn};
 
 pub struct RemediationController;
 
@@ -84,13 +84,30 @@ impl RemediationController {
 
     /// Terminate a process and all its children.
     pub fn kill_process_tree(&self, pid: u32) -> anyhow::Result<()> {
+        if pid <= 4 || pid == std::process::id() {
+            warn!("AUTONOMOUS RESPONSE: Refusing to kill protected system or self process (PID {})", pid);
+            return Err(anyhow::anyhow!("Cannot kill protected process PID {}", pid));
+        }
+
         info!(
             "AUTONOMOUS RESPONSE: Terminating process tree for PID {}...",
             pid
         );
 
-        use sysinfo::{Pid, System};
-        let mut sys = System::new_all();
+        #[cfg(target_os = "windows")]
+        {
+            use windows::Win32::Foundation::CloseHandle;
+            use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+            if let Ok(handle) = unsafe { OpenProcess(PROCESS_TERMINATE, false, pid) } {
+                let _ = unsafe { TerminateProcess(handle, 1) };
+                let _ = unsafe { CloseHandle(handle) };
+                debug!("Immediate Win32 TerminateProcess executed for PID {}", pid);
+            }
+        }
+
+        use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
+        let mut sys = System::new_with_specifics(RefreshKind::new().with_processes(ProcessRefreshKind::new()));
         sys.refresh_processes();
 
         let target_pid = Pid::from(pid as usize);

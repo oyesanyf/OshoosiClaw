@@ -630,36 +630,60 @@ pub fn is_account_rollback_allowed(username: &str, baseline: &std::collections::
 /// Generic user execution (AML.T0011, T1204), routine scripts (T1059), and discovery (T1082, T1033)
 /// must NEVER trigger an Audit Override!
 fn is_critical_security_attack(sig: &osoosi_types::ThreatSignature, event: &osoosi_types::HostSecurityEvent) -> bool {
-    // High-severity destructive mutations (ransomware, shadow copies, boot config)
+    // High-severity destructive mutations (ransomware, shadow copies, boot config, system integrity, credential dumpers)
     if is_destructive_mutation(sig, event) {
         return true;
     }
 
-    // Exclude low-confidence threats (< 0.75) from automatic containment escalation
-    if sig.confidence < 0.75 {
-        return false;
-    }
+    let autonomy = osoosi_types::load_autonomy_config();
+    let is_lockdown_mode = autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
+    let tech_id = sig.mitre_technique.as_deref().unwrap_or("").trim().to_ascii_uppercase();
 
-    let tech_id = sig.mitre_technique.as_deref().unwrap_or("").to_ascii_uppercase();
-
-    // Confirmed credential dumping
-    if tech_id.starts_with("T1003") {
+    // In True Zero-Trust Lockdown Mode: EVERY MITRE ATT&CK ('T*') and ATLAS ('AML.T*') technique
+    // above threshold is a critical security attack — zero techniques missed!
+    if is_lockdown_mode
+        && sig.confidence >= autonomy.action_confidence_threshold
+        && (tech_id.starts_with('T') || tech_id.starts_with("AML.T"))
+    {
         return true;
     }
 
-    // Confirmed process injection / hollowing
-    if tech_id.starts_with("T1055") {
-        return true;
-    }
+    // In standard Active Mode:
+    if autonomy.auto_quarantine_malware && sig.confidence >= autonomy.action_confidence_threshold {
+        let is_high_risk = tech_id.starts_with("T1003")
+            || tech_id.starts_with("T1006")
+            || tech_id.starts_with("T1055")
+            || tech_id.starts_with("T1136")
+            || tech_id.starts_with("T1485")
+            || tech_id.starts_with("T1486")
+            || tech_id.starts_with("T1489")
+            || tech_id.starts_with("T1490")
+            || tech_id.starts_with("T1542")
+            || tech_id.starts_with("T1543")
+            || tech_id.starts_with("T1546")
+            || tech_id.starts_with("T1547")
+            || tech_id.starts_with("T1552")
+            || tech_id.starts_with("T1553")
+            || tech_id.starts_with("T1555")
+            || tech_id.starts_with("T1556")
+            || tech_id.starts_with("T1562")
+            || tech_id.starts_with("T1574")
+            || tech_id.starts_with("T1601")
+            || tech_id.starts_with("AML.T0043")
+            || tech_id.starts_with("AML.T0048")
+            || tech_id.starts_with("AML.T0040");
 
-    // Confirmed ransomware / system recovery inhibition
-    if tech_id.starts_with("T1486") || tech_id.starts_with("T1490") || tech_id.starts_with("T1489") {
-        return true;
-    }
+        if is_high_risk && sig.confidence >= 0.50 {
+            return true;
+        }
 
-    // Confirmed AI agent jailbreak/injection with high confidence
-    if tech_id.starts_with("AML.T0043") || tech_id.starts_with("AML.T0048") || tech_id.starts_with("AML.T0040") {
-        return true;
+        if (tech_id.starts_with('T') || tech_id.starts_with("AML.T")) && sig.confidence >= 0.65 {
+            return true;
+        }
+    } else if sig.confidence >= 0.75 {
+        if tech_id.starts_with('T') || tech_id.starts_with("AML.T") {
+            return true;
+        }
     }
 
     false
@@ -677,19 +701,31 @@ fn is_destructive_mutation(sig: &osoosi_types::ThreatSignature, event: &osoosi_t
     let cmd = event.data.get("CommandLine")
         .or_else(|| event.data.get("command_line"))
         .or_else(|| event.data.get("cmdline"))
+        .or_else(|| event.data.get("Command"))
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_lowercase();
     let img = event.data.get("Image")
         .or_else(|| event.data.get("NewProcessName"))
+        .or_else(|| event.data.get("ProcessName"))
         .or_else(|| event.data.get("image"))
         .or_else(|| event.data.get("ImagePath"))
+        .or_else(|| event.data.get("SourceImage"))
         .and_then(|v| v.as_str())
         .unwrap_or("")
         .to_lowercase();
     let reason = sig.reason.as_deref().unwrap_or("").to_lowercase();
     let tech = sig.mitre_technique.as_deref().unwrap_or("");
     let tech_upper = tech.to_ascii_uppercase();
+
+    // System Integrity Tampering & Direct Volume Access (T1006 / T1601)
+    if tech_upper.starts_with("T1006") || tech_upper.starts_with("T1601")
+        || reason.contains("system integrity")
+        || reason.contains("direct volume")
+        || reason.contains("disk tampering")
+    {
+        return true;
+    }
 
     // Unauthorized account creation (T1136)
     if tech_upper.starts_with("T1136") 
@@ -699,8 +735,8 @@ fn is_destructive_mutation(sig: &osoosi_types::ThreatSignature, event: &osoosi_t
         return true;
     }
 
-    // Shadow copy / backup deletion (T1490)
-    if tech_upper.starts_with("T1490")
+    // Shadow copy / backup deletion / recovery inhibition (T1490 / T1489)
+    if tech_upper.starts_with("T1490") || tech_upper.starts_with("T1489")
         || cmd.contains("vssadmin delete shadows")
         || cmd.contains("wbadmin delete catalog")
         || (cmd.contains("bcdedit") && cmd.contains("recoveryenabled no"))
@@ -708,17 +744,39 @@ fn is_destructive_mutation(sig: &osoosi_types::ThreatSignature, event: &osoosi_t
         return true;
     }
 
-    // Ransomware encryption (T1486)
-    if tech_upper.starts_with("T1486") || reason.contains("ransomware") || reason.contains("encryption") {
+    // Ransomware encryption & data destruction (T1486 / T1485)
+    if tech_upper.starts_with("T1486") || tech_upper.starts_with("T1485")
+        || reason.contains("ransomware")
+        || reason.contains("encryption")
+        || reason.contains("wiper")
+    {
         return true;
     }
 
-    // Credential dumping / LSASS dumping (T1003)
-    if tech_upper.starts_with("T1003")
+    // Credential dumping, Vault, Secret store & LSASS dumping (T1003 / T1555 / T1552)
+    if tech_upper.starts_with("T1003") || tech_upper.starts_with("T1555") || tech_upper.starts_with("T1552")
         || cmd.contains("procdump")
         || cmd.contains("comsvcs.dll")
         || cmd.contains("minidump")
         || img.contains("mimikatz")
+        || cmd.contains("mimikatz")
+        || cmd.contains("keymgr.dll")
+        || cmd.contains("krshowkeymgr")
+        || img.ends_with("credwiz.exe") || cmd.contains("credwiz")
+        || img.ends_with("vaultcmd.exe") || cmd.contains("vaultcmd")
+        || img.ends_with("cmdkey.exe") || cmd.contains("cmdkey")
+        || cmd.contains("gsecdump")
+        || cmd.contains("nppspy")
+        || cmd.contains("ntdsutil")
+        || cmd.contains("lsadump")
+        || cmd.contains("sekurlsa")
+        || cmd.contains("dcsync")
+        || cmd.contains("rdrleakdiag")
+        || cmd.contains("tttracer")
+        || cmd.contains("sqldumper")
+        || cmd.contains("createdump")
+        || ((cmd.contains("reg save") || cmd.contains("reg export") || cmd.contains("reg.exe save"))
+            && (cmd.contains("sam") || cmd.contains("security") || cmd.contains("system")))
     {
         return true;
     }
@@ -728,8 +786,23 @@ fn is_destructive_mutation(sig: &osoosi_types::ThreatSignature, event: &osoosi_t
         return true;
     }
 
-    // Defense Impairment (T1562)
-    if tech_upper.starts_with("T1562") || (cmd.contains("sc stop") && cmd.contains("windefend")) || cmd.contains("disable-antivirus") {
+    // Defense Impairment & Trust Subversion (T1562 / T1553)
+    if tech_upper.starts_with("T1562") || tech_upper.starts_with("T1553")
+        || (cmd.contains("sc stop") && cmd.contains("windefend"))
+        || cmd.contains("disable-antivirus")
+        || cmd.contains("set-mppreference -disablerealtimemonitoring")
+    {
+        return true;
+    }
+
+    // Persistence & Autostart Tampering (T1542, T1543, T1546, T1547, T1556, T1574)
+    if tech_upper.starts_with("T1542")
+        || tech_upper.starts_with("T1543")
+        || tech_upper.starts_with("T1546")
+        || tech_upper.starts_with("T1547")
+        || tech_upper.starts_with("T1556")
+        || tech_upper.starts_with("T1574")
+    {
         return true;
     }
 
@@ -2969,12 +3042,13 @@ impl EdrOrchestrator {
     /// Register voters that require an Arc reference to the orchestrator (post-initialization).
     pub async fn post_init_voters(self: &Arc<Self>) {
         self.policy.add_voter(Box::new(osoosi_policy::voters::CredentialGuardVoter)).await;
+        self.policy.add_voter(Box::new(osoosi_policy::voters::ProcessInjectionVoter)).await;
         self.policy.add_voter(Box::new(osoosi_policy::voters::HarTrafficVoter)).await;
         self.policy.add_voter(Box::new(osoosi_policy::voters::MercuryFluidVoter)).await;
         self.policy.add_voter(Box::new(osoosi_policy::voters::SpiderWebPhysicsVoter)).await;
         info!(
             target: crate::CONSENSUS_LOG_TARGET,
-            "[CONSENSUS] native voters registered and operational (CredentialGuard + HarTrafficVoter + MercuryFluidVoter + SpiderWebPhysicsVoter)"
+            "[CONSENSUS] native voters registered and operational (CredentialGuard + ProcessInjection + HarTrafficVoter + MercuryFluidVoter + SpiderWebPhysicsVoter)"
         );
     }
 
@@ -3097,6 +3171,27 @@ impl EdrOrchestrator {
                                 debug!("Mesh: Suppressed local echo threat from our own node DID ({})", sig.id);
                                 return;
                             }
+                            if !sig.verify() {
+                                debug!("Mesh: Dropped unverified or invalidly signed threat signature {}", sig.id);
+                                return;
+                            }
+                            if sig.confidence < 0.50 {
+                                debug!("Mesh: Dropped low-confidence threat {} ({:.2}) from peer", sig.id, sig.confidence);
+                                return;
+                            }
+                            if sig.reason.as_deref().unwrap_or("").contains("Execution Of Non-Existing File") {
+                                debug!("Mesh: Dropped non-existing file noise threat {}", sig.id);
+                                return;
+                            }
+                            let proc_clean = sig.process_name.as_deref().unwrap_or("").trim();
+                            if proc_clean.is_empty()
+                                || proc_clean.eq_ignore_ascii_case("unknown")
+                                || proc_clean.eq_ignore_ascii_case("unknown process")
+                            {
+                                debug!("Mesh: Dropped unknown process threat {} from peer", sig.id);
+                                return;
+                            }
+
                             if !orch_sig.mesh_broadcast_debouncer.contains_key(&sig.id) {
                                 orch_sig.mesh_broadcast_debouncer.insert(sig.id.clone(), std::time::Instant::now());
                             } else {
@@ -3123,10 +3218,13 @@ impl EdrOrchestrator {
                             // Store in live gossip feed buffer
                             orch_sig.record_gossip_threat(&sig, "MESH_THREAT_RECEIVED");
 
-                            let proc = sig.process_name.clone().unwrap_or_else(|| "Unknown".to_string());
+                            let proc = proc_clean.to_string();
                             let tech = sig.mitre_technique.clone().unwrap_or_else(|| "T1082".to_string());
                             let action = format!("{:?}", sig.recommended_action);
-                            let summary = format!("Peer Threat [{}]: {} ({}) via {}", tech, proc, action, sig.source_node);
+                            let reason_str = sig.reason.as_deref().unwrap_or("").trim();
+                            let reason_clean = reason_str.split(';').next().unwrap_or(reason_str).trim();
+                            let issue_desc = if reason_clean.is_empty() { "Suspicious Activity" } else { reason_clean };
+                            let summary = format!("Peer Threat [{}]: {}: {} ({}) via {}", tech, proc, issue_desc, action, sig.source_node);
 
                             orch_sig.audit.log(
                                 "MESH_THREAT_RECEIVED",
@@ -3433,6 +3531,28 @@ impl EdrOrchestrator {
                 debug!("Nostr: Suppressed local echo threat from our own node DID ({})", sig.id);
                 return;
             }
+            if !sig.verify() {
+                debug!("Nostr: Dropped unverified or invalidly signed threat signature {}", sig.id);
+                return;
+            }
+            if sig.confidence < 0.50 {
+                debug!("Nostr: Dropped low-confidence threat {} ({:.2}) from relay", sig.id, sig.confidence);
+                return;
+            }
+            if sig.reason.as_deref().unwrap_or("").contains("Execution Of Non-Existing File") {
+                debug!("Nostr: Dropped non-existing file noise threat {}", sig.id);
+                return;
+            }
+            let proc_clean = sig.process_name.as_deref().unwrap_or("").trim();
+            if proc_clean.is_empty()
+                || proc_clean.eq_ignore_ascii_case("unknown")
+                || proc_clean.eq_ignore_ascii_case("unknown process")
+            {
+                debug!("Nostr: Dropped unknown process threat {} from relay", sig.id);
+                return;
+            }
+            let proc_name_owned = proc_clean.to_string();
+
             if !orch_nostr.mesh_broadcast_debouncer.contains_key(&sig.id) {
                 orch_nostr.mesh_broadcast_debouncer.insert(sig.id.clone(), std::time::Instant::now());
             } else {
@@ -3452,6 +3572,7 @@ impl EdrOrchestrator {
                     membership_proof: None,
                     attestation: None,
                 });
+                orch.mesh_gossip_count_atomic.fetch_add(1, std::sync::atomic::Ordering::Relaxed);
                 if let Err(e) = orch.memory.log_threat(&sig) {
                     if e.to_string().contains("UNIQUE constraint") {
                         debug!("Nostr threat {} already persisted: {}", sig.id, e);
@@ -3462,12 +3583,32 @@ impl EdrOrchestrator {
                 if let Some(ref hash) = sig.hash_blake3 {
                     orch.memory.mark_hash_known_malicious(hash);
                 }
+                // Store in live gossip feed buffer
+                orch.record_gossip_threat(&sig, "MESH_THREAT_RECEIVED");
+
+                let proc = proc_name_owned;
+                let tech = sig.mitre_technique.clone().unwrap_or_else(|| "T1082".to_string());
+                let action = format!("{:?}", sig.recommended_action);
+                let reason_str = sig.reason.as_deref().unwrap_or("").trim();
+                let reason_clean = reason_str.split(';').next().unwrap_or(reason_str).trim();
+                let issue_desc = if reason_clean.is_empty() { "Suspicious Activity" } else { reason_clean };
+                let summary = format!("Peer Threat [{}]: {}: {} ({}) via Nostr", tech, proc, issue_desc, action);
+
                 orch.audit.log(
-                    "NOSTR_THREAT_RECEIVED",
+                    "MESH_THREAT_RECEIVED",
                     serde_json::json!({
+                        "source_node": sig.source_node,
                         "threat_id": sig.id,
-                        "source": sig.source_node,
                         "confidence": sig.confidence,
+                        "process_name": sig.process_name,
+                        "mitre_technique": sig.mitre_technique,
+                        "mitre_technique_name": sig.mitre_technique_name,
+                        "mitre_tactic": sig.mitre_tactic,
+                        "reason": sig.reason,
+                        "action": action,
+                        "action_state": sig.action_state,
+                        "hash": sig.hash_blake3,
+                        "summary": summary,
                     }),
                 );
             });
@@ -5243,7 +5384,8 @@ impl EdrOrchestrator {
             });
 
         if let Some(ref h) = hash_opt {
-            if self.memory.is_hash_clean_ignored(h) {
+            let is_behavioral_event = matches!(event.event_id, 1 | 3 | 7 | 8 | 10 | 12 | 13 | 22 | 25 | 4688);
+            if !is_behavioral_event && self.memory.is_hash_clean_ignored(h) {
                 debug!("Telemetry: Bypassing clean ignored hash: {}", h);
                 return Ok(());
             }
@@ -5587,7 +5729,7 @@ impl EdrOrchestrator {
         .await?
     };
 
-        if let Some(signature) = signature {
+        if let Some(mut signature) = signature {
             info!(
                 "Consensus Threat Identified: {} (Confidence: {:.2}, Detectors: {})",
                 signature.id, signature.confidence, signature.detector_count
@@ -5632,24 +5774,47 @@ impl EdrOrchestrator {
                 }
             }
 
-            let _ = self.memory.log_threat(&signature);
-            
-            // Real-time Global Immunization: Broadcast threat to the P2P mesh
-            self.broadcast_threat_to_mesh(signature.clone()).await;
-
             let p_name = signature.process_name.clone().or_else(|| {
-                event.data.get("Image")
-                    .and_then(|v| v.as_str())
-                    .and_then(|p| std::path::Path::new(p).file_name())
-                    .map(|n| n.to_string_lossy().to_string())
+                for field in &["Image", "NewProcessName", "ProcessName", "ImagePath", "SourceImage", "TargetImage", "Application"] {
+                    if let Some(val) = event.data.get(*field).and_then(|v| v.as_str()) {
+                        if let Some(n) = std::path::Path::new(val).file_name().and_then(|n| n.to_str()) {
+                            if !n.trim().is_empty() && n != "unknown" {
+                                return Some(n.to_string());
+                            }
+                        }
+                    }
+                }
+                for field in &["CommandLine", "command_line", "cmdline", "Command"] {
+                    if let Some(cmd) = event.data.get(*field).and_then(|v| v.as_str()) {
+                        let trimmed = cmd.trim();
+                        if !trimmed.is_empty() {
+                            let first_tok = if trimmed.starts_with('"') {
+                                trimmed[1..].split('"').next().unwrap_or(trimmed)
+                            } else if trimmed.starts_with('\'') {
+                                trimmed[1..].split('\'').next().unwrap_or(trimmed)
+                            } else {
+                                trimmed.split_whitespace().next().unwrap_or(trimmed)
+                            };
+                            let fname = std::path::Path::new(first_tok).file_name().and_then(|n| n.to_str()).unwrap_or(first_tok);
+                            if !fname.trim().is_empty() && fname != "unknown" {
+                                return Some(fname.to_string());
+                            }
+                        }
+                    }
+                }
+                None
             }).unwrap_or_else(|| "unknown".to_string());
 
             let f_path = event.data.get("Image")
+                .or_else(|| event.data.get("NewProcessName"))
+                .or_else(|| event.data.get("ImagePath"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
                 .to_string();
 
             let cmd_line = event.data.get("CommandLine")
+                .or_else(|| event.data.get("command_line"))
+                .or_else(|| event.data.get("cmdline"))
                 .or_else(|| event.data.get("ParentCommandLine"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("")
@@ -5675,6 +5840,81 @@ impl EdrOrchestrator {
                 }
             });
 
+            signature.process_name = Some(p_name.clone());
+            signature.hash_blake3 = Some(hash_val.clone());
+
+            // 2. Autonomous Remediation Logic (Lockdown Mode and Active Response)
+            let autonomy = osoosi_types::load_autonomy_config();
+            let is_lockdown_mode = autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
+            let is_critical_attack = is_critical_security_attack(&signature, &event);
+            let is_destructive = is_destructive_mutation(&signature, &event);
+            let has_mitre_technique = signature
+                .mitre_technique
+                .as_ref()
+                .map(|t| !t.trim().is_empty())
+                .unwrap_or(false);
+
+            let effective_action = if is_lockdown_mode
+                && (signature.confidence >= autonomy.action_confidence_threshold
+                    || is_critical_attack
+                    || is_destructive
+                    || has_mitre_technique)
+            {
+                signature.require_approval = false;
+                ResponseAction::Isolate
+            } else if (is_destructive || is_critical_attack) && autonomy.auto_quarantine_malware {
+                if is_destructive
+                    || signature.recommended_action == ResponseAction::Isolate
+                    || signature.confidence >= autonomy.quarantine_confidence_threshold
+                {
+                    ResponseAction::Isolate
+                } else if signature.recommended_action == ResponseAction::GhostTarpit {
+                    ResponseAction::GhostTarpit
+                } else {
+                    ResponseAction::Isolate
+                }
+            } else if signature.confidence >= autonomy.action_confidence_threshold {
+                if autonomy.auto_quarantine_malware
+                    && signature.recommended_action == ResponseAction::Alert
+                    && has_mitre_technique
+                {
+                    ResponseAction::Isolate
+                } else {
+                    signature.recommended_action
+                }
+            } else {
+                debug!(
+                    "Fast-path threat confidence {:.2} below action threshold {:.2}: using Alert only",
+                    signature.confidence,
+                    autonomy.action_confidence_threshold
+                );
+                ResponseAction::Alert
+            };
+
+            signature.recommended_action = effective_action;
+            if effective_action != ResponseAction::Alert {
+                signature.action_state = osoosi_types::ActionState::Executed;
+            }
+
+            let _ = self.memory.log_threat(&signature);
+
+            let finding = osoosi_types::ConsensusFinding {
+                id: signature.id.clone(),
+                hash_blake3: hash_val.clone(),
+                process_name: Some(p_name.clone()),
+                file_path: Some(f_path.clone()),
+                verdict: "malicious".to_string(),
+                confidence: signature.confidence,
+                detector_count: signature.detector_count,
+                voters_summary: signature.reason.clone().unwrap_or_default(),
+                action_taken: format!("{:?}", effective_action),
+                evaluated_at: chrono::Utc::now(),
+            };
+            let _ = self.memory.record_consensus_finding(&finding);
+
+            // Real-time Global Immunization: Broadcast threat with populated metadata to the P2P mesh
+            self.broadcast_threat_to_mesh(signature.clone()).await;
+
             let src_node = self.trust.did().id.clone();
 
             // Audit log for tamper-evidence
@@ -5685,7 +5925,7 @@ impl EdrOrchestrator {
                     "confidence": signature.confidence,
                     "detector_count": signature.detector_count,
                     "reason": signature.reason,
-                    "action": signature.recommended_action,
+                    "action": effective_action,
                     "process_name": p_name,
                     "file_path": f_path,
                     "command_line": cmd_line,
@@ -5694,48 +5934,6 @@ impl EdrOrchestrator {
                     "source_node": src_node,
                 }),
             );
-
-            // 2. Autonomous Remediation Logic (same confidence gate as deep pipeline)
-            let autonomy = osoosi_types::load_autonomy_config();
-            let is_critical_attack = is_critical_security_attack(&signature, &event);
-            let is_destructive = is_destructive_mutation(&signature, &event);
-
-            let effective_action = if signature.confidence >= autonomy.action_confidence_threshold {
-                signature.recommended_action
-            } else if is_critical_attack && autonomy.auto_quarantine_malware {
-                // Only escalate if Active/Lockdown mode is armed (auto_quarantine_malware = true)
-                // Debounce fast-path warning log to avoid console spam
-                static FAST_PATH_WARN_DEBOUNCE: std::sync::LazyLock<dashmap::DashMap<String, std::time::Instant>> =
-                    std::sync::LazyLock::new(dashmap::DashMap::new);
-
-                let tech_key = signature.mitre_technique.clone().unwrap_or_else(|| "UNKNOWN".to_string());
-                let now = std::time::Instant::now();
-                let should_log = match FAST_PATH_WARN_DEBOUNCE.get(&tech_key) {
-                    Some(last) => now.duration_since(*last) > std::time::Duration::from_secs(30),
-                    None => true,
-                };
-                if should_log {
-                    FAST_PATH_WARN_DEBOUNCE.insert(tech_key, now);
-                    warn!(
-                        "CRITICAL ATTACK DETECTED: High-severity technique detected in fast path ({:?}: {:?}, conf: {:.2}). Escalating to active containment!",
-                        signature.mitre_technique, signature.id, signature.confidence
-                    );
-                }
-                if is_destructive || signature.recommended_action == ResponseAction::Isolate {
-                    ResponseAction::Isolate
-                } else if signature.recommended_action == ResponseAction::GhostTarpit {
-                    ResponseAction::GhostTarpit
-                } else {
-                    ResponseAction::Tarpit
-                }
-            } else {
-                debug!(
-                    "Fast-path threat confidence {:.2} below action threshold {:.2}: using Alert only",
-                    signature.confidence,
-                    autonomy.action_confidence_threshold
-                );
-                ResponseAction::Alert
-            };
 
             // Dynamic forensic sandbox execution if confidence >= 0.85
             if signature.confidence >= 0.85 {
@@ -6615,9 +6813,6 @@ impl EdrOrchestrator {
             }
         }
 
-        // 2. Aligned Messenger: Share verified intelligence with P2P Mesh & Nostr (only non-suppressed threats)
-        self.broadcast_threat_to_mesh(signature.clone()).await;
-
         // Auto-generated YARA from high-confidence detections
         if signature.confidence >= 0.8 {
             if let Some(rule) = crate::yara_gen::generate_yara_from_threat(&signature) {
@@ -6628,38 +6823,56 @@ impl EdrOrchestrator {
 
         // 3. Dispatch Active Response based on Decision Matrix
         let autonomy = osoosi_types::load_autonomy_config();
+        let is_lockdown_mode = autonomy.auto_quarantine_malware && autonomy.action_confidence_threshold <= 0.40;
         let is_catalog_attack = is_mitre_catalog_attack(&signature, &event);
         let is_destructive = is_destructive_mutation(&signature, &event);
+        let has_mitre_technique = signature
+            .mitre_technique
+            .as_ref()
+            .map(|t| !t.trim().is_empty())
+            .unwrap_or(false);
 
-        let mut effective_action = if let Some(clef_act) = decision_override {
-            clef_act
-        } else if signature.confidence >= autonomy.action_confidence_threshold {
-            signature.recommended_action
-        } else if is_catalog_attack && autonomy.auto_quarantine_malware {
-            // Only escalate if Active/Lockdown mode is armed (auto_quarantine_malware = true)
-            // Debounce deep-pipeline warning log to avoid console spam
-            static DEEP_PATH_WARN_DEBOUNCE: std::sync::LazyLock<dashmap::DashMap<String, std::time::Instant>> =
-                std::sync::LazyLock::new(dashmap::DashMap::new);
-
-            let tech_key = signature.mitre_technique.clone().unwrap_or_else(|| "UNKNOWN".to_string());
-            let now = std::time::Instant::now();
-            let should_log = match DEEP_PATH_WARN_DEBOUNCE.get(&tech_key) {
-                Some(last) => now.duration_since(*last) > std::time::Duration::from_secs(30),
-                None => true,
-            };
-            if should_log {
-                DEEP_PATH_WARN_DEBOUNCE.insert(tech_key, now);
-                warn!(
-                    "CRITICAL ATTACK DETECTED: Active MITRE catalog attack detected in deep pipeline ({:?}: {:?}, conf: {:.2}). Escalating to active containment!",
-                    signature.mitre_technique, signature.id, signature.confidence
-                );
-            }
-            if is_destructive || signature.recommended_action == ResponseAction::Isolate {
+        let mut effective_action = if is_lockdown_mode
+            && (signature.confidence >= autonomy.action_confidence_threshold
+                || is_catalog_attack
+                || is_destructive
+                || has_mitre_technique)
+        {
+            // True Zero-Trust Lockdown Mode: ALL MITRE ATT&CK / ATLAS techniques and threats above threshold
+            // immediately execute Isolate (Process Tree Kill). Never allow decision_override to downgrade to Alert.
+            signature.require_approval = false;
+            ResponseAction::Isolate
+        } else if (is_destructive || is_catalog_attack) && autonomy.auto_quarantine_malware {
+            // Active Enforcement Mode on MITRE catalog or destructive attack:
+            // Never allow Clef decision_override = Some(Alert) or single-voter default Alert to downgrade containment.
+            if is_destructive
+                || signature.recommended_action == ResponseAction::Isolate
+                || signature.confidence >= autonomy.quarantine_confidence_threshold
+            {
                 ResponseAction::Isolate
             } else if signature.recommended_action == ResponseAction::GhostTarpit {
                 ResponseAction::GhostTarpit
             } else {
-                ResponseAction::Tarpit
+                ResponseAction::Isolate
+            }
+        } else if let Some(clef_act) = decision_override {
+            if autonomy.auto_quarantine_malware
+                && clef_act == ResponseAction::Alert
+                && signature.confidence >= autonomy.action_confidence_threshold
+                && signature.recommended_action != ResponseAction::Alert
+            {
+                signature.recommended_action
+            } else {
+                clef_act
+            }
+        } else if signature.confidence >= autonomy.action_confidence_threshold {
+            if autonomy.auto_quarantine_malware
+                && signature.recommended_action == ResponseAction::Alert
+                && has_mitre_technique
+            {
+                ResponseAction::Isolate
+            } else {
+                signature.recommended_action
             }
         } else {
             debug!(
@@ -6679,15 +6892,106 @@ impl EdrOrchestrator {
                     .or_else(|| event.data.get("ImagePath"))
                     .and_then(|i| i.as_str())
                 {
-                    let is_active_threat = is_catalog_attack || is_destructive;
-                    // Administrative LOLBins executing active threat signatures cannot use SFC to veto mitigation!
-                    if crate::system_check::validate_file_safety_with_veto(file_path, is_active_threat).await {
-                        warn!("SFC SAFETY OVERRIDE: File {} verified as clean system binary by Windows SFC. Downgrading action to Alert.", file_path);
-                        effective_action = ResponseAction::Alert;
+                    let is_active_threat = is_lockdown_mode || is_catalog_attack || is_destructive || has_mitre_technique;
+                    // In Lockdown Mode or for administrative LOLBins executing active threats, SFC safety override is disallowed.
+                    if !is_lockdown_mode && !crate::system_check::is_administrative_lolbin(file_path) {
+                        if crate::system_check::validate_file_safety_with_veto(file_path, is_active_threat).await {
+                            warn!("SFC SAFETY OVERRIDE: File {} verified as clean system binary by Windows SFC. Downgrading action to Alert.", file_path);
+                            effective_action = ResponseAction::Alert;
+                        }
                     }
                 }
             }
         }
+
+        let p_name = signature.process_name.clone().or_else(|| {
+            for field in &["Image", "NewProcessName", "ProcessName", "ImagePath", "SourceImage", "TargetImage", "Application"] {
+                if let Some(val) = event.data.get(*field).and_then(|v| v.as_str()) {
+                    if let Some(n) = std::path::Path::new(val).file_name().and_then(|n| n.to_str()) {
+                        if !n.trim().is_empty() && n != "unknown" {
+                            return Some(n.to_string());
+                        }
+                    }
+                }
+            }
+            for field in &["CommandLine", "command_line", "cmdline", "Command"] {
+                if let Some(cmd) = event.data.get(*field).and_then(|v| v.as_str()) {
+                    let trimmed = cmd.trim();
+                    if !trimmed.is_empty() {
+                        let first_tok = if trimmed.starts_with('"') {
+                            trimmed[1..].split('"').next().unwrap_or(trimmed)
+                        } else if trimmed.starts_with('\'') {
+                            trimmed[1..].split('\'').next().unwrap_or(trimmed)
+                        } else {
+                            trimmed.split_whitespace().next().unwrap_or(trimmed)
+                        };
+                        let fname = std::path::Path::new(first_tok).file_name().and_then(|n| n.to_str()).unwrap_or(first_tok);
+                        if !fname.trim().is_empty() && fname != "unknown" {
+                            return Some(fname.to_string());
+                        }
+                    }
+                }
+            }
+            None
+        }).unwrap_or_else(|| "unknown".to_string());
+
+        let f_path = event.data.get("Image")
+            .or_else(|| event.data.get("NewProcessName"))
+            .or_else(|| event.data.get("ImagePath"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let cmd_line = event.data.get("CommandLine")
+            .or_else(|| event.data.get("command_line"))
+            .or_else(|| event.data.get("cmdline"))
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+
+        let hash_val = signature.hash_blake3.clone().unwrap_or_else(|| {
+            if !f_path.is_empty() {
+                std::fs::read(&f_path)
+                    .map(|b| blake3::hash(&b).to_hex().to_string())
+                    .unwrap_or_else(|_| {
+                        if !cmd_line.is_empty() {
+                            blake3::hash(cmd_line.as_bytes()).to_hex().to_string()
+                        } else {
+                            blake3::hash(signature.id.as_bytes()).to_hex().to_string()
+                        }
+                    })
+            } else if !cmd_line.is_empty() {
+                blake3::hash(cmd_line.as_bytes()).to_hex().to_string()
+            } else {
+                blake3::hash(signature.id.as_bytes()).to_hex().to_string()
+            }
+        });
+
+        signature.process_name = Some(p_name.clone());
+        signature.hash_blake3 = Some(hash_val.clone());
+        signature.recommended_action = effective_action;
+        if effective_action != ResponseAction::Alert {
+            signature.action_state = osoosi_types::ActionState::Executed;
+        }
+
+        let _ = self.memory.log_threat(&signature);
+
+        let finding = osoosi_types::ConsensusFinding {
+            id: signature.id.clone(),
+            hash_blake3: hash_val.clone(),
+            process_name: Some(p_name.clone()),
+            file_path: Some(f_path.clone()),
+            verdict: "malicious".to_string(),
+            confidence: signature.confidence,
+            detector_count: signature.detector_count,
+            voters_summary: signature.reason.clone().unwrap_or_default(),
+            action_taken: format!("{:?}", effective_action),
+            evaluated_at: chrono::Utc::now(),
+        };
+        let _ = self.memory.record_consensus_finding(&finding);
+
+        // Aligned Messenger: Share verified intelligence with P2P Mesh & Nostr
+        self.broadcast_threat_to_mesh(signature.clone()).await;
 
         // Shield Layer: Verify action safety against Taint/SSRF policies
         let sink = match effective_action {
@@ -7374,7 +7678,13 @@ impl EdrOrchestrator {
         // 1. First get items from the in-memory live gossip ring buffer
         if let Ok(buffer) = self.mesh_gossip_feed.read() {
             for item in buffer.iter() {
-                items.push(item.clone());
+                let is_invalid = item.summary.contains("Unknown Process")
+                    || item.summary.contains("Execution Of Non-Existing File")
+                    || (item.is_threat && item.confidence < 0.50)
+                    || (item.is_threat && item.mitre_technique.as_deref() == Some("T1006") && item.process_name.as_deref().unwrap_or("unknown").eq_ignore_ascii_case("unknown"));
+                if !is_invalid {
+                    items.push(item.clone());
+                }
             }
         }
 
@@ -7444,19 +7754,36 @@ impl EdrOrchestrator {
                         .and_then(|v| v.as_f64())
                         .unwrap_or(0.8) as f32;
 
-                    let summary = entry
-                        .data
-                        .get("summary")
-                        .and_then(|v| v.as_str())
-                        .map(String::from)
-                        .unwrap_or_else(|| {
-                            let p = proc.as_deref().unwrap_or("Security Alert");
-                            let t = tech
-                                .as_deref()
-                                .map(|s| format!("[{}] ", s))
-                                .unwrap_or_default();
-                            format!("{}{}: {}", t, entry.event_type, p)
-                        });
+                    let reason_str = entry.data.get("reason").and_then(|v| v.as_str()).unwrap_or("").trim();
+                    if reason_str.contains("Execution Of Non-Existing File") || conf < 0.50 {
+                        continue;
+                    }
+                    let proc_opt = proc.as_deref().filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("unknown") && !s.eq_ignore_ascii_case("unknown process") && !s.eq_ignore_ascii_case("system process"));
+                    if tech.as_deref() == Some("T1006") && proc_opt.is_none() {
+                        continue;
+                    }
+
+                    let tech_label = match (tech.as_deref(), tech_name.as_deref()) {
+                        (Some(id), Some(name)) if !name.is_empty() => format!("[{} · {}] ", id, name),
+                        (Some(id), _) => format!("[{}] ", id),
+                        _ => String::new(),
+                    };
+                    let act = action.as_deref().unwrap_or("Enforced");
+                    let reason_clean = reason_str.split(';').next().unwrap_or(reason_str).trim();
+                    let issue_desc = if reason_clean.is_empty() { "Suspicious Activity" } else { reason_clean };
+
+                    let raw_summary = entry.data.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+                    let summary = if !raw_summary.is_empty() && !raw_summary.contains("Unknown Process") && !raw_summary.contains("Execution Of Non-Existing File") {
+                        raw_summary.to_string()
+                    } else if let Some(p) = proc_opt {
+                        format!("Peer Threat: {}{}: {} — Action: {}", tech_label, p, issue_desc, act)
+                    } else {
+                        format!("Peer Threat: {}{} — Action: {}", tech_label, issue_desc, act)
+                    };
+
+                    if summary.contains("Unknown Process") || summary.contains("Execution Of Non-Existing File") {
+                        continue;
+                    }
 
                     let severity = if conf >= 0.85 || action.as_deref() == Some("Isolate") {
                         "CRITICAL".to_string()
@@ -7511,12 +7838,49 @@ impl EdrOrchestrator {
                     let ts = t.get("timestamp").and_then(|v| v.as_str()).unwrap_or("").to_string();
                     let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("");
 
+                    let proc_opt = proc.as_deref().filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("unknown") && !s.eq_ignore_ascii_case("unknown process") && !s.eq_ignore_ascii_case("system process"));
+                    if conf < 0.50 || reason.contains("Execution Of Non-Existing File") {
+                        continue;
+                    }
+
                     let (tactic, tech, tech_name) = osoosi_policy::mitre_kb::extract_mitre_from_text(reason)
                         .map(|(tac, tec, nam)| (Some(tac), Some(tec), Some(nam)))
                         .unwrap_or((None, None, None));
 
-                    let tech_badge = tech.as_deref().map(|s| format!("[{}] ", s)).unwrap_or_default();
-                    let summary = format!("Peer Threat: {}{} (Active)", tech_badge, proc.as_deref().unwrap_or("Security Alert"));
+                    if tech.as_deref() == Some("T1006") && proc_opt.is_none() {
+                        continue;
+                    }
+
+                    let tech_label = match (tech.as_deref(), tech_name.as_deref()) {
+                        (Some(id), Some(name)) if !name.is_empty() => format!("[{} · {}] ", id, name),
+                        (Some(id), _) => format!("[{}] ", id),
+                        _ => String::new(),
+                    };
+                    let clean_reason = {
+                        let first = reason.split(';').next().unwrap_or(reason).trim();
+                        if first.len() > 90 {
+                            format!("{}...", &first[..87])
+                        } else if first.is_empty() {
+                            "Suspicious Activity".to_string()
+                        } else {
+                            first.to_string()
+                        }
+                    };
+                    let act_str = t.get("action").or_else(|| t.get("recommended_action")).and_then(|v| v.as_str()).unwrap_or("Isolated & Terminated");
+                    let summary = if let Some(p) = proc_opt {
+                        format!("Peer Threat: {}{}: {} — Action: {}", tech_label, p, clean_reason, act_str)
+                    } else {
+                        format!("Peer Threat: {}{} — Action: {}", tech_label, clean_reason, act_str)
+                    };
+                    if summary.contains("Unknown Process") || summary.contains("Execution Of Non-Existing File") {
+                        continue;
+                    }
+
+                    let status = if act_str.contains("Isolate") || act_str.contains("Terminated") || conf >= 0.70 {
+                        "REMEDIATED".to_string()
+                    } else {
+                        "ACTIVE".to_string()
+                    };
 
                     let severity = if conf >= 0.85 {
                         "CRITICAL".to_string()
@@ -7538,8 +7902,8 @@ impl EdrOrchestrator {
                         mitre_tactic: tactic,
                         confidence: conf,
                         severity,
-                        action: Some("Alert".to_string()),
-                        status: "ACTIVE".to_string(),
+                        action: Some(act_str.to_string()),
+                        status,
                         hash_blake3: hash,
                         is_threat: true,
                     });
@@ -7563,6 +7927,14 @@ impl EdrOrchestrator {
         let mut seen_routine = std::collections::HashSet::new();
 
         for item in items {
+            let is_invalid = item.summary.contains("Unknown Process")
+                || item.summary.contains("Execution Of Non-Existing File")
+                || (item.is_threat && item.confidence < 0.50)
+                || (item.is_threat && item.mitre_technique.as_deref() == Some("T1006") && item.process_name.as_deref().unwrap_or("unknown").eq_ignore_ascii_case("unknown"));
+            if is_invalid {
+                continue;
+            }
+
             if item.event_type == "MESH_HEARTBEAT_ACK" || item.event_type == "CONSENSUS_CLOCK_SYNC" {
                 let key = format!("{}:{}", item.event_type, item.source_node);
                 if seen_routine.contains(&key) {
@@ -7610,55 +7982,39 @@ impl EdrOrchestrator {
 
     /// Broadcast a detected threat to the P2P wire mesh and Nostr with debouncing and cryptographic signing.
     pub async fn broadcast_threat_to_mesh(&self, mut sig: osoosi_types::ThreatSignature) {
-        // 1. Signal-to-noise ratio: Peer nodes must be alerted to serious threats
-        // (verified pentests, discovery probes T1082/T1033, credential dumping, injection, isolate/tarpit verdicts)
-        let is_serious_threat = sig.recommended_action == osoosi_types::ResponseAction::Isolate
-            || sig.recommended_action == osoosi_types::ResponseAction::Tarpit
-            || sig.recommended_action == osoosi_types::ResponseAction::GhostTarpit
-            || sig.confidence >= 0.65
-            || !sig.is_signed
-            || sig.mitre_technique.as_deref().map_or(false, |t| {
-                t.starts_with("T1082")
-                    || t.starts_with("T1033")
-                    || t.starts_with("T1003")
-                    || t.starts_with("T1055")
-                    || t.starts_with("T1059")
-                    || t.starts_with("T1490")
-                    || t.starts_with("T1547")
-                    || t.starts_with("T1071")
-            })
-            || sig.reason.as_deref().map_or(false, |r| {
-                let lr = r.to_lowercase();
-                lr.contains("sigma")
-                    || lr.contains("pentest")
-                    || lr.contains("discovery")
-                    || lr.contains("edrtest")
-                    || lr.contains("malware")
-                    || lr.contains("exploit")
-            });
-
-        if !is_serious_threat {
-            debug!(
-                "[Mesh] Threat suppressed from gossip broadcast (low signal-to-noise): {:?}",
-                sig.process_name
-            );
+        // 1. Signal-to-noise ratio & Zero-Unknown Invariant:
+        if sig.confidence < 0.50 {
+            debug!("[Mesh] Threat suppressed from gossip broadcast (confidence < 0.50): {:.2}", sig.confidence);
+            return;
+        }
+        if sig.reason.as_deref().unwrap_or("").contains("Execution Of Non-Existing File") {
+            debug!("[Mesh] Threat suppressed from gossip broadcast (Execution Of Non-Existing File)");
+            return;
+        }
+        let proc_clean = sig.process_name.as_deref().unwrap_or("").trim().to_string();
+        let is_unknown_proc = proc_clean.is_empty()
+            || proc_clean.eq_ignore_ascii_case("unknown")
+            || proc_clean.eq_ignore_ascii_case("unknown process")
+            || proc_clean.eq_ignore_ascii_case("system process");
+        if is_unknown_proc && sig.reason.as_deref().unwrap_or("").trim().is_empty() {
+            debug!("[Mesh] Threat suppressed from gossip broadcast (unknown process with empty reason)");
             return;
         }
 
-        // 2. Debouncing per process hash / threat category / MITRE technique
+        // 2. Debouncing per process hash / threat category / MITRE technique / reason
+        let reason_key = sig.reason.as_deref().unwrap_or("generic");
         let debounce_key = format!(
-            "{}:{}:{}",
-            sig.hash_blake3.as_deref().unwrap_or("nohash"),
-            sig.process_name.as_deref().unwrap_or("unknown"),
-            sig.mitre_technique
-                .as_deref()
-                .unwrap_or(sig.reason.as_deref().unwrap_or("generic"))
+            "{}:{}:{}:{}",
+            sig.hash_blake3.as_deref().unwrap_or(&sig.id),
+            sig.process_name.as_deref().unwrap_or("proc"),
+            sig.mitre_technique.as_deref().unwrap_or("tech"),
+            &reason_key[..reason_key.len().min(64)]
         );
-        let cooldown = std::time::Duration::from_secs(15);
+        let cooldown = std::time::Duration::from_secs(2);
         if let Some(last) = self.mesh_broadcast_debouncer.get(&debounce_key) {
             if last.elapsed() < cooldown {
                 debug!(
-                    "[Mesh] Threat broadcast debounced (within 15s cooldown): {}",
+                    "[Mesh] Threat broadcast debounced (within 2s cooldown): {}",
                     debounce_key
                 );
                 return;
@@ -7667,18 +8023,11 @@ impl EdrOrchestrator {
         self.mesh_broadcast_debouncer
             .insert(debounce_key, Instant::now());
 
-        // 3. Anonymizer & Differential Privacy
+        // 3. Anonymizer & Differential Privacy (preserve exact confidence without noise distortion)
         if let Some(reason) = sig.reason.as_mut() {
             *reason = self.anonymize_reason(reason);
         }
-        let dp_config = osoosi_dp::PrivacyConfig {
-            epsilon: 0.8,
-            min_samples: 3,
-            sensitivity: 1.0,
-        };
-        let dp = osoosi_dp::DifferentialPrivacy::new(dp_config.clone());
-        sig.confidence = (sig.confidence + dp.laplace_noise() as f32).clamp(0.05, 1.0);
-        sig.epsilon = Some(dp_config.epsilon as f32);
+        sig.confidence = sig.confidence.clamp(0.05, 1.0);
 
         // 4. Ensure origin node ID is set to this node's DID
         sig.source_node = self.trust.did().id.clone();
@@ -7717,10 +8066,23 @@ impl EdrOrchestrator {
         // 8. Record in local live gossip buffer and audit trail
         self.record_gossip_threat(&sig, "MESH_THREAT_BROADCAST");
 
-        let proc = sig.process_name.clone().unwrap_or_else(|| "Unknown".to_string());
-        let tech = sig.mitre_technique.clone().unwrap_or_else(|| "T1082".to_string());
+        let proc = proc_clean;
+        let tech = sig.mitre_technique.as_deref().unwrap_or("T1082");
         let action = format!("{:?}", sig.recommended_action);
-        let summary = format!("Broadcast to Mesh: [{}] {} ({})", tech, proc, action);
+        let tech_label = match (&sig.mitre_technique, &sig.mitre_technique_name) {
+            (Some(id), Some(name)) if !name.is_empty() => format!("[{} · {}] ", id, name),
+            (Some(id), _) => format!("[{}] ", id),
+            _ => format!("[{}] ", tech),
+        };
+        let reason_str = sig.reason.as_deref().unwrap_or("").trim();
+        let reason_clean = reason_str.split(';').next().unwrap_or(reason_str).trim();
+        let issue_desc = if reason_clean.is_empty() { "Suspicious Activity" } else { reason_clean };
+
+        let summary = if !is_unknown_proc {
+            format!("Broadcast to Mesh: {}{}: {} — Action: {}", tech_label, proc, issue_desc, action)
+        } else {
+            format!("Broadcast to Mesh: {}{} — Action: {}", tech_label, issue_desc, action)
+        };
 
         self.audit.log(
             "MESH_THREAT_BROADCAST",
@@ -8564,8 +8926,36 @@ impl EdrOrchestrator {
                 move |t| {
                     gossip_tarpit.fetch_add(1, Ordering::Relaxed);
                     if t.confidence >= autonomy_conf.action_confidence_threshold {
-                        if let Ok(addr) = t.target_ip.parse() {
-                            let _ = osoosi_wire::apply_socket_tarpit(addr);
+                        let socket_addr = if let Ok(sa) = t.target_ip.parse::<std::net::SocketAddr>() {
+                            Some(sa)
+                        } else if let Ok(ip) = t.target_ip.parse::<std::net::IpAddr>() {
+                            Some(std::net::SocketAddr::new(ip, 0))
+                        } else {
+                            None
+                        };
+                        if let Some(saddr) = socket_addr {
+                            let addr = saddr.ip();
+                            let is_disallowed = match addr {
+                                std::net::IpAddr::V4(ipv4) => {
+                                    let oct = ipv4.octets();
+                                    ipv4.is_loopback()
+                                        || ipv4.is_unspecified()
+                                        || ipv4.is_multicast()
+                                        || ipv4.is_broadcast()
+                                        || oct[0] == 10
+                                        || (oct[0] == 172 && (16..=31).contains(&oct[1]))
+                                        || (oct[0] == 192 && oct[1] == 168)
+                                        || (oct[0] == 169 && oct[1] == 254)
+                                }
+                                std::net::IpAddr::V6(ipv6) => {
+                                    ipv6.is_loopback() || ipv6.is_unspecified() || ipv6.is_multicast()
+                                }
+                            };
+                            if !is_disallowed {
+                                let _ = osoosi_wire::apply_socket_tarpit(saddr);
+                            } else {
+                                debug!("TarpitSignal: Ignored local/private/multicast IP {}", addr);
+                            }
                         }
                     }
                 },
@@ -8759,6 +9149,27 @@ impl EdrOrchestrator {
         let self_threat = self.clone();
         tokio::spawn(async move {
             while let Some(sig) = peer_threat_rx.recv().await {
+                if !sig.verify() {
+                    debug!("PeerThreatRx: Dropped unverified threat {}", sig.id);
+                    continue;
+                }
+                if sig.confidence < 0.50 {
+                    debug!("PeerThreatRx: Dropped low-confidence threat {}", sig.id);
+                    continue;
+                }
+                if sig.reason.as_deref().unwrap_or("").contains("Execution Of Non-Existing File") {
+                    debug!("PeerThreatRx: Dropped non-existing file noise threat {}", sig.id);
+                    continue;
+                }
+                let proc_clean = sig.process_name.as_deref().unwrap_or("").trim();
+                if proc_clean.is_empty()
+                    || proc_clean.eq_ignore_ascii_case("unknown")
+                    || proc_clean.eq_ignore_ascii_case("unknown process")
+                {
+                    debug!("PeerThreatRx: Dropped unknown process threat {}", sig.id);
+                    continue;
+                }
+
                 if let Err(e) = memory_peer.log_threat(&sig) {
                     if e.to_string().contains("UNIQUE constraint") {
                         debug!("Peer threat {} already stored: {}", sig.id, e);
@@ -8771,9 +9182,13 @@ impl EdrOrchestrator {
                 }
                 self_threat.record_gossip_threat(&sig, "MESH_THREAT_RECEIVED");
 
-                let proc = sig.process_name.clone().unwrap_or_else(|| "Unknown".to_string());
+                let proc = proc_clean.to_string();
                 let tech = sig.mitre_technique.clone().unwrap_or_else(|| "T1082".to_string());
                 let action = format!("{:?}", sig.recommended_action);
+                let reason_str = sig.reason.as_deref().unwrap_or("").trim();
+                let reason_clean = reason_str.split(';').next().unwrap_or(reason_str).trim();
+                let issue_desc = if reason_clean.is_empty() { "Suspicious Activity" } else { reason_clean };
+                let summary = format!("Peer Threat [{}]: {}: {} ({}) via {}", tech, proc, issue_desc, action, sig.source_node);
 
                 self_threat.audit.log(
                     "MESH_THREAT_RECEIVED",
@@ -8787,7 +9202,7 @@ impl EdrOrchestrator {
                         "mitre_tactic": sig.mitre_tactic,
                         "reason": sig.reason,
                         "action": action,
-                        "summary": format!("Peer Threat [{}]: {} ({}) via {}", tech, proc, action, sig.source_node),
+                        "summary": summary,
                     }),
                 );
 
@@ -9340,20 +9755,27 @@ impl EdrOrchestrator {
                         .or_else(|| event.data.get("image"))
                         .or_else(|| event.data.get("ImagePath"))
                         .and_then(|i| i.as_str());
-                    match crate::firewall::block_process_network(pid, image) {
-                        Ok(msg) => {
-                            warn!("Firewall auto-block applied: {}", msg);
-                            self.audit.log(
-                                "RESPONSE_ACTION",
-                                serde_json::json!({
-                                    "type": "FirewallBlock",
-                                    "pid": pid,
-                                    "image": image,
-                                    "message": msg
-                                }),
-                            );
+                    let is_lolbin = image
+                        .map(|img| crate::system_check::is_administrative_lolbin(img))
+                        .unwrap_or(false);
+                    if !is_lolbin {
+                        match crate::firewall::block_process_network(pid, image) {
+                            Ok(msg) => {
+                                warn!("Firewall auto-block applied: {}", msg);
+                                self.audit.log(
+                                    "RESPONSE_ACTION",
+                                    serde_json::json!({
+                                        "type": "FirewallBlock",
+                                        "pid": pid,
+                                        "image": image,
+                                        "message": msg
+                                    }),
+                                );
+                            }
+                            Err(e) => warn!("Firewall auto-block failed: {}", e),
                         }
-                        Err(e) => warn!("Firewall auto-block failed: {}", e),
+                    } else {
+                        debug!("Skipping firewall auto-block for administrative LOLBin {:?}", image);
                     }
                 }
                 if let Some(msg) =
@@ -9397,28 +9819,38 @@ impl EdrOrchestrator {
                         info!("Successfully terminated process PID: {}", pid);
                     }
 
-                    // Block network access via WFP
-                    match crate::firewall::block_process_network(Some(pid), image) {
-                        Ok(msg) => {
-                            warn!("Targeted firewall block applied: {}", msg);
-                            self.audit.log(
-                                "RESPONSE_ACTION",
-                                serde_json::json!({
-                                    "type": "FirewallBlock",
-                                    "pid": pid,
-                                    "image": image,
-                                    "message": msg
-                                }),
-                            );
+                    // Block network access via WFP and kernel driver, unless target is an administrative LOLBin
+                    let is_lolbin = image
+                        .map(|img| crate::system_check::is_administrative_lolbin(img))
+                        .unwrap_or(false);
+                    if !is_lolbin {
+                        match crate::firewall::block_process_network(Some(pid), image) {
+                            Ok(msg) => {
+                                warn!("Targeted firewall block applied: {}", msg);
+                                self.audit.log(
+                                    "RESPONSE_ACTION",
+                                    serde_json::json!({
+                                        "type": "FirewallBlock",
+                                        "pid": pid,
+                                        "image": image,
+                                        "message": msg
+                                    }),
+                                );
+                            }
+                            Err(e) => warn!("Targeted firewall block failed: {}", e),
                         }
-                        Err(e) => warn!("Targeted firewall block failed: {}", e),
-                    }
 
-                    // Add image to Ring-0 kernel driver blocklist
-                    if let Some(img) = image {
-                        if let Some(ref kd) = *self.kernel_driver.read() {
-                            let _ = kd.add_blocked_path(img);
+                        // Add image to Ring-0 kernel driver blocklist
+                        if let Some(img) = image {
+                            if let Some(ref kd) = *self.kernel_driver.read() {
+                                let _ = kd.add_blocked_path(img);
+                            }
                         }
+                    } else {
+                        info!(
+                            "Administrative LOLBin detected ({:?}); skipping permanent image firewall and kernel driver path block to protect OS integrity.",
+                            image
+                        );
                     }
                 }
 

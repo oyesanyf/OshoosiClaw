@@ -10,6 +10,40 @@ pub fn quarantine_file(file_path: &str) -> anyhow::Result<PathBuf> {
     if !src.exists() {
         return Err(anyhow::anyhow!("File does not exist: {}", file_path));
     }
+
+    // Check symlink to prevent quarantine symlink attacks
+    if let Ok(meta) = std::fs::symlink_metadata(src) {
+        if meta.file_type().is_symlink() {
+            anyhow::bail!("Refusing to quarantine symlink: {}", file_path);
+        }
+    }
+
+    // Self-protection: refuse to quarantine self infrastructure files
+    let fname_lc = src.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
+    if fname_lc == "osoosi.exe" || fname_lc == "osoosi.db" || fname_lc == "osoosi.toml" {
+        anyhow::bail!("Refusing to quarantine self-infrastructure binary/file: {}", file_path);
+    }
+    if let Ok(cur_exe) = std::env::current_exe() {
+        if let Some(parent) = cur_exe.parent() {
+            if let Ok(canon_src) = src.canonicalize() {
+                if let Ok(canon_parent) = parent.canonicalize() {
+                    if canon_src.starts_with(&canon_parent) {
+                        anyhow::bail!("Refusing to quarantine application directory file: {}", file_path);
+                    }
+                }
+            }
+        }
+    }
+
+    // System protection: refuse to quarantine Windows system binaries or administrative LOLBins
+    let path_lc = file_path.to_ascii_lowercase();
+    if path_lc.contains(r"\windows\system32\")
+        || path_lc.contains(r"\windows\syswow64\")
+        || path_lc.contains(r"\windows\winsxs\")
+        || crate::system_check::is_administrative_lolbin(file_path)
+    {
+        anyhow::bail!("Refusing to quarantine Windows system binary / administrative LOLBin: {}", file_path);
+    }
     
     let quarantine_dir = "quarantine";
     std::fs::create_dir_all(quarantine_dir)?;
