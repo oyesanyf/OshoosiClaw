@@ -7688,6 +7688,7 @@ impl EdrOrchestrator {
             for item in buffer.iter() {
                 let is_invalid = item.summary.contains("Unknown Process")
                     || item.summary.contains("Execution Of Non-Existing File")
+                    || (item.summary.contains("Suspicious Activity") && item.process_name.is_none())
                     || (item.is_threat && item.confidence < 0.50)
                     || (item.is_threat && item.mitre_technique.as_deref() == Some("T1006") && item.process_name.as_deref().unwrap_or("unknown").eq_ignore_ascii_case("unknown"));
                 if !is_invalid {
@@ -7705,7 +7706,10 @@ impl EdrOrchestrator {
             }
 
             for entry in audit_entries.iter().rev() {
-                if entry.event_type.starts_with("MESH_") || entry.event_type == "THREAT_DETECTED" {
+                if entry.event_type == "MESH_THREAT_BROADCAST"
+                    || entry.event_type == "MESH_THREAT_RECEIVED"
+                    || entry.event_type == "THREAT_DETECTED"
+                {
                     let id = entry
                         .data
                         .get("threat_id")
@@ -7778,9 +7782,12 @@ impl EdrOrchestrator {
                     };
                     let act = action.as_deref().unwrap_or("Enforced");
                     let reason_clean = reason_str.split(';').next().unwrap_or(reason_str).trim();
+                    let raw_summary = entry.data.get("summary").and_then(|v| v.as_str()).unwrap_or("");
+                    if reason_clean.is_empty() && raw_summary.is_empty() {
+                        continue;
+                    }
                     let issue_desc = if reason_clean.is_empty() { "Suspicious Activity" } else { reason_clean };
 
-                    let raw_summary = entry.data.get("summary").and_then(|v| v.as_str()).unwrap_or("");
                     let summary = if !raw_summary.is_empty() && !raw_summary.contains("Unknown Process") && !raw_summary.contains("Execution Of Non-Existing File") {
                         raw_summary.to_string()
                     } else if let Some(p) = proc_opt {
@@ -7789,7 +7796,10 @@ impl EdrOrchestrator {
                         format!("Peer Threat: {}{} — Action: {}", tech_label, issue_desc, act)
                     };
 
-                    if summary.contains("Unknown Process") || summary.contains("Execution Of Non-Existing File") {
+                    if summary.contains("Unknown Process")
+                        || summary.contains("Execution Of Non-Existing File")
+                        || (summary.contains("Suspicious Activity") && proc_opt.is_none())
+                    {
                         continue;
                     }
 
@@ -7801,6 +7811,12 @@ impl EdrOrchestrator {
                         "MEDIUM".to_string()
                     } else {
                         "LOW".to_string()
+                    };
+
+                    let status = if act.contains("Isolate") || act.contains("Terminated") || act.contains("Enforced") || conf >= 0.70 {
+                        "REMEDIATED".to_string()
+                    } else {
+                        "ACTIVE".to_string()
                     };
 
                     items.push(osoosi_types::GossipFeedItem {
@@ -7816,7 +7832,7 @@ impl EdrOrchestrator {
                         confidence: conf,
                         severity,
                         action,
-                        status: "ACTIVE".to_string(),
+                        status,
                         hash_blake3: hash,
                         is_threat: true,
                     });
@@ -7847,7 +7863,7 @@ impl EdrOrchestrator {
                     let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("");
 
                     let proc_opt = proc.as_deref().filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("unknown") && !s.eq_ignore_ascii_case("unknown process") && !s.eq_ignore_ascii_case("system process"));
-                    if conf < 0.50 || reason.contains("Execution Of Non-Existing File") {
+                    if conf < 0.50 || reason.trim().is_empty() || reason.contains("Execution Of Non-Existing File") {
                         continue;
                     }
 
@@ -7866,10 +7882,10 @@ impl EdrOrchestrator {
                     };
                     let clean_reason = {
                         let first = reason.split(';').next().unwrap_or(reason).trim();
-                        if first.len() > 90 {
+                        if first.is_empty() {
+                            continue;
+                        } else if first.len() > 90 {
                             format!("{}...", &first[..87])
-                        } else if first.is_empty() {
-                            "Suspicious Activity".to_string()
                         } else {
                             first.to_string()
                         }
@@ -7880,7 +7896,10 @@ impl EdrOrchestrator {
                     } else {
                         format!("Peer Threat: {}{} — Action: {}", tech_label, clean_reason, act_str)
                     };
-                    if summary.contains("Unknown Process") || summary.contains("Execution Of Non-Existing File") {
+                    if summary.contains("Unknown Process")
+                        || summary.contains("Execution Of Non-Existing File")
+                        || (summary.contains("Suspicious Activity") && proc_opt.is_none())
+                    {
                         continue;
                     }
 
@@ -7937,6 +7956,7 @@ impl EdrOrchestrator {
         for item in items {
             let is_invalid = item.summary.contains("Unknown Process")
                 || item.summary.contains("Execution Of Non-Existing File")
+                || (item.summary.contains("Suspicious Activity") && item.process_name.is_none())
                 || (item.is_threat && item.confidence < 0.50)
                 || (item.is_threat && item.mitre_technique.as_deref() == Some("T1006") && item.process_name.as_deref().unwrap_or("unknown").eq_ignore_ascii_case("unknown"));
             if is_invalid {
