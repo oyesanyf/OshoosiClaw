@@ -1,0 +1,88 @@
+header:
+  schema-version: '2.0.0'
+  last-updated: '2026-10-16'
+  last-reviewed: '2026-10-16'
+  url: https://github.com/oyesanyf/OshoosiClaw/blob/main/SECURITY-INSIGHTS.yml
+  project-url: https://github.com/oyesanyf/OshoosiClaw
+
+project-lifecycle:
+  status: active
+  bug-fixes-only: false
+  core-team:
+    - name: Femi Oyesanya
+      affiliation: Oshoosi Security
+      email: oyesanyf@gmail.com
+      social: https://github.com/oyesanyf
+      primary: true
+
+contribution-policy:
+  accepts-pull-requests: true
+  accepts-automated-pull-requests: true
+  contributing-policy: https://github.com/oyesanyf/OshoosiClaw/blob/main/CONTRIBUTING.md
+  code-of-conduct: https://github.com/oyesanyf/OshoosiClaw/blob/main/CODE_OF_CONDUCT.md
+
+documentation:
+  detailed-guide: https://github.com/oyesanyf/OshoosiClaw/blob/main/docs/ARCHITECTURE.md
+  quickstart-guide: https://github.com/oyesanyf/OshoosiClaw/blob/main/README.md
+  release-process: https://github.com/oyesanyf/OshoosiClaw/blob/main/docs/operations_manual.md
+  signature-verification: https://github.com/oyesanyf/OshoosiClaw/releases/latest
+
+distribution-points:
+  - https://github.com/oyesanyf/OshoosiClaw/releases/latest
+
+security-artifacts:
+  threat-model:
+    threat-model-created: true
+    evidence-url:
+      - https://github.com/oyesanyf/OshoosiClaw/blob/main/docs/THREAT_MODEL.md
+    comment: >
+      Comprehensive STRIDE Threat Model covering Ring-0 kernel drivers, eBPF sensors,
+      P2P libp2p/Nostr mesh consensus, and Autonomous AI Agent Multi-Ring Containment
+      (OWASP Top 10 for Agentic Applications ASI01-ASI10).
+  self-assessment:
+    self-assessment-created: true
+    evidence-url:
+      - https://github.com/oyesanyf/OshoosiClaw/blob/main/docs/openssf/OshoosiClaw_sandbox_stage.md
+
+security-assessments:
+  - auditor-name: OpenSSF Scorecard & Automated Security CI
+    results-url: https://securityscorecards.dev/viewer/?uri=github.com/oyesanyf/OshoosiClaw
+    date: '2026-10-16'
+    comment: Continuous OpenSSF Scorecard, CodeQL, Cargo Audit, and SLSA v0.2 provenance verification.
+
+security-testing:
+  - tool-type: sast
+    tool-name: CodeQL & Clippy
+    tool-version: latest
+    integration:
+      ad-hoc: false
+      ci: true
+      before-release: true
+    comment: Runs on every pull request and main branch push via GitHub Actions.
+  - tool-type: sca
+    tool-name: Cargo Audit & Dependabot
+    tool-version: latest
+    integration:
+      ad-hoc: false
+      ci: true
+      before-release: true
+    comment: Continuous RustSec advisory database auditing and automated dependency updates.
+
+vulnerability-reporting:
+  reports-accepted: true
+  bug-bounty-available: false
+  security-policy: https://github.com/oyesanyf/OshoosiClaw/blob/main/SECURITY.md
+  email-contact: oyesanyf@gmail.com
+  pgp-key: https://github.com/oyesanyf/OshoosiClaw/releases/latest/download/OshoosiClaw-1.2.0.msi.asc
+
+dependencies:
+  third-party-packages: true
+  dependencies-lists:
+    - https://github.com/oyesanyf/OshoosiClaw/blob/main/Cargo.lock
+  sbom:
+    - sbom-format: CycloneDX
+      sbom-file: https://github.com/oyesanyf/OshoosiClaw/actions/workflows/sbom.yml
+      sbom-Creation: Automated via Syft CycloneDX Action on every build and release.
+  env-dependencies-policy:
+    policy-url: https://github.com/oyesanyf/OshoosiClaw/blob/main/SECURITY.md
+    comment: All GitHub Actions are pinned to full 40-character commit SHAs with read-only default GITHUB_TOKEN permissions.
