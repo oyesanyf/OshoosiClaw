@@ -8315,7 +8315,10 @@ const SIQUERY_PRESETS = {
     api_endpoints: "SELECT api_type, provider_or_server, endpoint_or_command, protocol, auth_configured, pore_radius, status FROM api_endpoints LIMIT 25;",
     coding_tools: "SELECT category, tool_name, version, can_spawn_shell, can_network_egress, pore_radius, path FROM coding_tools ORDER BY can_spawn_shell DESC LIMIT 25;",
     spider_threads: "SELECT sector_id, session_id, current_regime, strain_epsilon, stress_sigma_mpa, enforced_rate_bps, max_exposure_bound_bytes, accumulated_exposure_bytes FROM spider_web_threads LIMIT 25;",
-    business_violations: "SELECT id, session_id, untrusted_source, restricted_asset, target_destination, action_taken, credentials_revoked, detected_at FROM business_policy_violations ORDER BY detected_at DESC LIMIT 25;"
+    business_violations: "SELECT id, session_id, untrusted_source, restricted_asset, target_destination, action_taken, credentials_revoked, detected_at FROM business_policy_violations ORDER BY detected_at DESC LIMIT 25;",
+    octopus_arms: "SELECT arm_id, agent_id, role, generation_epoch, posterior_probability, taint_state, hmac_verified, status FROM agent_octopus_arms LIMIT 25;",
+    octopus_rings: "SELECT ring_id, ring_layer, defense_module, active_epoch, ghostjacking_defanged, ssrf_blocked, path_traversal_blocked, autotomy_severances, status FROM agent_containment_rings LIMIT 25;",
+    mercury_physics: "SELECT process_id, process_name, reynolds_number, weber_number, capillary_pressure_pa, flow_regime, containment_action FROM agent_mercury_physics LIMIT 25;"
 };
 
 async function renderSiqueryView() {
@@ -8323,6 +8326,9 @@ async function renderSiqueryView() {
         fetchSiqueryTables(),
         refreshSiqueryTelemetry()
     ]);
+    if (!state.siqueryLastRaw) {
+        executeSiquery();
+    }
     if (window.lucide) window.lucide.createIcons();
 }
 
