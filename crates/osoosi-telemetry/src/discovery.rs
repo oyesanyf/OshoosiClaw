@@ -218,7 +218,7 @@ impl RouteScraper {
         #[cfg(target_os = "windows")]
         {
             // Windows: route print -4
-            if let Ok(output) = Command::new("route").args(["print", "-4"]).output() {
+            if let Ok(output) = Command::new(osoosi_types::resolve_system_binary("route.exe")).args(["print", "-4"]).output() {
                 let stdout = String::from_utf8_lossy(&output.stdout);
                 let mut in_table = false;
 

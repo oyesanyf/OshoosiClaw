@@ -23,13 +23,25 @@ impl DirectExecutor {
 
 #[async_trait]
 impl SecuredExecutor for DirectExecutor {
-    async fn execute(&self, mut cmd: std::process::Command) -> anyhow::Result<Output> {
+    async fn execute(&self, cmd: std::process::Command) -> anyhow::Result<Output> {
+        let prog = cmd.get_program().to_string_lossy().to_string();
+        let resolved = osoosi_types::resolve_system_binary(&prog);
+        let mut tokio_cmd = Command::new(resolved);
+        tokio_cmd.args(cmd.get_args());
+        for (k, v) in cmd.get_envs() {
+            if let Some(v) = v {
+                tokio_cmd.env(k, v);
+            } else {
+                tokio_cmd.env_remove(k);
+            }
+        }
+        if let Some(dir) = cmd.get_current_dir() {
+            tokio_cmd.current_dir(dir);
+        }
         #[cfg(windows)]
         {
-            use std::os::windows::process::CommandExt;
-            cmd.creation_flags(0x08000000);
+            tokio_cmd.creation_flags(0x08000000);
         }
-        let mut tokio_cmd = Command::from(cmd);
         // system-wide safety timeout for all orchestrated commands to prevent agent hangs
         let res = tokio::time::timeout(std::time::Duration::from_secs(600), tokio_cmd.output()).await;
         match res {

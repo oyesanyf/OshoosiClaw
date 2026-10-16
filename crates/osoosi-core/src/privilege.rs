@@ -150,7 +150,7 @@ fn current_user_windows() -> String {
 
 #[cfg(target_os = "windows")]
 fn is_in_event_log_readers() -> bool {
-    Command::new("whoami")
+    Command::new(osoosi_types::resolve_system_binary("whoami"))
         .args(["/groups"])
         .output()
         .map(|o| {
@@ -163,7 +163,7 @@ fn is_in_event_log_readers() -> bool {
 
 #[cfg(target_os = "windows")]
 fn can_read_channel(channel: &str) -> bool {
-    Command::new("wevtutil")
+    Command::new(osoosi_types::resolve_system_binary("wevtutil"))
         .args(["qe", channel, "/c:1", "/rd:true", "/f:text"])
         .output()
         .map(|o| o.status.success())
@@ -172,7 +172,7 @@ fn can_read_channel(channel: &str) -> bool {
 
 #[cfg(target_os = "windows")]
 fn get_current_user_sid() -> Option<String> {
-    let output = Command::new("whoami").args(["/user"]).output().ok()?;
+    let output = Command::new(osoosi_types::resolve_system_binary("whoami")).args(["/user"]).output().ok()?;
     let text = String::from_utf8_lossy(&output.stdout);
     for line in text.lines() {
         let trimmed = line.trim();
@@ -268,10 +268,10 @@ fn windows_grant(status: &mut PrivilegeStatus) {
     } // Stop if already failed
 
     // Check if Sysmon is installed
-    let sysmon_check = Command::new("sc")
+    let sysmon_check = Command::new(osoosi_types::resolve_system_binary("sc.exe"))
         .args(["query", "Sysmon64"])
         .output()
-        .or_else(|_| Command::new("sc").args(["query", "Sysmon"]).output());
+        .or_else(|_| Command::new(osoosi_types::resolve_system_binary("sc.exe")).args(["query", "Sysmon"]).output());
 
     match sysmon_check {
         Ok(o) if o.status.success() => {
@@ -285,7 +285,7 @@ fn windows_grant(status: &mut PrivilegeStatus) {
     }
 
     // Ensure Process Creation Auditing is enabled (Command line logging)
-    let _ = Command::new("auditpol")
+    let _ = Command::new(osoosi_types::resolve_system_binary("auditpol.exe"))
         .args([
             "/set",
             "/subcategory:Process Creation",
@@ -318,10 +318,7 @@ fn windows_grant(status: &mut PrivilegeStatus) {
     if crate::tool_paths::resolve_executable("ollama").is_none() {
         status
             .actions_taken
-            .push("Ollama NOT FOUND. AI Behavioral Analysis will be disabled.".into());
-        status
-            .actions_taken
-            .push("HINT: Run 'winget install Ollama' or visit ollama.com".into());
+            .push("Ollama external daemon not installed; using built-in Native Rust AI Cortex (SorelFFNN + MalConv + EmbeddingGemma-2 MRL + Clef Decision Engine).".into());
     } else {
         status.details.push("Ollama detection: FOUND".into());
     }
@@ -396,7 +393,7 @@ fn add_to_group(status: &mut PrivilegeStatus, user: &str, group: &str) {
 #[cfg(target_os = "windows")]
 fn grant_channel_read(status: &mut PrivilegeStatus, channel: &str, sid: Option<&str>) {
     // Check if channel exists
-    let gl_output = Command::new("wevtutil").args(["gl", channel]).output();
+    let gl_output = Command::new(osoosi_types::resolve_system_binary("wevtutil.exe")).args(["gl", channel]).output();
     let gl = match gl_output {
         Ok(o) if o.status.success() => o,
         _ => {
@@ -445,7 +442,7 @@ fn grant_channel_read(status: &mut PrivilegeStatus, channel: &str, sid: Option<&
 
     // Append read-only ACE: (A;;0x1;;;SID)
     let new_sddl = format!("{}(A;;0x1;;;{})", current_sddl, sid);
-    match Command::new("wevtutil")
+    match Command::new(osoosi_types::resolve_system_binary("wevtutil.exe"))
         .args(["sl", channel, &format!("/ca:{}", new_sddl)])
         .output()
     {
@@ -883,7 +880,8 @@ pub fn bootstrap_security_rules() {
             apply_defender_exclusions(&paths, &extensions, &processes);
 
             // 2. Firewall Rules (Force Inbound/Outbound Allow for the P2P Mesh)
-            let _ = Command::new("netsh")
+            let netsh_bin = osoosi_types::resolve_system_binary("netsh.exe");
+            let _ = Command::new(&netsh_bin)
                 .creation_flags(CREATE_NO_WINDOW)
                 .args([
                     "advfirewall",
@@ -894,7 +892,7 @@ pub fn bootstrap_security_rules() {
                 ])
                 .output();
 
-            let _ = Command::new("netsh")
+            let _ = Command::new(&netsh_bin)
                 .creation_flags(CREATE_NO_WINDOW)
                 .args([
                     "advfirewall",
@@ -910,7 +908,7 @@ pub fn bootstrap_security_rules() {
                 ])
                 .output();
 
-            let _ = Command::new("netsh")
+            let _ = Command::new(&netsh_bin)
                 .creation_flags(CREATE_NO_WINDOW)
                 .args([
                     "advfirewall",
@@ -927,7 +925,7 @@ pub fn bootstrap_security_rules() {
                 .output();
 
             // 3. Explicit Port Openings for Mesh & Discovery
-            let _ = Command::new("netsh")
+            let _ = Command::new(&netsh_bin)
                 .creation_flags(CREATE_NO_WINDOW)
                 .args([
                     "advfirewall",
@@ -943,7 +941,7 @@ pub fn bootstrap_security_rules() {
                     "profile=domain,private",
                 ])
                 .output();
-            let _ = Command::new("netsh")
+            let _ = Command::new(&netsh_bin)
                 .creation_flags(CREATE_NO_WINDOW)
                 .args([
                     "advfirewall",
@@ -961,7 +959,7 @@ pub fn bootstrap_security_rules() {
                 .output();
 
             // 4. Inbound Web Dashboard (Allow remote access to UI)
-            let _ = Command::new("netsh")
+            let _ = Command::new(&netsh_bin)
                 .creation_flags(CREATE_NO_WINDOW)
                 .args([
                     "advfirewall",
@@ -977,7 +975,7 @@ pub fn bootstrap_security_rules() {
                     "profile=any",
                 ])
                 .output();
-            let _ = Command::new("netsh")
+            let _ = Command::new(&netsh_bin)
                 .creation_flags(CREATE_NO_WINDOW)
                 .args([
                     "advfirewall",
@@ -995,7 +993,7 @@ pub fn bootstrap_security_rules() {
                 .output();
 
             // 5. Inbound ICMP (Ping) for connectivity debugging
-            let _ = Command::new("netsh")
+            let _ = Command::new(&netsh_bin)
                 .creation_flags(CREATE_NO_WINDOW)
                 .args([
                     "advfirewall",
@@ -1010,7 +1008,7 @@ pub fn bootstrap_security_rules() {
                     "profile=any",
                 ])
                 .output();
-            let _ = Command::new("netsh")
+            let _ = Command::new(&netsh_bin)
                 .creation_flags(CREATE_NO_WINDOW)
                 .args([
                     "advfirewall",

@@ -526,7 +526,7 @@ pub fn query_system_accounts() -> std::collections::HashSet<String> {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         let mut discovered = false;
-        if let Ok(output) = std::process::Command::new("powershell.exe")
+        if let Ok(output) = std::process::Command::new(osoosi_types::resolve_system_binary("powershell.exe"))
             .args(["-NoProfile", "-NonInteractive", "-Command", "Get-LocalUser | Select-Object -ExpandProperty Name"])
             .creation_flags(CREATE_NO_WINDOW)
             .output()
@@ -545,7 +545,7 @@ pub fn query_system_accounts() -> std::collections::HashSet<String> {
 
         // Fallback to net.exe user if powershell failed or yielded nothing
         if !discovered {
-            if let Ok(output) = std::process::Command::new("net.exe")
+            if let Ok(output) = std::process::Command::new(osoosi_types::resolve_system_binary("net.exe"))
                 .args(["user"])
                 .creation_flags(CREATE_NO_WINDOW)
                 .output()
@@ -3566,7 +3566,8 @@ impl EdrOrchestrator {
                                     #[allow(unused_imports)]
                                     use std::os::windows::process::CommandExt;
                                     let rule_name = format!("Osoosi-MeshTarpit-{}", tarpit_signal.target_ip.replace('.', "-").replace(':', "-"));
-                                    let mut cmd1 = std::process::Command::new("netsh");
+                                    let netsh_bin = osoosi_types::resolve_system_binary("netsh.exe");
+                                    let mut cmd1 = std::process::Command::new(&netsh_bin);
                                     cmd1.stdout(std::process::Stdio::null())
                                         .stderr(std::process::Stdio::null());
                                     #[cfg(windows)]
@@ -3581,7 +3582,7 @@ impl EdrOrchestrator {
                                         ])
                                         .status();
 
-                                    let mut cmd2 = std::process::Command::new("netsh");
+                                    let mut cmd2 = std::process::Command::new(&netsh_bin);
                                     cmd2.stdout(std::process::Stdio::null())
                                         .stderr(std::process::Stdio::null());
                                     #[cfg(windows)]
@@ -9739,8 +9740,11 @@ impl EdrOrchestrator {
             {
                 const CREATE_NO_WINDOW: u32 = 0x08000000;
 
+                let net_bin = osoosi_types::resolve_system_binary("net.exe");
+                let ps_bin = osoosi_types::resolve_system_binary("powershell.exe");
+
                 // Step 1: Check if user exists before attempting lockdown
-                let mut cmd_net = tokio::process::Command::new("net.exe");
+                let mut cmd_net = tokio::process::Command::new(&net_bin);
                 cmd_net.args(["user", &username]);
                 cmd_net.creation_flags(CREATE_NO_WINDOW);
                 let check_res = cmd_net.output().await;
@@ -9749,7 +9753,7 @@ impl EdrOrchestrator {
                     Ok(ref out) if out.status.success() => true,
                     _ => {
                         let clean_ps = escape_powershell_arg(&username);
-                        let mut cmd_ps = tokio::process::Command::new("powershell.exe");
+                        let mut cmd_ps = tokio::process::Command::new(&ps_bin);
                         cmd_ps.args(["-NoProfile", "-NonInteractive", "-Command", &format!("Get-LocalUser -Name '{}'", clean_ps)]);
                         cmd_ps.creation_flags(CREATE_NO_WINDOW);
                         let ps_check = cmd_ps.output().await;
@@ -9764,7 +9768,7 @@ impl EdrOrchestrator {
 
                 // Step 2: Non-destructive account disabling / lockdown (strictly never deletion)
                 let net_args = get_account_containment_net_args(&username);
-                let mut cmd_dis_net = tokio::process::Command::new("net.exe");
+                let mut cmd_dis_net = tokio::process::Command::new(&net_bin);
                 cmd_dis_net.args(net_args);
                 cmd_dis_net.creation_flags(CREATE_NO_WINDOW);
                 let res = cmd_dis_net.output().await;
@@ -9776,7 +9780,7 @@ impl EdrOrchestrator {
                 // Fallback to PowerShell Disable-LocalUser if net.exe failed
                 if !disabled {
                     let ps_cmd = get_account_containment_powershell_cmd(&username);
-                    let mut cmd_dis_ps = tokio::process::Command::new("powershell.exe");
+                    let mut cmd_dis_ps = tokio::process::Command::new(&ps_bin);
                     cmd_dis_ps.args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd]);
                     cmd_dis_ps.creation_flags(CREATE_NO_WINDOW);
                     let ps_dis = cmd_dis_ps.output().await;

@@ -1153,6 +1153,90 @@ pub fn persist_environment_paths() {
     }
 }
 
+/// Resolves a system binary name to its full absolute path.
+/// Guarantees that essential Windows system binaries (sc.exe, wevtutil.exe, netsh.exe,
+/// powershell.exe, cmd.exe, whoami.exe, tasklist.exe, etc.) resolve correctly even on
+/// machines with a stripped, empty, or corrupted PATH environment variable.
+pub fn resolve_system_binary(prog: &str) -> PathBuf {
+    use std::path::Path;
+
+    let p = Path::new(prog);
+    if p.is_file() {
+        return p.to_path_buf();
+    }
+
+    let stem = prog.strip_suffix(".exe")
+        .or_else(|| prog.strip_suffix(".EXE"))
+        .unwrap_or(prog);
+
+    #[cfg(target_os = "windows")]
+    {
+        let exe_name = format!("{}.exe", stem);
+
+        // 1. Walk existing PATH environment variable if present
+        if let Some(paths) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&paths) {
+                let candidate = dir.join(&exe_name);
+                if candidate.is_file() {
+                    return candidate;
+                }
+                let candidate_orig = dir.join(prog);
+                if candidate_orig.is_file() {
+                    return candidate_orig;
+                }
+            }
+        }
+
+        // 2. Comprehensive check of standard Windows system directories
+        let sys_root = std::env::var("SystemRoot")
+            .or_else(|_| std::env::var("windir"))
+            .unwrap_or_else(|_| r"C:\Windows".to_string());
+        let local_app_data = std::env::var("LOCALAPPDATA")
+            .unwrap_or_else(|_| r"C:\Users\Default\AppData\Local".to_string());
+
+        let candidates = [
+            PathBuf::from(&sys_root).join("System32").join(&exe_name),
+            PathBuf::from(r"C:\Windows\System32").join(&exe_name),
+            PathBuf::from(&sys_root).join(&exe_name),
+            PathBuf::from(r"C:\Windows").join(&exe_name),
+            PathBuf::from(&sys_root).join("System32").join("Wbem").join(&exe_name),
+            PathBuf::from(r"C:\Windows\System32\Wbem").join(&exe_name),
+            PathBuf::from(&sys_root).join("System32").join("WindowsPowerShell").join("v1.0").join(&exe_name),
+            PathBuf::from(r"C:\Windows\System32\WindowsPowerShell\v1.0").join(&exe_name),
+            PathBuf::from(&sys_root).join("Sysnative").join(&exe_name),
+            PathBuf::from(r"C:\Windows\Sysnative").join(&exe_name),
+            PathBuf::from(&local_app_data).join("Microsoft").join("WindowsApps").join(&exe_name),
+        ];
+
+        for candidate in &candidates {
+            if candidate.is_file() {
+                return candidate.clone();
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "windows"))]
+    {
+        if let Some(paths) = std::env::var_os("PATH") {
+            for dir in std::env::split_paths(&paths) {
+                let candidate = dir.join(prog);
+                if candidate.is_file() {
+                    return candidate;
+                }
+            }
+        }
+        let unix_dirs = ["/usr/bin", "/bin", "/usr/sbin", "/sbin", "/usr/local/bin"];
+        for dir in unix_dirs {
+            let candidate = std::path::Path::new(dir).join(prog);
+            if candidate.is_file() {
+                return candidate;
+            }
+        }
+    }
+
+    PathBuf::from(prog)
+}
+
 pub fn resolve_smollm_dir() -> PathBuf {
     resolve_models_dir().join("smollm")
 }
@@ -3280,6 +3364,30 @@ nsrl_cache_limit = 50000
         assert!(!fc.resources.auto_suppress_browser_on_low_ram);
         assert!(!fc.resources.auto_throttle_ai_on_low_ram);
         assert_eq!(fc.resources.nsrl_cache_limit, Some(50000));
+    }
+
+    #[test]
+    fn test_resolve_system_binary() {
+        #[cfg(target_os = "windows")]
+        {
+            let cmd_bin = resolve_system_binary("cmd");
+            assert!(cmd_bin.is_file(), "cmd should resolve to an existing file: {:?}", cmd_bin);
+            assert!(cmd_bin.to_string_lossy().to_ascii_lowercase().ends_with("cmd.exe"));
+
+            let sc_bin = resolve_system_binary("sc.exe");
+            assert!(sc_bin.is_file(), "sc.exe should resolve to an existing file: {:?}", sc_bin);
+            assert!(sc_bin.to_string_lossy().to_ascii_lowercase().ends_with("sc.exe"));
+
+            let ps_bin = resolve_system_binary("powershell.exe");
+            assert!(ps_bin.is_file(), "powershell.exe should resolve to an existing file: {:?}", ps_bin);
+            assert!(ps_bin.to_string_lossy().to_ascii_lowercase().ends_with("powershell.exe"));
+
+            let netsh_bin = resolve_system_binary("netsh");
+            assert!(netsh_bin.is_file(), "netsh should resolve to an existing file: {:?}", netsh_bin);
+
+            let whoami_bin = resolve_system_binary("whoami");
+            assert!(whoami_bin.is_file(), "whoami should resolve to an existing file: {:?}", whoami_bin);
+        }
     }
 }
 
