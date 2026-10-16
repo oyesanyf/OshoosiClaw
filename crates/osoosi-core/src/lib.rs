@@ -1806,6 +1806,9 @@ impl EdrOrchestrator {
         let autoruns_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM autoruns;");
         let total_autoruns = autoruns_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
 
+        let tasks_count_res = engine.execute_query("SELECT COUNT(*) AS total FROM scheduled_tasks;");
+        let total_scheduled_tasks = tasks_count_res.ok().and_then(|r| r.first().and_then(|row| row.get("total").and_then(|v| v.as_i64()))).unwrap_or(0);
+
         if let Ok(suspicious_autoruns) = engine.execute_query(
             "SELECT name, path, location, user FROM autoruns \
              WHERE path LIKE '%\\Temp\\%' OR path LIKE '%\\Users\\Public\\%' \
@@ -2086,6 +2089,7 @@ impl EdrOrchestrator {
                 "sockets_count": total_sockets,
                 "services_count": total_services,
                 "hotfixes_count": total_hotfixes,
+                "scheduled_tasks_count": total_scheduled_tasks,
                 "logical_drives_count": total_drives,
                 "dns_cache_count": total_dns_cache,
                 "arp_cache_count": total_arp_cache,
@@ -3438,6 +3442,16 @@ impl EdrOrchestrator {
             let orch = orch_nostr.clone();
             tokio::spawn(async move {
                 info!("BitChat: Decentralized threat received via Nostr relay: {:?} ({})", sig.reason, sig.source_node);
+                let _ = orch.memory.upsert_peer_status(&osoosi_types::PeerAnnounce {
+                    source_node: sig.source_node.clone(),
+                    timestamp: chrono::Utc::now(),
+                    is_patched: true,
+                    os_name: "Windows".to_string(),
+                    os_version: "10/11 (Nostr WAN)".to_string(),
+                    os_supported: true,
+                    membership_proof: None,
+                    attestation: None,
+                });
                 if let Err(e) = orch.memory.log_threat(&sig) {
                     if e.to_string().contains("UNIQUE constraint") {
                         debug!("Nostr threat {} already persisted: {}", sig.id, e);

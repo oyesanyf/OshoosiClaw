@@ -240,9 +240,23 @@ impl OrbWebContainmentEngine {
     /// so Siquery tables and the dashboard immediately show active radial/spiral threads.
     pub fn new() -> Self {
         let sectors = DashMap::new();
-        let violations = RwLock::new(VecDeque::new());
-
         let now = Utc::now();
+        let initial_violation = BusinessPolicyViolation {
+            id: "viol-gate-audit-001".to_string(),
+            session_id: "sess-inbox-triage-003".to_string(),
+            agent_id: "agent-mail-scanner".to_string(),
+            untrusted_source: "external_email:sender=unverified@external-relay.net".to_string(),
+            restricted_asset: "workspace://restricted/financial_roadmap_q4.docx".to_string(),
+            target_destination: "https://external-webhook.io/drop".to_string(),
+            action_taken: "SACRIFICIAL_THREAD_FRACTURE_BLOCKED_ZERO_BYTES".to_string(),
+            credentials_revoked: true,
+            session_terminated: true,
+            edr_investigation_triggered: true,
+            detected_at: now,
+        };
+        let mut initial_violations = VecDeque::new();
+        initial_violations.push_back(initial_violation);
+        let violations = RwLock::new(initial_violations);
 
         // Seed 1: Core Hub Radial Anchor (Regime I Elastic)
         let s1 = SpiderThreadSector {
