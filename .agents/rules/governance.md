@@ -19,7 +19,8 @@ model: gemini-3.1-pro
 3. **Mandatory Automated Microsoft Submission & Primary `signtool.exe` WDAC Signing**:
    - **User Preference**: "Each time the code is built, remember to send to Microsoft."
    - Every build of release binaries or installer packages MUST automatically code-sign all target and companion binaries with native Windows SDK `signtool.exe` (SHA-256 + DigiCert RFC 3161 timestamp), verify `SignerCertificate != null` so Windows Device Guard / WDAC never blocks execution, and submit them to Microsoft Security Intelligence (WDSI).
-   - Use `scripts/build_and_submit.ps1` as the canonical unified release build command, which automatically compiles `osoosi-cli`, re-signs configs, generates the MSI installer, signs all binaries, and invokes `python scripts/submit_to_wdsi.py --all --no-launch`.
+   - Use `scripts/build_and_submit.ps1` as the canonical unified release build command, which automatically compiles `osoosi-cli`, re-signs configs, generates the MSI installer, signs all binaries, invokes `python scripts/submit_to_wdsi.py --all --no-launch`, and uploads the signed MSI and SLSA provenance to GitHub Releases via `python scripts/update_github_release_msi.py`.
+   - **Mandatory GitHub Release MSI Sync on Every Build:** Every time `OshoosiClaw.msi` is built and signed, it MUST also be uploaded to the latest GitHub Release (`https://github.com/oyesanyf/OshoosiClaw/releases/latest`) along with its updated `.intoto.jsonl`, `.sig`, and `.asc` attestations via `python scripts/update_github_release_msi.py` (automatically invoked by `scripts/build_and_submit.ps1`).
    - Never release or produce an unsubmitted binary artifact.
 
 4. **Strict Invariant: Zero Environment Overwrites (PATH Immutability)**:
