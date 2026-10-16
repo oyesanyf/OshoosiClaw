@@ -444,6 +444,20 @@ if (-not $SkipSubmit) {
 }
 
 # =============================================================================
+# Step 6b: Mandatory GitHub Release MSI & SLSA Provenance Synchronization
+# =============================================================================
+Write-Host "`n>>> [6b/8] Synchronizing Signed MSI Installer to GitHub Latest Release..." -ForegroundColor Yellow
+$ReleaseSyncScript = Join-Path $ProjectRoot "scripts\update_github_release_msi.py"
+if (Test-Path $ReleaseSyncScript) {
+    & python $ReleaseSyncScript
+    if ($LASTEXITCODE -eq 0) {
+        Write-Host "       -> GitHub Release MSI assets synchronized successfully." -ForegroundColor Green
+    } else {
+        Write-Warning "update_github_release_msi.py returned code $LASTEXITCODE"
+    }
+}
+
+# =============================================================================
 # Step 7: Final Service Health Verification & Cleanup
 # =============================================================================
 Write-Host "`n>>> [7/8] Verifying OsoosiEDR Windows Service Health..." -ForegroundColor Yellow

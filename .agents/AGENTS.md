@@ -10,6 +10,7 @@
 - **Trigger:** Whenever code is built, packaged, or released.
 - **Enforcement:** Code artifacts MUST always be Authenticode signed (SHA-256 + RFC 3161 timestamp) and submitted to Microsoft Security Intelligence (WDSI) via `python scripts/submit_to_wdsi.py --all --no-launch` (orchestrated by `scripts/build_and_submit.ps1`).
 - **Standard Command:** Use `powershell -ExecutionPolicy Bypass -File scripts/build_and_submit.ps1` as the canonical command to build, sign, package, and submit to Microsoft in one go.
+- **Mandatory GitHub Release MSI Sync on Every Build:** Every time `OshoosiClaw.msi` is built and signed, it MUST also be uploaded to the latest GitHub Release (`https://github.com/oyesanyf/OshoosiClaw/releases/latest`) along with its updated `.intoto.jsonl`, `.sig`, and `.asc` attestations via `python scripts/update_github_release_msi.py` (automatically invoked by `scripts/build_and_submit.ps1`).
 
 ## Strict Invariant: PATH & Environment Variable Protection
 - **User Requirement:** "my path must never ever be over wrote"
