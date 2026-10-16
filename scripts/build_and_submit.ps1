@@ -18,7 +18,8 @@ param(
     [switch]$SkipWix = $false,
     [switch]$SkipSigning = $false,
     [switch]$SkipSubmit = $false,
-    [switch]$NoLaunch = $true
+    [switch]$NoLaunch = $true,
+    [string]$PrTitle = "feat(siquery): resilient sqlite busy timeout and peer status fallback for 100 tables"
 )
 
 $ErrorActionPreference = "Stop"
@@ -465,7 +466,7 @@ Cleanup-OldLockedFiles
 $SoloShipScript = Join-Path $ProjectRoot "scripts\solo_pr_ship.ps1"
 if (Test-Path $SoloShipScript) {
     Write-Host "`n>>> [8/8] Invoking Solo-Developer PR Workflow (Branch Protection Auto-Approval)..." -ForegroundColor Yellow
-    & powershell -ExecutionPolicy Bypass -File $SoloShipScript -Title "feat: Nonlinear Spider-Web Continuum Mechanics & Exposure-Bounded Containment Engine"
+    & powershell -ExecutionPolicy Bypass -File $SoloShipScript -Title $PrTitle
 }
 
 Write-Host "`n======================================================================" -ForegroundColor Green
