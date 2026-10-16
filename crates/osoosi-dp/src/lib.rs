@@ -41,8 +41,9 @@ impl DifferentialPrivacy {
     /// Generate Laplacian noise: L(0, sensitivity / epsilon)
     pub fn laplace_noise(&self) -> f32 {
         let mut rng = rand::thread_rng();
-        let u: f32 = rng.gen_range(-0.5..0.5);
-        let scale = self.config.sensitivity / self.config.epsilon;
+        let u: f32 = rng.gen_range(-0.4999999..0.4999999);
+        let eff_eps = (self.config.epsilon as f32).max(1e-6);
+        let scale = self.config.sensitivity / eff_eps;
 
         // Laplacian noise = -scale * sign(u) * ln(1 - 2|u|)
         let sign = if u < 0.0 { -1.0 } else { 1.0 };
@@ -79,19 +80,18 @@ pub struct LocalTelemetryNoiseEngine {
 impl LocalTelemetryNoiseEngine {
     pub fn new(epsilon: f64, sensitivity: f64) -> Self {
         Self {
-            epsilon,
-            sensitivity,
+            epsilon: epsilon.max(1e-6),
+            sensitivity: sensitivity.max(1e-6),
         }
     }
 
     /// Inverse CDF sampling for Laplace distribution: L(0, sensitivity / epsilon).
     pub fn sample_laplace(&self) -> f64 {
-        let scale = self.sensitivity / self.epsilon;
-        let mut u: f64 = fastrand::f64() - 0.5;
-        // Guard against boundary values +/-0.5 to prevent ln(0)
-        if u.abs() >= 0.5 {
-            u = u.signum() * 0.4999999999999999;
-        }
+        use rand::Rng;
+        let eff_eps = self.epsilon.max(1e-6);
+        let scale = self.sensitivity / eff_eps;
+        let mut rng = rand::thread_rng();
+        let u: f64 = rng.gen_range(-0.499999999..0.499999999);
         -scale * u.signum() * (1.0 - 2.0 * u.abs()).ln()
     }
 

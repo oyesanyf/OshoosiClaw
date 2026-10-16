@@ -4652,13 +4652,17 @@ impl EdrOrchestrator {
                                                 let _ = orchestrator.memory.record_consensus_finding(&finding);
 
                                                 if is_executable && decision.verdict_probability >= 0.85 {
-                                                    let p_clone = path.to_path_buf();
-                                                    tokio::spawn(async move {
-                                                        let executor = crate::secured_executor::get_forensic_executor().await;
-                                                        let cmd = std::process::Command::new(&p_clone);
-                                                        info!("Forensic Detonation: Running suspicious program in isolated sandbox: {:?}", p_clone);
-                                                        let _ = executor.execute(cmd).await;
-                                                    });
+                                                    if crate::secured_executor::OpenShellExecutor::is_available().await {
+                                                        let p_clone = path.to_path_buf();
+                                                        tokio::spawn(async move {
+                                                            let executor = crate::secured_executor::get_forensic_executor().await;
+                                                            let cmd = std::process::Command::new(&p_clone);
+                                                            info!("Forensic Detonation: Running suspicious program in isolated sandbox: {:?}", p_clone);
+                                                            let _ = executor.execute(cmd).await;
+                                                        });
+                                                    } else {
+                                                        warn!("Forensic Detonation: MicroVM/OpenShell unavailable; refusing uncontained host execution of {:?}", path);
+                                                    }
                                                 }
 
                                                 if decision.action_probability >= autonomy.action_confidence_threshold as f64 {
@@ -5945,12 +5949,16 @@ impl EdrOrchestrator {
                 if let Some(tp) = target_path {
                     let tp_buf = std::path::PathBuf::from(tp);
                     if tp_buf.exists() && tp_buf.is_file() {
-                        tokio::spawn(async move {
-                            let executor = crate::secured_executor::get_forensic_executor().await;
-                            let cmd = std::process::Command::new(&tp_buf);
-                            info!("Forensic Detonation: Running suspicious program in isolated sandbox: {:?}", tp_buf);
-                            let _ = executor.execute(cmd).await;
-                        });
+                        if crate::secured_executor::OpenShellExecutor::is_available().await {
+                            tokio::spawn(async move {
+                                let executor = crate::secured_executor::get_forensic_executor().await;
+                                let cmd = std::process::Command::new(&tp_buf);
+                                info!("Forensic Detonation: Running suspicious program in isolated sandbox: {:?}", tp_buf);
+                                let _ = executor.execute(cmd).await;
+                            });
+                        } else {
+                            warn!("Forensic Detonation: MicroVM/OpenShell unavailable; refusing uncontained host execution of {:?}", tp_buf);
+                        }
                     }
                 }
             }
@@ -9061,6 +9069,7 @@ impl EdrOrchestrator {
             command_tx.clone(),
             self.trust.did().to_string(),
             self.privacy.clone(),
+            self.memory.clone(),
         ));
         tokio::spawn(sleuth.start_sleuthing_loop());
 
@@ -10342,13 +10351,17 @@ impl EdrOrchestrator {
                 || file_path_str.ends_with(".exe");
 
             if confidence >= 0.85 && is_executable {
-                let p_clone = file_path.to_path_buf();
-                tokio::spawn(async move {
-                    let executor = crate::secured_executor::get_forensic_executor().await;
-                    let cmd = std::process::Command::new(&p_clone);
-                    info!("Forensic Detonation: Running suspicious program in isolated sandbox: {:?}", p_clone);
-                    let _ = executor.execute(cmd).await;
-                });
+                if crate::secured_executor::OpenShellExecutor::is_available().await {
+                    let p_clone = file_path.to_path_buf();
+                    tokio::spawn(async move {
+                        let executor = crate::secured_executor::get_forensic_executor().await;
+                        let cmd = std::process::Command::new(&p_clone);
+                        info!("Forensic Detonation: Running suspicious program in isolated sandbox: {:?}", p_clone);
+                        let _ = executor.execute(cmd).await;
+                    });
+                } else {
+                    warn!("Forensic Detonation: MicroVM/OpenShell unavailable; refusing uncontained host execution of {:?}", file_path);
+                }
             }
 
             // Apply containment
@@ -11222,19 +11235,34 @@ mod tests {
         let memory = std::sync::Arc::new(osoosi_memory::MemoryStore::new(":memory:").unwrap());
 
         // Insert 3 simulated hosts (2 hotspot, 1 lan)
-        let now_iso = chrono::Utc::now().to_rfc3339();
+        let now = chrono::Utc::now();
         let did_hotspot1 = "did:osoosi:31b59725bd7728d80163d4407c0863544ca91604d38374003d7be7285aa61ca9";
         let did_lan = "did:osoosi:4885d3f54d7282b7fa192427d9a7d8b45cced40be66b687c73d43e7df7aac668";
         let did_hotspot2 = "did:osoosi:14a974a992b5b95033f1040240820581a81f86d2b96768719c8af0b1ae80cf00";
 
-        let _ = memory.query_json("INSERT INTO peer_status (peer_id, is_patched, os_name, os_version, os_supported, received_at) VALUES (?, 1, 'Windows', '11 Pro', 1, ?)", &[did_hotspot1.to_string(), now_iso.clone()]);
-        let _ = memory.query_json("INSERT INTO reputation (node_id, score, alerts_verified, false_positives, last_updated) VALUES (?, 1.0, 5, 0, ?)", &[did_hotspot1.to_string(), now_iso.clone()]);
-
-        let _ = memory.query_json("INSERT INTO peer_status (peer_id, is_patched, os_name, os_version, os_supported, received_at) VALUES (?, 1, 'Windows', '11 Enterprise', 1, ?)", &[did_lan.to_string(), now_iso.clone()]);
-        let _ = memory.query_json("INSERT INTO reputation (node_id, score, alerts_verified, false_positives, last_updated) VALUES (?, 1.0, 5, 0, ?)", &[did_lan.to_string(), now_iso.clone()]);
-
-        let _ = memory.query_json("INSERT INTO peer_status (peer_id, is_patched, os_name, os_version, os_supported, received_at) VALUES (?, 1, 'Windows', '11 Pro', 1, ?)", &[did_hotspot2.to_string(), now_iso.clone()]);
-        let _ = memory.query_json("INSERT INTO reputation (node_id, score, alerts_verified, false_positives, last_updated) VALUES (?, 1.0, 5, 0, ?)", &[did_hotspot2.to_string(), now_iso.clone()]);
+        for (did, os_ver) in [
+            (did_hotspot1, "11 Pro"),
+            (did_lan, "11 Enterprise"),
+            (did_hotspot2, "11 Pro"),
+        ] {
+            memory.upsert_peer_status(&osoosi_types::PeerAnnounce {
+                source_node: did.to_string(),
+                is_patched: true,
+                os_name: "Windows".to_string(),
+                os_version: os_ver.to_string(),
+                os_supported: true,
+                timestamp: now,
+                membership_proof: None,
+                attestation: None,
+            }).unwrap();
+            memory.upsert_reputation(&osoosi_types::ReputationScore {
+                node_id: did.to_string(),
+                score: 1.0,
+                alerts_verified: 5,
+                false_positives: 0,
+                last_updated: now,
+            }).unwrap();
+        }
 
         // Verify query matches our get_zone_summary logic
         let query = "SELECT peer_id as node_id, 1.0 as score FROM peer_status WHERE peer_id != ? AND (datetime(received_at) > datetime('now', '-30 minutes') OR received_at IS NULL) UNION SELECT node_id, score FROM reputation WHERE node_id != ? AND (datetime(last_updated) > datetime('now', '-30 minutes') OR last_updated IS NULL)";

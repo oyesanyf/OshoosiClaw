@@ -75,9 +75,39 @@ impl TrustManager {
     pub fn new(
         executor: std::sync::Arc<dyn osoosi_types::SecuredExecutor>,
     ) -> anyhow::Result<Self> {
-        // In a real app, load this from secure storage/TPM
-        let mut csprng = rand::thread_rng();
-        let signing_key = SigningKey::generate(&mut csprng);
+        let signing_key = {
+            #[cfg(test)]
+            {
+                let mut csprng = rand::thread_rng();
+                SigningKey::generate(&mut csprng)
+            }
+            #[cfg(not(test))]
+            {
+                let key_path = std::path::Path::new("database").join("node_identity.key");
+                if key_path.exists() {
+                    match std::fs::read(&key_path) {
+                        Ok(bytes) if bytes.len() == 32 => {
+                            let mut key_bytes = [0u8; 32];
+                            key_bytes.copy_from_slice(&bytes);
+                            SigningKey::from_bytes(&key_bytes)
+                        }
+                        _ => {
+                            let mut csprng = rand::thread_rng();
+                            let key = SigningKey::generate(&mut csprng);
+                            let _ = std::fs::create_dir_all("database");
+                            let _ = std::fs::write(&key_path, key.to_bytes());
+                            key
+                        }
+                    }
+                } else {
+                    let mut csprng = rand::thread_rng();
+                    let key = SigningKey::generate(&mut csprng);
+                    let _ = std::fs::create_dir_all("database");
+                    let _ = std::fs::write(&key_path, key.to_bytes());
+                    key
+                }
+            }
+        };
         let public_key = signing_key.verifying_key();
 
         let did = NodeDID {

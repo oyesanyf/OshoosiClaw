@@ -92,6 +92,7 @@ pub fn get_process_name(pid: u32) -> String {
             };
             unsafe {
                 if Process32First(snapshot, &mut entry).is_ok() {
+                    let mut found_name = None;
                     loop {
                         if entry.th32ProcessID == pid {
                             let name: String = entry
@@ -100,9 +101,8 @@ pub fn get_process_name(pid: u32) -> String {
                                 .take_while(|&&c| c != 0)
                                 .map(|&c| c as u8 as char)
                                 .collect();
-                            let _ = CloseHandle(snapshot);
                             if !name.is_empty() {
-                                return name;
+                                found_name = Some(name);
                             }
                             break;
                         }
@@ -110,8 +110,13 @@ pub fn get_process_name(pid: u32) -> String {
                             break;
                         }
                     }
+                    let _ = CloseHandle(snapshot);
+                    if let Some(name) = found_name {
+                        return name;
+                    }
+                } else {
+                    let _ = CloseHandle(snapshot);
                 }
-                let _ = CloseHandle(snapshot);
             }
         }
     }

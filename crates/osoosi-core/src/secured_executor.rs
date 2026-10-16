@@ -300,6 +300,12 @@ impl SecuredExecutor for HardenedSmolExecutor {
         let mut sandbox = self.sandbox.lock().await;
         sandbox.poll();
 
+        if !OpenShellExecutor::is_available().await {
+            return Err(anyhow::anyhow!(
+                "Fail-closed security boundary: OpenShell / MicroVM isolation is unavailable; refusing uncontained host execution of forensic target"
+            ));
+        }
+
         // [FUTURE] Integrate with Windows AppContainer to bind process to Wintun interface.
         let mut tokio_cmd = Command::from(cmd);
         let output = tokio_cmd.output().await?;
@@ -324,6 +330,25 @@ pub async fn get_forensic_executor() -> std::sync::Arc<dyn SecuredExecutor> {
         }
     }
 
-    // Fallback for non-Windows or if Wintun setup fails
-    get_best_executor().await
+    if OpenShellExecutor::is_available().await {
+        info!("NVIDIA OpenShell detected. Using containerized sandbox for forensic detonation.");
+        return std::sync::Arc::new(OpenShellExecutor::new("osoosi-forensic", None));
+    }
+
+    // Fail-closed fallback: never execute suspicious binaries directly on the host OS
+    struct FailClosedDetonationExecutor;
+    #[async_trait]
+    impl SecuredExecutor for FailClosedDetonationExecutor {
+        async fn execute(&self, _cmd: std::process::Command) -> anyhow::Result<Output> {
+            Err(anyhow::anyhow!(
+                "Fail-closed security boundary: OpenShell / MicroVM isolation is unavailable; refusing uncontained host execution of forensic target"
+            ))
+        }
+        async fn download(&self, _url: &str, _dest: &Path, _resume: bool) -> anyhow::Result<()> {
+            Err(anyhow::anyhow!(
+                "Fail-closed security boundary: download refused under uncontained environment"
+            ))
+        }
+    }
+    std::sync::Arc::new(FailClosedDetonationExecutor)
 }

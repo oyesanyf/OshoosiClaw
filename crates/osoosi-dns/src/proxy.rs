@@ -213,10 +213,17 @@ impl DnsShield {
             )
             .await
             {
-                Ok(Ok((len, _))) => {
+                Ok(Ok((len, from_addr))) => {
+                    if from_addr != upstream {
+                        warn!("DNS spoofing defense: dropped packet from unexpected source: {} (expected {})", from_addr, upstream);
+                        continue;
+                    }
                     let response_data = &upstream_buf[..len];
 
-                    // Cache the response (with a simple TTL-less cache; production would honor DNS TTL)
+                    // Cache the response with a 10_000 entry cap
+                    if cache.len() >= 10_000 {
+                        cache.clear();
+                    }
                     cache.insert(cache_key, response_data.to_vec());
 
                     // Forward response back to client
@@ -236,12 +243,12 @@ impl DnsShield {
 /// Build a DNS response that sinkhole the domain to 0.0.0.0
 fn build_sinkhole_response(id: u16, domain: &str, qtype: RecordType) -> Message {
     let mut response = Message::new(id, MessageType::Response, OpCode::Query);
-    response.metadata.response_code = ResponseCode::NoError;
     response.metadata.recursion_desired = true;
     response.metadata.recursion_available = true;
 
-    // Add a sinkhole A record pointing to 0.0.0.0
+    // Add a sinkhole A/AAAA record pointing to 0.0.0.0 / ::
     if qtype == RecordType::A || qtype == RecordType::AAAA {
+        response.metadata.response_code = ResponseCode::NoError;
         if let Ok(name) = Name::parse(domain, None) {
             let rdata = if qtype == RecordType::A {
                 RData::A(hickory_proto::rr::rdata::A(std::net::Ipv4Addr::new(0, 0, 0, 0)))
@@ -252,6 +259,8 @@ fn build_sinkhole_response(id: u16, domain: &str, qtype: RecordType) -> Message 
             let record = Record::from_rdata(name, 300, rdata);
             response.add_answer(record);
         }
+    } else {
+        response.metadata.response_code = ResponseCode::NXDomain;
     }
 
     response

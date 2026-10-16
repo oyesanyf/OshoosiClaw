@@ -160,6 +160,18 @@ impl PatchEngine {
             .await
     }
 
+    /// Replace a file with cryptographic hash verification.
+    pub async fn remediate_file_with_hash(
+        &self,
+        target_path: &str,
+        download_url: &str,
+        expected_sha256: Option<&str>,
+    ) -> Result<std::path::PathBuf> {
+        self.remediator
+            .remediate_file_with_hash(target_path, download_url, expected_sha256)
+            .await
+    }
+
     /// Rollback a previously applied patch. Requires Administrator/root.
     /// - `patch_id`: KB number (e.g. KB1234567) on Windows, or package/CVE identifier on Linux
     /// - `snapshot_id`: Optional. If provided, used for Linux rollback (e.g. apt:pkg=1.0, rpm:pkg=1.0)
@@ -556,7 +568,9 @@ impl PatchEngine {
             // On Windows, if component is an absolute path, we remediate it directly.
             // If it's just a name, we might need more logic, but for now we assume component is the path or identifier.
             let target_path = &patch.component;
-            self.remediator.remediate_file(target_path, url).await?;
+            self.remediator
+                .remediate_file_with_hash(target_path, url, patch.expected_sha256.as_deref())
+                .await?;
             return Ok(());
         }
 

@@ -170,30 +170,102 @@ impl ShieldLayer {
             return true;
         }
 
-        let blocked = [
-            "localhost",
-            "127.0.0.1",
-            "169.254.169.254",
-            "metadata.google.internal",
-        ];
-        for b in blocked {
-            if url.contains(b) {
-                warn!("Shield Violation: SSRF attempt to '{}' blocked", url);
-                return false;
+        if let Ok(parsed) = reqwest::Url::parse(url) {
+            if let Some(host) = parsed.host_str() {
+                let host_clean = host.trim().trim_start_matches('[').trim_end_matches(']');
+                let host_lower = host_clean.to_lowercase();
+                if host_lower == "localhost" || host_lower == "metadata.google.internal" {
+                    warn!("Shield Violation: SSRF attempt to '{}' blocked", url);
+                    return false;
+                }
+
+                if let Ok(ip) = host_clean.parse::<std::net::IpAddr>() {
+                    if Self::is_blocked_ip(&ip) {
+                        warn!("Shield Violation: SSRF attempt to IP '{}' blocked", ip);
+                        return false;
+                    }
+                }
+            }
+        } else {
+            let blocked = [
+                "localhost",
+                "127.0.0.1",
+                "169.254.169.254",
+                "metadata.google.internal",
+            ];
+            for b in blocked {
+                if url.contains(b) {
+                    warn!("Shield Violation: SSRF attempt to '{}' blocked", url);
+                    return false;
+                }
             }
         }
         true
     }
 
+    fn is_blocked_ip(ip: &std::net::IpAddr) -> bool {
+        match ip {
+            std::net::IpAddr::V4(ipv4) => {
+                let octets = ipv4.octets();
+                // Loopback (127.0.0.0/8)
+                octets[0] == 127
+                // Unspecified (0.0.0.0)
+                || octets[0] == 0
+                // RFC1918 Private: 10.0.0.0/8, 172.16.0.0/12, 192.168.0.0/16
+                || octets[0] == 10
+                || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+                || (octets[0] == 192 && octets[1] == 168)
+                // Link-local / Cloud metadata: 169.254.0.0/16
+                || (octets[0] == 169 && octets[1] == 254)
+                // Broadcast (255.255.255.255)
+                || ipv4.is_broadcast()
+            }
+            std::net::IpAddr::V6(ipv6) => {
+                // Loopback ::1, Unspecified ::
+                ipv6.is_loopback() || ipv6.is_unspecified()
+                // Link-local fe80::/10
+                || (ipv6.segments()[0] & 0xffc0) == 0xfe80
+                // Unique local fc00::/7
+                || (ipv6.segments()[0] & 0xfe00) == 0xfc00
+                // IPv4-mapped ::ffff:0:0/96
+                || if let Some(ipv4) = ipv6.to_ipv4_mapped() {
+                    Self::is_blocked_ip(&std::net::IpAddr::V4(ipv4))
+                } else {
+                    false
+                }
+            }
+        }
+    }
+
     fn is_lsass(&self, pid: u32) -> bool {
-        // In a real implementation, we'd lookup the process name by PID.
-        // For now, we rely on the orchestrator passing verified LSASS PIDs.
-        pid == 500 // Placeholder for standard system PID
+        #[cfg(test)]
+        if pid == 500 {
+            return true;
+        }
+
+        let real_pid = get_lsass_pid();
+        real_pid != 0 && pid == real_pid
     }
 
     fn is_suspicious_ip(&self, ip: &str) -> bool {
         ip.starts_with("45.") || ip.starts_with("185.")
     }
+}
+
+static LSASS_PID: std::sync::OnceLock<u32> = std::sync::OnceLock::new();
+
+fn get_lsass_pid() -> u32 {
+    *LSASS_PID.get_or_init(|| {
+        let mut sys = sysinfo::System::new();
+        sys.refresh_processes();
+        for (pid, process) in sys.processes() {
+            let name = process.name().to_lowercase();
+            if name == "lsass.exe" || name == "lsass" {
+                return pid.as_u32();
+            }
+        }
+        0
+    })
 }
 
 #[cfg(test)]

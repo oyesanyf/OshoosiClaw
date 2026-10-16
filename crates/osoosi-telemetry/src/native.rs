@@ -361,7 +361,9 @@ async fn run_hook_telemetry_listener(tx: tokio::sync::mpsc::Sender<HostSecurityE
                 }
 
                 let mut result = None;
-                if ConnectNamedPipe(h_pipe, std::ptr::null_mut()) != 0 {
+                let connected = ConnectNamedPipe(h_pipe, std::ptr::null_mut()) != 0
+                    || windows_sys::Win32::Foundation::GetLastError() == windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED;
+                if connected {
                     let mut buffer = [0u8; 4096];
                     let mut bytes_read = 0;
                     if ReadFile(h_pipe, buffer.as_mut_ptr() as *mut _, 4096, &mut bytes_read, std::ptr::null_mut()) != 0 {

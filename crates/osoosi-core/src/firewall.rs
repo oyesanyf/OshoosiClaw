@@ -758,7 +758,20 @@ fn block_windows_program(image_path: Option<&str>) -> Result<String> {
 fn block_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<String> {
     #[allow(unused_imports)]
     use std::os::windows::process::CommandExt;
-    let payload = targets.join(",");
+
+    let mut valid_targets = Vec::new();
+    for t in targets {
+        if let Ok(ip) = t.trim().parse::<std::net::IpAddr>() {
+            if !ip.is_loopback() && !ip.is_unspecified() {
+                valid_targets.push(ip.to_string());
+            }
+        }
+    }
+    if valid_targets.is_empty() {
+        return Err(anyhow!("No valid non-loopback remote IPs provided to Windows firewall block"));
+    }
+
+    let payload = valid_targets.join(",");
     let name = dns_rule_name(prefix, &payload);
 
     let mut cmd = Command::new("netsh");
@@ -891,6 +904,9 @@ fn remove_windows_autoblock_rules() -> Result<usize> {
 fn block_linux_process_uid(process_id: Option<u32>) -> Result<String> {
     let pid = process_id.ok_or_else(|| anyhow!("Linux firewall block requires ProcessId"))?;
     let uid = linux_uid_for_pid(pid)?;
+    if uid == 0 {
+        return Err(anyhow!("Refusing to block UID 0 (root) - potential system lockout"));
+    }
 
     if command_exists("iptables") {
         // Add OUTPUT drop for this uid if not already present.
@@ -969,8 +985,20 @@ fn block_linux_process_uid(process_id: Option<u32>) -> Result<String> {
 
 #[cfg(target_os = "linux")]
 fn block_linux_remote_ips(targets: &[String]) -> Result<String> {
+    let mut valid_targets = Vec::new();
+    for t in targets {
+        if let Ok(ip) = t.trim().parse::<std::net::IpAddr>() {
+            if !ip.is_loopback() && !ip.is_unspecified() {
+                valid_targets.push(ip.to_string());
+            }
+        }
+    }
+    if valid_targets.is_empty() {
+        return Err(anyhow!("No valid non-loopback remote IPs provided to Linux firewall block"));
+    }
+
     if command_exists("iptables") {
-        for ip in targets {
+        for ip in &valid_targets {
             let check = Command::new("iptables")
                 .args(["-C", "OUTPUT", "-d", ip, "-j", "DROP"])
                 .status();
@@ -986,7 +1014,7 @@ fn block_linux_remote_ips(targets: &[String]) -> Result<String> {
         }
         return Ok(format!(
             "Linux firewall DNS destination block applied for {} IP(s)",
-            targets.len()
+            valid_targets.len()
         ));
     }
 
@@ -1000,7 +1028,7 @@ fn block_linux_remote_ips(targets: &[String]) -> Result<String> {
                 "output", "priority", "0", ";", "}",
             ])
             .status();
-        for ip in targets {
+        for ip in &valid_targets {
             let status = Command::new("nft")
                 .args([
                     "add", "rule", "inet", "osoosi", "output", "ip", "daddr", ip, "drop",
@@ -1012,7 +1040,7 @@ fn block_linux_remote_ips(targets: &[String]) -> Result<String> {
         }
         return Ok(format!(
             "Linux nft DNS destination block applied for {} IP(s)",
-            targets.len()
+            valid_targets.len()
         ));
     }
 
@@ -1068,8 +1096,10 @@ fn linux_uid_for_pid(pid: u32) -> Result<u32> {
 
 #[cfg(target_os = "linux")]
 fn command_exists(cmd: &str) -> bool {
-    Command::new("sh")
-        .args(["-c", &format!("command -v {} >/dev/null 2>&1", cmd)])
+    Command::new("which")
+        .arg(cmd)
+        .stdout(std::process::Stdio::null())
+        .stderr(std::process::Stdio::null())
         .status()
         .map(|s| s.success())
         .unwrap_or(false)

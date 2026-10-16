@@ -35,17 +35,61 @@ impl StandaloneRemediator {
     /// Download a file and replace the target path atomically.
     /// Returns the backup path of the original file.
     pub async fn remediate_file(&self, target_path: &str, download_url: &str) -> Result<PathBuf> {
+        self.remediate_file_with_hash(target_path, download_url, None).await
+    }
+
+    /// Download a file with SHA-256 verification and replace target path atomically.
+    pub async fn remediate_file_with_hash(
+        &self,
+        target_path: &str,
+        download_url: &str,
+        expected_sha256: Option<&str>,
+    ) -> Result<PathBuf> {
         info!(
             "Remediating standalone file: {} via {}",
             target_path, download_url
         );
 
         let target = Path::new(target_path);
+        if target.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+            return Err(anyhow!(
+                "Path traversal rejected in target file path: {}",
+                target_path
+            ));
+        }
+
         if !target.exists() {
             return Err(anyhow!(
                 "Target file for remediation does not exist: {}",
                 target_path
             ));
+        }
+
+        if let Ok(meta) = std::fs::symlink_metadata(target) {
+            if meta.file_type().is_symlink() {
+                return Err(anyhow!(
+                    "Target file is a symbolic link; refusing remediation: {}",
+                    target_path
+                ));
+            }
+        }
+
+        if !download_url.starts_with("https://") {
+            return Err(anyhow!(
+                "Remediation download URL must use HTTPS: {}",
+                download_url
+            ));
+        }
+
+        let blocked_hosts = ["localhost", "127.", "10.", "192.168.", "169.254."];
+        let url_lower = download_url.to_lowercase();
+        for b in blocked_hosts {
+            if url_lower.contains(&format!("://{}", b)) || url_lower.contains(&format!("://{}:", b)) {
+                return Err(anyhow!(
+                    "SSRF Protection: Blocked private/loopback download host in URL: {}",
+                    download_url
+                ));
+            }
         }
 
         // 1. Download to memory first to ensure it's valid
@@ -58,6 +102,24 @@ impl StandaloneRemediator {
             ));
         }
         let data = response.bytes().await?;
+
+        // Compute SHA-256
+        use sha2::{Sha256, Digest};
+        let mut hasher = Sha256::new();
+        hasher.update(&data);
+        let computed_sha256 = hex::encode(hasher.finalize());
+        info!("Remediation payload SHA-256: {}", computed_sha256);
+
+        if let Some(expected) = expected_sha256 {
+            let expected_clean = expected.trim().to_lowercase();
+            if !expected_clean.is_empty() && expected_clean != computed_sha256.to_lowercase() {
+                return Err(anyhow!(
+                    "Cryptographic mismatch: expected SHA-256 {}, but downloaded payload has {}",
+                    expected_clean,
+                    computed_sha256
+                ));
+            }
+        }
 
         // 2. Create backup of original
         let backup_path = self.create_backup(target)?;

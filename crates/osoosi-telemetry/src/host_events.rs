@@ -310,7 +310,7 @@ impl HostEventReader for WindowsEventReader {
 
                         let _ = EvtRender(None, evt, EvtRenderEventXml.0 as u32, 0, None, &mut buffer_used, &mut property_count);
 
-                        let mut buffer: Vec<u16> = vec![0; (buffer_used / 2) as usize];
+                        let mut buffer: Vec<u16> = vec![0u16; (buffer_used / 2 + 1) as usize];
                         if EvtRender(
                             None, 
                             evt, 

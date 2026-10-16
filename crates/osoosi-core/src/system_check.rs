@@ -267,6 +267,11 @@ pub async fn validate_windows_file_integrity(path: &str) -> bool {
         use std::path::Path;
         use std::process::Command;
 
+        if path.contains("..") || path.chars().any(|c| c.is_control() || c == '"' || c == '&' || c == '|' || c == ';' || c == '`' || c == '$') {
+            warn!("SFC Validation: Rejecting suspicious or malformed file path: {}", path);
+            return false;
+        }
+
         let path_obj = Path::new(path);
         let win_dir = std::env::var("WINDIR").unwrap_or_else(|_| "C:\\Windows".into());
 
@@ -284,8 +289,9 @@ pub async fn validate_windows_file_integrity(path: &str) -> bool {
             path
         );
 
+        let sfc_path = "C:\\Windows\\System32\\sfc.exe";
         // SFC /SCANFILE requires full path
-        let output = match Command::new("sfc").args(["/scanfile", path]).output() {
+        let output = match Command::new(sfc_path).args(["/scanfile", path]).output() {
             Ok(o) => o,
             Err(e) => {
                 error!("SFC Validation: Could not execute sfc: {}", e);
