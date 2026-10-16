@@ -129,18 +129,42 @@ impl SandboxSecurityConfig {
         }
     }
 
-    /// Check if SELECT query is allowed (table restriction).
+    /// Check if SELECT query is allowed (single statement, no dangerous keywords, table restriction).
     pub fn is_query_allowed(&self, query: &str) -> bool {
+        let trimmed = query.trim();
+        let upper = trimmed.to_uppercase();
+        if !upper.starts_with("SELECT") {
+            return false;
+        }
+
+        // Reject multi-statement SQL
+        let statements: Vec<&str> = trimmed
+            .split(';')
+            .map(|s| s.trim())
+            .filter(|s| !s.is_empty())
+            .collect();
+        if statements.len() > 1 {
+            return false;
+        }
+
+        // Reject dangerous SQL keywords
+        let dangerous_keywords = [
+            "ATTACH", "DETACH", "PRAGMA", "UNION", "DROP", "DELETE",
+            "UPDATE", "INSERT", "ALTER", "CREATE", "REPLACE", "VACUUM",
+        ];
+        for token in upper.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == ',' || c == ';') {
+            let token = token.trim();
+            if dangerous_keywords.contains(&token) {
+                return false;
+            }
+        }
+
         if !self.query_restrict_tables || self.query_allowed_tables.is_empty() {
             return true;
         }
-        let q = query.trim().to_uppercase();
-        if !q.starts_with("SELECT") {
-            return false;
-        }
         for table in &self.query_allowed_tables {
             let t = table.to_uppercase();
-            if q.contains(&format!("FROM {}", t)) || q.contains(&format!("FROM {} ", t)) {
+            if upper.contains(&format!("FROM {}", t)) || upper.contains(&format!("FROM {} ", t)) {
                 return true;
             }
         }
@@ -156,7 +180,7 @@ impl SandboxSecurityConfig {
     }
 }
 
-fn extract_host_from_url(url: &str) -> String {
+pub fn extract_host_from_url(url: &str) -> String {
     let url = url.trim();
     let rest = if let Some(r) = url.strip_prefix("https://") {
         r
@@ -165,13 +189,18 @@ fn extract_host_from_url(url: &str) -> String {
     } else {
         return String::new();
     };
+    let authority = rest.split('/').next().unwrap_or(rest);
+    let host_port = authority.split('@').last().unwrap_or(authority);
+    if host_port.starts_with('[') {
+        if let Some(end) = host_port.find(']') {
+            return host_port[1..end].to_ascii_lowercase();
+        }
+    }
     to_ascii_lower(
-        rest.split('/')
-            .next()
-            .unwrap_or(rest)
+        host_port
             .split(':')
             .next()
-            .unwrap_or(rest),
+            .unwrap_or(host_port),
     )
 }
 

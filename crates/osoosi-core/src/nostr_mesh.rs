@@ -85,9 +85,8 @@ impl NostrMeshOrchestrator {
         // Mark our own broadcast threat as already seen so we don't re-process local echoes
         self.seen_threats.insert(sig.id.clone(), std::time::Instant::now());
         
-        // --- 1. MALCHELA DIFFERENTIAL PRIVACY ---
-        // Inject Laplacian noise to prevent relay-side fingerprinting of specific threats.
-        sig.confidence = self.privacy.inject_noise(sig.confidence as f64) as f32;
+        // Ensure confidence is valid and bounded without corrupting cryptographic signature
+        sig.confidence = sig.confidence.clamp(0.05, 1.0);
 
         // --- 2. CRYPTOGRAPHIC IDENTITY & SIGNING ---
         let content = serde_json::to_string(&sig)?;

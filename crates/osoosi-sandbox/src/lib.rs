@@ -101,6 +101,20 @@ pub struct SandboxResult {
     pub suspicious_sequence: bool,
 }
 
+/// Maximum allowable buffer length returned from WASM linear memory (16MB).
+const MAX_WASM_BUFFER_SIZE: usize = 16 * 1024 * 1024;
+
+/// Safely read a slice from WASM linear memory with checked arithmetic and size upper bounds.
+fn read_wasm_slice<'a>(data: &'a [u8], ptr: u32, len: u32) -> Option<&'a [u8]> {
+    let start = ptr as usize;
+    let length = len as usize;
+    if length > MAX_WASM_BUFFER_SIZE {
+        return None;
+    }
+    let end = start.checked_add(length)?;
+    data.get(start..end)
+}
+
 /// The main WASM execution engine.
 pub struct SandboxExecutor {
     engine: Engine,
@@ -163,9 +177,8 @@ impl SandboxExecutor {
                         .and_then(|e: Extern| e.into_memory())
                         .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
                     let data = memory.data(&caller);
-                    let bytes = data
-                        .get(ptr as usize..(ptr + len) as usize)
-                        .ok_or_else(|| wasmtime::Error::msg("Out of bounds memory access"))?
+                    let bytes = read_wasm_slice(data, ptr, len)
+                        .ok_or_else(|| wasmtime::Error::msg("Out of bounds or oversized memory access in host_scan_file"))?
                         .to_vec();
                     let fuel = caller.get_fuel().unwrap_or(0);
 
@@ -212,7 +225,9 @@ impl SandboxExecutor {
                         .and_then(|e: Extern| e.into_memory())
                         .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
                     let data = memory.data(&caller);
-                    let url = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
+                    let slice = read_wasm_slice(data, ptr, len)
+                        .ok_or_else(|| wasmtime::Error::msg("Out of bounds or oversized memory access in host_fetch_url"))?;
+                    let url = std::str::from_utf8(slice)
                         .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in URL"))?
                         .to_string();
                     let fuel = caller.get_fuel().unwrap_or(0);
@@ -269,7 +284,9 @@ impl SandboxExecutor {
                         .and_then(|e: Extern| e.into_memory())
                         .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
                     let data = memory.data(&caller);
-                    let cmd = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
+                    let slice = read_wasm_slice(data, ptr, len)
+                        .ok_or_else(|| wasmtime::Error::msg("Out of bounds or oversized memory access in host_exec_command"))?;
+                    let cmd = std::str::from_utf8(slice)
                         .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in command"))?
                         .to_string();
                     let fuel = caller.get_fuel().unwrap_or(0);
@@ -329,7 +346,9 @@ impl SandboxExecutor {
                         .and_then(|e: Extern| e.into_memory())
                         .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
                     let data = memory.data(&caller);
-                    let query = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
+                    let slice = read_wasm_slice(data, ptr, len)
+                        .ok_or_else(|| wasmtime::Error::msg("Out of bounds or oversized memory access in host_read_db"))?;
+                    let query = std::str::from_utf8(slice)
                         .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in query"))?
                         .to_string();
                     let fuel = caller.get_fuel().unwrap_or(0);
@@ -386,13 +405,13 @@ impl SandboxExecutor {
                         .and_then(|e: Extern| e.into_memory())
                         .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
                     let data = memory.data(&caller);
-                    let topic =
-                        std::str::from_utf8(&data[t_ptr as usize..(t_ptr + t_len) as usize])
-                            .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in topic"))?
-                            .to_string();
-                    let bytes = data
-                        .get(d_ptr as usize..(d_ptr + d_len) as usize)
-                        .ok_or_else(|| wasmtime::Error::msg("Out of bounds memory access"))?
+                    let topic_slice = read_wasm_slice(data, t_ptr, t_len)
+                        .ok_or_else(|| wasmtime::Error::msg("Out of bounds or oversized memory access for topic in host_send_mesh"))?;
+                    let topic = std::str::from_utf8(topic_slice)
+                        .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in topic"))?
+                        .to_string();
+                    let bytes = read_wasm_slice(data, d_ptr, d_len)
+                        .ok_or_else(|| wasmtime::Error::msg("Out of bounds or oversized memory access for data in host_send_mesh"))?
                         .to_vec();
                     let fuel = caller.get_fuel().unwrap_or(0);
 
@@ -441,7 +460,9 @@ impl SandboxExecutor {
                         .and_then(|e: Extern| e.into_memory())
                         .ok_or_else(|| wasmtime::Error::msg("Missing memory export"))?;
                     let data = memory.data(&caller);
-                    let entry_str = std::str::from_utf8(&data[ptr as usize..(ptr + len) as usize])
+                    let slice = read_wasm_slice(data, ptr, len)
+                        .ok_or_else(|| wasmtime::Error::msg("Out of bounds or oversized memory access in host_write_audit"))?;
+                    let entry_str = std::str::from_utf8(slice)
                         .map_err(|_| wasmtime::Error::msg("Invalid UTF-8 in audit entry"))?
                         .to_string();
                     let entry: serde_json::Value = serde_json::from_str(&entry_str)

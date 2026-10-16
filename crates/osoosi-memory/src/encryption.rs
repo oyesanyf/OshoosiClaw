@@ -65,7 +65,8 @@ pub fn get_db_encryption_key() -> String {
 /// ```
 pub fn apply_encryption(conn: &rusqlite::Connection, key: &str) -> anyhow::Result<()> {
     // SQLCipher PRAGMA key must be the first statement after opening
-    conn.execute_batch(&format!("PRAGMA key = '{}';", key))?;
+    let escaped_key = key.replace('\'', "''");
+    conn.execute_batch(&format!("PRAGMA key = '{}';", escaped_key))?;
 
     // Configure encryption parameters
     conn.execute_batch(
@@ -105,12 +106,15 @@ pub fn migrate_to_encrypted(db_path: &str, key: &str) -> anyhow::Result<()> {
 
     let conn = rusqlite::Connection::open(db_path)?;
 
+    let escaped_tmp = tmp_path.replace('\'', "''");
+    let escaped_key = key.replace('\'', "''");
+
     // Attach a new encrypted database
     conn.execute_batch(&format!(
         "ATTACH DATABASE '{}' AS encrypted KEY '{}';
          SELECT sqlcipher_export('encrypted');
          DETACH DATABASE encrypted;",
-        tmp_path, key
+        escaped_tmp, escaped_key
     ))?;
 
     // Replace the original with the encrypted version
@@ -127,8 +131,10 @@ pub fn rekey_database(
     old_key: &str,
     new_key: &str,
 ) -> anyhow::Result<()> {
-    conn.execute_batch(&format!("PRAGMA key = '{}';", old_key))?;
-    conn.execute_batch(&format!("PRAGMA rekey = '{}';", new_key))?;
+    let escaped_old = old_key.replace('\'', "''");
+    let escaped_new = new_key.replace('\'', "''");
+    conn.execute_batch(&format!("PRAGMA key = '{}';", escaped_old))?;
+    conn.execute_batch(&format!("PRAGMA rekey = '{}';", escaped_new))?;
     info!("Database re-keyed successfully.");
     Ok(())
 }

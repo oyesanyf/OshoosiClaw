@@ -470,6 +470,28 @@ impl MemoryStore {
             [],
         )?;
 
+        // Purge stale bogus rows from threats, consensus_findings, and known_clean_hashes:
+        let _ = conn.execute(
+            "DELETE FROM threats WHERE process_name IS NULL OR lower(process_name) IN ('unknown', 'unknown process', 'system process', '') OR reason LIKE '%Execution Of Non-Existing File%' OR confidence < 0.50",
+            [],
+        );
+        let _ = conn.execute(
+            "DELETE FROM consensus_findings WHERE process_name IS NULL OR lower(process_name) IN ('unknown', 'unknown process', 'system process', '') OR voters_summary LIKE '%Execution Of Non-Existing File%'",
+            [],
+        );
+        let lolbins_patterns = [
+            "%powershell%", "%pwsh%", "%cmd.exe%", "%rundll32%", "%regsvr32%", "%mshta%", "%wmic%",
+            "%certutil%", "%bitsadmin%", "%reg.exe%", "%vssadmin%", "%wbadmin%", "%bcdedit%",
+            "%ntdsutil%", "%cscript%", "%wscript%", "%msiexec%", "%python%", "%node.exe%",
+            "%svchost%", "%explorer.exe%", "%dllhost%", "%taskhostw%", "%conhost%"
+        ];
+        for pat in &lolbins_patterns {
+            let _ = conn.execute(
+                "DELETE FROM known_clean_hashes WHERE lower(process_name) LIKE ?1 OR lower(file_path) LIKE ?1",
+                rusqlite::params![pat],
+            );
+        }
+
         Ok(())
     }
 
@@ -1540,6 +1562,24 @@ impl MemoryStore {
         query: &str,
         parameters: &[String],
     ) -> anyhow::Result<Vec<serde_json::Value>> {
+        let q_trimmed = query.trim();
+        let q_upper = q_trimmed.to_uppercase();
+        if !q_upper.starts_with("SELECT ") {
+            anyhow::bail!("Only SELECT queries are permitted in query_json");
+        }
+        let without_semi = q_trimmed.trim_end_matches(';').trim();
+        if without_semi.contains(';') {
+            anyhow::bail!("Multi-statement queries are forbidden in query_json");
+        }
+        let dangerous = ["ATTACH", "DETACH", "PRAGMA", "DROP", "DELETE", "UPDATE", "INSERT", "ALTER", "CREATE", "REPLACE", "VACUUM"];
+        for kw in &dangerous {
+            for word in q_upper.split(|c: char| !c.is_alphanumeric() && c != '_') {
+                if word == *kw {
+                    anyhow::bail!("Disallowed keyword in query_json: {}", kw);
+                }
+            }
+        }
+
         let conn = self.conn.lock();
         let mut stmt = conn.prepare(query)?;
         let column_count = stmt.column_count();
@@ -1769,6 +1809,22 @@ impl MemoryStore {
         if clean_hash.is_empty() {
             return Ok(());
         }
+
+        let lolbins = [
+            "powershell", "pwsh", "cmd", "rundll32", "regsvr32", "mshta", "wmic", "certutil",
+            "bitsadmin", "reg", "vssadmin", "wbadmin", "bcdedit", "ntdsutil", "cscript", "wscript",
+            "msiexec", "python", "node", "svchost", "explorer", "dllhost", "taskhostw", "conhost"
+        ];
+        let p_name = process_name.unwrap_or("").to_ascii_lowercase();
+        let f_path = file_path.unwrap_or("").to_ascii_lowercase();
+        let is_dual_use = lolbins.iter().any(|lb| {
+            p_name.contains(lb) || f_path.contains(lb)
+        });
+        if is_dual_use {
+            debug!("MemoryStore: Refusing to cache dual-use system binary/LOLBin {} ({}) as clean ignored", p_name, clean_hash);
+            return Ok(());
+        }
+
         let conn = self.conn.lock();
         let now = Utc::now().to_rfc3339();
         conn.execute(

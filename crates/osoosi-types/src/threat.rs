@@ -377,7 +377,15 @@ pub struct GossipFeedItem {
 
 impl GossipFeedItem {
     pub fn from_threat(sig: &ThreatSignature, event_type: &str) -> Self {
-        let action_str = format!("{:?}", sig.recommended_action);
+        let action_str = match sig.recommended_action {
+            ResponseAction::Isolate => "Isolated & Terminated".to_string(),
+            ResponseAction::Tarpit => "Tarpitted".to_string(),
+            ResponseAction::GhostTarpit => "Ghost Tarpitted".to_string(),
+            ResponseAction::MemoryScan => "Memory Scanned".to_string(),
+            ResponseAction::Alert => "Alert".to_string(),
+            _ => format!("{:?}", sig.recommended_action),
+        };
+
         let severity = if sig.recommended_action == ResponseAction::Isolate || sig.confidence >= 0.85 {
             "CRITICAL".to_string()
         } else if sig.recommended_action == ResponseAction::Tarpit
@@ -391,20 +399,66 @@ impl GossipFeedItem {
             "LOW".to_string()
         };
 
-        let proc = sig.process_name.as_deref().unwrap_or("Unknown Process");
-        let tech_badge = sig
-            .mitre_technique
+        let proc_opt = sig
+            .process_name
             .as_deref()
-            .map(|t| format!("[{}] ", t))
-            .unwrap_or_default();
-        let summary = match event_type {
-            "MESH_THREAT_RECEIVED" => {
-                format!("Peer Threat: {}{} — Action: {}", tech_badge, proc, action_str)
+            .map(str::trim)
+            .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("unknown") && !s.eq_ignore_ascii_case("unknown process") && !s.eq_ignore_ascii_case("system process"));
+
+        let tech_label = match (sig.mitre_technique.as_deref(), sig.mitre_technique_name.as_deref()) {
+            (Some(id), Some(name)) if !name.is_empty() => format!("[{} · {}] ", id, name),
+            (Some(id), _) => format!("[{}] ", id),
+            _ => String::new(),
+        };
+
+        // Clean sig.reason by stripping internal voter brackets like [Sigma-Engine]: or [CredentialGuard-Memory]:
+        let mut issue_description = sig.reason.as_deref().unwrap_or("").trim().to_string();
+        while let Some(open) = issue_description.find('[') {
+            if let Some(close) = issue_description[open..].find(']') {
+                let after_bracket = open + close + 1;
+                let colon_space = if issue_description[after_bracket..].starts_with(": ") {
+                    2
+                } else if issue_description[after_bracket..].starts_with(':') {
+                    1
+                } else if issue_description[after_bracket..].starts_with(' ') {
+                    1
+                } else {
+                    0
+                };
+                issue_description = format!("{}{}", &issue_description[..open], &issue_description[after_bracket + colon_space..]).trim().to_string();
+            } else {
+                break;
             }
-            "MESH_THREAT_BROADCAST" => {
-                format!("Broadcast to Mesh: {}{} — Action: {}", tech_badge, proc, action_str)
+        }
+        let first_desc = issue_description.split(';').next().unwrap_or(&issue_description).trim();
+        let issue_str = if first_desc.is_empty() {
+            "Threat Activity Detected"
+        } else if first_desc.len() > 120 {
+            &first_desc[..117]
+        } else {
+            first_desc
+        };
+
+        let summary = if let Some(proc) = proc_opt {
+            match event_type {
+                "MESH_THREAT_RECEIVED" => {
+                    format!("Peer Threat: {}{}: {} — Action: {}", tech_label, proc, issue_str, action_str)
+                }
+                "MESH_THREAT_BROADCAST" => {
+                    format!("Broadcast to Mesh: {}{}: {} — Action: {}", tech_label, proc, issue_str, action_str)
+                }
+                _ => format!("Threat Event: {}{}: {} — Action: {}", tech_label, proc, issue_str, action_str),
             }
-            _ => format!("Threat Event: {}{} — Action: {}", tech_badge, proc, action_str),
+        } else {
+            match event_type {
+                "MESH_THREAT_RECEIVED" => {
+                    format!("Peer Threat: {}{} — Action: {}", tech_label, issue_str, action_str)
+                }
+                "MESH_THREAT_BROADCAST" => {
+                    format!("Broadcast to Mesh: {}{} — Action: {}", tech_label, issue_str, action_str)
+                }
+                _ => format!("Threat Event: {}{} — Action: {}", tech_label, issue_str, action_str),
+            }
         };
 
         Self {
@@ -420,10 +474,12 @@ impl GossipFeedItem {
             confidence: sig.confidence,
             severity,
             action: Some(action_str),
-            status: match sig.action_state {
-                ActionState::Executed => "REMEDIATED".to_string(),
-                ActionState::Rejected => "FALSE_POSITIVE".to_string(),
-                _ => "ACTIVE".to_string(),
+            status: if sig.action_state == ActionState::Executed || sig.recommended_action == ResponseAction::Isolate {
+                "REMEDIATED".to_string()
+            } else if sig.action_state == ActionState::Rejected {
+                "FALSE_POSITIVE".to_string()
+            } else {
+                "ACTIVE".to_string()
             },
             hash_blake3: sig.hash_blake3.clone(),
             is_threat: true,
