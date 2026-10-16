@@ -6,7 +6,7 @@ The project has a minimum of one maintainer and is actively expanding its contri
 
 ### Plan to grow the maintainer and contributor base
   * **Modular Crate Publication**: Publish standalone crates from the 25-crate Rust workspace—including the Dogwood Temporal Policy Engine (`Cedar` + past-only Metric First-Order Temporal Logic) and `osoosi-agent-anomaly` (OWASP Agentic Top 10 `ASI01`–`ASI10` runtime detector & AgentOctopus multi-ring containment)—to `crates.io` so downstream Rust and AI safety teams can adopt and co-maintain individual components.
-  * **OpenSSF Working Group Collaboration**: Present technical demonstrations and bi-annual readouts at the **OpenSSF AI/ML Security Working Group** and **OpenSSF Security Tooling Working Group** meetings to onboard co-maintainers from multiple organizations toward Incubating stage requirements (3+ maintainers across 2+ organizations).
+  * **OpenSSF Working Group Collaboration**: Share async technical updates, security telemetry benchmarks, and repository releases (`https://github.com/oyesanyf/OshoosiClaw`) with the **OpenSSF AI/ML Security Working Group** and **OpenSSF Security Tooling Working Group** to onboard co-maintainers from multiple organizations toward Incubating stage requirements (3+ maintainers across 2+ organizations).
   * **Contributor Onboarding & Good First Issues**: Maintain curated `good first issue` and `help wanted` issues across kernel sensors (Windows Minifilter/WFP, Linux eBPF), the 100-table native Rust `siquery` relational SQL engine, and the Agentic Breakout Test Harness, backed by comprehensive architecture and contributor guides (`CONTRIBUTING.md`, `docs/ARCHITECTURE.md`).
 
 ### Sponsor
