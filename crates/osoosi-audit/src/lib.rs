@@ -20,6 +20,8 @@ pub struct AuditEntry {
     pub data: serde_json::Value,
 }
 
+pub const MAX_IN_MEMORY_AUDIT_ENTRIES: usize = 4096;
+
 /// Internal state protected by a single mutex (eliminates the previous 3-lock dance).
 struct Inner {
     entries: Vec<AuditEntry>,
@@ -34,6 +36,8 @@ struct Inner {
     spine: Vec<String>,
     /// Current Merkle root.
     root: String,
+    /// Epoch checkpoint root captured during in-memory compaction
+    epoch_checkpoint_root: Option<String>,
 }
 
 pub struct MerkleAuditTree {
@@ -55,6 +59,59 @@ fn hash_pair(left: &str, right: &str) -> String {
     hex::encode(hasher.finalize())
 }
 
+/// Updates the streaming right-spine with a new leaf hash at 1-based index `n`.
+fn update_spine(spine: &mut Vec<String>, leaf_hash: &str, n: usize) {
+    let mut carry = leaf_hash.to_string();
+    let mut level_count = n;
+    let mut level = 0;
+
+    loop {
+        if level >= spine.len() {
+            spine.push(carry);
+            break;
+        }
+
+        if level_count % 2 == 0 {
+            carry = hash_pair(&spine[level], &carry);
+            level_count /= 2;
+            level += 1;
+        } else {
+            spine[level] = carry;
+            break;
+        }
+    }
+}
+
+/// Rebuilds the spine from a sequence of leaf hashes.
+fn rebuild_spine(leaves: &[String]) -> Vec<String> {
+    let mut spine = Vec::new();
+    for (i, leaf) in leaves.iter().enumerate() {
+        update_spine(&mut spine, leaf, i + 1);
+    }
+    spine
+}
+
+/// Folds the active levels of the right-spine into a single root in O(log n) time.
+fn fold_spine(spine: &[String], leaf_count: usize) -> String {
+    if leaf_count == 0 {
+        return "0".repeat(64);
+    }
+    let mut active_indices = Vec::new();
+    for i in 0..spine.len() {
+        if ((leaf_count >> i) & 1) == 1 {
+            active_indices.push(i);
+        }
+    }
+    if active_indices.is_empty() {
+        return "0".repeat(64);
+    }
+    let mut acc = spine[active_indices[0]].clone();
+    for &idx in &active_indices[1..] {
+        acc = hash_pair(&spine[idx], &acc);
+    }
+    acc
+}
+
 impl MerkleAuditTree {
     pub fn new() -> Self {
         Self {
@@ -63,13 +120,14 @@ impl MerkleAuditTree {
                 leaves: Vec::new(),
                 spine: Vec::new(),
                 root: "0".repeat(64),
+                epoch_checkpoint_root: None,
             }),
         }
     }
 
     /// Append a new event and **incrementally** update the Merkle root.
     ///
-    /// Complexity: O(log n) hash operations per call (was O(n) before).
+    /// Complexity: O(log n) hash operations per call.
     pub fn log(&self, event_type: &str, data: serde_json::Value) -> String {
         let mut inner = self.inner.lock().expect("audit mutex poisoned");
 
@@ -87,49 +145,78 @@ impl MerkleAuditTree {
         inner.entries.push(entry);
         inner.leaves.push(leaf_hash.clone());
 
-        // 2. Incremental Merkle root update via right-spine accumulation.
-        //
-        // The spine holds partial roots at each tree level.  When the number of
-        // leaves at a given level becomes even, we combine with the waiting partial
-        // and propagate up.  This is the standard "streaming Merkle" algorithm.
-        let mut carry = leaf_hash;
-        let n = inner.leaves.len(); // 1-indexed count (after push)
-        let mut level_count = n;
-        let mut level = 0;
+        // 2. Incremental Merkle root update via right-spine accumulation
+        let n = inner.leaves.len();
+        update_spine(&mut inner.spine, &leaf_hash, n);
 
-        loop {
-            if level >= inner.spine.len() {
-                // First node at this level — just park it.
-                inner.spine.push(carry.clone());
-                break;
-            }
-
-            if level_count % 2 == 0 {
-                // Even count at this level: combine with the waiting left sibling.
-                carry = hash_pair(&inner.spine[level], &carry);
-                level_count /= 2;
-                level += 1;
-            } else {
-                // Odd count: park the carry and stop.
-                inner.spine[level] = carry.clone();
-                break;
-            }
+        // 3. Auto-compact if in-memory entries reach 2x limit (8192) down to 4096
+        if inner.entries.len() >= MAX_IN_MEMORY_AUDIT_ENTRIES * 2 {
+            let evict_count = inner.entries.len() - MAX_IN_MEMORY_AUDIT_ENTRIES;
+            let current_root = Self::compute_root_from_spine(
+                &inner.spine,
+                inner.leaves.len(),
+                inner.epoch_checkpoint_root.as_deref(),
+            );
+            inner.epoch_checkpoint_root = Some(current_root);
+            inner.entries.drain(0..evict_count);
+            inner.leaves.drain(0..evict_count);
+            inner.spine = rebuild_spine(&inner.leaves);
+            inner.entries.shrink_to_fit();
+            inner.leaves.shrink_to_fit();
+            inner.spine.shrink_to_fit();
         }
 
-        // 3. Compute the final root by folding any remaining spine entries.
-        //    Walk up from the lowest level, combining with any partial roots
-        //    that haven't been paired yet.
-        let new_root = Self::compute_root_from_spine(&inner.spine, &inner.leaves);
+        // 4. Compute final root by folding spine in O(log n) time
+        let new_root = Self::compute_root_from_spine(
+            &inner.spine,
+            inner.leaves.len(),
+            inner.epoch_checkpoint_root.as_deref(),
+        );
         inner.root = new_root.clone();
 
-        // 4. Extend to hardware TPM for root-of-trust
+        // 5. Extend to hardware TPM for root-of-trust
         let _ = tpm::extend_audit_to_tpm(event_type, &new_root);
 
         new_root
     }
 
+    /// Compact in-memory audit log entries to cap RAM usage.
+    /// Drains the oldest `inner.entries.len() - max_entries` entries, records the checkpoint root,
+    /// rebuilds the spine for retained leaves, and returns the number of evicted entries.
+    pub fn compact_memory(&self, max_entries: usize) -> usize {
+        let mut inner = self.inner.lock().expect("audit mutex poisoned");
+        if inner.entries.len() <= max_entries {
+            return 0;
+        }
+
+        let evict_count = inner.entries.len() - max_entries;
+        let checkpoint = Self::compute_root_from_spine(
+            &inner.spine,
+            inner.leaves.len(),
+            inner.epoch_checkpoint_root.as_deref(),
+        );
+        inner.epoch_checkpoint_root = Some(checkpoint);
+
+        inner.entries.drain(0..evict_count);
+        inner.leaves.drain(0..evict_count);
+
+        inner.spine = rebuild_spine(&inner.leaves);
+        inner.root = Self::compute_root_from_spine(
+            &inner.spine,
+            inner.leaves.len(),
+            inner.epoch_checkpoint_root.as_deref(),
+        );
+
+        inner.entries.shrink_to_fit();
+        inner.leaves.shrink_to_fit();
+        inner.spine.shrink_to_fit();
+
+        evict_count
+    }
+
     /// Compute the final Merkle root from the current leaf set.
-    /// Used by `log()` (after spine update) and `verify()`.
+    /// Used by `generate_proof()` and reference testing.
+    #[allow(dead_code)]
     fn compute_root_from_leaves(leaf_hashes: &[String]) -> String {
         if leaf_hashes.is_empty() {
             return "0".repeat(64);
@@ -151,28 +238,23 @@ impl MerkleAuditTree {
         current_level.into_iter().next().unwrap()
     }
 
-    /// Derive the root from the spine (right-edge partial roots).
-    /// This correctly handles incomplete trees by folding unpaired hashes upward.
-    fn compute_root_from_spine(spine: &[String], leaves: &[String]) -> String {
-        if leaves.is_empty() {
-            return "0".repeat(64);
+    /// Derive the root from the spine in O(log n) time, folding with epoch checkpoint if set.
+    fn compute_root_from_spine(
+        spine: &[String],
+        leaf_count: usize,
+        epoch_checkpoint: Option<&str>,
+    ) -> String {
+        if leaf_count == 0 {
+            return epoch_checkpoint
+                .map(|c| c.to_string())
+                .unwrap_or_else(|| "0".repeat(64));
         }
-        // For correctness we use the full leaf recomputation here.
-        // The spine is an optimization for the *incremental append* path;
-        // the root derivation itself is still O(n) on first call but is only
-        // triggered once per `log()` at the cost of the O(log n) spine update.
-        //
-        // A production implementation would store the full internal node array,
-        // but for our workload (append-only, no deletions) the spine-based
-        // approach keeps memory bounded.
-        //
-        // Optimization: if the leaf count is a power of 2, the spine tip IS the root.
-        let n = leaves.len();
-        if n.is_power_of_two() && !spine.is_empty() {
-            return spine.last().unwrap().clone();
+        let folded = fold_spine(spine, leaf_count);
+        if let Some(cp) = epoch_checkpoint {
+            hash_pair(cp, &folded)
+        } else {
+            folded
         }
-        // Otherwise, fold from the full leaf set.
-        Self::compute_root_from_leaves(leaves)
     }
 
     /// Generate a Merkle Inclusion Proof for a specific entry index.
@@ -240,10 +322,68 @@ impl MerkleAuditTree {
 
     pub fn verify(&self) -> bool {
         let inner = self.inner.lock().unwrap();
-        let computed = Self::compute_root_from_leaves(&inner.leaves);
+        if inner.leaves.is_empty() {
+            let expected_empty = inner
+                .epoch_checkpoint_root
+                .as_deref()
+                .unwrap_or("0000000000000000000000000000000000000000000000000000000000000000");
+            return inner.root == expected_empty;
+        }
+        let recomputed_spine = rebuild_spine(&inner.leaves);
+        let computed = Self::compute_root_from_spine(
+            &recomputed_spine,
+            inner.leaves.len(),
+            inner.epoch_checkpoint_root.as_deref(),
+        );
         computed == inner.root
     }
 }
 
 /// Backward compatibility alias for the Merkle Audit Tree.
 pub type AuditTrail = MerkleAuditTree;
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_merkle_audit_tree_basic_lifecycle() {
+        let tree = MerkleAuditTree::new();
+        assert!(tree.verify());
+        assert_eq!(tree.entries().len(), 0);
+
+        let root1 = tree.log("TEST_EVENT", serde_json::json!({ "key": "val1" }));
+        assert_ne!(root1, "0".repeat(64));
+        assert!(tree.verify());
+        assert_eq!(tree.entries().len(), 1);
+
+        let root2 = tree.log("TEST_EVENT_2", serde_json::json!({ "key": "val2" }));
+        assert_ne!(root2, root1);
+        assert!(tree.verify());
+        assert_eq!(tree.entries().len(), 2);
+    }
+
+    #[test]
+    fn test_merkle_audit_tree_memory_compaction() {
+        let tree = MerkleAuditTree::new();
+        assert!(tree.verify());
+
+        for i in 0..100 {
+            tree.log("TEST_EVENT", serde_json::json!({ "index": i }));
+        }
+        assert_eq!(tree.entries().len(), 100);
+        assert!(tree.verify());
+
+        let evicted = tree.compact_memory(40);
+        assert_eq!(evicted, 60);
+        assert_eq!(tree.entries().len(), 40);
+        assert!(tree.verify());
+
+        // Logging new entries post-compaction maintains valid root and verification
+        for i in 100..120 {
+            tree.log("POST_COMPACT_EVENT", serde_json::json!({ "index": i }));
+        }
+        assert_eq!(tree.entries().len(), 60);
+        assert!(tree.verify());
+    }
+}

@@ -3052,17 +3052,179 @@ impl EdrOrchestrator {
         );
     }
 
+    /// Comprehensive memory and disk cleanup routine to prevent memory leaks and disk exhaustion
+    /// across long-running EDR deployments.
+    pub fn cleanup_memory_and_disk(&self, days_retention: u32) -> serde_json::Value {
+        info!("Initiating comprehensive EDR memory and disk cleanup (retention: {} days)...", days_retention);
+
+        // 1. In-Memory Cache Eviction (DashMap lock hygiene: collect expired keys first)
+        let expired_behavioral: Vec<String> = self.behavioral_debouncer
+            .iter()
+            .filter(|entry| entry.value().elapsed() >= Duration::from_secs(3600))
+            .map(|entry| entry.key().clone())
+            .collect();
+        let evicted_behavioral = expired_behavioral.len();
+        for key in expired_behavioral {
+            self.behavioral_debouncer.remove(&key);
+        }
+
+        let expired_alerts: Vec<String> = self.alert_suppression_cache
+            .iter()
+            .filter(|entry| entry.value().elapsed() >= Duration::from_secs(3600))
+            .map(|entry| entry.key().clone())
+            .collect();
+        let evicted_alerts = expired_alerts.len();
+        for key in expired_alerts {
+            self.alert_suppression_cache.remove(&key);
+        }
+
+        let expired_broadcast: Vec<String> = self.mesh_broadcast_debouncer
+            .iter()
+            .filter(|entry| entry.value().elapsed() >= Duration::from_secs(3600))
+            .map(|entry| entry.key().clone())
+            .collect();
+        let evicted_broadcast = expired_broadcast.len();
+        for key in expired_broadcast {
+            self.mesh_broadcast_debouncer.remove(&key);
+        }
+
+        let mut cleared_nsrl = false;
+        if self.nsrl_cache.len() > 50_000 {
+            self.nsrl_cache.clear();
+            self.nsrl_cache.shrink_to_fit();
+            cleared_nsrl = true;
+        }
+
+        let mut cleared_consensus = false;
+        if self.policy_consensus.len() > 2_000 {
+            self.policy_consensus.clear();
+            self.policy_consensus.shrink_to_fit();
+            cleared_consensus = true;
+        }
+
+        let compacted_audit_entries = self.audit.compact_memory(4096);
+
+        // 2. Disk Artifact & Quarantine Cleanup
+        // 2a. Stale .locked.* old binary swap files in current directory & exe parent
+        let mut cleaned_locked = 0;
+        let mut candidate_dirs: Vec<std::path::PathBuf> = Vec::new();
+        if let Ok(cur_dir) = std::env::current_dir() {
+            candidate_dirs.push(cur_dir);
+        }
+        if let Ok(cur_exe) = std::env::current_exe() {
+            if let Some(parent) = cur_exe.parent() {
+                let p = parent.to_path_buf();
+                if !candidate_dirs.contains(&p) {
+                    candidate_dirs.push(p);
+                }
+            }
+        }
+        for dir in candidate_dirs {
+            if let Ok(entries) = std::fs::read_dir(dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                        if name.starts_with(".locked.") || name.contains(".locked.") {
+                            if std::fs::remove_file(&path).is_ok() {
+                                cleaned_locked += 1;
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2b. Expired quarantine files older than days_retention
+        let mut cleaned_quarantine = 0;
+        let quarantine_cutoff = Duration::from_secs(days_retention as u64 * 86400);
+        let q_dir = std::path::Path::new("quarantine");
+        if q_dir.exists() {
+            if let Ok(entries) = std::fs::read_dir(q_dir) {
+                for entry in entries.flatten() {
+                    let path = entry.path();
+                    if path.is_file() {
+                        if let Ok(meta) = path.metadata() {
+                            if let Ok(modified) = meta.modified() {
+                                if modified.elapsed().map(|el| el >= quarantine_cutoff).unwrap_or(false) {
+                                    if std::fs::remove_file(&path).is_ok() {
+                                        cleaned_quarantine += 1;
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2c. Stale temporary files in std::env::temp_dir() older than 24 hours
+        let mut cleaned_temp = 0;
+        let temp_dir = std::env::temp_dir();
+        let temp_cutoff = Duration::from_secs(86400);
+        if let Ok(entries) = std::fs::read_dir(&temp_dir) {
+            for entry in entries.flatten() {
+                let path = entry.path();
+                let name = path.file_name().and_then(|n| n.to_str()).unwrap_or("");
+                if name.starts_with("osoosi-temp-") || name.starts_with("osoosi-update-") || name.starts_with("osoosi-forensic-") {
+                    if let Ok(meta) = path.metadata() {
+                        if let Ok(modified) = meta.modified() {
+                            if modified.elapsed().map(|el| el >= temp_cutoff).unwrap_or(false) {
+                                if path.is_dir() {
+                                    if std::fs::remove_dir_all(&path).is_ok() {
+                                        cleaned_temp += 1;
+                                    }
+                                } else if std::fs::remove_file(&path).is_ok() {
+                                    cleaned_temp += 1;
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        }
+
+        // 2d. Run vacuum_and_prune on SQLite database
+        let db_pruned = self.memory.vacuum_and_prune(days_retention).is_ok();
+
+        // 2e. Run maintain_logs
+        let logs_maintained = self.maintain_logs().is_ok();
+
+        // 3. OS Working-Set Trim
+        let working_set_trimmed = crate::memory_watchdog::trim_process_working_set();
+
+        let summary = serde_json::json!({
+            "status": "success",
+            "in_memory_evicted": {
+                "behavioral_debouncer": evicted_behavioral,
+                "alert_suppression": evicted_alerts,
+                "mesh_broadcast_debouncer": evicted_broadcast,
+                "nsrl_cache_capped": cleared_nsrl,
+                "policy_consensus_capped": cleared_consensus,
+                "compacted_audit_entries": compacted_audit_entries,
+            },
+            "disk_cleaned": {
+                "locked_swap_files": cleaned_locked,
+                "quarantine_files": cleaned_quarantine,
+                "temp_files": cleaned_temp,
+                "db_pruned": db_pruned,
+                "logs_maintained": logs_maintained,
+            },
+            "os_working_set_trimmed": working_set_trimmed,
+        });
+
+        info!("Comprehensive EDR cleanup completed: {}", summary);
+        summary
+    }
+
     pub async fn run_maintenance_loop(&self) {
-        info!("EDR Maintenance Loop started.");
-        let mut interval = tokio::time::interval(Duration::from_secs(3600 * 24)); // Once a day
+        info!("EDR Maintenance Loop started (6-hour interval).");
+        let mut interval = tokio::time::interval(Duration::from_secs(3600 * 6)); // Every 6 hours
         loop {
             interval.tick().await;
-            if let Err(e) = self.memory.vacuum_and_prune(30) {
-                error!("Maintenance loop failed: {}", e);
-            }
-            if let Err(e) = self.maintain_logs() {
-                error!("Maintenance log retention failed: {}", e);
-            }
+            info!("Running periodic memory and disk maintenance cycle...");
+            let summary = self.cleanup_memory_and_disk(30);
+            debug!("Periodic maintenance cycle completed: {}", summary);
         }
     }
 
@@ -11337,6 +11499,11 @@ mod tests {
         assert!(cached.id.starts_with("CONS-CACHED-"));
 
         let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[test]
+    fn test_cleanup_memory_and_disk_working_set_trim() {
+        assert!(crate::memory_watchdog::trim_process_working_set());
     }
 }
 
