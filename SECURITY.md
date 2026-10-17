@@ -63,11 +63,13 @@ OshoosiClaw is an autonomous EDR agent. Security bugs — especially agent bypas
 
 ## Security Design Principles
 
-- **No shell execution**: All operations use native Win32/WMI/registry APIs — no `powershell.exe` or `cmd.exe` spawns in production paths
-- **Tamper-evident logging**: All security decisions are recorded in a Merkle-chained audit trail (`osoosi merkle`)
-- **Byzantine consensus**: Blocking decisions require mesh quorum — no single node can autonomously block without peer agreement
-- **Least privilege**: The agent separates host-maintenance (requires admin) from analysis tasks (runs in OpenShell sandbox)
-- **Cargo.lock tracked**: Exact dependency versions are pinned and committed — reproducible builds are enforced
+- **Zero shell execution on detection hot-paths**: Detection, telemetry, and pre-operation enforcement hot-paths strictly execute via native Win32/ETW/eBPF/Siquery APIs without spawning shells or external script hosts.
+- **Strictly controlled administrative CLI operations**: Administrative CLI maintenance commands (`osoosi service`, `osoosi repair`) resolve system binaries solely from verified `%SystemRoot%\System32` paths (`osoosi_types::resolve_system_binary`) with `CREATE_NO_WINDOW` and strict argument arrays (never `cmd /c` string interpolation or unescaped shell invocations).
+- **Multi-voter consensus & human-in-the-loop gating**: Destructive containment (`Isolate`, `Tarpit`) requires multi-voter corroboration (`detector_count >= 2`, confidence `>= 0.90`) and respects `human_escalation_required` as a hard stop gate before autonomous containment can be applied.
+- **Air-gapped & privacy-first networking defaults**: Public WAN relays (Nostr / DuckDNS) and remote LLM providers are strictly **opt-in** (`allow_public_relays = false`, `duckdns_domain = ""`, and `OSOOSI_ENABLE_REMOTE_LLM=0` by default); all threat detection and voting operate fully local and air-gapped out of the box.
+- **Tamper-evident logging**: All security decisions are recorded in a Merkle-chained audit trail (`osoosi merkle`).
+- **Least privilege**: The agent separates host-maintenance (requires admin) from analysis tasks (runs in AppContainer/OpenShell sandbox).
+- **Cargo.lock tracked**: Exact dependency versions are pinned and committed — reproducible builds and SLSA provenance are enforced.
 
 ---
 

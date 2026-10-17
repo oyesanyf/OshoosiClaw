@@ -563,29 +563,29 @@ impl JoinGate {
     }
 
     pub fn with_trust_manager(self, tm: Arc<TrustManager>) -> Self {
-        *self.trust_manager.write().unwrap() = Some(tm);
+        *self.trust_manager.write().unwrap_or_else(|e| e.into_inner()) = Some(tm);
         self
     }
 
     pub fn set_trust_manager(&self, tm: Arc<TrustManager>) {
-        *self.trust_manager.write().unwrap() = Some(tm);
+        *self.trust_manager.write().unwrap_or_else(|e| e.into_inner()) = Some(tm);
     }
 
     pub fn trust_manager(&self) -> Option<Arc<TrustManager>> {
-        self.trust_manager.read().unwrap().clone()
+        self.trust_manager.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     pub fn with_golden_baseline(self, baseline: GoldenBaseline) -> Self {
-        *self.golden_baseline.write().unwrap() = Some(baseline);
+        *self.golden_baseline.write().unwrap_or_else(|e| e.into_inner()) = Some(baseline);
         self
     }
 
     pub fn set_golden_baseline(&self, baseline: GoldenBaseline) {
-        *self.golden_baseline.write().unwrap() = Some(baseline);
+        *self.golden_baseline.write().unwrap_or_else(|e| e.into_inner()) = Some(baseline);
     }
 
     pub fn golden_baseline(&self) -> Option<GoldenBaseline> {
-        self.golden_baseline.read().unwrap().clone()
+        self.golden_baseline.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     /// Create and record an active TPM 2.0 attestation challenge for a peer.

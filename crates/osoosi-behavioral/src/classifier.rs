@@ -168,9 +168,17 @@ impl BehavioralClassifier {
             }
             info!("BehavioralClassifier: Background AI initialization complete.");
         });
-        let openai_key = std::env::var("OPENAI_API_KEY")
-            .or_else(|_| std::env::var("OSOOSI_OPENAI_API_KEY"))
-            .unwrap_or_default();
+        let remote_llm_enabled = std::env::var("OSOOSI_ENABLE_REMOTE_LLM")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let openai_key = if remote_llm_enabled {
+            std::env::var("OPENAI_API_KEY")
+                .or_else(|_| std::env::var("OSOOSI_OPENAI_API_KEY"))
+                .or_else(|_| std::env::var("OSOOSI_LLM_API_KEY"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
 
         let client = reqwest::Client::builder()
             .timeout(std::time::Duration::from_secs(10))
@@ -263,19 +271,27 @@ impl BehavioralClassifier {
     }
 
     async fn classify_sentence_internal(&self, sentence: &str) -> (bool, f32, String) {
+        let (safe_sentence, injection_detected) = osoosi_types::sanitize_untrusted_log_field(sentence, 512);
+
         // 1. Check feedback (continual learning)
-        if let Some(ref fb) = self.feedback {
-            if let Ok(Some(label)) = fb.get_feedback(sentence) {
-                return (
-                    label,
-                    if label { 1.0 } else { 0.0 },
-                    "Feedback matched".to_string(),
-                );
+        if !injection_detected {
+            if let Some(ref fb) = self.feedback {
+                if let Ok(Some(label)) = fb.get_feedback(sentence) {
+                    return (
+                        label,
+                        if label { 1.0 } else { 0.0 },
+                        "Feedback matched".to_string(),
+                    );
+                }
             }
         }
 
-        let mut max_score = 0.0f32;
-        let mut reasons = Vec::new();
+        let mut max_score = if injection_detected { 0.95f32 } else { 0.0f32 };
+        let mut reasons = if injection_detected {
+            vec!["Prompt injection attempt detected in telemetry sentence".to_string()]
+        } else {
+            Vec::new()
+        };
 
         // 0. Benign Allowlist (High-confidence benign events)
         fn is_trusted_activity(sentence: &str) -> bool {
@@ -331,7 +347,7 @@ impl BehavioralClassifier {
         }
 
         // Rule-based check against process list (if event implies process execution)
-        if is_trusted_activity(sentence) {
+        if !injection_detected && is_trusted_activity(sentence) {
             // Even if trusted, if it matches a high-confidence attack pattern (like mimikatz, ransomware, injection), we still analyze.
             // But for general baseline, we immediately suppress with 0% risk score.
             let mut high_confidence_match = false;
@@ -451,18 +467,18 @@ impl BehavioralClassifier {
                     }
                     Ok(Err(e)) => {
                         debug!("SmolLM inference failed, trying OpenAI: {}", e);
-                        self.openai_fallback(sentence, &mut max_score, &mut reasons)
+                        self.openai_fallback(&safe_sentence, &mut max_score, &mut reasons)
                             .await;
                     }
                     Err(e) => {
                         debug!("SmolLM inference thread panicked: {}", e);
-                        self.openai_fallback(sentence, &mut max_score, &mut reasons)
+                        self.openai_fallback(&safe_sentence, &mut max_score, &mut reasons)
                             .await;
                     }
                 }
             } else if (*self.securebert.read().await).is_none() {
                 // 5. OpenAI Final Fallback (only if local AI is unavailable)
-                self.openai_fallback(sentence, &mut max_score, &mut reasons)
+                self.openai_fallback(&safe_sentence, &mut max_score, &mut reasons)
                     .await;
             }
         }
@@ -486,9 +502,9 @@ impl BehavioralClassifier {
         let judge_guard = self.judge.read().await;
         if let Some(ref judge) = *judge_guard {
             if max_score >= 0.7 {
-                let suspect_query = format!("Analyze this forensic artifact: '{}'. Is it malicious or benign context?", sentence);
+                let suspect_query = format!("Analyze this forensic artifact: '{}'. Is it malicious or benign context?", safe_sentence);
                 if let Ok(verdict) = judge.judge_artifact_sync(&suspect_query) {
-                    if verdict.to_lowercase().contains("benign") {
+                    if verdict.to_lowercase().contains("benign") && !injection_detected {
                         gemma_score = 0.3;
                         gemma_reasoning = format!("Gemma override: {}", verdict);
                     } else {
@@ -538,10 +554,10 @@ impl BehavioralClassifier {
         if is_suspicious {
             let judge_guard = self.judge.read().await;
             if let Some(ref judge) = *judge_guard {
-                let suspect_query = format!("Analyze this forensic artifact: '{}'. Is it malicious or benign context?", sentence);
+                let suspect_query = format!("Analyze this forensic artifact: '{}'. Is it malicious or benign context?", safe_sentence);
                 match judge.judge_artifact(&suspect_query).await {
                     Ok(verdict) => {
-                        if verdict.to_lowercase().contains("benign") {
+                        if verdict.to_lowercase().contains("benign") && !injection_detected {
                             // High-reasoning model thinks it's benign, downgrade it
                             return (false, 0.4, format!("LLM Forensic Override (Benign): {}", verdict));
                         } else {
@@ -646,17 +662,33 @@ impl BehavioralClassifier {
     }
 
     async fn infer_openai(&self, sentence: &str) -> anyhow::Result<f32> {
-        let url = "https://api.openai.com/v1/chat/completions";
+        let (safe_sentence, _) = osoosi_types::sanitize_untrusted_log_field(sentence, 512);
+        let api_base = std::env::var("OSOOSI_LLM_API_BASE")
+            .or_else(|_| std::env::var("OSOOSI_OPENAI_API_BASE"))
+            .unwrap_or_else(|_| "http://127.0.0.1:11434/v1".to_string());
+        let default_fallback = osoosi_types::load_ai_config()
+            .fallback_models
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "qwen2.5:1.5b".to_string());
+        let model = std::env::var("OSOOSI_LLM_MODEL")
+            .or_else(|_| std::env::var("OSOOSI_OPENAI_MODEL"))
+            .unwrap_or(default_fallback);
+        let url = format!("{}/chat/completions", api_base.trim_end_matches('/'));
         let prompt = format!(
             "Analyze the following log sentence and determine if it indicates malicious or highly suspicious activity (e.g. lateral movement, exfiltration, persistence). \
              Respond ONLY with a JSON object containing a 'score' field (0.0 to 1.0). \n\nLog: {}", 
-            sentence
+            safe_sentence
         );
 
-        let res = self.client.post(url)
-            .header("Authorization", format!("Bearer {}", self.openai_key))
+        let mut req_builder = self.client.post(&url);
+        if !self.openai_key.is_empty() {
+            req_builder = req_builder.header("Authorization", format!("Bearer {}", self.openai_key));
+        }
+
+        let res = req_builder
             .json(&serde_json::json!({
-                "model": "gpt-4o",
+                "model": model,
                 "messages": [
                     { "role": "system", "content": "You are a professional security analyst. Return JSON scores." },
                     { "role": "user", "content": prompt }

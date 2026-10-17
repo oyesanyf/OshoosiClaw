@@ -162,7 +162,7 @@ impl SmolLMAnalyzer {
     }
 
     pub fn analyze_log(&self, sentence: &str) -> Result<f32> {
-        let model = self.model.lock().unwrap();
+        let model = self.model.lock().unwrap_or_else(|e| e.into_inner());
 
         let prompt = format!(
             "<|user|>\nYou are a security expert. Analyze the log and return a JSON score 0.0-1.0. Log: {} <|end|>\n<|assistant|>\n{{ \"score\": ", 
@@ -180,7 +180,7 @@ impl SmolLMAnalyzer {
 
         for i in 0..10 {
             let input = Tensor::new(&tokens_vec[..], &self.device)?.unsqueeze(0)?;
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
             let logits = model.forward(
                 &input,
                 tokens_vec.len() - if i == 0 { 0 } else { 1 },
@@ -221,7 +221,7 @@ impl SmolLMAnalyzer {
     }
 
     pub fn generate_text_sync(&self, prompt: &str, max_tokens: usize) -> Result<String> {
-        let model = self.model.lock().unwrap();
+        let model = self.model.lock().unwrap_or_else(|e| e.into_inner());
 
         let tokens = self
             .tokenizer
@@ -234,7 +234,7 @@ impl SmolLMAnalyzer {
 
         for i in 0..max_tokens {
             let input = Tensor::new(&tokens_vec[..], &self.device)?.unsqueeze(0)?;
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
             let logits = model.forward(
                 &input,
                 tokens_vec.len() - if i == 0 { 0 } else { 1 },
@@ -692,7 +692,7 @@ impl Gemma4Analyzer {
                 let mut result_text = String::new();
 
                 for _ in 0..max_tokens {
-                    let mut session_guard = session.lock().unwrap();
+                    let mut session_guard = session.lock().unwrap_or_else(|e| e.into_inner());
                     let input_val = ort::value::Value::from_array(([1, tokens_vec.len()], tokens_vec.iter().map(|&x| x as i64).collect::<Vec<_>>()))?;
                     let outputs = session_guard.run(ort::inputs![input_val])?;
                     let (shape, data) = outputs[0].try_extract_tensor::<f32>()?;
@@ -703,7 +703,7 @@ impl Gemma4Analyzer {
                     let next_token = last_token_logits
                         .iter()
                         .enumerate()
-                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                         .map(|(i, _)| i as u32)
                         .unwrap_or(0);
 
@@ -725,7 +725,7 @@ impl Gemma4Analyzer {
                 let encoding = tokenizer.encode(prompt, true).map_err(anyhow::Error::msg)?;
                 let prompt_tokens = encoding.get_ids().to_vec();
                 let mut all_tokens = prompt_tokens.clone();
-                let mut model_guard = model.lock().unwrap();
+                let mut model_guard = model.lock().unwrap_or_else(|e| e.into_inner());
                 let mut result_text = String::new();
 
                 // Process the prompt (prefill) with a hard 15s timeout
@@ -741,7 +741,7 @@ impl Gemma4Analyzer {
                     .map_err(|e| anyhow::anyhow!("{}", e))?
                     .iter()
                     .enumerate()
-                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                     .map(|(i, _)| i as u32)
                     .unwrap_or(0);
                 all_tokens.push(next_token);
@@ -772,7 +772,7 @@ impl Gemma4Analyzer {
                         .map_err(|e| anyhow::anyhow!("{}", e))?
                         .iter()
                         .enumerate()
-                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                         .map(|(i, _)| i as u32)
                         .unwrap_or(0);
                     all_tokens.push(next);
@@ -1064,7 +1064,7 @@ impl SecureBertAnalyzer {
                 let attention_mask = ort::value::Value::from_array(([1, len], attention))?;
                 let token_type_ids = ort::value::Value::from_array(([1, len], type_ids))?;
 
-                let mut session_guard = session.lock().unwrap();
+                let mut session_guard = session.lock().unwrap_or_else(|e| e.into_inner());
                 let outputs = session_guard.run(ort::inputs![input_ids, attention_mask, token_type_ids])?;
                 let (_, data) = outputs[0].try_extract_tensor::<f32>()?;
                 let score = data[0];
@@ -1171,7 +1171,7 @@ impl SecurityJudge {
 
         for i in 0..256 {
             let input = Tensor::new(&tokens_vec[..], &self.device)?.unsqueeze(0)?;
-            let mut cache = self.cache.lock().unwrap();
+            let mut cache = self.cache.lock().unwrap_or_else(|e| e.into_inner());
             let logits = self.model.forward(
                 &input,
                 tokens_vec.len() - if i == 0 { 0 } else { 1 },
@@ -1459,7 +1459,7 @@ impl FoundationSecAnalyzer {
                 let mut result_text = String::new();
 
                 for _ in 0..max_tokens {
-                    let mut session_guard = session.lock().unwrap();
+                    let mut session_guard = session.lock().unwrap_or_else(|e| e.into_inner());
                     let input_val = ort::value::Value::from_array(([1, tokens_vec.len()], tokens_vec.iter().map(|&x| x as i64).collect::<Vec<_>>()))?;
                     let outputs = session_guard.run(ort::inputs![input_val])?;
                     let (shape, data) = outputs[0].try_extract_tensor::<f32>()?;
@@ -1470,7 +1470,7 @@ impl FoundationSecAnalyzer {
                     let next_token = last_token_logits
                         .iter()
                         .enumerate()
-                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                         .map(|(i, _)| i as u32)
                         .unwrap_or(0);
 
@@ -1492,7 +1492,7 @@ impl FoundationSecAnalyzer {
                 let encoding = tokenizer.encode(prompt, true).map_err(anyhow::Error::msg)?;
                 let prompt_tokens = encoding.get_ids().to_vec();
                 let mut all_tokens = prompt_tokens.clone();
-                let mut model_guard = model.lock().unwrap();
+                let mut model_guard = model.lock().unwrap_or_else(|e| e.into_inner());
                 let mut result_text = String::new();
 
                 let input = Tensor::new(&prompt_tokens[..], device)?.unsqueeze(0)?;
@@ -1503,7 +1503,7 @@ impl FoundationSecAnalyzer {
                     .map_err(|e| anyhow::anyhow!("{}", e))?
                     .iter()
                     .enumerate()
-                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                    .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                     .map(|(i, _)| i as u32)
                     .unwrap_or(0);
                 all_tokens.push(next_token);
@@ -1532,7 +1532,7 @@ impl FoundationSecAnalyzer {
                         .map_err(|e| anyhow::anyhow!("{}", e))?
                         .iter()
                         .enumerate()
-                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap())
+                        .max_by(|(_, a), (_, b)| a.partial_cmp(b).unwrap_or(std::cmp::Ordering::Equal))
                         .map(|(i, _)| i as u32)
                         .unwrap_or(0);
                     all_tokens.push(next);

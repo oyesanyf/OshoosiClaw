@@ -3,7 +3,12 @@
 //! Provides capabilities to neutralize threats: network isolation, process termination, and rollback.
 
 use std::process::Command;
+use std::sync::atomic::{AtomicU64, Ordering};
+use std::time::Instant;
 use tracing::{debug, info, warn};
+
+static LAST_ISOLATION_TIME: parking_lot::Mutex<Option<Instant>> = parking_lot::Mutex::new(None);
+static ISOLATION_COUNT: AtomicU64 = AtomicU64::new(0);
 
 pub struct RemediationController;
 
@@ -12,8 +17,47 @@ impl RemediationController {
         Self
     }
 
-    /// Isolate the host from the network (except for the Oshoosi P2P mesh).
+    /// Isolate the host from the network (except for the Oshoosi P2P mesh and management access).
     pub fn isolate_node(&self) -> anyhow::Result<()> {
+        let allow_isolation = std::env::var("OSOOSI_ALLOW_HOST_ISOLATION")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        if !allow_isolation {
+            warn!("AUTONOMOUS RESPONSE: Host network isolation skipped (set OSOOSI_ALLOW_HOST_ISOLATION=1 to enable).");
+            return Ok(());
+        }
+
+        let is_dry_run = std::env::var("OSOOSI_DRY_RUN")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+        if is_dry_run {
+            info!("AUTONOMOUS RESPONSE: [DRY-RUN] Network isolation simulated successfully.");
+            return Ok(());
+        }
+
+        // Rate limiter: maximum 2 host isolations within 60 seconds
+        {
+            let mut last_time = LAST_ISOLATION_TIME.lock();
+            let now = Instant::now();
+            if let Some(prev) = *last_time {
+                if now.duration_since(prev).as_secs() < 60 {
+                    let count = ISOLATION_COUNT.fetch_add(1, Ordering::Relaxed);
+                    if count >= 2 {
+                        warn!("AUTONOMOUS RESPONSE: Host isolation rate limit exceeded (max 2 per 60s). Throttling.");
+                        return Err(anyhow::anyhow!("Rate limit exceeded for host network isolation: max 2 isolations per 60s"));
+                    }
+                } else {
+                    ISOLATION_COUNT.store(1, Ordering::Relaxed);
+                    *last_time = Some(now);
+                }
+            } else {
+                ISOLATION_COUNT.store(1, Ordering::Relaxed);
+                *last_time = Some(now);
+            }
+        }
+
         info!("AUTONOMOUS RESPONSE: Initiating network isolation...");
 
         #[cfg(target_os = "windows")]
@@ -21,7 +65,7 @@ impl RemediationController {
             #[allow(unused_imports)]
             use std::os::windows::process::CommandExt;
             let netsh_bin = osoosi_types::resolve_system_binary("netsh.exe");
-            // Block all inbound/outbound except common P2P mesh ports (4001, 8080)
+            // Block all inbound/outbound except common P2P mesh ports (4001, 8080) and remote admin (22, 3389)
             let mut cmd1 = Command::new(&netsh_bin);
             cmd1.stdout(std::process::Stdio::null())
                 .stderr(std::process::Stdio::null());
@@ -46,27 +90,40 @@ impl RemediationController {
             #[cfg(windows)]
             cmd3.creation_flags(0x08000000);
             let _ = cmd3
-                .args(["advfirewall", "firewall", "add", "rule", "name=Oshoosi-Isolation-Mesh", "dir=in", "action=allow", "protocol=TCP", "localport=4001,8080", "profile=any"])
+                .args(["advfirewall", "firewall", "add", "rule", "name=Oshoosi-Isolation-Mesh", "dir=in", "action=allow", "protocol=TCP", "localport=4001,8080,22,3389", "profile=any"])
                 .status();
 
-            info!("Network isolation applied via Windows Firewall (netsh).");
+            info!("Network isolation applied via Windows Firewall (netsh). Preserved admin ports (22, 3389) and mesh ports (4001, 8080).");
             Ok(())
         }
 
         #[cfg(target_os = "linux")]
         {
-            // Attempt iptables isolation
-            let cmd = "sudo iptables -P INPUT DROP && sudo iptables -P OUTPUT DROP && \
-                       sudo iptables -A INPUT -p tcp --dport 4001 -j ACCEPT && \
-                       sudo iptables -A OUTPUT -p tcp --dport 4001 -j ACCEPT";
+            // Apply iptables isolation safely with explicit argument arrays, preserving loopback, established connections, and SSH (port 22)
+            let commands = [
+                vec!["-A", "INPUT", "-i", "lo", "-j", "ACCEPT"],
+                vec!["-A", "OUTPUT", "-o", "lo", "-j", "ACCEPT"],
+                vec!["-A", "INPUT", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+                vec!["-A", "OUTPUT", "-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+                vec!["-A", "INPUT", "-p", "tcp", "--dport", "22", "-j", "ACCEPT"],
+                vec!["-A", "OUTPUT", "-p", "tcp", "--sport", "22", "-j", "ACCEPT"],
+                vec!["-A", "INPUT", "-p", "tcp", "--dport", "4001", "-j", "ACCEPT"],
+                vec!["-A", "OUTPUT", "-p", "tcp", "--dport", "4001", "-j", "ACCEPT"],
+                vec!["-A", "INPUT", "-p", "tcp", "--dport", "8080", "-j", "ACCEPT"],
+                vec!["-A", "OUTPUT", "-p", "tcp", "--dport", "8080", "-j", "ACCEPT"],
+                vec!["-P", "INPUT", "DROP"],
+                vec!["-P", "OUTPUT", "DROP"],
+            ];
 
-            let status = Command::new("sh").args(["-c", cmd]).status()?;
-            if status.success() {
-                info!("Network isolation applied via iptables.");
-                Ok(())
-            } else {
-                Err(anyhow::anyhow!("Failed to apply iptables isolation rules."))
+            for args in &commands {
+                let status = Command::new("iptables").args(args).status();
+                if let Err(e) = status {
+                    warn!("Failed to execute iptables {:?}: {}", args, e);
+                }
             }
+
+            info!("Network isolation applied via iptables. Preserved loopback, established connections, SSH (22), and mesh ports (4001, 8080).");
+            Ok(())
         }
 
         #[cfg(target_os = "macos")]

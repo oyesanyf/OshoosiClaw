@@ -14,8 +14,8 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing::{error, info, warn};
 
-/// `pip install git+https://...` (VCS) — needs `git` on PATH; same default as NVIDIA OpenShell docs.
-const OPENSHELL_PIP_GIT_URL: &str = "git+https://github.com/NVIDIA/OpenShell.git";
+/// `pip install git+https://...` (VCS) — pinned to v0.0.36 for supply-chain integrity.
+const OPENSHELL_PIP_GIT_URL: &str = "git+https://github.com/NVIDIA/OpenShell.git@v0.0.36";
 
 /// Default sandbox policy path relative to the osoosi installation directory.
 const DEFAULT_POLICY_PATH: &str = "config/openshell-policy.yaml";
@@ -624,6 +624,18 @@ echo "DONE: YARA provisioning complete"
 
         #[cfg(unix)]
         {
+            let allow_curl_sh = std::env::var("OSOOSI_ALLOW_UNVERIFIED_INSTALL_SH")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+
+            if !allow_curl_sh {
+                return OpenShellResult {
+                    success: false,
+                    message: "Direct pipe-to-shell installation (curl | sh) is blocked for supply-chain integrity. Use 'pip install openshell' or set OSOOSI_ALLOW_UNVERIFIED_INSTALL_SH=1 to override.".to_string(),
+                    sandbox_name: None,
+                };
+            }
+
             let output = Command::new("sh")
                 .args(["-c", "curl -LsSf https://raw.githubusercontent.com/NVIDIA/OpenShell/main/install.sh | sh"])
                 .output();

@@ -57,9 +57,7 @@ rcgen = { version = "0.13", features = ["pem", "x509-parser"] }
 # nexus-shield = { version = "0.4.4", default-features = false }
 dotscope = "0.1"
 wasmtime = "44.0"
-malchela = { git = "https://github.com/dwmetz/MalChela.git" }
 iced-x86 = "1"
-tiquery = { git = "https://github.com/dwmetz/tiquery.git" }
 rand = "0.8"
 rand_distr = "0.4"
 fastrand = "2"

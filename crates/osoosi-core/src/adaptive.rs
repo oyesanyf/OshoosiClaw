@@ -95,7 +95,7 @@ impl TelemetryController {
     /// Start a background task to monitor resources and adapt telemetry.
     /// Start a background task to monitor resources and adapt telemetry.
     pub fn start_adaptive_loop(self: Arc<Self>) {
-        let mut task_rx = self.task_rx.lock().unwrap().take().expect("start_adaptive_loop called twice");
+        let Some(mut task_rx) = self.task_rx.lock().unwrap_or_else(|e| e.into_inner()).take() else { return; };
         
         // Task 1: Resource Monitor
         let monitor_self = self.clone();
@@ -129,7 +129,7 @@ impl TelemetryController {
                 }
 
                 // 2. Process tasks based on mode
-                let mode = *worker_self.current_mode.read().unwrap();
+                let mode = *worker_self.current_mode.read().unwrap_or_else(|e| e.into_inner());
                 if mode == TelemetryMode::Burst {
                     // During burst, we only process High priority tasks if any (though usually only Low are deferred)
                     // and we wait.
@@ -177,7 +177,7 @@ impl TelemetryController {
 
         let events_per_sec = {
             let now = Instant::now();
-            let mut last_poll = self.last_poll_time.write().unwrap();
+            let mut last_poll = self.last_poll_time.write().unwrap_or_else(|e| e.into_inner());
             let elapsed = now.duration_since(*last_poll).as_secs_f64();
             let current_events = self.event_rate.swap(0, std::sync::atomic::Ordering::SeqCst);
             let eps = if elapsed > 0.1 { current_events as f64 / elapsed } else { 0.0 };
@@ -187,7 +187,7 @@ impl TelemetryController {
 
         let mut next_mode = None;
         {
-            let mut current_mode = self.current_mode.write().unwrap();
+            let mut current_mode = self.current_mode.write().unwrap_or_else(|e| e.into_inner());
 
             // 1. Mode adjustment (Silent/Normal/Burst)
             let is_burst = events_per_sec > 500.0; // More than 500 events/sec is a burst
@@ -213,7 +213,7 @@ impl TelemetryController {
             let ai_cap = self.guard.ai_base as isize - *self.guard.ai_throttled.lock().await;
             let io_cap = self.guard.io_base as isize - *self.guard.io_throttled.lock().await;
             let net_cap = self.guard.net_base as isize - *self.guard.net_throttled.lock().await;
-            let mode = *self.current_mode.read().unwrap();
+            let mode = *self.current_mode.read().unwrap_or_else(|e| e.into_inner());
             info!("ADAPTIVE HEALTH: CPU={:.1}%, MEM={:.1}%, EPS={:.1}, Mode={:?}. AI_Limit={}, IO_Limit={}, NET_Limit={}", 
                 cpu_usage, mem_usage, events_per_sec, mode, ai_cap, io_cap, net_cap
             );
@@ -278,7 +278,7 @@ impl TelemetryController {
     /// Explicitly trigger BURST mode (high fidelity) during a suspicious event.
     pub async fn trigger_burst_mode(&self, duration_secs: u64) -> anyhow::Result<()> {
         let old_mode = {
-            let mut current_mode = self.current_mode.write().unwrap();
+            let mut current_mode = self.current_mode.write().unwrap_or_else(|e| e.into_inner());
             if *current_mode == TelemetryMode::Burst {
                 return Ok(());
             }
@@ -296,7 +296,7 @@ impl TelemetryController {
             tokio::time::sleep(std::time::Duration::from_secs(duration_secs)).await;
             info!("ADAPTIVE TELEMETRY: Burst period ended. Restoring original mode.");
             {
-                let mut mode = controller.current_mode.write().unwrap();
+                let mut mode = controller.current_mode.write().unwrap_or_else(|e| e.into_inner());
                 *mode = old_mode;
             }
             let _ = controller.apply_telemetry_profile(old_mode).await;
@@ -319,7 +319,7 @@ impl TelemetryController {
         F: std::future::Future<Output = T> + Send + 'static,
         T: Send + 'static,
     {
-        let mode = self.current_mode.read().unwrap().clone();
+        let mode = self.current_mode.read().unwrap_or_else(|e| e.into_inner()).clone();
         
         // Yielding logic: During an alert (Burst mode), Low priority tasks (like background hashing) 
         // are deferred to a priority queue to prevent interference with telemetry ingestion.
@@ -349,7 +349,7 @@ impl TelemetryController {
         F: std::future::Future<Output = T> + Send + 'static,
         T: Send + 'static,
     {
-        let mode = self.current_mode.read().unwrap().clone();
+        let mode = self.current_mode.read().unwrap_or_else(|e| e.into_inner()).clone();
         
         if mode == TelemetryMode::Burst && priority == Priority::Low {
              // Yield: wait for mode to stabilize
@@ -388,11 +388,11 @@ impl TelemetryControllerInterface for TelemetryController {
     }
 
     fn is_burst_mode(&self) -> bool {
-        *self.current_mode.read().unwrap() == TelemetryMode::Burst
+        *self.current_mode.read().unwrap_or_else(|e| e.into_inner()) == TelemetryMode::Burst
     }
     
     fn is_silent_mode(&self) -> bool {
-        *self.current_mode.read().unwrap() == TelemetryMode::Silent
+        *self.current_mode.read().unwrap_or_else(|e| e.into_inner()) == TelemetryMode::Silent
     }
 
     fn is_socket_exhaustion(&self) -> bool {

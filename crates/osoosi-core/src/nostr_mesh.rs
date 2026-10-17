@@ -85,8 +85,29 @@ impl NostrMeshOrchestrator {
         // Mark our own broadcast threat as already seen so we don't re-process local echoes
         self.seen_threats.insert(sig.id.clone(), std::time::Instant::now());
         
-        // Ensure confidence is valid and bounded without corrupting cryptographic signature
-        sig.confidence = sig.confidence.clamp(0.05, 1.0);
+        // --- 1. DIFFERENTIAL PRIVACY & ANONYMIZATION ---
+        sig.confidence = (self.privacy.inject_noise(sig.confidence as f64) as f32).clamp(0.05, 1.0);
+
+        // Anonymize/scrub all host-identifying fields before broadcasting to Nostr:
+        sig.source_node = format!("anon-node-{}", &blake3::hash(sig.source_node.as_bytes()).to_hex()[..12]);
+
+        sig.process_name = sig.process_name.map(|p| {
+            if p.contains('\\') || p.contains('/') || p.contains("Users") || p.contains("home") {
+                let ext = std::path::Path::new(&p)
+                    .extension()
+                    .and_then(|e| e.to_str())
+                    .unwrap_or("bin")
+                    .to_lowercase();
+                format!("redacted-process.{}", ext)
+            } else {
+                p.to_lowercase()
+            }
+        });
+
+        sig.reason = Some(format!(
+            "Anonymized Mesh Telemetry [MITRE: {:?}, Detectors: {}]",
+            sig.mitre_technique, sig.detector_count
+        ));
 
         // --- 2. CRYPTOGRAPHIC IDENTITY & SIGNING ---
         let content = serde_json::to_string(&sig)?;

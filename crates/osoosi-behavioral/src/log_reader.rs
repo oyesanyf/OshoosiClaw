@@ -214,7 +214,7 @@ impl BehavioralLogReader {
         let mut query = format!("*[System[TimeCreated[timediff(@SystemTime) <= 600000]]]");
         
         {
-            let last_times = self.last_poll_times.lock().unwrap();
+            let last_times = self.last_poll_times.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(t) = last_times.get(channel) {
                 let ts_str = t.to_rfc3339_opts(chrono::SecondsFormat::Millis, true);
                 query = format!("*[System[TimeCreated[@SystemTime > '{}']]]", ts_str);
@@ -278,7 +278,7 @@ impl BehavioralLogReader {
 
         // Update watermark per-channel
         {
-            let mut last_times = self.last_poll_times.lock().unwrap();
+            let mut last_times = self.last_poll_times.lock().unwrap_or_else(|e| e.into_inner());
             if let Some(latest) = out.iter().map(|e| e.timestamp).max() {
                 last_times.insert(channel.to_string(), latest);
             } else if !last_times.contains_key(channel) {

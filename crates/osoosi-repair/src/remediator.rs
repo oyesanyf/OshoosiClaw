@@ -110,14 +110,18 @@ impl StandaloneRemediator {
         let computed_sha256 = hex::encode(hasher.finalize());
         info!("Remediation payload SHA-256: {}", computed_sha256);
 
+        let mut verified = false;
         if let Some(expected) = expected_sha256 {
             let expected_clean = expected.trim().to_lowercase();
-            if !expected_clean.is_empty() && expected_clean != computed_sha256.to_lowercase() {
-                return Err(anyhow!(
-                    "Cryptographic mismatch: expected SHA-256 {}, but downloaded payload has {}",
-                    expected_clean,
-                    computed_sha256
-                ));
+            if !expected_clean.is_empty() {
+                if expected_clean != computed_sha256.to_lowercase() {
+                    return Err(anyhow!(
+                        "Cryptographic mismatch: expected SHA-256 {}, but downloaded payload has {}",
+                        expected_clean,
+                        computed_sha256
+                    ));
+                }
+                verified = true;
             }
         }
 
@@ -125,11 +129,27 @@ impl StandaloneRemediator {
         let backup_path = self.create_backup(target)?;
         info!("Backup created at {:?}", backup_path);
 
-        // 3. Write new file (atomic replace if possible on same drive)
+        // 3. Write new file to temporary path
         let temp_dir = target.parent().unwrap_or_else(|| Path::new("."));
         let temp_file = temp_dir.join(format!(".remediate_{}.tmp", uuid::Uuid::new_v4()));
 
         fs::write(&temp_file, &data)?;
+
+        // If no hash was provided, verify Authenticode digital signature
+        if !verified {
+            if osoosi_types::is_trusted_signed_binary(&temp_file) {
+                info!("Downloaded remediation payload verified via trusted Authenticode digital signature.");
+                verified = true;
+            }
+        }
+
+        if !verified {
+            let _ = fs::remove_file(&temp_file);
+            return Err(anyhow!(
+                "Supply-chain verification failed: replacement payload from {} has no expected SHA-256 match and is not Authenticode signed with a trusted certificate",
+                download_url
+            ));
+        }
 
         if let Err(e) = fs::rename(&temp_file, target) {
             #[cfg(target_os = "windows")]

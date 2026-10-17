@@ -490,6 +490,14 @@ impl AgentProvisioner {
 
     /// Provision Firewall rules for the Oshoosi Mesh.
     pub async fn provision_firewall(&self) -> anyhow::Result<()> {
+        let auto_fw = std::env::var("OSOOSI_AUTO_CONFIGURE_HOST_FIREWALL")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        if !auto_fw {
+            info!("Host firewall auto-configuration skipped (set OSOOSI_AUTO_CONFIGURE_HOST_FIREWALL=1 to enable).");
+            return Ok(());
+        }
+
         info!("Provisioning firewall rules for mesh networking...");
 
         #[cfg(target_os = "windows")]
@@ -498,7 +506,6 @@ impl AgentProvisioner {
                 ("OshoosiMesh-Main", "4001"),
                 ("OshoosiMesh-Control", "9000"),
                 ("OshoosiMesh-Alt", "9876"),
-                ("OshoosiDashboard", "3030"),
             ];
             let udp_ports = [
                 ("OshoosiMesh-Discovery", "4001"),
@@ -515,7 +522,7 @@ impl AgentProvisioner {
 
         #[cfg(target_os = "linux")]
         {
-            let tcp_ports = ["4001", "9000", "9876", "3030"];
+            let tcp_ports = ["4001", "9000", "9876"];
             let udp_ports = ["4001", "5353"];
 
             // Try ufw first
@@ -1381,7 +1388,7 @@ mod tests {
             }
 
             if full_cmd.contains("-i") && full_cmd.contains("-accepteula") {
-                let mut attempts = self.install_attempts.lock().unwrap();
+                let mut attempts = self.install_attempts.lock().unwrap_or_else(|e| e.into_inner());
                 *attempts += 1;
                 if *attempts > 1 {
                     if let Some((code, stdout)) = self.retry_install_response {
@@ -1433,7 +1440,7 @@ mod tests {
         let res = provisioner.provision_sysmon_if_missing().await;
         assert!(res.is_ok());
 
-        let cmds = executor.executed_commands.lock().unwrap();
+        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(cmds.len(), 1);
         assert!(cmds[0].contains("sc.exe query Sysmon64"));
     }
@@ -1450,7 +1457,7 @@ mod tests {
         let res = provisioner.provision_sysmon_if_missing().await;
         assert!(res.is_ok());
 
-        let cmds = executor.executed_commands.lock().unwrap();
+        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(cmds.len(), 2);
         assert!(cmds[0].contains("sc.exe query Sysmon64"));
         assert!(cmds[1].contains("sc.exe start Sysmon64"));
@@ -1468,7 +1475,7 @@ mod tests {
         let res = provisioner.provision_sysmon_if_missing().await;
         assert!(res.is_ok());
 
-        let cmds = executor.executed_commands.lock().unwrap();
+        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
         assert_eq!(cmds.len(), 2);
         assert!(cmds[0].contains("sc.exe query Sysmon64"));
         assert!(cmds[1].contains("sc.exe query Sysmon"));
@@ -1487,7 +1494,7 @@ mod tests {
         // Graceful handling requirement: do NOT fail startup!
         assert!(res.is_ok(), "provision_sysmon_if_missing failed with error: {:?}", res.as_ref().err());
 
-        let cmds = executor.executed_commands.lock().unwrap();
+        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
         assert!(cmds.iter().any(|c| c.contains("-i") && c.contains("-accepteula")));
     }
 
@@ -1501,7 +1508,7 @@ mod tests {
         let res = provisioner.provision_sysmon_if_missing().await;
         assert!(res.is_ok());
 
-        let cmds = executor.executed_commands.lock().unwrap();
+        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
         // Check that wevtutil gp was executed
         assert!(cmds.iter().any(|c| c.contains("wevtutil.exe gp Microsoft-Windows-Sysmon")));
         // Check that wevtutil um was executed to unregister orphaned manifest
@@ -1540,7 +1547,7 @@ mod tests {
         let res = provisioner.provision_sysmon_if_missing().await;
         assert!(res.is_ok());
 
-        let cmds = executor.executed_commands.lock().unwrap();
+        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
         // Should have run initial install and retry install
         let install_cmds: Vec<_> = cmds
             .iter()
@@ -1582,7 +1589,7 @@ mod tests {
         let res = provisioner.provision_sysmon_if_missing().await;
         assert!(res.is_ok());
 
-        let cmds = executor.executed_commands.lock().unwrap();
+        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
         let install_cmd = cmds
             .iter()
             .find(|c| c.contains("-i") && c.contains("-accepteula"))
@@ -1621,7 +1628,7 @@ mod tests {
         let res = provisioner.provision_sysmon_if_missing().await;
         assert!(res.is_ok());
 
-        let cmds = executor.executed_commands.lock().unwrap();
+        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
         // Should have executed remediation: wevtutil um and sysmon -u force
         assert!(
             cmds.iter().any(|c| c.contains("wevtutil.exe um Microsoft-Windows-Sysmon")),
@@ -1650,7 +1657,7 @@ mod tests {
         let res = provisioner.provision_sysmon_if_missing().await;
         assert!(res.is_ok());
 
-        let cmds = executor.executed_commands.lock().unwrap();
+        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
         assert!(
             cmds.iter().any(|c| c.contains("wevtutil.exe um Microsoft-Windows-Sysmon")),
             "Expected wevtutil um on HRESULT error code, but commands were: {:?}",

@@ -12,33 +12,33 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
     // Windows Event ID 4688 = Process Creation
     let is_4688 = event.event_id == 4688 || event.data.contains_key("NewProcessName");
     if is_4688 {
-        let proc_path = event
+        let raw_proc_path = event
             .data
             .get("NewProcessName")
             .or(event.data.get("Image"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let proc_name = std::path::Path::new(proc_path)
+        let raw_proc_name = std::path::Path::new(raw_proc_path)
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or(proc_path);
-        let parent_path = event
+            .unwrap_or(raw_proc_path);
+        let raw_parent_path = event
             .data
             .get("ParentProcessName")
             .or(event.data.get("ParentImage"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let parent_name = std::path::Path::new(parent_path)
+        let raw_parent_name = std::path::Path::new(raw_parent_path)
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or(parent_path);
-        let user = event
+            .unwrap_or(raw_parent_path);
+        let raw_user = event
             .data
             .get("SubjectUserName")
             .or(event.data.get("User"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let cmd = event
+        let raw_cmd = event
             .data
             .get("CommandLine")
             .or(event.data.get("Command"))
@@ -46,6 +46,13 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             .unwrap_or("");
         let hashes = event.data.get("Hashes").and_then(|v| v.as_str()).unwrap_or("");
         let integrity = event.data.get("IntegrityLevel").and_then(|v| v.as_str()).unwrap_or("unknown");
+
+        let (proc_path, _) = osoosi_types::sanitize_untrusted_log_field(raw_proc_path, 256);
+        let (proc_name, _) = osoosi_types::sanitize_untrusted_log_field(raw_proc_name, 128);
+        let (parent_path, _) = osoosi_types::sanitize_untrusted_log_field(raw_parent_path, 256);
+        let (parent_name, _) = osoosi_types::sanitize_untrusted_log_field(raw_parent_name, 128);
+        let (user, _) = osoosi_types::sanitize_untrusted_log_field(raw_user, 64);
+        let (cmd, _) = osoosi_types::sanitize_untrusted_log_field(raw_cmd, 1024);
 
         parts.push(format!(
             "Process {} (path: {}, integrity: {}) was executed by user {} from parent {} (path: {}).",
@@ -55,7 +62,7 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             parts.push(format!("Hashes: {}", hashes));
         }
         if !cmd.is_empty() {
-            parts.push(format!("CommandLine: {}", cmd.chars().take(1024).collect::<String>()));
+            parts.push(format!("CommandLine: {}", cmd));
         }
     }
 
@@ -73,32 +80,35 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             .and_then(|v| v.as_i64())
             .unwrap_or(event.event_id as i64);
 
-        let img = event
+        let raw_img = event
             .data
             .get("Image")
             .or(event.data.get("SourceImage"))
             .and_then(|v| v.as_str())
             .unwrap_or("unknown");
-        let exe = std::path::Path::new(img)
+        let raw_exe = std::path::Path::new(raw_img)
             .file_name()
             .and_then(|n| n.to_str())
-            .unwrap_or(img);
+            .unwrap_or(raw_img);
+        let (exe, _) = osoosi_types::sanitize_untrusted_log_field(raw_exe, 128);
 
         match event_id {
             1 => {
                 // Process Creation
-                let parent = event
+                let raw_parent = event
                     .data
                     .get("ParentImage")
                     .and_then(|v| v.as_str())
                     .and_then(|s| std::path::Path::new(s).file_name())
                     .and_then(|n| n.to_str())
                     .unwrap_or("unknown");
-                let cmd = event
+                let raw_cmd = event
                     .data
                     .get("CommandLine")
                     .and_then(|v| v.as_str())
                     .unwrap_or("");
+                let (parent, _) = osoosi_types::sanitize_untrusted_log_field(raw_parent, 128);
+                let (cmd, _) = osoosi_types::sanitize_untrusted_log_field(raw_cmd, 512);
                 parts.push(format!("Process {} started by parent {}.", exe, parent));
                 if !cmd.is_empty() && cmd.len() < 500 {
                     parts.push(format!("Command: {}", cmd));
@@ -106,7 +116,8 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             }
             2 => {
                 // Change File Creation Time (Timestomping)
-                let target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("file");
+                let raw_target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("file");
+                let (target, _) = osoosi_types::sanitize_untrusted_log_field(raw_target, 256);
                 parts.push(format!("Process {} altered creation time on {} (Timestomping Anti-Forensics).", exe, target));
             }
             3 => {
@@ -139,20 +150,22 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             7 => {
                 // Image Loaded (DLL Hijacking)
                 let loaded_full = event.data.get("ImageLoaded").and_then(|v| v.as_str()).unwrap_or("module");
-                let loaded = std::path::Path::new(loaded_full)
+                let loaded_name = std::path::Path::new(loaded_full)
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or(loaded_full);
+                let (loaded, _) = osoosi_types::sanitize_untrusted_log_field(loaded_name, 128);
                 let sig = event.data.get("Signature").and_then(|v| v.as_str()).unwrap_or("unsigned");
                 parts.push(format!("Process {} loaded dynamic module {} (Signature: {}).", exe, loaded, sig));
             }
             8 => {
                 // CreateRemoteThread (Process Injection)
                 let target_full = event.data.get("TargetImage").and_then(|v| v.as_str()).unwrap_or("target");
-                let target = std::path::Path::new(target_full)
+                let target_name = std::path::Path::new(target_full)
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or(target_full);
+                let (target, _) = osoosi_types::sanitize_untrusted_log_field(target_name, 128);
                 let start_addr = event.data.get("StartAddress").and_then(|v| v.as_str()).unwrap_or("0x0");
                 parts.push(format!("Process {} injected remote thread into target {} at {}.", exe, target, start_addr));
             }
@@ -164,21 +177,24 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             10 => {
                 // ProcessAccess (LSASS Credential Dumping)
                 let target_full = event.data.get("TargetImage").and_then(|v| v.as_str()).unwrap_or("target");
-                let target = std::path::Path::new(target_full)
+                let target_name = std::path::Path::new(target_full)
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or(target_full);
+                let (target, _) = osoosi_types::sanitize_untrusted_log_field(target_name, 128);
                 let access = event.data.get("GrantedAccess").and_then(|v| v.as_str()).unwrap_or("unknown");
                 parts.push(format!("Process {} requested handle access ({}) into target {}.", exe, access, target));
             }
             11 => {
                 // FileCreate (Drop / Ransomware)
-                let target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("file");
+                let raw_target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("file");
+                let (target, _) = osoosi_types::sanitize_untrusted_log_field(raw_target, 256);
                 parts.push(format!("Process {} created file: {}.", exe, target));
             }
             12 | 13 | 14 => {
                 // Registry Event (Persistence / Run Keys)
-                let obj = event.data.get("TargetObject").and_then(|v| v.as_str()).unwrap_or("key");
+                let raw_obj = event.data.get("TargetObject").and_then(|v| v.as_str()).unwrap_or("key");
+                let (obj, _) = osoosi_types::sanitize_untrusted_log_field(raw_obj, 256);
                 let op = event.data.get("EventType").and_then(|v| v.as_str()).unwrap_or("RegistryModification");
                 parts.push(format!("Process {} performed registry operation ({}) on {}.", exe, op, obj));
             }
@@ -195,23 +211,28 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             }
             17 | 18 => {
                 // Pipe Created / Connected (Cobalt Strike / C2)
-                let pipe = event.data.get("PipeName").and_then(|v| v.as_str()).unwrap_or("pipe");
+                let raw_pipe = event.data.get("PipeName").and_then(|v| v.as_str()).unwrap_or("pipe");
+                let (pipe, _) = osoosi_types::sanitize_untrusted_log_field(raw_pipe, 128);
                 parts.push(format!("Process {} created or connected to named pipe {}.", exe, pipe));
             }
             19 | 20 | 21 => {
                 // WMI Event Filter / Consumer (WMI Persistence)
-                let name = event.data.get("Name").and_then(|v| v.as_str()).unwrap_or("WMI");
-                let query = event.data.get("Query").and_then(|v| v.as_str()).unwrap_or("");
+                let raw_name = event.data.get("Name").and_then(|v| v.as_str()).unwrap_or("WMI");
+                let raw_query = event.data.get("Query").and_then(|v| v.as_str()).unwrap_or("");
+                let (name, _) = osoosi_types::sanitize_untrusted_log_field(raw_name, 128);
+                let (query, _) = osoosi_types::sanitize_untrusted_log_field(raw_query, 256);
                 parts.push(format!("WMI persistence event detected (Name: {}, Query: {}).", name, query));
             }
             22 => {
                 // DNS Query
-                let query = event.data.get("QueryName").and_then(|v| v.as_str()).unwrap_or("query");
+                let raw_query = event.data.get("QueryName").and_then(|v| v.as_str()).unwrap_or("query");
+                let (query, _) = osoosi_types::sanitize_untrusted_log_field(raw_query, 256);
                 parts.push(format!("Process {} queried DNS record: {}.", exe, query));
             }
             23 | 26 => {
                 // File Delete / Shredding
-                let target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("file");
+                let raw_target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("file");
+                let (target, _) = osoosi_types::sanitize_untrusted_log_field(raw_target, 256);
                 parts.push(format!("Process {} deleted file: {}.", exe, target));
             }
             24 => {
@@ -225,13 +246,15 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             }
             27 | 28 | 29 => {
                 // File Block / Executable Intercept
-                let target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("executable");
+                let raw_target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("executable");
+                let (target, _) = osoosi_types::sanitize_untrusted_log_field(raw_target, 256);
                 parts.push(format!("Sysmon executable/shredding defense triggered on {} by {}.", target, exe));
             }
             _ => {
                 // Generic Sysmon event
-                if let Some(cmd) = event.data.get("CommandLine").and_then(|v| v.as_str()) {
-                    parts.push(format!("Sysmon Event {} from {}: {}", event_id, exe, cmd));
+                if let Some(raw_cmd) = event.data.get("CommandLine").and_then(|v| v.as_str()) {
+                    let (safe_cmd, _) = osoosi_types::sanitize_untrusted_log_field(raw_cmd, 512);
+                    parts.push(format!("Sysmon Event {} from {}: {}", event_id, exe, safe_cmd));
                 } else {
                     parts.push(format!("Sysmon Event {} from {}.", event_id, exe));
                 }

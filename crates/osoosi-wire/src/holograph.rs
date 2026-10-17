@@ -24,7 +24,7 @@ impl HolographEngine {
             return;
         }
 
-        let mut guard = self.shards.write().unwrap();
+        let mut guard = self.shards.write().unwrap_or_else(|e| e.into_inner());
         let attacker = shard.attacker_ip.clone();
         guard
             .entry(shard.attacker_ip.clone())
@@ -35,7 +35,7 @@ impl HolographEngine {
 
     /// Check if this node should "shimmer" (respond deceptively) to an incoming request.
     pub fn should_mirror(&self, attacker_ip: &str, port: u16) -> Option<DeceptionType> {
-        let guard = self.shards.read().unwrap();
+        let guard = self.shards.read().unwrap_or_else(|e| e.into_inner());
         if let Some(ip_shards) = guard.get(attacker_ip) {
             for shard in ip_shards {
                 if shard.virtual_port == port {

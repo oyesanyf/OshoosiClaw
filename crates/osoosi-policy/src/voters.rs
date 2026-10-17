@@ -289,7 +289,10 @@ impl ThreatVoter for GemmaVoter {
 
         // Rate limit: at most 1 LLM call per 30 seconds to protect CPU/GPU
         {
-            let mut last = self.last_call.lock().unwrap();
+            let mut last = match self.last_call.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             if last.elapsed() < std::time::Duration::from_secs(30) {
                 return None;
             }
@@ -384,7 +387,10 @@ impl ThreatVoter for FoundationSecVoter {
         }
 
         {
-            let mut last = self.last_call.lock().unwrap();
+            let mut last = match self.last_call.lock() {
+                Ok(guard) => guard,
+                Err(poisoned) => poisoned.into_inner(),
+            };
             if last.elapsed() < std::time::Duration::from_secs(30) {
                 return None;
             }

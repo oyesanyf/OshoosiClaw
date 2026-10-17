@@ -1,0 +1,31 @@
+[Unit]
+Description=OpenOsoosi Autonomous EDR Daemon
+Documentation=https://github.com/oyesanyf/OshoosiClaw
+After=network.target local-fs.target systemd-sysctl.service
+Wants=network.target
+
+[Service]
+Type=simple
+ExecStart=/usr/bin/osoosi start --no-browser
+Restart=on-failure
+RestartSec=5s
+WorkingDirectory=/var/lib/osoosi
+RuntimeDirectory=osoosi
+LogsDirectory=osoosi
+ConfigurationDirectory=osoosi
+StateDirectory=osoosi
+
+# Hardening & Sandboxing Controls
+ProtectSystem=full
+PrivateTmp=true
+ProtectHome=read-only
+NoNewPrivileges=false
+CapabilityBoundingSet=CAP_NET_ADMIN CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_DAC_OVERRIDE CAP_DAC_READ_SEARCH CAP_BPF CAP_PERFMON CAP_NET_RAW
+AmbientCapabilities=CAP_NET_ADMIN CAP_SYS_ADMIN CAP_SYS_PTRACE CAP_BPF CAP_PERFMON
+
+# Resource Limits
+LimitNOFILE=65536
+LimitMEMLOCK=infinity
+
+[Install]
+WantedBy=multi-user.target
