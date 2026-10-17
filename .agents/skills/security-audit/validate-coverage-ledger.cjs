@@ -721,17 +721,33 @@ function collectUnitErrors(unit, index) {
 function readFileWithinLimit(file) {
   const noFollow = fs.constants.O_NOFOLLOW;
   const nonBlock = fs.constants.O_NONBLOCK;
-  if (!Number.isInteger(noFollow) || noFollow === 0 || !Number.isInteger(nonBlock) || nonBlock === 0) {
-    // Node exposes no race-safe fallback on these platforms, so reject all inputs.
-    throw new SafeInputError("OS no-follow and nonblocking input protection is unavailable");
-  }
-
   let descriptor;
-  try {
-    descriptor = fs.openSync(file, fs.constants.O_RDONLY | noFollow | nonBlock);
-  } catch (error) {
-    if (error && (error.code === "ELOOP" || error.code === "EMLINK")) throw new SafeInputError("input must not be a symlink");
-    throw error;
+  if (!Number.isInteger(noFollow) || noFollow === 0 || !Number.isInteger(nonBlock) || nonBlock === 0) {
+    if (process.platform === "win32") {
+      let lstat;
+      try {
+        lstat = fs.lstatSync(file);
+      } catch (error) {
+        throw error;
+      }
+      if (lstat.isSymbolicLink()) {
+        throw new SafeInputError("input must not be a symlink");
+      }
+      try {
+        descriptor = fs.openSync(file, fs.constants.O_RDONLY);
+      } catch (error) {
+        throw error;
+      }
+    } else {
+      throw new SafeInputError("OS no-follow and nonblocking input protection is unavailable");
+    }
+  } else {
+    try {
+      descriptor = fs.openSync(file, fs.constants.O_RDONLY | noFollow | nonBlock);
+    } catch (error) {
+      if (error && (error.code === "ELOOP" || error.code === "EMLINK")) throw new SafeInputError("input must not be a symlink");
+      throw error;
+    }
   }
   try {
     const stat = fs.fstatSync(descriptor);

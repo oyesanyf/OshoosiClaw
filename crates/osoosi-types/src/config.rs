@@ -3,7 +3,9 @@
 
 use serde::{Deserialize, Serialize};
 use std::path::PathBuf;
-use tracing::{debug, info, warn};
+#[cfg(target_os = "windows")]
+use tracing::debug;
+use tracing::{info, warn};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct AgentConfig {
@@ -123,12 +125,10 @@ pub fn all_physical_drive_paths() -> Vec<String> {
 /// Check if a path is a system directory (Windows System32/Program Files, Linux /bin, etc.).
 /// Used to prevent high-risk autonomous actions like hex-patching on critical OS files.
 pub fn is_system_path(path: &str) -> bool {
-    let p = path.to_lowercase();
-    let p = p.replace('/', "\\"); // Normalize slashes for comparison
-
     #[cfg(target_os = "windows")]
     {
-        // Check for common Windows system paths
+        let p = path.to_lowercase().replace('/', "\\"); // Normalize slashes for comparison
+                                                        // Check for common Windows system paths
         let system_root = std::env::var("SystemRoot")
             .unwrap_or_else(|_| "C:\\Windows".to_string())
             .to_lowercase();
@@ -1232,13 +1232,12 @@ pub fn resolve_system_binary(prog: &str) -> PathBuf {
         return p.to_path_buf();
     }
 
-    let stem = prog
-        .strip_suffix(".exe")
-        .or_else(|| prog.strip_suffix(".EXE"))
-        .unwrap_or(prog);
-
     #[cfg(target_os = "windows")]
     {
+        let stem = prog
+            .strip_suffix(".exe")
+            .or_else(|| prog.strip_suffix(".EXE"))
+            .unwrap_or(prog);
         let exe_name = format!("{}.exe", stem);
 
         // 1. Walk existing PATH environment variable if present
@@ -2784,12 +2783,24 @@ fn default_strands_timeout_ms() -> u64 {
     800
 }
 
+fn default_openjev_endpoint() -> Option<String> {
+    Some("http://127.0.0.1:8080".to_string())
+}
+
+fn default_openjev_model() -> String {
+    "openjev-latest".to_string()
+}
+
+fn default_openjev_timeout_ms() -> u64 {
+    500
+}
+
 /// Configuration for the non-autoregressive Clef Decision Model.
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub struct DecisionModelConfig {
     #[serde(default = "default_true")]
     pub enabled: bool,
-    /// Provider: "local", "cloudflare", "auto" (default: "local" for air-gapped self-hosted execution)
+    /// Provider: "local", "cloudflare", "auto", "openjev", "systemone" (default: "local" for air-gapped self-hosted execution)
     #[serde(default = "default_decision_provider")]
     pub provider: String,
     /// Model ID on Workers AI (e.g. "@cf/cloudflare/clef-flash" or "@cf/cloudflare/clef") or local model
@@ -2826,6 +2837,18 @@ pub struct DecisionModelConfig {
     /// Timeout for Strands Decider 2B in milliseconds (default: 800ms)
     #[serde(default = "default_strands_timeout_ms")]
     pub strands_timeout_ms: u64,
+    /// OpenJev SystemOne server endpoint (default: "http://127.0.0.1:8080")
+    #[serde(default = "default_openjev_endpoint")]
+    pub openjev_endpoint: Option<String>,
+    /// OpenJev model name (default: "openjev-latest")
+    #[serde(default = "default_openjev_model")]
+    pub openjev_model: String,
+    /// Optional OpenJev API Key
+    #[serde(default)]
+    pub openjev_api_key: Option<String>,
+    /// Timeout for OpenJev SystemOne in milliseconds (default: 500ms)
+    #[serde(default = "default_openjev_timeout_ms")]
+    pub openjev_timeout_ms: u64,
 }
 
 impl Default for DecisionModelConfig {
@@ -2845,6 +2868,10 @@ impl Default for DecisionModelConfig {
             strands_endpoint: default_strands_endpoint(),
             strands_model: default_strands_model(),
             strands_timeout_ms: default_strands_timeout_ms(),
+            openjev_endpoint: default_openjev_endpoint(),
+            openjev_model: default_openjev_model(),
+            openjev_api_key: None,
+            openjev_timeout_ms: default_openjev_timeout_ms(),
         }
     }
 }
@@ -2910,6 +2937,37 @@ pub fn load_decision_model_config() -> DecisionModelConfig {
     if let Ok(val) = std::env::var("STRANDS_TIMEOUT_MS") {
         if let Ok(ms) = val.trim().parse::<u64>() {
             cfg.strands_timeout_ms = ms;
+        }
+    }
+    if let Ok(val) = std::env::var("OPENJEV_BASE_URL")
+        .or_else(|_| std::env::var("TYPESAFE_BASE_URL"))
+        .or_else(|_| std::env::var("OSOOSI_OPENJEV_ENDPOINT"))
+    {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            cfg.openjev_endpoint = Some(trimmed.to_string());
+        }
+    }
+    if let Ok(val) =
+        std::env::var("OPENJEV_MODEL").or_else(|_| std::env::var("OSOOSI_OPENJEV_MODEL"))
+    {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            cfg.openjev_model = trimmed.to_string();
+        }
+    }
+    if let Ok(val) = std::env::var("OPENJEV_API_KEY")
+        .or_else(|_| std::env::var("TYPESAFE_API_KEY"))
+        .or_else(|_| std::env::var("OSOOSI_OPENJEV_API_KEY"))
+    {
+        let trimmed = val.trim();
+        if !trimmed.is_empty() {
+            cfg.openjev_api_key = Some(trimmed.to_string());
+        }
+    }
+    if let Ok(val) = std::env::var("OPENJEV_TIMEOUT_MS") {
+        if let Ok(ms) = val.trim().parse::<u64>() {
+            cfg.openjev_timeout_ms = ms;
         }
     }
 

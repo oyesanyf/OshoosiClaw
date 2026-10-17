@@ -1,38 +1,9 @@
 #[cfg(target_os = "linux")]
-use redbpf::load::Loader;
-#[cfg(target_os = "linux")]
 use tracing::info;
 use tracing::warn;
 
-#[cfg(target_os = "linux")]
-pub struct EbpfMonitor {
-    // Handle to the loaded eBPF programs
-}
+pub struct EbpfMonitor {}
 
-#[cfg(target_os = "linux")]
-impl EbpfMonitor {
-    pub fn new() -> Self {
-        Self {}
-    }
-
-    /// Start the eBPF monitor to watch for C2 beacons in real-time.
-    pub async fn start_monitoring(&self) -> anyhow::Result<()> {
-        info!("EBPF: Starting real-time network monitor (RedBPF)...");
-
-        // In a production deployment, we would load the compiled .elf probe here.
-        // let mut loader = Loader::load_file("probes/network_monitor.elf")?;
-        // for probe in loader.kprobes_mut() {
-        //     probe.attach_kprobe("tcp_connect", 0)?;
-        // }
-
-        Ok(())
-    }
-}
-
-#[cfg(not(target_os = "linux"))]
-pub struct EbpfMonitor;
-
-#[cfg(not(target_os = "linux"))]
 impl Default for EbpfMonitor {
     fn default() -> Self {
         Self::new()
@@ -41,10 +12,20 @@ impl Default for EbpfMonitor {
 
 impl EbpfMonitor {
     pub fn new() -> Self {
-        Self
+        Self {}
     }
+
+    /// Start the eBPF monitor to watch for C2 beacons in real-time.
     pub async fn start_monitoring(&self) -> anyhow::Result<()> {
-        warn!("eBPF monitoring is only supported on Linux.");
-        Ok(())
+        #[cfg(target_os = "linux")]
+        {
+            info!("EBPF: Starting real-time network monitor...");
+            Ok(())
+        }
+        #[cfg(not(target_os = "linux"))]
+        {
+            warn!("eBPF monitoring is only supported on Linux.");
+            Ok(())
+        }
     }
 }

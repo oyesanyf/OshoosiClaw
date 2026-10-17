@@ -23,6 +23,11 @@ pub fn get_file_version_info(path: &Path) -> Option<String> {
     }
 }
 
+#[cfg(not(target_os = "windows"))]
+fn get_unix_file_version(_path: &Path) -> Option<String> {
+    None
+}
+
 #[cfg(target_os = "windows")]
 fn get_windows_file_version(path: &Path) -> Option<String> {
     match win32_version_info::VersionInfo::from_file(path) {

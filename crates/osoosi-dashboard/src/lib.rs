@@ -910,6 +910,14 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             "/api/siquery/protection-sweep",
             post(post_siquery_protection_sweep),
         )
+        .route(
+            "/api/audit/merkle-hierarchy",
+            get(handle_audit_merkle_hierarchy),
+        )
+        .route(
+            "/api/audit/nsrl-aslr-merkle",
+            get(get_audit_nsrl_aslr_merkle),
+        )
         .with_state(state);
 
     let cors = CorsLayer::new()
@@ -8075,9 +8083,75 @@ pub async fn post_siquery_protection_sweep(
     }
 }
 
+pub async fn handle_audit_merkle_hierarchy() -> impl IntoResponse {
+    let registry = osoosi_audit::global_hierarchical_merkle();
+    let anchors = registry.get_recent_anchors(100);
+    let latest = registry.get_latest_anchor().unwrap_or_else(|| {
+        registry.force_rollup_anchor("bootstrap_anchor")
+    });
+
+    let count = anchors.len();
+    let current_heads = json!({
+        "arm": latest.arm_root,
+        "tarpit": latest.tarpit_root,
+        "ring": latest.ring_root,
+    });
+
+    let summary = registry.get_summary();
+    let inclusion_proof = registry.internal_global_tree().generate_proof(0);
+
+    (
+        StatusCode::OK,
+        Json(json!({
+            "status": "ok",
+            "anchors": anchors,
+            "count": count,
+            "current_heads": current_heads,
+            "latest_anchor": latest,
+            "recent_anchors": anchors,
+            "summary": summary,
+            "inclusion_proof": inclusion_proof,
+            "public_key": registry.verifying_key_hex(),
+        })),
+    )
+}
+
+pub async fn get_audit_merkle_hierarchy() -> impl IntoResponse {
+    handle_audit_merkle_hierarchy().await
+}
+
+pub async fn get_audit_nsrl_aslr_merkle() -> impl IntoResponse {
+    let summary = osoosi_audit::global_nsrl_aslr_merkle().get_summary();
+    (StatusCode::OK, Json(summary))
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
+
+    #[tokio::test]
+    async fn test_audit_merkle_hierarchy_endpoint() {
+        let resp = handle_audit_merkle_hierarchy().await.into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .expect("read body");
+        let json_val: Value = serde_json::from_slice(&body_bytes).expect("parse json");
+
+        assert_eq!(json_val["status"], "ok");
+        assert!(json_val["anchors"].is_array());
+        assert!(json_val["count"].as_u64().unwrap_or(0) >= 1);
+        assert!(json_val["current_heads"]["arm"].is_string());
+        assert!(json_val["current_heads"]["tarpit"].is_string());
+        assert!(json_val["current_heads"]["ring"].is_string());
+    }
+
+    #[tokio::test]
+    async fn test_audit_nsrl_aslr_merkle_endpoint() {
+        let resp = get_audit_nsrl_aslr_merkle().await.into_response();
+        assert_eq!(resp.status(), StatusCode::OK);
+    }
 
     #[tokio::test]
     async fn test_mesh_topology_mock_fallback() {

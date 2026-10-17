@@ -4,6 +4,7 @@ use super::models::{
     build_security_incident_request, parse_security_incident_response, BoolAnswer, ChoiceAnswer,
     DecisionAnswer, DecisionRequest, DecisionResponse, SecurityIncidentDecision,
 };
+use super::openjev_client::OpenJevClient;
 use super::strands_client::StrandsClient;
 use anyhow::Result;
 use osoosi_types::config::DecisionModelConfig;
@@ -48,12 +49,13 @@ pub struct DecisionMetricsSummary {
     pub cumulative_rl_reward: f64,
 }
 
-/// The unified Clef Decision Engine uniting Cloudflare Workers AI, Strands Decider 2B SLM,
-/// and Local Brier Evaluators.
+/// The unified Clef Decision Engine uniting OpenJev ("System One"), Cloudflare Workers AI,
+/// Strands Decider 2B SLM, and Local Brier Evaluators.
 pub struct ClefDecisionEngine {
     config: DecisionModelConfig,
     cf_client: Option<CloudflareClient>,
     strands_client: Option<StrandsClient>,
+    openjev_client: Option<OpenJevClient>,
     local_engine: LocalDecisionEngine,
     metrics: Arc<DecisionMetrics>,
 }
@@ -111,10 +113,45 @@ impl ClefDecisionEngine {
             None
         };
 
+        let openjev_client = if let Some(ref ep) = config.openjev_endpoint {
+            if !ep.trim().is_empty() {
+                let trimmed = ep.trim().trim_end_matches('/');
+                let base_ep = if let Some(stripped) = trimmed.strip_suffix("/v1/predict") {
+                    stripped
+                } else if let Some(stripped) = trimmed.strip_suffix("/v1/systemone") {
+                    stripped
+                } else if let Some(stripped) = trimmed.strip_suffix("/v1/decisions") {
+                    stripped
+                } else {
+                    trimmed
+                };
+                match OpenJevClient::new(
+                    base_ep.to_string(),
+                    config.openjev_model.clone(),
+                    config.openjev_api_key.clone(),
+                    config.openjev_timeout_ms,
+                ) {
+                    Ok(client) => Some(client),
+                    Err(e) => {
+                        tracing::warn!(
+                            "[DECISION] OpenJev SystemOne client initialization failed: {}. Fallback active.",
+                            e
+                        );
+                        None
+                    }
+                }
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+
         Self {
             config,
             cf_client,
             strands_client,
+            openjev_client,
             local_engine,
             metrics: Arc::new(DecisionMetrics::default()),
         }
@@ -148,6 +185,10 @@ impl ClefDecisionEngine {
         self.strands_client.as_ref()
     }
 
+    pub fn openjev_client(&self) -> Option<&OpenJevClient> {
+        self.openjev_client.as_ref()
+    }
+
     pub fn metrics_handle(&self) -> &Arc<DecisionMetrics> {
         &self.metrics
     }
@@ -178,6 +219,61 @@ impl ClefDecisionEngine {
                 .fetch_add(elapsed_micros, Ordering::Relaxed);
             res.latency_ms = start.elapsed().as_secs_f64() * 1000.0;
             return Ok(res);
+        }
+
+        // 2. OpenJev / SystemOne Provider Routing
+        if prov == "openjev" || prov == "systemone" {
+            if let Some(ref client) = self.openjev_client {
+                match client.run_systemone(request).await {
+                    Ok(mut resp) => {
+                        let elapsed_micros = start.elapsed().as_micros() as u64;
+                        self.metrics
+                            .total_latency_micros
+                            .fetch_add(elapsed_micros, Ordering::Relaxed);
+                        resp.latency_ms = start.elapsed().as_secs_f64() * 1000.0;
+                        return Ok(resp);
+                    }
+                    Err(err) => {
+                        if self.config.fallback_to_local {
+                            tracing::warn!(
+                                "[DECISION] OpenJev SystemOne call failed ({}); falling back to local engine.",
+                                err
+                            );
+                            self.metrics
+                                .fallback_evaluations
+                                .fetch_add(1, Ordering::Relaxed);
+                            match self.local_engine.evaluate(request) {
+                                Ok(mut local_resp) => {
+                                    self.metrics
+                                        .local_evaluations
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    let elapsed_micros = start.elapsed().as_micros() as u64;
+                                    self.metrics
+                                        .total_latency_micros
+                                        .fetch_add(elapsed_micros, Ordering::Relaxed);
+                                    local_resp.latency_ms = start.elapsed().as_secs_f64() * 1000.0;
+                                    return Ok(local_resp);
+                                }
+                                Err(e2) => {
+                                    self.metrics.error_count.fetch_add(1, Ordering::Relaxed);
+                                    return Err(e2);
+                                }
+                            }
+                        } else {
+                            self.metrics.error_count.fetch_add(1, Ordering::Relaxed);
+                            return Err(err);
+                        }
+                    }
+                }
+            } else {
+                let mut fallback = OpenJevClient::local_systemone_readout(request);
+                let elapsed_micros = start.elapsed().as_micros() as u64;
+                self.metrics
+                    .total_latency_micros
+                    .fetch_add(elapsed_micros, Ordering::Relaxed);
+                fallback.latency_ms = start.elapsed().as_secs_f64() * 1000.0;
+                return Ok(fallback);
+            }
         }
 
         let use_cloudflare = (prov == "cloudflare" || prov == "auto") && self.cf_client.is_some();
@@ -249,11 +345,12 @@ impl ClefDecisionEngine {
         }
     }
 
-    /// Tiered 4-Tier Hybrid Decision Cascade:
+    /// Tiered 5-Tier Hybrid Decision Cascade:
     /// Tier 1: In-process deterministic / Brier check (< 5ms)
-    /// Tier 2: Cloudflare Clef Flash Non-Autoregressive Edge (~38ms)
-    /// Tier 3: Local Strands Decider 2B SLM (~115ms)
-    /// Tier 4: Native local heuristic engine fallback
+    /// Tier 2: OpenJev SystemOne Non-Autoregressive Decision Server (~12ms)
+    /// Tier 3: Cloudflare Clef Flash Non-Autoregressive Edge (~38ms)
+    /// Tier 4: Local Strands Decider 2B SLM (~115ms)
+    /// Tier 5: Native local heuristic engine fallback
     pub async fn evaluate_hybrid_cascade(
         &self,
         request: &DecisionRequest,
@@ -270,7 +367,22 @@ impl ClefDecisionEngine {
                 return Ok(local_resp);
             }
 
-            // Tier 2: Cloudflare Clef Flash Non-Autoregressive Edge (~38ms)
+            // Tier 2: OpenJev SystemOne Non-Autoregressive Server (~12ms)
+            if let Some(ref ojc) = self.openjev_client {
+                match ojc.run_systemone(request).await {
+                    Ok(oj_resp) => {
+                        return Ok(oj_resp);
+                    }
+                    Err(err) => {
+                        tracing::debug!(
+                            "[DECISION-CASCADE] OpenJev SystemOne tier unreachable ({}); cascading.",
+                            err
+                        );
+                    }
+                }
+            }
+
+            // Tier 3: Cloudflare Clef Flash Non-Autoregressive Edge (~38ms)
             if let Some(ref cf) = self.cf_client {
                 match cf.run_decision(request).await {
                     Ok(cf_resp) => {
@@ -281,14 +393,14 @@ impl ClefDecisionEngine {
                     }
                     Err(err) => {
                         tracing::debug!(
-                            "[DECISION-CASCADE] Clef Flash tier unreachable ({}); cascading to Tier 3.",
+                            "[DECISION-CASCADE] Clef Flash tier unreachable ({}); cascading to Tier 4.",
                             err
                         );
                     }
                 }
             }
 
-            // Tier 3: Local Strands Decider 2B SLM (~115ms)
+            // Tier 4: Local Strands Decider 2B SLM (~115ms)
             if let Some(ref sc) = self.strands_client {
                 match sc.run_decision(request).await {
                     Ok(strands_resp) => {
@@ -299,20 +411,25 @@ impl ClefDecisionEngine {
                     }
                     Err(err) => {
                         tracing::debug!(
-                            "[DECISION-CASCADE] Strands Decider 2B tier unreachable ({}); cascading to Tier 4.",
+                            "[DECISION-CASCADE] Strands Decider 2B tier unreachable ({}); cascading to Tier 5.",
                             err
                         );
                     }
                 }
             }
 
-            // Tier 4: Native local heuristic fallback
+            // Tier 5: Native local heuristic fallback
             self.metrics
                 .fallback_evaluations
                 .fetch_add(1, Ordering::Relaxed);
             Ok(local_resp)
         } else {
-            // Local evaluation failed, fallback to strands or cf
+            // Local evaluation failed, fallback to openjev, strands, or cf
+            if let Some(ref ojc) = self.openjev_client {
+                if let Ok(o) = ojc.run_systemone(request).await {
+                    return Ok(o);
+                }
+            }
             if let Some(ref sc) = self.strands_client {
                 if let Ok(s) = sc.run_decision(request).await {
                     self.metrics
@@ -334,9 +451,9 @@ impl ClefDecisionEngine {
     }
 
     /// Bayesian Consensus Resolution:
-    /// Queries Clef Flash and Strands Decider 2B concurrently with `tokio::join!`.
-    /// Combines action probability distributions with Bayesian weighting.
-    /// If both models agree on containment (P >= 0.80), proceed autonomously.
+    /// Queries OpenJev System One, Cloudflare Clef Flash, and Strands Decider 2B concurrently with `tokio::join!`.
+    /// Combines categorical probability distributions with Bayesian confidence weighting derived from Shannon entropy.
+    /// If models agree on containment (P >= 0.80), proceed autonomously.
     /// If models disagree, sets human_escalation_required = true, increments dispute counter, and logs.
     pub async fn evaluate_hybrid_consensus(
         &self,
@@ -350,6 +467,14 @@ impl ClefDecisionEngine {
             }
         };
 
+        let openjev_fut = async {
+            if let Some(ref ojc) = self.openjev_client {
+                ojc.run_systemone(request).await.ok()
+            } else {
+                None
+            }
+        };
+
         let strands_fut = async {
             if let Some(ref sc) = self.strands_client {
                 sc.run_decision(request).await.ok()
@@ -358,21 +483,50 @@ impl ClefDecisionEngine {
             }
         };
 
-        let (cf_opt, strands_opt) = tokio::join!(cf_fut, strands_fut);
+        let (cf_opt, openjev_opt, strands_opt) = tokio::join!(cf_fut, openjev_fut, strands_fut);
 
         // Fallback to local engines if endpoints not configured/offline
-        let resp_clef = cf_opt
-            .or_else(|| self.local_engine.evaluate(request).ok())
-            .unwrap_or_else(|| StrandsClient::local_calibrated_estimation(request));
-
+        let resp_openjev = openjev_opt.unwrap_or_else(|| OpenJevClient::local_systemone_readout(request));
         let resp_strands =
             strands_opt.unwrap_or_else(|| StrandsClient::local_calibrated_estimation(request));
 
-        let dec_clef = parse_security_incident_response(&resp_clef);
+        let dec_openjev = parse_security_incident_response(&resp_openjev);
         let dec_strands = parse_security_incident_response(&resp_strands);
+        let dec_cf = cf_opt.as_ref().map(parse_security_incident_response);
 
-        let w_clef = 0.55;
-        let w_strands = 0.45;
+        // Extract confidence scores (using Shannon entropy-normalized confidence from OpenJev when available)
+        let conf_openjev = resp_openjev
+            .answers
+            .get("containment_action")
+            .and_then(|a| a.confidence)
+            .unwrap_or(0.90)
+            .clamp(0.10, 1.0);
+        let conf_strands = resp_strands
+            .answers
+            .get("containment_action")
+            .and_then(|a| a.confidence)
+            .unwrap_or(0.85)
+            .clamp(0.10, 1.0);
+
+        // Compute Bayesian weights modulated by Shannon entropy confidence
+        let (base_w_openjev, base_w_strands, base_w_cf) = if dec_cf.is_some() {
+            (0.35, 0.30, 0.35)
+        } else {
+            (0.55, 0.45, 0.0)
+        };
+
+        let raw_w_openjev = base_w_openjev * conf_openjev;
+        let raw_w_strands = base_w_strands * conf_strands;
+        let raw_w_cf = if let Some(ref d_cf) = dec_cf {
+            base_w_cf * d_cf.action_probability.clamp(0.10, 1.0)
+        } else {
+            0.0
+        };
+
+        let sum_w = (raw_w_openjev + raw_w_strands + raw_w_cf).max(1e-6);
+        let w_openjev = raw_w_openjev / sum_w;
+        let w_strands = raw_w_strands / sum_w;
+        let w_cf = raw_w_cf / sum_w;
 
         // Extract action probabilities
         let candidate_actions = [
@@ -385,7 +539,7 @@ impl ClefDecisionEngine {
         ];
         let mut fused_probs: HashMap<String, f64> = HashMap::new();
 
-        let probs_clef = resp_clef
+        let probs_openjev = resp_openjev
             .answers
             .get("containment_action")
             .and_then(|a| a.probabilities.as_ref());
@@ -393,11 +547,15 @@ impl ClefDecisionEngine {
             .answers
             .get("containment_action")
             .and_then(|a| a.probabilities.as_ref());
+        let probs_cf = cf_opt
+            .as_ref()
+            .and_then(|r| r.answers.get("containment_action"))
+            .and_then(|a| a.probabilities.as_ref());
 
         for &act in &candidate_actions {
-            let p_c = probs_clef.and_then(|m| m.get(act).copied()).unwrap_or(
-                if act == dec_clef.containment_action {
-                    dec_clef.action_probability
+            let p_oj = probs_openjev.and_then(|m| m.get(act).copied()).unwrap_or(
+                if act == dec_openjev.containment_action {
+                    dec_openjev.action_probability
                 } else {
                     0.05
                 },
@@ -409,7 +567,18 @@ impl ClefDecisionEngine {
                     0.05
                 },
             );
-            fused_probs.insert(act.to_string(), w_clef * p_c + w_strands * p_s);
+            let mut p_fused = w_openjev * p_oj + w_strands * p_s;
+            if let Some(ref d_cf) = dec_cf {
+                let p_c = probs_cf.and_then(|m| m.get(act).copied()).unwrap_or(
+                    if act == d_cf.containment_action {
+                        d_cf.action_probability
+                    } else {
+                        0.05
+                    },
+                );
+                p_fused += w_cf * p_c;
+            }
+            fused_probs.insert(act.to_string(), p_fused);
         }
 
         // Normalize fused action probabilities
@@ -432,46 +601,62 @@ impl ClefDecisionEngine {
 
         let is_containment =
             |act: &str| matches!(act, "isolate" | "quarantine" | "tarpit" | "ghost_tarpit");
-        let clef_contains = is_containment(&dec_clef.containment_action);
+        let openjev_contains = is_containment(&dec_openjev.containment_action);
         let strands_contains = is_containment(&dec_strands.containment_action);
+        let cf_contains = dec_cf.as_ref().map(|d| is_containment(&d.containment_action));
 
         let mut disagreement = false;
-        let mut human_escalation =
-            dec_clef.human_escalation_required || dec_strands.human_escalation_required;
+        let mut human_escalation = dec_openjev.human_escalation_required
+            || dec_strands.human_escalation_required
+            || dec_cf.as_ref().map(|d| d.human_escalation_required).unwrap_or(false);
 
-        // Disagreement detection: e.g. Clef says isolate while Strands says allow
-        if clef_contains != strands_contains {
+        // Disagreement detection: e.g. OpenJev says isolate while Strands says allow
+        if openjev_contains != strands_contains
+            || cf_contains.is_some_and(|c| c != openjev_contains)
+        {
             disagreement = true;
             human_escalation = true;
             self.metrics
                 .consensus_disagreements
                 .fetch_add(1, Ordering::Relaxed);
             tracing::warn!(
-                "[DECISION-CONSENSUS] Model dispute detected: Clef action '{}' (P={:.2}) vs Strands action '{}' (P={:.2}). Human escalation flagged.",
-                dec_clef.containment_action, dec_clef.action_probability,
-                dec_strands.containment_action, dec_strands.action_probability
+                "[DECISION-CONSENSUS] Model dispute detected: OpenJev action '{}' (P={:.2}, Conf={:.2}) vs Strands action '{}' (P={:.2}, Conf={:.2}). Human escalation flagged.",
+                dec_openjev.containment_action,
+                dec_openjev.action_probability,
+                conf_openjev,
+                dec_strands.containment_action,
+                dec_strands.action_probability,
+                conf_strands
             );
         }
 
-        let mut final_answers = resp_strands.answers;
+        // Start with OpenJev answers (rich System One slot readouts with entropy confidence)
+        let mut final_answers = resp_openjev.answers;
+        for (k, v) in resp_strands.answers {
+            final_answers.entry(k).or_insert(v);
+        }
+
         final_answers.insert(
             "containment_action".to_string(),
-            DecisionAnswer::from_choice(ChoiceAnswer {
-                value: best_action,
-                probabilities: fused_probs,
-            }),
+            DecisionAnswer::from_choice(ChoiceAnswer::new(best_action, fused_probs)),
         );
         final_answers.insert(
             "human_escalation".to_string(),
-            DecisionAnswer::from_bool(BoolAnswer {
-                value: human_escalation,
-                probability: if human_escalation { 0.95 } else { 0.10 },
-            }),
+            DecisionAnswer::from_bool(BoolAnswer::new(
+                human_escalation,
+                if human_escalation { 0.95 } else { 0.10 },
+            )),
         );
+
+        let cf_lat = cf_opt.as_ref().map(|c| c.latency_ms).unwrap_or(0.0);
+        let max_lat = resp_openjev
+            .latency_ms
+            .max(resp_strands.latency_ms)
+            .max(cf_lat);
 
         Ok(DecisionResponse {
             answers: final_answers,
-            latency_ms: resp_clef.latency_ms.max(resp_strands.latency_ms),
+            latency_ms: max_lat,
             provider: if disagreement {
                 "hybrid-consensus-dispute".to_string()
             } else {
@@ -567,5 +752,66 @@ impl ClefDecisionEngine {
             rl_feedback_count: self.local_engine.rl_feedback_count(),
             cumulative_rl_reward: self.local_engine.cumulative_rl_reward(),
         }
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[tokio::test]
+    async fn test_openjev_consensus_agreement() {
+        let mut cfg = DecisionModelConfig::default();
+        cfg.provider = "hybrid".to_string();
+        cfg.hybrid_strategy = "consensus".to_string();
+        cfg.openjev_endpoint = Some("http://127.0.0.1:8000/v1/predict".to_string());
+        cfg.openjev_model = "openjev-systemone-v1".to_string();
+        cfg.openjev_timeout_ms = 100;
+        cfg.strands_endpoint = Some("http://127.0.0.1:4003".to_string());
+        cfg.strands_timeout_ms = 100;
+
+        let engine = ClefDecisionEngine::new(cfg);
+        assert!(engine.openjev_client().is_some());
+        assert_eq!(
+            engine.openjev_client().unwrap().endpoint(),
+            "http://127.0.0.1:8000"
+        );
+
+        let dec = engine
+            .evaluate_security_incident(
+                "Process Image: C:\\Windows\\System32\\vssadmin.exe | CommandLine: delete shadows /all /quiet | MITRE: T1486 | IsSigned: false",
+            )
+            .await
+            .expect("Consensus evaluation must succeed");
+
+        assert!(dec.containment_action == "isolate" || dec.containment_action == "tarpit");
+        assert!(dec.action_probability > 0.50);
+
+        let metrics = engine.metrics();
+        assert_eq!(metrics.hybrid_evaluations, 1);
+    }
+
+    #[tokio::test]
+    async fn test_openjev_consensus_benign_agreement() {
+        let mut cfg = DecisionModelConfig::default();
+        cfg.provider = "hybrid".to_string();
+        cfg.hybrid_strategy = "consensus".to_string();
+        cfg.openjev_endpoint = Some("http://127.0.0.1:8000/v1/predict".to_string());
+        cfg.openjev_model = "openjev-systemone-v1".to_string();
+        cfg.openjev_timeout_ms = 100;
+        cfg.strands_endpoint = Some("http://127.0.0.1:4003".to_string());
+        cfg.strands_timeout_ms = 100;
+
+        let engine = ClefDecisionEngine::new(cfg);
+        let dec = engine
+            .evaluate_security_incident(
+                "Process Image: C:\\Windows\\System32\\svchost.exe | CommandLine: -k DcomLaunch | IsSigned: true | Invariants: Nominal",
+            )
+            .await
+            .expect("Consensus evaluation must succeed");
+
+        assert_eq!(dec.verdict, "benign");
+        assert_eq!(dec.containment_action, "allow");
+        assert!(!dec.human_escalation_required);
     }
 }

@@ -1,13 +1,72 @@
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
-/// Question answer type for Clef decision models.
+/// Question answer type for Clef and OpenJev decision models.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Serialize, Deserialize)]
 #[serde(rename_all = "lowercase")]
 pub enum QuestionType {
     Choice,
+    #[serde(alias = "noul", alias = "predicate")]
     Bool,
     Score,
+}
+
+/// Computes exact Shannon entropy H(p) = -\sum_{p_k > 1e-12} p_k \ln(p_k).
+/// [SEC-OJEV-02] Hardened with finite probability checks to prevent NaN/Inf propagation.
+pub fn shannon_entropy(probs: &HashMap<String, f64>) -> f64 {
+    let mut h = 0.0;
+    for &p in probs.values() {
+        if p.is_finite() && p > 1e-12 {
+            h -= p * p.ln();
+        }
+    }
+    if !h.is_finite() || h < 0.0 {
+        0.0
+    } else {
+        h
+    }
+}
+
+/// Computes normalized Shannon entropy confidence 1.0 - (H(p) / \ln(K)) clamped to [0.0, 1.0].
+/// [SEC-OJEV-02] Hardened against NaN/Inf and division-by-zero, guaranteeing a finite [0.0, 1.0] return.
+pub fn normalized_entropy_confidence(probs: &HashMap<String, f64>) -> f64 {
+    let k = probs.len();
+    if k <= 1 {
+        return 1.0;
+    }
+    let h = shannon_entropy(probs);
+    let max_h = (k as f64).ln();
+    if !max_h.is_finite() || max_h <= 1e-12 {
+        return 1.0;
+    }
+    let ratio = h / max_h;
+    if !ratio.is_finite() {
+        return 1.0;
+    }
+    let conf = 1.0 - ratio;
+    if !conf.is_finite() {
+        1.0
+    } else {
+        conf.clamp(0.0, 1.0)
+    }
+}
+
+/// Computes expected ordinal score \sum_{i=0}^{K-1} i * p(levels[i]).
+/// [SEC-OJEV-02] Hardened against non-finite probabilities.
+pub fn expected_ordinal_score(levels: &[String], probs: &HashMap<String, f64>) -> f64 {
+    let mut score = 0.0;
+    for (i, level) in levels.iter().enumerate() {
+        if let Some(&p) = probs.get(level) {
+            if p.is_finite() && p >= 0.0 {
+                score += (i as f64) * p;
+            }
+        }
+    }
+    if !score.is_finite() {
+        0.0
+    } else {
+        score
+    }
 }
 
 /// Definition of a question posed to the decision model.
@@ -35,6 +94,19 @@ pub struct DecisionRequest {
 pub struct ChoiceAnswer {
     pub value: String,
     pub probabilities: HashMap<String, f64>,
+    #[serde(default)]
+    pub confidence: Option<f64>,
+}
+
+impl ChoiceAnswer {
+    pub fn new(value: String, probabilities: HashMap<String, f64>) -> Self {
+        let conf = normalized_entropy_confidence(&probabilities);
+        Self {
+            value,
+            probabilities,
+            confidence: Some(conf),
+        }
+    }
 }
 
 /// Boolean answer with calibrated probability.
@@ -42,6 +114,29 @@ pub struct ChoiceAnswer {
 pub struct BoolAnswer {
     pub value: bool,
     pub probability: f64,
+    #[serde(default)]
+    pub confidence: Option<f64>,
+}
+
+impl BoolAnswer {
+    pub fn new(value: bool, probability: f64) -> Self {
+        let p = if probability.is_finite() {
+            probability.clamp(0.0, 1.0)
+        } else if value {
+            1.0
+        } else {
+            0.0
+        };
+        let mut map = HashMap::new();
+        map.insert("true".to_string(), p);
+        map.insert("false".to_string(), 1.0 - p);
+        let conf = normalized_entropy_confidence(&map);
+        Self {
+            value,
+            probability: p,
+            confidence: Some(conf),
+        }
+    }
 }
 
 /// Ordinal score answer with calibrated probability distribution.
@@ -49,6 +144,27 @@ pub struct BoolAnswer {
 pub struct ScoreAnswer {
     pub value: String,
     pub probabilities: HashMap<String, f64>,
+    #[serde(default)]
+    pub confidence: Option<f64>,
+    #[serde(default)]
+    pub expected_score: Option<f64>,
+}
+
+impl ScoreAnswer {
+    pub fn new(
+        value: String,
+        probabilities: HashMap<String, f64>,
+        levels: Option<&[String]>,
+    ) -> Self {
+        let conf = normalized_entropy_confidence(&probabilities);
+        let expected = levels.map(|l| expected_ordinal_score(l, &probabilities));
+        Self {
+            value,
+            probabilities,
+            confidence: Some(conf),
+            expected_score: expected,
+        }
+    }
 }
 
 /// Strongly-typed or deserialized answer item.
@@ -59,30 +175,53 @@ pub struct DecisionAnswer {
     pub probability: Option<f64>,
     #[serde(default)]
     pub probabilities: Option<HashMap<String, f64>>,
+    #[serde(default)]
+    pub confidence: Option<f64>,
+    #[serde(default)]
+    pub expected_score: Option<f64>,
 }
 
 impl DecisionAnswer {
     pub fn from_choice(choice: ChoiceAnswer) -> Self {
+        let conf = choice
+            .confidence
+            .or_else(|| Some(normalized_entropy_confidence(&choice.probabilities)));
         Self {
             value: serde_json::Value::String(choice.value),
             probability: None,
             probabilities: Some(choice.probabilities),
+            confidence: conf,
+            expected_score: None,
         }
     }
 
     pub fn from_bool(b: BoolAnswer) -> Self {
+        let p = b.probability.clamp(0.0, 1.0);
+        let conf = b.confidence.or_else(|| {
+            let mut map = HashMap::new();
+            map.insert("true".to_string(), p);
+            map.insert("false".to_string(), 1.0 - p);
+            Some(normalized_entropy_confidence(&map))
+        });
         Self {
             value: serde_json::Value::Bool(b.value),
-            probability: Some(b.probability),
+            probability: Some(p),
             probabilities: None,
+            confidence: conf,
+            expected_score: None,
         }
     }
 
     pub fn from_score(score: ScoreAnswer) -> Self {
+        let conf = score
+            .confidence
+            .or_else(|| Some(normalized_entropy_confidence(&score.probabilities)));
         Self {
             value: serde_json::Value::String(score.value),
             probability: None,
             probabilities: Some(score.probabilities),
+            confidence: conf,
+            expected_score: score.expected_score,
         }
     }
 
@@ -288,5 +427,36 @@ pub fn parse_security_incident_response(res: &DecisionResponse) -> SecurityIncid
         threat_severity,
         latency_ms: res.latency_ms,
         provider_used: res.provider.clone(),
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+
+    #[test]
+    fn test_sec_ojev_02_finite_probability_and_entropy_guards() {
+        let mut probs = HashMap::new();
+        probs.insert("option_a".to_string(), f64::NAN);
+        probs.insert("option_b".to_string(), f64::INFINITY);
+        probs.insert("option_c".to_string(), -1.0);
+        probs.insert("option_d".to_string(), 0.5);
+
+        let h = shannon_entropy(&probs);
+        assert!(h.is_finite(), "Entropy must be finite despite NaN/Inf inputs");
+        assert!(h >= 0.0);
+
+        let conf = normalized_entropy_confidence(&probs);
+        assert!(conf.is_finite(), "Confidence must be finite despite NaN/Inf inputs");
+        assert!(conf >= 0.0 && conf <= 1.0);
+
+        let levels = vec!["option_d".to_string()];
+        let score = expected_ordinal_score(&levels, &probs);
+        assert!(score.is_finite(), "Score must be finite");
+
+        let bool_ans_nan = BoolAnswer::new(true, f64::NAN);
+        assert!(bool_ans_nan.probability.is_finite());
+        assert_eq!(bool_ans_nan.probability, 1.0);
+        assert!(bool_ans_nan.confidence.unwrap().is_finite());
     }
 }

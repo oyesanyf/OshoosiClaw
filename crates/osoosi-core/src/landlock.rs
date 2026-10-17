@@ -60,8 +60,6 @@ impl Default for LandlockConfig {
 /// the kernel — even for root.
 #[cfg(target_os = "linux")]
 pub fn apply_landlock_sandbox(config: &LandlockConfig) -> anyhow::Result<()> {
-    use std::os::unix::io::AsRawFd;
-
     // Check Landlock availability
     let abi = match landlock_abi_version() {
         Some(v) => v,
@@ -186,10 +184,10 @@ fn landlock_ruleset_attr(abi: u32) -> LandlockRulesetAttr {
         (1 << 12); // MAKE_SYM
 
     if abi >= 2 {
-        flags |= (1 << 13); // REFER (move/rename across dirs)
+        flags |= 1 << 13; // REFER (move/rename across dirs)
     }
     if abi >= 3 {
-        flags |= (1 << 14); // TRUNCATE
+        flags |= 1 << 14; // TRUNCATE
     }
 
     LandlockRulesetAttr {

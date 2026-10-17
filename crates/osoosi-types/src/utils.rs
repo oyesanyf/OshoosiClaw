@@ -28,6 +28,8 @@ pub fn extract_zip(zip_path: &Path, dest_dir: &Path) -> anyhow::Result<()> {
 
     for i in 0..archive.len() {
         let file = archive.by_index(i)?;
+        #[cfg(unix)]
+        let unix_mode = file.unix_mode();
         let outpath = match file.enclosed_name() {
             Some(path) => dest_dir.join(path),
             None => continue,
@@ -60,7 +62,7 @@ pub fn extract_zip(zip_path: &Path, dest_dir: &Path) -> anyhow::Result<()> {
         #[cfg(unix)]
         {
             use std::os::unix::fs::PermissionsExt;
-            if let Some(mode) = file.unix_mode() {
+            if let Some(mode) = unix_mode {
                 std::fs::set_permissions(&outpath, std::fs::Permissions::from_mode(mode))?;
             }
         }

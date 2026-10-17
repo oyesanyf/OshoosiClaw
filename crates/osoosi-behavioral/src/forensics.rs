@@ -4,6 +4,7 @@
 //! analyze high-fidelity network telemetry during an active incident.
 
 use serde::{Deserialize, Serialize};
+#[cfg(target_os = "windows")]
 use std::process::Command;
 use tracing::info;
 

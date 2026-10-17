@@ -109,7 +109,7 @@ fn inspect_tpm_linux() -> Option<TpmHardwareInspection> {
         return None;
     }
 
-    let mut mfg_id = 0u32;
+    let mfg_id = 0u32;
     let mut mfg_str = "TPM2_LINUX".to_string();
 
     if let Ok(id_str) = fs::read_to_string("/sys/class/tpm/tpm0/device/description") {

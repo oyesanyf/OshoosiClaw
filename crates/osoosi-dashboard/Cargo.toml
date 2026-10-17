@@ -10,6 +10,7 @@ osoosi-policy = { path = "../osoosi-policy" }
 osoosi-wire = { path = "../osoosi-wire" }
 osoosi-behavioral = { path = "../osoosi-behavioral" }
 osoosi-agent-anomaly = { path = "../osoosi-agent-anomaly" }
+osoosi-audit = { path = "../osoosi-audit" }
 axum.workspace = true
 tower.workspace = true
 tower-http.workspace = true

@@ -5,6 +5,8 @@
 
 #[cfg(not(target_os = "windows"))]
 use chrono::Utc;
+#[cfg(not(target_os = "windows"))]
+use osoosi_types::HostEventSource;
 use osoosi_types::HostSecurityEvent;
 #[cfg(not(target_os = "windows"))]
 use serde_json::json;
@@ -1344,7 +1346,8 @@ impl HostEventReader for LinuxAuditReader {
                 }
             }
         } else {
-            for line in reader.lines().flatten().rev().take(50) {
+            let lines: Vec<String> = reader.lines().flatten().collect();
+            for line in lines.into_iter().rev().take(50) {
                 if line.contains("Accepted") || line.contains("Failed") || line.contains("session")
                 {
                     if let Some(ev) = self.parse_audit_line(&line) {

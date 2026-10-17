@@ -5,7 +5,9 @@
 use std::process::Command;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::time::Instant;
-use tracing::{debug, info, warn};
+#[cfg(target_os = "windows")]
+use tracing::debug;
+use tracing::{info, warn};
 
 static LAST_ISOLATION_TIME: parking_lot::Mutex<Option<Instant>> = parking_lot::Mutex::new(None);
 static ISOLATION_COUNT: AtomicU64 = AtomicU64::new(0);

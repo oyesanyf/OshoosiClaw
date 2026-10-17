@@ -612,10 +612,7 @@ impl LocalDecisionEngine {
             .map(|(k, _)| k.clone())
             .unwrap_or_else(|| classes[0].clone());
 
-        ChoiceAnswer {
-            value: best_class,
-            probabilities,
-        }
+        ChoiceAnswer::new(best_class, probabilities)
     }
 
     fn evaluate_bool(
@@ -655,10 +652,7 @@ impl LocalDecisionEngine {
         let calibrated_prob = prob.clamp(0.01, 0.99);
         let value = calibrated_prob >= 0.50;
 
-        BoolAnswer {
-            value,
-            probability: calibrated_prob,
-        }
+        BoolAnswer::new(value, calibrated_prob)
     }
 
     fn evaluate_score(
@@ -730,10 +724,7 @@ impl LocalDecisionEngine {
             .map(|(k, _)| k.clone())
             .unwrap_or_else(|| levels[0].clone());
 
-        ScoreAnswer {
-            value: best_level,
-            probabilities,
-        }
+        ScoreAnswer::new(best_level, probabilities, Some(&levels))
     }
 
     /// Softmax with label smoothing and strict sum-to-1 normalization.

@@ -198,7 +198,8 @@ int handle_connect(struct trace_event_raw_sys_enter_connect *ctx) {
     event->pid = (uint32_t)(pid_tgid >> 32);
     event->family = family;
     event->sport = 0;
-    event->_pad = 0;
+    event->_pad1 = 0;
+    event->_pad2 = 0;
     event->timestamp_ns = bpf_ktime_get_ns();
 
     if (family == 2) { // AF_INET

@@ -1,12 +1,22 @@
+#[cfg(target_os = "windows")]
 use chrono::Utc;
+#[cfg(target_os = "windows")]
 use dashmap::DashMap;
+#[cfg(target_os = "windows")]
 use ferrisetw::parser::*;
+#[cfg(target_os = "windows")]
 use ferrisetw::provider::Provider;
+#[cfg(target_os = "windows")]
 use ferrisetw::trace::UserTrace;
-use osoosi_types::{HostEventSource, HostSecurityEvent};
+#[cfg(target_os = "windows")]
+use osoosi_types::HostEventSource;
+use osoosi_types::HostSecurityEvent;
+#[cfg(target_os = "windows")]
 use std::sync::Arc;
 use tokio::sync::mpsc;
-use tracing::{error, info, warn};
+#[cfg(target_os = "windows")]
+use tracing::warn;
+use tracing::{error, info};
 
 #[derive(Debug, Clone)]
 pub struct ProcessMeta {
@@ -30,12 +40,15 @@ impl NativeTelemetryEngine {
         info!("🚀 [NATIVE-TELEMETRY] Starting Oshoosi Native Monitoring (Multi-Engine)...");
 
         // 1. Start Injection Hook Telemetry Listener (Named Pipe)
-        let tx_hook = self.tx.clone();
-        tokio::spawn(async move {
-            if let Err(e) = run_hook_telemetry_listener(tx_hook).await {
-                error!("Hook Telemetry Listener failed: {:?}", e);
-            }
-        });
+        #[cfg(target_os = "windows")]
+        {
+            let tx_hook = self.tx.clone();
+            tokio::spawn(async move {
+                if let Err(e) = run_hook_telemetry_listener(tx_hook).await {
+                    error!("Hook Telemetry Listener failed: {:?}", e);
+                }
+            });
+        }
 
         // 2. Start Linux eBPF Engine (Adapted from Rustinel)
         #[cfg(target_os = "linux")]
@@ -49,316 +62,332 @@ impl NativeTelemetryEngine {
             });
         }
 
-        let tx = self.tx.clone();
-        let computer = hostname::get()
-            .ok()
-            .and_then(|h| h.into_string().ok())
-            .unwrap_or_else(|| "localhost".to_string());
+        // 3. Sysmon-Zero: Port of SysmonX native ETW logic (Windows)
+        #[cfg(target_os = "windows")]
+        {
+            let tx = self.tx.clone();
+            let computer = hostname::get()
+                .ok()
+                .and_then(|h| h.into_string().ok())
+                .unwrap_or_else(|| "localhost".to_string());
 
-        // 2. Sysmon-Zero: Port of SysmonX native ETW logic
-        // We listen to the official Sysmon provider IF present, or kernel providers as fallback.
+            tokio::task::spawn_blocking(move || {
+                let tx_p = tx.clone();
+                let computer_p = computer.clone();
 
-        tokio::task::spawn_blocking(move || {
-            let tx_p = tx.clone();
-            let computer_p = computer.clone();
-
-            // --- 2a. Sysmon Provider (if installed) ---
-            let sysmon_provider = Provider::by_guid("5770385F-C22A-43E0-BF4C-06F5698FFBD9")
-                .add_callback(move |event, schema_locator| {
-                    if let Ok(schema) = schema_locator.event_schema(event) {
-                        let parser = Parser::create(event, &schema);
-                        let event_id = event.event_id();
-
-                        let mut data = serde_json::Map::new();
-                        // Extract common Sysmon fields by name (cannot iterate properties due to private API)
-                        let keys = [
-                            "Image",
-                            "CommandLine",
-                            "ParentImage",
-                            "ParentCommandLine",
-                            "User",
-                            "SourceIp",
-                            "DestinationIp",
-                            "Protocol",
-                        ];
-                        for key in keys {
-                            if let Ok(val) = parser.try_parse::<String>(key) {
-                                data.insert(key.to_string(), serde_json::json!(val.trim()));
-                            }
-                        }
-
-                        // Handle numeric IDs specifically
-                        if let Ok(pid) = parser.try_parse::<u32>("ProcessId") {
-                            data.insert("ProcessId".to_string(), serde_json::json!(pid));
-                        }
-                        if let Ok(ppid) = parser.try_parse::<u32>("ParentProcessId") {
-                            data.insert("ParentProcessId".to_string(), serde_json::json!(ppid));
-                        }
-                        if let Ok(dport) = parser.try_parse::<u16>("DestinationPort") {
-                            data.insert("DestinationPort".to_string(), serde_json::json!(dport));
-                        }
-
-                        let ev = HostSecurityEvent {
-                            source: HostEventSource::WindowsEventLog,
-                            event_id: event_id as u32,
-                            timestamp: Utc::now(),
-                            computer: computer_p.clone(),
-                            data: serde_json::Value::Object(data),
-                            causal_parent: None,
-                        };
-                        let _ = tx_p.blocking_send(ev);
-                    }
-                })
-                .build();
-
-            // --- 2b. Kernel Process Provider (Direct Port) ---
-            let tx_k = tx.clone();
-            let computer_k = computer.clone();
-            let active_processes: Arc<DashMap<u32, ProcessMeta>> = Arc::new(DashMap::new());
-            let active_procs_cb = active_processes.clone();
-            let kernel_process_provider = Provider::by_guid("22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716")
-                .add_callback(move |event, schema_locator| {
-                    let event_id = event.event_id();
-                    // 1: ProcessStart, 2: ProcessStop
-                    if event_id == 1 || event_id == 2 {
+                // --- 2a. Sysmon Provider (if installed) ---
+                let sysmon_provider = Provider::by_guid("5770385F-C22A-43E0-BF4C-06F5698FFBD9")
+                    .add_callback(move |event, schema_locator| {
                         if let Ok(schema) = schema_locator.event_schema(event) {
                             let parser = Parser::create(event, &schema);
-                            let pid: u32 = parser
-                                .try_parse("ProcessID")
-                                .or_else(|_| parser.try_parse("ProcessId"))
-                                .unwrap_or(0);
-                            let parent_pid: u32 = parser
-                                .try_parse("ParentProcessID")
-                                .or_else(|_| parser.try_parse("ParentProcessId"))
-                                .unwrap_or(0);
-                            let image: String = parser
-                                .try_parse("ImageName")
-                                .or_else(|_| parser.try_parse("ImageFileName"))
-                                .unwrap_or_else(|_| {
-                                    parser.try_parse("CommandLine").unwrap_or_default()
-                                });
+                            let event_id = event.event_id();
 
                             let mut data = serde_json::Map::new();
-                            data.insert("ProcessId".to_string(), serde_json::json!(pid));
-                            data.insert(
-                                "ParentProcessId".to_string(),
-                                serde_json::json!(parent_pid),
-                            );
-                            data.insert("Image".to_string(), serde_json::json!(image));
-                            if let Ok(cmd) = parser.try_parse::<String>("CommandLine") {
-                                data.insert("CommandLine".to_string(), serde_json::json!(cmd));
+                            // Extract common Sysmon fields by name (cannot iterate properties due to private API)
+                            let keys = [
+                                "Image",
+                                "CommandLine",
+                                "ParentImage",
+                                "ParentCommandLine",
+                                "User",
+                                "SourceIp",
+                                "DestinationIp",
+                                "Protocol",
+                            ];
+                            for key in keys {
+                                if let Ok(val) = parser.try_parse::<String>(key) {
+                                    data.insert(key.to_string(), serde_json::json!(val.trim()));
+                                }
                             }
 
-                            if event_id == 1 {
-                                let now = std::time::Instant::now();
-                                let mut parent_image = String::new();
-                                let mut velocity_3s = 0usize;
-
-                                if parent_pid != 0 {
-                                    if let Some(mut parent_meta) =
-                                        active_procs_cb.get_mut(&parent_pid)
-                                    {
-                                        parent_image = parent_meta.image_name.clone();
-                                        parent_meta
-                                            .child_spawn_times
-                                            .retain(|t| now.duration_since(*t).as_secs() < 3);
-                                        parent_meta.child_spawn_times.push(now);
-                                        velocity_3s = parent_meta.child_spawn_times.len();
-                                    }
-                                }
-
-                                if !parent_image.is_empty() {
-                                    data.insert(
-                                        "ParentImage".to_string(),
-                                        serde_json::json!(parent_image),
-                                    );
-                                }
-                                data.insert(
-                                    "ChildSpawnVelocity3s".to_string(),
-                                    serde_json::json!(velocity_3s),
-                                );
-                                data.insert(
-                                    "IsVelocityAnomaly".to_string(),
-                                    serde_json::json!(velocity_3s > 5),
-                                );
-
-                                active_procs_cb.insert(
-                                    pid,
-                                    ProcessMeta {
-                                        pid,
-                                        image_name: image.clone(),
-                                        started_at: now,
-                                        child_spawn_times: Vec::new(),
-                                    },
-                                );
-
-                                let ev = HostSecurityEvent {
-                                    source: HostEventSource::WindowsEventLog,
-                                    event_id: 1, // Sysmon ProcessCreate
-                                    timestamp: Utc::now(),
-                                    computer: computer_k.clone(),
-                                    data: serde_json::Value::Object(data),
-                                    causal_parent: None,
-                                };
-                                let _ = tx_k.blocking_send(ev);
-                            } else {
-                                let lifetime_ms =
-                                    if let Some((_, meta)) = active_procs_cb.remove(&pid) {
-                                        meta.started_at.elapsed().as_millis() as u64
-                                    } else {
-                                        0u64
-                                    };
-                                data.insert(
-                                    "ProcessLifetimeMs".to_string(),
-                                    serde_json::json!(lifetime_ms),
-                                );
-
-                                let ev = HostSecurityEvent {
-                                    source: HostEventSource::WindowsEventLog,
-                                    event_id: 5, // Sysmon ProcessTerminate
-                                    timestamp: Utc::now(),
-                                    computer: computer_k.clone(),
-                                    data: serde_json::Value::Object(data),
-                                    causal_parent: None,
-                                };
-                                let _ = tx_k.blocking_send(ev);
+                            // Handle numeric IDs specifically
+                            if let Ok(pid) = parser.try_parse::<u32>("ProcessId") {
+                                data.insert("ProcessId".to_string(), serde_json::json!(pid));
                             }
-                        }
-                    }
-                })
-                .build();
-
-            // --- 2c. Kernel Network Provider (Port) ---
-            let tx_n = tx.clone();
-            let computer_n = computer.clone();
-            let kernel_net_provider = Provider::by_guid("7DD42A49-5329-4832-8DFD-43D979153A88")
-                .add_callback(move |event, schema_locator| {
-                    if let Ok(schema) = schema_locator.event_schema(event) {
-                        let parser = Parser::create(event, &schema);
-                        let mut data = serde_json::Map::new();
-
-                        let dest_ip: String = parser.try_parse("daddr").unwrap_or_default();
-                        let dest_port: u16 = parser.try_parse("dport").unwrap_or(0);
-                        let pid: u32 = parser.try_parse("PID").unwrap_or(0);
-
-                        if !dest_ip.is_empty() && dest_port != 0 {
-                            data.insert("DestinationIp".to_string(), serde_json::json!(dest_ip));
-                            data.insert(
-                                "DestinationPort".to_string(),
-                                serde_json::json!(dest_port),
-                            );
-                            data.insert("ProcessId".to_string(), serde_json::json!(pid));
+                            if let Ok(ppid) = parser.try_parse::<u32>("ParentProcessId") {
+                                data.insert("ParentProcessId".to_string(), serde_json::json!(ppid));
+                            }
+                            if let Ok(dport) = parser.try_parse::<u16>("DestinationPort") {
+                                data.insert(
+                                    "DestinationPort".to_string(),
+                                    serde_json::json!(dport),
+                                );
+                            }
 
                             let ev = HostSecurityEvent {
                                 source: HostEventSource::WindowsEventLog,
-                                event_id: 3, // Sysmon Network Connection
+                                event_id: event_id as u32,
                                 timestamp: Utc::now(),
-                                computer: computer_n.clone(),
+                                computer: computer_p.clone(),
                                 data: serde_json::Value::Object(data),
                                 causal_parent: None,
                             };
-                            let _ = tx_n.blocking_send(ev);
+                            let _ = tx_p.blocking_send(ev);
                         }
-                    }
-                })
-                .build();
+                    })
+                    .build();
 
-            // --- 2d. Kernel File Provider (Port) ---
-            let tx_f = tx.clone();
-            let computer_f = computer.clone();
-            let kernel_file_provider = Provider::by_guid("EDD08927-9CC9-4E69-B970-C2560FB5C289")
-                .add_callback(move |event, schema_locator| {
-                    if let Ok(schema) = schema_locator.event_schema(event) {
-                        let parser = Parser::create(event, &schema);
-                        let mut data = serde_json::Map::new();
+                // --- 2b. Kernel Process Provider (Direct Port) ---
+                let tx_k = tx.clone();
+                let computer_k = computer.clone();
+                let active_processes: Arc<DashMap<u32, ProcessMeta>> = Arc::new(DashMap::new());
+                let active_procs_cb = active_processes.clone();
+                let kernel_process_provider =
+                    Provider::by_guid("22FB2CD6-0E7B-422B-A0C7-2FAD1FD0E716")
+                        .add_callback(move |event, schema_locator| {
+                            let event_id = event.event_id();
+                            // 1: ProcessStart, 2: ProcessStop
+                            if event_id == 1 || event_id == 2 {
+                                if let Ok(schema) = schema_locator.event_schema(event) {
+                                    let parser = Parser::create(event, &schema);
+                                    let pid: u32 = parser
+                                        .try_parse("ProcessID")
+                                        .or_else(|_| parser.try_parse("ProcessId"))
+                                        .unwrap_or(0);
+                                    let parent_pid: u32 = parser
+                                        .try_parse("ParentProcessID")
+                                        .or_else(|_| parser.try_parse("ParentProcessId"))
+                                        .unwrap_or(0);
+                                    let image: String = parser
+                                        .try_parse("ImageName")
+                                        .or_else(|_| parser.try_parse("ImageFileName"))
+                                        .unwrap_or_else(|_| {
+                                            parser.try_parse("CommandLine").unwrap_or_default()
+                                        });
 
-                        let event_id = event.event_id();
-                        // Mapping various file ops to Sysmon 11 (Create) or 23 (Delete)
-                        let sysmon_id = match event_id {
-                            12 | 64 => 11, // Create / Overwrite
-                            65 | 66 => 23, // Delete
-                            _ => 0,
-                        };
+                                    let mut data = serde_json::Map::new();
+                                    data.insert("ProcessId".to_string(), serde_json::json!(pid));
+                                    data.insert(
+                                        "ParentProcessId".to_string(),
+                                        serde_json::json!(parent_pid),
+                                    );
+                                    data.insert("Image".to_string(), serde_json::json!(image));
+                                    if let Ok(cmd) = parser.try_parse::<String>("CommandLine") {
+                                        data.insert(
+                                            "CommandLine".to_string(),
+                                            serde_json::json!(cmd),
+                                        );
+                                    }
 
-                        if sysmon_id != 0 {
-                            if let Ok(path) = parser.try_parse::<String>("FileName") {
-                                data.insert("TargetFilename".to_string(), serde_json::json!(path));
-                                let ev = HostSecurityEvent {
-                                    source: HostEventSource::WindowsEventLog,
-                                    event_id: sysmon_id,
-                                    timestamp: Utc::now(),
-                                    computer: computer_f.clone(),
-                                    data: serde_json::Value::Object(data),
-                                    causal_parent: None,
-                                };
-                                let _ = tx_f.blocking_send(ev);
+                                    if event_id == 1 {
+                                        let now = std::time::Instant::now();
+                                        let mut parent_image = String::new();
+                                        let mut velocity_3s = 0usize;
+
+                                        if parent_pid != 0 {
+                                            if let Some(mut parent_meta) =
+                                                active_procs_cb.get_mut(&parent_pid)
+                                            {
+                                                parent_image = parent_meta.image_name.clone();
+                                                parent_meta.child_spawn_times.retain(|t| {
+                                                    now.duration_since(*t).as_secs() < 3
+                                                });
+                                                parent_meta.child_spawn_times.push(now);
+                                                velocity_3s = parent_meta.child_spawn_times.len();
+                                            }
+                                        }
+
+                                        if !parent_image.is_empty() {
+                                            data.insert(
+                                                "ParentImage".to_string(),
+                                                serde_json::json!(parent_image),
+                                            );
+                                        }
+                                        data.insert(
+                                            "ChildSpawnVelocity3s".to_string(),
+                                            serde_json::json!(velocity_3s),
+                                        );
+                                        data.insert(
+                                            "IsVelocityAnomaly".to_string(),
+                                            serde_json::json!(velocity_3s > 5),
+                                        );
+
+                                        active_procs_cb.insert(
+                                            pid,
+                                            ProcessMeta {
+                                                pid,
+                                                image_name: image.clone(),
+                                                started_at: now,
+                                                child_spawn_times: Vec::new(),
+                                            },
+                                        );
+
+                                        let ev = HostSecurityEvent {
+                                            source: HostEventSource::WindowsEventLog,
+                                            event_id: 1, // Sysmon ProcessCreate
+                                            timestamp: Utc::now(),
+                                            computer: computer_k.clone(),
+                                            data: serde_json::Value::Object(data),
+                                            causal_parent: None,
+                                        };
+                                        let _ = tx_k.blocking_send(ev);
+                                    } else {
+                                        let lifetime_ms =
+                                            if let Some((_, meta)) = active_procs_cb.remove(&pid) {
+                                                meta.started_at.elapsed().as_millis() as u64
+                                            } else {
+                                                0u64
+                                            };
+                                        data.insert(
+                                            "ProcessLifetimeMs".to_string(),
+                                            serde_json::json!(lifetime_ms),
+                                        );
+
+                                        let ev = HostSecurityEvent {
+                                            source: HostEventSource::WindowsEventLog,
+                                            event_id: 5, // Sysmon ProcessTerminate
+                                            timestamp: Utc::now(),
+                                            computer: computer_k.clone(),
+                                            data: serde_json::Value::Object(data),
+                                            causal_parent: None,
+                                        };
+                                        let _ = tx_k.blocking_send(ev);
+                                    }
+                                }
                             }
-                        }
-                    }
-                })
-                .build();
+                        })
+                        .build();
 
-            // --- 2e. DNS Client Provider (Port) ---
-            let tx_d = tx.clone();
-            let computer_d = computer.clone();
-            let dns_client_provider = Provider::by_guid("1C95126E-7EEA-49A9-A3FE-13F157579402")
-                .add_callback(move |event, schema_locator| {
-                    if event.event_id() == 3008 {
-                        // DNS Query
+                // --- 2c. Kernel Network Provider (Port) ---
+                let tx_n = tx.clone();
+                let computer_n = computer.clone();
+                let kernel_net_provider = Provider::by_guid("7DD42A49-5329-4832-8DFD-43D979153A88")
+                    .add_callback(move |event, schema_locator| {
                         if let Ok(schema) = schema_locator.event_schema(event) {
                             let parser = Parser::create(event, &schema);
                             let mut data = serde_json::Map::new();
 
-                            if let Ok(query) = parser.try_parse::<String>("QueryName") {
-                                data.insert("QueryName".to_string(), serde_json::json!(query));
+                            let dest_ip: String = parser.try_parse("daddr").unwrap_or_default();
+                            let dest_port: u16 = parser.try_parse("dport").unwrap_or(0);
+                            let pid: u32 = parser.try_parse("PID").unwrap_or(0);
+
+                            if !dest_ip.is_empty() && dest_port != 0 {
+                                data.insert(
+                                    "DestinationIp".to_string(),
+                                    serde_json::json!(dest_ip),
+                                );
+                                data.insert(
+                                    "DestinationPort".to_string(),
+                                    serde_json::json!(dest_port),
+                                );
+                                data.insert("ProcessId".to_string(), serde_json::json!(pid));
+
                                 let ev = HostSecurityEvent {
                                     source: HostEventSource::WindowsEventLog,
-                                    event_id: 22, // Sysmon DNS Query
+                                    event_id: 3, // Sysmon Network Connection
                                     timestamp: Utc::now(),
-                                    computer: computer_d.clone(),
+                                    computer: computer_n.clone(),
                                     data: serde_json::Value::Object(data),
                                     causal_parent: None,
                                 };
-                                let _ = tx_d.blocking_send(ev);
+                                let _ = tx_n.blocking_send(ev);
                             }
                         }
-                    }
-                })
-                .build();
+                    })
+                    .build();
 
-            info!("🚀 [NATIVE-TELEMETRY] Starting Multi-Engine ETW Session...");
+                // --- 2d. Kernel File Provider (Port) ---
+                let tx_f = tx.clone();
+                let computer_f = computer.clone();
+                let kernel_file_provider =
+                    Provider::by_guid("EDD08927-9CC9-4E69-B970-C2560FB5C289")
+                        .add_callback(move |event, schema_locator| {
+                            if let Ok(schema) = schema_locator.event_schema(event) {
+                                let parser = Parser::create(event, &schema);
+                                let mut data = serde_json::Map::new();
 
-            // Clean up any stale session using logman (ferrisetw doesn't expose stop-by-name easily)
-            let _ = std::process::Command::new(osoosi_types::resolve_system_binary("logman.exe"))
-                .args(["stop", "OshoosiNativeTelemetry", "-ets"])
-                .output();
+                                let event_id = event.event_id();
+                                // Mapping various file ops to Sysmon 11 (Create) or 23 (Delete)
+                                let sysmon_id = match event_id {
+                                    12 | 64 => 11, // Create / Overwrite
+                                    65 | 66 => 23, // Delete
+                                    _ => 0,
+                                };
 
-            let trace_res = UserTrace::new()
-                .named("OshoosiNativeTelemetry".to_string())
-                .enable(sysmon_provider)
-                .enable(kernel_process_provider)
-                .enable(kernel_net_provider)
-                .enable(kernel_file_provider)
-                .enable(dns_client_provider)
-                .start();
+                                if sysmon_id != 0 {
+                                    if let Ok(path) = parser.try_parse::<String>("FileName") {
+                                        data.insert(
+                                            "TargetFilename".to_string(),
+                                            serde_json::json!(path),
+                                        );
+                                        let ev = HostSecurityEvent {
+                                            source: HostEventSource::WindowsEventLog,
+                                            event_id: sysmon_id,
+                                            timestamp: Utc::now(),
+                                            computer: computer_f.clone(),
+                                            data: serde_json::Value::Object(data),
+                                            causal_parent: None,
+                                        };
+                                        let _ = tx_f.blocking_send(ev);
+                                    }
+                                }
+                            }
+                        })
+                        .build();
 
-            match trace_res {
-                Ok(_) => info!("✅ [NATIVE-TELEMETRY] ETW Session started successfully."),
-                Err(e) => {
-                    let err_str = format!("{:?}", e);
-                    if err_str.contains("AlreadyExist") {
-                        warn!("⚠️ [NATIVE-TELEMETRY] ETW Session 'OshoosiNativeTelemetry' already exists. This usually means a previous instance is still running.");
-                    } else {
-                        error!("❌ [NATIVE-TELEMETRY] ETW Session failed: {:?}", e);
+                // --- 2e. DNS Client Provider (Port) ---
+                let tx_d = tx.clone();
+                let computer_d = computer.clone();
+                let dns_client_provider = Provider::by_guid("1C95126E-7EEA-49A9-A3FE-13F157579402")
+                    .add_callback(move |event, schema_locator| {
+                        if event.event_id() == 3008 {
+                            // DNS Query
+                            if let Ok(schema) = schema_locator.event_schema(event) {
+                                let parser = Parser::create(event, &schema);
+                                let mut data = serde_json::Map::new();
+
+                                if let Ok(query) = parser.try_parse::<String>("QueryName") {
+                                    data.insert("QueryName".to_string(), serde_json::json!(query));
+                                    let ev = HostSecurityEvent {
+                                        source: HostEventSource::WindowsEventLog,
+                                        event_id: 22, // Sysmon DNS Query
+                                        timestamp: Utc::now(),
+                                        computer: computer_d.clone(),
+                                        data: serde_json::Value::Object(data),
+                                        causal_parent: None,
+                                    };
+                                    let _ = tx_d.blocking_send(ev);
+                                }
+                            }
+                        }
+                    })
+                    .build();
+
+                info!("🚀 [NATIVE-TELEMETRY] Starting Multi-Engine ETW Session...");
+
+                // Clean up any stale session using logman (ferrisetw doesn't expose stop-by-name easily)
+                let _ =
+                    std::process::Command::new(osoosi_types::resolve_system_binary("logman.exe"))
+                        .args(["stop", "OshoosiNativeTelemetry", "-ets"])
+                        .output();
+
+                let trace_res = UserTrace::new()
+                    .named("OshoosiNativeTelemetry".to_string())
+                    .enable(sysmon_provider)
+                    .enable(kernel_process_provider)
+                    .enable(kernel_net_provider)
+                    .enable(kernel_file_provider)
+                    .enable(dns_client_provider)
+                    .start();
+
+                match trace_res {
+                    Ok(_) => info!("✅ [NATIVE-TELEMETRY] ETW Session started successfully."),
+                    Err(e) => {
+                        let err_str = format!("{:?}", e);
+                        if err_str.contains("AlreadyExist") {
+                            warn!("⚠️ [NATIVE-TELEMETRY] ETW Session 'OshoosiNativeTelemetry' already exists. This usually means a previous instance is still running.");
+                        } else {
+                            error!("❌ [NATIVE-TELEMETRY] ETW Session failed: {:?}", e);
+                        }
                     }
                 }
-            }
 
-            // Loop while trace is active (blocks the spawn_blocking thread)
-            loop {
-                std::thread::sleep(std::time::Duration::from_secs(10));
-            }
-        });
+                // Loop while trace is active (blocks the spawn_blocking thread)
+                loop {
+                    std::thread::sleep(std::time::Duration::from_secs(10));
+                }
+            });
+        }
 
         // Keep the main loop alive
         loop {
@@ -367,6 +396,7 @@ impl NativeTelemetryEngine {
     }
 }
 
+#[cfg(target_os = "windows")]
 async fn run_hook_telemetry_listener(
     tx: tokio::sync::mpsc::Sender<HostSecurityEvent>,
 ) -> anyhow::Result<()> {

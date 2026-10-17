@@ -1,0 +1,4 @@
+# Synthetic unit-test fixtures for credential-exfiltration and honey-token detection tests
+f28aefb2682a1db86f2165b4cb0c45fec9db6386:crates/osoosi-agent-anomaly/src/breakout_defense.rs:generic-api-key:782
+crates/osoosi-agent-anomaly/src/breakout_defense.rs:generic-api-key:782
+crates/osoosi-agent-anomaly/src/agentjacking_guard.rs:generic-api-key:581

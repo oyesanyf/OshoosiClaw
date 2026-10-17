@@ -392,6 +392,7 @@ impl PatchEngine {
         self.last_snapshot_secs.store(now_secs, Ordering::Release);
 
         info!("Creating filesystem snapshot...");
+        #[cfg(not(target_os = "linux"))]
         let snap_id = format!("snap-{}", Uuid::new_v4());
 
         #[cfg(target_os = "windows")]
@@ -561,6 +562,7 @@ impl PatchEngine {
             }
         }
 
+        #[cfg(not(target_os = "linux"))]
         Ok(snap_id)
     }
 

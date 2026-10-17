@@ -171,10 +171,14 @@ trigger_techniques = ["T1055", "T1055.012", "T1003", "T1014", "T1547", "T1059"]
 
 [decision_model]
 enabled = true
-# Provider: "hybrid" (combines Clef Flash & Strands Decider), "local", or "cloudflare"
+# Provider: "hybrid" (combines OpenJev System One, Clef Flash & Strands Decider), "local", "openjev", or "cloudflare"
 provider = "hybrid"
 # Hybrid routing strategy: "cascade", "consensus", or "local_first"
 hybrid_strategy = "cascade"
+# OpenJev System One Settings (Tier 2 Non-Autoregressive On-Premises / Local Decision Engine)
+openjev_endpoint = "http://127.0.0.1:8000/v1/predict"
+openjev_model = "openjev-systemone-v1"
+openjev_timeout_ms = 500
 # Cloudflare Clef Settings (Tier 2 Edge)
 model = "@cf/cloudflare/clef-flash"
 cloudflare_account_id = ""
