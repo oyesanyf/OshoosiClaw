@@ -283,13 +283,32 @@ powershell -ExecutionPolicy Bypass -File scripts/build_and_submit.ps1
 
 | Endpoint | Method | Description |
 |:---|:---|:---|
-| `/api/siquery/tables` | `GET` | Returns an array of all 98 registered system tables and total count. |
-| `/api/siquery/query` | `POST` | Executes SQL queries (`query`, `format: json\|pretty\|csv`) and returns rows with `execution_duration_ms`. |
+| `/api/siquery/tables` | `GET` | Returns an array of all 101 registered system, Merkle, and AI security tables. |
+| `/api/siquery/query` | `POST` | Executes read-only SQL queries (`query`, `format: json\|pretty\|csv`) with `PRAGMA query_only = ON` and `stmt.readonly()` enforcement. |
 | `/api/siquery/edr-status` | `GET` | Returns cached or freshly swept 8-dimension EDR security telemetry. |
+| `/api/audit/merkle-hierarchy` | `GET` | Returns Two-Tier Hierarchical BLAKE3 Merkle chains (per-arm, per-tarpit, per-ring), cross-ring continuity status, and Ed25519-signed interior rollup anchors. |
+| `/api/audit/nsrl-aslr-merkle` | `GET` | Returns NSRL global allowlist proofs, 4 KB demand-paged page-cache proofs, Linux `fs-verity` status, and ASLR-invariant `.text` code-segment Merkle roots. |
 | `/api/agent-anomalies/containment-status` | `GET` | Returns active 4-Ring agent containment states, isolated sessions, and breakout counts. |
 | `/api/agent-anomalies/spider-web` | `GET` | Returns spider-web continuum sectors, thread strain states, and business violations. |
 | `/api/agent-anomalies/spider-web/evaluate` | `POST` | Evaluates an agent action against 4-regime continuum mechanics and exposure budget ($B_{\max}$). |
 | `/api/har/inspect` | `POST` | Ingests and inspects W3C `.har` L7 traffic, returning total findings and security alerts. |
+
+### 16. Linux (`x86_64-unknown-linux-gnu`) Package & `systemd` Operations (`v1.2.0`)
+
+```bash
+# Install Debian / Ubuntu package (.deb)
+sudo dpkg -i deploy/linux/oshoosiclaw_1.2.0_amd64.deb
+
+# Or install RHEL / Fedora / Rocky package (.rpm)
+sudo rpm -Uvh deploy/linux/oshoosiclaw-1.2.0-1.x86_64.rpm
+
+# Manage the osoosi-edr systemd service via CLI or systemctl
+sudo osoosi service status
+sudo systemctl status osoosi-edr.service
+
+# Query Hierarchical Merkle Anchors via Siquery on Linux or Windows
+osoosi siquery --pretty -q "SELECT anchor_seq, interior_hash, trigger_reason FROM hierarchical_merkle_anchors LIMIT 5;"
+```
 
 ---
 

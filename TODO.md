@@ -13,7 +13,7 @@ This document outlines the 4-part open-source security, code quality, foundation
 - [ ] **OpenSSF Best Practices Badge**: Register repository on [bestpractices.dev](https://bestpractices.dev/) and complete all criteria to achieve the OpenSSF Passing and Silver Badges:
   - Documented vulnerability reporting process (`SECURITY.md`).
   - Automated continuous integration testing on all commits and PRs.
-  - Published cryptographic hash manifests and Authenticode signed releases.
+  - [x] Published cryptographic hash manifests (`SHA256SUMS.txt.asc`), SLSA v1.0 DSSE `.intoto.jsonl` provenance, GPG-signed Linux packages (`.deb`, `.rpm`, `.tar.gz`), and Authenticode-signed Windows `OshoosiClaw.msi` (`v1.2.0`).
 
 ---
 
@@ -27,8 +27,8 @@ This document outlines the 4-part open-source security, code quality, foundation
 - [ ] **DeepSource / CodeFactor Integration**:
   - Configure automated style, complexity, and performance audits on every pull request.
   - Track cognitive complexity of consensus and Dempster-Shafer fusion algorithms.
-- [ ] **Hermetic Fuzzing & Gauntlets**:
-  - Expand `cargo fuzz` harness for Wire protocol, STIX 2.1 deserializer, and PQC ML-KEM-768 packet decoders.
+- [x] **Hermetic Fuzzing & Gauntlets**:
+  - Deployed ClusterFuzzLite continuous fuzzing (`.github/workflows/cifuzz.yml`, `fuzz/`) and 6-phase `/security-audit` schema verification (`validate-findings.cjs`, `validate-coverage-ledger.cjs`).
 
 ---
 
@@ -56,12 +56,12 @@ This document outlines the 4-part open-source security, code quality, foundation
 
 ### Community Feedback & Peer Audit
 - [ ] **Hacker News Launch (`Show HN`)**:
-  - Title: *"Show HN: OpenỌ̀ṣọ́ọ̀sì – Autonomous, P2P Rust EDR with ML-KEM-768 & Siquery (Zero-Cloud)"*
+  - Title: *"Show HN: OpenỌ̀ṣọ́ọ̀sì – Autonomous, P2P Rust EDR with ML-KEM-768, Two-Tier Merkle & 101-Table Siquery (Windows & Linux)"*
   - Emphasize local model inference, zero telemetry exfiltration, 100/100 multi-sensor fusion, and self-hosted air-gapped capabilities.
 - [ ] **Technical Subreddit Presentations**:
-  - `r/rust`: Architecture deep-dive on safe concurrency, DashMap lock hygiene, zero-alloc tokenization, and Windows SDK `signtool.exe` Authenticode integration.
-  - `r/netsec`: Technical analysis of Byzantine fault-tolerant mesh consensus, pre-operation kernel driver blocking, and adversarial evasion benchmarking.
+  - `r/rust`: Architecture deep-dive on safe concurrency, DashMap lock hygiene, two-tier BLAKE3 Merkle chains, NSRL/ASLR Merkle verification, and Windows SDK `signtool.exe` + Linux eBPF integration.
+  - `r/netsec`: Technical analysis of Byzantine fault-tolerant mesh consensus, pre-operation kernel driver / eBPF LSM blocking, and adversarial evasion benchmarking.
   - `r/opensource`: Open-source endpoint security governance, reproducible builds, and CNCF/ASF incubation journey.
-  - `r/programming` & `r/python`: Siquery-RS 88-table relational engine and automated Microsoft Security Intelligence (WDSI) pipeline.
+  - `r/programming` & `r/python`: Siquery-RS 101-table relational engine, OpenJev non-autoregressive decision model, and automated Microsoft Security Intelligence (WDSI) pipeline.
 - [ ] **Product Hunt Maker Launch**:
-  - Create interactive product demo highlighting the zero-config Windows Service installer (`OshoosiClaw.msi`), live WebUI dashboard, and 100/100 supervisor posture.
+  - Create interactive product demo highlighting the zero-config Windows Service installer (`OshoosiClaw.msi`), Linux `.deb`/`.rpm` packages, live WebUI dashboard, and 100/100 supervisor posture.

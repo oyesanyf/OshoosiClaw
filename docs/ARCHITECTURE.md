@@ -353,6 +353,26 @@ OpenỌ̀ṣọ́ọ̀sì eliminates the post-execution telemetry gap of traditi
 - **Sub-Second Windows Service Hot-Swap (`OsoosiEDR`)**:
   - Step 3 of `scripts/build_and_submit.ps1` hot-swaps `target/release/osoosi.exe` and restarts the `OsoosiEDR` Windows Service in ~1 second, keeping endpoints continuously protected while WiX MSI packaging, Authenticode signing, WDSI submission, and PR shipping complete.
 
+### 23. Hierarchical (Two-Tier) BLAKE3 Merkle Hash Chains & NSRL / ASLR Merkle Verifier (`crates/osoosi-audit`)
+- **Tier-1 Domain-Separated Subsystem Chains (`crates/osoosi-audit/src/hierarchical.rs`)**:
+  - **Per-Arm Merkle Chain (`OSOOSI_ARM_MERKLE_V1`)**: Binds every inter-agent message and tool call in `containment_ring.rs` to `(arm_id, epoch, role, tool_call_hash, hmac_sig)`. Upon surgical autotomy (`sever_rogue_agent_branch`), generates an immutable `ArmFractureProof` and advances epoch $N \to N+1$.
+  - **Per-Tarpit Merkle Chain (`OSOOSI_TARPIT_MERKLE_V1`)**: Zero-lock wire-speed append across `tarpit.rs` and `ghost_node.rs` capturing `(pid, trap_id, payload_hash, timestamp_ns)`.
+  - **Per-Ring Merkle Chain (`OSOOSI_RING_MERKLE_V1`)**: Tracks boundary transitions across Ring 0 (Kernel/eBPF/WFP), Ring 1 (Sentinel), Ring 2 (Policy/Mesh), and Ring 3 (Worker). `verify_cross_ring_continuity()` detects asymmetric pipeline blinding ($N_0 > N_2$) and feeds into `CognitiveFusionSupervisor`.
+- **Tier-2 Ed25519-Signed Interior Rollup Node**:
+  - Folds subsystem heads into $\text{BLAKE3}(\text{Domain}_{\text{rollup}} \parallel \text{Seq} \parallel H_{\text{arms}} \parallel H_{\text{tarpits}} \parallel H_{\text{rings}} \parallel \text{trigger})$, signs with the node's Ed25519 key, anchors into `MerkleAuditTree` and TPM PCRs, and exposes records via Siquery table `hierarchical_merkle_anchors` (**101 tables total**) and `GET /api/audit/merkle-hierarchy`.
+- **NSRL Demand-Paged 4 KB Allowlist Tree & ASLR-Invariant Process Verifier (`crates/osoosi-audit/src/nsrl_aslr_merkle.rs`)**:
+  - Global NSRL allowlist sparse Merkle tree ($O(\log N)$ `verify_nsrl_executable_proof`) + per-binary 4 KB demand-paged page tree ($O(\log m)$ `verify_demand_paged_block`) paired with Linux `fs-verity` (`FS_IOC_GETFLAGS` `0x80086601` / `FS_IOC_MEASURE_VERITY` `0xC0046686`) and Windows Security Catalog / Authenticode.
+  - ASLR-Invariant `.text` Code-Segment Page Merkle Verifier (`verify_aslr_code_segment_pages`): normalizes relocated pointers ($\Delta_k = \text{VA} - \text{RandomizedBase}$) across Windows PE and Linux ELF64 PIE/PIC `PT_LOAD` (`PF_X`) segments, detecting single-byte hooks (`0xCC`, `0xE9`) and hollowing while excluding mutable `[stack]`/`[heap]` under hardware $W \oplus X$ and CET shadow stack enforcement (`GET /api/audit/nsrl-aslr-merkle`).
+
+### 24. OpenJev ("System One") Non-Autoregressive Decision Engine (`crates/osoosi-behavioral/src/decision_model/openjev_client.rs`)
+- **Single-Forward-Pass Logit Extraction**: Evaluates structured incident states in a single non-autoregressive pass (`max_tokens = 1` + `top_logprobs`), extracting exact calibrated probabilities across boolean (`Yes`/`No`) and ordinal (`1..5`) decision axes.
+- **Shannon Entropy Uncertainty Quantification**: Computes normalized Shannon entropy $H(p) = -\sum p_i \log_2 p_i$ with strict `is_finite()` validation to route high-uncertainty edge cases to multi-voter consensus or human review, protected by a 1 MB bounded HTTP stream reader (`read_bounded_json`).
+
+### 25. Full-Stack Native Linux (`x86_64-unknown-linux-gnu`) Parity & Packaging (`v1.2.0`)
+- **CO-RE eBPF Probes (`ebpf/src/osoosi_probe.bpf.c` & `crates/osoosi-telemetry/src/linux_ebpf.rs`)**: 6 active kernel hooks (`sched_process_exec`, `sched_process_exit`, `sys_enter_connect`, `sys_enter_mprotect` $W \oplus X$, `sys_enter_ptrace` process tampering, and `lsm/bprm_check_security` pre-exec binary block).
+- **Linux `systemd` & Forensic Parity**: `osoosi service` manages `osoosi-edr.service` via `systemctl` (with `setsid()` detached daemon fallback); `osoosi-forensics` parses `/proc/<pid>/maps` for anonymous `rwxp` and `/memfd:` regions; `system_check.rs` validates Linux system binaries via `rpm -Vf` / `dpkg -S` + ELF64 trust & `fs-verity`.
+- **Pre-Built Linux & Windows Release Artifacts (`v1.2.0`)**: Packaged via `packaging/linux/build_packages.sh` (`oshoosiclaw_1.2.0_amd64.deb`, `oshoosiclaw-1.2.0-1.x86_64.rpm`, `oshoosiclaw-1.2.0-linux-x86_64.tar.gz`, `osoosi-linux-x86_64`) and WiX v5 (`OshoosiClaw.msi`), signed with GPG, Windows SDK `signtool.exe`, and SLSA v1.0 DSSE `.intoto.jsonl` provenance.
+
 ## Response Matrix
 
 | Confidence | Action | Description |
