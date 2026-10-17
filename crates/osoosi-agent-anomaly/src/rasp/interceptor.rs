@@ -273,16 +273,19 @@ impl Default for ToolActuatorInterceptor {
     }
 }
 
+static CMD_INJECTION_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r#"(?i)(;|&&|\|\||`|\$\(|\bpowershell(\.exe)?\b|\bcmd(\.exe)?\b|\bbash\b|\bwscript(\.exe)?\b)"#).expect("valid regex")
+});
+static PATH_TRAVERSAL_RE: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+    Regex::new(r#"(?i)(\.\./|\.\.\\|/etc/passwd|c:\\windows\\system32|%2e%2e)"#).expect("valid regex")
+});
+
 impl ToolActuatorInterceptor {
     pub fn new(policy_engine: Arc<RaspPolicyEngine>) -> Self {
-        let cmd_regex = Regex::new(r#"(?i)(;|&&|\|\||`|\$\(|\bpowershell(\.exe)?\b|\bcmd(\.exe)?\b|\bbash\b|\bwscript(\.exe)?\b)"#).unwrap();
-        let path_regex =
-            Regex::new(r#"(?i)(\.\./|\.\.\\|/etc/passwd|c:\\windows\\system32|%2e%2e)"#).unwrap();
-
         Self {
             policy_engine,
-            cmd_injection_regex: cmd_regex,
-            path_traversal_regex: path_regex,
+            cmd_injection_regex: CMD_INJECTION_RE.clone(),
+            path_traversal_regex: PATH_TRAVERSAL_RE.clone(),
         }
     }
 

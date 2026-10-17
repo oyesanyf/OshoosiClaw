@@ -291,15 +291,11 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             .to_string_lossy()
             .trim_start_matches(r"\\?\")
             .to_string();
-        let exe_name = current_exe
-            .file_name()
-            .map(|f| f.to_string_lossy().to_string())
-            .unwrap_or_else(|| "osoosi.exe".to_string());
 
         tracing::info!(
             install_dir = %clean_install_dir,
             exe_path = %clean_exe_path,
-            "Configuring dynamic install folder Defender exclusions and Windows Firewall rules"
+            "Configuring Windows Firewall rules for mesh networking"
         );
 
         // 0. Pre-create required data directories in install_dir and grant permissions to Users
@@ -334,48 +330,9 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             let _ = timeout(Duration::from_secs(10), perm_cmd.status()).await;
         }
 
-        // 1. Windows Defender Folder & Process Exclusion
-        let mut ps_cmd = format!(
-            "Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue; \
-             Add-MpPreference -ExclusionProcess '{}' -ErrorAction SilentlyContinue; \
-             Add-MpPreference -ExclusionProcess '{}' -ErrorAction SilentlyContinue",
-            clean_install_dir.replace('\'', "''"),
-            exe_name.replace('\'', "''"),
-            clean_exe_path.replace('\'', "''")
-        );
-
-        if let Some(root) = osoosi_types::resolve_project_root() {
-            let clean_root = root
-                .to_string_lossy()
-                .trim_start_matches(r"\\?\")
-                .to_string();
-            if clean_root != clean_install_dir {
-                ps_cmd.push_str(&format!(
-                    "; Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue",
-                    clean_root.replace('\'', "''")
-                ));
-            }
-        }
-
-        let ps_exe = osoosi_types::resolve_system_binary("powershell.exe");
         let netsh_exe = osoosi_types::resolve_system_binary("netsh.exe");
 
-        let mut def_cmd = Command::new(&ps_exe);
-        def_cmd.stdout(std::process::Stdio::null());
-        def_cmd.stderr(std::process::Stdio::null());
-        #[cfg(windows)]
-        def_cmd.creation_flags(0x08000000); // CREATE_NO_WINDOW
-        def_cmd.args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &ps_cmd,
-        ]);
-        let _ = timeout(Duration::from_secs(15), def_cmd.status()).await;
-
-        // 2. Windows Firewall Rules Deduplication and Addition
+        // Windows Firewall Rules Deduplication and Addition
         let delete_rule = |name: &str| {
             let mut del_cmd = Command::new(&netsh_exe);
             del_cmd.stdout(std::process::Stdio::null());
@@ -511,7 +468,6 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             ("Osoosi-Mesh-Control", 9000_u16, "TCP"),
             ("Osoosi-Mesh-Alt", 9876_u16, "TCP"),
             ("Osoosi-mDNS", 5353_u16, "UDP"),
-            ("Osoosi-Dashboard", 3030_u16, "TCP"),
         ];
         for (name, port, _) in ports {
             tracing::info!(
@@ -996,7 +952,52 @@ fn block_linux_process_uid(process_id: Option<u32>) -> Result<String> {
         ));
     }
 
+    if pid <= 4 {
+        return Err(anyhow!(
+            "Refusing to block UID {} for system PID {} (<= 4)",
+            uid,
+            pid
+        ));
+    }
+
+    // Administrative session shield: If the PID is associated with sshd or ansible, refuse UID block.
+    if let Ok(cmdline) = std::fs::read_to_string(format!("/proc/{}/cmdline", pid)) {
+        let cl_lower = cmdline.to_lowercase();
+        if cl_lower.contains("sshd") || cl_lower.contains("ansible") || cl_lower.contains("pts/") {
+            return Err(anyhow!(
+                "Refusing to block UID {} for PID {} - administrative / SSH / Ansible session shield",
+                uid,
+                pid
+            ));
+        }
+    }
+
     if command_exists("iptables") {
+        // Exempt loopback, conntrack ESTABLISHED,RELATED, and SSH/management ports before UID drop.
+        // Idempotent: Check prior existence (-C) to prevent duplicate rule accumulation across calls.
+        let exemption_rules: &[&[&str]] = &[
+            &["-o", "lo", "-j", "ACCEPT"],
+            &["-m", "conntrack", "--ctstate", "ESTABLISHED,RELATED", "-j", "ACCEPT"],
+            &["-p", "tcp", "-m", "multiport", "--sports", "22,4001,8080", "-j", "ACCEPT"],
+            &["-p", "tcp", "-m", "multiport", "--dports", "22,4001,8080", "-j", "ACCEPT"],
+        ];
+        for rule in exemption_rules {
+            let mut check_args = vec!["-C", "OUTPUT"];
+            check_args.extend_from_slice(rule);
+            let exists = Command::new("iptables")
+                .args(&check_args)
+                .status()
+                .map(|s| s.success())
+                .unwrap_or(false);
+            if !exists {
+                let mut insert_args = vec!["-I", "OUTPUT", "1"];
+                insert_args.extend_from_slice(rule);
+                let _ = Command::new("iptables")
+                    .args(&insert_args)
+                    .status();
+            }
+        }
+
         // Add OUTPUT drop for this uid if not already present.
         let check = Command::new("iptables")
             .args([
@@ -1014,7 +1015,7 @@ fn block_linux_process_uid(process_id: Option<u32>) -> Result<String> {
         if !exists {
             let status = Command::new("iptables")
                 .args([
-                    "-I",
+                    "-A",
                     "OUTPUT",
                     "-m",
                     "owner",
@@ -1044,6 +1045,27 @@ fn block_linux_process_uid(process_id: Option<u32>) -> Result<String> {
                 "output", "priority", "0", ";", "}",
             ])
             .status();
+        // Exceptions for loopback, conntrack, and SSH
+        let _ = Command::new("nft")
+            .args(["add", "rule", "inet", "osoosi", "output", "oif", "lo", "accept"])
+            .status();
+        let _ = Command::new("nft")
+            .args([
+                "add", "rule", "inet", "osoosi", "output", "ct", "state", "established,related",
+                "accept",
+            ])
+            .status();
+        let _ = Command::new("nft")
+            .args([
+                "add", "rule", "inet", "osoosi", "output", "tcp", "dport", "22", "accept",
+            ])
+            .status();
+        let _ = Command::new("nft")
+            .args([
+                "add", "rule", "inet", "osoosi", "output", "tcp", "sport", "22", "accept",
+            ])
+            .status();
+
         let status = Command::new("nft")
             .args([
                 "add",

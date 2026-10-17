@@ -8,6 +8,11 @@
 # Enable AI features (ONNX, SmolLM, Ollama, etc.).
 enabled = true
 
+# Explicit opt-in required for cloud LLM services (e.g. OpenAI). Defaults to false.
+enable_cloud_llm = false
+# Cloud LLM model (e.g. "gpt-4o")
+cloud_llm_model = "gpt-4o"
+
 # Ordered fallback list when the primary model is not available.
 fallback_models  = ["gemma3:1b", "gemma3:4b", "qwen2.5:1.5b", "phi3:mini"]
 

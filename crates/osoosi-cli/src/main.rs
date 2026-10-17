@@ -3221,22 +3221,21 @@ fn try_open_browser(url: &str, user_no_browser: bool, lite_mode: bool) {
     if !opened {
         #[cfg(target_os = "windows")]
         {
-            if (url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:"))
-                && !url.chars().any(|c| {
-                    c == '&'
-                        || c == '|'
-                        || c == ';'
-                        || c == '`'
-                        || c == '$'
-                        || c == '"'
-                        || c == '\''
-                        || c == '\n'
-                        || c == '\r'
-                })
-            {
-                let _ = std::process::Command::new(osoosi_types::resolve_system_binary("cmd.exe"))
-                    .args(["/c", "start", "", url])
-                    .spawn();
+            if url.starts_with("http://127.0.0.1:") || url.starts_with("http://localhost:") {
+                use windows::Win32::UI::Shell::ShellExecuteW;
+                use windows::Win32::UI::WindowsAndMessaging::SW_SHOWNORMAL;
+                let wide_url: Vec<u16> = url.encode_utf16().chain(std::iter::once(0)).collect();
+                let op: Vec<u16> = "open".encode_utf16().chain(std::iter::once(0)).collect();
+                unsafe {
+                    let _ = ShellExecuteW(
+                        None,
+                        windows::core::PCWSTR(op.as_ptr()),
+                        windows::core::PCWSTR(wide_url.as_ptr()),
+                        None,
+                        None,
+                        SW_SHOWNORMAL,
+                    );
+                }
             }
         }
     }
@@ -3360,6 +3359,76 @@ async fn ensure_ai_models() -> anyhow::Result<()> {
     let res = ensure_ai_models_inner().await;
     osoosi_types::set_model_provisioning(false);
     res
+}
+
+fn compute_file_sha256(path: &std::path::Path) -> std::io::Result<String> {
+    use sha2::{Digest, Sha256};
+    use std::io::Read;
+    let mut file = std::fs::File::open(path)?;
+    let mut hasher = Sha256::new();
+    let mut buffer = [0u8; 65536];
+    loop {
+        let n = file.read(&mut buffer)?;
+        if n == 0 {
+            break;
+        }
+        hasher.update(&buffer[..n]);
+    }
+    Ok(hex::encode(hasher.finalize()))
+}
+
+fn get_default_gemma_hash(filename: &str) -> Option<&'static str> {
+    let base = filename.strip_prefix("onnx/").unwrap_or(filename);
+    match base {
+        "decoder_model_merged.onnx" => {
+            Some("d78efba85d5b54ce6ffa1c3c9caf3be4277184c6cd001e3fe775c9f1f581358d")
+        }
+        "decoder_model_merged.onnx_data_1" => {
+            Some("c1d6e332d466f09865ba9a59b72c6d95c94acbfd07a38e8dbe1e1f84e4c61a65")
+        }
+        "decoder_model_merged.onnx_data_2" => {
+            Some("dee2a766a80f52cea2e9c76530afd6f86e4f35d66db91aba84589c45a11a76df")
+        }
+        "decoder_model_merged.onnx_data_3" => {
+            Some("9e3b4055cd99720849435d181b4629c24e7a9f04d535cd13e702b0ab491b2f51")
+        }
+        "decoder_model_merged.onnx_data_4" => {
+            Some("01e3cc6e70662dba3e0e55e8536c0c84d24de3c4171e07017378b64432ad0441")
+        }
+        "decoder_model_merged.onnx_data_5" => {
+            Some("fe9e3d8147138007cd1ad0bfe551cf0bbbba44e30a34089768c3af6c68f879d9")
+        }
+        "decoder_model_merged.onnx_data_6" => {
+            Some("e17281c3d5b08677b018f15b80d8de890799723e516f0f456e043a305971390f")
+        }
+        "decoder_model_merged.onnx_data_7" => {
+            Some("c1ad4f07cb5829dc45fe9afe0f01ce9f21be60e2baf3bad1c4552ebf37432d89")
+        }
+        "decoder_model_merged.onnx_data_8" => {
+            Some("5f520fb85af8513a5681fa15760af8e8f896a5dedded7d85a45c47016ac67ff9")
+        }
+        _ => None,
+    }
+}
+
+const DEFAULT_MALCONV_SHA256: &str =
+    "2539cccee65a244182e63069629ed5b7552224750878fd084e79c8ea66427163";
+const DEFAULT_SOREL_SHA256: &str =
+    "9b8fadcd288be2d72ca3ecc8081d1696728804db17c5c7c0811bb23d8e19eef6";
+
+fn get_default_securebert_hash(filename: &str) -> Option<&'static str> {
+    match filename {
+        "config.json" => {
+            Some("529e66e4283aa99da0385ed50f4f608c55202da986507b95709249c15f981112")
+        }
+        "model.onnx" => {
+            Some("51d4f73538146ec7c2a46e1220a7605e075474b5351682a09284890121775979")
+        }
+        "tokenizer.json" => {
+            Some("b18211964db7d0ae2a8d2c4a4c00e271c13905859726fe980622488d95db75af")
+        }
+        _ => None,
+    }
 }
 
 async fn ensure_ai_models_inner() -> anyhow::Result<()> {
@@ -3523,8 +3592,43 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
             if !check_oom_guard(&mut sys) {
                 return Ok(());
             }
-            if gemma_repo.get(filename).await.is_ok() {
-                tracing::debug!("Cached Gemma component: {}", filename);
+            if let Ok(shard_path) = gemma_repo.get(filename).await {
+                match compute_file_sha256(&shard_path) {
+                    Ok(actual_hash) => {
+                        let env_key = format!(
+                            "OSOOSI_GEMMA_SHA256_{}",
+                            filename.replace(['/', '.'], "_").to_uppercase()
+                        );
+                        let expected = std::env::var(&env_key)
+                            .ok()
+                            .or_else(|| get_default_gemma_hash(filename).map(|s| s.to_string()));
+
+                        if let Some(exp) = expected {
+                            if !actual_hash.eq_ignore_ascii_case(&exp) {
+                                warn!(
+                                    "Gemma component {} hash mismatch: expected {}, got {}",
+                                    filename, exp, actual_hash
+                                );
+                                let _ = std::fs::remove_file(&shard_path);
+                                anyhow::bail!("Gemma component {} hash mismatch", filename);
+                            }
+                            tracing::info!(
+                                "✅ Cached and verified Gemma component: {} (SHA-256: {})",
+                                filename,
+                                actual_hash
+                            );
+                        } else {
+                            tracing::info!(
+                                "Cached Gemma component (unpinned): {} (SHA-256: {})",
+                                filename,
+                                actual_hash
+                            );
+                        }
+                    }
+                    Err(e) => {
+                        warn!("Failed to compute SHA-256 for shard {:?}: {}", shard_path, e);
+                    }
+                }
             }
         }
     }
@@ -3612,8 +3716,44 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
                                 warn!("Downloaded MalConv file is too small ({} bytes). Likely a 404 page. Skipping.", meta.len());
                                 continue;
                             }
+                            let mut verified = false;
+                            if let Ok(actual_hash) = compute_file_sha256(&downloaded) {
+                                let expected = std::env::var("OSOOSI_MALCONV_SHA256")
+                                    .ok()
+                                    .or_else(|| Some(DEFAULT_MALCONV_SHA256.to_string()));
+
+                                if let Some(ref exp) = expected {
+                                    if !actual_hash.eq_ignore_ascii_case(exp) {
+                                        warn!(
+                                            "MalConv hash mismatch: expected {}, got {}. Skipping.",
+                                            exp, actual_hash
+                                        );
+                                        continue;
+                                    }
+                                    verified = true;
+                                    info!(
+                                        "Downloaded MalConv candidate from {} ({}) verified SHA-256: {}",
+                                        repo_name, file, actual_hash
+                                    );
+                                } else {
+                                    info!(
+                                        "Downloaded MalConv candidate from {} ({}) (unpinned SHA-256: {})",
+                                        repo_name, file, actual_hash
+                                    );
+                                }
+                            }
                             if fs::copy(&downloaded, &malconv_dest).is_ok() {
-                                info!("✅ MalConv weights saved from {} ({}).", repo_name, file);
+                                if verified {
+                                    info!(
+                                        "✅ MalConv weights verified and saved from {} ({}).",
+                                        repo_name, file
+                                    );
+                                } else {
+                                    info!(
+                                        "MalConv weights saved (unpinned) from {} ({}).",
+                                        repo_name, file
+                                    );
+                                }
                                 break 'malconv_hf;
                             }
                         }
@@ -3708,12 +3848,45 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
                                         continue;
                                     }
                                 }
+                                let mut verified = false;
+                                if let Ok(actual_hash) = compute_file_sha256(&downloaded) {
+                                    let expected = std::env::var("OSOOSI_SOREL_SHA256")
+                                        .ok()
+                                        .or_else(|| Some(DEFAULT_SOREL_SHA256.to_string()));
+
+                                    if let Some(ref exp) = expected {
+                                        if !actual_hash.eq_ignore_ascii_case(exp) {
+                                            warn!(
+                                                "SOREL-20M hash mismatch: expected {}, got {}. Skipping.",
+                                                exp, actual_hash
+                                            );
+                                            continue;
+                                        }
+                                        verified = true;
+                                        info!(
+                                            "Downloaded SOREL-20M candidate from {} ({}) verified SHA-256: {}",
+                                            repo_name, file, actual_hash
+                                        );
+                                    } else {
+                                        info!(
+                                            "Downloaded SOREL-20M candidate from {} ({}) (unpinned SHA-256: {})",
+                                            repo_name, file, actual_hash
+                                        );
+                                    }
+                                }
 
                                 if fs::copy(&downloaded, &sorel_dest).is_ok() {
-                                    info!(
-                                        "✅ SOREL-20M weights saved from {} ({}).",
-                                        repo_name, file
-                                    );
+                                    if verified {
+                                        info!(
+                                            "✅ SOREL-20M weights verified and saved from {} ({}).",
+                                            repo_name, file
+                                        );
+                                    } else {
+                                        info!(
+                                            "SOREL-20M weights saved (unpinned) from {} ({}).",
+                                            repo_name, file
+                                        );
+                                    }
                                     break 'sorel_hf;
                                 }
                             }
@@ -3771,7 +3944,41 @@ async fn ensure_ai_models_inner() -> anyhow::Result<()> {
                 let target_file = bert_dir.join(file);
                 let tmp_path = bert_dir.join(format!("{}.tmp", file));
                 if fs::copy(&path, &tmp_path).is_ok() {
+                    let mut verified = false;
+                    if let Ok(actual_hash) = compute_file_sha256(&tmp_path) {
+                        let env_key = format!(
+                            "OSOOSI_SECUREBERT_{}_SHA256",
+                            file.replace('.', "_").to_uppercase()
+                        );
+                        let expected = std::env::var(&env_key)
+                            .ok()
+                            .or_else(|| get_default_securebert_hash(file).map(|s| s.to_string()));
+
+                        if let Some(ref exp) = expected {
+                            if !actual_hash.eq_ignore_ascii_case(exp) {
+                                let _ = fs::remove_file(&tmp_path);
+                                warn!(
+                                    "SecureBERT {} hash mismatch: expected {}, got {}. Skipping.",
+                                    file, exp, actual_hash
+                                );
+                                continue;
+                            }
+                            verified = true;
+                            info!(
+                                "Cached and verified SecureBERT component {} (SHA-256: {})",
+                                file, actual_hash
+                            );
+                        } else {
+                            info!(
+                                "Cached SecureBERT component {} (unpinned SHA-256: {})",
+                                file, actual_hash
+                            );
+                        }
+                    }
                     let _ = fs::rename(&tmp_path, target_file);
+                    if verified {
+                        info!("✅ SecureBERT component {} installed and verified.", file);
+                    }
                 }
             }
         }
@@ -4038,18 +4245,9 @@ async fn install_ollama_best_effort() {
 
     #[cfg(target_os = "linux")]
     {
-        let shell_fut = tokio::process::Command::new("sh")
-            .args(["-c", "curl -fsSL https://ollama.com/install.sh | sh"])
-            .status();
-
-        match tokio::time::timeout(std::time::Duration::from_secs(600), shell_fut).await {
-            Ok(Ok(status)) if status.success() => {
-                info!("Ollama installed with official Linux installer.")
-            }
-            Ok(Ok(status)) => warn!("Ollama Linux installer exited with status {}.", status),
-            Ok(Err(e)) => warn!("Failed to start Ollama Linux installer: {}", e),
-            Err(_) => warn!("Ollama Linux installer timed out."),
-        }
+        info!(
+            "Ollama was not detected on Linux. To enable local reasoning models, please install Ollama via your package manager or follow https://ollama.com/download/linux. Built-in Native Rust AI Cortex remains fully active."
+        );
     }
 }
 

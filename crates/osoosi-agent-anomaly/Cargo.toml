@@ -17,6 +17,7 @@ thiserror = { workspace = true }
 uuid = { workspace = true }
 regex = { workspace = true }
 reqwest = { version = "0.12", default-features = false, features = ["json", "rustls-tls"] }
+osoosi-types = { path = "../osoosi-types" }
 osoosi-behavioral = { path = "../osoosi-behavioral" }
 osoosi-policy = { path = "../osoosi-policy" }
 osoosi-audit = { path = "../osoosi-audit" }

@@ -252,13 +252,13 @@ jobs:
               "predicateType": "https://slsa.dev/provenance/v0.2",
               "subject": [{"name": f, "digest": {"sha256": sha}}],
               "predicate": {
-                  "builder": {"id": "https://github.com/oyesanyf/OshoosiClaw/.github/workflows/release.yml"},
+                  "builder": {"id": "https://github.com/oyesanyf/OshoosiClaw/.github/workflows/release-slsa.yml"},
                   "buildType": "https://github.com/slsa-framework/slsa-github-generator/generic@v1",
                   "invocation": {
                       "configSource": {
                           "uri": "git+https://github.com/oyesanyf/OshoosiClaw",
                           "digest": {"sha1": git_sha},
-                          "entryPoint": ".github/workflows/release.yml"
+                          "entryPoint": ".github/workflows/release-slsa.yml"
                       }
                   }
               }

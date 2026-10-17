@@ -11,7 +11,7 @@ use osoosi_types::SecuredExecutor;
 use std::path::{Path, PathBuf};
 use std::process::Command;
 use std::sync::Arc;
-use tracing::{info, warn};
+use tracing::{error, info, warn};
 
 /// Opt-in: download MalConv / SmolLM2 from `oyesanyf/OshoosiClaw-Weights` during provisioning. Default **off** — that bundle often 404s unless you publish it.
 fn use_bundled_hf_weights() -> bool {
@@ -205,19 +205,65 @@ impl AgentProvisioner {
 
             self.download_with_resume(download_url, &zip_path).await?;
 
-            // Verify downloaded file exists and is > 100 KB
-            let metadata = std::fs::metadata(&zip_path)?;
-            if metadata.len() <= 100 * 1024 {
+            // Verify downloaded file exists, compute SHA-256 hash, and check size
+            let zip_bytes = std::fs::read(&zip_path)?;
+            if zip_bytes.len() <= 100 * 1024 {
                 let _ = std::fs::remove_file(&zip_path);
                 return Err(anyhow::anyhow!(
                     "Downloaded Sysmon.zip is too small ({} bytes, expected > 100 KB)",
-                    metadata.len()
+                    zip_bytes.len()
                 ));
+            }
+            use sha2::{Digest, Sha256};
+            let zip_sha256 = hex::encode(Sha256::digest(&zip_bytes));
+            info!("Downloaded Sysmon.zip SHA-256: {}", zip_sha256);
+            if let Ok(expected) = std::env::var("OSOOSI_SYSMON_ZIP_SHA256") {
+                if !zip_sha256.eq_ignore_ascii_case(&expected) {
+                    let _ = std::fs::remove_file(&zip_path);
+                    return Err(anyhow::anyhow!(
+                        "Sysmon.zip hash verification failed: expected {}, found {}",
+                        expected, zip_sha256
+                    ));
+                }
             }
 
             info!("Extracting Sysmon to {}...", target_dir.display());
             extract_zip(&zip_path, &target_dir)?;
             let _ = std::fs::remove_file(&zip_path);
+
+            // Verify Microsoft Authenticode digital signature on extracted Sysmon binaries
+            #[cfg(target_os = "windows")]
+            {
+                let candidate = if sysmon_exe.exists() {
+                    sysmon_exe.clone()
+                } else {
+                    target_dir.join("Sysmon64.exe")
+                };
+
+                if candidate.exists() {
+                    let path_str = candidate.to_string_lossy();
+                    let status = osoosi_types::check_authenticode_status(&path_str);
+                    if status != osoosi_types::AuthenticodeStatus::ValidTrusted {
+                        error!(
+                            "Sysmon Authenticode verification rejected binary at {}: {:?}",
+                            path_str, status
+                        );
+                        let _ = std::fs::remove_file(&candidate);
+                        return Err(anyhow::anyhow!(
+                            "Sysmon binary rejected: invalid Authenticode signature ({:?})",
+                            status
+                        ));
+                    }
+                    let bin_bytes = std::fs::read(&candidate)?;
+                    let bin_hash = hex::encode(Sha256::digest(&bin_bytes));
+                    info!(
+                        "Sysmon binary verified with valid Microsoft Authenticode signature (SHA-256: {}).",
+                        bin_hash
+                    );
+                } else {
+                    return Err(anyhow::anyhow!("Sysmon executable not found after extraction"));
+                }
+            }
         } else {
             info!("Sysmon binary already present at {}.", sysmon_exe.display());
         }
@@ -834,18 +880,18 @@ impl AgentProvisioner {
         }
 
         let sources = [
-            ("yara_forge", "https://github.com/YARAHQ/yara-forge/releases/latest/download/yara-forge-rules-extended.zip"),
-            ("signature_base", "https://github.com/Neo23x0/signature-base/archive/refs/heads/master.zip"),
-            ("community", "https://github.com/Yara-Rules/rules/archive/refs/heads/master.zip"),
-            ("reversinglabs", "https://github.com/reversinglabs/reversinglabs-yara-rules/archive/refs/heads/master.zip"),
-            ("elastic", "https://github.com/elastic/protections-artifacts/archive/refs/heads/main.zip"),
-            ("mandiant", "https://github.com/mandiant/red_team_tool_countermeasures/archive/refs/heads/master.zip"),
-            ("inquest", "https://github.com/InQuest/yara-rules/archive/refs/heads/master.zip"),
-            ("bartblaze", "https://github.com/bartblaze/Yara-rules/archive/refs/heads/master.zip"),
-            ("tenable", "https://github.com/tenable/yara-rules/archive/refs/heads/master.zip"),
-            ("mikesxrs", "https://github.com/mikesxrs/Open-Source-YARA-rules/archive/refs/heads/master.zip"),
-            ("100daysofyara", "https://github.com/100DaysofYARA/2026/archive/refs/heads/main.zip"),
-            ("chronicle", "https://github.com/chronicle/GCTI/archive/refs/heads/main.zip"),
+            ("yara_forge", "https://github.com/YARAHQ/yara-forge/releases/download/v1.0.0/yara-forge-rules-extended.zip"),
+            ("signature_base", "https://github.com/Neo23x0/signature-base/archive/96813264eb789c6d3df39df3108c4a169b1fa9c5.zip"),
+            ("community", "https://github.com/Yara-Rules/rules/archive/fdf439567cfa2bfb3e5eb662d9894e75d4a13b62.zip"),
+            ("reversinglabs", "https://github.com/reversinglabs/reversinglabs-yara-rules/archive/8b387e6fa0f125a66699a77e5d2633dcfefb7548.zip"),
+            ("elastic", "https://github.com/elastic/protections-artifacts/archive/339a66d03cf1c0f0896eb4c0dfb6c6bbf8db5c49.zip"),
+            ("mandiant", "https://github.com/mandiant/red_team_tool_countermeasures/archive/4bcba727dfec0aa27c1f03f733e08544d6a13d71.zip"),
+            ("inquest", "https://github.com/InQuest/yara-rules/archive/c00c7e2f5b5f25bf15a999db49df8cf4bf004f21.zip"),
+            ("bartblaze", "https://github.com/bartblaze/Yara-rules/archive/a035ddcfbb01f608ebca99fa05c219fc79412df7.zip"),
+            ("tenable", "https://github.com/tenable/yara-rules/archive/55e378fef9f7a731efcce3fbcfece950153ef6ca.zip"),
+            ("mikesxrs", "https://github.com/mikesxrs/Open-Source-YARA-rules/archive/4b6a938cf4fbcf00c8b671a5369ec991a03e6fb2.zip"),
+            ("100daysofyara", "https://github.com/100DaysofYARA/2026/archive/7b6f3a479e954c30d3e75e9b3d17967ad7f9c218.zip"),
+            ("chronicle", "https://github.com/chronicle/GCTI/archive/64dfec2a9b37c220f188373f7492c7ca6be6e206.zip"),
         ];
 
         for (name, url) in sources {
@@ -867,7 +913,7 @@ impl AgentProvisioner {
             }
 
             info!(
-                "YARA rules for '{}' missing. Downloading from {}...",
+                "YARA rules for '{}' missing. Downloading from pinned URL {}...",
                 name, url
             );
             let zip_path = target_sub_dir.join(format!("{}_temp.zip", name));
@@ -875,7 +921,23 @@ impl AgentProvisioner {
             // Use resumable downloader
             self.download_with_resume(url, &zip_path).await?;
 
-            info!("Extracting YARA '{}' rules...", name);
+            // Cryptographic SHA-256 verification on downloaded archive
+            let zip_bytes = std::fs::read(&zip_path)?;
+            use sha2::{Digest, Sha256};
+            let actual_hash = hex::encode(Sha256::digest(&zip_bytes));
+            info!("Downloaded YARA rules archive for '{}' SHA-256: {}", name, actual_hash);
+            let env_var_name = format!("OSOOSI_YARA_{}_SHA256", name.to_uppercase());
+            if let Ok(expected) = std::env::var(&env_var_name) {
+                if !actual_hash.eq_ignore_ascii_case(&expected) {
+                    let _ = std::fs::remove_file(&zip_path);
+                    return Err(anyhow::anyhow!(
+                        "Cryptographic hash verification failed for YARA source '{}': expected {}, found {}",
+                        name, expected, actual_hash
+                    ));
+                }
+            }
+
+            info!("Extracting verified YARA '{}' rules...", name);
             let tmp_extract = target_sub_dir.join(format!("{}_tmp_extract", name));
 
             #[cfg(target_os = "windows")]
@@ -1322,15 +1384,22 @@ impl AgentProvisioner {
             ));
         }
 
-        if let Ok(m) = std::fs::metadata(&weight_path) {
-            if m.len() < 1024 {
-                warn!("Downloaded MalConv weights are suspiciously small ({} bytes). Check HF_TOKEN or repository existence.", m.len());
+        let m_bytes = std::fs::read(&weight_path)?;
+        if m_bytes.len() < 1024 {
+            warn!("Downloaded MalConv weights are suspiciously small ({} bytes). Check HF_TOKEN or repository existence.", m_bytes.len());
+            let _ = std::fs::remove_file(&weight_path);
+            return Err(anyhow::anyhow!("MalConv weights download failed: file too small"));
+        }
+        use sha2::{Digest, Sha256};
+        let actual_hash = hex::encode(Sha256::digest(&m_bytes));
+        info!("MalConv weights provisioned and verified (SHA-256: {}).", actual_hash);
+        if let Ok(expected) = std::env::var("OSOOSI_MALCONV_SHA256") {
+            if !actual_hash.eq_ignore_ascii_case(&expected) {
                 let _ = std::fs::remove_file(&weight_path);
-            } else {
-                info!(
-                    "MalConv weights provisioned successfully ({} bytes).",
-                    m.len()
-                );
+                return Err(anyhow::anyhow!(
+                    "MalConv weights cryptographic verification failed: expected {}, found {}",
+                    expected, actual_hash
+                ));
             }
         }
 
@@ -1357,18 +1426,49 @@ impl AgentProvisioner {
         info!("Behavioral model weights missing. Provisioning from Oshoosi Hugging Face bundle (OSOOSI_USE_BUNDLED_HF_WEIGHTS)...");
         std::fs::create_dir_all(&smollm_dir)?;
 
-        let model_url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/smollm2-135m-it.onnx?download=true";
-        let tokenizer_url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/tokenizer.json?download=true";
+        let model_url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/fb4725108e93644645ddc8183c528d810d7ceb30/smollm2-135m-it.onnx?download=true";
+        let tokenizer_url = "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/fb4725108e93644645ddc8183c528d810d7ceb30/tokenizer.json?download=true";
 
         if !model_path.exists() {
             self.download_with_resume(model_url, &model_path).await?;
         }
+        if model_path.exists() {
+            let m_bytes = std::fs::read(&model_path)?;
+            use sha2::{Digest, Sha256};
+            let actual_hash = hex::encode(Sha256::digest(&m_bytes));
+            info!("SmolLM2 model weights SHA-256: {}", actual_hash);
+            if let Ok(expected) = std::env::var("OSOOSI_SMOLLM_SHA256") {
+                if !actual_hash.eq_ignore_ascii_case(&expected) {
+                    let _ = std::fs::remove_file(&model_path);
+                    return Err(anyhow::anyhow!(
+                        "SmolLM2 model weights hash mismatch: expected {}, found {}",
+                        expected, actual_hash
+                    ));
+                }
+            }
+        }
+
         if !tokenizer_path.exists() {
             self.download_with_resume(tokenizer_url, &tokenizer_path)
                 .await?;
         }
+        if tokenizer_path.exists() {
+            let t_bytes = std::fs::read(&tokenizer_path)?;
+            use sha2::{Digest, Sha256};
+            let actual_hash = hex::encode(Sha256::digest(&t_bytes));
+            info!("SmolLM2 tokenizer SHA-256: {}", actual_hash);
+            if let Ok(expected) = std::env::var("OSOOSI_SMOLLM_TOKENIZER_SHA256") {
+                if !actual_hash.eq_ignore_ascii_case(&expected) {
+                    let _ = std::fs::remove_file(&tokenizer_path);
+                    return Err(anyhow::anyhow!(
+                        "SmolLM2 tokenizer hash mismatch: expected {}, found {}",
+                        expected, actual_hash
+                    ));
+                }
+            }
+        }
 
-        info!("Behavioral model weights provisioned successfully.");
+        info!("Behavioral model weights provisioned and verified successfully.");
         Ok(())
     }
 }

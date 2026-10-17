@@ -2323,6 +2323,12 @@ pub struct AiConfig {
     /// Model name/path for Foundation-Sec (e.g. "fenkohq/foundation-sec-8b").
     #[serde(default = "default_foundation_sec_model")]
     pub foundation_sec_model: String,
+    /// Explicit opt-in required for cloud LLM services (e.g. OpenAI). Defaults to false.
+    #[serde(default)]
+    pub enable_cloud_llm: bool,
+    /// Cloud LLM model (e.g. "gpt-4o").
+    #[serde(default)]
+    pub cloud_llm_model: Option<String>,
 }
 
 fn default_ai_enabled() -> bool {
@@ -2384,6 +2390,15 @@ fn apply_ai_env_overrides(mut c: AiConfig) -> AiConfig {
     if let Ok(v) = std::env::var("OSOOSI_FOUNDATION_SEC_MODEL") {
         c.foundation_sec_model = v;
     }
+    if let Ok(v) = std::env::var("OSOOSI_ENABLE_CLOUD_LLM") {
+        c.enable_cloud_llm = v == "1" || v.eq_ignore_ascii_case("true");
+    }
+    if let Ok(v) = std::env::var("OSOOSI_CLOUD_LLM_MODEL") {
+        let t = v.trim();
+        if !t.is_empty() {
+            c.cloud_llm_model = Some(t.to_string());
+        }
+    }
     c
 }
 
@@ -2400,6 +2415,8 @@ impl Default for AiConfig {
             colog_threshold: default_colog_threshold(),
             foundation_sec_enabled: true,
             foundation_sec_model: default_foundation_sec_model(),
+            enable_cloud_llm: false,
+            cloud_llm_model: None,
         }
     }
 }
@@ -3797,4 +3814,27 @@ nsrl_cache_limit = 50000
         assert_eq!(clean_ghost, "calc.exe  malicious");
         assert!(!ghost_inj);
     }
+
+    #[test]
+    fn test_ai_config_cloud_llm_opt_in() {
+        // Test default: cloud LLM must be strictly disabled
+        let ai_default = AiConfig::default();
+        assert!(!ai_default.enable_cloud_llm, "enable_cloud_llm must default to false");
+        assert_eq!(ai_default.cloud_llm_model.as_deref(), None);
+
+        // Test TOML deserialization with explicit opt-in
+        let toml_str = r#"
+            enable_cloud_llm = true
+            cloud_llm_model = "gpt-4o-mini"
+        "#;
+        let parsed: AiConfig = toml::from_str(toml_str).expect("Valid AiConfig TOML");
+        assert!(parsed.enable_cloud_llm);
+        assert_eq!(parsed.cloud_llm_model.as_deref(), Some("gpt-4o-mini"));
+
+        // Test TOML deserialization with default omission
+        let toml_empty = "";
+        let parsed_empty: AiConfig = toml::from_str(toml_empty).expect("Valid empty AiConfig TOML");
+        assert!(!parsed_empty.enable_cloud_llm, "Omitted enable_cloud_llm must deserialize as false");
+    }
 }
+

@@ -321,29 +321,69 @@ impl LocalDecisionEngine {
             || state_lower.contains("ignore previous instructions")
             || state_lower.contains("ignore all previous");
 
-        // Parse structured fields strictly by " | " delimiter
+        // Parse structured fields from XML tags, newline-separated key-values, or legacy " | " delimiters
         let mut process_name = String::new();
         let mut is_signed = false;
         let mut is_unsigned = false;
         let mut invariants_nominal = false;
 
-        for part in request.state.split(" | ") {
-            let part_trim = part.trim();
-            let part_lower = part_trim.to_lowercase();
-            if let Some(stripped) = part_trim.strip_prefix("Process Image:") {
-                process_name = stripped.trim().to_lowercase();
-            } else if let Some(stripped) = part_trim.strip_prefix("Process:") {
-                process_name = stripped.trim().to_lowercase();
-            } else if let Some(stripped) = part_trim.strip_prefix("Path:") {
-                if process_name.is_empty() {
-                    process_name = stripped.trim().to_lowercase();
+        // 1. Extract XML tags if present
+        if request.state.contains('<') && request.state.contains('>') {
+            if let Some(start) = request.state.find("<process>") {
+                if let Some(end) = request.state[start..].find("</process>") {
+                    process_name = request.state[start + 9..start + end].trim().to_lowercase();
                 }
-            } else if part_lower == "signed: true" || part_lower == "issigned: true" {
+            } else if let Some(start) = request.state.find("<path>") {
+                if let Some(end) = request.state[start..].find("</path>") {
+                    if process_name.is_empty() {
+                        process_name = request.state[start + 6..start + end].trim().to_lowercase();
+                    }
+                }
+            }
+            if request.state.contains("<signed>true</signed>")
+                || request.state.contains("<issigned>true</issigned>")
+            {
                 is_signed = true;
-            } else if part_lower == "signed: false" || part_lower == "issigned: false" {
+            } else if request.state.contains("<signed>false</signed>")
+                || request.state.contains("<issigned>false</issigned>")
+            {
                 is_unsigned = true;
-            } else if part_lower == "invariants: nominal" {
+            }
+            if request.state.contains("<invariants>nominal</invariants>") {
                 invariants_nominal = true;
+            }
+        }
+
+        // 2. Parse via newline-delimited lines (primary structured format) or legacy " | "
+        if process_name.is_empty() || (!is_signed && !is_unsigned) {
+            let parts: Vec<&str> = if request.state.contains('\n') {
+                request.state.lines().collect()
+            } else {
+                request.state.split(" | ").collect()
+            };
+
+            for part in parts {
+                let part_trim = part.trim();
+                let part_lower = part_trim.to_lowercase();
+                if let Some(stripped) = part_trim.strip_prefix("Process Image:") {
+                    if process_name.is_empty() {
+                        process_name = stripped.trim().to_lowercase();
+                    }
+                } else if let Some(stripped) = part_trim.strip_prefix("Process:") {
+                    if process_name.is_empty() {
+                        process_name = stripped.trim().to_lowercase();
+                    }
+                } else if let Some(stripped) = part_trim.strip_prefix("Path:") {
+                    if process_name.is_empty() {
+                        process_name = stripped.trim().to_lowercase();
+                    }
+                } else if part_lower == "signed: true" || part_lower == "issigned: true" {
+                    is_signed = true;
+                } else if part_lower == "signed: false" || part_lower == "issigned: false" {
+                    is_unsigned = true;
+                } else if part_lower == "invariants: nominal" {
+                    invariants_nominal = true;
+                }
             }
         }
 
@@ -356,7 +396,19 @@ impl LocalDecisionEngine {
         // 1. Compute composite feature evidence
         let mut mal_score = 0.0f64;
         for (token, &weight) in &self.weights.malicious_token_weights {
-            if state_lower.contains(token) {
+            if token == "inject" {
+                let has_inj = state_lower.contains("inject.exe")
+                    || state_lower.contains("injection: true")
+                    || state_lower.contains("injectiondetected: true")
+                    || state_lower.contains("promptinjectiondetected: true")
+                    || (state_lower.contains("inject")
+                        && !state_lower.contains("injectiondetected: false")
+                        && !state_lower.contains("promptinjectiondetected: false")
+                        && !state_lower.contains("injection: false"));
+                if has_inj {
+                    mal_score += weight;
+                }
+            } else if state_lower.contains(token) {
                 mal_score += weight;
             }
         }

@@ -139,7 +139,7 @@ def build_server():
     try:
         from mcp.server.fastmcp import FastMCP
     except ImportError as exc:
-        raise RuntimeError("MCP support is optional; install it with: python -m pip install 'wikiskill-research[mcp] @ git+https://github.com/Stahl-G/wikiskill.git'") from exc
+        raise RuntimeError("MCP support is optional; install it with: python -m pip install 'wikiskill-research[mcp] @ git+https://github.com/Stahl-G/wikiskill.git@da6984caca09d5f81b2336cf3067b59c0c18bb1e'") from exc
     server = FastMCP('wikiskill', instructions=INSTRUCTIONS)
     for name, function in TOOLS.items():
         server.add_tool(function, name=name)

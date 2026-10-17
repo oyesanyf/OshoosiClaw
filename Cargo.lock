@@ -1196,7 +1196,7 @@ dependencies = [
 
 [[package]]
 name = "compression-prompt"
-version = "0.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "rand 0.8.6",
@@ -1885,19 +1885,6 @@ dependencies = [
 
 [[package]]
 name = "dashmap"
-version = "5.5.3"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "978747c1d849a7d2ee5e8adc0159961c48fb7e5db2f06af6723b80123bb53856"
-dependencies = [
- "cfg-if",
- "hashbrown 0.14.5",
- "lock_api",
- "once_cell",
- "parking_lot_core",
-]
-
-[[package]]
-name = "dashmap"
 version = "6.1.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "5041cc499144891f3790297212f32a74fb938e5136a14943f338ef9e0ae276cf"
@@ -2156,32 +2143,11 @@ dependencies = [
 
 [[package]]
 name = "dirs"
-version = "5.0.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "44c45a9d03d6676652bcb5e724c7e988de1acad23a711b5217ab9cbecbec2225"
-dependencies = [
- "dirs-sys 0.4.1",
-]
-
-[[package]]
-name = "dirs"
 version = "6.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "c3e8aa94d75141228480295a7d0e7feb620b1a5ad9f12bc40be62411e38cce4e"
 dependencies = [
- "dirs-sys 0.5.0",
-]
-
-[[package]]
-name = "dirs-sys"
-version = "0.4.1"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "520f05a5cbd335fae5a99ff7a6ab8627577660ee5cfd6a94a6a929b52ff0321c"
-dependencies = [
- "libc",
- "option-ext",
- "redox_users 0.4.6",
- "windows-sys 0.48.0",
+ "dirs-sys",
 ]
 
 [[package]]
@@ -2233,7 +2199,7 @@ dependencies = [
  "bitflags 2.13.2",
  "boxcar",
  "crossbeam-skiplist",
- "dashmap 6.1.0",
+ "dashmap",
  "goblin 0.10.5",
  "md-5",
  "memmap2",
@@ -3107,17 +3073,6 @@ dependencies = [
 
 [[package]]
 name = "goblin"
-version = "0.8.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "1b363a30c165f666402fe6a3024d3bec7ebc898f96a4a23bd1c99f8dbf3f4f47"
-dependencies = [
- "log",
- "plain",
- "scroll 0.12.0",
-]
-
-[[package]]
-name = "goblin"
 version = "0.9.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "daa0a64d21a7eb230583b4c5f4e23b7e4e57974f96620f42a7e75e08ae66d745"
@@ -3312,28 +3267,11 @@ checksum = "b07f60793ff0a4d9cef0f18e63b5357e06209987153a64648c972c1e5aff336f"
 
 [[package]]
 name = "hf-hub"
-version = "0.3.2"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "2b780635574b3d92f036890d8373433d6f9fc7abb320ee42a5c25897fc8ed732"
-dependencies = [
- "dirs 5.0.1",
- "indicatif",
- "log",
- "native-tls",
- "rand 0.8.6",
- "serde",
- "serde_json",
- "thiserror 1.0.69",
- "ureq 2.12.1",
-]
-
-[[package]]
-name = "hf-hub"
 version = "0.4.3"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "629d8f3bbeda9d148036d6b0de0a3ab947abd08ce90626327fc3547a49d59d97"
 dependencies = [
- "dirs 6.0.0",
+ "dirs",
  "futures",
  "http",
  "indicatif",
@@ -4800,7 +4738,7 @@ version = "1.0.0"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "074c94e982f344b74c7c498750aa23a72797aaddd5a33e658510437cc37b54d8"
 dependencies = [
- "ndarray 0.16.1",
+ "ndarray",
  "ort",
  "thiserror 1.0.69",
  "tokio",
@@ -5080,19 +5018,6 @@ dependencies = [
  "security-framework 3.7.0",
  "security-framework-sys",
  "tempfile",
-]
-
-[[package]]
-name = "ndarray"
-version = "0.15.6"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "adb12d4e967ec485a5f71c6311fe28158e9d6f4bc4a447b474184d0f91a8fa32"
-dependencies = [
- "matrixmultiply",
- "num-complex",
- "num-integer",
- "num-traits",
- "rawpointer",
 ]
 
 [[package]]
@@ -5670,7 +5595,7 @@ source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "1fa7e49bd669d32d7bc2a15ec540a527e7764aec722a45467814005725bcd721"
 dependencies = [
  "libloading",
- "ndarray 0.16.1",
+ "ndarray",
  "ort-sys",
  "smallvec 2.0.0-alpha.10",
  "tracing",
@@ -5691,11 +5616,11 @@ dependencies = [
 
 [[package]]
 name = "osoosi-agent-anomaly"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap",
  "hex",
  "hmac 0.12.1",
  "hostname",
@@ -5703,6 +5628,7 @@ dependencies = [
  "osoosi-audit",
  "osoosi-behavioral",
  "osoosi-policy",
+ "osoosi-types",
  "rand 0.8.6",
  "regex",
  "reqwest",
@@ -5719,17 +5645,17 @@ dependencies = [
  "url",
  "uuid",
  "windows-sys 0.61.2",
- "winreg 0.52.0",
+ "winreg",
 ]
 
 [[package]]
 name = "osoosi-audit"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "blake3",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap",
  "ed25519-dalek 2.2.0",
  "hex",
  "libc",
@@ -5745,7 +5671,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-auditor"
-version = "0.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5762,7 +5688,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-behavioral"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -5773,11 +5699,11 @@ dependencies = [
  "candle-transformers",
  "chrono",
  "compression-prompt",
- "dashmap 5.5.3",
+ "dashmap",
  "hex",
  "hostname",
  "iced-x86",
- "ndarray 0.16.1",
+ "ndarray",
  "ort",
  "osoosi-dp",
  "osoosi-telemetry",
@@ -5796,12 +5722,13 @@ dependencies = [
  "walkdir",
  "winapi",
  "windows 0.58.0",
+ "winreg",
  "yara-x",
 ]
 
 [[package]]
 name = "osoosi-cli"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -5811,7 +5738,7 @@ dependencies = [
  "ed25519-dalek 2.2.0",
  "flate2",
  "hex",
- "hf-hub 0.4.3",
+ "hf-hub",
  "libc",
  "libloading",
  "ort",
@@ -5832,6 +5759,7 @@ dependencies = [
  "regex",
  "reqwest",
  "serde_json",
+ "sha2 0.10.9",
  "sysinfo",
  "tar",
  "tokio",
@@ -5847,25 +5775,25 @@ dependencies = [
 
 [[package]]
 name = "osoosi-core"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "blake3",
  "chrono",
- "dashmap 6.1.0",
- "dirs 6.0.0",
+ "dashmap",
+ "dirs",
  "dotscope",
  "ed25519-dalek 2.2.0",
  "futures",
  "hex",
- "hf-hub 0.3.2",
+ "hf-hub",
  "hmac 0.12.1",
  "hostname",
  "libc",
  "magika",
  "managed",
- "ndarray 0.15.6",
+ "ndarray",
  "nostr-sdk",
  "opentelemetry",
  "opentelemetry_sdk",
@@ -5898,6 +5826,7 @@ dependencies = [
  "sha2 0.10.9",
  "smoltcp",
  "sysinfo",
+ "tempfile",
  "tfhe",
  "thiserror 2.0.18",
  "tokenizers",
@@ -5909,7 +5838,7 @@ dependencies = [
  "wasmtime 44.0.3",
  "win32-version-info",
  "windows 0.58.0",
- "winreg 0.52.0",
+ "winreg",
  "wintun",
  "wmi",
  "yara-x",
@@ -5917,13 +5846,13 @@ dependencies = [
 
 [[package]]
 name = "osoosi-dashboard"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "axum",
  "blake3",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap",
  "hex",
  "once_cell",
  "osoosi-agent-anomaly",
@@ -5947,10 +5876,10 @@ dependencies = [
 
 [[package]]
 name = "osoosi-dns"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
- "dashmap 6.1.0",
+ "dashmap",
  "hickory-proto",
  "serde",
  "serde_json",
@@ -5960,7 +5889,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-dp"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5976,7 +5905,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-exporter"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -5995,7 +5924,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-forensics"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6013,7 +5942,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-inject"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "lazy_static",
  "libc",
@@ -6026,12 +5955,12 @@ dependencies = [
 
 [[package]]
 name = "osoosi-memory"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "bloomfilter",
  "chrono",
- "dirs 6.0.0",
+ "dirs",
  "goblin 0.9.3",
  "hex",
  "hostname",
@@ -6051,17 +5980,17 @@ dependencies = [
 
 [[package]]
 name = "osoosi-model"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "candle-core",
  "candle-nn",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap",
  "goblin 0.9.3",
  "hex",
  "magika",
- "ndarray 0.16.1",
+ "ndarray",
  "ort",
  "osoosi-dp",
  "osoosi-memory",
@@ -6086,15 +6015,16 @@ dependencies = [
 
 [[package]]
 name = "osoosi-policy"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "base64 0.22.1",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap",
  "evalexpr",
  "futures",
+ "hex",
  "ipnetwork",
  "osoosi-audit",
  "osoosi-behavioral",
@@ -6113,6 +6043,7 @@ dependencies = [
  "serde",
  "serde_json",
  "serde_yaml",
+ "sha2 0.10.9",
  "sysinfo",
  "thiserror 2.0.18",
  "tokio",
@@ -6128,8 +6059,20 @@ dependencies = [
 ]
 
 [[package]]
+name = "osoosi-relay"
+version = "1.2.0"
+dependencies = [
+ "anyhow",
+ "futures",
+ "libp2p",
+ "tokio",
+ "tracing",
+ "tracing-subscriber",
+]
+
+[[package]]
 name = "osoosi-repair"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6148,18 +6091,18 @@ dependencies = [
  "uuid",
  "winapi",
  "windows 0.58.0",
- "winreg 0.52.0",
+ "winreg",
  "wmi",
 ]
 
 [[package]]
 name = "osoosi-runtime"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "bincode 1.3.3",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap",
  "hex",
  "osoosi-audit",
  "osoosi-sandbox",
@@ -6179,7 +6122,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-sandbox"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "blake3",
@@ -6204,14 +6147,14 @@ dependencies = [
 
 [[package]]
 name = "osoosi-telemetry"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "aya",
  "blake3",
  "bytes",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap",
  "ferrisetw",
  "futures",
  "hex",
@@ -6224,6 +6167,7 @@ dependencies = [
  "reqwest",
  "serde",
  "serde_json",
+ "sha2 0.10.9",
  "sysinfo",
  "thiserror 2.0.18",
  "tokio",
@@ -6239,7 +6183,7 @@ dependencies = [
 
 [[package]]
 name = "osoosi-trust"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
@@ -6262,19 +6206,20 @@ dependencies = [
 
 [[package]]
 name = "osoosi-types"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "chrono",
- "dirs 6.0.0",
+ "dirs",
  "ed25519-dalek 2.2.0",
- "goblin 0.8.2",
+ "goblin 0.9.3",
  "hex",
  "hostname",
  "libc",
  "pelite",
  "rand 0.8.6",
+ "regex",
  "rustls-native-certs",
  "serde",
  "serde_json",
@@ -6284,7 +6229,7 @@ dependencies = [
  "tracing",
  "uuid",
  "windows 0.58.0",
- "winreg 0.7.0",
+ "winreg",
  "wmi",
  "x509-parser 0.16.0",
  "zip 2.4.2",
@@ -6292,14 +6237,14 @@ dependencies = [
 
 [[package]]
 name = "osoosi-wire"
-version = "0.1.1"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "async-trait",
  "bincode 1.3.3",
  "blake3",
  "chrono",
- "dashmap 6.1.0",
+ "dashmap",
  "ed25519-dalek 2.2.0",
  "futures",
  "hex",
@@ -6325,7 +6270,7 @@ dependencies = [
 
 [[package]]
 name = "otx-taxii-rs"
-version = "0.1.0"
+version = "1.2.0"
 dependencies = [
  "base64 0.22.1",
  "chrono",
@@ -8397,7 +8342,7 @@ dependencies = [
 
 [[package]]
 name = "test-peer"
-version = "0.1.0"
+version = "1.2.0"
 dependencies = [
  "anyhow",
  "chrono",
@@ -10711,15 +10656,6 @@ name = "winnow"
 version = "1.0.2"
 source = "registry+https://github.com/rust-lang/crates.io-index"
 checksum = "2ee1708bef14716a11bae175f579062d4554d95be2c6829f518df847b7b3fdd0"
-
-[[package]]
-name = "winreg"
-version = "0.7.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0120db82e8a1e0b9fb3345a539c478767c0048d842860994d96113d5b667bd69"
-dependencies = [
- "winapi",
-]
 
 [[package]]
 name = "winreg"

@@ -141,14 +141,14 @@ def build_dsse_intoto(
         "subject": subjects,
         "predicate": {
             "builder": {
-                "id": "https://github.com/oyesanyf/OshoosiClaw/.github/workflows/release.yml"
+                "id": "https://github.com/oyesanyf/OshoosiClaw/.github/workflows/release-slsa.yml"
             },
             "buildType": "https://github.com/slsa-framework/slsa-github-generator/generic@v1",
             "invocation": {
                 "configSource": {
                     "uri": "git+https://github.com/oyesanyf/OshoosiClaw",
                     "digest": {"sha1": git_sha},
-                    "entryPoint": ".github/workflows/release.yml"
+                    "entryPoint": ".github/workflows/release-slsa.yml"
                 }
             }
         }
@@ -348,25 +348,18 @@ def sign_and_prepare_linux_artifacts(repo_root: str, gpg_path: str) -> list:
 
         # Generate detached GPG signatures
         asc_path = pkg_path + ".asc"
-        if not os.path.exists(asc_path):
-            asc_bytes = gpg_sign_detached(gpg_path, data, armored=True)
-            with open(asc_path, "wb") as af:
-                af.write(asc_bytes)
-            print(f"    [+] Created armored signature: {os.path.basename(asc_path)}")
-        else:
-            with open(asc_path, "rb") as af:
-                asc_bytes = af.read()
+        asc_bytes = gpg_sign_detached(gpg_path, data, armored=True)
+        with open(asc_path, "wb") as af:
+            af.write(asc_bytes)
+        print(f"    [+] Created armored signature: {os.path.basename(asc_path)}")
 
         artifacts_to_upload.append((pkg + ".asc", asc_bytes, "text/plain"))
 
         sig_path = pkg_path + ".sig"
-        if not os.path.exists(sig_path):
-            sig_bytes = gpg_sign_detached(gpg_path, data, armored=False)
-            with open(sig_path, "wb") as sf:
-                sf.write(sig_bytes)
-        else:
-            with open(sig_path, "rb") as sf:
-                sig_bytes = sf.read()
+        sig_bytes = gpg_sign_detached(gpg_path, data, armored=False)
+        with open(sig_path, "wb") as sf:
+            sf.write(sig_bytes)
+        print(f"    [+] Created binary signature: {os.path.basename(sig_path)}")
 
         artifacts_to_upload.append((pkg + ".sig", sig_bytes, "application/octet-stream"))
 
@@ -402,9 +395,77 @@ def main():
     print(f"[*] Using GnuPG binary: {gpg_path}")
     key_fingerprint = ensure_gpg_key(gpg_path, public_key_path)
 
+    tag = "v1.2.0"
+    ver = tag.lstrip("v")
+
+    with open(msi_path, "rb") as f:
+        msi_bytes = f.read()
+
+    sha256_hex = hashlib.sha256(msi_bytes).hexdigest()
+    print(f"\n[RELEASE] Processing OshoosiClaw.msi ({len(msi_bytes):,} bytes, SHA-256={sha256_hex}) for {tag}...")
+
+    # OpenPGP Detached Signatures
+    print("[*] Generating and verifying OpenPGP detached signatures...")
+    asc_bytes = gpg_sign_detached(gpg_path, msi_bytes, armored=True)
+    sig_bytes = gpg_sign_detached(gpg_path, msi_bytes, armored=False)
+    print("    [+] Armored signature (.asc) verified successfully with gpg --verify")
+    print("    [+] Binary signature (.sig) verified successfully with gpg --verify")
+
+    # Save MSI signatures to disk
+    for dest_dir in [repo_root, os.path.join(repo_root, "deploy")]:
+        for base_name in [f"OshoosiClaw-{ver}.msi", "OshoosiClaw.msi"]:
+            with open(os.path.join(dest_dir, f"{base_name}.asc"), "wb") as f:
+                f.write(asc_bytes)
+            with open(os.path.join(dest_dir, f"{base_name}.sig"), "wb") as f:
+                f.write(sig_bytes)
+
+    # Discover and prepare Linux artifacts from deploy/linux
+    linux_artifacts = sign_and_prepare_linux_artifacts(repo_root, gpg_path)
+
+    # Collect subjects for DSSE provenance
+    subjects = [
+        {"name": f"OshoosiClaw-{ver}.msi", "digest": {"sha256": sha256_hex}},
+        {"name": "OshoosiClaw.msi", "digest": {"sha256": sha256_hex}},
+    ]
+    for name, data, _ in linux_artifacts:
+        if not (name.endswith(".asc") or name.endswith(".sig") or name.endswith(".jsonl")):
+            subjects.append({"name": name, "digest": {"sha256": hashlib.sha256(data).hexdigest()}})
+
+    # DSSE In-Toto / SLSA Provenance Envelope
+    print("[*] Generating Dead Simple Signing Envelope (DSSE) in-toto provenance...")
+    git_sha = "HEAD"
+    try:
+        git_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
+    except Exception:
+        pass
+
+    dsse_intoto_bytes = build_dsse_intoto(
+        gpg_path,
+        key_fingerprint,
+        subjects,
+        git_sha=git_sha
+    )
+    print("    [+] DSSE envelope created and PAE signed with GPG key.")
+
+    # Save DSSE provenance to disk
+    for dest_dir in [repo_root, os.path.join(repo_root, "deploy")]:
+        for base_name in [f"OshoosiClaw-{ver}.msi", "OshoosiClaw.msi"]:
+            with open(os.path.join(dest_dir, f"{base_name}.intoto.jsonl"), "wb") as f:
+                f.write(dsse_intoto_bytes)
+    with open(os.path.join(repo_root, "deploy", "linux", "provenance.intoto.jsonl"), "wb") as f:
+        f.write(dsse_intoto_bytes)
+
+    # Linux packaging archive
+    print("[*] Building Linux release packaging archive...")
+    linux_pkg_bytes = create_linux_packaging_archive(repo_root)
+    print(f"    [+] Created osoosi-linux-packaging.tar.gz ({len(linux_pkg_bytes):,} bytes)")
+
+    with open(public_key_path, "rb") as f:
+        public_key_bytes = f.read()
+
     token = get_git_credentials()
     if not token:
-        print("[RELEASE] No GitHub token available from git credential fill.")
+        print("[RELEASE] No GitHub token available from git credential fill. Release artifacts and provenance are fully signed on disk.")
         return 0
 
     headers = {
@@ -414,7 +475,6 @@ def main():
     }
 
     # Fetch release or create if not present
-    tag = "v1.2.0"
     try:
         req = urllib.request.Request(
             f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/tags/{tag}",
@@ -449,57 +509,7 @@ def main():
         else:
             raise
 
-    ver = tag.lstrip("v")
     upload_url_base = rel["upload_url"].split("{")[0]
-
-    with open(msi_path, "rb") as f:
-        msi_bytes = f.read()
-
-    sha256_hex = hashlib.sha256(msi_bytes).hexdigest()
-    print(f"\n[RELEASE] Processing OshoosiClaw.msi ({len(msi_bytes):,} bytes, SHA-256={sha256_hex}) for {tag}...")
-
-    # OpenPGP Detached Signatures
-    print("[*] Generating and verifying OpenPGP detached signatures...")
-    asc_bytes = gpg_sign_detached(gpg_path, msi_bytes, armored=True)
-    sig_bytes = gpg_sign_detached(gpg_path, msi_bytes, armored=False)
-    print("    [+] Armored signature (.asc) verified successfully with gpg --verify")
-    print("    [+] Binary signature (.sig) verified successfully with gpg --verify")
-
-    # Discover and prepare Linux artifacts from deploy/linux
-    linux_artifacts = sign_and_prepare_linux_artifacts(repo_root, gpg_path)
-
-    # Collect subjects for DSSE provenance
-    subjects = [
-        {"name": f"OshoosiClaw-{ver}.msi", "digest": {"sha256": sha256_hex}},
-        {"name": "OshoosiClaw.msi", "digest": {"sha256": sha256_hex}},
-    ]
-    for name, data, _ in linux_artifacts:
-        if not (name.endswith(".asc") or name.endswith(".sig") or name.endswith(".jsonl")):
-            subjects.append({"name": name, "digest": {"sha256": hashlib.sha256(data).hexdigest()}})
-
-    # DSSE In-Toto / SLSA Provenance Envelope
-    print("[*] Generating Dead Simple Signing Envelope (DSSE) in-toto provenance...")
-    git_sha = "HEAD"
-    try:
-        git_sha = subprocess.check_output(["git", "rev-parse", "HEAD"], text=True).strip()
-    except Exception:
-        pass
-
-    dsse_intoto_bytes = build_dsse_intoto(
-        gpg_path,
-        key_fingerprint,
-        subjects,
-        git_sha=git_sha
-    )
-    print("    [+] DSSE envelope created and PAE signed with GPG key.")
-
-    # Linux packaging archive
-    print("[*] Building Linux release packaging archive...")
-    linux_pkg_bytes = create_linux_packaging_archive(repo_root)
-    print(f"    [+] Created osoosi-linux-packaging.tar.gz ({len(linux_pkg_bytes):,} bytes)")
-
-    with open(public_key_path, "rb") as f:
-        public_key_bytes = f.read()
 
     assets_to_upload = [
         (f"OshoosiClaw-{ver}.msi", msi_bytes, "application/octet-stream"),

@@ -12,6 +12,31 @@ use tracing::{info, warn};
 static LAST_ISOLATION_TIME: parking_lot::Mutex<Option<Instant>> = parking_lot::Mutex::new(None);
 static ISOLATION_COUNT: AtomicU64 = AtomicU64::new(0);
 
+static LAST_KILL_TIME: parking_lot::Mutex<Option<Instant>> = parking_lot::Mutex::new(None);
+static KILL_COUNT: AtomicU64 = AtomicU64::new(0);
+
+pub fn is_administrative_or_ssh_session(name: &str, cmd: &[String]) -> bool {
+    let lower_name = name.to_lowercase();
+    if lower_name == "sshd"
+        || lower_name.starts_with("sshd:")
+        || lower_name == "ansible"
+        || lower_name.starts_with("ansible-")
+        || lower_name.starts_with("ansible_module")
+    {
+        return true;
+    }
+    for arg in cmd {
+        let lower_arg = arg.to_lowercase();
+        if lower_arg.contains("ansible")
+            || lower_arg.contains("sshd:")
+            || lower_arg.contains("pts/")
+        {
+            return true;
+        }
+    }
+    false
+}
+
 pub struct RemediationController;
 
 impl Default for RemediationController {
@@ -209,12 +234,36 @@ impl RemediationController {
             .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
             .unwrap_or(false);
 
-        if is_dry_run {
+        let autonomy = osoosi_types::load_autonomy_config();
+        let is_monitor_mode = autonomy.current_mode() == osoosi_types::AutonomyMode::Audit;
+
+        if is_dry_run || is_monitor_mode {
             info!(
-                "AUTONOMOUS RESPONSE: [DRY-RUN] Process tree termination simulated for PID {}.",
+                "AUTONOMOUS RESPONSE: [MONITOR-MODE/DRY-RUN] Process tree termination simulated for PID {} (no processes killed).",
                 pid
             );
             return Ok(());
+        }
+
+        // Rate limiter: maximum 5 process tree terminations within 60 seconds
+        {
+            let mut last_time = LAST_KILL_TIME.lock();
+            let now = Instant::now();
+            if let Some(prev) = *last_time {
+                if now.duration_since(prev).as_secs() < 60 {
+                    let count = KILL_COUNT.fetch_add(1, Ordering::Relaxed);
+                    if count >= 5 {
+                        warn!("AUTONOMOUS RESPONSE: Process tree termination rate limit exceeded (max 5 per 60s). Throttling.");
+                        return Err(anyhow::anyhow!("Rate limit exceeded for process tree termination: max 5 kills per 60s"));
+                    }
+                } else {
+                    KILL_COUNT.store(1, Ordering::Relaxed);
+                    *last_time = Some(now);
+                }
+            } else {
+                KILL_COUNT.store(1, Ordering::Relaxed);
+                *last_time = Some(now);
+            }
         }
 
         if pid <= 4 || pid == std::process::id() {
@@ -225,9 +274,58 @@ impl RemediationController {
             return Err(anyhow::anyhow!("Cannot kill protected process PID {}", pid));
         }
 
+        use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
+        let mut sys = System::new_with_specifics(
+            RefreshKind::new().with_processes(ProcessRefreshKind::new()),
+        );
+        sys.refresh_processes();
+
+        let target_pid = Pid::from(pid as usize);
+
+        // Pre-kill Administrative / SSH Session Shield check on target
+        if let Some(proc) = sys.process(target_pid) {
+            if is_administrative_or_ssh_session(proc.name(), proc.cmd()) {
+                warn!(
+                    "AUTONOMOUS RESPONSE: Refusing to kill administrative or SSH session PID {} ({})",
+                    pid,
+                    proc.name()
+                );
+                return Err(anyhow::anyhow!(
+                    "Cannot kill administrative or SSH session PID {} ({})",
+                    pid,
+                    proc.name()
+                ));
+            }
+        }
+
+        // Collect all descendants while enforcing session shields
+        let mut to_kill = vec![target_pid];
+        let mut i = 0;
+        while i < to_kill.len() {
+            let parent_pid = to_kill[i];
+            for (p, proc) in sys.processes() {
+                if proc.parent() == Some(parent_pid) && !to_kill.contains(p) {
+                    if is_administrative_or_ssh_session(proc.name(), proc.cmd()) {
+                        warn!(
+                            "AUTONOMOUS RESPONSE: Process tree descendant PID {} ({}) is an administrative / SSH session. Aborting kill tree.",
+                            p,
+                            proc.name()
+                        );
+                        return Err(anyhow::anyhow!(
+                            "Cannot kill process tree containing administrative or SSH session PID {}",
+                            p
+                        ));
+                    }
+                    to_kill.push(*p);
+                }
+            }
+            i += 1;
+        }
+
         info!(
-            "AUTONOMOUS RESPONSE: Terminating process tree for PID {}...",
-            pid
+            "AUTONOMOUS RESPONSE: Terminating process tree for PID {} ({} processes)...",
+            pid,
+            to_kill.len()
         );
 
         #[cfg(target_os = "windows")]
@@ -242,27 +340,6 @@ impl RemediationController {
                 let _ = unsafe { CloseHandle(handle) };
                 debug!("Immediate Win32 TerminateProcess executed for PID {}", pid);
             }
-        }
-
-        use sysinfo::{Pid, ProcessRefreshKind, RefreshKind, System};
-        let mut sys = System::new_with_specifics(
-            RefreshKind::new().with_processes(ProcessRefreshKind::new()),
-        );
-        sys.refresh_processes();
-
-        let target_pid = Pid::from(pid as usize);
-
-        // Collect all descendants
-        let mut to_kill = vec![target_pid];
-        let mut i = 0;
-        while i < to_kill.len() {
-            let parent_pid = to_kill[i];
-            for (p, proc) in sys.processes() {
-                if proc.parent() == Some(parent_pid) && !to_kill.contains(p) {
-                    to_kill.push(*p);
-                }
-            }
-            i += 1;
         }
 
         // Kill in reverse order (children first) to ensure clean termination

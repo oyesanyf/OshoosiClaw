@@ -458,7 +458,7 @@ impl BehavioralClassifier {
         if let (Some(ref model_arc), Some(ref tokenizer_arc)) = (&self.model, &self.tokenizer) {
             let model_clone = model_arc.clone();
             let tokenizer_clone = tokenizer_arc.clone();
-            let sentence_clone = sentence.to_string();
+            let sentence_clone = safe_sentence.clone();
             let score_res = tokio::task::spawn_blocking(move || match model_clone.lock() {
                 Ok(mut model) => Self::infer_sync(&sentence_clone, &mut model, &tokenizer_clone),
                 Err(e) => Err(anyhow::anyhow!("Failed to lock model mutex: {}", e)),
@@ -484,7 +484,7 @@ impl BehavioralClassifier {
         {
             let bert_opt = self.securebert.read().await.clone();
             if let Some(sb) = bert_opt {
-                let sentence_clone = sentence.to_string();
+                let sentence_clone = safe_sentence.clone();
                 let score_res = tokio::task::spawn_blocking(move || {
                     let query = "Is this log activity malicious or indicative of a cyber attack?";
                     sb.score_pair(query, &sentence_clone)
@@ -517,7 +517,7 @@ impl BehavioralClassifier {
             // 4. SmolLM Fallback (Deep Security Reasoning)
             let smollm_opt = self.smollm.read().await.clone();
             if let Some(smollm) = smollm_opt {
-                let sentence_clone = sentence.to_string();
+                let sentence_clone = safe_sentence.clone();
                 let score_res =
                     tokio::task::spawn_blocking(move || smollm.analyze_log(&sentence_clone)).await;
                 match score_res {

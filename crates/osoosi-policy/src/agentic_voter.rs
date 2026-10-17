@@ -375,7 +375,7 @@ impl AgenticPolicyVoter {
             for payload in AgenticToolValidator::extract_base64_payloads(raw) {
                 let norm_payload = AgenticToolValidator::normalize_string(&payload);
                 candidates.push(payload);
-                if norm_payload != *candidates.last().unwrap() {
+                if candidates.last().is_none_or(|last| norm_payload != *last) {
                     candidates.push(norm_payload);
                 }
             }

@@ -619,93 +619,106 @@ impl MemoryStore {
     /// This avoids loading millions of rows into Rust and completes much faster with lower RAM use than
     /// `import_nsrl_from_sqlite` + `upsert_nsrl_records`. Safe to run while the agent is up (WAL + readers).
     pub fn import_nsrl_from_nist_rds_sqlite(&self, nist_rds_path: &Path) -> anyhow::Result<u64> {
-        let p = nist_rds_path
-            .to_str()
-            .ok_or_else(|| anyhow::anyhow!("NSRL RDS path is not valid UTF-8"))?;
         if !nist_rds_path.exists() {
             anyhow::bail!("NSRL RDS file not found: {:?}", nist_rds_path);
         }
-        let mut conn = self.conn.lock();
-        let before: u64 = conn.query_row("SELECT COUNT(*) FROM nsrl", [], |r| r.get(0))?;
 
-        // Tuned for one-shot bulk copy (reduces disk sync overhead; still crash-safe on WAL).
-        let _ = conn.query_row(
-            "PRAGMA journal_mode",
-            [],
-            |r: &rusqlite::Row| -> rusqlite::Result<String> { r.get(0) },
-        );
-        let _ = conn.execute("PRAGMA synchronous = NORMAL", []);
-        let _ = conn.execute("PRAGMA temp_store = MEMORY", []);
-        // ~200MB page cache: speeds reading the attached NIST file (env overridable for fast SSDs)
-        let cache_kb: i32 = std::env::var("OSOOSI_NSRL_IMPORT_CACHE_KB")
+        let before: u64 = {
+            let conn = self.conn.lock();
+            conn.query_row("SELECT COUNT(*) FROM nsrl", [], |r| r.get(0))?
+        };
+
+        let max_import_rows: usize = std::env::var("OSOOSI_NSRL_IMPORT_LIMIT")
             .ok()
             .and_then(|s| s.parse().ok())
-            .unwrap_or(200_000i32);
-        let _ = conn.execute(&format!("PRAGMA cache_size = -{cache_kb}"), []);
-        // SQLite 3.39+: extra worker threads for large INSERT..SELECT (default env: 4; set 0 to leave default)
-        if let Some(t) = std::env::var("OSOOSI_NSRL_IMPORT_THREADS")
-            .ok()
-            .and_then(|s| s.parse::<i32>().ok())
-        {
-            if t > 0 {
-                let t = t.clamp(1, 32);
-                let _ = conn.execute(&format!("PRAGMA threads = {t}"), []);
-            }
-        } else {
-            let _ = conn.execute("PRAGMA threads = 4", []);
+            .unwrap_or(50_000);
+
+        if before as usize >= max_import_rows {
+            debug!(
+                "NSRL table already has {} rows (>= limit {}), skipping bulk re-import",
+                before, max_import_rows
+            );
+            return Ok(0);
         }
 
-        let tx = conn.transaction()?;
-        tx.execute("ATTACH DATABASE ? AS nist", [p])?;
-        let file_tbl: i64 = tx
+        let nist_conn = Connection::open_with_flags(
+            nist_rds_path,
+            rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY | rusqlite::OpenFlags::SQLITE_OPEN_NO_MUTEX,
+        )?;
+        let _ = nist_conn.busy_timeout(std::time::Duration::from_millis(2000));
+
+        let file_tbl: i64 = nist_conn
             .query_row(
-                "SELECT COUNT(*) FROM nist.sqlite_master WHERE type='table' AND name='FILE'",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='FILE'",
                 [],
                 |r| r.get(0),
             )
             .unwrap_or(0);
-        let metadata_tbl: i64 = tx
+        let metadata_tbl: i64 = nist_conn
             .query_row(
-                "SELECT COUNT(*) FROM nist.sqlite_master WHERE type='table' AND name='METADATA'",
+                "SELECT COUNT(*) FROM sqlite_master WHERE type='table' AND name='METADATA'",
                 [],
                 |r| r.get(0),
             )
             .unwrap_or(0);
 
-        if file_tbl > 0 {
-            // Map NIST `FILE` columns -> our schema; hashes in RDS are typically hex strings.
-            tx.execute(
-                "INSERT OR REPLACE INTO main.nsrl (sha1, md5, sha256, file_name, file_size, product_code, os_code)
-                 SELECT lower(sha1), lower(md5), lower(sha256), name, size, product, os FROM nist.FILE",
-                [],
-            )?;
+        let query_sql = if file_tbl > 0 {
+            format!(
+                "SELECT lower(COALESCE(sha1, '')), lower(md5), lower(sha256), COALESCE(name, ''), COALESCE(size, 0), product, os FROM FILE LIMIT {}",
+                max_import_rows
+            )
         } else if metadata_tbl > 0 {
-            // Map modern NIST `METADATA` columns -> our schema
-            tx.execute(
-                "INSERT OR REPLACE INTO main.nsrl (sha1, md5, sha256, file_name, file_size, product_code, os_code)
-                 SELECT lower(sha1), lower(md5), lower(sha256), file_name, bytes, NULL, NULL FROM nist.METADATA",
-                [],
-            )?;
+            format!(
+                "SELECT lower(COALESCE(sha1, '')), lower(md5), lower(sha256), COALESCE(file_name, ''), COALESCE(bytes, 0), NULL, NULL FROM METADATA LIMIT {}",
+                max_import_rows
+            )
         } else {
-            let _ = tx.execute("DETACH DATABASE nist", []);
-            tx.commit()?;
             anyhow::bail!(
                 "NSRL file has neither FILE nor METADATA table (expected NIST modern RDS): {:?}",
                 nist_rds_path
             );
+        };
+
+        let mut stmt = nist_conn.prepare(&query_sql)?;
+        let mut rows = stmt.query([])?;
+        let batch_size = 2_000usize;
+        let mut batch: Vec<osoosi_types::NsrlRecord> = Vec::with_capacity(batch_size);
+
+        while let Some(row) = rows.next()? {
+            let sha1: String = row.get::<_, String>(0).unwrap_or_default();
+            if sha1.is_empty() {
+                continue;
+            }
+            batch.push(osoosi_types::NsrlRecord {
+                sha1,
+                md5: row.get::<_, Option<String>>(1).ok().flatten(),
+                sha256: row.get::<_, Option<String>>(2).ok().flatten(),
+                file_name: row.get::<_, String>(3).unwrap_or_default(),
+                file_size: row.get::<_, i64>(4).unwrap_or(0).max(0) as u64,
+                product_code: row.get::<_, Option<String>>(5).ok().flatten().or_else(|| row.get::<_, Option<i32>>(5).ok().flatten().map(|v| v.to_string())),
+                os_code: row.get::<_, Option<String>>(6).ok().flatten(),
+            });
+
+            if batch.len() >= batch_size {
+                self.upsert_nsrl_records(&batch)?;
+                batch.clear();
+                // Yield briefly between micro-batches so dashboard/telemetry readers never starve
+                std::thread::sleep(std::time::Duration::from_millis(2));
+            }
         }
 
-        let _ = tx.execute("DETACH DATABASE nist", []);
-        tx.commit()?;
+        if !batch.is_empty() {
+            self.upsert_nsrl_records(&batch)?;
+            batch.clear();
+        }
 
-        let after: u64 = conn.query_row("SELECT COUNT(*) FROM nsrl", [], |r| r.get(0))?;
-        // Restore conservative sync for steady-state operation (small cost).
-        let _ = conn.execute("PRAGMA synchronous = FULL", []);
-        let _ = conn.execute("PRAGMA cache_size = -2000", []); // back to a modest default
-        let _ = conn.execute("PRAGMA threads = 0", []); // restore SQLite default worker count
+        let after: u64 = {
+            let conn = self.conn.lock();
+            conn.query_row("SELECT COUNT(*) FROM nsrl", [], |r| r.get(0))?
+        };
         let added = after.saturating_sub(before);
         debug!(
-            "NSRL bulk import: +{} rows (total {} in nsrl) from {:?}",
+            "NSRL micro-batched import: +{} rows (total {} in nsrl) from {:?}",
             added, after, nist_rds_path
         );
         Ok(added)

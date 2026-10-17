@@ -578,25 +578,42 @@ pub fn query_system_accounts() -> std::collections::HashSet<String> {
         const CREATE_NO_WINDOW: u32 = 0x08000000;
 
         let mut discovered = false;
-        if let Ok(output) =
-            std::process::Command::new(osoosi_types::resolve_system_binary("powershell.exe"))
-                .args([
-                    "-NoProfile",
-                    "-NonInteractive",
-                    "-Command",
-                    "Get-LocalUser | Select-Object -ExpandProperty Name",
-                ])
-                .creation_flags(CREATE_NO_WINDOW)
-                .output()
         {
-            if output.status.success() {
-                let stdout = String::from_utf8_lossy(&output.stdout);
-                for line in stdout.lines() {
-                    let user = line.trim().to_ascii_lowercase();
-                    if !user.is_empty() {
-                        set.insert(user);
-                        discovered = true;
+            use windows::Win32::NetworkManagement::NetManagement::{
+                NetApiBufferFree, NetUserEnum, FILTER_NORMAL_ACCOUNT, USER_INFO_0,
+            };
+            use windows::core::PCWSTR;
+
+            let mut bufptr: *mut u8 = std::ptr::null_mut();
+            let mut entries_read = 0u32;
+            let mut total_entries = 0u32;
+            let mut resume_handle = 0u32;
+
+            unsafe {
+                let status = NetUserEnum(
+                    PCWSTR::null(),
+                    0,
+                    FILTER_NORMAL_ACCOUNT,
+                    &mut bufptr,
+                    u32::MAX,
+                    &mut entries_read,
+                    &mut total_entries,
+                    Some(&mut resume_handle),
+                );
+                if status == 0 && !bufptr.is_null() {
+                    let slice = std::slice::from_raw_parts(bufptr as *const USER_INFO_0, entries_read as usize);
+                    for info in slice {
+                        if !info.usri0_name.is_null() {
+                            if let Ok(name) = info.usri0_name.to_string() {
+                                let user = name.trim().to_ascii_lowercase();
+                                if !user.is_empty() {
+                                    set.insert(user);
+                                    discovered = true;
+                                }
+                            }
+                        }
                     }
+                    let _ = NetApiBufferFree(Some(bufptr as *const _));
                 }
             }
         }
@@ -663,6 +680,50 @@ pub fn get_account_containment_powershell_cmd(username: &str) -> String {
         "Disable-LocalUser -Name '{}' -ErrorAction SilentlyContinue",
         clean
     )
+}
+
+#[cfg(target_os = "windows")]
+fn win32_user_exists(username: &str) -> bool {
+    use windows::Win32::NetworkManagement::NetManagement::{
+        NetApiBufferFree, NetUserGetInfo,
+    };
+    use windows::core::PCWSTR;
+
+    let wide_user: Vec<u16> = username.encode_utf16().chain(std::iter::once(0)).collect();
+    let mut bufptr: *mut u8 = std::ptr::null_mut();
+    unsafe {
+        let status = NetUserGetInfo(PCWSTR::null(), PCWSTR(wide_user.as_ptr()), 0, &mut bufptr);
+        if status == 0 && !bufptr.is_null() {
+            let _ = NetApiBufferFree(Some(bufptr as *const _));
+            true
+        } else {
+            false
+        }
+    }
+}
+
+#[cfg(target_os = "windows")]
+fn win32_disable_user(username: &str) -> bool {
+    use windows::Win32::NetworkManagement::NetManagement::{
+        NetUserSetInfo, USER_INFO_1008, UF_ACCOUNTDISABLE,
+    };
+    use windows::core::PCWSTR;
+
+    let wide_user: Vec<u16> = username.encode_utf16().chain(std::iter::once(0)).collect();
+    unsafe {
+        let info_1008 = USER_INFO_1008 {
+            usri1008_flags: UF_ACCOUNTDISABLE,
+        };
+        let mut parm_err = 0u32;
+        let status = NetUserSetInfo(
+            PCWSTR::null(),
+            PCWSTR(wide_user.as_ptr()),
+            1008,
+            &info_1008 as *const _ as *const u8,
+            Some(&mut parm_err),
+        );
+        status == 0
+    }
 }
 
 /// Helper to check whether account containment is allowed against a given baseline.
@@ -1622,17 +1683,23 @@ impl EdrOrchestrator {
                 warn!("{}", reason);
 
                 let mut is_benign = false;
+                let mut human_escalation_required = false;
                 if self.decision_engine.is_enabled() {
                     let (safe_name, inj_n) = osoosi_types::sanitize_untrusted_log_field(name, 128);
                     let (safe_cmd, inj_c) = osoosi_types::sanitize_untrusted_log_field(cmd, 512);
                     let inj = inj_n || inj_c;
-                    let incident = format!("Process: {} | PID: {} | Cmd: {} | Trigger: Siquery breakout query | PromptInjectionDetected: {}", safe_name, pid, safe_cmd, inj);
+                    let incident = format!(
+                        "Target: Process\nProcess: {}\nPID: {}\nCmd: {}\nTrigger: Siquery breakout query\nPromptInjectionDetected: {}",
+                        safe_name, pid, safe_cmd, inj
+                    );
                     if let Ok(dec) = self
                         .decision_engine
                         .evaluate_security_incident(&incident)
                         .await
                     {
-                        if !inj && (dec.verdict == "benign" || dec.containment_action == "allow") {
+                        if dec.human_escalation_required {
+                            human_escalation_required = true;
+                        } else if !inj && (dec.verdict == "benign" || dec.containment_action == "allow") {
                             is_benign = true;
                         }
                     }
@@ -1655,7 +1722,13 @@ impl EdrOrchestrator {
                     let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
                     sig.process_name = Some(name.to_string());
                     sig.confidence = 0.95;
-                    sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                    if human_escalation_required {
+                        sig.recommended_action = osoosi_types::ResponseAction::Alert;
+                        sig.action_state = osoosi_types::ActionState::Pending;
+                        sig.require_approval = true;
+                    } else {
+                        sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                    }
                     sig.reason = Some(reason.clone());
                     sig.mitre_tactic = Some("TA0002".to_string());
                     sig.mitre_technique = Some("T1003.001".to_string());
@@ -1674,7 +1747,7 @@ impl EdrOrchestrator {
                         let _ = tx.try_send(osoosi_wire::MeshCommand::Broadcast(sig.clone()));
                     }
 
-                    if !monitor_only && pid > 4 {
+                    if !monitor_only && !human_escalation_required && pid > 4 {
                         info!(
                             "Siquery Active Protection: Terminating & entangling rogue PID {}",
                             pid
@@ -1689,7 +1762,7 @@ impl EdrOrchestrator {
                         "pid": pid,
                         "name": name,
                         "details": reason,
-                        "action": if monitor_only { "logged_monitored" } else { "terminated_and_entangled" }
+                        "action": if monitor_only || human_escalation_required { "logged_monitored" } else { "terminated_and_entangled" }
                     }));
                 }
             }
@@ -1731,19 +1804,25 @@ impl EdrOrchestrator {
                     warn!("{}", reason);
 
                     let mut is_benign = false;
+                    let mut human_escalation_required = false;
                     if self.decision_engine.is_enabled() {
                         let (safe_name, inj_n) =
                             osoosi_types::sanitize_untrusted_log_field(name, 128);
                         let (safe_path, inj_p) =
                             osoosi_types::sanitize_untrusted_log_field(path_name, 256);
                         let inj = inj_n || inj_p;
-                        let incident = format!("Process: {} | Path: {} | State: Running | Signed: false | PromptInjectionDetected: {}", safe_name, safe_path, inj);
+                        let incident = format!(
+                            "Target: Service\nProcess: {}\nPath: {}\nState: Running\nSigned: false\nPromptInjectionDetected: {}",
+                            safe_name, safe_path, inj
+                        );
                         if let Ok(dec) = self
                             .decision_engine
                             .evaluate_security_incident(&incident)
                             .await
                         {
-                            if !inj
+                            if dec.human_escalation_required {
+                                human_escalation_required = true;
+                            } else if !inj
                                 && (dec.verdict == "benign" || dec.containment_action == "allow")
                             {
                                 is_benign = true;
@@ -1770,7 +1849,13 @@ impl EdrOrchestrator {
                             osoosi_types::ThreatSignature::new(self.trust.did().to_string());
                         sig.process_name = Some(name.to_string());
                         sig.confidence = 0.90;
-                        sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                        if human_escalation_required {
+                            sig.recommended_action = osoosi_types::ResponseAction::Alert;
+                            sig.action_state = osoosi_types::ActionState::Pending;
+                            sig.require_approval = true;
+                        } else {
+                            sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                        }
                         sig.reason = Some(reason.clone());
                         sig.mitre_tactic = Some("TA0003".to_string());
                         sig.mitre_technique = Some("T1543.003".to_string());
@@ -1780,7 +1865,7 @@ impl EdrOrchestrator {
                         let _ = self.memory.log_threat(&sig);
                         self.record_gossip_threat(&sig, "SIQUERY_SERVICE_PERSISTENCE");
 
-                        if !monitor_only {
+                        if !monitor_only && !human_escalation_required {
                             let rule = osoosi_types::BlockingRule {
                                 path: clean_path.to_string(),
                                 kind: osoosi_types::BlockingKind::Executable,
@@ -1799,7 +1884,7 @@ impl EdrOrchestrator {
                             "name": name,
                             "path": path_name,
                             "details": reason,
-                            "action": if monitor_only { "logged_monitored" } else { "binary_blocked" }
+                            "action": if monitor_only || human_escalation_required { "logged_monitored" } else { "binary_blocked" }
                         }));
                     }
                 }
@@ -1983,19 +2068,25 @@ impl EdrOrchestrator {
                     warn!("{}", reason);
 
                     let mut is_benign = false;
+                    let mut human_escalation_required = false;
                     if self.decision_engine.is_enabled() {
                         let (safe_proc, inj_p) =
                             osoosi_types::sanitize_untrusted_log_field(proc_name, 128);
                         let (safe_mod, inj_m) =
                             osoosi_types::sanitize_untrusted_log_field(mod_path, 256);
                         let inj = inj_p || inj_m;
-                        let incident = format!("Process: {} | PID: {} | UnsignedModule: {} | PromptInjectionDetected: {}", safe_proc, pid, safe_mod, inj);
+                        let incident = format!(
+                            "Target: Module\nProcess: {}\nPID: {}\nUnsignedModule: {}\nPromptInjectionDetected: {}",
+                            safe_proc, pid, safe_mod, inj
+                        );
                         if let Ok(dec) = self
                             .decision_engine
                             .evaluate_security_incident(&incident)
                             .await
                         {
-                            if !inj
+                            if dec.human_escalation_required {
+                                human_escalation_required = true;
+                            } else if !inj
                                 && (dec.verdict == "benign" || dec.containment_action == "allow")
                             {
                                 is_benign = true;
@@ -2008,7 +2099,13 @@ impl EdrOrchestrator {
                             osoosi_types::ThreatSignature::new(self.trust.did().to_string());
                         sig.process_name = Some(proc_name.to_string());
                         sig.confidence = 0.90;
-                        sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                        if human_escalation_required {
+                            sig.recommended_action = osoosi_types::ResponseAction::Alert;
+                            sig.action_state = osoosi_types::ActionState::Pending;
+                            sig.require_approval = true;
+                        } else {
+                            sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                        }
                         sig.reason = Some(reason.clone());
                         sig.mitre_tactic = Some("TA0005".to_string());
                         sig.mitre_technique = Some("T1055.001".to_string());
@@ -2018,7 +2115,7 @@ impl EdrOrchestrator {
                         let _ = self.memory.log_threat(&sig);
                         self.record_gossip_threat(&sig, "SIQUERY_MEMORY_MODULE_INJECTION");
 
-                        if !monitor_only && pid > 4 {
+                        if !monitor_only && !human_escalation_required && pid > 4 {
                             info!("Siquery Active Protection: Entangling PID {} due to unbacked DLL injection", pid);
                             self.entangle_process(pid, proc_name).await;
                         }
@@ -2061,17 +2158,23 @@ impl EdrOrchestrator {
                 warn!("{}", reason);
 
                 let mut is_benign = false;
+                let mut human_escalation_required = false;
                 if self.decision_engine.is_enabled() {
                     let (safe_name, inj_n) = osoosi_types::sanitize_untrusted_log_field(name, 128);
                     let (safe_data, inj_d) = osoosi_types::sanitize_untrusted_log_field(data, 256);
                     let inj = inj_n || inj_d;
-                    let incident = format!("Process: dns_cache | DNS Query: {} | Resolved Data: {} | Trigger: Fast-Flux / Cloud Metadata C2 | PromptInjectionDetected: {}", safe_name, safe_data, inj);
+                    let incident = format!(
+                        "Target: DNS\nProcess: dns_cache\nDNS Query: {}\nResolved Data: {}\nTrigger: Fast-Flux / Cloud Metadata C2\nPromptInjectionDetected: {}",
+                        safe_name, safe_data, inj
+                    );
                     if let Ok(dec) = self
                         .decision_engine
                         .evaluate_security_incident(&incident)
                         .await
                     {
-                        if !inj && (dec.verdict == "benign" || dec.containment_action == "allow") {
+                        if dec.human_escalation_required {
+                            human_escalation_required = true;
+                        } else if !inj && (dec.verdict == "benign" || dec.containment_action == "allow") {
                             is_benign = true;
                         }
                     }
@@ -2084,7 +2187,13 @@ impl EdrOrchestrator {
                     let mut sig = osoosi_types::ThreatSignature::new(self.trust.did().to_string());
                     sig.process_name = Some("dns_cache".to_string());
                     sig.confidence = 0.88;
-                    sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                    if human_escalation_required {
+                        sig.recommended_action = osoosi_types::ResponseAction::Alert;
+                        sig.action_state = osoosi_types::ActionState::Pending;
+                        sig.require_approval = true;
+                    } else {
+                        sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                    }
                     sig.reason = Some(reason.clone());
                     sig.mitre_tactic = Some("TA0011".to_string());
                     sig.mitre_technique = Some("T1071.004".to_string());
@@ -2093,7 +2202,7 @@ impl EdrOrchestrator {
                     let _ = self.memory.log_threat(&sig);
                     self.record_gossip_threat(&sig, "SIQUERY_DNS_ANOMALY");
 
-                    if !monitor_only {
+                    if !monitor_only && !human_escalation_required {
                         let _ = crate::firewall::block_dns_destinations(Some(name), Some(data));
                     }
 
@@ -2226,9 +2335,10 @@ impl EdrOrchestrator {
                     let (san_loc, inj3) = osoosi_types::sanitize_untrusted_log_field(location, 128);
                     let inj_flag = inj1 || inj2 || inj3;
                     let mut is_benign = false;
+                    let mut human_escalation_required = false;
                     if self.decision_engine.is_enabled() {
                         let incident = format!(
-                            "Autorun: {} | Path: {} | Location: {} | Signed: false | InjectionDetected: {}",
+                            "Target: Autorun\nAutorun: {}\nPath: {}\nLocation: {}\nSigned: false\nInjectionDetected: {}",
                             san_name, san_path, san_loc, inj_flag
                         );
                         if let Ok(dec) = self
@@ -2236,7 +2346,9 @@ impl EdrOrchestrator {
                             .evaluate_security_incident(&incident)
                             .await
                         {
-                            if !inj_flag
+                            if dec.human_escalation_required {
+                                human_escalation_required = true;
+                            } else if !inj_flag
                                 && (dec.verdict == "benign" || dec.containment_action == "allow")
                             {
                                 is_benign = true;
@@ -2252,7 +2364,13 @@ impl EdrOrchestrator {
                             osoosi_types::ThreatSignature::new(self.trust.did().to_string());
                         sig.process_name = Some(name.to_string());
                         sig.confidence = 0.92;
-                        sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                        if human_escalation_required {
+                            sig.recommended_action = osoosi_types::ResponseAction::Alert;
+                            sig.action_state = osoosi_types::ActionState::Pending;
+                            sig.require_approval = true;
+                        } else {
+                            sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                        }
                         sig.reason = Some(reason.clone());
                         sig.mitre_tactic = Some("TA0003".to_string());
                         sig.mitre_technique = Some("T1547.001".to_string());
@@ -2263,7 +2381,7 @@ impl EdrOrchestrator {
                         let _ = self.memory.log_threat(&sig);
                         self.record_gossip_threat(&sig, "SIQUERY_AUTORUN_PERSISTENCE");
 
-                        if !monitor_only && !clean_path.is_empty() {
+                        if !monitor_only && !human_escalation_required && !clean_path.is_empty() {
                             let _ = self
                                 .blocking_manager
                                 .add_rule(osoosi_types::BlockingRule {
@@ -2280,7 +2398,7 @@ impl EdrOrchestrator {
                             "path": path,
                             "location": location,
                             "details": reason,
-                            "action": if monitor_only { "logged_monitored" } else { "binary_blocked" }
+                            "action": if monitor_only || human_escalation_required { "logged_monitored" } else { "binary_blocked" }
                         }));
                     }
                 }
@@ -2361,9 +2479,10 @@ impl EdrOrchestrator {
                     let (san_path, inj2) = osoosi_types::sanitize_untrusted_log_field(path, 256);
                     let inj_flag = inj1 || inj2;
                     let mut is_benign = false;
+                    let mut human_escalation_required = false;
                     if self.decision_engine.is_enabled() {
                         let incident = format!(
-                            "Driver: {} | Path: {} | BYOVD Risk | Signed: {} | InjectionDetected: {}",
+                            "Target: Driver\nDriver: {}\nPath: {}\nBYOVD Risk: true\nSigned: {}\nInjectionDetected: {}",
                             san_name, san_path, is_signed, inj_flag
                         );
                         if let Ok(dec) = self
@@ -2371,7 +2490,9 @@ impl EdrOrchestrator {
                             .evaluate_security_incident(&incident)
                             .await
                         {
-                            if !inj_flag
+                            if dec.human_escalation_required {
+                                human_escalation_required = true;
+                            } else if !inj_flag
                                 && (dec.verdict == "benign" || dec.containment_action == "allow")
                             {
                                 is_benign = true;
@@ -2387,7 +2508,13 @@ impl EdrOrchestrator {
                             osoosi_types::ThreatSignature::new(self.trust.did().to_string());
                         sig.process_name = Some(name.to_string());
                         sig.confidence = 0.96;
-                        sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                        if human_escalation_required {
+                            sig.recommended_action = osoosi_types::ResponseAction::Alert;
+                            sig.action_state = osoosi_types::ActionState::Pending;
+                            sig.require_approval = true;
+                        } else {
+                            sig.recommended_action = osoosi_types::ResponseAction::Isolate;
+                        }
                         sig.reason = Some(reason.clone());
                         sig.mitre_tactic = Some("TA0004".to_string());
                         sig.mitre_technique = Some("T1068".to_string());
@@ -2397,7 +2524,7 @@ impl EdrOrchestrator {
                         let _ = self.memory.log_threat(&sig);
                         self.record_gossip_threat(&sig, "SIQUERY_BYOVD_KERNEL_DRIVER");
 
-                        if !monitor_only {
+                        if !monitor_only && !human_escalation_required {
                             if let Some(ref kd) = *self.kernel_driver.read() {
                                 let _ = kd.add_blocked_path(clean_path);
                             }
@@ -2410,7 +2537,7 @@ impl EdrOrchestrator {
                             "path": path,
                             "signed": is_signed,
                             "details": reason,
-                            "action": if monitor_only { "logged_monitored" } else { "kernel_driver_blocked" }
+                            "action": if monitor_only || human_escalation_required { "logged_monitored" } else { "kernel_driver_blocked" }
                         }));
                     }
                 }
@@ -2761,6 +2888,51 @@ impl EdrOrchestrator {
         Some(sig)
     }
 
+    /// Evaluates and enforces the Human Escalation Gate.
+    /// When `human_escalation_required` is true, autonomous destructive action is strictly
+    /// downgraded to Alert, queued as ActionState::Pending, and require_approval is set to true.
+    pub fn apply_human_escalation_gate(
+        signature: &mut osoosi_types::ThreatSignature,
+        effective_action: &mut osoosi_types::ResponseAction,
+        human_escalation_required: bool,
+    ) {
+        if human_escalation_required {
+            *effective_action = osoosi_types::ResponseAction::Alert;
+            signature.recommended_action = osoosi_types::ResponseAction::Alert;
+            signature.action_state = osoosi_types::ActionState::Pending;
+            signature.require_approval = true;
+        }
+    }
+
+    /// Evaluates and enforces the Multi-Signal Corroboration Gate.
+    /// Caps uncorroborated single-detector destructive actions (Isolate/Tarpit/GhostTarpit)
+    /// to require human approval unless deterministic cryptographic, YARA, or multi-detector proof exists.
+    pub fn apply_corroboration_gate(
+        signature: &mut osoosi_types::ThreatSignature,
+        effective_action: osoosi_types::ResponseAction,
+        is_destructive: bool,
+        action_confidence_threshold: f32,
+    ) {
+        if matches!(
+            effective_action,
+            osoosi_types::ResponseAction::Isolate
+                | osoosi_types::ResponseAction::Tarpit
+                | osoosi_types::ResponseAction::GhostTarpit
+        ) && signature.detector_count < 2
+            && signature.cve_id.is_none()
+            && !is_destructive
+            && signature.signature.is_none()
+            && signature.merkle_proof.is_none()
+            && (action_confidence_threshold > 0.40 || signature.confidence < 0.90)
+        {
+            tracing::info!(
+                "Corroboration Gate: Single detector (count={}) without multi-signal deterministic corroboration. Requiring operator approval before {:?}.",
+                signature.detector_count, effective_action
+            );
+            signature.require_approval = true;
+        }
+    }
+
     pub async fn new() -> anyhow::Result<Self> {
         // Drastic Performance Optimization: Lower process priority so we don't freeze the UI
         #[cfg(windows)]
@@ -2906,10 +3078,7 @@ impl EdrOrchestrator {
         let adaptive = Arc::new(crate::adaptive::TelemetryController::new());
 
         // Inject adaptive controller into policy engine for heavy voter skipping
-        {
-            // SAFETY: `policy` has exactly one strong reference at this point (just created above).
-            let p = Arc::get_mut(&mut policy)
-                .expect("policy Arc has multiple owners before construction completes");
+        if let Some(p) = Arc::get_mut(&mut policy) {
             p.telemetry_controller = Some(adaptive.clone());
         }
         let (watcher_obj, file_rx) = osoosi_telemetry::FileWatcher::new(
@@ -5393,7 +5562,7 @@ impl EdrOrchestrator {
                                     let (san_yara, inj3) = osoosi_types::sanitize_untrusted_log_field(&yara_str, 256);
                                     let inj_flag = inj1 || inj2 || inj3;
                                     let state_text = format!(
-                                        "Target: File | Path: {} | Magika: {} | ML Score: {:.2} | YARA: {} | IsSigned: {} | InjectionDetected: {}",
+                                        "Target: File\nPath: {}\nMagika: {}\nML Score: {:.2}\nYARA: {}\nSigned: {}\nInjectionDetected: {}",
                                         san_file_path, san_magika, result.ml_score, san_yara, is_signed, inj_flag
                                     );
 
@@ -5436,6 +5605,11 @@ impl EdrOrchestrator {
                                                     result.file_path, result.magika_label, result.ml_score,
                                                     decision.verdict, decision.verdict_probability
                                                 );
+                                                let action_str = if decision.human_escalation_required {
+                                                    "pending_human_escalation"
+                                                } else {
+                                                    "contained_and_quarantined"
+                                                };
                                                 let finding = osoosi_types::ConsensusFinding {
                                                     id: format!("CONS-MALICIOUS-{}", &event.hash[..event.hash.len().min(12)]),
                                                     hash_blake3: event.hash.clone(),
@@ -5445,15 +5619,15 @@ impl EdrOrchestrator {
                                                     confidence: decision.verdict_probability as f32,
                                                     detector_count: 1,
                                                     voters_summary: format!(
-                                                        "Decision Model ({}): verdict={}, action={}, severity={}",
-                                                        decision.provider_used, decision.verdict, decision.containment_action, decision.threat_severity
+                                                        "Decision Model ({}): verdict={}, action={}, severity={}, human_escalation={}",
+                                                        decision.provider_used, decision.verdict, decision.containment_action, decision.threat_severity, decision.human_escalation_required
                                                     ),
-                                                    action_taken: "contained_and_quarantined".to_string(),
+                                                    action_taken: action_str.to_string(),
                                                     evaluated_at: chrono::Utc::now(),
                                                 };
                                                 let _ = orchestrator.memory.record_consensus_finding(&finding);
 
-                                                if is_executable && decision.verdict_probability >= 0.85 {
+                                                if is_executable && decision.verdict_probability >= 0.85 && !decision.human_escalation_required {
                                                     if crate::secured_executor::OpenShellExecutor::is_available().await {
                                                         let p_clone = path.to_path_buf();
                                                         tokio::spawn(async move {
@@ -5467,7 +5641,7 @@ impl EdrOrchestrator {
                                                     }
                                                 }
 
-                                                if decision.action_probability >= autonomy.action_confidence_threshold as f64 {
+                                                if !decision.human_escalation_required && decision.action_probability >= autonomy.action_confidence_threshold as f64 {
                                                     should_hard_block = true;
                                                 }
                                             } else {
@@ -6697,7 +6871,9 @@ impl EdrOrchestrator {
                                     chars.next();
                                     break;
                                 }
-                                tag.push(chars.next().unwrap());
+                                if let Some(ch) = chars.next() {
+                                    tag.push(ch);
+                                }
                             }
                             let trimmed = tag.trim();
                             if !trimmed.is_empty()
@@ -6843,7 +7019,6 @@ impl EdrOrchestrator {
                     || is_destructive
                     || has_mitre_technique)
             {
-                signature.require_approval = false;
                 ResponseAction::Isolate
             } else if (is_destructive || is_critical_attack) && autonomy.auto_quarantine_malware {
                 if is_destructive
@@ -6875,8 +7050,12 @@ impl EdrOrchestrator {
             };
 
             signature.recommended_action = effective_action;
-            if effective_action != ResponseAction::Alert {
+            if signature.require_approval {
+                signature.action_state = osoosi_types::ActionState::Pending;
+            } else if effective_action != ResponseAction::Alert {
                 signature.action_state = osoosi_types::ActionState::Executed;
+            } else {
+                signature.action_state = osoosi_types::ActionState::Pending;
             }
 
             let _ = self.memory.log_threat(&signature);
@@ -6917,6 +7096,24 @@ impl EdrOrchestrator {
                     "source_node": src_node,
                 }),
             );
+
+            // Human-in-the-Loop check: high-impact actions may require approval
+            if signature.require_approval
+                || signature.action_state == osoosi_types::ActionState::Pending
+            {
+                info!(
+                    "Fast-path: Action {:?} requires administrator approval. Queuing for review.",
+                    effective_action
+                );
+                self.audit.log(
+                    "ACTION_PENDING_APPROVAL",
+                    serde_json::json!({
+                        "threat_id": signature.id,
+                        "action": format!("{:?}", effective_action)
+                    }),
+                );
+                return Ok(());
+            }
 
             // Dynamic forensic sandbox execution if confidence >= 0.85
             if signature.confidence >= 0.85 {
@@ -7758,6 +7955,7 @@ impl EdrOrchestrator {
 
         // 1. Clef Non-Autoregressive Decision Model Evaluation & Noise Suppression Gate
         let mut decision_override: Option<ResponseAction> = None;
+        let mut human_escalation_required = false;
         if self.decision_engine.is_enabled() {
             let proc_str = signature.process_name.as_deref().unwrap_or("Unknown");
             let cmd_str = event
@@ -7769,9 +7967,10 @@ impl EdrOrchestrator {
             let (san_proc, inj1) = osoosi_types::sanitize_untrusted_log_field(proc_str, 128);
             let (san_cmd, inj2) = osoosi_types::sanitize_untrusted_log_field(cmd_str, 512);
             let injection_flag = inj1 || inj2;
+            let tech_str = signature.mitre_technique.as_deref().unwrap_or("none");
             let state_text = format!(
-                "Process: {} | CmdLine: {} | MITRE: {:?} | Confidence: {:.2} | Signed: {} | InjectionDetected: {}",
-                san_proc, san_cmd, signature.mitre_technique, signature.confidence, signature.is_signed, injection_flag
+                "Target: Incident\nProcess: {}\nCmdLine: {}\nMITRE: {}\nConfidence: {:.2}\nSigned: {}\nInjectionDetected: {}",
+                san_proc, san_cmd, tech_str, signature.confidence, signature.is_signed, injection_flag
             );
 
             match self
@@ -7785,6 +7984,13 @@ impl EdrOrchestrator {
                         decision.latency_ms, decision.provider_used, decision.verdict, decision.verdict_probability,
                         decision.containment_action, decision.action_probability, decision.human_escalation_required
                     );
+
+                    if decision.human_escalation_required {
+                        human_escalation_required = true;
+                        signature.require_approval = true;
+                        signature.action_state = osoosi_types::ActionState::Pending;
+                        signature.recommended_action = ResponseAction::Alert;
+                    }
 
                     // 1. Noise Suppression: Suppress benign false-positive noise before mesh broadcast or YARA generation
                     // Reject suppression if prompt injection was detected
@@ -7812,16 +8018,22 @@ impl EdrOrchestrator {
 
                     // 2. Action Routing: Containment actions
                     if decision.action_probability >= self.decision_engine.min_action_confidence() {
-                        let mapped_action = match decision.containment_action.as_str() {
-                            "isolate" | "quarantine" => ResponseAction::Isolate,
-                            "tarpit" => ResponseAction::Tarpit,
-                            "ghost_tarpit" => ResponseAction::GhostTarpit,
-                            "alert" => ResponseAction::Alert,
-                            _ => signature.recommended_action,
+                        let mapped_action = if decision.human_escalation_required {
+                            ResponseAction::Alert
+                        } else {
+                            match decision.containment_action.as_str() {
+                                "isolate" | "quarantine" => ResponseAction::Isolate,
+                                "tarpit" => ResponseAction::Tarpit,
+                                "ghost_tarpit" => ResponseAction::GhostTarpit,
+                                "alert" => ResponseAction::Alert,
+                                _ => signature.recommended_action,
+                            }
                         };
 
                         if decision.human_escalation_required {
                             signature.require_approval = true;
+                            signature.action_state = osoosi_types::ActionState::Pending;
+                            signature.recommended_action = ResponseAction::Alert;
                         }
 
                         self.audit.log(
@@ -7882,7 +8094,9 @@ impl EdrOrchestrator {
             .unwrap_or(false);
 
         #[allow(unused_mut)]
-        let mut effective_action = if is_lockdown_mode
+        let mut effective_action = if human_escalation_required {
+            ResponseAction::Alert
+        } else if is_lockdown_mode
             && (signature.confidence >= autonomy.action_confidence_threshold
                 || is_catalog_attack
                 || is_destructive
@@ -7890,9 +8104,6 @@ impl EdrOrchestrator {
         {
             // True Zero-Trust Lockdown Mode: ALL MITRE ATT&CK / ATLAS techniques and threats above threshold
             // immediately execute Isolate (Process Tree Kill). Never allow decision_override to downgrade to Alert.
-            if signature.detector_count >= 2 || is_catalog_attack || signature.cve_id.is_some() {
-                signature.require_approval = false;
-            }
             ResponseAction::Isolate
         } else if (is_destructive || is_catalog_attack) && autonomy.auto_quarantine_malware {
             // Active Enforcement Mode on MITRE catalog or destructive attack:
@@ -7934,20 +8145,20 @@ impl EdrOrchestrator {
             ResponseAction::Alert
         };
 
+        // Strictly enforce Human Escalation Gate (override lockdown or catalog attacks if human escalation required)
+        Self::apply_human_escalation_gate(
+            &mut signature,
+            &mut effective_action,
+            human_escalation_required,
+        );
+
         // Corroboration Gate: Cap uncorroborated single-detector destructive actions
-        if effective_action == ResponseAction::Isolate
-            && signature.detector_count < 2
-            && !is_catalog_attack
-            && signature.cve_id.is_none()
-            && !is_destructive
-            && autonomy.action_confidence_threshold > 0.40
-        {
-            info!(
-                    "Corroboration Gate: Single detector (count={}) without catalog or CVE corroboration. Requiring operator approval before Isolate.",
-                    signature.detector_count
-                );
-            signature.require_approval = true;
-        }
+        Self::apply_corroboration_gate(
+            &mut signature,
+            effective_action,
+            is_destructive,
+            autonomy.action_confidence_threshold,
+        );
 
         // Platform-specific safety check: Validate Windows system files with SFC before isolation.
         #[cfg(target_os = "windows")]
@@ -8125,7 +8336,7 @@ impl EdrOrchestrator {
 
         // Human-in-the-Loop check: high-impact actions may require approval
         if signature.require_approval
-            && signature.action_state == osoosi_types::ActionState::Pending
+            || signature.action_state == osoosi_types::ActionState::Pending
         {
             info!(
                 "Action {:?} requires administrator approval. Queuing for review.",
@@ -10893,58 +11104,38 @@ impl EdrOrchestrator {
             #[cfg(target_os = "windows")]
             {
                 const CREATE_NO_WINDOW: u32 = 0x08000000;
-
                 let net_bin = osoosi_types::resolve_system_binary("net.exe");
-                let ps_bin = osoosi_types::resolve_system_binary("powershell.exe");
 
-                // Step 1: Check if user exists before attempting lockdown
-                let mut cmd_net = tokio::process::Command::new(&net_bin);
-                cmd_net.args(["user", &username]);
-                cmd_net.creation_flags(CREATE_NO_WINDOW);
-                let check_res = cmd_net.output().await;
-
-                let user_exists = match check_res {
-                    Ok(ref out) if out.status.success() => true,
-                    _ => {
-                        let clean_ps = escape_powershell_arg(&username);
-                        let mut cmd_ps = tokio::process::Command::new(&ps_bin);
-                        cmd_ps.args([
-                            "-NoProfile",
-                            "-NonInteractive",
-                            "-Command",
-                            &format!("Get-LocalUser -Name '{}'", clean_ps),
-                        ]);
-                        cmd_ps.creation_flags(CREATE_NO_WINDOW);
-                        let ps_check = cmd_ps.output().await;
-                        matches!(ps_check, Ok(ref out) if out.status.success())
+                // Step 1: Check if user exists using native Win32 NetUserGetInfo
+                let mut user_exists = win32_user_exists(&username);
+                if !user_exists {
+                    // Fallback to net.exe user check
+                    let mut cmd_net = tokio::process::Command::new(&net_bin);
+                    cmd_net.args(["user", &username]);
+                    cmd_net.creation_flags(CREATE_NO_WINDOW);
+                    if let Ok(out) = cmd_net.output().await {
+                        if out.status.success() {
+                            user_exists = true;
+                        }
                     }
-                };
+                }
 
                 if !user_exists {
                     info!("[NON_DESTRUCTIVE_ACCOUNT_CONTAINMENT] User account '{}' does not exist in local database (threat mitigated before creation).", username);
                     return;
                 }
 
-                // Step 2: Non-destructive account disabling / lockdown (strictly never deletion)
-                let net_args = get_account_containment_net_args(&username);
-                let mut cmd_dis_net = tokio::process::Command::new(&net_bin);
-                cmd_dis_net.args(net_args);
-                cmd_dis_net.creation_flags(CREATE_NO_WINDOW);
-                let res = cmd_dis_net.output().await;
-                let mut disabled = matches!(res, Ok(ref output) if output.status.success());
+                // Step 2: Non-destructive account disabling / lockdown via native Win32 NetUserSetInfo (UF_ACCOUNTDISABLE)
+                let mut disabled = win32_disable_user(&username);
 
-                // Fallback to PowerShell Disable-LocalUser if net.exe failed
+                // Fallback to net.exe user if NetUserSetInfo returned error
                 if !disabled {
-                    let ps_cmd = get_account_containment_powershell_cmd(&username);
-                    let mut cmd_dis_ps = tokio::process::Command::new(&ps_bin);
-                    cmd_dis_ps.args(["-NoProfile", "-NonInteractive", "-Command", &ps_cmd]);
-                    cmd_dis_ps.creation_flags(CREATE_NO_WINDOW);
-                    let ps_dis = cmd_dis_ps.output().await;
-                    if let Ok(out) = ps_dis {
-                        if out.status.success() {
-                            disabled = true;
-                        }
-                    }
+                    let net_args = get_account_containment_net_args(&username);
+                    let mut cmd_dis_net = tokio::process::Command::new(&net_bin);
+                    cmd_dis_net.args(net_args);
+                    cmd_dis_net.creation_flags(CREATE_NO_WINDOW);
+                    let res = cmd_dis_net.output().await;
+                    disabled = matches!(res, Ok(ref output) if output.status.success());
                 }
 
                 if disabled {
@@ -11723,7 +11914,7 @@ impl EdrOrchestrator {
         let (san_yara, inj3) = osoosi_types::sanitize_untrusted_log_field(&yara_str, 256);
         let inj_flag = inj1 || inj2 || inj3;
         let state_text = format!(
-            "Target: File | Path: {} | Magika: {} | ML Score: {:.2} | YARA: {} | IsSigned: {} | InjectionDetected: {}",
+            "Target: File\nPath: {}\nMagika: {}\nML Score: {:.2}\nYARA: {}\nSigned: {}\nInjectionDetected: {}",
             san_file_path, san_magika, ml_score, san_yara, is_signed, inj_flag
         );
 
@@ -11746,7 +11937,9 @@ impl EdrOrchestrator {
                     };
                     let conf = decision.verdict_probability as f32;
                     let act = if is_mal {
-                        if conf >= 0.85 {
+                        if decision.human_escalation_required {
+                            "pending_human_escalation".to_string()
+                        } else if conf >= 0.85 {
                             "contained_and_quarantined".to_string()
                         } else {
                             "alert_only".to_string()
@@ -11759,11 +11952,12 @@ impl EdrOrchestrator {
                         conf,
                         act,
                         format!(
-                            "Decision Model ({}): verdict={}, action={}, severity={}",
+                            "Decision Model ({}): verdict={}, action={}, severity={}, human_escalation={}",
                             decision.provider_used,
                             decision.verdict,
                             decision.containment_action,
-                            decision.threat_severity
+                            decision.threat_severity,
+                            decision.human_escalation_required
                         ),
                     )
                 }
@@ -11817,7 +12011,7 @@ impl EdrOrchestrator {
                 || magika_label.contains("elf")
                 || file_path_str.ends_with(".exe");
 
-            if confidence >= 0.85 && is_executable {
+            if action != "pending_human_escalation" && confidence >= 0.85 && is_executable {
                 if crate::secured_executor::OpenShellExecutor::is_available().await {
                     let p_clone = file_path.to_path_buf();
                     tokio::spawn(async move {
@@ -11832,7 +12026,7 @@ impl EdrOrchestrator {
             }
 
             // Apply containment
-            if confidence >= autonomy.action_confidence_threshold {
+            if action != "pending_human_escalation" && confidence >= autonomy.action_confidence_threshold {
                 let rule = osoosi_types::BlockingRule {
                     path: file_path_str.clone(),
                     kind: osoosi_types::BlockingKind::Executable,
@@ -11922,13 +12116,14 @@ impl EdrOrchestrator {
     /// Replaces Windows (C:\...) and Unix (/...) paths with <PATH>.
     fn anonymize_reason(&self, reason: &str) -> String {
         use regex::Regex;
-        // Regex for Windows paths (supports C:\ and \\Server\share)
-        let win_path = Regex::new(r#"[a-zA-Z]:\\[^;,\n]*"#).unwrap();
-        // Regex for Unix paths (starts with / and contains alphanumeric/dashes/dots)
-        let unix_path = Regex::new(r#"/[\w\-\.]+(/[\w\-\.]+)+"#).unwrap();
+        use std::sync::LazyLock;
+        static WIN_PATH: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r#"[a-zA-Z]:\\[^;,\n]*"#).expect("valid regex"));
+        static UNIX_PATH: LazyLock<Regex> =
+            LazyLock::new(|| Regex::new(r#"/[\w\-\.]+(/[\w\-\.]+)+"#).expect("valid regex"));
 
-        let intermediate = win_path.replace_all(reason, "<PATH>");
-        unix_path.replace_all(&intermediate, "<PATH>").to_string()
+        let intermediate = WIN_PATH.replace_all(reason, "<PATH>");
+        UNIX_PATH.replace_all(&intermediate, "<PATH>").to_string()
     }
 }
 
