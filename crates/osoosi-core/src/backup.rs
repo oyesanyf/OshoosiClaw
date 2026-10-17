@@ -201,12 +201,12 @@ fn run_restore_point(config: &BackupConfig) -> anyhow::Result<String> {
     } else {
         config.target.clone()
     };
-    if Command::new("sh")
-        .args(["-c", "command -v btrfs >/dev/null 2>&1"])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-    {
+    let has_btrfs = std::path::Path::new("/bin/btrfs").exists()
+        || std::path::Path::new("/usr/bin/btrfs").exists()
+        || std::path::Path::new("/sbin/btrfs").exists()
+        || std::path::Path::new("/usr/sbin/btrfs").exists();
+
+    if has_btrfs {
         let snap_dir = std::path::Path::new("/.snapshots");
         let _ = std::fs::create_dir_all(snap_dir);
         let snap = snap_dir.join(format!("osoosi-{}", chrono::Utc::now().timestamp().max(0)));
@@ -227,12 +227,13 @@ fn run_restore_point(config: &BackupConfig) -> anyhow::Result<String> {
             ));
         }
     }
-    if Command::new("sh")
-        .args(["-c", "command -v lvcreate >/dev/null 2>&1"])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-    {
+
+    let has_lvm = std::path::Path::new("/sbin/lvcreate").exists()
+        || std::path::Path::new("/usr/sbin/lvcreate").exists()
+        || std::path::Path::new("/bin/lvcreate").exists()
+        || std::path::Path::new("/usr/bin/lvcreate").exists();
+
+    if has_lvm {
         return Ok(
             "LVM snapshot support detected; configure OSOOSI_LVM_VOLUME for exact LV snapshots"
                 .to_string(),

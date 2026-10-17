@@ -6,7 +6,7 @@ use serde_json::Value;
 use std::collections::HashSet;
 use std::io::Write;
 use sysinfo::Disks;
-use tracing::{debug, info, warn};
+use tracing::{debug, error, info, warn};
 
 pub const CISA_KEV_FEED_URL: &str =
     "https://www.cisa.gov/sites/default/files/feeds/known_exploited_vulnerabilities.json";
@@ -951,6 +951,66 @@ impl ThreatFeedFetcher {
                 continue;
             }
 
+            // Cryptographic SHA-256 verification
+            use sha2::{Digest, Sha256};
+            let actual_sha256 = hex::encode(Sha256::digest(&bytes));
+            info!("Computed SHA-256 for downloaded NSRL archive {}: {}", url, actual_sha256);
+
+            let expected_hash = std::env::var("OSOOSI_NSRL_SHA256").ok();
+            let mut verified = false;
+            if let Some(ref expected) = expected_hash {
+                if !actual_sha256.eq_ignore_ascii_case(expected) {
+                    error!(
+                        "NSRL cryptographic SHA-256 mismatch! Expected: {}, Computed: {}",
+                        expected, actual_sha256
+                    );
+                    last_error = Some(anyhow::anyhow!(
+                        "NSRL cryptographic verification failed: expected {}, found {}",
+                        expected,
+                        actual_sha256
+                    ));
+                    continue;
+                }
+                info!("Verified NSRL archive against configured SHA-256: {}", expected);
+                verified = true;
+            } else {
+                let sha_url = format!("{}.sha256", url);
+                if let Ok(sha_resp) = download_client.get(&sha_url).send().await {
+                    if sha_resp.status().is_success() {
+                        if let Ok(sha_text) = sha_resp.text().await {
+                            let expected = sha_text.split_whitespace().next().unwrap_or("").trim();
+                            if !expected.is_empty() {
+                                if !actual_sha256.eq_ignore_ascii_case(expected) {
+                                    error!(
+                                        "NSRL archive SHA-256 mismatch against NIST manifest! Expected: {}, Computed: {}",
+                                        expected, actual_sha256
+                                    );
+                                    last_error = Some(anyhow::anyhow!(
+                                        "NSRL verification failed against manifest: expected {}, found {}",
+                                        expected,
+                                        actual_sha256
+                                    ));
+                                    continue;
+                                }
+                                info!("Verified NSRL archive against published manifest: {}", expected);
+                                verified = true;
+                            }
+                        }
+                    }
+                }
+            }
+
+            if !verified {
+                error!(
+                    "NSRL verification failed: no expected SHA-256 configured and manifest could not be fetched/verified from {}.sha256. Failing closed.",
+                    url
+                );
+                last_error = Some(anyhow::anyhow!(
+                    "NSRL verification failed: missing manifest or unverified hash"
+                ));
+                continue;
+            }
+
             {
                 if let Some(p) = zip_path.parent() {
                     let _ = std::fs::create_dir_all(p);
@@ -958,7 +1018,7 @@ impl ThreatFeedFetcher {
                 let mut file = std::fs::File::create(&zip_path)?;
                 file.write_all(&bytes)?;
             }
-            info!("Download complete ({} bytes) from {}.", bytes.len(), url);
+            info!("Download complete and verified ({} bytes, SHA-256={}) from {}.", bytes.len(), actual_sha256, url);
 
             info!("Step 2: Extracting database...");
             let file = std::fs::File::open(&zip_path)?;
@@ -1391,7 +1451,104 @@ impl ThreatFeedFetcher {
             }
 
             if download_finished {
-                info!("[NSRL Background] Download complete. Extracting...");
+                info!("[NSRL Background] Download complete. Verifying SHA-256 checksum...");
+
+                // Compute SHA-256 in chunks (O(1) RAM) over the downloaded zip archive
+                let actual_sha256 = {
+                    let mut file = match std::fs::File::open(&zip_path) {
+                        Ok(f) => f,
+                        Err(e) => {
+                            error!("[NSRL Background] Failed to open downloaded archive {:?} for hashing: {}", zip_path, e);
+                            last_error = Some(e.into());
+                            continue;
+                        }
+                    };
+                    use sha2::{Digest, Sha256};
+                    use std::io::Read;
+                    let mut hasher = Sha256::new();
+                    let mut buffer = [0u8; 65536];
+                    let mut hash_err = None;
+                    loop {
+                        match file.read(&mut buffer) {
+                            Ok(0) => break,
+                            Ok(n) => hasher.update(&buffer[..n]),
+                            Err(e) => {
+                                hash_err = Some(e);
+                                break;
+                            }
+                        }
+                    }
+                    if let Some(e) = hash_err {
+                        error!("[NSRL Background] Failed streaming SHA-256 on {:?}: {}", zip_path, e);
+                        last_error = Some(e.into());
+                        continue;
+                    }
+                    hex::encode(hasher.finalize())
+                };
+
+                info!("[NSRL Background] Computed SHA-256 for {:?}: {}", zip_path, actual_sha256);
+
+                let expected_hash = std::env::var("OSOOSI_NSRL_SHA256").ok();
+                let mut verified = false;
+
+                if let Some(ref expected) = expected_hash {
+                    if !actual_sha256.eq_ignore_ascii_case(expected) {
+                        error!(
+                            "[NSRL Background] NSRL SHA-256 mismatch against environment! Expected: {}, Computed: {}",
+                            expected, actual_sha256
+                        );
+                        let _ = std::fs::remove_file(&zip_path);
+                        let _ = std::fs::remove_file(&state_path);
+                        last_error = Some(anyhow::anyhow!(
+                            "NSRL cryptographic verification failed: expected {}, found {}",
+                            expected, actual_sha256
+                        ));
+                        continue;
+                    }
+                    info!("[NSRL Background] Verified NSRL archive against configured SHA-256: {}", expected);
+                    verified = true;
+                } else {
+                    let sha_url = format!("{}.sha256", url);
+                    if let Ok(sha_resp) = download_client.get(&sha_url).send().await {
+                        if sha_resp.status().is_success() {
+                            if let Ok(sha_text) = sha_resp.text().await {
+                                let expected = sha_text.split_whitespace().next().unwrap_or("").trim();
+                                if !expected.is_empty() {
+                                    if !actual_sha256.eq_ignore_ascii_case(expected) {
+                                        error!(
+                                            "[NSRL Background] NSRL SHA-256 mismatch against NIST manifest! Expected: {}, Computed: {}",
+                                            expected, actual_sha256
+                                        );
+                                        let _ = std::fs::remove_file(&zip_path);
+                                        let _ = std::fs::remove_file(&state_path);
+                                        last_error = Some(anyhow::anyhow!(
+                                            "NSRL verification failed against manifest: expected {}, found {}",
+                                            expected, actual_sha256
+                                        ));
+                                        continue;
+                                    }
+                                    info!("[NSRL Background] Verified NSRL archive against published manifest: {}", expected);
+                                    verified = true;
+                                }
+                            }
+                        }
+                    }
+                }
+
+                if !verified {
+                    error!(
+                        "[NSRL Background] NSRL verification failed: no expected SHA-256 configured and manifest could not be fetched/verified from {}.sha256. Failing closed.",
+                        url
+                    );
+                    let _ = std::fs::remove_file(&zip_path);
+                    let _ = std::fs::remove_file(&state_path);
+                    last_error = Some(anyhow::anyhow!(
+                        "NSRL verification failed: missing manifest or unverified hash"
+                    ));
+                    continue;
+                }
+
+                info!("[NSRL Background] NSRL download cryptographically verified. Extracting...");
                 let dest_clone = target_dir.clone();
                 let zip_clone = zip_path.clone();
 

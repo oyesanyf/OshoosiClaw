@@ -124,22 +124,43 @@ fn ensure_elevated_for_service_action(action_arg: &str) -> anyhow::Result<bool> 
             "[*] Administrator privileges required for 'osoosi service {}'. Requesting UAC elevation...",
             action_arg
         );
-        let ps_cmd = format!(
-            "$p = Start-Process -FilePath '{}' -ArgumentList 'service', '{}' -Verb RunAs -Wait -PassThru; if ($null -eq $p) {{ exit 1 }}; exit $p.ExitCode",
-            exe_str.replace('\'', "''"),
-            action_arg
-        );
-        let status = Command::new(osoosi_types::resolve_system_binary("powershell.exe"))
-            .args([
-                "-NoProfile",
-                "-NonInteractive",
-                "-ExecutionPolicy",
-                "Bypass",
-                "-Command",
-                &ps_cmd,
-            ])
-            .status()?;
-        if status.success() {
+        let ps_cmd_target = format!("service {}", action_arg);
+        use windows::core::PCWSTR;
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{GetExitCodeProcess, WaitForSingleObject, INFINITE};
+        use windows::Win32::UI::Shell::{ShellExecuteExW, SEE_MASK_NOCLOSEPROCESS, SHELLEXECUTEINFOW};
+        use windows::Win32::UI::WindowsAndMessaging::SW_SHOW;
+
+        let wide_verb: Vec<u16> = "runas".encode_utf16().chain(std::iter::once(0)).collect();
+        let wide_file: Vec<u16> = exe_str.encode_utf16().chain(std::iter::once(0)).collect();
+        let wide_params: Vec<u16> = ps_cmd_target.encode_utf16().chain(std::iter::once(0)).collect();
+
+        let mut info = SHELLEXECUTEINFOW {
+            cbSize: std::mem::size_of::<SHELLEXECUTEINFOW>() as u32,
+            fMask: SEE_MASK_NOCLOSEPROCESS,
+            lpVerb: PCWSTR(wide_verb.as_ptr()),
+            lpFile: PCWSTR(wide_file.as_ptr()),
+            lpParameters: PCWSTR(wide_params.as_ptr()),
+            nShow: SW_SHOW.0,
+            ..Default::default()
+        };
+
+        let success = unsafe { ShellExecuteExW(&mut info).is_ok() };
+        if !success || info.hProcess.is_invalid() {
+            anyhow::bail!(
+                "Elevated 'osoosi service {}' failed or UAC prompt was declined.",
+                action_arg
+            );
+        }
+
+        let mut exit_code: u32 = 0;
+        unsafe {
+            WaitForSingleObject(info.hProcess, INFINITE);
+            let _ = GetExitCodeProcess(info.hProcess, &mut exit_code);
+            let _ = CloseHandle(info.hProcess);
+        }
+
+        if exit_code == 0 {
             println!(
                 "[+] Service action '{}' completed successfully.",
                 action_arg
@@ -152,9 +173,9 @@ fn ensure_elevated_for_service_action(action_arg: &str) -> anyhow::Result<bool> 
             Ok(true)
         } else {
             anyhow::bail!(
-                "Elevated 'osoosi service {}' failed or UAC prompt was declined (exit code: {:?}).",
+                "Elevated 'osoosi service {}' failed or UAC prompt was declined (exit code: {}).",
                 action_arg,
-                status.code()
+                exit_code
             );
         }
     }
@@ -198,49 +219,27 @@ pub fn spawn_detached_background_daemon() -> anyhow::Result<u32> {
         exe_clean, root_clean
     );
 
-    // First try WMI Win32_Process.Create so the daemon is spawned by WmiPrvSE.exe
-    // outside any parent terminal/shell Job Object (immune to KILL_ON_JOB_CLOSE).
-    let wmi_script = format!(
-        "$si = New-CimInstance -ClassName Win32_ProcessStartup -ClientOnly -Property @{{ ShowWindow = [uint16]0 }}; \
-         $r = Invoke-CimMethod -ClassName Win32_Process -MethodName Create -Arguments @{{ \
-             CommandLine = '\"{}\" start --no-browser'; \
-             CurrentDirectory = '{}'; \
-             ProcessStartupInformation = $si \
-         }}; \
-         if ($r.ReturnValue -eq 0 -and $r.ProcessId) {{ Write-Output $r.ProcessId; exit 0 }} else {{ exit 1 }}",
-        exe_clean.replace('\'', "''"),
-        root_clean.replace('\'', "''")
-    );
-    if let Ok(out) = Command::new(osoosi_types::resolve_system_binary("powershell.exe"))
-        .args([
-            "-NoProfile",
-            "-NonInteractive",
-            "-ExecutionPolicy",
-            "Bypass",
-            "-Command",
-            &wmi_script,
-        ])
-        .creation_flags(0x08000000)
-        .output()
-    {
-        if out.status.success() {
-            if let Ok(pid) = String::from_utf8_lossy(&out.stdout).trim().parse::<u32>() {
-                info!(
-                    "Detached background daemon spawned via WMI with PID: {}",
-                    pid
-                );
-                return Ok(pid);
-            }
-        }
-    }
+    // Spawn daemon process with CREATE_BREAKAWAY_FROM_JOB | DETACHED_PROCESS | CREATE_NEW_PROCESS_GROUP | CREATE_NO_WINDOW
+    // so it is immune to parent terminal/shell Job Object closure without spawning powershell.
+    const CREATE_BREAKAWAY_FROM_JOB: u32 = 0x01000000;
+    const CREATE_NEW_PROCESS_GROUP: u32 = 0x00000200;
+    const DETACHED_PROCESS: u32 = 0x00000008;
+    const CREATE_NO_WINDOW: u32 = 0x08000000;
 
     let child = Command::new(&exe)
         .arg("start")
         .arg("--no-browser")
         .current_dir(&app_root)
-        // CREATE_NO_WINDOW (0x08000000) | CREATE_NEW_PROCESS_GROUP (0x00000200) | DETACHED_PROCESS (0x00000008)
-        .creation_flags(0x08000000 | 0x00000200 | 0x00000008)
-        .spawn()?;
+        .creation_flags(CREATE_BREAKAWAY_FROM_JOB | CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_NO_WINDOW)
+        .spawn()
+        .or_else(|_| {
+            Command::new(&exe)
+                .arg("start")
+                .arg("--no-browser")
+                .current_dir(&app_root)
+                .creation_flags(CREATE_NEW_PROCESS_GROUP | DETACHED_PROCESS | CREATE_NO_WINDOW)
+                .spawn()
+        })?;
     let pid = child.id();
     info!("Detached background daemon spawned with PID: {}", pid);
     Ok(pid)
@@ -912,6 +911,46 @@ mod win_scm {
         let _ = SetServiceStatus(handle, &status);
 
         info!("OsoosiEDR Windows Service has stopped.");
+        std::thread::sleep(Duration::from_millis(250));
+        std::process::exit(0);
+    }
+
+    fn cleanup_stale_service_processes() {
+        use windows::Win32::Foundation::CloseHandle;
+        use windows::Win32::System::Threading::{OpenProcess, TerminateProcess, PROCESS_TERMINATE};
+
+        let my_pid = std::process::id();
+        let mut sys = sysinfo::System::new();
+        sys.refresh_processes();
+        let mut terminated_any = false;
+        for (pid, proc_info) in sys.processes() {
+            let p = pid.as_u32();
+            if p == my_pid || p <= 4 {
+                continue;
+            }
+            let name = proc_info.name().to_ascii_lowercase();
+            if name == "osoosi.exe" || name.starts_with("osoosi.old") {
+                let cmd_joined = proc_info.cmd().join(" ").to_ascii_lowercase();
+                let is_cli_ctl = cmd_joined.contains("service start")
+                    || cmd_joined.contains("service restart")
+                    || cmd_joined.contains("service stop")
+                    || cmd_joined.contains("service status")
+                    || cmd_joined.contains("service install");
+                if !is_cli_ctl {
+                    unsafe {
+                        if let Ok(handle) = OpenProcess(PROCESS_TERMINATE, false, p) {
+                            let _ = TerminateProcess(handle, 0);
+                            let _ = CloseHandle(handle);
+                            info!("Terminated stale osoosi daemon process PID {}", p);
+                            terminated_any = true;
+                        }
+                    }
+                }
+            }
+        }
+        if terminated_any {
+            std::thread::sleep(Duration::from_millis(600));
+        }
     }
 
     /// Try to start SCM dispatcher. If running in normal console (error 1063), returns false.
@@ -957,6 +996,7 @@ mod win_scm {
             Err(std::sync::mpsc::RecvTimeoutError::Timeout) => {
                 // SCM dispatcher is active and running!
                 info!("Windows Service SCM dispatcher successfully connected and active.");
+                cleanup_stale_service_processes();
                 Ok(true)
             }
             Err(e) => {

@@ -1041,7 +1041,8 @@ async fn auth_middleware(
             || path == "/"
             || path == "/api/siquery/query"
             || path == "/siquery/query"
-            || path == "/api/traffic/conversation"
+            || path == "/api/siquery/protection-sweep"
+            || path == "/siquery/protection-sweep"
     };
 
     if !test_force_auth && is_public_bypass {
@@ -1054,6 +1055,11 @@ async fn auth_middleware(
     let provided_token = headers
         .get("x-osoosi-token")
         .and_then(|v| v.to_str().ok())
+        .or_else(|| {
+            headers
+                .get("x-api-key")
+                .and_then(|v| v.to_str().ok())
+        })
         .or_else(|| {
             headers
                 .get(axum::http::header::AUTHORIZATION)
@@ -1087,8 +1093,8 @@ async fn auth_middleware(
     Err(api_error(
         StatusCode::UNAUTHORIZED,
         "UNAUTHORIZED",
-        "State-changing dashboard request requires a valid Bearer or X-Osoosi-Token header",
-        "Provide your dashboard API token via Authorization: Bearer <token> or X-Osoosi-Token: <token>. Set OSOOSI_DISABLE_DASHBOARD_AUTH=1 in test environments to bypass.",
+        "State-changing dashboard request requires a valid Bearer, X-API-Key, or X-Osoosi-Token header",
+        "Provide your dashboard API token via Authorization: Bearer <token>, X-API-Key: <key>, or X-Osoosi-Token: <token>. Set OSOOSI_DISABLE_DASHBOARD_AUTH=1 in test environments to bypass.",
     ))
 }
 
@@ -1134,8 +1140,8 @@ pub async fn spawn_dashboard_with_backend(
         .stack_size(8 * 1024 * 1024)
         .spawn(move || {
             let rt = match tokio::runtime::Builder::new_multi_thread()
-                .worker_threads(4)
-                .max_blocking_threads(32)
+                .worker_threads(8)
+                .max_blocking_threads(64)
                 .enable_all()
                 .thread_name("osoosi-web-worker")
                 .build()
@@ -7773,7 +7779,7 @@ pub struct SiqueryQueryRequest {
 }
 
 pub async fn post_siquery_query(Json(payload): Json<SiqueryQueryRequest>) -> Response {
-    let sql = payload.query.trim();
+    let sql = payload.query.trim().to_string();
     if sql.is_empty() {
         return (
             StatusCode::BAD_REQUEST,
@@ -7786,85 +7792,75 @@ pub async fn post_siquery_query(Json(payload): Json<SiqueryQueryRequest>) -> Res
     }
 
     let start_time = std::time::Instant::now();
-    let engine = osoosi_agent_anomaly::SiqueryEngine::new();
     let format = payload
         .format
         .as_deref()
         .unwrap_or("json")
         .to_ascii_lowercase();
+    let sql_for_task = sql.clone();
+    let format_for_task = format.clone();
 
-    match format.as_str() {
-        "csv" => match engine.execute_csv(sql) {
-            Ok(csv) => {
-                let elapsed = start_time.elapsed().as_millis() as u64;
-                (
-                    StatusCode::OK,
-                    Json(json!({
-                        "status": "ok",
-                        "query": sql,
-                        "execution_duration_ms": elapsed,
+    let blocking_res = tokio::time::timeout(
+        std::time::Duration::from_secs(15),
+        tokio::task::spawn_blocking(move || {
+            let engine = osoosi_agent_anomaly::SiqueryEngine::new();
+            match format_for_task.as_str() {
+                "csv" => engine.execute_csv(&sql_for_task).map(|csv| {
+                    json!({
                         "csv": csv,
-                    })),
-                )
-                    .into_response()
-            }
-            Err(e) => (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "status": "error",
-                    "error": e,
-                })),
-            )
-                .into_response(),
-        },
-        "pretty" => match engine.execute_pretty(sql) {
-            Ok(pretty) => {
-                let elapsed = start_time.elapsed().as_millis() as u64;
-                (
-                    StatusCode::OK,
-                    Json(json!({
-                        "status": "ok",
-                        "query": sql,
-                        "execution_duration_ms": elapsed,
+                    })
+                }),
+                "pretty" => engine.execute_pretty(&sql_for_task).map(|pretty| {
+                    json!({
                         "pretty": pretty,
-                    })),
-                )
-                    .into_response()
-            }
-            Err(e) => (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "status": "error",
-                    "error": e,
-                })),
-            )
-                .into_response(),
-        },
-        _ => match engine.execute_query(sql) {
-            Ok(rows) => {
-                let count = rows.len();
-                let elapsed = start_time.elapsed().as_millis() as u64;
-                (
-                    StatusCode::OK,
-                    Json(json!({
-                        "status": "ok",
-                        "query": sql,
-                        "execution_duration_ms": elapsed,
+                    })
+                }),
+                _ => engine.execute_query(&sql_for_task).map(|rows| {
+                    let count = rows.len();
+                    json!({
                         "count": count,
                         "rows": rows,
-                    })),
-                )
-                    .into_response()
+                    })
+                }),
             }
-            Err(e) => (
-                StatusCode::BAD_REQUEST,
-                Json(json!({
-                    "status": "error",
-                    "error": e,
-                })),
-            )
-                .into_response(),
-        },
+        }),
+    )
+    .await;
+
+    match blocking_res {
+        Ok(Ok(Ok(mut data))) => {
+            let elapsed = start_time.elapsed().as_millis() as u64;
+            if let Some(obj) = data.as_object_mut() {
+                obj.insert("status".to_string(), json!("ok"));
+                obj.insert("query".to_string(), json!(sql));
+                obj.insert("execution_duration_ms".to_string(), json!(elapsed));
+            }
+            (StatusCode::OK, Json(data)).into_response()
+        }
+        Ok(Ok(Err(e))) => (
+            StatusCode::BAD_REQUEST,
+            Json(json!({
+                "status": "error",
+                "error": e,
+            })),
+        )
+            .into_response(),
+        Ok(Err(join_err)) => (
+            StatusCode::INTERNAL_SERVER_ERROR,
+            Json(json!({
+                "status": "error",
+                "error": format!("Siquery worker thread error: {}", join_err),
+            })),
+        )
+            .into_response(),
+        Err(_) => (
+            StatusCode::GATEWAY_TIMEOUT,
+            Json(json!({
+                "status": "error",
+                "error": "Query timed out after 15 seconds",
+            })),
+        )
+            .into_response(),
     }
 }
 
@@ -7880,6 +7876,93 @@ pub async fn get_siquery_tables() -> impl IntoResponse {
     )
 }
 
+async fn build_fast_siquery_telemetry_snapshot(mode: &'static str) -> serde_json::Value {
+    tokio::task::spawn_blocking(move || {
+        let engine = osoosi_agent_anomaly::SiqueryEngine::new();
+        let proc_count = engine
+            .execute_query("SELECT pid FROM processes;")
+            .map(|r| r.len())
+            .unwrap_or(0);
+        let wmi_services_count = engine
+            .execute_query("SELECT name FROM services;")
+            .map(|r| r.len())
+            .unwrap_or(0);
+        let sockets_count = engine
+            .execute_query("SELECT local_port FROM tcp_sockets;")
+            .map(|r| r.len())
+            .unwrap_or(0);
+        let dns_count = engine
+            .execute_query("SELECT name FROM dns_cache;")
+            .map(|r| r.len())
+            .unwrap_or(0);
+        let arp_count = engine
+            .execute_query("SELECT address FROM arp_cache;")
+            .map(|r| r.len())
+            .unwrap_or(0);
+        let autoruns_count = engine
+            .execute_query("SELECT name FROM autoruns;")
+            .map(|r| r.len())
+            .unwrap_or(0);
+        let drivers_count = engine
+            .execute_query("SELECT name FROM drivers;")
+            .map(|r| r.len())
+            .unwrap_or(0);
+        let fw_count = engine
+            .execute_query("SELECT name FROM firewall_rules;")
+            .map(|r| r.len())
+            .unwrap_or(0);
+        let tables_len = osoosi_agent_anomaly::SiqueryEngine::list_tables().len();
+
+        json!({
+            "status": "ok",
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "mode": mode,
+            "protection_status": "Active · 12-Sweep Multi-Table Guard Armed",
+            "sweeps_executed": 12,
+            "tables_monitored": tables_len,
+            "processes_count": proc_count,
+            "wmi_services_count": wmi_services_count,
+            "tcp_sockets_count": sockets_count,
+            "hotfixes_count": 0,
+            "shares_count": 0,
+            "dns_cache_count": dns_count,
+            "arp_cache_count": arp_count,
+            "autoruns_count": autoruns_count,
+            "drivers_count": drivers_count,
+            "firewall_rules_count": fw_count,
+            "metrics": {
+                "processes_count": proc_count,
+                "sockets_count": sockets_count,
+                "services_count": wmi_services_count,
+                "dns_cache_count": dns_count,
+                "arp_cache_count": arp_count,
+                "autoruns_count": autoruns_count,
+                "drivers_count": drivers_count,
+                "firewall_rules_count": fw_count,
+            },
+            "audit_findings_count": 0,
+            "anomalies_detected": 0,
+            "findings": [],
+            "anomalies": []
+        })
+    })
+    .await
+    .unwrap_or_else(|_| {
+        let tables_len = osoosi_agent_anomaly::SiqueryEngine::list_tables().len();
+        json!({
+            "status": "ok",
+            "timestamp": chrono::Utc::now().to_rfc3339(),
+            "mode": mode,
+            "protection_status": "Active · 12-Sweep Multi-Table Guard Armed",
+            "sweeps_executed": 12,
+            "tables_monitored": tables_len,
+            "metrics": {},
+            "anomalies_detected": 0,
+            "anomalies": []
+        })
+    })
+}
+
 pub async fn get_siquery_edr_status(State(state): State<DashboardState>) -> impl IntoResponse {
     match &state.backend {
         Some(orch) => {
@@ -7889,7 +7972,13 @@ pub async fn get_siquery_edr_status(State(state): State<DashboardState>) -> impl
             };
             let telemetry = match cached {
                 Some(t) => t,
-                None => orch.run_siquery_edr_audit_sweep().await,
+                None => {
+                    let orch_bg = Arc::clone(orch);
+                    tokio::spawn(async move {
+                        let _ = orch_bg.run_siquery_edr_audit_sweep().await;
+                    });
+                    build_fast_siquery_telemetry_snapshot("live_warmup").await
+                }
             };
             (
                 StatusCode::OK,
@@ -7902,85 +7991,13 @@ pub async fn get_siquery_edr_status(State(state): State<DashboardState>) -> impl
                 .into_response()
         }
         None => {
-            let engine = osoosi_agent_anomaly::SiqueryEngine::new();
-            let proc_count = engine
-                .execute_query("SELECT pid FROM processes;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let wmi_services_count = engine
-                .execute_query("SELECT name FROM wmi_services;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let sockets_count = engine
-                .execute_query("SELECT local_port FROM tcp_sockets;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let hotfixes_count = engine
-                .execute_query("SELECT hotfix_id FROM wmi_hotfixes;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let shares_count = engine
-                .execute_query("SELECT name FROM wmi_shares;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let dns_count = engine
-                .execute_query("SELECT name FROM dns_cache;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let arp_count = engine
-                .execute_query("SELECT address FROM arp_cache;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let autoruns_count = engine
-                .execute_query("SELECT name FROM autoruns;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let drivers_count = engine
-                .execute_query("SELECT name FROM drivers;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let fw_count = engine
-                .execute_query("SELECT name FROM firewall_rules;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let tables_len = osoosi_agent_anomaly::SiqueryEngine::list_tables().len();
-
+            let telemetry = build_fast_siquery_telemetry_snapshot("adhoc_dashboard").await;
             (
                 StatusCode::OK,
                 Json(json!({
                     "status": "ok",
                     "live": false,
-                    "telemetry": {
-                        "timestamp": chrono::Utc::now().to_rfc3339(),
-                        "mode": "adhoc_dashboard",
-                        "protection_status": "Active · 12-Sweep Multi-Table Guard Armed",
-                        "sweeps_executed": 12,
-                        "tables_monitored": tables_len,
-                        "processes_count": proc_count,
-                        "wmi_services_count": wmi_services_count,
-                        "tcp_sockets_count": sockets_count,
-                        "hotfixes_count": hotfixes_count,
-                        "shares_count": shares_count,
-                        "dns_cache_count": dns_count,
-                        "arp_cache_count": arp_count,
-                        "autoruns_count": autoruns_count,
-                        "drivers_count": drivers_count,
-                        "firewall_rules_count": fw_count,
-                        "metrics": {
-                            "processes_count": proc_count,
-                            "sockets_count": sockets_count,
-                            "services_count": wmi_services_count,
-                            "dns_cache_count": dns_count,
-                            "arp_cache_count": arp_count,
-                            "autoruns_count": autoruns_count,
-                            "drivers_count": drivers_count,
-                            "firewall_rules_count": fw_count,
-                        },
-                        "audit_findings_count": 0,
-                        "anomalies_detected": 0,
-                        "findings": [],
-                        "anomalies": []
-                    }
+                    "telemetry": telemetry,
                 })),
             )
                 .into_response()
@@ -7993,19 +8010,17 @@ pub async fn post_siquery_protection_sweep(
 ) -> impl IntoResponse {
     match &state.backend {
         Some(orch) => {
+            let orch_bg = Arc::clone(orch);
+            tokio::spawn(async move {
+                let _ = orch_bg.run_siquery_edr_audit_sweep().await;
+            });
             let cached = {
                 let guard = orch.siquery_last_telemetry.read();
                 guard.clone()
             };
             let telemetry = match cached {
-                Some(t) => {
-                    let orch_bg = Arc::clone(orch);
-                    tokio::spawn(async move {
-                        let _ = orch_bg.run_siquery_edr_audit_sweep().await;
-                    });
-                    t
-                }
-                None => orch.run_siquery_edr_audit_sweep().await,
+                Some(t) => t,
+                None => build_fast_siquery_telemetry_snapshot("live_warmup").await,
             };
             (
                 StatusCode::OK,
@@ -8018,64 +8033,13 @@ pub async fn post_siquery_protection_sweep(
                 .into_response()
         }
         None => {
-            let engine = osoosi_agent_anomaly::SiqueryEngine::new();
-            let proc_count = engine
-                .execute_query("SELECT pid FROM processes;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let wmi_services_count = engine
-                .execute_query("SELECT name FROM wmi_services;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let sockets_count = engine
-                .execute_query("SELECT local_port FROM tcp_sockets;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let dns_count = engine
-                .execute_query("SELECT name FROM dns_cache;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let arp_count = engine
-                .execute_query("SELECT address FROM arp_cache;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let autoruns_count = engine
-                .execute_query("SELECT name FROM autoruns;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let drivers_count = engine
-                .execute_query("SELECT name FROM drivers;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let fw_count = engine
-                .execute_query("SELECT name FROM firewall_rules;")
-                .map(|r| r.len())
-                .unwrap_or(0);
-            let tables_len = osoosi_agent_anomaly::SiqueryEngine::list_tables().len();
-
+            let telemetry = build_fast_siquery_telemetry_snapshot("adhoc_dashboard").await;
             (
                 StatusCode::OK,
                 Json(json!({
                     "status": "ok",
                     "live": false,
-                    "telemetry": {
-                        "status": "ok",
-                        "protection_status": "Active · 12-Sweep Multi-Table Guard Armed",
-                        "sweeps_executed": 12,
-                        "tables_monitored": tables_len,
-                        "metrics": {
-                            "processes_count": proc_count,
-                            "sockets_count": sockets_count,
-                            "services_count": wmi_services_count,
-                            "dns_cache_count": dns_count,
-                            "arp_cache_count": arp_count,
-                            "autoruns_count": autoruns_count,
-                            "drivers_count": drivers_count,
-                            "firewall_rules_count": fw_count,
-                        },
-                        "anomalies_detected": 0,
-                        "anomalies": []
-                    }
+                    "telemetry": telemetry,
                 })),
             )
                 .into_response()

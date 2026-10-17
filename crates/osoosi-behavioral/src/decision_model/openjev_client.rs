@@ -656,7 +656,19 @@ impl OpenJevClient {
         ];
 
         for (t, w) in &mal_tokens {
-            if state.contains(t) {
+            if *t == "inject" {
+                let has_inj = state.contains("inject.exe")
+                    || state.contains("injection: true")
+                    || state.contains("injectiondetected: true")
+                    || state.contains("promptinjectiondetected: true")
+                    || (state.contains("inject")
+                        && !state.contains("injectiondetected: false")
+                        && !state.contains("promptinjectiondetected: false")
+                        && !state.contains("injection: false"));
+                if has_inj {
+                    mal += w;
+                }
+            } else if state.contains(t) {
                 mal += w;
             }
         }

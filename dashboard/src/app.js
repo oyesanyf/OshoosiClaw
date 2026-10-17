@@ -4130,26 +4130,6 @@ async function renderZoneView() {
                 attestation: "TPM 2.0 Verified (PCR-0 Match)",
                 status: "Synchronized",
                 latency_ms: 1.2
-            },
-            {
-                id: "relay:wss://relay.damus.io",
-                name: "Nostr Relay (wss://relay.damus.io)",
-                address: "wss://relay.damus.io",
-                role: "Nostr Relay Pool",
-                node_type: "message_relay",
-                attestation: "Public / Configured Transport",
-                status: "Configured",
-                latency_ms: 15.0
-            },
-            {
-                id: "relay:wss://nos.lol",
-                name: "Nostr Relay (wss://nos.lol)",
-                address: "wss://nos.lol",
-                role: "Nostr Relay Pool",
-                node_type: "message_relay",
-                attestation: "Public / Configured Transport",
-                status: "Configured",
-                latency_ms: 15.0
             }
         ]
     };
@@ -8354,7 +8334,7 @@ async function renderSiqueryView() {
 
 async function fetchSiqueryTables() {
     try {
-        const res = await fetch(`${API_BASE}/siquery/tables`);
+        const res = await fetchWithRetry(`${API_BASE}/siquery/tables`);
         if (!res.ok) throw new Error(`HTTP ${res.status}`);
         const data = await res.json();
         if (data && data.tables) {
@@ -8555,7 +8535,7 @@ async function executeSiquery() {
     if (window.lucide) window.lucide.createIcons();
 
     try {
-        const res = await fetch(`${API_BASE}/siquery/query`, {
+        const res = await fetchWithRetry(`${API_BASE}/siquery/query`, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ query: sql, format: format })

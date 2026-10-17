@@ -24,6 +24,10 @@
 *.exe
 *.dll
 *.msi
+*.msi.asc
+*.msi.sig
+*.msi.intoto.jsonl
+*.intoto.jsonl
 *.sfx
 *.wasm
 /bin/

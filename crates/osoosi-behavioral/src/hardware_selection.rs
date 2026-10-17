@@ -207,35 +207,35 @@ fn probe_wmic_gpu() -> Option<(String, u64, u64)> {
     None
 }
 
-/// Windows PowerShell CIM probe for display adapters (Win 10/11 24H2+/Server without WMIC).
+/// Native Windows display adapter probe reading driver description and VRAM size (zero shell process spawns).
 #[cfg(target_os = "windows")]
-fn probe_powershell_cim_gpu() -> Option<(String, u64, u64)> {
-    let mut cmd = Command::new("powershell");
-    cmd.args([
-        "-NoProfile",
-        "-NonInteractive",
-        "-Command",
-        "Get-CimInstance Win32_VideoController | Select-Object Name,AdapterRAM | ConvertTo-Csv -NoTypeInformation",
-    ]);
-    cmd.creation_flags(CREATE_NO_WINDOW);
+fn probe_native_windows_gpu() -> Option<(String, u64, u64)> {
+    use winreg::enums::{HKEY_LOCAL_MACHINE, KEY_READ};
+    use winreg::RegKey;
 
-    let output = cmd.output().ok()?;
-    if !output.status.success() {
-        return None;
-    }
+    let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
+    let class_path = r"SYSTEM\CurrentControlSet\Control\Class\{4d36e968-e325-11ce-bfc1-08002be10318}";
+    let class_key = hklm.open_subkey_with_flags(class_path, KEY_READ).ok()?;
 
-    let stdout = String::from_utf8_lossy(&output.stdout);
-    for line in stdout.lines() {
-        let trimmed = line.trim();
-        if trimmed.starts_with('"') && !trimmed.contains("AdapterRAM") {
-            let parts: Vec<&str> = trimmed
-                .split(',')
-                .map(|s| s.trim_matches('"').trim())
-                .collect();
-            if parts.len() >= 2 {
-                let name = parts[0].to_string();
-                let bytes: u64 = parts[1].parse().unwrap_or(0);
-                let vram_mb = bytes / (1024 * 1024);
+    for sub in 0..16 {
+        let sub_name = format!("{:04}", sub);
+        if let Ok(dev_key) = class_key.open_subkey_with_flags(&sub_name, KEY_READ) {
+            let desc: Result<String, _> = dev_key.get_value("DriverDesc");
+            if let Ok(name) = desc {
+                let name_lc = name.to_lowercase();
+                if name_lc.contains("basic display")
+                    || name_lc.contains("remote desktop")
+                {
+                    continue;
+                }
+                // Try qwMemorySize (u64) first, then MemorySize (u32 or u64)
+                let vram_bytes: u64 = dev_key
+                    .get_value::<u64, _>("HardwareInformation.qwMemorySize")
+                    .or_else(|_| dev_key.get_value::<u32, _>("HardwareInformation.MemorySize").map(|v| v as u64))
+                    .or_else(|_| dev_key.get_value::<u64, _>("HardwareInformation.MemorySize"))
+                    .unwrap_or(0);
+
+                let vram_mb = vram_bytes / (1024 * 1024);
                 if vram_mb > 0 {
                     return Some((name, vram_mb, vram_mb));
                 }
@@ -245,13 +245,13 @@ fn probe_powershell_cim_gpu() -> Option<(String, u64, u64)> {
     None
 }
 
-/// Windows GPU detection fallback: tries WMIC first, then PowerShell CIM.
+/// Windows GPU detection: tries native registry probe first, falls back to WMIC.
 #[cfg(target_os = "windows")]
 fn probe_windows_gpu() -> Option<(String, u64, u64)> {
-    if let Some(gpu) = probe_wmic_gpu() {
+    if let Some(gpu) = probe_native_windows_gpu() {
         return Some(gpu);
     }
-    probe_powershell_cim_gpu()
+    probe_wmic_gpu()
 }
 
 #[cfg(not(target_os = "windows"))]

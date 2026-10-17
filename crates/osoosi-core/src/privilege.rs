@@ -661,12 +661,10 @@ fn linux_grant(status: &mut PrivilegeStatus) {
         .push("Enabled auditd and added execve monitoring rule.".into());
 
     // Check for sysmonforlinux
-    if Command::new("sh")
-        .args(["-c", "command -v sysmon >/dev/null 2>&1"])
-        .status()
-        .map(|s| s.success())
-        .unwrap_or(false)
-    {
+    let has_sysmon = std::path::Path::new("/usr/bin/sysmon").exists()
+        || std::path::Path::new("/bin/sysmon").exists()
+        || std::path::Path::new("/opt/sysmon/sysmon").exists();
+    if has_sysmon {
         let _ = Command::new("sudo")
             .args(["systemctl", "enable", "--now", "sysmon"])
             .status();

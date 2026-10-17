@@ -3,6 +3,7 @@
 //! Core conceptual model for taint tracking, audit actions, and config.
 //! Adapted for security telemetry (Native ETW/eBPF, TTP detection, mesh defense).
 
+pub mod agentjacking;
 pub mod blocking;
 pub mod config;
 pub mod error;
@@ -18,6 +19,7 @@ pub mod threat;
 pub mod trust;
 pub mod utils;
 
+pub use agentjacking::*;
 pub use blocking::*;
 pub use config::*;
 pub use error::*;

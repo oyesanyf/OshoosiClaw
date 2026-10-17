@@ -4924,7 +4924,10 @@ impl SiqueryEngine {
         ]);
 
         // 2. Ollama Local LLM API (127.0.0.1:11434)
-        let ollama_addr: std::net::SocketAddr = "127.0.0.1:11434".parse().unwrap();
+        let ollama_addr = std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
+            std::net::Ipv4Addr::new(127, 0, 0, 1),
+            11434,
+        ));
         let ollama_online = std::net::TcpStream::connect_timeout(
             &ollama_addr,
             std::time::Duration::from_millis(50),
@@ -4941,7 +4944,10 @@ impl SiqueryEngine {
         ]);
 
         // 3. Chrome DevTools Protocol (CDP 127.0.0.1:9222)
-        let cdp_addr: std::net::SocketAddr = "127.0.0.1:9222".parse().unwrap();
+        let cdp_addr = std::net::SocketAddr::V4(std::net::SocketAddrV4::new(
+            std::net::Ipv4Addr::new(127, 0, 0, 1),
+            9222,
+        ));
         let cdp_online =
             std::net::TcpStream::connect_timeout(&cdp_addr, std::time::Duration::from_millis(50))
                 .is_ok();

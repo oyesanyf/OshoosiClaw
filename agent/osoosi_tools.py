@@ -6,14 +6,22 @@ from typing import Optional
 OSOOSI_BASE = os.environ.get("OSOOSI_API_URL", "http://127.0.0.1:3030")
 
 
+def _headers() -> dict:
+    api_key = os.environ.get("OSOOSI_API_KEY") or os.environ.get("OSOOSI_API_TOKEN") or ""
+    headers = {}
+    if api_key:
+        headers["X-API-Key"] = api_key
+    return headers
+
+
 def _get(path: str) -> dict:
-    r = requests.get(f"{OSOOSI_BASE}{path}", timeout=10)
+    r = requests.get(f"{OSOOSI_BASE}{path}", headers=_headers(), timeout=10)
     r.raise_for_status()
     return r.json()
 
 
 def _post(path: str, json: Optional[dict] = None) -> dict:
-    r = requests.post(f"{OSOOSI_BASE}{path}", json=json or {}, timeout=10)
+    r = requests.post(f"{OSOOSI_BASE}{path}", json=json or {}, headers=_headers(), timeout=10)
     r.raise_for_status()
     return r.json()
 

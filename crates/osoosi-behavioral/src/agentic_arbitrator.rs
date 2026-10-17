@@ -347,7 +347,7 @@ impl AgenticToolValidator {
             for payload in Self::extract_base64_payloads(raw) {
                 let norm_payload = Self::normalize_string(&payload);
                 candidates.push(payload);
-                if norm_payload != *candidates.last().unwrap() {
+                if candidates.last().is_none_or(|last| norm_payload != *last) {
                     candidates.push(norm_payload);
                 }
             }

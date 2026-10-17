@@ -147,7 +147,7 @@ $isSigned = ($hasCert) -or ($statusStr -eq 'Valid')
 
 
 def get_build_version(file_path: Path) -> str:
-    """Reads product version from Cargo.toml or falls back to 0.1.1."""
+    """Reads product version from Cargo.toml or falls back to 1.2.0."""
     cargo_path = REPO_ROOT / "Cargo.toml"
     if cargo_path.exists():
         try:
@@ -161,7 +161,7 @@ def get_build_version(file_path: Path) -> str:
                         return val
         except Exception:
             pass
-    return "0.1.1"
+    return "1.2.0"
 
 
 def determine_product_name(file_path: Path, override: str = None) -> str:

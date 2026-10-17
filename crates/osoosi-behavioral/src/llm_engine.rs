@@ -167,9 +167,10 @@ impl SmolLMAnalyzer {
     pub fn analyze_log(&self, sentence: &str) -> Result<f32> {
         let model = self.model.lock().unwrap_or_else(|e| e.into_inner());
 
+        let safe_sentence = osoosi_types::agentjacking::LogSanitizer::sanitize_text(sentence);
         let prompt = format!(
-            "<|user|>\nYou are a security expert. Analyze the log and return a JSON score 0.0-1.0. Log: {} <|end|>\n<|assistant|>\n{{ \"score\": ", 
-            sentence
+            "<|user|>\nYou are a security expert. Analyze the log and return a JSON score 0.0-1.0.\n<untrusted_log>\n{}\n</untrusted_log>\n<|end|>\n<|assistant|>\n{{ \"score\": ", 
+            safe_sentence
         );
 
         let tokens = self
@@ -623,9 +624,10 @@ impl Gemma4Analyzer {
         };
 
         // Short, focused prompt to minimize prefill time on CPU
+        let safe_summary = osoosi_types::agentjacking::LogSanitizer::sanitize_text(&compressed_summary);
         let prompt = format!(
-            "<|im_start|>system\nClassify this event as malicious, suspicious, or benign. One sentence max.\n<|im_end|>\n<|im_start|>user\n{}<|im_end|>\n<|im_start|>assistant\n",
-            compressed_summary
+            "<|im_start|>system\nClassify this event as malicious, suspicious, or benign. One sentence max.\n<|im_end|>\n<|im_start|>user\n<untrusted_event_summary>\n{}\n</untrusted_event_summary>\n<|im_end|>\n<|im_start|>assistant\n",
+            safe_summary
         );
 
         let raw = match self {
@@ -674,7 +676,8 @@ impl Gemma4Analyzer {
         match self {
             Self::Onnx { .. } | Self::NativeGGUF { .. } => {
                 // For ONNX/GGUF, we use a standard prompt template
-                let prompt = format!("<|user|>\nYou are a security expert. Analyze this artifact and return a verdict: {} <|end|>\n<|assistant|>\n", query);
+                let safe_query = osoosi_types::agentjacking::LogSanitizer::sanitize_text(query);
+                let prompt = format!("<|user|>\nYou are a security expert. Analyze this artifact and return a verdict:\n<untrusted_artifact>\n{}\n</untrusted_artifact>\n<|end|>\n<|assistant|>\n", safe_query);
                 self.generate_text_sync(&prompt, 128)
             }
             Self::Candle(judge) => judge.judge_artifact(query),
@@ -831,7 +834,9 @@ impl Gemma4Analyzer {
                         warn!("Native GGUF inference timed out after {:?}", timeout);
                         return Err(anyhow::anyhow!("GGUF timed out after {:?}", timeout));
                     }
-                    let last = *all_tokens.last().unwrap();
+                    let Some(&last) = all_tokens.last() else {
+                        break;
+                    };
                     if last == eos_token || last == 0 {
                         break;
                     }
@@ -1301,7 +1306,8 @@ impl SecurityJudge {
 
     /// The Parameterized Inference Function
     pub fn judge_artifact(&self, query: &str) -> Result<String> {
-        let prompt = format!("<|user|>\nYou are a security expert. Analyze this artifact and return a verdict: {} <|end|>\n<|assistant|>\n", query);
+        let safe_query = osoosi_types::agentjacking::LogSanitizer::sanitize_text(query);
+        let prompt = format!("<|user|>\nYou are a security expert. Analyze this artifact and return a verdict:\n<untrusted_artifact>\n{}\n</untrusted_artifact>\n<|end|>\n<|assistant|>\n", safe_query);
 
         let tokens = self
             .tokenizer
@@ -1711,7 +1717,9 @@ impl FoundationSecAnalyzer {
                     if start.elapsed() > timeout {
                         return Err(anyhow::anyhow!("GGUF timed out"));
                     }
-                    let last = *all_tokens.last().unwrap();
+                    let Some(&last) = all_tokens.last() else {
+                        break;
+                    };
                     if last == eos_token || last == 0 {
                         break;
                     }

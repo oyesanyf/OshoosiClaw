@@ -1,6 +1,6 @@
 [package]
 name = "test-peer"
-version = "0.1.0"
+version.workspace = true
 edition = "2021"
 description = "Test peer for simulating mesh join in OpenỌ̀ṣọ́ọ̀sì"
 

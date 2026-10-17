@@ -96,17 +96,19 @@ impl NostrMeshOrchestrator {
         );
 
         sig.process_name = sig.process_name.map(|p| {
-            if p.contains('\\') || p.contains('/') || p.contains("Users") || p.contains("home") {
-                let ext = std::path::Path::new(&p)
-                    .extension()
-                    .and_then(|e| e.to_str())
-                    .unwrap_or("bin")
-                    .to_lowercase();
-                format!("redacted-process.{}", ext)
-            } else {
-                p.to_lowercase()
-            }
+            let ext = std::path::Path::new(&p)
+                .extension()
+                .and_then(|e| e.to_str())
+                .unwrap_or("bin")
+                .to_lowercase();
+            format!("redacted-process.{}", ext)
         });
+
+        sig.parent_process = None;
+
+        if sig.predicted_next.is_some() {
+            sig.predicted_next = Some("[Redacted Mesh Privacy]".to_string());
+        }
 
         sig.reason = Some(format!(
             "Anonymized Mesh Telemetry [MITRE: {:?}, Detectors: {}]",

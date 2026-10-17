@@ -279,47 +279,48 @@ impl ClefDecisionEngine {
         let use_cloudflare = (prov == "cloudflare" || prov == "auto") && self.cf_client.is_some();
 
         if use_cloudflare {
-            let client = self.cf_client.as_ref().unwrap();
-            match client.run_decision(request).await {
-                Ok(resp) => {
-                    self.metrics
-                        .cloudflare_evaluations
-                        .fetch_add(1, Ordering::Relaxed);
-                    let elapsed_micros = start.elapsed().as_micros() as u64;
-                    self.metrics
-                        .total_latency_micros
-                        .fetch_add(elapsed_micros, Ordering::Relaxed);
-                    return Ok(resp);
-                }
-                Err(err) => {
-                    if self.config.fallback_to_local {
-                        tracing::warn!(
-                            "[DECISION] Cloudflare Workers AI call failed ({}); falling back to local engine.",
-                            err
-                        );
+            if let Some(ref client) = self.cf_client {
+                match client.run_decision(request).await {
+                    Ok(resp) => {
                         self.metrics
-                            .fallback_evaluations
+                            .cloudflare_evaluations
                             .fetch_add(1, Ordering::Relaxed);
-                        match self.local_engine.evaluate(request) {
-                            Ok(mut local_resp) => {
-                                self.metrics
-                                    .local_evaluations
-                                    .fetch_add(1, Ordering::Relaxed);
-                                let elapsed_micros = start.elapsed().as_micros() as u64;
-                                self.metrics
-                                    .total_latency_micros
-                                    .fetch_add(elapsed_micros, Ordering::Relaxed);
-                                local_resp.latency_ms = start.elapsed().as_secs_f64() * 1000.0;
-                                return Ok(local_resp);
+                        let elapsed_micros = start.elapsed().as_micros() as u64;
+                        self.metrics
+                            .total_latency_micros
+                            .fetch_add(elapsed_micros, Ordering::Relaxed);
+                        return Ok(resp);
+                    }
+                    Err(err) => {
+                        if self.config.fallback_to_local {
+                            tracing::warn!(
+                                "[DECISION] Cloudflare Workers AI call failed ({}); falling back to local engine.",
+                                err
+                            );
+                            self.metrics
+                                .fallback_evaluations
+                                .fetch_add(1, Ordering::Relaxed);
+                            match self.local_engine.evaluate(request) {
+                                Ok(mut local_resp) => {
+                                    self.metrics
+                                        .local_evaluations
+                                        .fetch_add(1, Ordering::Relaxed);
+                                    let elapsed_micros = start.elapsed().as_micros() as u64;
+                                    self.metrics
+                                        .total_latency_micros
+                                        .fetch_add(elapsed_micros, Ordering::Relaxed);
+                                    local_resp.latency_ms = start.elapsed().as_secs_f64() * 1000.0;
+                                    return Ok(local_resp);
+                                }
+                                Err(e2) => {
+                                    self.metrics.error_count.fetch_add(1, Ordering::Relaxed);
+                                    return Err(e2);
+                                }
                             }
-                            Err(e2) => {
-                                self.metrics.error_count.fetch_add(1, Ordering::Relaxed);
-                                return Err(e2);
-                            }
+                        } else {
+                            self.metrics.error_count.fetch_add(1, Ordering::Relaxed);
+                            return Err(err);
                         }
-                    } else {
-                        self.metrics.error_count.fetch_add(1, Ordering::Relaxed);
-                        return Err(err);
                     }
                 }
             }

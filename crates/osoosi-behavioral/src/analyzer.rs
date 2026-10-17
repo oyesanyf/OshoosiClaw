@@ -59,7 +59,7 @@ pub struct BehavioralAnalyzer {
     colog: Arc<Mutex<CoLogFilter>>,
     reasoning: ReasoningEngine,
     smollm: Arc<tokio::sync::RwLock<Option<Arc<SmolLMAnalyzer>>>>,
-    embedder: Arc<Mutex<crate::process_tree::ProcessTreeEmbedder>>,
+    embedder: Arc<Mutex<Option<crate::process_tree::ProcessTreeEmbedder>>>,
 }
 
 impl Default for BehavioralAnalyzer {
@@ -70,10 +70,16 @@ impl Default for BehavioralAnalyzer {
 
 impl BehavioralAnalyzer {
     pub fn new() -> Self {
-        let remote_llm_enabled = std::env::var("OSOOSI_ENABLE_REMOTE_LLM")
-            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
-            .unwrap_or(false);
-        let api_key = if remote_llm_enabled {
+        let ai_cfg = osoosi_types::load_ai_config();
+        let cloud_llm_opted_in = ai_cfg.enable_cloud_llm
+            || std::env::var("OSOOSI_ENABLE_CLOUD_LLM")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false)
+            || std::env::var("OSOOSI_ENABLE_REMOTE_LLM")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+
+        let api_key = if cloud_llm_opted_in {
             std::env::var("OPENAI_API_KEY")
                 .or_else(|_| std::env::var("OSOOSI_OPENAI_API_KEY"))
                 .or_else(|_| std::env::var("OSOOSI_LLM_API_KEY"))
@@ -81,14 +87,24 @@ impl BehavioralAnalyzer {
         } else {
             String::new()
         };
-        let api_base = std::env::var("OSOOSI_LLM_API_BASE")
-            .or_else(|_| std::env::var("OSOOSI_OPENAI_API_BASE"))
-            .unwrap_or_else(|_| "http://127.0.0.1:11434/v1".to_string());
-        let default_fallback = osoosi_types::load_ai_config()
-            .fallback_models
-            .first()
-            .cloned()
-            .unwrap_or_else(|| "qwen2.5:1.5b".to_string());
+        let api_base = if cloud_llm_opted_in {
+            std::env::var("OSOOSI_LLM_API_BASE")
+                .or_else(|_| std::env::var("OSOOSI_OPENAI_API_BASE"))
+                .unwrap_or_else(|_| "https://api.openai.com/v1".to_string())
+        } else {
+            std::env::var("OSOOSI_LLM_API_BASE")
+                .or_else(|_| std::env::var("OSOOSI_OPENAI_API_BASE"))
+                .unwrap_or_else(|_| "http://127.0.0.1:11434/v1".to_string())
+        };
+        let default_fallback = if cloud_llm_opted_in {
+            ai_cfg.cloud_llm_model.clone().unwrap_or_else(|| "gpt-4o".to_string())
+        } else {
+            ai_cfg
+                .fallback_models
+                .first()
+                .cloned()
+                .unwrap_or_else(|| "qwen2.5:1.5b".to_string())
+        };
         let model = std::env::var("OSOOSI_LLM_MODEL")
             .or_else(|_| std::env::var("OSOOSI_OPENAI_MODEL"))
             .unwrap_or(default_fallback);
@@ -96,8 +112,7 @@ impl BehavioralAnalyzer {
         let reasoning = ReasoningEngine::new();
         let smollm = Arc::new(tokio::sync::RwLock::new(None));
         let embedder = Arc::new(Mutex::new(
-            crate::process_tree::ProcessTreeEmbedder::new()
-                .expect("Failed to init ProcessTreeEmbedder"),
+            crate::process_tree::ProcessTreeEmbedder::new().ok(),
         ));
 
         let analyzer = Self {
@@ -285,9 +300,11 @@ impl BehavioralAnalyzer {
                         };
 
                         if let Ok(embedder_guard) = embedder.lock() {
-                            if let Ok(emb) = embedder_guard.embed(&rel) {
-                                let ml_score = embedder_guard.calculate_anomaly_score(&rel, &emb);
-                                base_score = (base_score * 0.5) + (ml_score * 0.5);
+                            if let Some(ref emb_inst) = *embedder_guard {
+                                if let Ok(emb) = emb_inst.embed(&rel) {
+                                    let ml_score = emb_inst.calculate_anomaly_score(&rel, &emb);
+                                    base_score = (base_score * 0.5) + (ml_score * 0.5);
+                                }
                             }
                         }
                     }
@@ -521,6 +538,20 @@ impl BehavioralAnalyzer {
                 let result = smollm.generate_text(prompt, 500).await?;
                 return Ok(result);
             }
+        }
+
+        // Explicit opt-in verification: api.openai.com or cloud LLMs must never be contacted without explicit opt-in
+        let ai_cfg = osoosi_types::load_ai_config();
+        let cloud_llm_opted_in = ai_cfg.enable_cloud_llm
+            || std::env::var("OSOOSI_ENABLE_CLOUD_LLM")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false)
+            || std::env::var("OSOOSI_ENABLE_REMOTE_LLM")
+                .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+                .unwrap_or(false);
+
+        if self.api_base.contains("api.openai.com") && !cloud_llm_opted_in {
+            return Err(anyhow!("Cloud LLM access is disabled. To enable OpenAI or remote LLM inference, configure 'enable_cloud_llm = true' in osoosi.toml or set OSOOSI_ENABLE_CLOUD_LLM=1."));
         }
 
         // Only fall back to OpenAI/Remote if SmolLM is not loaded and a key is available
