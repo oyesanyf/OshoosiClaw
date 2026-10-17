@@ -74,6 +74,7 @@ VOID OsoosiCreateProcessNotifyRoutine(
 );
 
 static VOID OsoosiClearRulesLocked(VOID);
+static ULONG OsoosiBoundedWcsLen(_In_reads_(maxChars) PCWSTR str, _In_ ULONG maxChars);
 static BOOLEAN OsoosiIsCriticalSystemImage(_In_ PCUNICODE_STRING ImageFileName);
 static BOOLEAN OsoosiIsPathBlockedLocked(_In_ PCUNICODE_STRING ImageFileName);
 static BOOLEAN OsoosiIsHashBlockedLocked(_In_reads_(32) const UCHAR* Hash);
@@ -237,15 +238,8 @@ NTSTATUS OsoosiDeviceControl(
         }
 
         POSOOSI_ADD_PATH_REQUEST pReq = (POSOOSI_ADD_PATH_REQUEST)buffer;
-        // Ensure null-termination within buffer
         pReq->image_path[OSOOSI_MAX_PATH - 1] = L'\0';
-
-        // Normalize forward slashes to backslashes
-        for (ULONG k = 0; k < OSOOSI_MAX_PATH && pReq->image_path[k] != L'\0'; ++k) {
-            if (pReq->image_path[k] == L'/') {
-                pReq->image_path[k] = L'\\';
-            }
-        }
+        ULONG copyLen = OsoosiBoundedWcsLen(pReq->image_path, OSOOSI_MAX_PATH - 1);
 
         POSOOSI_PATH_RULE rule = (POSOOSI_PATH_RULE)ExAllocatePoolWithTag(
             NonPagedPoolNx,
@@ -259,8 +253,11 @@ NTSTATUS OsoosiDeviceControl(
         }
 
         RtlZeroMemory(rule, sizeof(OSOOSI_PATH_RULE));
-        wcsncpy(rule->Path, pReq->image_path, OSOOSI_MAX_PATH - 1);
-        rule->Length = (ULONG)wcslen(rule->Path);
+        for (ULONG k = 0; k < copyLen; ++k) {
+            rule->Path[k] = (pReq->image_path[k] == L'/') ? L'\\' : pReq->image_path[k];
+        }
+        rule->Path[copyLen] = L'\0';
+        rule->Length = copyLen;
 
         KeAcquireInStackQueuedSpinLock(&g_State.Lock, &lockHandle);
         InsertTailList(&g_State.PathRuleList, &rule->ListEntry);
@@ -365,6 +362,20 @@ static VOID OsoosiClearRulesLocked(VOID) {
     g_State.RuleCount = 0;
 }
 
+static ULONG OsoosiBoundedWcsLen(
+    _In_reads_(maxChars) PCWSTR str,
+    _In_ ULONG maxChars
+) {
+    if (str == NULL) {
+        return 0;
+    }
+    ULONG len = 0;
+    while (len < maxChars && str[len] != L'\0') {
+        len++;
+    }
+    return len;
+}
+
 static WCHAR OsoosiToUpper(WCHAR c) {
     if (c >= L'a' && c <= L'z') {
         return c - (L'a' - L'A');
@@ -426,7 +437,7 @@ static BOOLEAN OsoosiIsCriticalSystemImage(_In_ PCUNICODE_STRING ImageFileName) 
 
     for (ULONG i = 0; i < sizeof(g_ProtectedImages) / sizeof(g_ProtectedImages[0]); ++i) {
         PCWSTR protName = g_ProtectedImages[i];
-        ULONG protLen = (ULONG)wcslen(protName);
+        ULONG protLen = OsoosiBoundedWcsLen(protName, OSOOSI_MAX_PATH - 1);
 
         // Ensure ImageFileName ends with '\' + protName (or equals protName)
         BOOLEAN matchesName = FALSE;

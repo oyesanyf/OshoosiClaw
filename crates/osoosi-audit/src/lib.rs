@@ -259,7 +259,7 @@ impl MerkleAuditTree {
 
     /// Generate a Merkle Inclusion Proof for a specific entry index.
     pub fn generate_proof(&self, index: usize) -> Option<osoosi_types::MerkleProof> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
 
         if index >= inner.entries.len() {
             return None;
@@ -307,21 +307,21 @@ impl MerkleAuditTree {
     }
 
     pub fn root(&self) -> String {
-        self.inner.lock().unwrap().root.clone()
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).root.clone()
     }
 
     pub fn entries(&self) -> Vec<AuditEntry> {
-        self.inner.lock().unwrap().entries.clone()
+        self.inner.lock().unwrap_or_else(|e| e.into_inner()).entries.clone()
     }
 
     pub fn get_recent_entries(&self, limit: usize) -> Vec<AuditEntry> {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         let start = inner.entries.len().saturating_sub(limit);
         inner.entries[start..].to_vec()
     }
 
     pub fn verify(&self) -> bool {
-        let inner = self.inner.lock().unwrap();
+        let inner = self.inner.lock().unwrap_or_else(|e| e.into_inner());
         if inner.leaves.is_empty() {
             let expected_empty = inner
                 .epoch_checkpoint_root

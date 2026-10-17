@@ -32,7 +32,7 @@ impl CausalEngine {
     }
 
     pub fn ingest_event(&self, event: &HostSecurityEvent) {
-        let mut processes = self.processes.write().unwrap();
+        let mut processes = self.processes.write().unwrap_or_else(|e| e.into_inner());
 
         match event.event_id {
             1 => { // ProcessCreate
@@ -333,7 +333,7 @@ impl CausalEngine {
 
     /// Returns the full ancestry of a process
     pub fn get_ancestry(&self, pid: u32) -> Vec<ProcessNode> {
-        let processes = self.processes.read().unwrap();
+        let processes = self.processes.read().unwrap_or_else(|e| e.into_inner());
         let mut ancestry = Vec::new();
         let mut current_pid = pid;
 

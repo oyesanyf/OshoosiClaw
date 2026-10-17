@@ -72,6 +72,40 @@ struct trace_event_raw_sys_enter_connect {
     unsigned long int addrlen;
 };
 
+// Linux CO-RE Task and MM Definitions
+struct mm_struct {
+    unsigned long arg_start;
+    unsigned long arg_end;
+} __attribute__((preserve_access_index));
+
+struct task_struct {
+    int pid;
+    int tgid;
+    struct task_struct *real_parent;
+    struct mm_struct *mm;
+} __attribute__((preserve_access_index));
+
+static __always_inline void fill_task_lineage_and_args(struct ebpf_process_event *event) {
+    struct task_struct *task = (struct task_struct *)bpf_get_current_task();
+    if (!task) {
+        event->ppid = 0;
+        event->args[0] = '\0';
+        return;
+    }
+    event->ppid = (uint32_t)BPF_CORE_READ(task, real_parent, tgid);
+    unsigned long arg_start = BPF_CORE_READ(task, mm, arg_start);
+    unsigned long arg_end = BPF_CORE_READ(task, mm, arg_end);
+    if (arg_start != 0 && arg_end > arg_start) {
+        unsigned long len = arg_end - arg_start;
+        if (len >= sizeof(event->args)) {
+            len = sizeof(event->args) - 1;
+        }
+        bpf_probe_read_user_str(&event->args, (uint32_t)len, (const void *)arg_start);
+    } else {
+        event->args[0] = '\0';
+    }
+}
+
 // Hook 1: Process Execution Tracepoint
 SEC("tp/sched/sched_process_exec")
 int handle_process_exec(struct trace_event_raw_sched_process_exec *ctx) {
@@ -86,7 +120,6 @@ int handle_process_exec(struct trace_event_raw_sched_process_exec *ctx) {
     uint64_t uid_gid = bpf_get_current_uid_gid();
 
     event->pid = (uint32_t)(pid_tgid >> 32);
-    event->ppid = 0; // Filled from task_struct in full CO-RE environment
     event->uid = (uint32_t)uid_gid;
     event->gid = (uint32_t)(uid_gid >> 32);
     event->timestamp_ns = bpf_ktime_get_ns();
@@ -100,8 +133,8 @@ int handle_process_exec(struct trace_event_raw_sched_process_exec *ctx) {
     const char *filename_ptr = (const char *)ctx + filename_offset;
     bpf_probe_read_str(&event->filename, sizeof(event->filename), filename_ptr);
 
-    // Read process command line / args placeholder
-    event->args[0] = '\0';
+    // Read process lineage (ppid) and command-line args via CO-RE
+    fill_task_lineage_and_args(event);
 
     bpf_ringbuf_submit(event, 0);
     return 0;
@@ -121,7 +154,6 @@ int handle_process_exit(struct trace_event_raw_sched_process_exit *ctx) {
     uint64_t uid_gid = bpf_get_current_uid_gid();
 
     event->pid = (uint32_t)(pid_tgid >> 32);
-    event->ppid = 0;
     event->uid = (uint32_t)uid_gid;
     event->gid = (uint32_t)(uid_gid >> 32);
     event->timestamp_ns = bpf_ktime_get_ns();
@@ -130,7 +162,7 @@ int handle_process_exit(struct trace_event_raw_sched_process_exit *ctx) {
 
     bpf_probe_read_kernel_str(&event->comm, sizeof(event->comm), ctx->comm);
     event->filename[0] = '\0';
-    event->args[0] = '\0';
+    fill_task_lineage_and_args(event);
 
     bpf_ringbuf_submit(event, 0);
     return 0;
@@ -189,7 +221,7 @@ struct linux_binprm {
     void *file;
     const char *filename;
     const char *interp;
-};
+} __attribute__((preserve_access_index));
 
 // Hook 4: Linux Security Module (LSM) Pre-Operation Execution Block
 // Intercepts binary launch and returns -EPERM before the process can execute!
@@ -219,7 +251,6 @@ int BPF_PROG(osoosi_bprm_check, struct linux_binprm *bprm) {
             uint64_t pid_tgid = bpf_get_current_pid_tgid();
             uint64_t uid_gid = bpf_get_current_uid_gid();
             event->pid = (uint32_t)(pid_tgid >> 32);
-            event->ppid = 0;
             event->uid = (uint32_t)uid_gid;
             event->gid = (uint32_t)(uid_gid >> 32);
             event->timestamp_ns = bpf_ktime_get_ns();
@@ -227,7 +258,7 @@ int BPF_PROG(osoosi_bprm_check, struct linux_binprm *bprm) {
             event->_pad = 0;
             bpf_get_current_comm(&event->comm, sizeof(event->comm));
             bpf_probe_read_kernel_str(&event->filename, sizeof(event->filename), filename);
-            event->args[0] = '\0';
+            fill_task_lineage_and_args(event);
             bpf_ringbuf_submit(event, 0);
         }
 

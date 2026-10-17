@@ -856,12 +856,151 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             .route_service("/", ServeFile::new(index_html))
             .fallback_service(safe_serve)
             .layer(cors)
+            .layer(axum::middleware::from_fn(auth_middleware))
     } else {
         Router::new()
             .merge(api)
             .fallback_service(safe_serve)
             .layer(cors)
+            .layer(axum::middleware::from_fn(auth_middleware))
     }
+}
+
+/// Constant-time string equality check to prevent timing attacks on tokens.
+pub fn constant_time_eq_token(a: &str, b: &str) -> bool {
+    if a.len() != b.len() {
+        return false;
+    }
+    let mut diff = 0u8;
+    for (x, y) in a.bytes().zip(b.bytes()) {
+        diff |= x ^ y;
+    }
+    diff == 0
+}
+
+/// Resolve or generate the dashboard API token for authenticating state-changing requests.
+pub fn get_or_init_dashboard_api_token() -> String {
+    if let Ok(tok) = std::env::var("OSOOSI_DASHBOARD_API_TOKEN") {
+        let trimmed = tok.trim().to_string();
+        if !trimmed.is_empty() {
+            return trimmed;
+        }
+    }
+
+    let token_path = osoosi_types::resolve_project_root()
+        .map(|p| p.join("config").join("dashboard_token.key"))
+        .unwrap_or_else(|| PathBuf::from("config").join("dashboard_token.key"));
+
+    if token_path.is_file() {
+        if let Ok(content) = std::fs::read_to_string(&token_path) {
+            let trimmed = content.trim().to_string();
+            if !trimmed.is_empty() {
+                return trimmed;
+            }
+        }
+    }
+
+    use rand::RngCore;
+    let mut bytes = [0u8; 32];
+    rand::thread_rng().fill_bytes(&mut bytes);
+    let token = hex::encode(bytes);
+
+    if let Some(parent) = token_path.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let _ = std::fs::write(&token_path, &token);
+
+    #[cfg(unix)]
+    {
+        use std::os::unix::fs::PermissionsExt;
+        let _ = std::fs::set_permissions(&token_path, std::fs::Permissions::from_mode(0o600));
+    }
+
+    token
+}
+
+async fn auth_middleware(
+    req: axum::extract::Request,
+    next: axum::middleware::Next,
+) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
+    let method = req.method().clone();
+    let path = req.uri().path().to_string();
+    let is_state_changing = matches!(method, Method::POST | Method::PUT | Method::DELETE | Method::PATCH);
+    #[cfg(test)]
+    let test_force_auth = req.headers().get("x-test-require-auth").is_some();
+    #[cfg(not(test))]
+    let test_force_auth = false;
+
+    let auth_disabled = (cfg!(test) && !test_force_auth)
+        || std::env::var("OSOOSI_DISABLE_DASHBOARD_AUTH")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+
+    if !is_state_changing || auth_disabled {
+        let mut resp = next.run(req).await;
+        if method == Method::GET && (path == "/" || path == "/index.html" || path == "/api/status") {
+            let tok = get_or_init_dashboard_api_token();
+            let cookie_val = format!("osoosi_token={}; Path=/; HttpOnly; SameSite=Strict", tok);
+            if let Ok(hv) = axum::http::HeaderValue::from_str(&cookie_val) {
+                resp.headers_mut().insert(axum::http::header::SET_COOKIE, hv);
+            }
+        }
+        return Ok(resp);
+    }
+
+    if !test_force_auth
+        && (path == "/health"
+            || path == "/api/health"
+            || path == "/"
+            || path == "/api/siquery/query"
+            || path == "/siquery/query"
+            || path == "/api/traffic/conversation")
+    {
+        return Ok(next.run(req).await);
+    }
+
+    let expected_token = get_or_init_dashboard_api_token();
+    let headers = req.headers();
+
+    let provided_token = headers
+        .get("x-osoosi-token")
+        .and_then(|v| v.to_str().ok())
+        .or_else(|| {
+            headers
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|auth| {
+                    if auth.starts_with("Bearer ") || auth.starts_with("bearer ") {
+                        Some(&auth[7..])
+                    } else {
+                        None
+                    }
+                })
+        })
+        .or_else(|| {
+            headers
+                .get(axum::http::header::COOKIE)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|cookies| {
+                    cookies
+                        .split(';')
+                        .map(|c| c.trim())
+                        .find_map(|c| c.strip_prefix("osoosi_token="))
+                })
+        });
+
+    if let Some(token) = provided_token {
+        if constant_time_eq_token(token.trim(), &expected_token) {
+            return Ok(next.run(req).await);
+        }
+    }
+
+    Err(api_error(
+        StatusCode::UNAUTHORIZED,
+        "UNAUTHORIZED",
+        "State-changing dashboard request requires a valid Bearer or X-Osoosi-Token header",
+        "Provide your dashboard API token via Authorization: Bearer <token> or X-Osoosi-Token: <token>. Set OSOOSI_DISABLE_DASHBOARD_AUTH=1 in test environments to bypass.",
+    ))
 }
 
 /// Bind port, spawn `axum::serve` in the background, return bound port.
@@ -882,7 +1021,11 @@ pub async fn spawn_dashboard_with_backend(
     }
 
     let app = dashboard_router(state, asset_path);
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let bind_all = std::env::var("OSOOSI_DASHBOARD_BIND_ALL")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let bind_ip = if bind_all { [0, 0, 0, 0] } else { [127, 0, 0, 1] };
+    let addr = SocketAddr::from((bind_ip, port));
     let std_listener = std::net::TcpListener::bind(addr)?;
     std_listener.set_nonblocking(true)?;
     let bound_port = std_listener.local_addr()?.port();
@@ -1550,7 +1693,11 @@ pub async fn start_dashboard_with_backend(
     }
 
     let app = dashboard_router(state, asset_path);
-    let addr = SocketAddr::from(([0, 0, 0, 0], port));
+    let bind_all = std::env::var("OSOOSI_DASHBOARD_BIND_ALL")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    let bind_ip = if bind_all { [0, 0, 0, 0] } else { [127, 0, 0, 1] };
+    let addr = SocketAddr::from((bind_ip, port));
     info!(
         "OpenỌ̀ṣọ́ọ̀sì Dashboard listening on {} (local access: http://127.0.0.1:{})",
         addr, port
@@ -4797,7 +4944,11 @@ async fn get_mesh_topology(State(state): State<DashboardState>) -> Json<Value> {
             // 2. Nostr Relays
             let mesh_config = osoosi_types::load_mesh_listen_config();
             let nostr_relays = if mesh_config.nostr_relays.is_empty() {
-                vec!["wss://relay.damus.io".to_string(), "wss://nos.lol".to_string()]
+                if mesh_config.allow_public_relays {
+                    vec!["wss://relay.damus.io".to_string(), "wss://nos.lol".to_string()]
+                } else {
+                    Vec::new()
+                }
             } else {
                 mesh_config.nostr_relays.clone()
             };
@@ -5077,7 +5228,11 @@ async fn get_peers(State(state): State<DashboardState>) -> Json<Value> {
     // 3. Nostr Relays as known network peers
     let mesh_config = osoosi_types::load_mesh_listen_config();
     let nostr_relays = if mesh_config.nostr_relays.is_empty() {
-        vec!["wss://relay.damus.io".to_string(), "wss://nos.lol".to_string()]
+        if mesh_config.allow_public_relays {
+            vec!["wss://relay.damus.io".to_string(), "wss://nos.lol".to_string()]
+        } else {
+            Vec::new()
+        }
     } else {
         mesh_config.nostr_relays.clone()
     };
@@ -7077,8 +7232,8 @@ mod tests {
         let val = resp.0;
         let nodes = val["nodes"].as_array().expect("nodes should be array");
         let edges = val["edges"].as_array().expect("edges should be array");
-        assert!(nodes.len() >= 7, "expected enriched topology nodes, got {}", nodes.len());
-        assert!(edges.len() >= 6, "expected enriched topology edges, got {}", edges.len());
+        assert!(nodes.len() >= 6, "expected enriched topology nodes, got {}", nodes.len());
+        assert!(edges.len() >= 5, "expected enriched topology edges, got {}", edges.len());
         assert_eq!(val["mesh_health"], "Optimal");
         assert!(nodes.iter().any(|n| n["id"] == "did:osoosi:local"));
         assert!(nodes.iter().any(|n| n["id"] == "gateway:wire-p2p"));
@@ -7094,7 +7249,7 @@ mod tests {
         let resp = get_peers(State(state)).await;
         let val = resp.0;
         let peers = val["peers"].as_array().expect("peers should be array");
-        assert!(peers.len() >= 4, "expected at least local node, relays, gateway, and otel collector");
+        assert!(peers.len() >= 3, "expected at least local node, gateway, and otel collector");
         assert!(peers.iter().any(|p| p["label"] == "Local Node"));
         assert!(peers.iter().any(|p| p["id"] == "gateway:wire-p2p"));
         assert!(peers.iter().any(|p| p["id"] == "otel:collector"));
@@ -8033,7 +8188,7 @@ mod tests {
         assert!(get_val["recommended_multiaddr"].as_str().unwrap().starts_with("/ip4/"));
         assert!(get_val["duckdns_template"].as_str().unwrap().contains("duckdns.org"));
         assert_eq!(get_val["duckdns_domain"].as_str(), Some("oshoosi"));
-        assert_eq!(get_val["auto_bootstrap_duckdns"].as_bool(), Some(true));
+        assert_eq!(get_val["auto_bootstrap_duckdns"].as_bool(), Some(false));
         assert!(get_val["is_duckdns_host"].as_bool().is_some());
         assert!(get_val["upstream_peer"].as_str().unwrap().contains("oshoosi.duckdns.org"));
 
@@ -9001,6 +9156,71 @@ mod tests {
         let json_val6: serde_json::Value = serde_json::from_slice(&bytes6).unwrap();
         assert_eq!(json_val6["status"], "ok");
         assert!(json_val6.get("telemetry").is_some());
+
+        let _ = std::fs::remove_dir_all(&temp_dir);
+    }
+
+    #[tokio::test]
+    async fn test_dashboard_token_auth_middleware() {
+        let test_token = get_or_init_dashboard_api_token();
+
+        let state = DashboardState::new(None, None);
+        let temp_dir = std::env::temp_dir().join(format!("osoosi_dash_auth_{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&temp_dir);
+        let app = dashboard_router(state, temp_dir.clone());
+
+        // 1. GET request succeeds without token even when x-test-require-auth is present
+        let get_req = axum::http::Request::builder()
+            .uri("/api/status")
+            .method(axum::http::Method::GET)
+            .header("x-test-require-auth", "1")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let get_resp = app.clone().oneshot(get_req).await.unwrap();
+        assert_eq!(get_resp.status(), StatusCode::OK);
+
+        // 2. POST without token rejected with 401 Unauthorized
+        let post_req = axum::http::Request::builder()
+            .uri("/api/mitre/stix/update")
+            .method(axum::http::Method::POST)
+            .header("x-test-require-auth", "1")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let post_resp = app.clone().oneshot(post_req).await.unwrap();
+        assert_eq!(post_resp.status(), StatusCode::UNAUTHORIZED);
+
+        // 3. POST with invalid token rejected with 401 Unauthorized
+        let post_bad = axum::http::Request::builder()
+            .uri("/api/mitre/stix/update")
+            .method(axum::http::Method::POST)
+            .header("x-test-require-auth", "1")
+            .header("X-Osoosi-Token", "wrong_token")
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let post_bad_resp = app.clone().oneshot(post_bad).await.unwrap();
+        assert_eq!(post_bad_resp.status(), StatusCode::UNAUTHORIZED);
+
+        // 4. POST with valid X-Osoosi-Token succeeds
+        let post_ok = axum::http::Request::builder()
+            .uri("/api/mitre/stix/update")
+            .method(axum::http::Method::POST)
+            .header("x-test-require-auth", "1")
+            .header("X-Osoosi-Token", &test_token)
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let post_ok_resp = app.clone().oneshot(post_ok).await.unwrap();
+        assert_eq!(post_ok_resp.status(), StatusCode::OK);
+
+        // 5. POST with valid Bearer token succeeds
+        let post_bearer = axum::http::Request::builder()
+            .uri("/api/mitre/stix/update")
+            .method(axum::http::Method::POST)
+            .header("x-test-require-auth", "1")
+            .header("Authorization", format!("Bearer {}", test_token))
+            .body(axum::body::Body::empty())
+            .unwrap();
+        let post_bearer_resp = app.clone().oneshot(post_bearer).await.unwrap();
+        assert_eq!(post_bearer_resp.status(), StatusCode::OK);
 
         let _ = std::fs::remove_dir_all(&temp_dir);
     }

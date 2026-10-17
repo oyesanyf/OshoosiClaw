@@ -2391,8 +2391,15 @@ async fn handle_update_stix(force: bool, broadcast: bool) -> anyhow::Result<()> 
     println!("📡 Checking P2P wire mesh daemon status...");
     let client = reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(3))
-        .build()?;
-    match client.post("http://127.0.0.1:3030/api/mitre/stix/update").send().await {
+        .build()
+        .unwrap_or_default();
+    let dash_token = osoosi_dashboard::get_or_init_dashboard_api_token();
+    match client
+        .post("http://127.0.0.1:3030/api/mitre/stix/update")
+        .header("X-Osoosi-Token", &dash_token)
+        .send()
+        .await
+    {
         Ok(resp) if resp.status().is_success() => {
             println!("✓ P2P Wire Mesh gossip broadcast triggered via daemon (http://127.0.0.1:3030)");
         }
@@ -3599,9 +3606,6 @@ async fn ensure_ollama_model() {
     std::env::set_var("OSOOSI_REASONING_MODEL", &model);
     if std::env::var("OSOOSI_OPENAI_API_BASE").is_err() {
         std::env::set_var("OSOOSI_OPENAI_API_BASE", "http://127.0.0.1:11434/v1");
-    }
-    if std::env::var("OSOOSI_OPENAI_API_KEY").is_err() {
-        std::env::set_var("OSOOSI_OPENAI_API_KEY", "ollama");
     }
     if std::env::var("OSOOSI_OPENAI_MODEL").is_err() {
         std::env::set_var("OSOOSI_OPENAI_MODEL", &model);

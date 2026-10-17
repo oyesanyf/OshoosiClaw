@@ -73,16 +73,16 @@ impl Default for RaspCanaryManager {
 impl RaspCanaryManager {
     pub fn register_canary(&self, label: &str) -> String {
         let token = format!("CANARY_OCTOPUS_{}_{:08x}", label.to_uppercase(), rand::random::<u32>());
-        let mut canaries = self.active_canaries.write().unwrap();
+        let mut canaries = self.active_canaries.write().unwrap_or_else(|e| e.into_inner());
         canaries.insert(token.clone(), label.to_string());
         token
     }
 
     pub fn check_and_trip(&self, text: &str) -> Option<(String, String)> {
-        let canaries = self.active_canaries.read().unwrap();
+        let canaries = self.active_canaries.read().unwrap_or_else(|e| e.into_inner());
         for (token, label) in canaries.iter() {
             if text.contains(token) {
-                let mut compromised = self.compromised_canaries.write().unwrap();
+                let mut compromised = self.compromised_canaries.write().unwrap_or_else(|e| e.into_inner());
                 compromised.insert(token.clone());
                 return Some((token.clone(), label.clone()));
             }
@@ -91,11 +91,11 @@ impl RaspCanaryManager {
     }
 
     pub fn is_compromised(&self, token: &str) -> bool {
-        self.compromised_canaries.read().unwrap().contains(token)
+        self.compromised_canaries.read().unwrap_or_else(|e| e.into_inner()).contains(token)
     }
 
     pub fn compromised_count(&self) -> usize {
-        self.compromised_canaries.read().unwrap().len()
+        self.compromised_canaries.read().unwrap_or_else(|e| e.into_inner()).len()
     }
 }
 
@@ -123,11 +123,11 @@ impl RaspPolicyEngine {
     }
 
     pub fn config(&self) -> RaspPolicyConfig {
-        self.config.read().unwrap().clone()
+        self.config.read().unwrap_or_else(|e| e.into_inner()).clone()
     }
 
     pub fn set_mitigation_tier(&self, tier: AdaptiveMitigationTier) {
-        let mut cfg = self.config.write().unwrap();
+        let mut cfg = self.config.write().unwrap_or_else(|e| e.into_inner());
         cfg.active_mitigation_tier = tier;
     }
 

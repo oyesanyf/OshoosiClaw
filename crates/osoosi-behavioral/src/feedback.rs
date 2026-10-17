@@ -37,7 +37,7 @@ impl FeedbackStore {
     }
 
     pub fn add_feedback(&self, sentence: &str, label: bool) -> Result<()> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         info!(
             "Adding feedback: label={} for sentence \"{}\"",
             label, sentence
@@ -52,7 +52,7 @@ impl FeedbackStore {
     }
 
     pub fn get_feedback(&self, sentence: &str) -> Result<Option<bool>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let mut stmt = conn.prepare("SELECT label FROM feedback WHERE sentence = ?1")?;
         let mut rows = stmt.query(params![sentence])?;
         if let Some(row) = rows.next()? {
@@ -64,7 +64,7 @@ impl FeedbackStore {
     }
 
     pub fn list_feedback(&self) -> Result<Vec<LabeledSample>> {
-        let conn = self.conn.lock().unwrap();
+        let conn = self.conn.lock().unwrap_or_else(|e| e.into_inner());
         let mut stmt = conn.prepare("SELECT sentence, label, confidence FROM feedback")?;
         let samples = stmt
             .query_map([], |row| {

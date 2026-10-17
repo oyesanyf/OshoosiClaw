@@ -143,7 +143,7 @@ impl PiiClassifier {
         // 2. Magika AI check
         if let Some(ref mutex) = self.magika {
             if let Ok(data) = std::fs::read(path) {
-                let mut session = mutex.lock().unwrap();
+                let mut session = mutex.lock().unwrap_or_else(|e| e.into_inner());
                 if let Ok(res) = session.identify_content_sync(&data[..]) {
                     let label = res.info().label;
                     let target_labels = [

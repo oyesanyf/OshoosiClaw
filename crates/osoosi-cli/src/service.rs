@@ -249,7 +249,6 @@ pub fn install_service() -> anyhow::Result<()> {
             }
             if wait_for_dashboard_ready(3030, 30) {
                 println!("[+] WebUI active at: http://127.0.0.1:3030/");
-                let _ = Command::new(osoosi_types::resolve_system_binary("cmd.exe")).args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
                 return Ok(());
             } else {
                 anyhow::bail!("Detached background daemon started but port 3030 did not become ready.");
@@ -338,7 +337,6 @@ pub fn start_service() -> anyhow::Result<()> {
             }
             if wait_for_dashboard_ready(3030, 30) {
                 println!("[+] WebUI active at: http://127.0.0.1:3030/");
-                let _ = Command::new(osoosi_types::resolve_system_binary("cmd.exe")).args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
                 return Ok(());
             } else {
                 anyhow::bail!("Detached background daemon started but port 3030 did not become ready.");
@@ -359,7 +357,6 @@ pub fn start_service() -> anyhow::Result<()> {
             }
             if wait_for_dashboard_ready(3030, 30) {
                 println!("[+] WebUI active at: http://127.0.0.1:3030/");
-                let _ = Command::new(osoosi_types::resolve_system_binary("cmd.exe")).args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
                 return Ok(());
             } else {
                 anyhow::bail!("Detached daemon started but WebUI port 3030 failed to respond.");
@@ -391,13 +388,11 @@ pub fn start_service() -> anyhow::Result<()> {
     println!("[*] Waiting for WebUI (http://127.0.0.1:3030) to bind...");
     if wait_for_dashboard_ready(3030, 30) {
         println!("[+] WebUI active at: http://127.0.0.1:3030/");
-        let _ = Command::new(osoosi_types::resolve_system_binary("cmd.exe")).args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
     } else {
         warn!("Port 3030 not ready from Windows Service. Launching detached daemon fallback...");
         let _ = spawn_detached_background_daemon();
         if wait_for_dashboard_ready(3030, 20) {
             println!("[+] WebUI active at: http://127.0.0.1:3030/");
-            let _ = Command::new(osoosi_types::resolve_system_binary("cmd.exe")).args(["/C", "start", "", "http://127.0.0.1:3030/"]).spawn();
         }
     }
 

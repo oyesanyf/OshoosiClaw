@@ -510,9 +510,9 @@ impl YaraManager {
 
         if !offline {
             let feed_urls = [
-                ("yara_forge_core.yar", "https://raw.githubusercontent.com/YARAHQ/yara-forge/main/dist/yara-rules-core.yar"),
-                ("florian_c2_hunting.yar", "https://raw.githubusercontent.com/Neo23x0/signature-base/master/yara/gen_c2_hunting.yar"),
-                ("abusech_rules.yar", "https://raw.githubusercontent.com/YARAHQ/yara-forge/main/rules/abusech_rules.yar"),
+                ("yara_forge_core.yar", "https://raw.githubusercontent.com/YARAHQ/yara-forge/4d5500ce4371480b06b5a3715c9a0081d43a6d71/dist/yara-rules-core.yar"),
+                ("florian_c2_hunting.yar", "https://raw.githubusercontent.com/Neo23x0/signature-base/96813264eb789c6d3df39df3108c4a169b1fa9c5/yara/gen_c2_hunting.yar"),
+                ("abusech_rules.yar", "https://raw.githubusercontent.com/YARAHQ/yara-forge/4d5500ce4371480b06b5a3715c9a0081d43a6d71/rules/abusech_rules.yar"),
             ];
 
             let client = reqwest::Client::builder()
@@ -534,6 +534,12 @@ impl YaraManager {
                         if let Ok(text) = resp.text().await {
                             if !text.trim().is_empty() {
                                 let sanitized = sanitize_yara_content(&text);
+                                let mut test_compiler = yara_x::Compiler::new();
+                                if let Err(e) = test_compiler.add_source(sanitized.as_str()) {
+                                    warn!("[YARA] Downloaded feed '{}' failed YARA-X compilation validation: {}. Skipping write.", filename, e);
+                                    continue;
+                                }
+
                                 for dir in &target_dirs {
                                     if std::fs::create_dir_all(dir).is_ok() {
                                         let file_path = dir.join(filename);
@@ -541,7 +547,7 @@ impl YaraManager {
                                     }
                                 }
                                 downloaded_any = true;
-                                info!("[YARA] Downloaded and cached threat feed: {}", filename);
+                                info!("[YARA] Downloaded, verified, and cached threat feed: {}", filename);
                             }
                         }
                     }

@@ -261,6 +261,14 @@ pub fn clear_firewall_persistence() -> Result<()> {
 
 /// Dynamically configure Windows Defender folder/process exclusions and Firewall rules for the installation directory.
 pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
+    let auto_fw = std::env::var("OSOOSI_AUTO_CONFIGURE_HOST_FIREWALL")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !auto_fw {
+        tracing::info!("Host firewall / Defender auto-configuration skipped (set OSOOSI_AUTO_CONFIGURE_HOST_FIREWALL=1 to enable).");
+        return Ok(());
+    }
+
     #[cfg(target_os = "windows")]
     {
         use tokio::process::Command;
@@ -399,7 +407,6 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             ("Osoosi-Mesh-Control", 9000_u16, "TCP"),
             ("Osoosi-Mesh-Alt", 9876_u16, "TCP"),
             ("Osoosi-mDNS", 5353_u16, "UDP"),
-            ("Osoosi-Dashboard", 3030_u16, "TCP"),
         ];
 
         for (name, port, proto) in ports {
@@ -441,7 +448,6 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             ("Osoosi-Mesh-Control", 9000_u16, "TCP"),
             ("Osoosi-Mesh-Alt", 9876_u16, "TCP"),
             ("Osoosi-mDNS", 5353_u16, "UDP"),
-            ("Osoosi-Dashboard", 3030_u16, "TCP"),
         ];
 
         for (_, port, proto) in ports {
@@ -929,10 +935,24 @@ fn remove_windows_autoblock_rules() -> Result<usize> {
 
 #[cfg(target_os = "linux")]
 fn block_linux_process_uid(process_id: Option<u32>) -> Result<String> {
+    let allow_uid_block = std::env::var("OSOOSI_ALLOW_UID_FIREWALL_BLOCK")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+    if !allow_uid_block {
+        return Err(anyhow!("Linux UID firewall block disabled by default (set OSOOSI_ALLOW_UID_FIREWALL_BLOCK=1 to enable)"));
+    }
+
     let pid = process_id.ok_or_else(|| anyhow!("Linux firewall block requires ProcessId"))?;
     let uid = linux_uid_for_pid(pid)?;
     if uid == 0 {
         return Err(anyhow!("Refusing to block UID 0 (root) - potential system lockout"));
+    }
+    if uid < 1000 {
+        return Err(anyhow!("Refusing to block system UID {} (< 1000) - potential system/service lockout", uid));
+    }
+    let current_uid = unsafe { libc::getuid() };
+    if uid == current_uid {
+        return Err(anyhow!("Refusing to block current process UID {} - self lockout protection", uid));
     }
 
     if command_exists("iptables") {

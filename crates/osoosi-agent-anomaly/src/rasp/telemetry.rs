@@ -79,11 +79,11 @@ impl RaspTelemetryRegistry {
         }
 
         if let Some(cat) = event.threat_category {
-            let mut counts = self.threat_counts.write().unwrap();
+            let mut counts = self.threat_counts.write().unwrap_or_else(|e| e.into_inner());
             *counts.entry(cat).or_insert(0) += 1;
         }
 
-        let mut events = self.events.write().unwrap();
+        let mut events = self.events.write().unwrap_or_else(|e| e.into_inner());
         if events.len() >= self.max_history {
             events.pop_front();
         }
@@ -92,7 +92,7 @@ impl RaspTelemetryRegistry {
 
     /// Retrieves the most recent N interception events.
     pub fn get_recent_events(&self, limit: usize) -> Vec<RaspInterceptionEvent> {
-        let events = self.events.read().unwrap();
+        let events = self.events.read().unwrap_or_else(|e| e.into_inner());
         events.iter().rev().take(limit).cloned().collect()
     }
 
@@ -120,13 +120,13 @@ impl RaspTelemetryRegistry {
             100.0
         };
 
-        let threat_counts = self.threat_counts.read().unwrap();
+        let threat_counts = self.threat_counts.read().unwrap_or_else(|e| e.into_inner());
         let mut distribution = HashMap::new();
         for (k, v) in threat_counts.iter() {
             distribution.insert(k.to_string(), *v);
         }
 
-        let recent_count = self.events.read().unwrap().len();
+        let recent_count = self.events.read().unwrap_or_else(|e| e.into_inner()).len();
 
         RaspTelemetryMetrics {
             total_inspections: inspections,

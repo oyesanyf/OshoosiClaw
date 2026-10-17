@@ -1471,9 +1471,12 @@ impl EdrOrchestrator {
 
                 let mut is_benign = false;
                 if self.decision_engine.is_enabled() {
-                    let incident = format!("Process: {}, PID: {}, Cmd: {}, Trigger: Siquery breakout query", name, pid, cmd);
+                    let (safe_name, inj_n) = osoosi_types::sanitize_untrusted_log_field(name, 128);
+                    let (safe_cmd, inj_c) = osoosi_types::sanitize_untrusted_log_field(cmd, 512);
+                    let inj = inj_n || inj_c;
+                    let incident = format!("Process: {} | PID: {} | Cmd: {} | Trigger: Siquery breakout query | PromptInjectionDetected: {}", safe_name, pid, safe_cmd, inj);
                     if let Ok(dec) = self.decision_engine.evaluate_security_incident(&incident).await {
-                        if dec.verdict == "benign" || dec.containment_action == "allow" {
+                        if !inj && (dec.verdict == "benign" || dec.containment_action == "allow") {
                             is_benign = true;
                         }
                     }
@@ -1553,9 +1556,12 @@ impl EdrOrchestrator {
 
                     let mut is_benign = false;
                     if self.decision_engine.is_enabled() {
-                        let incident = format!("Service: {}, Path: {}, State: Running, Signed: false", name, path_name);
+                        let (safe_name, inj_n) = osoosi_types::sanitize_untrusted_log_field(name, 128);
+                        let (safe_path, inj_p) = osoosi_types::sanitize_untrusted_log_field(path_name, 256);
+                        let inj = inj_n || inj_p;
+                        let incident = format!("Process: {} | Path: {} | State: Running | Signed: false | PromptInjectionDetected: {}", safe_name, safe_path, inj);
                         if let Ok(dec) = self.decision_engine.evaluate_security_incident(&incident).await {
-                            if dec.verdict == "benign" || dec.containment_action == "allow" {
+                            if !inj && (dec.verdict == "benign" || dec.containment_action == "allow") {
                                 is_benign = true;
                             }
                         }
@@ -1735,9 +1741,12 @@ impl EdrOrchestrator {
 
                     let mut is_benign = false;
                     if self.decision_engine.is_enabled() {
-                        let incident = format!("Process: {}, PID: {}, UnsignedModule: {}", proc_name, pid, mod_path);
+                        let (safe_proc, inj_p) = osoosi_types::sanitize_untrusted_log_field(proc_name, 128);
+                        let (safe_mod, inj_m) = osoosi_types::sanitize_untrusted_log_field(mod_path, 256);
+                        let inj = inj_p || inj_m;
+                        let incident = format!("Process: {} | PID: {} | UnsignedModule: {} | PromptInjectionDetected: {}", safe_proc, pid, safe_mod, inj);
                         if let Ok(dec) = self.decision_engine.evaluate_security_incident(&incident).await {
-                            if dec.verdict == "benign" || dec.containment_action == "allow" {
+                            if !inj && (dec.verdict == "benign" || dec.containment_action == "allow") {
                                 is_benign = true;
                             }
                         }
@@ -1794,9 +1803,12 @@ impl EdrOrchestrator {
 
                 let mut is_benign = false;
                 if self.decision_engine.is_enabled() {
-                    let incident = format!("DNS Query: {}, Resolved Data: {}, Trigger: Fast-Flux / Cloud Metadata C2", name, data);
+                    let (safe_name, inj_n) = osoosi_types::sanitize_untrusted_log_field(name, 128);
+                    let (safe_data, inj_d) = osoosi_types::sanitize_untrusted_log_field(data, 256);
+                    let inj = inj_n || inj_d;
+                    let incident = format!("Process: dns_cache | DNS Query: {} | Resolved Data: {} | Trigger: Fast-Flux / Cloud Metadata C2 | PromptInjectionDetected: {}", safe_name, safe_data, inj);
                     if let Ok(dec) = self.decision_engine.evaluate_security_incident(&incident).await {
-                        if dec.verdict == "benign" || dec.containment_action == "allow" {
+                        if !inj && (dec.verdict == "benign" || dec.containment_action == "allow") {
                             is_benign = true;
                         }
                     }
@@ -1899,11 +1911,18 @@ impl EdrOrchestrator {
                 let is_signed = crate::win_trust::is_trusted_signed_binary(std::path::Path::new(clean_path));
 
                 if !is_signed {
+                    let (san_name, inj1) = osoosi_types::sanitize_untrusted_log_field(name, 128);
+                    let (san_path, inj2) = osoosi_types::sanitize_untrusted_log_field(path, 256);
+                    let (san_loc, inj3) = osoosi_types::sanitize_untrusted_log_field(location, 128);
+                    let inj_flag = inj1 || inj2 || inj3;
                     let mut is_benign = false;
                     if self.decision_engine.is_enabled() {
-                        let incident = format!("Autorun: {}, Path: {}, Location: {}, Signed: false", name, path, location);
+                        let incident = format!(
+                            "Autorun: {} | Path: {} | Location: {} | Signed: false | InjectionDetected: {}",
+                            san_name, san_path, san_loc, inj_flag
+                        );
                         if let Ok(dec) = self.decision_engine.evaluate_security_incident(&incident).await {
-                            if dec.verdict == "benign" || dec.containment_action == "allow" {
+                            if !inj_flag && (dec.verdict == "benign" || dec.containment_action == "allow") {
                                 is_benign = true;
                             }
                         }
@@ -1996,11 +2015,17 @@ impl EdrOrchestrator {
                     let reason = format!("Siquery EDR Sweep: Potentially malicious or BYOVD vulnerable kernel driver detected: {} ({})", name, path);
                     warn!("{}", reason);
 
+                    let (san_name, inj1) = osoosi_types::sanitize_untrusted_log_field(name, 128);
+                    let (san_path, inj2) = osoosi_types::sanitize_untrusted_log_field(path, 256);
+                    let inj_flag = inj1 || inj2;
                     let mut is_benign = false;
                     if self.decision_engine.is_enabled() {
-                        let incident = format!("Driver: {}, Path: {}, BYOVD Risk, Signed: {}", name, path, is_signed);
+                        let incident = format!(
+                            "Driver: {} | Path: {} | BYOVD Risk | Signed: {} | InjectionDetected: {}",
+                            san_name, san_path, is_signed, inj_flag
+                        );
                         if let Ok(dec) = self.decision_engine.evaluate_security_incident(&incident).await {
-                            if dec.verdict == "benign" || dec.containment_action == "allow" {
+                            if !inj_flag && (dec.verdict == "benign" || dec.containment_action == "allow") {
                                 is_benign = true;
                             }
                         }
@@ -4753,14 +4778,18 @@ impl EdrOrchestrator {
                                     } else {
                                         result.yara_matches.join(",")
                                     };
+                                    let (san_file_path, inj1) = osoosi_types::sanitize_untrusted_log_field(&result.file_path, 256);
+                                    let (san_magika, inj2) = osoosi_types::sanitize_untrusted_log_field(&result.magika_label, 64);
+                                    let (san_yara, inj3) = osoosi_types::sanitize_untrusted_log_field(&yara_str, 256);
+                                    let inj_flag = inj1 || inj2 || inj3;
                                     let state_text = format!(
-                                        "Target: File | Path: {} | Magika: {} | ML Score: {:.2} | YARA: {} | IsSigned: {} | Invariants: Nominal",
-                                        result.file_path, result.magika_label, result.ml_score, yara_str, is_signed
+                                        "Target: File | Path: {} | Magika: {} | ML Score: {:.2} | YARA: {} | IsSigned: {} | InjectionDetected: {}",
+                                        san_file_path, san_magika, result.ml_score, san_yara, is_signed, inj_flag
                                     );
 
                                     match orchestrator.decision_engine.evaluate_security_incident(&state_text).await {
                                         Ok(decision) => {
-                                            if decision.verdict == "benign" || decision.containment_action == "allow" {
+                                            if !inj_flag && (decision.verdict == "benign" || decision.containment_action == "allow") {
                                                 info!(
                                                     "File Monitor: Decision model evaluated {} as benign (prob={:.2}, action='{}'). Alert suppressed.",
                                                     result.file_path, decision.verdict_probability, decision.containment_action
@@ -5624,7 +5653,7 @@ impl EdrOrchestrator {
         }
 
         // 0. Intelligent Load-Aware Throttling (The "Brain")
-        let current_mode = *self.adaptive.current_mode.read().unwrap();
+        let current_mode = *self.adaptive.current_mode.read().unwrap_or_else(|e| e.into_inner());
         let is_high_pressure = current_mode == TelemetryMode::Silent;
 
         // Deduplication: Avoid redundant heavy analysis for the same image in a burst
@@ -6903,9 +6932,12 @@ impl EdrOrchestrator {
                 .or_else(|| event.data.get("command_line"))
                 .and_then(|v| v.as_str())
                 .unwrap_or("None");
+            let (san_proc, inj1) = osoosi_types::sanitize_untrusted_log_field(proc_str, 128);
+            let (san_cmd, inj2) = osoosi_types::sanitize_untrusted_log_field(cmd_str, 512);
+            let injection_flag = inj1 || inj2;
             let state_text = format!(
-                "Process: {} | CmdLine: {} | MITRE: {:?} | Confidence: {:.2} | Signed: {} | Invariants: Nominal",
-                proc_str, cmd_str, signature.mitre_technique, signature.confidence, signature.is_signed
+                "Process: {} | CmdLine: {} | MITRE: {:?} | Confidence: {:.2} | Signed: {} | InjectionDetected: {}",
+                san_proc, san_cmd, signature.mitre_technique, signature.confidence, signature.is_signed, injection_flag
             );
 
             match self.decision_engine.evaluate_security_incident(&state_text).await {
@@ -6917,7 +6949,8 @@ impl EdrOrchestrator {
                     );
 
                     // 1. Noise Suppression: Suppress benign false-positive noise before mesh broadcast or YARA generation
-                    if decision.verdict == "benign" && decision.verdict_probability >= 0.90 {
+                    // Reject suppression if prompt injection was detected
+                    if !injection_flag && decision.verdict == "benign" && decision.verdict_probability >= 0.90 {
                         info!(
                             "[DECISION] Benign verdict ({:.2}) from Clef decision model. Suppressing alert.",
                             decision.verdict_probability
@@ -7011,7 +7044,9 @@ impl EdrOrchestrator {
         {
             // True Zero-Trust Lockdown Mode: ALL MITRE ATT&CK / ATLAS techniques and threats above threshold
             // immediately execute Isolate (Process Tree Kill). Never allow decision_override to downgrade to Alert.
-            signature.require_approval = false;
+            if signature.detector_count >= 2 || is_catalog_attack || signature.cve_id.is_some() {
+                signature.require_approval = false;
+            }
             ResponseAction::Isolate
         } else if (is_destructive || is_catalog_attack) && autonomy.auto_quarantine_malware {
             // Active Enforcement Mode on MITRE catalog or destructive attack:
@@ -7052,6 +7087,22 @@ impl EdrOrchestrator {
             );
             ResponseAction::Alert
         };
+
+        // Corroboration Gate: Cap uncorroborated single-detector destructive actions
+        if effective_action == ResponseAction::Isolate
+            && signature.detector_count < 2
+            && !is_catalog_attack
+            && signature.cve_id.is_none()
+            && !is_destructive
+        {
+            if autonomy.action_confidence_threshold > 0.40 {
+                info!(
+                    "Corroboration Gate: Single detector (count={}) without catalog or CVE corroboration. Requiring operator approval before Isolate.",
+                    signature.detector_count
+                );
+                signature.require_approval = true;
+            }
+        }
 
         // Platform-specific safety check: Validate Windows system files with SFC before isolation.
         #[cfg(target_os = "windows")]
@@ -7141,8 +7192,12 @@ impl EdrOrchestrator {
         signature.process_name = Some(p_name.clone());
         signature.hash_blake3 = Some(hash_val.clone());
         signature.recommended_action = effective_action;
-        if effective_action != ResponseAction::Alert {
+        if signature.require_approval {
+            signature.action_state = osoosi_types::ActionState::Pending;
+        } else if effective_action != ResponseAction::Alert {
             signature.action_state = osoosi_types::ActionState::Executed;
+        } else {
+            signature.action_state = osoosi_types::ActionState::Pending;
         }
 
         let _ = self.memory.log_threat(&signature);
@@ -8338,7 +8393,11 @@ impl EdrOrchestrator {
         // Nostr Relays
         let mesh_config = osoosi_types::load_mesh_listen_config();
         let nostr_relays = if mesh_config.nostr_relays.is_empty() {
-            vec!["wss://relay.damus.io".to_string(), "wss://nos.lol".to_string()]
+            if mesh_config.allow_public_relays {
+                vec!["wss://relay.damus.io".to_string(), "wss://nos.lol".to_string()]
+            } else {
+                Vec::new()
+            }
         } else {
             mesh_config.nostr_relays.clone()
         };
@@ -10479,18 +10538,23 @@ impl EdrOrchestrator {
         };
 
         let yara_str = if yara_matches.is_empty() { "none".to_string() } else { yara_matches };
+        let (san_file_path, inj1) = osoosi_types::sanitize_untrusted_log_field(&file_path_str, 256);
+        let (san_magika, inj2) = osoosi_types::sanitize_untrusted_log_field(&magika_label, 64);
+        let (san_yara, inj3) = osoosi_types::sanitize_untrusted_log_field(&yara_str, 256);
+        let inj_flag = inj1 || inj2 || inj3;
         let state_text = format!(
-            "Target: File | Path: {} | Magika: {} | ML Score: {:.2} | YARA: {} | IsSigned: {} | Invariants: Nominal",
-            file_path_str, magika_label, ml_score, yara_str, is_signed
+            "Target: File | Path: {} | Magika: {} | ML Score: {:.2} | YARA: {} | IsSigned: {} | InjectionDetected: {}",
+            san_file_path, san_magika, ml_score, san_yara, is_signed, inj_flag
         );
 
         let autonomy = osoosi_types::load_autonomy_config();
         let (verdict, confidence, action, summary) = if decision_engine.is_enabled() {
             match decision_engine.evaluate_security_incident(&state_text).await {
                 Ok(decision) => {
-                    let is_mal = decision.verdict == "malicious"
+                    let is_mal = !is_signed && (inj_flag
+                        || decision.verdict == "malicious"
                         || decision.containment_action == "isolate"
-                        || decision.containment_action == "quarantine";
+                        || decision.containment_action == "quarantine");
                     let v = if is_mal { "malicious".to_string() } else { "benign".to_string() };
                     let conf = decision.verdict_probability as f32;
                     let act = if is_mal {

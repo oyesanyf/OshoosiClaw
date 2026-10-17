@@ -64,12 +64,28 @@ pub struct BehavioralAnalyzer {
 
 impl BehavioralAnalyzer {
     pub fn new() -> Self {
-        let api_key = std::env::var("OPENAI_API_KEY")
-            .or_else(|_| std::env::var("OSOOSI_OPENAI_API_KEY"))
-            .unwrap_or_default();
-        let api_base = std::env::var("OSOOSI_OPENAI_API_BASE")
-            .unwrap_or_else(|_| "https://api.openai.com/v1".to_string());
-        let model = std::env::var("OSOOSI_OPENAI_MODEL").unwrap_or_else(|_| "gpt-4o".to_string());
+        let remote_llm_enabled = std::env::var("OSOOSI_ENABLE_REMOTE_LLM")
+            .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+            .unwrap_or(false);
+        let api_key = if remote_llm_enabled {
+            std::env::var("OPENAI_API_KEY")
+                .or_else(|_| std::env::var("OSOOSI_OPENAI_API_KEY"))
+                .or_else(|_| std::env::var("OSOOSI_LLM_API_KEY"))
+                .unwrap_or_default()
+        } else {
+            String::new()
+        };
+        let api_base = std::env::var("OSOOSI_LLM_API_BASE")
+            .or_else(|_| std::env::var("OSOOSI_OPENAI_API_BASE"))
+            .unwrap_or_else(|_| "http://127.0.0.1:11434/v1".to_string());
+        let default_fallback = osoosi_types::load_ai_config()
+            .fallback_models
+            .first()
+            .cloned()
+            .unwrap_or_else(|| "qwen2.5:1.5b".to_string());
+        let model = std::env::var("OSOOSI_LLM_MODEL")
+            .or_else(|_| std::env::var("OSOOSI_OPENAI_MODEL"))
+            .unwrap_or(default_fallback);
 
         let reasoning = ReasoningEngine::new();
         let smollm = Arc::new(tokio::sync::RwLock::new(None));
@@ -363,15 +379,18 @@ impl BehavioralAnalyzer {
     fn format_events_for_llm(&self, events: &[LogEvent]) -> String {
         let mut out = String::from("<security_event_data>\n");
         for ev in events.iter().take(100) {
-            let msg = ev
+            let raw_msg = ev
                 .data
                 .get("Message")
                 .and_then(|m| m.as_str())
                 .map(|s| s.to_string())
                 .unwrap_or_else(|| crate::sentence::event_to_behavioral_sentence(ev));
+            let (safe_computer, _) = osoosi_types::sanitize_untrusted_log_field(&ev.computer, 128);
+            let (safe_source, _) = osoosi_types::sanitize_untrusted_log_field(&ev.source, 128);
+            let (safe_msg, _) = osoosi_types::sanitize_untrusted_log_field(&raw_msg, 1024);
             out.push_str(&format!(
                 "[{}] {} (Source: {}, EventID: {}): {}\n",
-                ev.timestamp, ev.computer, ev.source, ev.event_id, msg
+                ev.timestamp, safe_computer, safe_source, ev.event_id, safe_msg
             ));
         }
         out.push_str("</security_event_data>");

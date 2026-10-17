@@ -79,11 +79,24 @@ jobs:
       - name: Build release (static musl)
         run: cross build --release --target x86_64-unknown-linux-musl
 
+      - name: Package Linux x64 artifacts (.deb, .tar.gz)
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ]; then VERSION="1.2.0"; fi
+          bash packaging/linux/build_packages.sh target/x86_64-unknown-linux-musl/release/osoosi "${VERSION}" amd64 dist-linux-x64
+
       - name: Upload artifact
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: osoosi-linux-x64-musl
           path: target/x86_64-unknown-linux-musl/release/osoosi
+          if-no-files-found: error
+
+      - name: Upload Linux x64 packages
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: osoosi-linux-x64-packages
+          path: dist-linux-x64/*
           if-no-files-found: error
 
   # ── Linux ARM64 musl (Raspberry Pi, AWS Graviton, cloud ARM) ────────────────
@@ -116,11 +129,24 @@ jobs:
       - name: Build release (static ARM64 musl)
         run: cross build --release --target aarch64-unknown-linux-musl
 
+      - name: Package Linux ARM64 artifacts (.deb, .tar.gz)
+        run: |
+          VERSION="${GITHUB_REF_NAME#v}"
+          if [ -z "$VERSION" ]; then VERSION="1.2.0"; fi
+          bash packaging/linux/build_packages.sh target/aarch64-unknown-linux-musl/release/osoosi "${VERSION}" arm64 dist-linux-arm64
+
       - name: Upload artifact
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: osoosi-linux-arm64-musl
           path: target/aarch64-unknown-linux-musl/release/osoosi
+          if-no-files-found: error
+
+      - name: Upload Linux ARM64 packages
+        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
+        with:
+          name: osoosi-linux-arm64-packages
+          path: dist-linux-arm64/*
           if-no-files-found: error
 
   # ── macOS Intel ──────────────────────────────────────────────────────────────
@@ -187,17 +213,22 @@ jobs:
           path: target/aarch64-apple-darwin/release/osoosi
           if-no-files-found: error
 
-  # ── SLSA Provenance Attestation ──────────────────────────────────────────────
+  # ── SLSA Provenance Attestation & GitHub Release ─────────────────────────────
   release:
-    name: Generate SLSA Build Provenance
+    name: Generate SLSA Build Provenance & GitHub Release
     if: startsWith(github.ref, 'refs/tags/')
     needs: [build-windows, build-linux-x64, build-linux-arm64, build-macos-intel, build-macos-arm]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
       attestations: write
-      contents: read
+      contents: write
     steps:
+      - name: Checkout repository
+        uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
+        with:
+          persist-credentials: false
+
       - name: Download all artifacts
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.1.8
         with:
@@ -207,6 +238,21 @@ jobs:
         uses: actions/attest-build-provenance@e8998f949152b193b063cb0ec769d69d929409be # v2.2.3
         with:
           subject-path: 'dist/**/osoosi*'
+
+      - name: Stage Release Assets
+        run: |
+          mkdir -p release_assets
+          find dist/ -type f \( -name "*.deb" -o -name "*.tar.gz" -o -name "*.rpm" -o -name "*.exe" -o -name "osoosi" \) -exec cp {} release_assets/ \;
+          cp packaging/linux/osoosi-edr.service release_assets/
+          if [ -f PUBLIC_KEY.asc ]; then cp PUBLIC_KEY.asc release_assets/; fi
+          ls -la release_assets/
+
+      - name: Attach Assets to GitHub Release
+        uses: softprops/action-gh-release@c062e08bd532815e2082a85e87e3ef29c3e6d191 # v2.0.8
+        with:
+          files: release_assets/*
+          draft: false
+          prerelease: false
 
   # ── Container Packaging to GHCR ──────────────────────────────────────────────
   package-container:

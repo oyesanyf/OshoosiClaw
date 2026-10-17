@@ -31,7 +31,7 @@ auto_quarantine_malware = false
 # Minimum confidence (0.0–1.0) to quarantine
 quarantine_confidence_threshold = 0.95
 # Minimum confidence for active response (Tarpit, Deception)
-action_confidence_threshold = 0.80
+action_confidence_threshold = 0.90
 # Try to replace compromised binaries with clean versions
 auto_replace_malware_binaries = false
 # Quarantine directory
@@ -53,16 +53,16 @@ db_path = "./database/osoosi.db"
 # listen_addr = "/ip4/0.0.0.0/tcp/9000"
 # Static bootstrap peers (PeerId@Multiaddr)
 peers = []
-# Canonical DuckDNS domain for zero-touch cross-network WAN auto-peering
-duckdns_domain = "oshoosi"
-auto_bootstrap_duckdns = true
+# Canonical DuckDNS domain for zero-touch cross-network WAN auto-peering (disabled by default)
+duckdns_domain = ""
+auto_bootstrap_duckdns = false
 duckdns_port = 4001
-# Nostr Relays for decentralized threat intelligence sharing (BitChat style)
+# Nostr Relays for decentralized threat intelligence sharing (disabled by default)
 # Set to custom active relays if available, e.g. ["wss://relay.damus.io"]
-nostr_relays = ["wss://relay.damus.io", "wss://nos.lol"]
+nostr_relays = []
 # Security: If true, allows fallback to public Nostr relays if private ones are offline.
 # WARNING: This may leak encrypted telemetry metadata to public servers.
-allow_public_relays = true
+allow_public_relays = false
 
 [backup]
 # Enable backup on agent start
@@ -185,7 +185,7 @@ strands_endpoint = "http://127.0.0.1:4003"
 strands_model = "StrandsAgents/strands-decider-2B-hobson-v19"
 strands_timeout_ms = 800
 fallback_to_local = true
-min_action_confidence = 0.80
+min_action_confidence = 0.90
 auto_escalate_to_cortex = true
 # Path to local weights / calibration tables (operates 100% self-hosted / air-gapped)
 model_dir = "models/clef"

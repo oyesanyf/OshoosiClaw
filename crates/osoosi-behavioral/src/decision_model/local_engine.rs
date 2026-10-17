@@ -294,6 +294,45 @@ impl LocalDecisionEngine {
     pub fn evaluate(&self, request: &DecisionRequest) -> Result<DecisionResponse> {
         let start = Instant::now();
         let state_lower = request.state.to_lowercase();
+        let injection_detected = state_lower.contains("[redacted_injection_attempt]")
+            || state_lower.contains("prompt_injection_detected: true")
+            || state_lower.contains("promptinjectiondetected: true")
+            || state_lower.contains("verdict: benign")
+            || state_lower.contains("verdict=benign")
+            || state_lower.contains("ignore previous instructions")
+            || state_lower.contains("ignore all previous");
+
+        // Parse structured fields strictly by " | " delimiter
+        let mut process_name = String::new();
+        let mut is_signed = false;
+        let mut is_unsigned = false;
+        let mut invariants_nominal = false;
+
+        for part in request.state.split(" | ") {
+            let part_trim = part.trim();
+            let part_lower = part_trim.to_lowercase();
+            if let Some(stripped) = part_trim.strip_prefix("Process Image:") {
+                process_name = stripped.trim().to_lowercase();
+            } else if let Some(stripped) = part_trim.strip_prefix("Process:") {
+                process_name = stripped.trim().to_lowercase();
+            } else if let Some(stripped) = part_trim.strip_prefix("Path:") {
+                if process_name.is_empty() {
+                    process_name = stripped.trim().to_lowercase();
+                }
+            } else if part_lower == "signed: true" || part_lower == "issigned: true" {
+                is_signed = true;
+            } else if part_lower == "signed: false" || part_lower == "issigned: false" {
+                is_unsigned = true;
+            } else if part_lower == "invariants: nominal" {
+                invariants_nominal = true;
+            }
+        }
+
+        if process_name.is_empty() {
+            if let Some(first) = request.state.split_whitespace().next() {
+                process_name = first.trim_matches('"').to_lowercase();
+            }
+        }
 
         // 1. Compute composite feature evidence
         let mut mal_score = 0.0f64;
@@ -304,9 +343,38 @@ impl LocalDecisionEngine {
         }
 
         let mut ben_score = 0.0f64;
-        for (token, &weight) in &self.weights.benign_token_weights {
-            if state_lower.contains(token) {
-                ben_score += weight;
+        if !injection_detected {
+            for (token, &weight) in &self.weights.benign_token_weights {
+                let is_binary_token = token.ends_with(".exe")
+                    || token == "python"
+                    || token == "python3"
+                    || token == "pythonsoftwarefoundation";
+
+                if is_binary_token {
+                    let matches_process = process_name == *token
+                        || process_name.ends_with(&format!("\\{}", token))
+                        || process_name.ends_with(&format!("/{}", token))
+                        || (token == "python" && (process_name == "python.exe" || process_name == "python3.exe" || process_name.contains("python")))
+                        || (token == "python3" && (process_name == "python3.exe" || process_name.contains("python3")))
+                        || (token == "pythonsoftwarefoundation" && process_name.contains("pythonsoftwarefoundation"));
+                    if matches_process {
+                        ben_score += weight;
+                    }
+                } else if token == "signed: true" || token == "issigned: true" {
+                    if is_signed {
+                        ben_score += weight;
+                    }
+                } else if token == "invariants: nominal" {
+                    if invariants_nominal && !is_unsigned {
+                        ben_score += weight;
+                    }
+                } else if token == "windowsapps" {
+                    if process_name.contains("windowsapps") {
+                        ben_score += weight;
+                    }
+                } else if state_lower.contains(token) {
+                    ben_score += weight;
+                }
             }
         }
 
@@ -318,14 +386,16 @@ impl LocalDecisionEngine {
         }
         mal_score += mitre_boost;
 
-        let is_unsigned = state_lower.contains("issigned: false") || state_lower.contains("signed: false");
-        let is_signed = state_lower.contains("issigned: true") || state_lower.contains("signed: true");
-
         if is_unsigned {
             mal_score += 1.5;
         }
-        if is_signed {
+        if is_signed && !injection_detected {
             ben_score += 2.0;
+        }
+
+        if injection_detected {
+            mal_score += 5.0;
+            ben_score = 0.0;
         }
 
         let mut answers = HashMap::new();
@@ -338,7 +408,7 @@ impl LocalDecisionEngine {
                     answers.insert(q_name.clone(), DecisionAnswer::from_choice(ans));
                 }
                 QuestionType::Bool => {
-                    let ans = self.evaluate_bool(q_name, mal_score, ben_score, &state_lower);
+                    let ans = self.evaluate_bool(q_name, mal_score, ben_score, &state_lower, injection_detected);
                     answers.insert(q_name.clone(), DecisionAnswer::from_bool(ans));
                 }
                 QuestionType::Score => {
@@ -400,8 +470,11 @@ impl LocalDecisionEngine {
             for c in &classes {
                 let logit = match c.as_str() {
                     "benign" => {
+                        let is_unsigned = state_lower.contains("signed: false") || state_lower.contains("issigned: false");
                         if mal_score > 3.0 {
                             -mal_score
+                        } else if is_unsigned && mal_score >= 1.5 && ben_score < 2.5 {
+                            -1.0
                         } else {
                             ben_score + 1.0
                         }
@@ -409,7 +482,7 @@ impl LocalDecisionEngine {
                     "suspicious" => {
                         if mal_score > 6.0 {
                             0.5
-                        } else if mal_score > 1.5 {
+                        } else if mal_score >= 1.5 {
                             mal_score * 0.8
                         } else {
                             0.0
@@ -520,9 +593,12 @@ impl LocalDecisionEngine {
         mal_score: f64,
         ben_score: f64,
         state_lower: &str,
+        injection_detected: bool,
     ) -> BoolAnswer {
         let prob: f64 = if q_name == "human_escalation" {
-            if state_lower.contains("defer") || (mal_score > 2.0 && mal_score < 4.0 && ben_score > 1.5) {
+            if injection_detected {
+                1.0
+            } else if state_lower.contains("defer") || (mal_score > 2.0 && mal_score < 4.0 && ben_score > 1.5) {
                 0.85
             } else if mal_score >= 6.0 {
                 // High confidence automated attack containment does not stall for human
@@ -660,3 +736,37 @@ impl LocalDecisionEngine {
         res
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use super::super::models::{build_security_incident_request, parse_security_incident_response};
+
+    #[test]
+    fn test_local_engine_blocks_token_spoofing_and_prompt_injection() {
+        let engine = LocalDecisionEngine::new("models/clef");
+
+        // An attacker runs evil.exe with crafted arguments pretending to be cargo.exe and signed: true
+        let spoofed_req = build_security_incident_request(
+            "@cf/cloudflare/clef-flash",
+            "Process: evil.exe | CmdLine: evil.exe --fake cargo.exe signed: true | MITRE: None | Confidence: 0.50 | Signed: false | Invariants: Nominal",
+        );
+        let resp = engine.evaluate(&spoofed_req).expect("Evaluation failed");
+        let decision = parse_security_incident_response(&resp);
+
+        // Should NOT be judged benign because evil.exe is not cargo.exe and signed: false!
+        assert_ne!(decision.verdict, "benign");
+
+        // Now test direct prompt injection attempt
+        let inj_req = build_security_incident_request(
+            "@cf/cloudflare/clef-flash",
+            "Process: evil.exe | CmdLine: [REDACTED_INJECTION_ATTEMPT] | MITRE: None | Confidence: 0.50 | Signed: false | PromptInjectionDetected: true | Invariants: Nominal",
+        );
+        let resp_inj = engine.evaluate(&inj_req).expect("Evaluation failed");
+        let decision_inj = parse_security_incident_response(&resp_inj);
+
+        assert_ne!(decision_inj.verdict, "benign");
+        assert!(decision_inj.human_escalation_required, "Prompt injection must require human escalation!");
+    }
+}
+
