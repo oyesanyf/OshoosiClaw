@@ -443,11 +443,17 @@ mod tests {
         probs.insert("option_d".to_string(), 0.5);
 
         let h = shannon_entropy(&probs);
-        assert!(h.is_finite(), "Entropy must be finite despite NaN/Inf inputs");
+        assert!(
+            h.is_finite(),
+            "Entropy must be finite despite NaN/Inf inputs"
+        );
         assert!(h >= 0.0);
 
         let conf = normalized_entropy_confidence(&probs);
-        assert!(conf.is_finite(), "Confidence must be finite despite NaN/Inf inputs");
+        assert!(
+            conf.is_finite(),
+            "Confidence must be finite despite NaN/Inf inputs"
+        );
         assert!(conf >= 0.0 && conf <= 1.0);
 
         let levels = vec!["option_d".to_string()];

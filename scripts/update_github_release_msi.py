@@ -413,13 +413,42 @@ def main():
         "Accept": "application/vnd.github+json",
     }
 
-    # Fetch latest release
-    req = urllib.request.Request(
-        f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/latest",
-        headers=headers
-    )
-    rel = json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
-    tag = rel.get("tag_name", "v1.2.0")
+    # Fetch release or create if not present
+    tag = "v1.2.0"
+    try:
+        req = urllib.request.Request(
+            f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases/tags/{tag}",
+            headers=headers
+        )
+        rel = json.loads(urllib.request.urlopen(req, timeout=30).read().decode())
+    except urllib.error.HTTPError as e:
+        if e.code == 404:
+            print(f"[*] Release {tag} not found. Creating release {tag} on GitHub...")
+            create_payload = json.dumps({
+                "tag_name": tag,
+                "target_commitish": "main",
+                "name": f"OpenOsoosi {tag} Release",
+                "body": (
+                    f"OpenOsoosi EDR {tag} Release\n\n"
+                    "- Cross-platform Windows Authenticode-signed MSI installer\n"
+                    "- Native Linux Debian (.deb), RPM (.rpm), portable tarball (.tar.gz), and standalone eBPF-integrated binary\n"
+                    "- Full Dead Simple Signing Envelope (DSSE) in-toto / SLSA provenance and GPG signatures"
+                ),
+                "draft": False,
+                "prerelease": False,
+                "make_latest": "true",
+            }).encode("utf-8")
+            create_req = urllib.request.Request(
+                f"https://api.github.com/repos/{REPO_OWNER}/{REPO_NAME}/releases",
+                data=create_payload,
+                headers={**headers, "Content-Type": "application/json"},
+                method="POST"
+            )
+            rel = json.loads(urllib.request.urlopen(create_req, timeout=30).read().decode())
+            print(f"[+] Created GitHub Release {tag} (ID: {rel.get('id')})")
+        else:
+            raise
+
     ver = tag.lstrip("v")
     upload_url_base = rel["upload_url"].split("{")[0]
 

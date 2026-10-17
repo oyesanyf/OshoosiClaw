@@ -8086,9 +8086,9 @@ pub async fn post_siquery_protection_sweep(
 pub async fn handle_audit_merkle_hierarchy() -> impl IntoResponse {
     let registry = osoosi_audit::global_hierarchical_merkle();
     let anchors = registry.get_recent_anchors(100);
-    let latest = registry.get_latest_anchor().unwrap_or_else(|| {
-        registry.force_rollup_anchor("bootstrap_anchor")
-    });
+    let latest = registry
+        .get_latest_anchor()
+        .unwrap_or_else(|| registry.force_rollup_anchor("bootstrap_anchor"));
 
     let count = anchors.len();
     let current_heads = json!({
@@ -10346,15 +10346,16 @@ mod tests {
             .unwrap();
         let json_val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json_val["status"], "ok");
-        assert_eq!(json_val["total"], 100);
+        assert_eq!(json_val["total"], 101);
         let tables = json_val["tables"]
             .as_array()
             .expect("tables must be an array");
-        assert_eq!(tables.len(), 100);
+        assert_eq!(tables.len(), 101);
         assert!(tables.iter().any(|t| t == "processes"));
         assert!(tables.iter().any(|t| t == "wmi_os_version"));
         assert!(tables.iter().any(|t| t == "spider_web_threads"));
         assert!(tables.iter().any(|t| t == "business_policy_violations"));
+        assert!(tables.iter().any(|t| t == "hierarchical_merkle_anchors"));
 
         // 2. POST /api/siquery/query (JSON format)
         let query_payload = serde_json::json!({

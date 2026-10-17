@@ -72,6 +72,31 @@ struct trace_event_raw_sys_enter_connect {
     unsigned long int addrlen;
 };
 
+// Linux syscall sys_enter_mprotect context definition
+struct trace_event_raw_sys_enter_mprotect {
+    unsigned short common_type;
+    unsigned char common_flags;
+    unsigned char common_preempt_count;
+    int common_pid;
+    long int id;
+    unsigned long int start;
+    unsigned long int len;
+    unsigned long int prot;
+};
+
+// Linux syscall sys_enter_ptrace context definition
+struct trace_event_raw_sys_enter_ptrace {
+    unsigned short common_type;
+    unsigned char common_flags;
+    unsigned char common_preempt_count;
+    int common_pid;
+    long int id;
+    long int request;
+    long int pid;
+    unsigned long int addr;
+    unsigned long int data;
+};
+
 // Linux CO-RE Task and MM Definitions
 struct mm_struct {
     unsigned long arg_start;
@@ -267,5 +292,68 @@ int BPF_PROG(osoosi_bprm_check, struct linux_binprm *bprm) {
         return -EPERM;
     }
 
+    return 0;
+}
+
+// Hook 5: Linux mprotect W^X Violation Syscall Tracepoint
+SEC("tp/syscalls/sys_enter_mprotect")
+int handle_mprotect(struct trace_event_raw_sys_enter_mprotect *ctx) {
+    // Check W^X violation: PROT_WRITE (0x2) and PROT_EXEC (0x4)
+    if ((ctx->prot & 0x6) != 0x6) {
+        return 0;
+    }
+
+    struct ebpf_process_event *event = bpf_ringbuf_reserve(&process_ring, sizeof(*event), 0);
+    if (!event) {
+        return 0;
+    }
+
+    uint64_t pid_tgid = bpf_get_current_pid_tgid();
+    uint64_t uid_gid = bpf_get_current_uid_gid();
+
+    event->pid = (uint32_t)(pid_tgid >> 32);
+    event->uid = (uint32_t)uid_gid;
+    event->gid = (uint32_t)(uid_gid >> 32);
+    event->timestamp_ns = bpf_ktime_get_ns();
+    event->event_type = OSOOSI_EBPF_EVENT_MPROTECT_WX;
+    event->_pad = 0;
+
+    bpf_get_current_comm(&event->comm, sizeof(event->comm));
+    event->filename[0] = '\0';
+    fill_task_lineage_and_args(event);
+
+    bpf_ringbuf_submit(event, 0);
+    return 0;
+}
+
+// Hook 6: Linux ptrace Injection & Tampering Tracepoint
+SEC("tp/syscalls/sys_enter_ptrace")
+int handle_ptrace(struct trace_event_raw_sys_enter_ptrace *ctx) {
+    long req = ctx->request;
+    // 4=POKETEXT, 5=POKEDATA, 13=SETREGS, 16=ATTACH, 0x4206=SEIZE
+    if (req != 4 && req != 5 && req != 13 && req != 16 && req != 0x4206) {
+        return 0;
+    }
+
+    struct ebpf_process_event *event = bpf_ringbuf_reserve(&process_ring, sizeof(*event), 0);
+    if (!event) {
+        return 0;
+    }
+
+    uint64_t pid_tgid = bpf_get_current_pid_tgid();
+    uint64_t uid_gid = bpf_get_current_uid_gid();
+
+    event->pid = (uint32_t)(pid_tgid >> 32);
+    event->uid = (uint32_t)uid_gid;
+    event->gid = (uint32_t)(uid_gid >> 32);
+    event->timestamp_ns = bpf_ktime_get_ns();
+    event->event_type = OSOOSI_EBPF_EVENT_PTRACE_TAMPER;
+    event->_pad = 0;
+
+    bpf_get_current_comm(&event->comm, sizeof(event->comm));
+    event->filename[0] = '\0';
+    fill_task_lineage_and_args(event);
+
+    bpf_ringbuf_submit(event, 0);
     return 0;
 }

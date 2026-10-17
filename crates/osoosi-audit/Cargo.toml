@@ -22,3 +22,6 @@ rand = { workspace = true }
 [target.'cfg(windows)'.dependencies]
 windows = { workspace = true }
 wmi = "0.13"
+
+[target.'cfg(unix)'.dependencies]
+libc = { workspace = true }

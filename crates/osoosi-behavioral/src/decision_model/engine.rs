@@ -486,7 +486,8 @@ impl ClefDecisionEngine {
         let (cf_opt, openjev_opt, strands_opt) = tokio::join!(cf_fut, openjev_fut, strands_fut);
 
         // Fallback to local engines if endpoints not configured/offline
-        let resp_openjev = openjev_opt.unwrap_or_else(|| OpenJevClient::local_systemone_readout(request));
+        let resp_openjev =
+            openjev_opt.unwrap_or_else(|| OpenJevClient::local_systemone_readout(request));
         let resp_strands =
             strands_opt.unwrap_or_else(|| StrandsClient::local_calibrated_estimation(request));
 
@@ -603,12 +604,17 @@ impl ClefDecisionEngine {
             |act: &str| matches!(act, "isolate" | "quarantine" | "tarpit" | "ghost_tarpit");
         let openjev_contains = is_containment(&dec_openjev.containment_action);
         let strands_contains = is_containment(&dec_strands.containment_action);
-        let cf_contains = dec_cf.as_ref().map(|d| is_containment(&d.containment_action));
+        let cf_contains = dec_cf
+            .as_ref()
+            .map(|d| is_containment(&d.containment_action));
 
         let mut disagreement = false;
         let mut human_escalation = dec_openjev.human_escalation_required
             || dec_strands.human_escalation_required
-            || dec_cf.as_ref().map(|d| d.human_escalation_required).unwrap_or(false);
+            || dec_cf
+                .as_ref()
+                .map(|d| d.human_escalation_required)
+                .unwrap_or(false);
 
         // Disagreement detection: e.g. OpenJev says isolate while Strands says allow
         if openjev_contains != strands_contains

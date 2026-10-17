@@ -237,13 +237,8 @@ impl AgentContainmentRing {
 
         // Record arm fracture proof and Ring 0 transition
         let ring_merkle = osoosi_audit::global_hierarchical_merkle();
-        let fracture_proof = ring_merkle.record_arm_fracture(
-            agent_id,
-            old_epoch,
-            new_epoch,
-            reason,
-            None,
-        );
+        let fracture_proof =
+            ring_merkle.record_arm_fracture(agent_id, old_epoch, new_epoch, reason, None);
         ring_merkle.record_ring_transition(
             osoosi_audit::ContainmentRingId::Ring0Kernel,
             agent_id,
@@ -261,8 +256,9 @@ impl AgentContainmentRing {
                 {
                     let system_root =
                         std::env::var("SystemRoot").unwrap_or_else(|_| "C:\\Windows".to_string());
-                    let taskkill_path =
-                        std::path::Path::new(&system_root).join("System32").join("taskkill.exe");
+                    let taskkill_path = std::path::Path::new(&system_root)
+                        .join("System32")
+                        .join("taskkill.exe");
                     let mut cmd = if taskkill_path.exists() {
                         std::process::Command::new(taskkill_path)
                     } else {
