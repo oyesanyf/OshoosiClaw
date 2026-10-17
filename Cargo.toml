@@ -74,7 +74,7 @@ regex = "1"
 walkdir = "2"
 socket2 = "0.5"
 blake3 = "1.5"
-notify = "6"
+notify = "8"
 libp2p = "0.57"
 futures = "0.3"
 quick-xml = { version = "0.28.2", features = ["serialize"] }
