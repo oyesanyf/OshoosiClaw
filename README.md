@@ -19,15 +19,16 @@
 
 <p align="center">
   <a href="#-quick-start">Quick Start</a> •
-  <a href="#-siquery-rs-98-table-engine">Siquery-RS 98-Table Engine</a> •
+  <a href="#-siquery-rs-101-table-engine">Siquery-RS 101-Table Engine</a> •
+  <a href="#-hierarchical-merkle-hash-chains--nsrl--aslr-merkle-protection">Hierarchical & NSRL/ASLR Merkle</a> •
   <a href="#-spider-web-continuum-mechanics--exposure-bounded-containment">Spider-Web Continuum Mechanics</a> •
   <a href="#-agentoctopus-multi-ring-containment">AgentOctopus Multi-Ring Containment</a> •
-  <a href="#-native-windows-service-lifecycle-osoosiedr">Windows Service (OsoosiEDR)</a> •
+  <a href="#-native-windows-service-lifecycle-osoosiedr">Windows & Linux Service (`OsoosiEDR`)</a> •
   <a href="#-ring-0-windows-driver--linux-ebpf-parity">Ring-0 Driver & eBPF</a> •
   <a href="#-agent-anomaly-detection-owasp-top-10-agentic-2026--embeddinggemma-2-mrl">Agent Anomaly & EmbeddingGemma 2</a> •
   <a href="#-autonomous-defense-swarm--langgraph">LangGraph Swarm</a> •
-  <a href="#-hybrid-decision-engine--strands-decider-2b--clef-flash">Hybrid Decision Engine</a> •
-  <a href="#-embedded-velociraptor-forensic-extraction-service">Velociraptor Forensics</a> •
+  <a href="#-hybrid-decision-engine--strands-decider-2b--clef-flash">Hybrid Decision & OpenJev</a> •
+  <a href="#-embedded-velociraptor-forensic-extraction-service">Velociraptor & Linux VAD Forensics</a> •
   <a href="#-dns-telemetry-setup">DNS & Sysmon Setup</a> •
   <a href="#-two-host-mesh-consensus">Two-Host BFT Mesh</a> •
   <a href="#-rl-adaptive-controller">6-Pillar RL Controller</a> •
@@ -123,22 +124,19 @@ The Windows Ring-0 driver (`osoosi_driver.sys`) is a high-performance native ker
 
 ---
 
-### Linux eBPF Parity (`ebpf/`)
+### Linux CO-RE eBPF Parity (`ebpf/` & `crates/osoosi-telemetry/src/linux_ebpf.rs`)
 
-On Linux endpoints, OpenỌ̀ṣọ́ọ̀sì achieves parity with Ring-0 Windows enforcement through modern **eBPF Ring Buffers** and the **BPF Linux Security Module (LSM)**:
+On Linux endpoints (`x86_64-unknown-linux-gnu`), OpenỌ̀ṣọ́ọ̀sì achieves full parity with Ring-0 Windows enforcement through modern **CO-RE eBPF Ring Buffers**, **BPF Linux Security Module (LSM)** hooks, **Linux `fs-verity`**, and **ELF64 PIE ASLR / `/proc/<pid>/maps` VAD forensics**:
 
-- **LSM Hook (`osoosi_bprm_check`)**: Attaches directly to the Linux kernel's `lsm/bprm_check_security` interface. When `execve()` or `execveat()` is called, the kernel passes `struct linux_binprm *bprm`. The probe queries the in-kernel `blocked_paths` BPF hash map (`BPF_MAP_TYPE_HASH`). If a match occurs, the LSM hook immediately returns `-EACCES` (`-EPERM`), terminating execution before binary pages are mapped into memory.
-- **Zero-Drop Ring Buffer Telemetry**: High-throughput `BPF_MAP_TYPE_RINGBUF` maps (`process_ring`, `network_ring`) stream sub-millisecond telemetry directly into user space:
-  - `sched_process_exec`: Process creation (PID, PPID, UID, GID, comm, executable path, timestamp).
-  - `sched_process_exit`: Process termination and exit status.
-  - `sys_enter_connect` / `inet_sock_set_state`: Outbound network socket initiation (AF_INET, AF_INET6, destination IP, port).
-- **Aya Rust Integration & Multi-Path Discovery**: The user-space orchestrator (`crates/osoosi-telemetry/src/linux_ebpf.rs`) loads and attaches bytecode dynamically using the pure-Rust Aya eBPF library. Multi-path candidate discovery checks:
-  1. `$env:OSOOSI_EBPF_OBJECT` (Custom override)
-  2. `osoosi-ebpf.o` (Working directory)
-  3. `ebpf/bin/osoosi-ebpf.o` (Development tree)
-  4. `/usr/lib/osoosi/osoosi-ebpf.o` (FHS package directory)
-  5. `/etc/osoosi/osoosi-ebpf.o` (System configuration directory)
-  If eBPF facilities or BTF are unavailable, error propagation is completely panic-free, gracefully degrading to user-mode telemetry.
+- **LSM Hook (`lsm/bprm_check_security` — `osoosi_bprm_check`)**: Attaches directly to the Linux kernel's `lsm/bprm_check_security` interface. When `execve()` or `execveat()` is called, the probe queries both the `blocked_paths` and `blocked_hashes` in-kernel BPF hash maps (`BPF_MAP_TYPE_HASH`). If a match occurs, the LSM hook immediately returns `-EACCES` (`-EPERM`), terminating execution before binary pages are mapped into memory.
+- **Zero-Drop Ring Buffer Telemetry (`BPF_MAP_TYPE_RINGBUF`)**: High-throughput `process_ring` and `network_ring` buffers stream sub-millisecond kernel telemetry directly into user space across 6 hooks:
+  - `tp/sched/sched_process_exec`: Process creation (PID, PPID, UID, GID, comm, executable path, timestamp).
+  - `tp/sched/sched_process_exit`: Process termination and exit status.
+  - `tp/syscalls/sys_enter_connect`: Outbound network socket initiation (`AF_INET`, `AF_INET6`, destination IP, port).
+  - `tp/syscalls/sys_enter_mprotect`: Runtime $W \oplus X$ memory violation interception (`OSOOSI_EBPF_EVENT_MPROTECT_WX` when `(prot & (PROT_WRITE | PROT_EXEC)) == (PROT_WRITE | PROT_EXEC)`).
+  - `tp/syscalls/sys_enter_ptrace`: Process hollowing and debugger code-injection interception (`OSOOSI_EBPF_EVENT_PTRACE_TAMPER` on `PTRACE_POKETEXT`, `PTRACE_POKEDATA`, `PTRACE_SETREGS`, `PTRACE_ATTACH`, `PTRACE_SEIZE`).
+  - `lsm/bprm_check_security`: Pre-execution binary block events (`OSOOSI_EBPF_EVENT_LSM_BLOCK`).
+- **Aya Rust Integration & Multi-Path Discovery**: The user-space orchestrator (`crates/osoosi-telemetry/src/linux_ebpf.rs`) loads and attaches bytecode dynamically using the pure-Rust Aya eBPF library across `$OSOOSI_EBPF_OBJECT`, `ebpf/osoosi_probe.bpf.o`, `/usr/lib/osoosi/osoosi-ebpf.o`, and `/etc/osoosi/osoosi-ebpf.o`. If eBPF facilities or BTF are unavailable, error propagation is completely panic-free, gracefully degrading to user-mode `auditd`/`/proc` telemetry.
 
 ---
 
@@ -240,37 +238,60 @@ OpenỌ̀ṣọ́ọ̀sì features enterprise-grade background execution via nat
    - The runtime multiplexes interactive console interrupts (`tokio::signal::ctrl_c()`) with Windows SCM stop notifications (`notify_service_stop()`) via `tokio::select!`.
    - Registration configures native SCM crash recovery (`reset= 86400`, `actions= restart/5000/restart/5000/restart/5000`): in the event of an unhandled host fault, Windows automatically restarts the EDR daemon after 5 seconds.
 
-### Windows Service Management Commands
+### Windows & Linux Service Management Commands (`OsoosiEDR` / `osoosi-edr.service`)
 
-| Management Action | OpenỌ̀ṣọ́ọ̀sì CLI | PowerShell Cmdlet | Native Win32 `sc.exe` | Description |
+| Management Action | OpenỌ̀ṣọ́ọ̀sì CLI (Windows & Linux) | Windows PowerShell / `sc.exe` | Linux `systemd` (`systemctl`) | Description |
 |:---|:---|:---|:---|:---|
-| **Install Service** | `.\osoosi.exe service install` | *N/A* | `sc.exe create OsoosiEDR binPath= "..." start= auto` | Registers `OsoosiEDR` (`OpenOsoosi Autonomous EDR Service`) with automatic startup and recovery. |
-| **Start Service** | `.\osoosi.exe service start` | `Start-Service OsoosiEDR` | `sc.exe start OsoosiEDR` | Signals SCM to transition service from `STOPPED` to `RUNNING`. |
-| **Stop Service** | `.\osoosi.exe service stop` | `Stop-Service OsoosiEDR` | `sc.exe stop OsoosiEDR` | Dispatches `SERVICE_CONTROL_STOP` and waits up to 15s for orderly shutdown. |
-| **Restart Service** | `.\osoosi.exe service restart` | `Restart-Service OsoosiEDR` | `sc.exe stop OsoosiEDR && sc.exe start OsoosiEDR` | Safely cycles the service daemon, reloading rules, configs, and models. |
-| **Query Status** | `.\osoosi.exe service status` | `Get-Service OsoosiEDR` | `sc.exe queryex OsoosiEDR` | Displays PID, current state (`RUNNING`, `STOPPED`), Win32 exit codes, and memory usage. |
-| **Delete / Remove** | `.\osoosi.exe service delete` | *N/A* | `sc.exe delete OsoosiEDR` | Stops the running daemon and unregisters the service definition from the registry. *(Aliases: `uninstall`, `remove`, `rm`)* |
-| **Run Dispatcher** | `.\osoosi.exe service run` | *N/A* | *Internal* | Internal SCM dispatcher entrypoint (launches orchestrator with `--no-browser`). |
+| **Install Service** | `osoosi service install` | `sc.exe create OsoosiEDR ...` | Installs `/usr/lib/systemd/system/osoosi-edr.service` + `systemctl enable --now osoosi-edr` | Registers automatic startup and crash recovery on both Windows SCM and Linux `systemd`. |
+| **Start Service** | `osoosi service start` | `Start-Service OsoosiEDR` | `systemctl start osoosi-edr.service` | Transitions service to `RUNNING` / `active (running)` (or detaches via `setsid()` when `systemd` is absent). |
+| **Stop Service** | `osoosi service stop` | `Stop-Service OsoosiEDR` | `systemctl stop osoosi-edr.service` | Dispatches graceful stop signal and flushes SQLite WAL. |
+| **Restart Service** | `osoosi service restart` | `Restart-Service OsoosiEDR` | `systemctl restart osoosi-edr.service` | Safely cycles the daemon, reloading rules, configs, and models. |
+| **Query Status** | `osoosi service status` | `Get-Service OsoosiEDR` | `systemctl status osoosi-edr.service` | Displays PID, current state, and memory usage. |
+| **Delete / Remove** | `osoosi service delete` | `sc.exe delete OsoosiEDR` | `systemctl disable --now osoosi-edr && rm /etc/systemd/system/osoosi-edr.service` | Stops the daemon and unregisters the service definition. |
 
 ```powershell
-# Complete Administrative Service Lifecycle Example (Elevated PowerShell)
+# Complete Administrative Service Lifecycle Example (Windows PowerShell or Linux Root Shell)
 
-# 1. Install OpenỌ̀ṣọ́ọ̀sì as an automatic Windows Service
-.\osoosi.exe service install
+# 1. Install OpenỌ̀ṣọ́ọ̀sì as an automatic Service (Windows SCM or Linux systemd)
+osoosi service install
 
 # 2. Start the service
-.\osoosi.exe service start
+osoosi service start
 
 # 3. Verify operational status and running PID
-.\osoosi.exe service status
-# Output: Service 'OsoosiEDR' is RUNNING (PID: 12480, State: Running, StartType: Automatic)
-
-# 4. Query live health through PowerShell
-Get-Service OsoosiEDR | Format-List Status, Name, DisplayName, StartType
-
-# 5. Stop the service cleanly
-.\osoosi.exe service stop
+osoosi service status
 ```
+
+---
+
+<a id="-hierarchical-merkle-hash-chains--nsrl--aslr-merkle-protection"></a>
+<a id="hierarchical-merkle-hash-chains--nsrl--aslr-merkle-protection"></a>
+## 🌳 Hierarchical (Two-Tier) BLAKE3 Merkle Hash Chains & NSRL / ASLR Merkle Protection (`crates/osoosi-audit`)
+
+OpenỌ̀ṣọ́ọ̀sì implements a lock-free **Two-Tier Hierarchical BLAKE3 Merkle Architecture** across every arm, tarpit, and containment ring alongside **NSRL Demand-Paged 4 KB Binary Merkle Proofs** and **ASLR-Invariant Process Code-Segment Merkle Verification**.
+
+### 1. Two-Tier Hierarchical Subsystem Merkle Chains (`crates/osoosi-audit/src/hierarchical.rs`)
+Rather than contending on a single global mutex for every microsecond telemetry event, each subsystem maintains its own domain-separated rolling BLAKE3 hash chain in memory and periodically anchors an Ed25519-signed interior rollup node into the global root `MerkleAuditTree` and hardware TPM PCRs:
+
+1. **Per-Arm Merkle Chain (`OSOOSI_ARM_MERKLE_V1` — Limb State & Epoch Integrity)**:
+   $$H_{\text{arm}}^{(n)} = \text{BLAKE3}\left(\text{Domain}_{\text{arm}} \parallel H_{\text{arm}}^{(n-1)} \parallel \text{arm\_id} \parallel \text{epoch} \parallel \text{role} \parallel \text{tool\_call\_hash} \parallel \text{hmac\_sig}\right)$$
+   Binds every inter-agent message and tool invocation in `containment_ring.rs` to the arm's monotonic generation epoch. When `sever_rogue_agent_branch` executes surgical autotomy (`epoch N -> N + 1`), an immutable `ArmFractureProof` is sealed and anchored into the global root tree.
+2. **Per-Tarpit Merkle Chain (`OSOOSI_TARPIT_MERKLE_V1` — Deception & Forensic Non-Repudiation)**:
+   $$H_{\text{tarpit}}^{(n)} = \text{BLAKE3}\left(\text{Domain}_{\text{tarpit}} \parallel H_{\text{tarpit}}^{(n-1)} \parallel \text{pid} \parallel \text{trap\_id} \parallel \text{payload\_hash} \parallel \text{timestamp\_ns}\right)$$
+   Appends at wire speed with zero global lock contention across `tarpit.rs` and `ghost_node.rs`, producing a tamper-evident forensic transcript of every synthetic delay, honeyport touch, and canary interaction.
+3. **Per-Ring Merkle Chain (`OSOOSI_RING_MERKLE_V1` — Cross-Ring Blinding Detection across Rings 0..3)**:
+   Records boundary transitions across **Ring 0 (Kernel/eBPF/WFP)**, **Ring 1 (Out-of-Process Sentinel)**, **Ring 2 (Neural Mesh/Dogwood Policy Gate)**, and **Ring 3 (Sandboxed Worker)**. `verify_cross_ring_continuity()` mathematically compares Ring 0 event counts ($N_0$) against Ring 2 policy evaluations ($N_2$) to detect asymmetric pipeline blinding in real time.
+4. **Tier-2 Ed25519-Signed Interior Rollup Node**:
+   $$H_{\text{interior}}^{(k)} = \text{BLAKE3}\left(\text{Domain}_{\text{rollup}} \parallel k \parallel H_{\text{arms\_fold}} \parallel H_{\text{tarpits\_fold}} \parallel H_{\text{rings\_fold}} \parallel \text{trigger}\right)$$
+   Exposed via Siquery table `hierarchical_merkle_anchors` and `GET /api/audit/merkle-hierarchy`.
+
+### 2. NSRL Demand-Paged 4 KB Allowlist Tree & ASLR-Invariant Process Verifier (`crates/osoosi-audit/src/nsrl_aslr_merkle.rs`)
+1. **NSRL Global Allowlist & 4 KB Demand-Paged Page-Cache Merkle Tree**:
+   - **Global Allowlist Proof ($O(\log N)$)**: Verifies that an approved binary profile (`file_blake3`, `page_merkle_root`, canonical path, and Windows Security Catalog / Authenticode or Linux `fs-verity` status) belongs to the trusted NIST NSRL root (`verify_nsrl_executable_proof`).
+   - **4 KB Demand-Paged Verification ($O(\log m)$)**: Divides each approved executable into 4,096-byte pages (`OSOOSI_NSRL_PAGE_4K_V1`) matching Linux `fs-verity` (`FS_IOC_GETFLAGS` `0x80086601` / `FS_IOC_MEASURE_VERITY` `0xC0046686`) so individual code pages are verified on page-in (`verify_demand_paged_block`), preventing dormant disk modification.
+2. **ASLR-Invariant Process Code-Segment Merkle Verifier**:
+   - **Relocation Normalization ($\Delta_k = \text{VA} - \text{RandomizedBase}$)**: Normalizes absolute relocated addresses across both Windows PE `.text` (`IMAGE_REL_BASED_DIR64`) and Linux ELF64 PIE/PIC `PT_LOAD` (`PF_X`) code segments so the 4 KB page Merkle root (`OSOOSI_ASLR_CODE_PAGE_V1`) remains **100% identical across any randomized ASLR base address** while immediately catching single-byte inline hooks (`0xCC` INT3, `0xE9` JMP) and process hollowing (`verify_aslr_code_segment_pages`).
+   - **Hardware $W \oplus X$ & CET Separation**: Anchors immutable `.text` code pages at process startup (`AslrProcessMerkleAnchor`) while excluding continuously mutating `[stack]` and `[heap]` allocations, enforcing hardware $W \oplus X$ (DEP/NX) and Control-flow Enforcement Technology (CET) shadow stacks (`GET /api/audit/nsrl-aslr-merkle`).
 
 ---
 
@@ -373,16 +394,19 @@ During multi-gigabyte model downloads from Hugging Face or Cloudflare R2, dual-s
 <a id="siquery-rs-41-table-engine"></a>
 <a id="-siquery-rs-98-table-engine"></a>
 <a id="siquery-rs-98-table-engine"></a>
-## 🔍 Native Rust `siquery-rs` 98-Table SQL Engine (`crates/osoosi-agent-anomaly/src/siquery.rs`)
+<a id="-siquery-rs-101-table-engine"></a>
+<a id="siquery-rs-101-table-engine"></a>
+## 🔍 Native Rust `siquery-rs` 101-Table SQL Engine (`crates/osoosi-agent-anomaly/src/siquery.rs`)
 
-OpenỌ̀ṣọ́ọ̀sì embeds a 100% native Rust, in-process relational SQL telemetry engine modeled after Devolutions' `siquery-rs`. Operating entirely via an in-memory SQLite virtual database with zero external dependencies (no external `osqueryi.exe` binary or MSI required), it provides real-time visibility across **98 operating system & AI agent security tables**:
+OpenỌ̀ṣọ́ọ̀sì embeds a 100% native Rust, in-process relational SQL telemetry engine modeled after Devolutions' `siquery-rs`. Operating entirely via an in-memory SQLite virtual database (`PRAGMA query_only = ON` and statement-level `stmt.readonly()` enforcement) with zero external dependencies (no external `osqueryi.exe` binary or MSI required), it provides real-time visibility across **101 operating system, cryptographic Merkle, & AI agent security tables**:
 
 - **Execution & Memory**: `processes`, `process_open_sockets`, `process_open_pipes`, `process_open_files`, `process_memory_map`, `process_envs`
 - **Network & Connections**: `interface_addresses`, `network_adapters`, `routes`, `tcp_sockets`, `udp_sockets`, `etc_hosts`, `etc_protocols`, `etc_services`, `dns_resolvers`, `proxies`
 - **WMI & Hardware Inventory**: `system_info`, `os_version`, `wmi_os_version`, `wmi_bios`, `wmi_computer_system`, `wmi_services`, `wmi_shares`, `wmi_hotfixes`, `wmi_startup_commands`, `wmi_volume`, `wmi_logical_disk`, `wmi_memory_device`, `wmi_network_adapter`, `wmi_process`, `wmi_product`, `wmi_quick_fix_engineering`, `wmi_user_account`, `wmi_base_board`
-- **Identity & Posture**: `user_accounts`, `groups`, `logged_in_users`, `user_groups`, `certificates`, `bitlocker_info`, `device_guard_policy`
+- **Identity & Posture**: `user_accounts`, `groups`, `logged_in_users`, `user_groups`, `certificates`, `bitlocker_info`, `device_guard_policy`, `system_health`, `peer_status`
 - **Filesystem & System**: `logical_drives`, `mounts`, `file_system`, `disks`, `installed_packages`, `uptime`, `time`
-- **AI Agent Security, Continuum Physics & L7 Telemetry**:
+- **Cryptographic Merkle & AI Agent Security Telemetry**:
+  - `hierarchical_merkle_anchors`: Two-tier BLAKE3 interior rollup hashes (`anchor_seq`, `interior_hash`, `arms_fold_hash`, `tarpits_fold_hash`, `rings_fold_hash`, `global_merkle_root`, `ed25519_sig`, `trigger_reason`).
   - `spider_web_threads`: Radial and spiral thread strain ($\epsilon$), constitutive regimes (`LinearElastic`, `EntropicUnfolding`, `StrainStiffening`, `SacrificialFracture`), sector allocation, token bucket consumption, and localized fracture state.
   - `business_policy_violations`: Out-of-model business authorization gate violations, zero-day exfiltration bounds ($B_{\max}$), sensitivity levels, and containment latencies.
   - `agent_mercury_physics`: Liquid mercury fluid dynamics, surface tension coefficients, Navier-Stokes droplet coalescence, and isolation barriers.
@@ -1978,20 +2002,24 @@ The name **Ọ̀ṣọ́ọ̀sì** honours the Yoruba cosmological tradition and
 
 ---
 
-## 🏗️ Production Stability & Hardening (v1.2)
+## 🏗️ Production Stability & Hardening (v1.2.0)
 
-Recent hardening efforts have focused on autonomous multi-agent defense, hybrid decision models, and production stability:
+Recent hardening efforts have focused on hierarchical Merkle integrity, demand-paged NSRL/ASLR verification, non-autoregressive decision engines, full-stack Linux parity, and production stability:
 
-- **100% Native Rust `siquery-rs` 41-Table Relational SQL Engine (`crates/osoosi-agent-anomaly/src/siquery.rs`)**: In-memory `rusqlite` SQL engine modeled on Devolutions' `siquery-rs` with zero external `osqueryi.exe` binary or MSI dependencies. Implements all 41 tables (`processes`, `process_open_sockets`, `process_memory_map`, `process_envs`, `pipes`, `etc_hosts`, `etc_protocols`, `etc_services`, `interface_address`, `interface_details`, `proxies`, `system_info`, `os_version`, `logical_drives`, `mounts`, `uptime`, `products`, `users`, `groups`, `logged_in_users`, `logon_sessions`, `launchd`, `launchd_overrides`, and 18 `wmi_*` tables), 45-second continuous `EdrOrchestrator::run_siquery_edr_audit_sweep()` background telemetry sweeps, `osoosi.exe siquery` CLI (`-q`, `-l`, `--schema`, `-A`, `--json`, `--csv`, `--pretty`), and the interactive `#siquery-view` WebUI SQL Console.
+- **Two-Tier Hierarchical BLAKE3 Merkle Hash Chain Architecture (`crates/osoosi-audit/src/hierarchical.rs`)**: Lock-free domain-separated rolling BLAKE3 chains per Arm (`OSOOSI_ARM_MERKLE_V1`, monotonic epoch binding & fracture proofs on surgical autotomy), per Tarpit (`OSOOSI_TARPIT_MERKLE_V1`, wire-speed deception non-repudiation), and per Containment Ring (`OSOOSI_RING_MERKLE_V1`, Rings 0..3 cross-ring pipeline blinding detection $N_0$ vs $N_2$), periodically folding into an Ed25519-signed interior rollup node anchored into the global `MerkleAuditTree`, Siquery table `hierarchical_merkle_anchors`, and `GET /api/audit/merkle-hierarchy`.
+- **NSRL Demand-Paged 4 KB Binary Allowlist Merkle Tree & ASLR-Invariant Process Code-Segment Merkle Verifier (`crates/osoosi-audit/src/nsrl_aslr_merkle.rs`)**: $O(\log N)$ global allowlist inclusion proofs (`verify_nsrl_executable_proof`) + $O(\log m)$ 4 KB demand-paged page-cache verification (`verify_demand_paged_block`) paired with Linux `fs-verity` (`FS_IOC_GETFLAGS` / `FS_IOC_MEASURE_VERITY`) and Windows Security Catalog / Authenticode. Relocation-normalized ($\Delta_k = \text{VA} - \text{RandomizedBase}$) `.text` page hashing (`verify_aslr_code_segment_pages`) produces identical Merkle roots across randomized ASLR bases on both Windows PE and Linux ELF64 PIE/PIC executables while catching single-byte inline hooks (`0xCC`, `0xE9`) and process hollowing (`GET /api/audit/nsrl-aslr-merkle`).
+- **OpenJev ("System One") Non-Autoregressive Single-Forward-Pass Decision Engine (`crates/osoosi-behavioral/src/decision_model/openjev_client.rs`)**: Sub-40ms non-autoregressive decision classification extracting exact boolean (`Yes`/`No`) and ordinal (`1..5`) logit probabilities in a single forward pass with Shannon entropy uncertainty quantification and 1 MB bounded stream protection.
+- **Full-Stack Native Linux (`x86_64-unknown-linux-gnu`) Support & GPG-Signed Release Packages (`v1.2.0`)**: Native CO-RE eBPF probes (`sched_process_exec`, `sched_process_exit`, `sys_enter_connect`, `sys_enter_mprotect` $W \oplus X$, `sys_enter_ptrace` process tampering, `lsm/bprm_check_security`), Linux `systemd` (`osoosi-edr.service`) CLI management, `/proc/<pid>/maps` VAD forensics, `dpkg -S` / `rpm -Vf` + ELF64 trust & `fs-verity`, and pre-built `.deb` (`oshoosiclaw_1.2.0_amd64.deb`), `.rpm` (`oshoosiclaw-1.2.0-1.x86_64.rpm`), and `.tar.gz` (`oshoosiclaw-1.2.0-linux-x86_64.tar.gz`) packages alongside the Authenticode-signed Windows `OshoosiClaw.msi` (`50.5 MB`).
+- **100% Native Rust `siquery-rs` 101-Table Relational SQL Engine (`crates/osoosi-agent-anomaly/src/siquery.rs`)**: In-memory `rusqlite` SQL engine (`PRAGMA query_only = ON` and statement-level `stmt.readonly()` enforcement) with zero external `osqueryi.exe` dependencies. Implements 101 OS, cryptographic Merkle (`hierarchical_merkle_anchors`), and AI agent security tables, 45-second continuous `EdrOrchestrator::run_siquery_edr_audit_sweep()` sweeps, `osoosi siquery` CLI, and the interactive `#siquery-view` WebUI SQL Console.
 - **AgentOctopus Multi-Ring Breakout Defense & Zero-Hardcode Bayesian Agent Discovery (`crates/osoosi-agent-anomaly/`)**: Ported 4-Ring Agent Containment (`ArmContainmentRing`, `MeshGuard` HMAC-SHA256 epoch verification, `BreakoutDefenseCoordinator` with mathematical IPv4/IPv6 SSRF & `Path::join`/ADS guards, 3-Phase `AgentjackingGuard`, 16-Tactic MITRE ATLAS STIX 2.1 Arm, and 5-Layer RASP). Zero-hardcode `DynamicAgentClassifier` discovers AI agents (e.g. Antigravity, MCP servers, OpenAI Codex, Ollama) purely from relational `siquery` SQL joins (`processes` JOIN `process_open_sockets` JOIN `pipes` JOIN `process_envs`) and ETW 3-second spawn velocity without disrupting normal developer workflows, broadcasting `[AI AGENT WATCH-OUT]` alerts across the libp2p GossipSub and Nostr mesh.
-- **Native Windows Service (`OsoosiEDR`)**: Full SCM lifecycle (`install`, `start`, `stop`, `restart`, `delete`, `status`, `run`) with automatic working-directory resolution and dual `Ctrl+C` / `SERVICE_CONTROL_STOP` shutdown multiplexing.
+- **Native Windows Service (`OsoosiEDR`) & Linux `systemd` (`osoosi-edr.service`)**: Full service lifecycle (`install`, `start`, `stop`, `restart`, `delete`, `status`, `run`) with automatic working-directory resolution and dual `Ctrl+C` / `SERVICE_CONTROL_STOP` shutdown multiplexing.
 - **Closed-Loop RL Per-Voter Weight Calibration & SQLite Persistence**: Persistent `voter_weights` table, automatic local YARA rule hot-synthesis on multi-detector consensus findings, and `SkyRL` DQN checkpoint restoration (`runs/skyrl_checkpoint.json`).
 - **Multi-Class LSASS `CredentialGuardVoter` (`T1003.001`)**: Independent `EvidenceClass::Memory` voter inspecting `comsvcs.dll MiniDump`, `procdump`, `nanodump`, `mimikatz`, `pypykatz`, and `EventID 10` `lsass.exe` access masks (`0x1fffff`, `0x1410`), elevating `T1003.001` consensus confidence to `>0.92`.
-- **Full-Stack Deception & Multi-Transport Mesh (LAN TCP + Cellular Nostr WAN)**: Automatic `GhostNodeManager` honeyport fallback (`22->2222`, `80->8088`, `445->4450`, `3389->3390`), `HolographicMesh` P2P shard mirroring, `CanaryManager` file watcher integration, and cellular hotspot CGNAT traversal over Nostr BitChat relays.
+- **Full-Stack Deception & Multi-Transport Mesh (LAN TCP + Cellular Nostr WAN)**: Automatic `GhostNodeManager` honeyport fallback (`22->2222`, `80->8088`, `445->4450`, `3389->3390`) with bounded 64-permit non-blocking Tokio semaphore concurrency, `HolographicMesh` P2P shard mirroring, `CanaryManager` file watcher integration, and cellular hotspot CGNAT traversal over Nostr BitChat relays.
 - **Primary `signtool.exe` WDAC / Device Guard Signing**: Native Windows 10 SDK `signtool.exe` SHA-256 + DigiCert RFC 3161 timestamping across all primary and companion binaries.
 - **LangGraph Autonomous Multi-Agent Defense Swarm (`tools/defense_swarm/`)**: Decoupled Dual-Ring Architecture executing 8-node cyclical StateGraph (`triage`, `de_escalate`, `forensics`, `intel`, `rule_synth` with retry, `remediation` with OS process immunity, `human_review` gate, `mesh_sync`). Integrated with FastAPI REST service on port 4002 and `osoosi swarm` CLI commands.
-- **Strands Decider 2B & Multi-Tiered Hybrid Decision Engine (`crates/osoosi-behavioral`)**: Hybrid non-autoregressive decision fabric uniting in-process Rust Brier gates (< 5ms), Cloudflare Clef Flash (~38ms), and AWS Strands Decider 2B (~115ms) with `cascade`, `consensus`, and `local_first` routing strategies.
-- **Embedded Velociraptor Forensic Extraction Service (`crates/osoosi-forensics`)**: Sub-second process VAD memory RWX extraction, NTFS Master File Table (MFT) rootkit hiding detection, and sanitized VQL builders with zero shell injection vulnerabilities.
+- **Strands Decider 2B, OpenJev & Multi-Tiered Hybrid Decision Engine (`crates/osoosi-behavioral`)**: Hybrid non-autoregressive decision fabric uniting in-process Rust Brier gates (< 5ms), Cloudflare Clef Flash (~38ms), OpenJev "System One" (~35ms), and AWS Strands Decider 2B (~115ms) with `cascade`, `consensus`, and `local_first` routing strategies.
+- **Embedded Velociraptor & Linux `/proc/<pid>/maps` Forensic Extraction Service (`crates/osoosi-forensics`)**: Sub-second process VAD memory RWX extraction (native `/proc/<pid>/maps` on Linux and Velociraptor VQL on Windows), NTFS Master File Table (MFT) rootkit hiding detection, and sanitized VQL builders with zero shell injection vulnerabilities.
 - **WikiSkill Autonomous Agent Evolution (`tools/wikiskill`)**: Self-evolving agent skills with ground-truth test catalogs, strict improvement gating, and automated P2P GossipSub replication over `osoosi-skills-v1`.
 - **Zero-Mock Real-Time Telemetry & libp2p WAN Mesh**: Complete elimination of mock topology cards, dynamic local node hostname resolution, zero-remote-peer graceful UI states, and DuckDNS auto-bootstrap.
 

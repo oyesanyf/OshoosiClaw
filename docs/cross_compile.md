@@ -55,28 +55,35 @@ cross build --release --target aarch64-apple-darwin    # Apple Silicon
 
 ## What Works on Each Platform
 
-| Feature | Windows | Linux | macOS |
+| Feature | Windows (`x86_64-pc-windows-msvc`) | Linux (`x86_64-unknown-linux-gnu`) | macOS (`apple-darwin`) |
 |---|---|---|---|
-| Sysmon telemetry | ✅ native EventLog | ✅ via auditd/journald | ✅ via Unified Log |
-| Windows Update COM | ✅ | ❌ (gated by `#[cfg]`) | ❌ |
-| Registry operations | ✅ winreg | ❌ (gated) | ❌ |
-| File watcher | ✅ ReadDirectoryChanges | ✅ inotify | ✅ kqueue |
-| YARA-X scanning | ✅ | ✅ | ✅ |
-| ONNX / AI models | ✅ | ✅ | ✅ |
-| P2P mesh (libp2p) | ✅ | ✅ | ✅ |
-| SQLite memory store | ✅ | ✅ | ✅ |
-| Defender exclusions | ✅ registry | ❌ | ❌ |
-
-All Windows-only features are already gated by `#[cfg(target_os = "windows")]` — the Linux/macOS builds simply exclude them and compile cleanly.
+| Kernel Pre-Exec Blocking | ✅ Ring-0 Driver (`PsSetCreateProcessNotifyRoutineEx`) | ✅ eBPF LSM (`bprm_check_security` + `blocked_paths`/`blocked_hashes`) | ⚠️ Endpoint Security (ESF) |
+| Runtime Telemetry | ✅ Native Sysmon ETW (Events 1–25) | ✅ CO-RE eBPF (`sched_process_exec`, `exit`, `connect`, `mprotect` $W\oplus X$, `ptrace`) + `auditd` | ✅ Unified Log |
+| Binary Allowlist & Page Integrity | ✅ NSRL 4 KB Merkle + Authenticode + Windows Catalog | ✅ NSRL 4 KB Merkle + Linux `fs-verity` (`FS_IOC_MEASURE_VERITY`) + ELF64 `.asc`/`.sig` | ✅ NSRL 4 KB Merkle |
+| ASLR Code-Segment Merkle | ✅ PE `.text` (`IMAGE_REL_BASED_DIR64`) relocation normalization | ✅ ELF64 PIE/PIC `PT_LOAD` (`PF_X`) relocation normalization + `/proc/<pid>/maps` | ✅ Mach-O `__TEXT` |
+| Process Memory VAD Forensics | ✅ Velociraptor VQL + Win32 `VirtualQueryEx` | ✅ Native `/proc/<pid>/maps` + `/proc/<pid>/mem` (`rwxp` & `/memfd:` detection) | ✅ Velociraptor |
+| Service Lifecycle | ✅ Native Win32 SCM (`OsoosiEDR`) | ✅ Native `systemd` (`osoosi-edr.service`) + `setsid()` daemon | ✅ `launchd` |
+| OS Sandboxing | ✅ AppContainer + Job Objects + Restricted Tokens | ✅ Landlock V3 + seccomp-bpf + cgroups v2 + namespaces | ✅ Seatbelt |
+| Siquery 101-Table SQL Engine | ✅ All 101 tables populated | ✅ All 101 tables populated (`/proc`, `/sys`, `/etc`, Merkle, AI) | ✅ Cross-platform tables |
+| Hierarchical BLAKE3 Merkle | ✅ Per-Arm, Per-Tarpit, Per-Ring + Ed25519 Rollup | ✅ Per-Arm, Per-Tarpit, Per-Ring + Ed25519 Rollup | ✅ Full parity |
+| Native Installer Packages | ✅ Signed `OshoosiClaw.msi` (WiX v5) | ✅ Signed `.deb`, `.rpm`, `.tar.gz` (`packaging/linux/build_packages.sh`) | ✅ `.tar.gz` |
 
 ---
 
-## Linux Telemetry Stubs
+## Native Linux Build & Packaging (`v1.2.0`)
 
-On Linux, the agent uses `auditd`/`journald`-based telemetry in place of Sysmon. This is already scaffolded in the code — look for `#[cfg(target_os = "linux")]` blocks in:
-- `crates/osoosi-telemetry/src/sysmon.rs`
-- `crates/osoosi-repair/src/discovery.rs`
-- `crates/osoosi-repair/src/lib.rs`
+On Linux or WSL2 Ubuntu (`x86_64-unknown-linux-gnu`), build the release binary, CO-RE eBPF probe, and `.deb` / `.rpm` / `.tar.gz` packages:
+
+```bash
+# 1. Compile the CO-RE eBPF probe (optional if using pre-compiled ebpf/osoosi_probe.bpf.o)
+clang -g -O2 -target bpf -D__TARGET_ARCH_x86 -Iebpf/include -c ebpf/src/osoosi_probe.bpf.c -o ebpf/osoosi_probe.bpf.o
+
+# 2. Build the native Linux release binary
+cargo build --release -p osoosi-cli --bin osoosi
+
+# 3. Package .deb, .rpm, .tar.gz, and standalone binary
+bash packaging/linux/build_packages.sh target/release/osoosi 1.2.0
+```
 
 ---
 
