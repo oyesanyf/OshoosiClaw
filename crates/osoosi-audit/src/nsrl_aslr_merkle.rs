@@ -938,7 +938,9 @@ pub fn measure_linux_fs_verity(path: &Path) -> LinuxFsVerityMeasurement {
                 is_fs_verity_enabled: true,
                 digest_algorithm: 0,
                 digest_hex: None,
-                error: Some("fs-verity flag set on inode, but measure ioctl returned non-zero".to_string()),
+                error: Some(
+                    "fs-verity flag set on inode, but measure ioctl returned non-zero".to_string(),
+                ),
             }
         } else {
             LinuxFsVerityMeasurement {
@@ -994,13 +996,33 @@ pub fn extract_elf64_code_segment(elf_bytes: &[u8]) -> Option<(u64, usize, usize
         }
 
         let p_type = u32::from_le_bytes(elf_bytes[entry_offset..entry_offset + 4].try_into().ok()?);
-        let p_flags = u32::from_le_bytes(elf_bytes[entry_offset + 4..entry_offset + 8].try_into().ok()?);
-        let p_offset = u64::from_le_bytes(elf_bytes[entry_offset + 8..entry_offset + 16].try_into().ok()?) as usize;
-        let p_vaddr = u64::from_le_bytes(elf_bytes[entry_offset + 16..entry_offset + 24].try_into().ok()?);
-        let p_filesz = u64::from_le_bytes(elf_bytes[entry_offset + 32..entry_offset + 40].try_into().ok()?) as usize;
+        let p_flags = u32::from_le_bytes(
+            elf_bytes[entry_offset + 4..entry_offset + 8]
+                .try_into()
+                .ok()?,
+        );
+        let p_offset = u64::from_le_bytes(
+            elf_bytes[entry_offset + 8..entry_offset + 16]
+                .try_into()
+                .ok()?,
+        ) as usize;
+        let p_vaddr = u64::from_le_bytes(
+            elf_bytes[entry_offset + 16..entry_offset + 24]
+                .try_into()
+                .ok()?,
+        );
+        let p_filesz = u64::from_le_bytes(
+            elf_bytes[entry_offset + 32..entry_offset + 40]
+                .try_into()
+                .ok()?,
+        ) as usize;
 
         // PT_LOAD = 1, PF_X = 1 (Executable segment)
-        if p_type == 1 && (p_flags & 1) != 0 && p_filesz > 0 && p_offset + p_filesz <= elf_bytes.len() {
+        if p_type == 1
+            && (p_flags & 1) != 0
+            && p_filesz > 0
+            && p_offset + p_filesz <= elf_bytes.len()
+        {
             return Some((p_vaddr, p_offset, p_filesz, is_pie));
         }
     }
@@ -1706,10 +1728,12 @@ mod tests {
         let pref_base = 0x1000u64;
         let target_va = pref_base + 0x2000;
         elf_binary[4096 + reloc1..4096 + reloc1 + 8].copy_from_slice(&target_va.to_le_bytes());
-        elf_binary[4096 + reloc2..4096 + reloc2 + 8].copy_from_slice(&(target_va + 0x100).to_le_bytes());
+        elf_binary[4096 + reloc2..4096 + reloc2 + 8]
+            .copy_from_slice(&(target_va + 0x100).to_le_bytes());
 
         // Extract code segment via extract_elf64_code_segment
-        let extracted = extract_elf64_code_segment(&elf_binary).expect("Must extract ELF64 code segment");
+        let extracted =
+            extract_elf64_code_segment(&elf_binary).expect("Must extract ELF64 code segment");
         assert_eq!(extracted.0, 0x1000, "Preferred base VA must be 0x1000");
         assert_eq!(extracted.1, 4096, "Code segment file offset must be 4096");
         assert_eq!(extracted.2, 8192, "Code segment size must be 8192");
@@ -1744,7 +1768,10 @@ mod tests {
             &relocs,
         );
 
-        assert_eq!(root1, root2, "ELF64 PIE ASLR-invariant Merkle roots must match across randomized bases!");
+        assert_eq!(
+            root1, root2,
+            "ELF64 PIE ASLR-invariant Merkle roots must match across randomized bases!"
+        );
         assert_eq!(pages1, pages2);
 
         // Verification check passes
@@ -1774,8 +1801,15 @@ mod tests {
 7ffed69ea000-7ffed69eb000 r-xp 00000000 00:00 0                          [vdso]\n";
 
         let (base_va, regions, has_wx) = parse_linux_proc_maps_aslr(1234, maps_benign);
-        assert_eq!(base_va, 0x55d2f6230000, "Base VA must match lowest binary mapping");
-        assert_eq!(regions.len(), 3, "Must capture 3 executable regions (/usr/bin/cat, libc.so.6, [vdso])");
+        assert_eq!(
+            base_va, 0x55d2f6230000,
+            "Base VA must match lowest binary mapping"
+        );
+        assert_eq!(
+            regions.len(),
+            3,
+            "Must capture 3 executable regions (/usr/bin/cat, libc.so.6, [vdso])"
+        );
         assert!(!has_wx, "Benign proc maps must not trigger W^X violation");
 
         // Malicious attack injection: JIT shellcode buffer mapped rwxp
@@ -1785,7 +1819,10 @@ mod tests {
         );
 
         let (_base2, _regions2, has_wx_tampered) = parse_linux_proc_maps_aslr(1234, &maps_tampered);
-        assert!(has_wx_tampered, "rwxp mapping must trigger hardware W^X violation!");
+        assert!(
+            has_wx_tampered,
+            "rwxp mapping must trigger hardware W^X violation!"
+        );
     }
 
     #[test]

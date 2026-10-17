@@ -693,7 +693,9 @@ impl SiqueryEngine {
             .map_err(|e| format!("SQLite prepare error: {}", e))?;
 
         if !stmt.readonly() {
-            return Err("Mutating SQL statements are forbidden (read-only query engine)".to_string());
+            return Err(
+                "Mutating SQL statements are forbidden (read-only query engine)".to_string(),
+            );
         }
         let col_count = stmt.column_count();
         let col_names: Vec<String> = stmt
@@ -6755,7 +6757,10 @@ mod tests {
         assert!(res.is_err(), "Mutating SQL queries must be rejected");
 
         let res_comment = engine.execute_query("/* comment */ DROP TABLE processes;");
-        assert!(res_comment.is_err(), "Comment-prefixed mutating queries must be rejected by query_only / stmt.readonly()");
+        assert!(
+            res_comment.is_err(),
+            "Comment-prefixed mutating queries must be rejected by query_only / stmt.readonly()"
+        );
 
         let res_create = engine.execute_query("/* bypass */ CREATE TABLE evil (x INT);");
         assert!(res_create.is_err(), "Comment-prefixed DDL must be rejected");

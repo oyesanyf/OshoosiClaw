@@ -348,7 +348,9 @@ impl EbpfTelemetryEngine {
         let tx = self.tx.clone();
         let shutdown = self.shutdown.clone();
 
+        #[allow(deprecated)]
         let mut process_fd = tokio::io::unix::AsyncFd::new(process_ring)?;
+        #[allow(deprecated)]
         let mut network_fd = tokio::io::unix::AsyncFd::new(network_ring)?;
 
         tokio::spawn(async move {

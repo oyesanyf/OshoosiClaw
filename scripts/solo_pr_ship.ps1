@@ -17,22 +17,42 @@ $uncommitted = (git status --porcelain)
 $headSha = (git rev-parse HEAD).Trim()
 $originMainSha = (git rev-parse origin/main).Trim()
 
+function Wait-GitLock {
+    for ($w = 0; $w -lt 25; $w++) {
+        if (-not (Test-Path ".git/index.lock")) { break }
+        Start-Sleep -Milliseconds 200
+    }
+    if (Test-Path ".git/index.lock") {
+        Remove-Item -Force ".git/index.lock" -ErrorAction SilentlyContinue
+    }
+}
+
 if ($uncommitted) {
     # Case A: Uncommitted changes exist in working tree
     Write-Host "Detected uncommitted changes. Staging and committing to $branchName..." -ForegroundColor Yellow
+    Wait-GitLock
     git checkout -b $branchName
+    Start-Sleep -Milliseconds 400
+    Wait-GitLock
     git add -A
+    Wait-GitLock
     git commit -m "$Title"
 } elseif ($headSha -ne $originMainSha) {
     # Case B: Local commit(s) ahead of origin/main (triggered after git commit on main)
     Write-Host "Detected local commit(s) ahead of origin/main. Branching to $branchName and resetting local main..." -ForegroundColor Yellow
+    Wait-GitLock
     git branch $branchName HEAD
+    Wait-GitLock
     git reset --hard origin/main
+    Wait-GitLock
     git checkout $branchName
 } else {
     # Case C: Clean working tree and HEAD == origin/main (direct test run)
     Write-Host "Working tree is clean and HEAD matches origin/main. Creating empty commit on $branchName so PR has content..." -ForegroundColor Yellow
+    Wait-GitLock
     git checkout -b $branchName
+    Start-Sleep -Milliseconds 300
+    Wait-GitLock
     git commit --allow-empty -m "$Title"
 }
 
