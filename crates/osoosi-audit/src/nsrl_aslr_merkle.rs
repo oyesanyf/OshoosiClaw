@@ -855,6 +855,249 @@ impl AslrInvariantCodeVerifier {
 }
 
 // ============================================================================
+// 5b. Linux fs-verity & ELF64 PIE ASLR Verification Engine
+// ============================================================================
+
+/// Measurement of Linux `fs-verity` page-cache Merkle integrity for a binary.
+#[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
+pub struct LinuxFsVerityMeasurement {
+    pub path: String,
+    pub is_fs_verity_enabled: bool,
+    pub digest_algorithm: u16,
+    pub digest_hex: Option<String>,
+    pub error: Option<String>,
+}
+
+/// Measures Linux `fs-verity` Merkle digest directly from kernel inode via ioctls:
+/// - `FS_IOC_GETFLAGS` (0x80086601) checking `FS_VERITY_FL` (0x00100000)
+/// - `FS_IOC_MEASURE_VERITY` (0xC0046686 / 0xC0806686) querying `fsverity_digest`
+pub fn measure_linux_fs_verity(path: &Path) -> LinuxFsVerityMeasurement {
+    let path_str = path.to_string_lossy().to_string();
+
+    #[cfg(target_os = "linux")]
+    {
+        use std::os::unix::io::AsRawFd;
+
+        const FS_IOC_GETFLAGS: libc::c_ulong = 0x80086601;
+        const FS_VERITY_FL: libc::c_long = 0x00100000;
+        const FS_IOC_MEASURE_VERITY: libc::c_ulong = 0xC0046686;
+        const FS_IOC_MEASURE_VERITY_COMPAT: libc::c_ulong = 0xC0806686;
+
+        let file = match std::fs::File::open(path) {
+            Ok(f) => f,
+            Err(e) => {
+                return LinuxFsVerityMeasurement {
+                    path: path_str,
+                    is_fs_verity_enabled: false,
+                    digest_algorithm: 0,
+                    digest_hex: None,
+                    error: Some(format!("Failed to open file: {e}")),
+                };
+            }
+        };
+
+        let fd = file.as_raw_fd();
+
+        // 1. Check FS_IOC_GETFLAGS
+        let mut flags: libc::c_long = 0;
+        let flags_ret = unsafe { libc::ioctl(fd, FS_IOC_GETFLAGS, &mut flags) };
+        let flag_enabled = flags_ret == 0 && (flags & FS_VERITY_FL) != 0;
+
+        // 2. Query FS_IOC_MEASURE_VERITY
+        #[repr(C)]
+        struct FsVerityDigestBuf {
+            digest_algorithm: u16,
+            digest_size: u16,
+            digest: [u8; 128],
+        }
+
+        let mut buf = FsVerityDigestBuf {
+            digest_algorithm: 0,
+            digest_size: 128,
+            digest: [0u8; 128],
+        };
+
+        let mut measure_ret = unsafe { libc::ioctl(fd, FS_IOC_MEASURE_VERITY, &mut buf) };
+        if measure_ret != 0 {
+            measure_ret = unsafe { libc::ioctl(fd, FS_IOC_MEASURE_VERITY_COMPAT, &mut buf) };
+        }
+
+        if measure_ret == 0 {
+            let digest_len = (buf.digest_size as usize).min(128);
+            let hex_digest = hex::encode(&buf.digest[..digest_len]);
+            LinuxFsVerityMeasurement {
+                path: path_str,
+                is_fs_verity_enabled: true,
+                digest_algorithm: buf.digest_algorithm,
+                digest_hex: Some(hex_digest),
+                error: None,
+            }
+        } else if flag_enabled {
+            LinuxFsVerityMeasurement {
+                path: path_str,
+                is_fs_verity_enabled: true,
+                digest_algorithm: 0,
+                digest_hex: None,
+                error: Some("fs-verity flag set on inode, but measure ioctl returned non-zero".to_string()),
+            }
+        } else {
+            LinuxFsVerityMeasurement {
+                path: path_str,
+                is_fs_verity_enabled: false,
+                digest_algorithm: 0,
+                digest_hex: None,
+                error: None,
+            }
+        }
+    }
+
+    #[cfg(not(target_os = "linux"))]
+    {
+        LinuxFsVerityMeasurement {
+            path: path_str,
+            is_fs_verity_enabled: false,
+            digest_algorithm: 0,
+            digest_hex: None,
+            error: Some("Linux fs-verity page-cache measurement is supported natively on Linux (kernel >= 5.4)".to_string()),
+        }
+    }
+}
+
+/// Extracts the executable `.text` / code segment parameters from a 64-bit ELF binary:
+/// Returns `Some((preferred_base_va, file_offset, segment_size, is_pie))`
+pub fn extract_elf64_code_segment(elf_bytes: &[u8]) -> Option<(u64, usize, usize, bool)> {
+    if elf_bytes.len() < 64 {
+        return None;
+    }
+
+    // Verify ELF64 Magic (\x7FELF, class=2, data=1)
+    if &elf_bytes[0..4] != b"\x7FELF" || elf_bytes[4] != 2 || elf_bytes[5] != 1 {
+        return None;
+    }
+
+    let e_type = u16::from_le_bytes(elf_bytes[16..18].try_into().ok()?);
+    let is_pie = e_type == 3; // ET_DYN (Position-Independent Executable or shared library)
+
+    let e_phoff = u64::from_le_bytes(elf_bytes[32..40].try_into().ok()?) as usize;
+    let e_phentsize = u16::from_le_bytes(elf_bytes[54..56].try_into().ok()?) as usize;
+    let e_phnum = u16::from_le_bytes(elf_bytes[56..58].try_into().ok()?) as usize;
+
+    if e_phentsize < 56 || e_phoff == 0 {
+        return None;
+    }
+
+    // Iterate Program Header entries (Elf64_Phdr)
+    for i in 0..e_phnum {
+        let entry_offset = e_phoff.checked_add(i.checked_mul(e_phentsize)?)?;
+        if entry_offset + 56 > elf_bytes.len() {
+            break;
+        }
+
+        let p_type = u32::from_le_bytes(elf_bytes[entry_offset..entry_offset + 4].try_into().ok()?);
+        let p_flags = u32::from_le_bytes(elf_bytes[entry_offset + 4..entry_offset + 8].try_into().ok()?);
+        let p_offset = u64::from_le_bytes(elf_bytes[entry_offset + 8..entry_offset + 16].try_into().ok()?) as usize;
+        let p_vaddr = u64::from_le_bytes(elf_bytes[entry_offset + 16..entry_offset + 24].try_into().ok()?);
+        let p_filesz = u64::from_le_bytes(elf_bytes[entry_offset + 32..entry_offset + 40].try_into().ok()?) as usize;
+
+        // PT_LOAD = 1, PF_X = 1 (Executable segment)
+        if p_type == 1 && (p_flags & 1) != 0 && p_filesz > 0 && p_offset + p_filesz <= elf_bytes.len() {
+            return Some((p_vaddr, p_offset, p_filesz, is_pie));
+        }
+    }
+
+    None
+}
+
+/// Parses Linux `/proc/<pid>/maps` content to extract:
+/// - `aslr_base_va`: The lowest base virtual address of the executable image mappings
+/// - `executable_regions`: List of `(start_va, end_va, path_or_label)` for all executable mappings
+/// - `has_wx_violation`: `true` if any mapped page has both WRITABLE and EXECUTABLE permissions
+pub fn parse_linux_proc_maps_aslr(
+    _pid: u32,
+    maps_content: &str,
+) -> (u64, Vec<(u64, u64, String)>, bool) {
+    let mut aslr_base_va = 0u64;
+    let mut executable_regions = Vec::new();
+    let mut has_wx_violation = false;
+    let mut lowest_exec_va = u64::MAX;
+
+    for line in maps_content.lines() {
+        let trimmed = line.trim();
+        if trimmed.is_empty() {
+            continue;
+        }
+
+        let parts: Vec<&str> = trimmed.split_whitespace().collect();
+        if parts.len() < 2 {
+            continue;
+        }
+
+        // Parse address range: e.g. "55d2f6230000-55d2f6232000"
+        let range_parts: Vec<&str> = parts[0].split('-').collect();
+        if range_parts.len() != 2 {
+            continue;
+        }
+
+        let start_va = match u64::from_str_radix(range_parts[0], 16) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+        let end_va = match u64::from_str_radix(range_parts[1], 16) {
+            Ok(v) => v,
+            Err(_) => continue,
+        };
+
+        let perms = parts[1];
+        let is_writable = perms.contains('w');
+        let is_executable = perms.contains('x');
+
+        // Hardware W^X violation detection: writable AND executable!
+        if is_writable && is_executable {
+            has_wx_violation = true;
+        }
+
+        let pathname = if parts.len() >= 6 {
+            parts[5..].join(" ")
+        } else {
+            String::new()
+        };
+
+        if is_executable {
+            executable_regions.push((start_va, end_va, pathname.clone()));
+
+            // Identify binary base: exclude vdso/vsyscall/stack/heap
+            if !pathname.starts_with('[') && start_va < lowest_exec_va {
+                lowest_exec_va = start_va;
+            }
+        }
+
+        if aslr_base_va == 0 && !pathname.starts_with('[') && !pathname.is_empty() {
+            aslr_base_va = start_va;
+        }
+    }
+
+    if aslr_base_va == 0 && lowest_exec_va != u64::MAX {
+        aslr_base_va = lowest_exec_va;
+    }
+
+    (aslr_base_va, executable_regions, has_wx_violation)
+}
+
+/// Reads Linux kernel ASLR setting (`/proc/sys/kernel/randomize_va_space`).
+/// Returns 2 (full randomization) as default.
+pub fn read_kernel_aslr_setting() -> u32 {
+    #[cfg(target_os = "linux")]
+    {
+        if let Ok(content) = std::fs::read_to_string("/proc/sys/kernel/randomize_va_space") {
+            if let Ok(val) = content.trim().parse::<u32>() {
+                return val;
+            }
+        }
+    }
+    2
+}
+
+// ============================================================================
 // 6. NSRL / ASLR Merkle Guard Master Component
 // ============================================================================
 
@@ -907,7 +1150,13 @@ impl NsrlAslrMerkleGuard {
 
         #[cfg(not(target_os = "windows"))]
         {
-            for path_str in &["/bin/sh", "/usr/bin/env", "/bin/ls"] {
+            for path_str in &[
+                "/bin/sh",
+                "/usr/bin/env",
+                "/bin/ls",
+                "/lib/x86_64-linux-gnu/libc.so.6",
+                "/usr/lib/libc.so.6",
+            ] {
                 let p = PathBuf::from(path_str);
                 if p.is_file() {
                     target_paths.push(p);
@@ -933,6 +1182,68 @@ impl NsrlAslrMerkleGuard {
                 }
             }
         }
+
+        // Auto-anchor the current process into Hierarchical Merkle Audit on startup
+        self.anchor_current_process();
+    }
+
+    /// Automatically anchors the current running process into the Hierarchical Merkle Audit.
+    pub fn anchor_current_process(&self) {
+        let pid = std::process::id();
+        let exe_path = match std::env::current_exe() {
+            Ok(p) => p,
+            Err(_) => return,
+        };
+        let proc_name = exe_path
+            .file_name()
+            .map(|n| n.to_string_lossy().to_string())
+            .unwrap_or_else(|| "osoosi".to_string());
+
+        #[allow(unused_mut)]
+        let mut rand_base = 0x00007FF7_00000000u64;
+        let mut pref_base = 0x00000001_40000000u64;
+
+        #[cfg(target_os = "linux")]
+        {
+            if let Ok(maps_data) = std::fs::read_to_string("/proc/self/maps") {
+                let (aslr_base, _regions, _wx) = parse_linux_proc_maps_aslr(pid, &maps_data);
+                if aslr_base != 0 {
+                    rand_base = aslr_base;
+                }
+            }
+        }
+
+        let mut code_root = "0".repeat(64);
+        if let Ok(bytes) = std::fs::read(&exe_path) {
+            if let Some((p_base, offset, size, _is_pie)) = extract_elf64_code_segment(&bytes) {
+                pref_base = p_base;
+                let code_slice = &bytes[offset..offset + size];
+                let (root, _) = AslrInvariantCodeVerifier::compute_invariant_root(
+                    code_slice,
+                    rand_base,
+                    pref_base,
+                    &[],
+                );
+                code_root = root;
+            } else if bytes.len() >= 4096 {
+                let (root, _) = AslrInvariantCodeVerifier::compute_invariant_root(
+                    &bytes[..4096.min(bytes.len())],
+                    rand_base,
+                    pref_base,
+                    &[],
+                );
+                code_root = root;
+            }
+        }
+
+        self.anchor_process_startup(
+            pid,
+            &proc_name,
+            rand_base,
+            pref_base,
+            &code_root,
+            Vec::new(),
+        );
     }
 
     /// Anchors an active process layout at startup.
@@ -998,6 +1309,9 @@ impl NsrlAslrMerkleGuard {
 
         serde_json::json!({
             "status": "ok",
+            "linux_fs_verity_supported": cfg!(target_os = "linux"),
+            "elf64_pie_aslr_supported": true,
+            "kernel_aslr_randomize_va_space": read_kernel_aslr_setting(),
             "nsrl_allowlist": {
                 "nsrl_allowlist_root": global_nsrl_root,
                 "registered_profiles_count": profile_count,
@@ -1349,5 +1663,136 @@ mod tests {
         assert!(
             AslrInvariantCodeVerifier::verify_memory_region_security(true, false, true).is_err()
         ); // CET writable shadow stack
+    }
+
+    #[test]
+    fn test_elf64_pie_code_segment_extraction_and_aslr_merkle() {
+        // Construct valid ELF64 PIE binary buffer (12 KB)
+        let mut elf_binary = vec![0u8; 12288];
+
+        // 1. ELF64 Header (64 bytes)
+        elf_binary[0..4].copy_from_slice(b"\x7FELF");
+        elf_binary[4] = 2; // ELFCLASS64
+        elf_binary[5] = 1; // ELFDATA2LSB (little-endian)
+        elf_binary[6] = 1; // EV_CURRENT
+        elf_binary[16..18].copy_from_slice(&3u16.to_le_bytes()); // e_type = ET_DYN (PIE executable)
+        elf_binary[18..20].copy_from_slice(&0x3Eu16.to_le_bytes()); // e_machine = EM_X86_64
+        elf_binary[20..24].copy_from_slice(&1u32.to_le_bytes()); // e_version = 1
+        elf_binary[24..32].copy_from_slice(&0x1000u64.to_le_bytes()); // e_entry = 0x1000
+        elf_binary[32..40].copy_from_slice(&64u64.to_le_bytes()); // e_phoff = 64
+        elf_binary[52..54].copy_from_slice(&64u16.to_le_bytes()); // e_ehsize = 64
+        elf_binary[54..56].copy_from_slice(&56u16.to_le_bytes()); // e_phentsize = 56
+        elf_binary[56..58].copy_from_slice(&1u16.to_le_bytes()); // e_phnum = 1
+
+        // 2. Program Header 0 (Elf64_Phdr at offset 64, 56 bytes)
+        let phdr_offset = 64;
+        elf_binary[phdr_offset..phdr_offset + 4].copy_from_slice(&1u32.to_le_bytes()); // p_type = PT_LOAD
+        elf_binary[phdr_offset + 4..phdr_offset + 8].copy_from_slice(&5u32.to_le_bytes()); // p_flags = PF_R | PF_X (Executable)
+        elf_binary[phdr_offset + 8..phdr_offset + 16].copy_from_slice(&4096u64.to_le_bytes()); // p_offset = 4096
+        elf_binary[phdr_offset + 16..phdr_offset + 24].copy_from_slice(&0x1000u64.to_le_bytes()); // p_vaddr = 0x1000 (preferred base)
+        elf_binary[phdr_offset + 24..phdr_offset + 32].copy_from_slice(&0x1000u64.to_le_bytes()); // p_paddr = 0x1000
+        elf_binary[phdr_offset + 32..phdr_offset + 40].copy_from_slice(&8192u64.to_le_bytes()); // p_filesz = 8192 (2 pages)
+        elf_binary[phdr_offset + 40..phdr_offset + 48].copy_from_slice(&8192u64.to_le_bytes()); // p_memsz = 8192
+        elf_binary[phdr_offset + 48..phdr_offset + 56].copy_from_slice(&4096u64.to_le_bytes()); // p_align = 4096
+
+        // 3. Executable code segment at offset 4096..12288
+        for b in &mut elf_binary[4096..12288] {
+            *b = 0x90; // NOP sled
+        }
+
+        let reloc1 = 128;
+        let reloc2 = 4500;
+        let relocs = vec![reloc1, reloc2];
+        let pref_base = 0x1000u64;
+        let target_va = pref_base + 0x2000;
+        elf_binary[4096 + reloc1..4096 + reloc1 + 8].copy_from_slice(&target_va.to_le_bytes());
+        elf_binary[4096 + reloc2..4096 + reloc2 + 8].copy_from_slice(&(target_va + 0x100).to_le_bytes());
+
+        // Extract code segment via extract_elf64_code_segment
+        let extracted = extract_elf64_code_segment(&elf_binary).expect("Must extract ELF64 code segment");
+        assert_eq!(extracted.0, 0x1000, "Preferred base VA must be 0x1000");
+        assert_eq!(extracted.1, 4096, "Code segment file offset must be 4096");
+        assert_eq!(extracted.2, 8192, "Code segment size must be 8192");
+        assert!(extracted.3, "Must be flagged as PIE");
+
+        let code_preferred = &elf_binary[extracted.1..extracted.1 + extracted.2];
+
+        // Simulate runtime memory under two randomized ASLR bases
+        let rand_base1 = 0x00005555_55554000u64;
+        let rand_base2 = 0x00005600_00000000u64;
+
+        let delta1 = rand_base1.wrapping_sub(pref_base);
+        let mut code_aslr1 = code_preferred.to_vec();
+        code_aslr1[reloc1..reloc1 + 8].copy_from_slice(&(target_va + delta1).to_le_bytes());
+        code_aslr1[reloc2..reloc2 + 8].copy_from_slice(&(target_va + 0x100 + delta1).to_le_bytes());
+
+        let delta2 = rand_base2.wrapping_sub(pref_base);
+        let mut code_aslr2 = code_preferred.to_vec();
+        code_aslr2[reloc1..reloc1 + 8].copy_from_slice(&(target_va + delta2).to_le_bytes());
+        code_aslr2[reloc2..reloc2 + 8].copy_from_slice(&(target_va + 0x100 + delta2).to_le_bytes());
+
+        let (root1, pages1) = AslrInvariantCodeVerifier::compute_invariant_root(
+            &code_aslr1,
+            rand_base1,
+            pref_base,
+            &relocs,
+        );
+        let (root2, pages2) = AslrInvariantCodeVerifier::compute_invariant_root(
+            &code_aslr2,
+            rand_base2,
+            pref_base,
+            &relocs,
+        );
+
+        assert_eq!(root1, root2, "ELF64 PIE ASLR-invariant Merkle roots must match across randomized bases!");
+        assert_eq!(pages1, pages2);
+
+        // Verification check passes
+        let check = AslrInvariantCodeVerifier::verify_runtime_code(
+            &code_aslr1,
+            rand_base1,
+            pref_base,
+            &relocs,
+            &root2,
+            Some(&pages2),
+        );
+        assert!(check.intact);
+        assert!(check.matched_root);
+    }
+
+    #[test]
+    fn test_linux_proc_maps_aslr_and_wx_enforcement() {
+        let maps_benign = "\
+55d2f6230000-55d2f6232000 r--p 00000000 08:01 12345678                   /usr/bin/cat\n\
+55d2f6232000-55d2f6237000 r-xp 00002000 08:01 12345678                   /usr/bin/cat\n\
+55d2f6237000-55d2f6239000 r--p 00007000 08:01 12345678                   /usr/bin/cat\n\
+55d2f6239000-55d2f623a000 rw-p 00009000 08:01 12345678                   /usr/bin/cat\n\
+55d2f70b4000-55d2f70d5000 rw-p 00000000 00:00 0                          [heap]\n\
+7f8a32a00000-7f8a32a28000 r--p 00000000 08:01 87654321                   /usr/lib/libc.so.6\n\
+7f8a32a28000-7f8a32bbd000 r-xp 00028000 08:01 87654321                   /usr/lib/libc.so.6\n\
+7ffed698c000-7ffed69ad000 rw-p 00000000 00:00 0                          [stack]\n\
+7ffed69ea000-7ffed69eb000 r-xp 00000000 00:00 0                          [vdso]\n";
+
+        let (base_va, regions, has_wx) = parse_linux_proc_maps_aslr(1234, maps_benign);
+        assert_eq!(base_va, 0x55d2f6230000, "Base VA must match lowest binary mapping");
+        assert_eq!(regions.len(), 3, "Must capture 3 executable regions (/usr/bin/cat, libc.so.6, [vdso])");
+        assert!(!has_wx, "Benign proc maps must not trigger W^X violation");
+
+        // Malicious attack injection: JIT shellcode buffer mapped rwxp
+        let maps_tampered = format!(
+            "{}\n7f8a40000000-7f8a40010000 rwxp 00000000 00:00 0                          [anon:jit_shellcode]\n",
+            maps_benign
+        );
+
+        let (_base2, _regions2, has_wx_tampered) = parse_linux_proc_maps_aslr(1234, &maps_tampered);
+        assert!(has_wx_tampered, "rwxp mapping must trigger hardware W^X violation!");
+    }
+
+    #[test]
+    fn test_measure_linux_fs_verity() {
+        let measurement = measure_linux_fs_verity(Path::new("dummy_test_binary"));
+        assert_eq!(measurement.path, "dummy_test_binary");
+        // On non-Linux or without real verity enabled, is_fs_verity_enabled is false without panics
+        assert!(!measurement.is_fs_verity_enabled);
     }
 }
