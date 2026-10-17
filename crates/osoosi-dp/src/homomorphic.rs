@@ -379,7 +379,7 @@ mod tests {
     #[test]
     fn test_aggregate_encrypted_counts() {
         let (pub_key, priv_key) = generate_keypair();
-        let counts = vec![5u64, 10, 15, 20];
+        let counts = [5u64, 10, 15, 20];
         let encrypted: Vec<_> = counts.iter().map(|&c| encrypt(&pub_key, c)).collect();
 
         let total_encrypted = aggregate_encrypted_counts(&pub_key, &encrypted);

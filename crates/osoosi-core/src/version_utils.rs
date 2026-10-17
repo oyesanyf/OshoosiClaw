@@ -46,7 +46,7 @@ pub fn get_pe_product_info(path: &Path) -> Option<(String, String)> {
     use pelite::pe64::{Pe, PeFile};
     let map = std::fs::read(path).ok()?;
     let pe = PeFile::from_bytes(&map).ok()?;
-    
+
     let mut product_name = String::new();
     let mut version_str = String::new();
 

@@ -91,7 +91,9 @@ impl SystemResourceSummary {
 
         if has_runtime_metrics && self.free_ram_gb < 8.0 && self.free_vram_mb < 4_000 {
             match base_tier {
-                HardwareTier::Tier4Enterprise | HardwareTier::Tier3HighPerf => HardwareTier::Tier2MidRange,
+                HardwareTier::Tier4Enterprise | HardwareTier::Tier3HighPerf => {
+                    HardwareTier::Tier2MidRange
+                }
                 other => other,
             }
         } else {
@@ -129,7 +131,8 @@ pub fn get_system_resources() -> SystemResourceSummary {
 fn refresh_live_memory(res: &mut SystemResourceSummary) {
     let mut sys = System::new();
     sys.refresh_memory();
-    let free_ram_gb = ((sys.available_memory() as f64) / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
+    let free_ram_gb =
+        ((sys.available_memory() as f64) / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
     if free_ram_gb > 0.0 {
         res.free_ram_gb = free_ram_gb;
     }
@@ -225,7 +228,10 @@ fn probe_powershell_cim_gpu() -> Option<(String, u64, u64)> {
     for line in stdout.lines() {
         let trimmed = line.trim();
         if trimmed.starts_with('"') && !trimmed.contains("AdapterRAM") {
-            let parts: Vec<&str> = trimmed.split(',').map(|s| s.trim_matches('"').trim()).collect();
+            let parts: Vec<&str> = trimmed
+                .split(',')
+                .map(|s| s.trim_matches('"').trim())
+                .collect();
             if parts.len() >= 2 {
                 let name = parts[0].to_string();
                 let bytes: u64 = parts[1].parse().unwrap_or(0);
@@ -266,8 +272,10 @@ pub fn query_system_resources() -> SystemResourceSummary {
         .unwrap_or_else(|| "Unknown CPU".to_string());
     let logical_cores = sys.cpus().len().max(1);
 
-    let total_ram_gb = ((sys.total_memory() as f64) / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
-    let free_ram_gb = ((sys.available_memory() as f64) / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
+    let total_ram_gb =
+        ((sys.total_memory() as f64) / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
+    let free_ram_gb =
+        ((sys.available_memory() as f64) / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
 
     let (gpu_name, total_vram_mb, free_vram_mb, has_gpu) =
         if let Some((name, tot, free)) = probe_nvidia_gpu() {
@@ -284,8 +292,10 @@ pub fn query_system_resources() -> SystemResourceSummary {
     let mut free_disk_bytes: u64 = 0;
 
     for d in disks_obj.iter() {
-        let total_gb = ((d.total_space() as f64) / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
-        let free_gb = ((d.available_space() as f64) / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
+        let total_gb =
+            ((d.total_space() as f64) / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
+        let free_gb =
+            ((d.available_space() as f64) / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
         total_disk_bytes = total_disk_bytes.saturating_add(d.total_space());
         free_disk_bytes = free_disk_bytes.saturating_add(d.available_space());
 
@@ -298,8 +308,10 @@ pub fn query_system_resources() -> SystemResourceSummary {
         });
     }
 
-    let total_disk_gb = ((total_disk_bytes as f64) / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
-    let free_disk_gb = ((free_disk_bytes as f64) / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
+    let total_disk_gb =
+        ((total_disk_bytes as f64) / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
+    let free_disk_gb =
+        ((free_disk_bytes as f64) / (1024.0 * 1024.0 * 1024.0) * 10.0).round() / 10.0;
 
     SystemResourceSummary {
         cpu_name,
@@ -331,26 +343,31 @@ pub fn model_matches(candidate: &str, installed: &str) -> bool {
     }
 
     // Strip organization/repository namespace prefix (e.g. "fenkohq/foundation-sec-8b" -> "foundation-sec-8b")
-    let cand_repo_stripped = cand_bare.split('/').last().unwrap_or(cand_bare);
-    let inst_repo_stripped = inst_bare.split('/').last().unwrap_or(inst_bare);
+    let cand_repo_stripped = cand_bare.split('/').next_back().unwrap_or(cand_bare);
+    let inst_repo_stripped = inst_bare.split('/').next_back().unwrap_or(inst_bare);
     if cand_repo_stripped == inst_repo_stripped {
         return true;
     }
 
     // Check for quantization / custom suffix (e.g. "deepseek-r1:32b" matching "deepseek-r1:32b-q4_k_m")
-    if inst_repo_stripped.starts_with(cand_repo_stripped) {
-        let remainder = &inst_repo_stripped[cand_repo_stripped.len()..];
-        if remainder.starts_with('-') || remainder.starts_with(':') || remainder.starts_with('.') || remainder.starts_with('_') {
+    if let Some(remainder) = inst_repo_stripped.strip_prefix(cand_repo_stripped) {
+        if remainder.starts_with('-')
+            || remainder.starts_with(':')
+            || remainder.starts_with('.')
+            || remainder.starts_with('_')
+        {
             return true;
         }
     }
-    if cand_repo_stripped.starts_with(inst_repo_stripped) {
+    if let Some(remainder) = cand_repo_stripped.strip_prefix(inst_repo_stripped) {
         // Only permit if installed specified a tag (e.g. contains ':'), preventing bare family names from matching any size
-        if inst_repo_stripped.contains(':') {
-            let remainder = &cand_repo_stripped[inst_repo_stripped.len()..];
-            if remainder.starts_with('-') || remainder.starts_with(':') || remainder.starts_with('.') || remainder.starts_with('_') {
-                return true;
-            }
+        if inst_repo_stripped.contains(':')
+            && (remainder.starts_with('-')
+                || remainder.starts_with(':')
+                || remainder.starts_with('.')
+                || remainder.starts_with('_'))
+        {
+            return true;
         }
     }
 
@@ -418,19 +435,14 @@ pub fn select_optimal_models(
             "deepseek-r1:7b",
             "qwen2.5:7b",
         ],
-        HardwareTier::Tier2MidRange => &[
-            "qwen2.5:7b",
-            "deepseek-r1:7b",
-            "fenkohq/foundation-sec-8b",
-        ],
-        HardwareTier::Tier1Constrained => &[
-            "deepseek-r1:1.5b",
-            "qwen2.5:1.5b",
-            "qwen2.5:3b",
-        ],
+        HardwareTier::Tier2MidRange => {
+            &["qwen2.5:7b", "deepseek-r1:7b", "fenkohq/foundation-sec-8b"]
+        }
+        HardwareTier::Tier1Constrained => &["deepseek-r1:1.5b", "qwen2.5:1.5b", "qwen2.5:3b"],
     };
 
-    let deep_model = if let Some(m) = find_installed_match(deep_candidates, installed_ollama_models) {
+    let deep_model = if let Some(m) = find_installed_match(deep_candidates, installed_ollama_models)
+    {
         m
     } else if !configured_deep_model.is_empty() {
         configured_deep_model.to_string()
@@ -514,7 +526,9 @@ pub fn discover_disk_ollama_manifests() -> Vec<String> {
 
     // 1. OLLAMA_MODELS env var
     if let Ok(om) = std::env::var("OLLAMA_MODELS") {
-        let p = std::path::PathBuf::from(om).join("manifests").join("registry.ollama.ai");
+        let p = std::path::PathBuf::from(om)
+            .join("manifests")
+            .join("registry.ollama.ai");
         if p.exists() {
             candidate_roots.push(p);
         }
@@ -683,13 +697,19 @@ pub async fn query_installed_ollama_models(ollama_endpoint: &str) -> Vec<String>
         if let Ok(mut lock) = cache.write() {
             *lock = merged.clone();
         }
-        debug!("Discovered {} installed Ollama models (HTTP + disk).", merged.len());
+        debug!(
+            "Discovered {} installed Ollama models (HTTP + disk).",
+            merged.len()
+        );
         merged
     } else {
         // Fallback to cache if available
         if let Ok(lock) = cache.read() {
             if !lock.is_empty() {
-                debug!("Returning {} cached Ollama models during temporary endpoint unavailability.", lock.len());
+                debug!(
+                    "Returning {} cached Ollama models during temporary endpoint unavailability.",
+                    lock.len()
+                );
                 return lock.clone();
             }
         }
@@ -759,7 +779,10 @@ fn query_installed_ollama_models_sync_inner(ollama_endpoint: &str) -> Vec<String
         if let Ok(mut lock) = cache.write() {
             *lock = merged.clone();
         }
-        debug!("Discovered {} installed Ollama models (sync HTTP + disk).", merged.len());
+        debug!(
+            "Discovered {} installed Ollama models (sync HTTP + disk).",
+            merged.len()
+        );
         merged
     } else {
         if let Ok(lock) = cache.read() {
@@ -901,12 +924,7 @@ mod tests {
         };
 
         let installed = vec![];
-        let selection = select_optimal_models(
-            &res,
-            &installed,
-            "custom-fast:1b",
-            "custom-deep:7b",
-        );
+        let selection = select_optimal_models(&res, &installed, "custom-fast:1b", "custom-deep:7b");
 
         assert_eq!(selection.fast_model, "custom-fast:1b");
         assert_eq!(selection.deep_model, "custom-deep:7b");
@@ -922,9 +940,18 @@ mod tests {
         assert!(model_matches("deepseek-r1:1.5b", "deepseek-r1:1.5b:latest"));
         assert!(model_matches("deepseek-r1:1.5b:latest", "deepseek-r1:1.5b"));
         // Strips repo namespace
-        assert!(model_matches("fenkohq/foundation-sec-8b", "foundation-sec-8b"));
-        assert!(model_matches("foundation-sec-8b", "fenkohq/foundation-sec-8b"));
-        assert!(model_matches("fenkohq/foundation-sec-8b:latest", "foundation-sec-8b"));
+        assert!(model_matches(
+            "fenkohq/foundation-sec-8b",
+            "foundation-sec-8b"
+        ));
+        assert!(model_matches(
+            "foundation-sec-8b",
+            "fenkohq/foundation-sec-8b"
+        ));
+        assert!(model_matches(
+            "fenkohq/foundation-sec-8b:latest",
+            "foundation-sec-8b"
+        ));
         // Quantization / custom tag suffixes
         assert!(model_matches("deepseek-r1:32b", "deepseek-r1:32b-q4_K_M"));
         assert!(model_matches("qwen2.5:7b", "qwen2.5:7b-instruct-q8_0"));
@@ -954,12 +981,8 @@ mod tests {
         };
 
         let installed = vec!["deepseek-r1:32b".to_string()];
-        let selection = select_optimal_models(
-            &res,
-            &installed,
-            "deepseek-r1:1.5b",
-            "deepseek-r1:32b",
-        );
+        let selection =
+            select_optimal_models(&res, &installed, "deepseek-r1:1.5b", "deepseek-r1:32b");
 
         assert_eq!(selection.deep_model, "deepseek-r1:32b");
         assert_eq!(selection.hardware_tier, HardwareTier::Tier4Enterprise);
@@ -1041,7 +1064,10 @@ mod tests {
             total_disk_gb: 2000.0,
             disks: vec![],
         };
-        assert_eq!(mock_enterprise.determine_tier(), HardwareTier::Tier4Enterprise);
+        assert_eq!(
+            mock_enterprise.determine_tier(),
+            HardwareTier::Tier4Enterprise
+        );
 
         // Mock test with 0.0 free RAM and non-zero free VRAM (<2000MB) must NOT trigger Tier 1 OOM fallback
         let mock_with_vram = SystemResourceSummary {
@@ -1057,7 +1083,10 @@ mod tests {
             total_disk_gb: 2000.0,
             disks: vec![],
         };
-        assert_eq!(mock_with_vram.determine_tier(), HardwareTier::Tier4Enterprise);
+        assert_eq!(
+            mock_with_vram.determine_tier(),
+            HardwareTier::Tier4Enterprise
+        );
 
         // Mock test for Tier 3 with 0.0 free RAM and non-zero free VRAM (<4000MB) must NOT cap at Tier 2
         let mock_tier3_vram = SystemResourceSummary {
@@ -1073,7 +1102,10 @@ mod tests {
             total_disk_gb: 1024.0,
             disks: vec![],
         };
-        assert_eq!(mock_tier3_vram.determine_tier(), HardwareTier::Tier3HighPerf);
+        assert_eq!(
+            mock_tier3_vram.determine_tier(),
+            HardwareTier::Tier3HighPerf
+        );
     }
 
     #[test]

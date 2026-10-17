@@ -4,13 +4,21 @@
 //! Linux journald/syslog, and macOS unified log into behavioral sentences for
 //! SecureBERT-style classification. Supports continual training via labeled feedback.
 
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::doc_lazy_continuation)]
+#![allow(clippy::too_many_arguments)]
+#![allow(clippy::manual_memcpy)]
+#![allow(clippy::large_enum_variant)]
+
+pub mod agentic_arbitrator;
 mod analyzer;
 mod classifier;
 mod colog;
-pub mod agentic_arbitrator;
-pub mod deception;
-pub mod ebpf_monitor;
 pub mod consensus;
+pub mod deception;
+pub mod decision_model;
+pub mod ebpf_monitor;
+pub mod embedding_gemma;
 pub mod feedback;
 pub mod forensics;
 pub mod hardware_selection;
@@ -18,31 +26,30 @@ pub mod llm_engine;
 mod log_reader;
 mod process_tree;
 pub mod reasoning;
-mod sentence;
 pub mod rl_engine;
+mod sentence;
 pub mod skyrl;
 pub mod spider_eyes;
 pub mod yara_analyzer;
-pub mod decision_model;
-pub mod embedding_gemma;
 
 pub use decision_model::{ClefDecisionEngine, LocalDecisionEngine, SecurityIncidentDecision};
 pub use hardware_selection::{
     detect_live_resources, get_system_resources, query_installed_ollama_models,
-    query_installed_ollama_models_sync, query_system_resources, DiskResourceInfo,
-    HardwareTier, OptimalModelSelection, SystemResourceSummary,
+    query_installed_ollama_models_sync, query_system_resources, DiskResourceInfo, HardwareTier,
+    OptimalModelSelection, SystemResourceSummary,
 };
 
 pub use agentic_arbitrator::{
-    AgentTrajectoryTracker, AgenticArbitrator, AgenticToolValidator, AgenticVerdict,
-    DefenseAction, Layer2Critic, TrajectoryEvent, VassilevMutator,
+    AgentTrajectoryTracker, AgenticArbitrator, AgenticToolValidator, AgenticVerdict, DefenseAction,
+    Layer2Critic, TrajectoryEvent, VassilevMutator,
 };
 pub use analyzer::{AnalysisMode, BehavioralAnalyzer, InvestigativePrompt};
 pub use classifier::{BehavioralClassifier, BehavioralResult};
 pub use ebpf_monitor::EbpfMonitor;
+pub use embedding_gemma::{EmbeddingGemma2Engine, MatryoshkaDim};
 pub use feedback::{FeedbackStore, LabeledSample};
 pub use forensics::{PacketForensics, TriageResult};
-pub use llm_engine::{Gemma4Analyzer, SmolLMAnalyzer, FoundationSecAnalyzer};
+pub use llm_engine::{FoundationSecAnalyzer, Gemma4Analyzer, SmolLMAnalyzer};
 pub use log_reader::{BehavioralLogReader, LogEvent};
 pub use process_tree::{ProcessRelationship, ProcessTreeEmbedder};
 pub use rl_engine::{
@@ -53,13 +60,10 @@ pub use rl_engine::{
     MultiObjectiveWeights, NStepTransitionBuffer, PrioritizedReplayBuffer, ProcessContext,
     ProcessLineageVector, QuantileRegressionDqnEngine, RiskProfile, RlExecutionMode,
     RollbackStrategy, RolloutMetrics, SafetyFilter, SafetyGuardrail, SharedBilinearBandit,
-    StateFeaturePipeline, StructuredEdrAction, TelemetryLevel, TelemetryPacket,
-    TelemetryVelocity, TemporalMetricsSummary, TemporalMetricsTracker, Transition,
-    UnifiedEdrState,
+    StateFeaturePipeline, StructuredEdrAction, TelemetryLevel, TelemetryPacket, TelemetryVelocity,
+    TemporalMetricsSummary, TemporalMetricsTracker, Transition, UnifiedEdrState,
 };
 pub use sentence::event_to_behavioral_sentence;
 pub use skyrl::{OshoosiSecurityGym, SkyAction, StepResult};
-pub use spider_eyes::{SpiderEyes, GemmaSupervisor};
+pub use spider_eyes::{GemmaSupervisor, SpiderEyes};
 pub use yara_analyzer::YaraAnalyzer;
-pub use embedding_gemma::{EmbeddingGemma2Engine, MatryoshkaDim};
-

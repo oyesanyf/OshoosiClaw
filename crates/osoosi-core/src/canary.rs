@@ -20,6 +20,12 @@ pub struct CanaryManager {
     base_dirs: Vec<PathBuf>,
 }
 
+impl Default for CanaryManager {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl CanaryManager {
     pub fn new() -> Self {
         let mut base_dirs = vec![std::env::temp_dir().join("osoosi-traps")];

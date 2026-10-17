@@ -1,3 +1,6 @@
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::type_complexity)]
+
 use axum::{
     body::Body,
     extract::ConnectInfo,
@@ -7,6 +10,13 @@ use axum::{
     routing::{delete, get, post},
     Json, Router,
 };
+use dashmap::DashMap;
+use once_cell::sync::Lazy;
+use osoosi_behavioral::{
+    DeepQEngine, OshoosiSecurityGym, PrioritizedReplayBuffer, ProcessContext, SafetyGuardrail,
+    SkyAction, Transition,
+};
+use rand::Rng;
 use serde::{Deserialize, Serialize};
 use serde_json::{json, Value};
 use std::convert::Infallible;
@@ -21,13 +31,6 @@ use tower::{Service, ServiceExt};
 use tower_http::cors::{Any, CorsLayer};
 use tower_http::services::ServeFile;
 use tracing::{info, warn};
-use osoosi_behavioral::{
-    DeepQEngine, OshoosiSecurityGym, PrioritizedReplayBuffer, ProcessContext, SafetyGuardrail,
-    SkyAction, Transition,
-};
-use rand::Rng;
-use once_cell::sync::Lazy;
-use dashmap::DashMap;
 
 pub mod ipv6_guard;
 use ipv6_guard::Ipv6SuspensionGuard;
@@ -130,10 +133,7 @@ impl SkyRlServerState {
                     username: "User".to_string(),
                 },
                 false,
-                vec![
-                    SkyAction::QueryProcessTree,
-                    SkyAction::Allow,
-                ],
+                vec![SkyAction::QueryProcessTree, SkyAction::Allow],
             ),
             (
                 ProcessContext {
@@ -263,7 +263,9 @@ impl DashboardState {
             .as_ref()
             .map(|b| b.agent_anomaly_detector.clone())
             .unwrap_or_else(|| {
-                Arc::new(osoosi_agent_anomaly::AgentAnomalyDetector::new(50, 200, None))
+                Arc::new(osoosi_agent_anomaly::AgentAnomalyDetector::new(
+                    50, 200, None,
+                ))
             });
 
         Self {
@@ -392,9 +394,27 @@ pub fn has_static_extension_str(s: &str) -> bool {
     let ext = clean.rsplit('.').next().unwrap_or("").to_ascii_lowercase();
     matches!(
         ext.as_str(),
-        "js" | "mjs" | "css" | "png" | "jpg" | "jpeg" | "gif" | "svg" | "ico"
-            | "woff" | "woff2" | "ttf" | "eot" | "map" | "wasm" | "json" | "webp"
-            | "webmanifest" | "txt" | "xml" | "html" | "htm"
+        "js" | "mjs"
+            | "css"
+            | "png"
+            | "jpg"
+            | "jpeg"
+            | "gif"
+            | "svg"
+            | "ico"
+            | "woff"
+            | "woff2"
+            | "ttf"
+            | "eot"
+            | "map"
+            | "wasm"
+            | "json"
+            | "webp"
+            | "webmanifest"
+            | "txt"
+            | "xml"
+            | "html"
+            | "htm"
     )
 }
 
@@ -501,7 +521,9 @@ pub fn validate_and_classify_path(decoded: &str) -> PathValidation {
             PathValidation::SpaRoute
         }
     } else if rel_path.as_os_str().is_empty()
-        || !rel_path.components().all(|c| matches!(c, std::path::Component::Normal(_)))
+        || !rel_path
+            .components()
+            .all(|c| matches!(c, std::path::Component::Normal(_)))
     {
         PathValidation::Invalid
     } else {
@@ -592,12 +614,10 @@ impl Service<Request<Body>> for SafeServeDir {
             let classification = validate_and_classify_path(&decoded);
 
             match classification {
-                PathValidation::Invalid => {
-                    Ok(Response::builder()
-                        .status(StatusCode::NOT_FOUND)
-                        .body(Body::from("Not found"))
-                        .unwrap())
-                }
+                PathValidation::Invalid => Ok(Response::builder()
+                    .status(StatusCode::NOT_FOUND)
+                    .body(Body::from("Not found"))
+                    .unwrap()),
                 PathValidation::SafeRelative(rel_path) => {
                     let is_static_asset =
                         has_static_extension(&rel_path) || has_static_extension_str(&decoded);
@@ -726,8 +746,14 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/attack-graph", get(get_attack_graph))
         .route("/api/agent/context", get(get_agent_context))
         .route("/api/agent/trigger-patch", post(post_agent_trigger_patch))
-        .route("/api/agent/approve-patches", post(post_agent_approve_patches))
-        .route("/api/agent/trigger-baseline", post(post_agent_trigger_baseline))
+        .route(
+            "/api/agent/approve-patches",
+            post(post_agent_approve_patches),
+        )
+        .route(
+            "/api/agent/trigger-baseline",
+            post(post_agent_trigger_baseline),
+        )
         .route(
             "/api/agent/trigger-restore-point",
             post(post_agent_trigger_restore_point),
@@ -742,10 +768,7 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             "/api/threats/:threat_id/true-positive",
             post(post_threat_true_positive),
         )
-        .route(
-            "/api/threats/confirm/:threat_id",
-            post(post_threat_confirm),
-        )
+        .route("/api/threats/confirm/:threat_id", post(post_threat_confirm))
         .route("/api/behavioral/feedback", post(post_behavioral_feedback))
         .route("/api/behavioral/analyze", get(get_behavioral_analyze))
         .route("/api/behavioral/deep-dive", post(post_behavioral_deep_dive))
@@ -767,10 +790,7 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
             get(get_bootstrap_peers).post(post_bootstrap_peers),
         )
         .route("/api/zone-summary", get(get_zone_summary))
-        .route(
-            "/api/zone/auto-remediate",
-            post(post_auto_remediate_gap),
-        )
+        .route("/api/zone/auto-remediate", post(post_auto_remediate_gap))
         .route("/api/story", get(get_story))
         .route("/api/pending-actions", get(get_pending_actions))
         .route("/api/approve-action", post(post_approve_action))
@@ -789,7 +809,10 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         )
         .route("/api/blocking/rules/unlock", post(post_blocking_unlock))
         .route("/api/deception/status", get(get_deception_status_endpoint))
-        .route("/api/deception/deploy-traps", post(post_deception_deploy_traps))
+        .route(
+            "/api/deception/deploy-traps",
+            post(post_deception_deploy_traps),
+        )
         .route(
             "/api/deception/activate-hologram",
             post(post_deception_activate_hologram),
@@ -821,27 +844,72 @@ fn dashboard_router(state: DashboardState, asset_path: PathBuf) -> Router {
         .route("/api/history/export", get(export_history))
         .route("/api/logs/files", get(get_log_files))
         .route("/api/logs/view", get(get_log_view))
-        .route("/api/agent-anomalies/evaluate", post(post_agent_anomalies_evaluate))
-        .route("/api/agent-anomalies/enforce", post(post_agent_anomalies_enforce))
-        .route("/api/agent-anomalies/findings", get(get_agent_anomalies_findings))
-        .route("/api/agent-anomalies/sessions", get(get_agent_anomalies_sessions))
-        .route("/api/agent-anomalies/summary", get(get_agent_anomalies_summary))
-        .route("/api/agent-anomalies/containment-status", get(get_agent_anomalies_containment_status))
-        .route("/api/agent-anomalies/mercury-status", get(get_mercury_status))
-        .route("/api/agent-anomalies/mercury-evaluate", post(post_mercury_evaluate))
-        .route("/api/agent-anomalies/spider-web", get(get_spider_web_status))
-        .route("/api/agent-anomalies/spider-web/evaluate", post(post_spider_web_evaluate))
-        .route("/api/agent-anomalies/embed", post(post_agent_anomalies_embed))
-        .route("/api/agent-anomalies/simulate-test", post(post_agent_anomalies_simulate_test))
+        .route(
+            "/api/agent-anomalies/evaluate",
+            post(post_agent_anomalies_evaluate),
+        )
+        .route(
+            "/api/agent-anomalies/enforce",
+            post(post_agent_anomalies_enforce),
+        )
+        .route(
+            "/api/agent-anomalies/findings",
+            get(get_agent_anomalies_findings),
+        )
+        .route(
+            "/api/agent-anomalies/sessions",
+            get(get_agent_anomalies_sessions),
+        )
+        .route(
+            "/api/agent-anomalies/summary",
+            get(get_agent_anomalies_summary),
+        )
+        .route(
+            "/api/agent-anomalies/containment-status",
+            get(get_agent_anomalies_containment_status),
+        )
+        .route(
+            "/api/agent-anomalies/mercury-status",
+            get(get_mercury_status),
+        )
+        .route(
+            "/api/agent-anomalies/mercury-evaluate",
+            post(post_mercury_evaluate),
+        )
+        .route(
+            "/api/agent-anomalies/spider-web",
+            get(get_spider_web_status),
+        )
+        .route(
+            "/api/agent-anomalies/spider-web/evaluate",
+            post(post_spider_web_evaluate),
+        )
+        .route(
+            "/api/agent-anomalies/embed",
+            post(post_agent_anomalies_embed),
+        )
+        .route(
+            "/api/agent-anomalies/simulate-test",
+            post(post_agent_anomalies_simulate_test),
+        )
         .route("/api/consensus/findings", get(get_consensus_findings))
         .route("/api/consensus/clean-hashes", get(get_clean_ignored_hashes))
         .route("/api/consensus/evaluate", post(post_consensus_evaluate))
-        .route("/api/consensus/ignore-hash", post(post_consensus_ignore_hash))
-        .route("/api/consensus/ignore-hash/:hash", delete(delete_consensus_ignore_hash))
+        .route(
+            "/api/consensus/ignore-hash",
+            post(post_consensus_ignore_hash),
+        )
+        .route(
+            "/api/consensus/ignore-hash/:hash",
+            delete(delete_consensus_ignore_hash),
+        )
         .route("/api/siquery/query", post(post_siquery_query))
         .route("/api/siquery/tables", get(get_siquery_tables))
         .route("/api/siquery/edr-status", get(get_siquery_edr_status))
-        .route("/api/siquery/protection-sweep", post(post_siquery_protection_sweep))
+        .route(
+            "/api/siquery/protection-sweep",
+            post(post_siquery_protection_sweep),
+        )
         .with_state(state);
 
     let cors = CorsLayer::new()
@@ -925,7 +993,10 @@ async fn auth_middleware(
 ) -> Result<Response, (StatusCode, Json<serde_json::Value>)> {
     let method = req.method().clone();
     let path = req.uri().path().to_string();
-    let is_state_changing = matches!(method, Method::POST | Method::PUT | Method::DELETE | Method::PATCH);
+    let is_state_changing = matches!(
+        method,
+        Method::POST | Method::PUT | Method::DELETE | Method::PATCH
+    );
     #[cfg(test)]
     let test_force_auth = req.headers().get("x-test-require-auth").is_some();
     #[cfg(not(test))]
@@ -938,24 +1009,34 @@ async fn auth_middleware(
 
     if !is_state_changing || auth_disabled {
         let mut resp = next.run(req).await;
-        if method == Method::GET && (path == "/" || path == "/index.html" || path == "/api/status") {
+        if method == Method::GET && (path == "/" || path == "/index.html" || path == "/api/status")
+        {
             let tok = get_or_init_dashboard_api_token();
             let cookie_val = format!("osoosi_token={}; Path=/; HttpOnly; SameSite=Strict", tok);
             if let Ok(hv) = axum::http::HeaderValue::from_str(&cookie_val) {
-                resp.headers_mut().insert(axum::http::header::SET_COOKIE, hv);
+                resp.headers_mut()
+                    .insert(axum::http::header::SET_COOKIE, hv);
             }
         }
         return Ok(resp);
     }
 
-    if !test_force_auth
-        && (path == "/health"
+    let bind_all = std::env::var("OSOOSI_DASHBOARD_BIND_ALL")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    let is_public_bypass = if bind_all {
+        path == "/health" || path == "/api/health" || path == "/"
+    } else {
+        path == "/health"
             || path == "/api/health"
             || path == "/"
             || path == "/api/siquery/query"
             || path == "/siquery/query"
-            || path == "/api/traffic/conversation")
-    {
+            || path == "/api/traffic/conversation"
+    };
+
+    if !test_force_auth && is_public_bypass {
         return Ok(next.run(req).await);
     }
 
@@ -1024,7 +1105,11 @@ pub async fn spawn_dashboard_with_backend(
     let bind_all = std::env::var("OSOOSI_DASHBOARD_BIND_ALL")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    let bind_ip = if bind_all { [0, 0, 0, 0] } else { [127, 0, 0, 1] };
+    let bind_ip = if bind_all {
+        [0, 0, 0, 0]
+    } else {
+        [127, 0, 0, 1]
+    };
     let addr = SocketAddr::from((bind_ip, port));
     let std_listener = std::net::TcpListener::bind(addr)?;
     std_listener.set_nonblocking(true)?;
@@ -1101,22 +1186,28 @@ async fn get_supervisor_status(State(state): State<DashboardState>) -> impl Into
             let regime = osoosi_core::supervisor::MultiSensorFusionEngine::map_regime(health_score);
             let hw_res = osoosi_behavioral::hardware_selection::get_system_resources();
             let ai_cfg = osoosi_types::config::load_ai_config();
-            let installed = osoosi_behavioral::hardware_selection::query_installed_ollama_models(&ai_cfg.reasoning_url).await;
-            let hw_selection = Some(osoosi_behavioral::hardware_selection::select_optimal_models(
-                &hw_res,
-                &installed,
-                &ai_cfg.reasoning_model,
-                &ai_cfg.foundation_sec_model,
-            ));
-            let diagnostic_narrative = osoosi_core::supervisor::SupervisorDiagnosticEngine::synthesize(
-                regime.clone(),
-                health_score,
-                conflict_metric,
-                &readings,
-                0,
-                true,
-                hw_selection.as_ref(),
+            let installed = osoosi_behavioral::hardware_selection::query_installed_ollama_models(
+                &ai_cfg.reasoning_url,
+            )
+            .await;
+            let hw_selection = Some(
+                osoosi_behavioral::hardware_selection::select_optimal_models(
+                    &hw_res,
+                    &installed,
+                    &ai_cfg.reasoning_model,
+                    &ai_cfg.foundation_sec_model,
+                ),
             );
+            let diagnostic_narrative =
+                osoosi_core::supervisor::SupervisorDiagnosticEngine::synthesize(
+                    regime.clone(),
+                    health_score,
+                    conflict_metric,
+                    &readings,
+                    0,
+                    true,
+                    hw_selection.as_ref(),
+                );
             osoosi_core::supervisor::SupervisorStatus {
                 regime,
                 health_score,
@@ -1143,7 +1234,9 @@ pub struct HardwareSummaryResponse {
 async fn get_hardware_summary(State(_state): State<DashboardState>) -> impl IntoResponse {
     let resources = osoosi_behavioral::hardware_selection::get_system_resources();
     let ai_cfg = osoosi_types::config::load_ai_config();
-    let installed = osoosi_behavioral::hardware_selection::query_installed_ollama_models(&ai_cfg.reasoning_url).await;
+    let installed =
+        osoosi_behavioral::hardware_selection::query_installed_ollama_models(&ai_cfg.reasoning_url)
+            .await;
     let optimal_selection = osoosi_behavioral::hardware_selection::select_optimal_models(
         &resources,
         &installed,
@@ -1198,11 +1291,15 @@ pub struct ModelPullProgress {
 
 static MODEL_PULL_TRACKER: Lazy<DashMap<String, ModelPullProgress>> = Lazy::new(DashMap::new);
 
-async fn get_calibrated_models(State(_state): State<DashboardState>) -> Json<CalibratedModelsResponse> {
+async fn get_calibrated_models(
+    State(_state): State<DashboardState>,
+) -> Json<CalibratedModelsResponse> {
     let resources = osoosi_behavioral::hardware_selection::get_system_resources();
     let tier = resources.determine_tier();
     let ai_cfg = osoosi_types::config::load_ai_config();
-    let installed_models = osoosi_behavioral::hardware_selection::query_installed_ollama_models(&ai_cfg.reasoning_url).await;
+    let installed_models =
+        osoosi_behavioral::hardware_selection::query_installed_ollama_models(&ai_cfg.reasoning_url)
+            .await;
 
     let ollama_online = if !installed_models.is_empty() {
         true
@@ -1219,7 +1316,11 @@ async fn get_calibrated_models(State(_state): State<DashboardState>) -> Json<Cal
             } else {
                 format!("{}/api/tags", ai_cfg.reasoning_url.trim_end_matches('/'))
             };
-            c.get(&tags_url).send().await.map(|r| r.status().is_success()).unwrap_or(false)
+            c.get(&tags_url)
+                .send()
+                .await
+                .map(|r| r.status().is_success())
+                .unwrap_or(false)
         } else {
             false
         };
@@ -1245,14 +1346,20 @@ async fn get_calibrated_models(State(_state): State<DashboardState>) -> Json<Cal
     };
 
     let (deep_model_name, deep_size) = match tier {
-        osoosi_behavioral::hardware_selection::HardwareTier::Tier4Enterprise => ("qwen2.5:32b", 19.0),
+        osoosi_behavioral::hardware_selection::HardwareTier::Tier4Enterprise => {
+            ("qwen2.5:32b", 19.0)
+        }
         osoosi_behavioral::hardware_selection::HardwareTier::Tier3HighPerf => ("qwen2.5:14b", 9.0),
         osoosi_behavioral::hardware_selection::HardwareTier::Tier2MidRange => ("qwen2.5:7b", 4.7),
-        osoosi_behavioral::hardware_selection::HardwareTier::Tier1Constrained => ("qwen2.5:1.5b", 1.0),
+        osoosi_behavioral::hardware_selection::HardwareTier::Tier1Constrained => {
+            ("qwen2.5:1.5b", 1.0)
+        }
     };
 
     let is_installed = |target: &str| -> bool {
-        installed_models.iter().any(|inst| osoosi_behavioral::hardware_selection::model_matches(target, inst))
+        installed_models
+            .iter()
+            .any(|inst| osoosi_behavioral::hardware_selection::model_matches(target, inst))
     };
 
     let calibrated_models = vec![
@@ -1331,13 +1438,22 @@ fn sanitize_pull_error(raw: &str) -> String {
     }
     let err_lines: Vec<&str> = meaningful_lines
         .iter()
-        .filter(|l| l.contains("Error") || l.contains("failed") || l.contains("dial") || l.contains("connectex"))
+        .filter(|l| {
+            l.contains("Error")
+                || l.contains("failed")
+                || l.contains("dial")
+                || l.contains("connectex")
+        })
         .copied()
         .collect();
     if !err_lines.is_empty() {
         err_lines.join(" | ")
     } else {
-        meaningful_lines.last().copied().unwrap_or("Model pull failed").to_string()
+        meaningful_lines
+            .last()
+            .copied()
+            .unwrap_or("Model pull failed")
+            .to_string()
     }
 }
 
@@ -1397,7 +1513,9 @@ async fn post_model_pull(
     let resources = osoosi_behavioral::hardware_selection::get_system_resources();
     let tier = resources.determine_tier();
     let ai_cfg = osoosi_types::config::load_ai_config();
-    let installed_models = osoosi_behavioral::hardware_selection::query_installed_ollama_models(&ai_cfg.reasoning_url).await;
+    let installed_models =
+        osoosi_behavioral::hardware_selection::query_installed_ollama_models(&ai_cfg.reasoning_url)
+            .await;
 
     let deep_model_name = match tier {
         osoosi_behavioral::hardware_selection::HardwareTier::Tier4Enterprise => "qwen2.5:32b",
@@ -1417,7 +1535,9 @@ async fn post_model_pull(
 
     if payload.download_all_calibrated == Some(true) {
         for m in &all_calibrated {
-            let already = installed_models.iter().any(|inst| osoosi_behavioral::hardware_selection::model_matches(m, inst));
+            let already = installed_models
+                .iter()
+                .any(|inst| osoosi_behavioral::hardware_selection::model_matches(m, inst));
             if !already {
                 target_models.push(m.to_string());
             }
@@ -1468,7 +1588,10 @@ async fn post_model_pull(
             let mut ipv6_guard = Ipv6SuspensionGuard::acquire().await;
 
             let initial_message = if ipv6_guard.has_disabled_adapters() {
-                format!("IPv4 prioritized (IPv6 will be auto-restored after download). Pulling {}...", model_to_pull)
+                format!(
+                    "IPv4 prioritized (IPv6 will be auto-restored after download). Pulling {}...",
+                    model_to_pull
+                )
             } else {
                 format!("Pulling {} via Ollama API...", model_to_pull)
             };
@@ -1503,7 +1626,10 @@ async fn post_model_pull(
             let mut pull_err = None;
 
             if let Ok(c) = client {
-                info!("Requesting Ollama REST pull for {} at {}", model_to_pull, pull_url);
+                info!(
+                    "Requesting Ollama REST pull for {} at {}",
+                    model_to_pull, pull_url
+                );
                 match c
                     .post(&pull_url)
                     .json(&serde_json::json!({
@@ -1542,7 +1668,10 @@ async fn post_model_pull(
                         completed_bytes: 0,
                         total_bytes: 0,
                         percent: 40.0,
-                        message: format!("Falling back to CLI execution: ollama pull {}", model_to_pull),
+                        message: format!(
+                            "Falling back to CLI execution: ollama pull {}",
+                            model_to_pull
+                        ),
                         error: None,
                         updated_at: chrono::Utc::now().to_rfc3339(),
                     },
@@ -1696,7 +1825,11 @@ pub async fn start_dashboard_with_backend(
     let bind_all = std::env::var("OSOOSI_DASHBOARD_BIND_ALL")
         .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
         .unwrap_or(false);
-    let bind_ip = if bind_all { [0, 0, 0, 0] } else { [127, 0, 0, 1] };
+    let bind_ip = if bind_all {
+        [0, 0, 0, 0]
+    } else {
+        [127, 0, 0, 1]
+    };
     let addr = SocketAddr::from((bind_ip, port));
     info!(
         "OpenỌ̀ṣọ́ọ̀sì Dashboard listening on {} (local access: http://127.0.0.1:{})",
@@ -1948,43 +2081,136 @@ fn enrich_mitre_threat(
             let mut parts = t.splitn(2, " - ");
             let tech_id = parts.next().unwrap_or(t).trim();
             let tech_name = parts.next().unwrap_or("").trim();
-            return (tech_id.to_string(), tech_name.to_string(), format!("[{}] {}", tech_id, tech_name));
+            return (
+                tech_id.to_string(),
+                tech_name.to_string(),
+                format!("[{}] {}", tech_id, tech_name),
+            );
         } else {
-            let name = if !process_name.is_empty() { process_name } else { t };
+            let name = if !process_name.is_empty() {
+                process_name
+            } else {
+                t
+            };
             return (t.to_string(), name.to_string(), format!("[{}] {}", t, name));
         }
     }
     let r_lower = reason.to_lowercase();
     let p_lower = process_name.to_lowercase();
 
-    let (tech_id, tech_name, display_title) = if r_lower.contains("sandboxsurface") || r_lower.contains("high-risk privilege") || r_lower.contains("whoami") || p_lower.contains("whoami") {
-        ("T1033", "System Owner/User Discovery", "[T1033] System Owner/User Discovery (Elevated Probe)".to_string())
-    } else if r_lower.contains("anti_dbg") || r_lower.contains("debuggercheck") || r_lower.contains("debuggerexception") || r_lower.contains("debugger") {
-        let target = if !process_name.is_empty() { process_name } else { "Binary" };
-        ("T1622", "Debugger Evasion", format!("[T1622] Debugger Evasion ({})", target))
+    let (tech_id, tech_name, display_title) = if r_lower.contains("sandboxsurface")
+        || r_lower.contains("high-risk privilege")
+        || r_lower.contains("whoami")
+        || p_lower.contains("whoami")
+    {
+        (
+            "T1033",
+            "System Owner/User Discovery",
+            "[T1033] System Owner/User Discovery (Elevated Probe)".to_string(),
+        )
+    } else if r_lower.contains("anti_dbg")
+        || r_lower.contains("debuggercheck")
+        || r_lower.contains("debuggerexception")
+        || r_lower.contains("debugger")
+    {
+        let target = if !process_name.is_empty() {
+            process_name
+        } else {
+            "Binary"
+        };
+        (
+            "T1622",
+            "Debugger Evasion",
+            format!("[T1622] Debugger Evasion ({})", target),
+        )
     } else if r_lower.contains("win_mutex") || r_lower.contains("mutex") {
-        let target = if !process_name.is_empty() { process_name } else { "Binary" };
-        ("T1027", "Obfuscated Files: Mutex Lock", format!("[T1027] Obfuscated Files: Mutex Lock ({})", target))
+        let target = if !process_name.is_empty() {
+            process_name
+        } else {
+            "Binary"
+        };
+        (
+            "T1027",
+            "Obfuscated Files: Mutex Lock",
+            format!("[T1027] Obfuscated Files: Mutex Lock ({})", target),
+        )
     } else if r_lower.contains("intelligent correlation") || r_lower.contains("suspicion score") {
-        ("T1082", "System Discovery: Heuristic Anomaly", "[T1082] System Discovery (Heuristic Anomaly)".to_string())
-    } else if p_lower.contains("mcp-cli") || p_lower.contains("powershell") || p_lower.contains("cmd.exe") {
-        let target = if !process_name.is_empty() { process_name } else { "Interpreter" };
-        ("T1059", "Command and Scripting Interpreter", format!("[T1059] Command and Scripting Interpreter ({})", target))
-    } else if p_lower.contains("invcol") || p_lower.contains("smbios") || p_lower.contains("update.exe") || p_lower.contains("inv.exe") {
-        let target = if !process_name.is_empty() { process_name } else { "System Tool" };
-        ("T1082", "System Information Discovery", format!("[T1082] System Information Discovery ({})", target))
+        (
+            "T1082",
+            "System Discovery: Heuristic Anomaly",
+            "[T1082] System Discovery (Heuristic Anomaly)".to_string(),
+        )
+    } else if p_lower.contains("mcp-cli")
+        || p_lower.contains("powershell")
+        || p_lower.contains("cmd.exe")
+    {
+        let target = if !process_name.is_empty() {
+            process_name
+        } else {
+            "Interpreter"
+        };
+        (
+            "T1059",
+            "Command and Scripting Interpreter",
+            format!("[T1059] Command and Scripting Interpreter ({})", target),
+        )
+    } else if p_lower.contains("invcol")
+        || p_lower.contains("smbios")
+        || p_lower.contains("update.exe")
+        || p_lower.contains("inv.exe")
+    {
+        let target = if !process_name.is_empty() {
+            process_name
+        } else {
+            "System Tool"
+        };
+        (
+            "T1082",
+            "System Information Discovery",
+            format!("[T1082] System Information Discovery ({})", target),
+        )
     } else if p_lower.ends_with(".rbf") {
-        let target = if !process_name.is_empty() { process_name } else { "Rollback" };
-        ("T1547", "Boot or Logon Autostart: Installer Rollback", format!("[T1547] Boot/Logon Autostart: Installer Rollback ({})", target))
+        let target = if !process_name.is_empty() {
+            process_name
+        } else {
+            "Rollback"
+        };
+        (
+            "T1547",
+            "Boot or Logon Autostart: Installer Rollback",
+            format!(
+                "[T1547] Boot/Logon Autostart: Installer Rollback ({})",
+                target
+            ),
+        )
     } else if !cve_id.is_empty() {
-        ("T1190", "Exploit Public-Facing Application", format!("[{}] Vulnerability Trigger ({})", cve_id, if !process_name.is_empty() { process_name } else { "Target" }))
+        (
+            "T1190",
+            "Exploit Public-Facing Application",
+            format!(
+                "[{}] Vulnerability Trigger ({})",
+                cve_id,
+                if !process_name.is_empty() {
+                    process_name
+                } else {
+                    "Target"
+                }
+            ),
+        )
     } else {
-        let target = if !process_name.is_empty() && !process_name.eq_ignore_ascii_case("threat") && !process_name.eq_ignore_ascii_case("unknown") {
+        let target = if !process_name.is_empty()
+            && !process_name.eq_ignore_ascii_case("threat")
+            && !process_name.eq_ignore_ascii_case("unknown")
+        {
             format!(" ({})", process_name)
         } else {
             String::new()
         };
-        ("T1082", "System Information Discovery", format!("[T1082] System Discovery{}", target))
+        (
+            "T1082",
+            "System Information Discovery",
+            format!("[T1082] System Discovery{}", target),
+        )
     };
     (tech_id.to_string(), tech_name.to_string(), display_title)
 }
@@ -2200,7 +2426,10 @@ async fn post_har_inspect(
     State(state): State<DashboardState>,
     Json(req): Json<Value>,
 ) -> (StatusCode, Json<Value>) {
-    let label = req.get("label").and_then(|v| v.as_str()).unwrap_or("API-Stream");
+    let label = req
+        .get("label")
+        .and_then(|v| v.as_str())
+        .unwrap_or("API-Stream");
     let har_str = if let Some(p) = req.get("file_path").and_then(|v| v.as_str()) {
         let p_trimmed = p.trim();
         // Path traversal, UNC, NTFS Alternate Data Streams (ADS) validation
@@ -2245,7 +2474,11 @@ async fn post_har_inspect(
                 );
             }
         }
-    } else if let Some(raw) = req.get("raw").or_else(|| req.get("har_content")).and_then(|v| v.as_str()) {
+    } else if let Some(raw) = req
+        .get("raw")
+        .or_else(|| req.get("har_content"))
+        .and_then(|v| v.as_str())
+    {
         raw.to_string()
     } else if let Some(har_val) = req.get("har") {
         if har_val.is_string() {
@@ -2350,7 +2583,7 @@ async fn get_attack_graph(
             let has_nodes = res
                 .get("nodes")
                 .and_then(|n| n.as_array())
-                .map_or(false, |a| !a.is_empty());
+                .is_some_and(|a| !a.is_empty());
             if has_nodes {
                 Json(res)
             } else {
@@ -2382,16 +2615,18 @@ async fn get_repair_status(State(state): State<DashboardState>) -> Json<Value> {
             } else {
                 "Patches Pending Approval"
             };
-            let effective_state = if up_to_date && (last_state.is_none() || last_state.as_deref() == Some("")) {
-                Some("Patches Up to Date · Verified".to_string())
-            } else {
-                last_state
-            };
-            let effective_cve = if up_to_date && (last_cve.is_none() || last_cve.as_deref() == Some("")) {
-                Some("All Patches Up to Date".to_string())
-            } else {
-                last_cve
-            };
+            let effective_state =
+                if up_to_date && (last_state.is_none() || last_state.as_deref() == Some("")) {
+                    Some("Patches Up to Date · Verified".to_string())
+                } else {
+                    last_state
+                };
+            let effective_cve =
+                if up_to_date && (last_cve.is_none() || last_cve.as_deref() == Some("")) {
+                    Some("All Patches Up to Date".to_string())
+                } else {
+                    last_cve
+                };
             Json(json!({
                 "last_cve": effective_cve,
                 "last_state": effective_state,
@@ -2459,9 +2694,14 @@ async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value> {
             }
             let mem_store = osoosi_core::MemoryStore::new(&db_path).ok();
             let mut sec_score = assessment.security_score.max(100);
-            let mut structured_recs = serde_json::to_value(&assessment.structured_recommendations).unwrap_or_default();
+            let mut structured_recs =
+                serde_json::to_value(&assessment.structured_recommendations).unwrap_or_default();
             let mesh_config = osoosi_types::load_mesh_listen_config();
-            let relay_count = mesh_config.nostr_relays.iter().filter(|r| !r.trim().is_empty()).count();
+            let relay_count = mesh_config
+                .nostr_relays
+                .iter()
+                .filter(|r| !r.trim().is_empty())
+                .count();
             let mut peer_count = 0;
             let mut host_count = 1;
 
@@ -2483,13 +2723,19 @@ async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value> {
             if let Some(ref mem) = mem_store {
                 if let Ok(Some(posture)) = mem.load_zone_posture("zone-alpha-mesh") {
                     if posture["tpm_remediated"].as_bool().unwrap_or(false) {
-                        osoosi_core::hardened::TPM_REMEDIATED.store(true, std::sync::atomic::Ordering::SeqCst);
+                        osoosi_core::hardened::TPM_REMEDIATED
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
                     }
-                    if posture["memory_shield_remediated"].as_bool().unwrap_or(false) {
-                        osoosi_core::hardened::MEMORY_SHIELD_REMEDIATED.store(true, std::sync::atomic::Ordering::SeqCst);
+                    if posture["memory_shield_remediated"]
+                        .as_bool()
+                        .unwrap_or(false)
+                    {
+                        osoosi_core::hardened::MEMORY_SHIELD_REMEDIATED
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
                     }
                     if posture["egress_remediated"].as_bool().unwrap_or(false) {
-                        osoosi_core::hardened::SOFTWARE_EGRESS_REMEDIATED.store(true, std::sync::atomic::Ordering::SeqCst);
+                        osoosi_core::hardened::SOFTWARE_EGRESS_REMEDIATED
+                            .store(true, std::sync::atomic::Ordering::SeqCst);
                     }
                     if let Some(sc) = posture["security_score"].as_i64() {
                         sec_score = (sc as u8).max(100);
@@ -2500,7 +2746,9 @@ async fn get_zone_summary(State(state): State<DashboardState>) -> Json<Value> {
                     if let Some(recs_str) = posture["recommendations_json"].as_str() {
                         if !recs_str.trim().is_empty() {
                             if let Ok(parsed) = serde_json::from_str::<Value>(recs_str) {
-                                if parsed.is_array() && !parsed.as_array().map_or(true, |a| a.is_empty()) {
+                                if parsed.is_array()
+                                    && !parsed.as_array().is_none_or(|a| a.is_empty())
+                                {
                                     structured_recs = parsed;
                                 }
                             }
@@ -2593,12 +2841,19 @@ async fn get_story(State(state): State<DashboardState>) -> Json<Value> {
                 let uptime_str = format_uptime(orch.uptime());
                 let tpm = osoosi_core::hardened::detect_tpm();
                 let tpm_status = if tpm.available {
-                    format!("TPM 2.0 Active ({})", tpm.version.as_deref().unwrap_or("Hardware"))
+                    format!(
+                        "TPM 2.0 Active ({})",
+                        tpm.version.as_deref().unwrap_or("Hardware")
+                    )
                 } else {
                     "TPM 2.0 Root of Trust Verified".to_string()
                 };
                 let event_count = orch.audit().entries().len();
-                let threat_count = orch.memory().get_recent_threats(100).map(|t| t.len()).unwrap_or(0);
+                let threat_count = orch
+                    .memory()
+                    .get_recent_threats(100)
+                    .map(|t| t.len())
+                    .unwrap_or(0);
                 format!(
                     "System forensic baseline established for Node {did}. \
                      Uptime: {uptime_str}. Security Anchor: {tpm_status}. \
@@ -2765,7 +3020,9 @@ async fn post_deception_entangle(
 ) -> Json<Value> {
     let pid = req.pid.unwrap_or(1337);
     let name = req.process_name.clone().unwrap_or_else(|| {
-        req.peer_id.clone().unwrap_or_else(|| "suspicious_process".to_string())
+        req.peer_id
+            .clone()
+            .unwrap_or_else(|| "suspicious_process".to_string())
     });
 
     match &state.backend {
@@ -3277,10 +3534,9 @@ async fn post_manual_false_positive(
             if let Some(ref p) = req.process_name {
                 orch.mark_gossip_false_positive(p);
             }
-            let res = orch.memory().mark_false_positive(
-                req.process_name.as_deref(),
-                req.hash.as_deref(),
-            );
+            let res = orch
+                .memory()
+                .mark_false_positive(req.process_name.as_deref(), req.hash.as_deref());
             if let Some(ref fp) = req.file_path {
                 let _ = orch.memory().record_false_positive_pattern(
                     Some(fp),
@@ -3288,15 +3544,13 @@ async fn post_manual_false_positive(
                     "analyst",
                 );
             }
-            let _ = orch.record_manual_false_positive(
-                req.process_name.clone(),
-                req.hash.clone(),
-            ).await;
+            let _ = orch
+                .record_manual_false_positive(req.process_name.clone(), req.hash.clone())
+                .await;
             if let Some(ref fp) = req.file_path {
-                let _ = orch.record_manual_false_positive(
-                    Some(fp.clone()),
-                    req.hash.clone(),
-                ).await;
+                let _ = orch
+                    .record_manual_false_positive(Some(fp.clone()), req.hash.clone())
+                    .await;
             }
             orch.audit().log(
                 "MANUAL_FALSE_POSITIVE",
@@ -3347,16 +3601,14 @@ pub async fn get_consensus_findings(
 ) -> Json<Value> {
     let limit = query.limit.unwrap_or(50);
     match &state.backend {
-        Some(orch) => {
-            match orch.memory().get_consensus_findings(limit) {
-                Ok(findings) => Json(json!(findings)),
-                Err(e) => api_error_json(
-                    "CONSENSUS_FINDINGS_FETCH_FAILED",
-                    format!("Failed to retrieve consensus findings: {}", e),
-                    "Verify memory telemetry store is initialized and query parameters are valid.",
-                ),
-            }
-        }
+        Some(orch) => match orch.memory().get_consensus_findings(limit) {
+            Ok(findings) => Json(json!(findings)),
+            Err(e) => api_error_json(
+                "CONSENSUS_FINDINGS_FETCH_FAILED",
+                format!("Failed to retrieve consensus findings: {}", e),
+                "Verify memory telemetry store is initialized and query parameters are valid.",
+            ),
+        },
         None => Json(json!([])),
     }
 }
@@ -3367,16 +3619,14 @@ pub async fn get_clean_ignored_hashes(
 ) -> Json<Value> {
     let limit = query.limit.unwrap_or(50);
     match &state.backend {
-        Some(orch) => {
-            match orch.memory().get_clean_ignored_hashes(limit) {
-                Ok(hashes) => Json(json!(hashes)),
-                Err(e) => api_error_json(
-                    "CLEAN_HASHES_FETCH_FAILED",
-                    format!("Failed to retrieve clean ignored hashes: {}", e),
-                    "Verify memory telemetry store is initialized and query parameters are valid.",
-                ),
-            }
-        }
+        Some(orch) => match orch.memory().get_clean_ignored_hashes(limit) {
+            Ok(hashes) => Json(json!(hashes)),
+            Err(e) => api_error_json(
+                "CLEAN_HASHES_FETCH_FAILED",
+                format!("Failed to retrieve clean ignored hashes: {}", e),
+                "Verify memory telemetry store is initialized and query parameters are valid.",
+            ),
+        },
         None => Json(json!([])),
     }
 }
@@ -3389,7 +3639,10 @@ pub async fn post_consensus_evaluate(
         Some(orch) => {
             let p = std::path::Path::new(&payload.path);
             match orch.evaluate_program_consensus(p).await {
-                Ok(finding) => (StatusCode::OK, Json(json!({"status": "ok", "finding": finding}))),
+                Ok(finding) => (
+                    StatusCode::OK,
+                    Json(json!({"status": "ok", "finding": finding})),
+                ),
                 Err(e) => api_error(
                     StatusCode::BAD_REQUEST,
                     "CONSENSUS_EVAL_FAILED",
@@ -3419,7 +3672,10 @@ pub async fn post_consensus_ignore_hash(
                 payload.file_path.as_deref(),
                 "dashboard_manual",
             ) {
-                Ok(()) => (StatusCode::OK, Json(json!({"status": "ok", "hash": payload.hash}))),
+                Ok(()) => (
+                    StatusCode::OK,
+                    Json(json!({"status": "ok", "hash": payload.hash})),
+                ),
                 Err(e) => api_error(
                     StatusCode::INTERNAL_SERVER_ERROR,
                     "CONSENSUS_IGNORE_FAILED",
@@ -3442,17 +3698,18 @@ pub async fn delete_consensus_ignore_hash(
     Path(hash): Path<String>,
 ) -> (StatusCode, Json<Value>) {
     match &state.backend {
-        Some(orch) => {
-            match orch.memory().remove_clean_ignored_hash(&hash) {
-                Ok(removed) => (StatusCode::OK, Json(json!({"status": "ok", "removed": removed}))),
-                Err(e) => api_error(
-                    StatusCode::INTERNAL_SERVER_ERROR,
-                    "CONSENSUS_REMOVE_FAILED",
-                    e.to_string(),
-                    "Verify database file integrity.",
-                ),
-            }
-        }
+        Some(orch) => match orch.memory().remove_clean_ignored_hash(&hash) {
+            Ok(removed) => (
+                StatusCode::OK,
+                Json(json!({"status": "ok", "removed": removed})),
+            ),
+            Err(e) => api_error(
+                StatusCode::INTERNAL_SERVER_ERROR,
+                "CONSENSUS_REMOVE_FAILED",
+                e.to_string(),
+                "Verify database file integrity.",
+            ),
+        },
         None => api_error(
             StatusCode::SERVICE_UNAVAILABLE,
             "BACKEND_UNAVAILABLE",
@@ -3571,7 +3828,10 @@ async fn post_blocking_rule(
     // 1. Compute/validate the BLAKE3 hash
     let computed_hash = if let Some(ref h) = req.hash {
         let trimmed = h.trim();
-        let stripped = trimmed.strip_prefix("0x").or_else(|| trimmed.strip_prefix("0X")).unwrap_or(trimmed);
+        let stripped = trimmed
+            .strip_prefix("0x")
+            .or_else(|| trimmed.strip_prefix("0X"))
+            .unwrap_or(trimmed);
         if !stripped.is_empty() {
             stripped.to_lowercase()
         } else if std::path::Path::new(trimmed_path).is_file() {
@@ -3594,11 +3854,13 @@ async fn post_blocking_rule(
     let kind = match req.kind.to_lowercase().as_str() {
         "executable" => osoosi_types::BlockingKind::Executable,
         "shredding" => osoosi_types::BlockingKind::Shredding,
-        _ => return api_error_json(
-            "INVALID_BLOCKING_KIND",
-            "Invalid blocking kind",
-            "Supported blocking kinds are 'executable' or 'shredding'.",
-        ),
+        _ => {
+            return api_error_json(
+                "INVALID_BLOCKING_KIND",
+                "Invalid blocking kind",
+                "Supported blocking kinds are 'executable' or 'shredding'.",
+            )
+        }
     };
     let rule = osoosi_types::BlockingRule {
         path: trimmed_path.to_string(),
@@ -3621,7 +3883,10 @@ async fn post_blocking_rule(
             // Sync to Ring-0 kernel driver if connected
             if let Some(ref kd) = *orch.kernel_driver.read() {
                 let _ = kd.add_blocked_path(trimmed_path);
-                let hex_str = computed_hash.strip_prefix("0x").or_else(|| computed_hash.strip_prefix("0X")).unwrap_or(&computed_hash);
+                let hex_str = computed_hash
+                    .strip_prefix("0x")
+                    .or_else(|| computed_hash.strip_prefix("0X"))
+                    .unwrap_or(&computed_hash);
                 if let Ok(hash_bytes) = hex::decode(hex_str) {
                     if hash_bytes.len() == 32 {
                         let mut arr = [0u8; 32];
@@ -3672,7 +3937,10 @@ async fn post_blocking_rule(
         }
         None => {
             let mut rules = state.mock_blocking_rules.write().await;
-            if !rules.iter().any(|r| r.path == rule.path && r.kind == rule.kind) {
+            if !rules
+                .iter()
+                .any(|r| r.path == rule.path && r.kind == rule.kind)
+            {
                 rules.push(rule);
             }
             Json(json!({
@@ -3776,8 +4044,13 @@ async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
                     } else {
                         match e.event_type.as_str() {
                             "THREAT_DETECTED" => {
-                                let proc = e.data.get("process_name").and_then(|v| v.as_str()).unwrap_or("Threat");
-                                let cve = e.data.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
+                                let proc = e
+                                    .data
+                                    .get("process_name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Threat");
+                                let cve =
+                                    e.data.get("cve_id").and_then(|v| v.as_str()).unwrap_or("");
                                 if !cve.is_empty() {
                                     format!("{} — {}", proc, cve)
                                 } else {
@@ -3785,61 +4058,129 @@ async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
                                 }
                             }
                             "MESH_THREAT_RECEIVED" => {
-                                let proc = e.data.get("process_name").and_then(|v| v.as_str()).unwrap_or("Threat");
-                                let node = e.data.get("source_node").and_then(|v| v.as_str()).unwrap_or("peer");
-                                let tech = e.data.get("mitre_technique").and_then(|v| v.as_str()).map(|t| format!("[{}] ", t)).unwrap_or_default();
+                                let proc = e
+                                    .data
+                                    .get("process_name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Threat");
+                                let node = e
+                                    .data
+                                    .get("source_node")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("peer");
+                                let tech = e
+                                    .data
+                                    .get("mitre_technique")
+                                    .and_then(|v| v.as_str())
+                                    .map(|t| format!("[{}] ", t))
+                                    .unwrap_or_default();
                                 format!("Peer Threat: {}{} via {}", tech, proc, node)
                             }
                             "MESH_THREAT_BROADCAST" => {
-                                let proc = e.data.get("process_name").and_then(|v| v.as_str()).unwrap_or("Threat");
-                                let tech = e.data.get("mitre_technique").and_then(|v| v.as_str()).map(|t| format!("[{}] ", t)).unwrap_or_default();
+                                let proc = e
+                                    .data
+                                    .get("process_name")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Threat");
+                                let tech = e
+                                    .data
+                                    .get("mitre_technique")
+                                    .and_then(|v| v.as_str())
+                                    .map(|t| format!("[{}] ", t))
+                                    .unwrap_or_default();
                                 format!("Mesh Broadcast: {}{}", tech, proc)
                             }
                             "MESH_INTEL_RECEIVED" => {
-                                let summ = e.data.get("summary").and_then(|v| v.as_str()).unwrap_or("Intel");
-                                let node = e.data.get("source_node").and_then(|v| v.as_str()).unwrap_or("peer");
+                                let summ = e
+                                    .data
+                                    .get("summary")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Intel");
+                                let node = e
+                                    .data
+                                    .get("source_node")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("peer");
                                 format!("Mesh Intel from {}: {}", node, summ)
                             }
                             "MESH_SAMPLE_RECEIVED" => {
-                                let hash = e.data.get("file_hash").and_then(|v| v.as_str()).unwrap_or("sample");
+                                let hash = e
+                                    .data
+                                    .get("file_hash")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("sample");
                                 let hshort = &hash[..hash.len().min(8)];
                                 format!("Malware sample received: {}", hshort)
                             }
                             "MESH_TARPIT_APPLIED" => {
-                                let ip = e.data.get("target_ip").and_then(|v| v.as_str()).unwrap_or("IP");
+                                let ip = e
+                                    .data
+                                    .get("target_ip")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("IP");
                                 format!("Mesh Tarpit applied: {}", ip)
                             }
                             "TELEMETRY_INGESTED" => {
-                                let ev = e.data.get("event_id").and_then(|v| v.as_i64()).unwrap_or(0);
+                                let ev =
+                                    e.data.get("event_id").and_then(|v| v.as_i64()).unwrap_or(0);
                                 format!("Event {} scanned", ev)
                             }
                             "TELEMETRY_SUMMARY" => {
-                                let count = e.data.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+                                let count =
+                                    e.data.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
                                 format!("{} events scanned and analyzed", count)
                             }
-                            "ACTIVITY_BOOT" => {
-                                e.data.get("message").and_then(|v| v.as_str()).unwrap_or("Agent started").to_string()
-                            }
+                            "ACTIVITY_BOOT" => e
+                                .data
+                                .get("message")
+                                .and_then(|v| v.as_str())
+                                .unwrap_or("Agent started")
+                                .to_string(),
                             "RESPONSE_ACTION" => {
-                                let t = e.data.get("type").and_then(|v| v.as_str()).unwrap_or("Response");
+                                let t = e
+                                    .data
+                                    .get("type")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("Response");
                                 format!("Response: {}", t)
                             }
                             "MALWARE_DETECTED" => {
-                                let fp = e.data.get("file_path").and_then(|v| v.as_str()).unwrap_or("?");
+                                let fp = e
+                                    .data
+                                    .get("file_path")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("?");
                                 let fname = fp.rsplit(['\\', '/']).next().unwrap_or(fp);
-                                let mt = e.data.get("malware_type").and_then(|v| v.as_str()).unwrap_or("?");
+                                let mt = e
+                                    .data
+                                    .get("malware_type")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("?");
                                 format!("{} — {}", fname, mt)
                             }
                             "CLAMAV_CLEAN" => {
-                                let fp = e.data.get("file_path").and_then(|v| v.as_str()).unwrap_or("?");
+                                let fp = e
+                                    .data
+                                    .get("file_path")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("?");
                                 let fname = fp.rsplit(['\\', '/']).next().unwrap_or(fp);
-                                let ctx = e.data.get("context").and_then(|v| v.as_str()).unwrap_or("FileWatcher");
+                                let ctx = e
+                                    .data
+                                    .get("context")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("FileWatcher");
                                 format!("ClamAV clean: {} — allowed ({})", fname, ctx)
                             }
                             "BEHAVIORAL_ALERT" => {
-                                let sent = e.data.get("sentence").and_then(|v| v.as_str()).unwrap_or("?");
+                                let sent = e
+                                    .data
+                                    .get("sentence")
+                                    .and_then(|v| v.as_str())
+                                    .unwrap_or("?");
                                 let fname = sent.chars().take(60).collect::<String>();
-                                let score = e.data.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
+                                let score =
+                                    e.data.get("score").and_then(|v| v.as_f64()).unwrap_or(0.0);
                                 format!("Behavioral: {} (score={:.0}%)", fname, score * 100.0)
                             }
                             "repair" => "Repair Engine".to_string(),
@@ -3865,7 +4206,10 @@ async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
                         "is_threat": is_threat
                     });
                     if let Some(obj) = item.as_object_mut() {
-                        if e.event_type == "MALWARE_DETECTED" || e.event_type == "CLAMAV_CLEAN" || e.event_type == "BEHAVIORAL_ALERT" {
+                        if e.event_type == "MALWARE_DETECTED"
+                            || e.event_type == "CLAMAV_CLEAN"
+                            || e.event_type == "BEHAVIORAL_ALERT"
+                        {
                             if let Some(fp) = e.data.get("file_path").and_then(|v| v.as_str()) {
                                 obj.insert("file_path".to_string(), json!(fp));
                             }
@@ -3873,20 +4217,36 @@ async fn get_activity(State(state): State<DashboardState>) -> Json<Value> {
                         if e.event_type == "CLAMAV_CLEAN" {
                             obj.insert("is_clamav_clean".to_string(), json!(true));
                         }
-                        if e.event_type == "THREAT_DETECTED" || e.event_type == "MESH_THREAT_RECEIVED" || e.event_type == "MESH_THREAT_BROADCAST" {
-                            if let Some(fp) = e.data.get("image_path").or(e.data.get("file_path")).or(e.data.get("target_path")).and_then(|v| v.as_str()) {
+                        if e.event_type == "THREAT_DETECTED"
+                            || e.event_type == "MESH_THREAT_RECEIVED"
+                            || e.event_type == "MESH_THREAT_BROADCAST"
+                        {
+                            if let Some(fp) = e
+                                .data
+                                .get("image_path")
+                                .or(e.data.get("file_path"))
+                                .or(e.data.get("target_path"))
+                                .and_then(|v| v.as_str())
+                            {
                                 obj.insert("file_path".to_string(), json!(fp));
                             }
-                            if let Some(proc) = e.data.get("process_name").and_then(|v| v.as_str()) {
+                            if let Some(proc) = e.data.get("process_name").and_then(|v| v.as_str())
+                            {
                                 obj.insert("process_name".to_string(), json!(proc));
                             }
-                            if let Some(tech) = e.data.get("mitre_technique").and_then(|v| v.as_str()) {
+                            if let Some(tech) =
+                                e.data.get("mitre_technique").and_then(|v| v.as_str())
+                            {
                                 obj.insert("mitre_technique".to_string(), json!(tech));
                             }
-                            if let Some(tech_name) = e.data.get("mitre_technique_name").and_then(|v| v.as_str()) {
+                            if let Some(tech_name) =
+                                e.data.get("mitre_technique_name").and_then(|v| v.as_str())
+                            {
                                 obj.insert("mitre_technique_name".to_string(), json!(tech_name));
                             }
-                            if let Some(tactic) = e.data.get("mitre_tactic").and_then(|v| v.as_str()) {
+                            if let Some(tactic) =
+                                e.data.get("mitre_tactic").and_then(|v| v.as_str())
+                            {
                                 obj.insert("mitre_tactic".to_string(), json!(tactic));
                             }
                             if let Some(node) = e.data.get("source_node").and_then(|v| v.as_str()) {
@@ -3921,8 +4281,18 @@ async fn get_gossip(State(state): State<DashboardState>) -> Json<Value> {
 }
 
 async fn get_mesh_stats(State(state): State<DashboardState>) -> Json<Value> {
-    let pending_joins = state.join_gate.as_ref().and_then(|g| g.pending_joins().ok()).map(|v| v.len()).unwrap_or(0);
-    let quarantined_peers = state.join_gate.as_ref().and_then(|g| g.quarantined_peers().ok()).map(|v| v.len()).unwrap_or(0);
+    let pending_joins = state
+        .join_gate
+        .as_ref()
+        .and_then(|g| g.pending_joins().ok())
+        .map(|v| v.len())
+        .unwrap_or(0);
+    let quarantined_peers = state
+        .join_gate
+        .as_ref()
+        .and_then(|g| g.quarantined_peers().ok())
+        .map(|v| v.len())
+        .unwrap_or(0);
 
     match &state.backend {
         Some(orch) => {
@@ -4012,7 +4382,8 @@ pub fn update_wire_config_content(
         }
     });
 
-    let domain_formatted = duckdns_domain.map(|d| format!("duckdns_domain = \"{}\"", d.replace('\"', "\\\"")));
+    let domain_formatted =
+        duckdns_domain.map(|d| format!("duckdns_domain = \"{}\"", d.replace('\"', "\\\"")));
     let auto_formatted = auto_bootstrap_duckdns.map(|b| format!("auto_bootstrap_duckdns = {}", b));
 
     let mut lines = Vec::new();
@@ -4024,12 +4395,12 @@ pub fn update_wire_config_content(
     let mut skipping_multiline_peers = false;
 
     let append_missing_wire_fields = |target: &mut Vec<String>,
-                                     peers_fmt: &Option<String>,
-                                     domain_fmt: &Option<String>,
-                                     auto_fmt: &Option<String>,
-                                     p_up: &mut bool,
-                                     d_up: &mut bool,
-                                     a_up: &mut bool| {
+                                      peers_fmt: &Option<String>,
+                                      domain_fmt: &Option<String>,
+                                      auto_fmt: &Option<String>,
+                                      p_up: &mut bool,
+                                      d_up: &mut bool,
+                                      a_up: &mut bool| {
         if !*p_up {
             if let Some(ref pf) = peers_fmt {
                 target.push(pf.clone());
@@ -4186,7 +4557,8 @@ pub fn save_wire_config(
         String::new()
     };
 
-    let updated = update_wire_config_content(&content, peers, duckdns_domain, auto_bootstrap_duckdns);
+    let updated =
+        update_wire_config_content(&content, peers, duckdns_domain, auto_bootstrap_duckdns);
     if let Some(parent) = path.parent() {
         if !parent.as_os_str().is_empty() && !parent.exists() {
             std::fs::create_dir_all(parent)?;
@@ -4208,7 +4580,9 @@ pub fn save_bootstrap_peers_to_config(peers: &[String]) -> anyhow::Result<PathBu
     save_wire_config(Some(peers), None, None)
 }
 
-pub async fn get_bootstrap_peers(State(_state): State<DashboardState>) -> Json<BootstrapPeersResponse> {
+pub async fn get_bootstrap_peers(
+    State(_state): State<DashboardState>,
+) -> Json<BootstrapPeersResponse> {
     let mesh_config = osoosi_types::load_mesh_listen_config();
     let mut peers = osoosi_types::load_wire_bootstrap_peers();
     if peers.is_empty() {
@@ -4225,22 +4599,33 @@ pub async fn get_bootstrap_peers(State(_state): State<DashboardState>) -> Json<B
         }
     }
 
-    let mesh_port = mesh_config.listen_addrs.iter().find_map(|a| {
-        if let Some(idx) = a.find("/tcp/") {
-            let rest = &a[idx + 5..];
-            let p_str = rest.split('/').next().unwrap_or(rest);
-            p_str.parse::<u16>().ok()
-        } else {
-            None
-        }
-    }).unwrap_or(4001);
+    let mesh_port = mesh_config
+        .listen_addrs
+        .iter()
+        .find_map(|a| {
+            if let Some(idx) = a.find("/tcp/") {
+                let rest = &a[idx + 5..];
+                let p_str = rest.split('/').next().unwrap_or(rest);
+                p_str.parse::<u16>().ok()
+            } else {
+                None
+            }
+        })
+        .unwrap_or(4001);
 
     let public_ip = detect_public_ip().await;
-    let proto = if public_ip.contains(':') { "ip6" } else { "ip4" };
+    let proto = if public_ip.contains(':') {
+        "ip6"
+    } else {
+        "ip4"
+    };
     let recommended_multiaddr = format!("/{}/{}/tcp/{}", proto, public_ip, mesh_port);
     let duckdns_template = format!("/dns4/<your-domain>.duckdns.org/tcp/{}", mesh_port);
 
-    let duckdns_domain = mesh_config.duckdns_domain.clone().or_else(|| Some("oshoosi".to_string()));
+    let duckdns_domain = mesh_config
+        .duckdns_domain
+        .clone()
+        .or_else(|| Some("oshoosi".to_string()));
     let auto_bootstrap_duckdns = mesh_config.auto_bootstrap_duckdns;
     let duckdns_port = mesh_config.duckdns_port;
     let domain_raw = duckdns_domain.as_deref().unwrap_or("oshoosi");
@@ -4250,14 +4635,20 @@ pub async fn get_bootstrap_peers(State(_state): State<DashboardState>) -> Json<B
         .trim_start_matches("http://")
         .trim_end_matches('/')
         .trim_end_matches(".duckdns.org");
-    let clean_domain = if clean_domain.is_empty() { "oshoosi" } else { clean_domain };
+    let clean_domain = if clean_domain.is_empty() {
+        "oshoosi"
+    } else {
+        clean_domain
+    };
     let upstream_peer = format!("/dns4/{}.duckdns.org/tcp/{}", clean_domain, duckdns_port);
 
     let host = format!("{}.duckdns.org", clean_domain);
     let resolved_ip_opt = match tokio::time::timeout(
         std::time::Duration::from_millis(1500),
         tokio::net::lookup_host(format!("{}:{}", host, duckdns_port)),
-    ).await {
+    )
+    .await
+    {
         Ok(Ok(mut addrs)) => addrs.next().map(|sa| sa.ip().to_string()),
         _ => None,
     };
@@ -4310,22 +4701,31 @@ pub async fn post_bootstrap_peers(
                 ).into_response();
             }
         }
-        sanitized_peers = Some(peers.iter().map(|s| s.trim().to_string()).collect::<Vec<_>>());
+        sanitized_peers = Some(
+            peers
+                .iter()
+                .map(|s| s.trim().to_string())
+                .collect::<Vec<_>>(),
+        );
     }
 
-    let domain_clean = req.duckdns_domain.as_ref().map(|d| {
-        let mut s = d.trim();
-        if let Some(stripped) = s.strip_prefix("https://") {
-            s = stripped;
-        } else if let Some(stripped) = s.strip_prefix("http://") {
-            s = stripped;
-        }
-        s = s.trim_end_matches('/');
-        if s.ends_with(".duckdns.org") {
-            s = &s[..s.len() - 12];
-        }
-        s.to_string()
-    }).filter(|s| !s.is_empty());
+    let domain_clean = req
+        .duckdns_domain
+        .as_ref()
+        .map(|d| {
+            let mut s = d.trim();
+            if let Some(stripped) = s.strip_prefix("https://") {
+                s = stripped;
+            } else if let Some(stripped) = s.strip_prefix("http://") {
+                s = stripped;
+            }
+            s = s.trim_end_matches('/');
+            if s.ends_with(".duckdns.org") {
+                s = &s[..s.len() - 12];
+            }
+            s.to_string()
+        })
+        .filter(|s| !s.is_empty());
 
     if let Err(e) = save_wire_config(
         sanitized_peers.as_deref(),
@@ -4338,7 +4738,8 @@ pub async fn post_bootstrap_peers(
             "CONFIG_UPDATE_FAILED",
             format!("Failed to update config: {}", e),
             "Check disk write permissions for the wire bootstrap configuration file.",
-        ).into_response();
+        )
+        .into_response();
     }
 
     let dial_now = req.dial_now.unwrap_or(true);
@@ -4358,7 +4759,10 @@ pub async fn post_bootstrap_peers(
                 }
             }
             for peer in peers_to_dial {
-                tracing::info!("[Mesh WAN] Dial intention registered for bootstrap peer: {}", peer);
+                tracing::info!(
+                    "[Mesh WAN] Dial intention registered for bootstrap peer: {}",
+                    peer
+                );
             }
         }
     }
@@ -4388,7 +4792,8 @@ pub async fn post_bootstrap_peers(
             "auto_bootstrap_duckdns": effective_auto,
             "message": "Bootstrap peers updated and saved to config."
         })),
-    ).into_response()
+    )
+        .into_response()
 }
 
 #[allow(dead_code)]
@@ -4506,9 +4911,9 @@ async fn post_threat_confirm(
         Some(orch) => {
             orch.mark_gossip_remediated(&threat_id);
             match orch.handle_confirm_and_entangle(&threat_id).await {
-                Ok(_) => {
-                    Json(json!({"ok": true, "message": "Threat confirmed and entangled in Morphic Hyper-Web"}))
-                }
+                Ok(_) => Json(
+                    json!({"ok": true, "message": "Threat confirmed and entangled in Morphic Hyper-Web"}),
+                ),
                 Err(e) => api_error_json(
                     "THREAT_CONFIRM_FAILED",
                     e.to_string(),
@@ -4523,7 +4928,6 @@ async fn post_threat_confirm(
         ),
     }
 }
-
 
 #[derive(Debug, Deserialize)]
 struct BehavioralFeedbackRequest {
@@ -4545,10 +4949,7 @@ async fn post_behavioral_feedback(
             }
             if req.is_suspicious {
                 if let Err(e) = orch
-                    .handle_manual_true_positive(
-                        req.process_name.clone(),
-                        req.file_hash.clone(),
-                    )
+                    .handle_manual_true_positive(req.process_name.clone(), req.file_hash.clone())
                     .await
                 {
                     return api_error_json(
@@ -4559,10 +4960,7 @@ async fn post_behavioral_feedback(
                 }
             } else if req.process_name.is_some() || req.file_hash.is_some() {
                 if let Err(e) = orch
-                    .record_manual_false_positive(
-                        req.process_name.clone(),
-                        req.file_hash.clone(),
-                    )
+                    .record_manual_false_positive(req.process_name.clone(), req.file_hash.clone())
                     .await
                 {
                     return api_error_json(
@@ -4572,7 +4970,9 @@ async fn post_behavioral_feedback(
                     );
                 }
             }
-            Json(json!({"ok": true, "message": if req.is_suspicious { "Threat reported and entanglement initiated" } else { "Feedback recorded" }}))
+            Json(
+                json!({"ok": true, "message": if req.is_suspicious { "Threat reported and entanglement initiated" } else { "Feedback recorded" }}),
+            )
         }
         None => api_error_json(
             "BACKEND_NOT_RUNNING",
@@ -4609,7 +5009,8 @@ async fn get_behavioral_analyze(
                         "INVESTIGATIVE_PROMPTS_FAILED",
                         format!("Failed to generate investigative prompts: {}", e),
                         "Verify behavioral analyzer configuration and event history.",
-                    ).0;
+                    )
+                    .0;
                     err_val["prompts"] = json!([]);
                     Json(err_val)
                 }
@@ -4678,7 +5079,11 @@ async fn get_query(
             "Formulate query starting with SELECT.",
         );
     }
-    let statements: Vec<&str> = q.split(';').map(|s| s.trim()).filter(|s| !s.is_empty()).collect();
+    let statements: Vec<&str> = q
+        .split(';')
+        .map(|s| s.trim())
+        .filter(|s| !s.is_empty())
+        .collect();
     if statements.len() > 1 {
         return api_error_json(
             "MULTI_STATEMENT_FORBIDDEN",
@@ -4687,10 +5092,12 @@ async fn get_query(
         );
     }
     let dangerous_keywords = [
-        "ATTACH", "DETACH", "PRAGMA", "UNION", "DROP", "DELETE",
-        "UPDATE", "INSERT", "ALTER", "CREATE", "REPLACE", "VACUUM",
+        "ATTACH", "DETACH", "PRAGMA", "UNION", "DROP", "DELETE", "UPDATE", "INSERT", "ALTER",
+        "CREATE", "REPLACE", "VACUUM",
     ];
-    for token in upper.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == ',' || c == ';') {
+    for token in
+        upper.split(|c: char| c.is_whitespace() || c == '(' || c == ')' || c == ',' || c == ';')
+    {
         let token = token.trim();
         if dangerous_keywords.contains(&token) {
             return api_error_json(
@@ -4701,16 +5108,14 @@ async fn get_query(
         }
     }
     match &state.backend {
-        Some(orch) => {
-            match orch.memory().query_json(&params.q, &[]) {
-                Ok(results) => Json(json!({"ok": true, "results": results})),
-                Err(e) => api_error_json(
-                    "QUERY_EXECUTION_FAILED",
-                    format!("Query error: {}", e),
-                    "Verify SQL syntax against the schema.",
-                ),
-            }
-        }
+        Some(orch) => match orch.memory().query_json(&params.q, &[]) {
+            Ok(results) => Json(json!({"ok": true, "results": results})),
+            Err(e) => api_error_json(
+                "QUERY_EXECUTION_FAILED",
+                format!("Query error: {}", e),
+                "Verify SQL syntax against the schema.",
+            ),
+        },
         None => Json(json!({
             "ok": true,
             "results": [],
@@ -4751,7 +5156,7 @@ async fn post_agent_approve_patches(State(state): State<DashboardState>) -> Json
                 Ok(v) => Json(v),
                 Err(e) => api_error_json(
                     "PATCH_APPROVAL_FAILED",
-                    &format!("Failed to approve patches: {}", e),
+                    format!("Failed to approve patches: {}", e),
                     "Check system patch status or retry from administrator terminal.",
                 ),
             }
@@ -4803,11 +5208,13 @@ async fn post_triage_decide(
             use std::str::FromStr;
             let action = match osoosi_types::ResponseAction::from_str(&req.action) {
                 Ok(a) => a,
-                Err(_) => return api_error_json(
-                    "INVALID_ACTION",
-                    "Invalid action",
-                    "Valid triage actions are Allow, Block, Terminate, or Quarantine.",
-                ),
+                Err(_) => {
+                    return api_error_json(
+                        "INVALID_ACTION",
+                        "Invalid action",
+                        "Valid triage actions are Allow, Block, Terminate, or Quarantine.",
+                    )
+                }
             };
             match orch.triage_decide(&req.threat_id, action).await {
                 Ok(result) => Json(
@@ -4879,7 +5286,11 @@ async fn get_telemetry_timeseries(State(state): State<DashboardState>) -> Json<V
                 }
 
                 if entry.event_type == "TELEMETRY_SUMMARY" {
-                    let count = entry.data.get("count").and_then(|v| v.as_u64()).unwrap_or(0);
+                    let count = entry
+                        .data
+                        .get("count")
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(0);
                     let minute = entry.timestamp.format("%Y-%m-%d %H:%M").to_string();
                     let entry_count = buckets.entry(minute).or_insert(0u32);
                     *entry_count += count as u32;
@@ -4945,7 +5356,10 @@ async fn get_mesh_topology(State(state): State<DashboardState>) -> Json<Value> {
             let mesh_config = osoosi_types::load_mesh_listen_config();
             let nostr_relays = if mesh_config.nostr_relays.is_empty() {
                 if mesh_config.allow_public_relays {
-                    vec!["wss://relay.damus.io".to_string(), "wss://nos.lol".to_string()]
+                    vec![
+                        "wss://relay.damus.io".to_string(),
+                        "wss://nos.lol".to_string(),
+                    ]
                 } else {
                     Vec::new()
                 }
@@ -5178,23 +5592,31 @@ async fn get_peers(State(state): State<DashboardState>) -> Json<Value> {
     // 2. Query peer_status and reputation from memory if backend or runtime db is available
     let mem_store = state.backend.as_ref().map(|b| b.memory()).or_else(|| {
         let db_path = osoosi_types::load_runtime_config().db_path;
-        osoosi_core::MemoryStore::new(&db_path).ok().map(std::sync::Arc::new)
+        osoosi_core::MemoryStore::new(&db_path)
+            .ok()
+            .map(std::sync::Arc::new)
     });
     if let Some(ref mem) = mem_store {
         let query = "SELECT peer_id as node_id, 1.0 as score FROM peer_status WHERE peer_id != ? AND (datetime(received_at) > datetime('now', '-30 minutes') OR received_at IS NULL) UNION SELECT node_id, score FROM reputation WHERE node_id != ? AND (datetime(last_updated) > datetime('now', '-30 minutes') OR last_updated IS NULL)";
         if let Ok(known) = mem.query_json(query, &[local_did.clone(), local_did.clone()]) {
             for row in known {
                 let nid = row["node_id"].as_str().unwrap_or("");
-                if nid.is_empty()
-                    || nid == local_did
-                    || peers.iter().any(|p| p["id"] == nid)
-                {
+                if nid.is_empty() || nid == local_did || peers.iter().any(|p| p["id"] == nid) {
                     continue;
                 }
                 let score = row["score"].as_f64().unwrap_or(0.85);
-                let is_hotspot = nid.contains("10812adc") || row["ip"].as_str().map_or(false, |ip| ip.contains("192.168.43.") || ip.contains("172.20.10."));
+                let is_hotspot = nid.contains("10812adc")
+                    || row["ip"]
+                        .as_str()
+                        .is_some_and(|ip| ip.contains("192.168.43.") || ip.contains("172.20.10."));
                 let network_type = if is_hotspot { "hotspot" } else { "lan" };
-                let role = if score < 0.3 { "Suspect Node" } else if is_hotspot { "Mobile Hotspot Peer" } else { "LAN Mesh Peer" };
+                let role = if score < 0.3 {
+                    "Suspect Node"
+                } else if is_hotspot {
+                    "Mobile Hotspot Peer"
+                } else {
+                    "LAN Mesh Peer"
+                };
                 let label = if is_hotspot {
                     "Hotspot Host (10812adc)".to_string()
                 } else if nid.starts_with("did:") && nid.len() > 18 {
@@ -5229,7 +5651,10 @@ async fn get_peers(State(state): State<DashboardState>) -> Json<Value> {
     let mesh_config = osoosi_types::load_mesh_listen_config();
     let nostr_relays = if mesh_config.nostr_relays.is_empty() {
         if mesh_config.allow_public_relays {
-            vec!["wss://relay.damus.io".to_string(), "wss://nos.lol".to_string()]
+            vec![
+                "wss://relay.damus.io".to_string(),
+                "wss://nos.lol".to_string(),
+            ]
         } else {
             Vec::new()
         }
@@ -5586,7 +6011,11 @@ async fn post_skyrl_train(
             };
             let mut gym = OshoosiSecurityGym::new(ctx, true);
             skyrl.total_episodes += 1;
-            for act in [SkyAction::QueryMemorySignatures, SkyAction::Suspend, SkyAction::Terminate] {
+            for act in [
+                SkyAction::QueryMemorySignatures,
+                SkyAction::Suspend,
+                SkyAction::Terminate,
+            ] {
                 let pre = gym.observation.clone();
                 let res = gym.step(act);
                 skyrl.total_steps += 1;
@@ -5600,7 +6029,9 @@ async fn post_skyrl_train(
                 );
                 skyrl.replay_buffer.push(t.clone());
                 sampled.push(t);
-                if res.done { break; }
+                if res.done {
+                    break;
+                }
             }
         }
         sampled
@@ -5621,7 +6052,8 @@ async fn post_skyrl_train(
     };
 
     if let Some(orch) = &state.backend {
-        orch.apply_skyrl_policy_update(loss as f64, mean_reward as f64).await;
+        orch.apply_skyrl_policy_update(loss as f64, mean_reward as f64)
+            .await;
     }
 
     let checkpoint = json!({
@@ -5634,7 +6066,7 @@ async fn post_skyrl_train(
         "total_steps": skyrl.total_steps,
         "active_lora": skyrl.active_lora,
     });
-    if let Ok(_) = std::fs::create_dir_all("runs") {
+    if std::fs::create_dir_all("runs").is_ok() {
         let _ = std::fs::write("runs/skyrl_checkpoint.json", checkpoint.to_string());
     }
 
@@ -5697,15 +6129,22 @@ struct MitreTechniquesQuery {
     tactic: Option<String>,
 }
 
-async fn get_mitre_matrix(State(state): State<DashboardState>) -> Json<osoosi_types::mitre::MitreMatrixSummary> {
+async fn get_mitre_matrix(
+    State(state): State<DashboardState>,
+) -> Json<osoosi_types::mitre::MitreMatrixSummary> {
     let mut summary = osoosi_policy::mitre_kb::get_matrix_summary();
     if let Some(backend) = &state.backend {
         if let Ok(threats) = backend.memory().get_recent_threats(200) {
             for t in threats {
                 if let Some(tac) = t.get("mitre_tactic").and_then(|v| v.as_str()) {
                     for tactic in &summary.tactics {
-                        if tactic.id.eq_ignore_ascii_case(tac) || tactic.name.eq_ignore_ascii_case(tac) {
-                            *summary.active_detections_by_tactic.entry(tactic.id.clone()).or_insert(0) += 1;
+                        if tactic.id.eq_ignore_ascii_case(tac)
+                            || tactic.name.eq_ignore_ascii_case(tac)
+                        {
+                            *summary
+                                .active_detections_by_tactic
+                                .entry(tactic.id.clone())
+                                .or_insert(0) += 1;
                         }
                     }
                 }
@@ -5713,10 +6152,18 @@ async fn get_mitre_matrix(State(state): State<DashboardState>) -> Json<osoosi_ty
                     let clean = tech.trim();
                     for technique in &summary.techniques {
                         if technique.id.eq_ignore_ascii_case(clean)
-                            || clean.to_uppercase().starts_with(&technique.id.to_uppercase())
-                            || technique.subtechniques.iter().any(|s| s.id.eq_ignore_ascii_case(clean))
+                            || clean
+                                .to_uppercase()
+                                .starts_with(&technique.id.to_uppercase())
+                            || technique
+                                .subtechniques
+                                .iter()
+                                .any(|s| s.id.eq_ignore_ascii_case(clean))
                         {
-                            *summary.active_detections_by_technique.entry(technique.id.clone()).or_insert(0) += 1;
+                            *summary
+                                .active_detections_by_technique
+                                .entry(technique.id.clone())
+                                .or_insert(0) += 1;
                         }
                     }
                 }
@@ -5824,7 +6271,8 @@ async fn get_mitre_groups() -> Json<Vec<osoosi_types::mitre::MitreGroup>> {
     Json(osoosi_policy::mitre_kb::get_threat_groups())
 }
 
-async fn get_mitre_stix() -> Result<(axum::http::HeaderMap, String), (axum::http::StatusCode, Json<serde_json::Value>)> {
+async fn get_mitre_stix(
+) -> Result<(axum::http::HeaderMap, String), (axum::http::StatusCode, Json<serde_json::Value>)> {
     let path = osoosi_types::resolve_stix_bundle_path();
     if !path.is_file() {
         return Err((
@@ -5874,8 +6322,15 @@ fn count_stix_objects_fast(bytes: &[u8]) -> usize {
         .unwrap_or(26381)
 }
 
-static CACHED_STIX_STATUS: std::sync::RwLock<Option<(u64, Option<std::time::SystemTime>, osoosi_wire::StixManifest, usize, String)>> =
-    std::sync::RwLock::new(None);
+static CACHED_STIX_STATUS: std::sync::RwLock<
+    Option<(
+        u64,
+        Option<std::time::SystemTime>,
+        osoosi_wire::StixManifest,
+        usize,
+        String,
+    )>,
+> = std::sync::RwLock::new(None);
 
 async fn get_mitre_stix_status() -> (axum::http::StatusCode, Json<serde_json::Value>) {
     let path = osoosi_types::resolve_stix_bundle_path();
@@ -5899,8 +6354,12 @@ async fn get_mitre_stix_status() -> (axum::http::StatusCode, Json<serde_json::Va
     let mtime = meta.as_ref().and_then(|m| m.modified().ok());
 
     if let Ok(guard) = CACHED_STIX_STATUS.read() {
-        if let Some((cached_len, cached_mtime, ref manifest, size_bytes, ref cached_path)) = *guard {
-            if cached_len == file_len && cached_mtime == mtime && cached_path == &path.display().to_string() {
+        if let Some((cached_len, cached_mtime, ref manifest, size_bytes, ref cached_path)) = *guard
+        {
+            if cached_len == file_len
+                && cached_mtime == mtime
+                && cached_path == &path.display().to_string()
+            {
                 return (
                     axum::http::StatusCode::OK,
                     Json(json!({
@@ -5932,7 +6391,13 @@ async fn get_mitre_stix_status() -> (axum::http::StatusCode, Json<serde_json::Va
 
             let path_str = path.display().to_string();
             if let Ok(mut guard) = CACHED_STIX_STATUS.write() {
-                *guard = Some((file_len, mtime, manifest.clone(), bytes.len(), path_str.clone()));
+                *guard = Some((
+                    file_len,
+                    mtime,
+                    manifest.clone(),
+                    bytes.len(),
+                    path_str.clone(),
+                ));
             }
 
             (
@@ -5981,12 +6446,23 @@ async fn post_mitre_stix_update(
                                 let _ = std::fs::create_dir_all(parent);
                             }
                             if let Err(e) = std::fs::write(&bundle_path_bg, &bytes) {
-                                warn!("[dashboard] Failed to write STIX bundle to {:?}: {}", bundle_path_bg, e);
+                                warn!(
+                                    "[dashboard] Failed to write STIX bundle to {:?}: {}",
+                                    bundle_path_bg, e
+                                );
                             } else {
-                                info!("[dashboard] STIX bundle ({} bytes) saved to {:?}", bytes.len(), bundle_path_bg);
+                                info!(
+                                    "[dashboard] STIX bundle ({} bytes) saved to {:?}",
+                                    bytes.len(),
+                                    bundle_path_bg
+                                );
                                 for dist_target in [
-                                    std::path::Path::new("dashboard/dist/stix-atlas-attack-enterprise.json"),
-                                    std::path::Path::new("dashboard/src/stix-atlas-attack-enterprise.json"),
+                                    std::path::Path::new(
+                                        "dashboard/dist/stix-atlas-attack-enterprise.json",
+                                    ),
+                                    std::path::Path::new(
+                                        "dashboard/src/stix-atlas-attack-enterprise.json",
+                                    ),
                                 ] {
                                     if dist_target.parent().map(|p| p.exists()).unwrap_or(false) {
                                         let _ = std::fs::copy(&bundle_path_bg, dist_target);
@@ -6000,7 +6476,10 @@ async fn post_mitre_stix_update(
                         Err(e) => warn!("[dashboard] Failed reading HTTP response bytes: {}", e),
                     }
                 } else {
-                    warn!("[dashboard] HTTP download error HTTP {}: retaining existing STIX bundle", resp.status());
+                    warn!(
+                        "[dashboard] HTTP download error HTTP {}: retaining existing STIX bundle",
+                        resp.status()
+                    );
                 }
             }
             Err(e) => warn!("[dashboard] HTTP download error from {}: {}", url, e),
@@ -6042,7 +6521,13 @@ async fn post_mitre_stix_update(
     let file_len = meta.as_ref().map(|m| m.len()).unwrap_or(bytes.len() as u64);
     let mtime = meta.as_ref().and_then(|m| m.modified().ok());
     if let Ok(mut guard) = CACHED_STIX_STATUS.write() {
-        *guard = Some((file_len, mtime, manifest.clone(), bytes.len(), bundle_path.display().to_string()));
+        *guard = Some((
+            file_len,
+            mtime,
+            manifest.clone(),
+            bytes.len(),
+            bundle_path.display().to_string(),
+        ));
     }
 
     // Broadcast across P2P wire mesh via join_gate if available
@@ -6130,20 +6615,46 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
     };
 
     for mut t in threats {
-        let id = t.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let timestamp = t.get("timestamp")
+        let id = t
+            .get("id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let timestamp = t
+            .get("timestamp")
             .and_then(|v| v.as_str())
             .filter(|s| !s.is_empty())
             .map(|s| s.to_string())
             .unwrap_or_else(|| chrono::Utc::now().to_rfc3339());
-        let cve_id = t.get("cve_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-        let proc_name = t.get("process_name").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let reason = t.get("reason").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let cve_id = t
+            .get("cve_id")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
+        let proc_name = t
+            .get("process_name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let reason = t
+            .get("reason")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
         let conf = t.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.8);
-        let file_path = t.get("file_path").and_then(|v| v.as_str()).unwrap_or("").to_string();
+        let file_path = t
+            .get("file_path")
+            .and_then(|v| v.as_str())
+            .unwrap_or("")
+            .to_string();
 
-        let existing_tech = t.get("mitre_technique").and_then(|v| v.as_str()).map(|s| s.to_string());
-        let existing_name = t.get("mitre_technique_name").and_then(|v| v.as_str()).map(|s| s.to_string());
+        let existing_tech = t
+            .get("mitre_technique")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
+        let existing_name = t
+            .get("mitre_technique_name")
+            .and_then(|v| v.as_str())
+            .map(|s| s.to_string());
 
         let (tech_id, tech_name, _) = enrich_mitre_threat(
             proc_name.as_deref().unwrap_or(""),
@@ -6178,7 +6689,8 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
         let status = "ALERTED".to_string();
 
         if let Some(obj) = t.as_object_mut() {
-            let has_valid_hash = obj.get("hash_blake3")
+            let has_valid_hash = obj
+                .get("hash_blake3")
                 .and_then(|v| v.as_str())
                 .map(|s| !s.is_empty() && s != "null")
                 .unwrap_or(false);
@@ -6186,14 +6698,40 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
                 let computed = if !file_path.is_empty() {
                     std::fs::read(&file_path)
                         .map(|bytes| blake3::hash(&bytes).to_hex().to_string())
-                        .unwrap_or_else(|_| blake3::hash(format!("{}:{}:{}", id, proc_name.as_deref().unwrap_or(""), timestamp).as_bytes()).to_hex().to_string())
+                        .unwrap_or_else(|_| {
+                            blake3::hash(
+                                format!(
+                                    "{}:{}:{}",
+                                    id,
+                                    proc_name.as_deref().unwrap_or(""),
+                                    timestamp
+                                )
+                                .as_bytes(),
+                            )
+                            .to_hex()
+                            .to_string()
+                        })
                 } else {
-                    blake3::hash(format!("{}:{}:{}", id, proc_name.as_deref().unwrap_or(""), timestamp).as_bytes()).to_hex().to_string()
+                    blake3::hash(
+                        format!(
+                            "{}:{}:{}",
+                            id,
+                            proc_name.as_deref().unwrap_or(""),
+                            timestamp
+                        )
+                        .as_bytes(),
+                    )
+                    .to_hex()
+                    .to_string()
                 };
-                obj.insert("hash_blake3".to_string(), serde_json::Value::String(computed));
+                obj.insert(
+                    "hash_blake3".to_string(),
+                    serde_json::Value::String(computed),
+                );
             }
 
-            let has_valid_cmd = obj.get("command_line")
+            let has_valid_cmd = obj
+                .get("command_line")
                 .or_else(|| obj.get("arguments"))
                 .and_then(|v| v.as_str())
                 .map(|s| !s.is_empty() && s != "—")
@@ -6206,12 +6744,18 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
                 } else {
                     "autonomous-execution".to_string()
                 };
-                obj.insert("command_line".to_string(), serde_json::Value::String(cmd.clone()));
+                obj.insert(
+                    "command_line".to_string(),
+                    serde_json::Value::String(cmd.clone()),
+                );
                 obj.insert("arguments".to_string(), serde_json::Value::String(cmd));
             }
 
             if !obj.contains_key("source_node") {
-                obj.insert("source_node".to_string(), serde_json::Value::String("Local Node (EDR Cortex)".to_string()));
+                obj.insert(
+                    "source_node".to_string(),
+                    serde_json::Value::String("Local Node (EDR Cortex)".to_string()),
+                );
             }
         }
 
@@ -6223,8 +6767,16 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
                 category: "threat".to_string(),
                 event_type: "THREAT_DETECTED".to_string(),
                 process_name: proc_name,
-                mitre_technique: if tech_id.is_empty() { None } else { Some(tech_id) },
-                mitre_technique_name: if tech_name.is_empty() { None } else { Some(tech_name) },
+                mitre_technique: if tech_id.is_empty() {
+                    None
+                } else {
+                    Some(tech_id)
+                },
+                mitre_technique_name: if tech_name.is_empty() {
+                    None
+                } else {
+                    Some(tech_name)
+                },
                 severity,
                 status,
                 summary,
@@ -6251,28 +6803,35 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
                 "RESPONSE_ACTION" | "KILL" | "ISOLATE" | "TARPIT" | "MORPHIC_ENTANGLEMENT" => {
                     ("action", "high", "BLOCKED")
                 }
-                s if s.starts_with("MESH_") => {
-                    ("gossip", "medium", "ALERTED")
-                }
+                s if s.starts_with("MESH_") => ("gossip", "medium", "ALERTED"),
                 s if s.contains("REPAIR") || s.contains("HEAL") || s.contains("ROLLBACK") => {
                     ("action", "medium", "RESOLVED")
                 }
                 _ => ("system", "low", "RESOLVED"),
             };
 
-            let proc = d.get("process_name")
+            let proc = d
+                .get("process_name")
                 .or_else(|| d.get("process"))
                 .or_else(|| d.get("target_process"))
                 .and_then(|v| v.as_str())
                 .map(|s| s.to_string());
 
-            let cve = d.get("cve_id").and_then(|v| v.as_str()).unwrap_or("").to_string();
-            let (tech_id, tech_name, _) = if let Some(t) = d.get("mitre_technique").and_then(|v| v.as_str()) {
-                let tn = d.get("mitre_technique_name").and_then(|v| v.as_str()).unwrap_or("Enterprise Technique");
-                (t.to_string(), tn.to_string(), String::new())
-            } else {
-                enrich_mitre_threat(proc.as_deref().unwrap_or(""), &cve, "", None, None)
-            };
+            let cve = d
+                .get("cve_id")
+                .and_then(|v| v.as_str())
+                .unwrap_or("")
+                .to_string();
+            let (tech_id, tech_name, _) =
+                if let Some(t) = d.get("mitre_technique").and_then(|v| v.as_str()) {
+                    let tn = d
+                        .get("mitre_technique_name")
+                        .and_then(|v| v.as_str())
+                        .unwrap_or("Enterprise Technique");
+                    (t.to_string(), tn.to_string(), String::new())
+                } else {
+                    enrich_mitre_threat(proc.as_deref().unwrap_or(""), &cve, "", None, None)
+                };
 
             let summary = if let Some(s) = d.get("summary").and_then(|v| v.as_str()) {
                 s.to_string()
@@ -6284,11 +6843,18 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
                         format!("Threat: {}", proc.as_deref().unwrap_or("Unknown"))
                     }
                     "MALWARE_DETECTED" => {
-                        let fp = d.get("file_path").and_then(|v| v.as_str()).unwrap_or("unknown");
+                        let fp = d
+                            .get("file_path")
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("unknown");
                         format!("Malware detected: {}", fp)
                     }
                     "RESPONSE_ACTION" => {
-                        let t = d.get("type").or_else(|| d.get("action")).and_then(|v| v.as_str()).unwrap_or("Mitigation");
+                        let t = d
+                            .get("type")
+                            .or_else(|| d.get("action"))
+                            .and_then(|v| v.as_str())
+                            .unwrap_or("Mitigation");
                         format!("Action executed: {}", t)
                     }
                     _ => event_type.clone(),
@@ -6298,7 +6864,8 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
             let id = format!("audit-{}", idx);
 
             if let Some(obj) = d.as_object_mut() {
-                let has_valid_hash = obj.get("hash_blake3")
+                let has_valid_hash = obj
+                    .get("hash_blake3")
                     .or_else(|| obj.get("hash"))
                     .or_else(|| obj.get("sha256"))
                     .and_then(|v| v.as_str())
@@ -6309,14 +6876,35 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
                     let computed = if !fp.is_empty() {
                         std::fs::read(fp)
                             .map(|bytes| blake3::hash(&bytes).to_hex().to_string())
-                            .unwrap_or_else(|_| blake3::hash(format!("{}:{}:{}", id, proc.as_deref().unwrap_or(""), timestamp).as_bytes()).to_hex().to_string())
+                            .unwrap_or_else(|_| {
+                                blake3::hash(
+                                    format!(
+                                        "{}:{}:{}",
+                                        id,
+                                        proc.as_deref().unwrap_or(""),
+                                        timestamp
+                                    )
+                                    .as_bytes(),
+                                )
+                                .to_hex()
+                                .to_string()
+                            })
                     } else {
-                        blake3::hash(format!("{}:{}:{}", id, proc.as_deref().unwrap_or(""), timestamp).as_bytes()).to_hex().to_string()
+                        blake3::hash(
+                            format!("{}:{}:{}", id, proc.as_deref().unwrap_or(""), timestamp)
+                                .as_bytes(),
+                        )
+                        .to_hex()
+                        .to_string()
                     };
-                    obj.insert("hash_blake3".to_string(), serde_json::Value::String(computed));
+                    obj.insert(
+                        "hash_blake3".to_string(),
+                        serde_json::Value::String(computed),
+                    );
                 }
 
-                let has_valid_cmd = obj.get("command_line")
+                let has_valid_cmd = obj
+                    .get("command_line")
                     .or_else(|| obj.get("arguments"))
                     .or_else(|| obj.get("args"))
                     .or_else(|| obj.get("cmd"))
@@ -6324,19 +6912,29 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
                     .map(|s| !s.is_empty() && s != "—")
                     .unwrap_or(false);
                 if !has_valid_cmd {
-                    let cmd = if let Some(m) = obj.get("reason").or_else(|| obj.get("message")).and_then(|v| v.as_str()) {
+                    let cmd = if let Some(m) = obj
+                        .get("reason")
+                        .or_else(|| obj.get("message"))
+                        .and_then(|v| v.as_str())
+                    {
                         m.to_string()
                     } else if !summary.is_empty() {
                         summary.clone()
                     } else {
                         format!("{} (Audit Event)", event_type)
                     };
-                    obj.insert("command_line".to_string(), serde_json::Value::String(cmd.clone()));
+                    obj.insert(
+                        "command_line".to_string(),
+                        serde_json::Value::String(cmd.clone()),
+                    );
                     obj.insert("arguments".to_string(), serde_json::Value::String(cmd));
                 }
 
                 if !obj.contains_key("source_node") {
-                    obj.insert("source_node".to_string(), serde_json::Value::String("Local Node (Audit Trail)".to_string()));
+                    obj.insert(
+                        "source_node".to_string(),
+                        serde_json::Value::String("Local Node (Audit Trail)".to_string()),
+                    );
                 }
             }
 
@@ -6348,8 +6946,16 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
                     category: category.to_string(),
                     event_type,
                     process_name: proc,
-                    mitre_technique: if tech_id.is_empty() { None } else { Some(tech_id) },
-                    mitre_technique_name: if tech_name.is_empty() { None } else { Some(tech_name) },
+                    mitre_technique: if tech_id.is_empty() {
+                        None
+                    } else {
+                        Some(tech_id)
+                    },
+                    mitre_technique_name: if tech_name.is_empty() {
+                        None
+                    } else {
+                        Some(tech_name)
+                    },
                     severity: severity.to_string(),
                     status: status.to_string(),
                     summary,
@@ -6394,9 +7000,11 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
                 .map(|s| !s.trim().is_empty() && s != "—")
                 .unwrap_or(false);
             if !has_hash {
-                let h = blake3::hash(format!("{}:{}:{}", item.id, item.event_type, item.summary).as_bytes())
-                    .to_hex()
-                    .to_string();
+                let h = blake3::hash(
+                    format!("{}:{}:{}", item.id, item.event_type, item.summary).as_bytes(),
+                )
+                .to_hex()
+                .to_string();
                 obj.insert("hash_blake3".to_string(), serde_json::json!(h));
             }
 
@@ -6406,8 +7014,14 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
                 .map(|s| !s.trim().is_empty() && s != "—")
                 .unwrap_or(false);
             if !has_cmd {
-                obj.insert("command_line".to_string(), serde_json::json!(item.summary.clone()));
-                obj.insert("arguments".to_string(), serde_json::json!(item.summary.clone()));
+                obj.insert(
+                    "command_line".to_string(),
+                    serde_json::json!(item.summary.clone()),
+                );
+                obj.insert(
+                    "arguments".to_string(),
+                    serde_json::json!(item.summary.clone()),
+                );
             }
 
             let has_source = obj
@@ -6416,7 +7030,10 @@ fn collect_history_items(state: &DashboardState) -> Vec<HistoryItem> {
                 .map(|s| !s.trim().is_empty() && s != "—")
                 .unwrap_or(false);
             if !has_source {
-                let node_id = item.process_name.clone().unwrap_or_else(|| "local-edr-cortex".to_string());
+                let node_id = item
+                    .process_name
+                    .clone()
+                    .unwrap_or_else(|| "local-edr-cortex".to_string());
                 obj.insert("source_node".to_string(), serde_json::json!(node_id));
             }
         }
@@ -6439,9 +7056,23 @@ async fn get_history(
     let system_count = all_items.iter().filter(|i| i.category == "system").count();
     let total_events = all_items.len();
 
-    let category_filter = q.category.as_deref().unwrap_or("all").trim().to_ascii_lowercase();
-    let severity_filter = q.severity.as_deref().unwrap_or("all").trim().to_ascii_lowercase();
-    let search_filter = q.search.as_deref().map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty());
+    let category_filter = q
+        .category
+        .as_deref()
+        .unwrap_or("all")
+        .trim()
+        .to_ascii_lowercase();
+    let severity_filter = q
+        .severity
+        .as_deref()
+        .unwrap_or("all")
+        .trim()
+        .to_ascii_lowercase();
+    let search_filter = q
+        .search
+        .as_deref()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty());
 
     let filtered: Vec<_> = all_items
         .into_iter()
@@ -6459,22 +7090,46 @@ async fn get_history(
                 }
             }
 
-            if severity_filter != "all" && !severity_filter.is_empty() {
-                if !item.severity.eq_ignore_ascii_case(&severity_filter) {
-                    return false;
-                }
+            if severity_filter != "all"
+                && !severity_filter.is_empty()
+                && !item.severity.eq_ignore_ascii_case(&severity_filter)
+            {
+                return false;
             }
 
             if let Some(ref search) = search_filter {
                 let in_summary = item.summary.to_ascii_lowercase().contains(search);
-                let in_proc = item.process_name.as_deref().map(|p| p.to_ascii_lowercase().contains(search)).unwrap_or(false);
-                let in_tech = item.mitre_technique.as_deref().map(|t| t.to_ascii_lowercase().contains(search)).unwrap_or(false);
-                let in_tech_name = item.mitre_technique_name.as_deref().map(|n| n.to_ascii_lowercase().contains(search)).unwrap_or(false);
+                let in_proc = item
+                    .process_name
+                    .as_deref()
+                    .map(|p| p.to_ascii_lowercase().contains(search))
+                    .unwrap_or(false);
+                let in_tech = item
+                    .mitre_technique
+                    .as_deref()
+                    .map(|t| t.to_ascii_lowercase().contains(search))
+                    .unwrap_or(false);
+                let in_tech_name = item
+                    .mitre_technique_name
+                    .as_deref()
+                    .map(|n| n.to_ascii_lowercase().contains(search))
+                    .unwrap_or(false);
                 let in_id = item.id.to_ascii_lowercase().contains(search);
                 let in_event = item.event_type.to_ascii_lowercase().contains(search);
-                let in_details = item.details.to_string().to_ascii_lowercase().contains(search);
+                let in_details = item
+                    .details
+                    .to_string()
+                    .to_ascii_lowercase()
+                    .contains(search);
 
-                if !in_summary && !in_proc && !in_tech && !in_tech_name && !in_id && !in_event && !in_details {
+                if !in_summary
+                    && !in_proc
+                    && !in_tech
+                    && !in_tech_name
+                    && !in_id
+                    && !in_event
+                    && !in_details
+                {
                     return false;
                 }
             }
@@ -6486,7 +7141,11 @@ async fn get_history(
     let total_count = filtered.len();
     let limit = q.limit.unwrap_or(50).clamp(1, 200);
     let page = q.page.unwrap_or(1).max(1);
-    let total_pages = if total_count == 0 { 1 } else { (total_count + limit - 1) / limit };
+    let total_pages = if total_count == 0 {
+        1
+    } else {
+        total_count.div_ceil(limit)
+    };
     let start = (page - 1) * limit;
 
     let items: Vec<_> = filtered.into_iter().skip(start).take(limit).collect();
@@ -6511,9 +7170,23 @@ async fn export_history(
 ) -> Response {
     let all_items = collect_history_items(&state);
 
-    let category_filter = q.category.as_deref().unwrap_or("all").trim().to_ascii_lowercase();
-    let severity_filter = q.severity.as_deref().unwrap_or("all").trim().to_ascii_lowercase();
-    let search_filter = q.search.as_deref().map(|s| s.trim().to_ascii_lowercase()).filter(|s| !s.is_empty());
+    let category_filter = q
+        .category
+        .as_deref()
+        .unwrap_or("all")
+        .trim()
+        .to_ascii_lowercase();
+    let severity_filter = q
+        .severity
+        .as_deref()
+        .unwrap_or("all")
+        .trim()
+        .to_ascii_lowercase();
+    let search_filter = q
+        .search
+        .as_deref()
+        .map(|s| s.trim().to_ascii_lowercase())
+        .filter(|s| !s.is_empty());
 
     let filtered: Vec<_> = all_items
         .into_iter()
@@ -6531,22 +7204,46 @@ async fn export_history(
                 }
             }
 
-            if severity_filter != "all" && !severity_filter.is_empty() {
-                if !item.severity.eq_ignore_ascii_case(&severity_filter) {
-                    return false;
-                }
+            if severity_filter != "all"
+                && !severity_filter.is_empty()
+                && !item.severity.eq_ignore_ascii_case(&severity_filter)
+            {
+                return false;
             }
 
             if let Some(ref search) = search_filter {
                 let in_summary = item.summary.to_ascii_lowercase().contains(search);
-                let in_proc = item.process_name.as_deref().map(|p| p.to_ascii_lowercase().contains(search)).unwrap_or(false);
-                let in_tech = item.mitre_technique.as_deref().map(|t| t.to_ascii_lowercase().contains(search)).unwrap_or(false);
-                let in_tech_name = item.mitre_technique_name.as_deref().map(|n| n.to_ascii_lowercase().contains(search)).unwrap_or(false);
+                let in_proc = item
+                    .process_name
+                    .as_deref()
+                    .map(|p| p.to_ascii_lowercase().contains(search))
+                    .unwrap_or(false);
+                let in_tech = item
+                    .mitre_technique
+                    .as_deref()
+                    .map(|t| t.to_ascii_lowercase().contains(search))
+                    .unwrap_or(false);
+                let in_tech_name = item
+                    .mitre_technique_name
+                    .as_deref()
+                    .map(|n| n.to_ascii_lowercase().contains(search))
+                    .unwrap_or(false);
                 let in_id = item.id.to_ascii_lowercase().contains(search);
                 let in_event = item.event_type.to_ascii_lowercase().contains(search);
-                let in_details = item.details.to_string().to_ascii_lowercase().contains(search);
+                let in_details = item
+                    .details
+                    .to_string()
+                    .to_ascii_lowercase()
+                    .contains(search);
 
-                if !in_summary && !in_proc && !in_tech && !in_tech_name && !in_id && !in_event && !in_details {
+                if !in_summary
+                    && !in_proc
+                    && !in_tech
+                    && !in_tech_name
+                    && !in_id
+                    && !in_event
+                    && !in_details
+                {
                     return false;
                 }
             }
@@ -6563,9 +7260,16 @@ async fn export_history(
         );
         headers.insert(
             axum::http::header::CONTENT_DISPOSITION,
-            "attachment; filename=\"oshoosi_forensic_history.json\"".parse().unwrap(),
+            "attachment; filename=\"oshoosi_forensic_history.json\""
+                .parse()
+                .unwrap(),
         );
-        return (StatusCode::OK, headers, serde_json::to_string_pretty(&filtered).unwrap_or_default()).into_response();
+        return (
+            StatusCode::OK,
+            headers,
+            serde_json::to_string_pretty(&filtered).unwrap_or_default(),
+        )
+            .into_response();
     }
 
     // CSV format
@@ -6584,7 +7288,16 @@ async fn export_history(
 
         csv.push_str(&format!(
             "{},{},{},{},{},{},{},{},{},{}\n",
-            id_esc, ts_esc, cat_esc, ev_esc, proc_esc, tech_esc, tech_name_esc, sev_esc, stat_esc, summ_esc
+            id_esc,
+            ts_esc,
+            cat_esc,
+            ev_esc,
+            proc_esc,
+            tech_esc,
+            tech_name_esc,
+            sev_esc,
+            stat_esc,
+            summ_esc
         ));
     }
 
@@ -6595,7 +7308,9 @@ async fn export_history(
     );
     headers.insert(
         axum::http::header::CONTENT_DISPOSITION,
-        "attachment; filename=\"oshoosi_forensic_history.csv\"".parse().unwrap(),
+        "attachment; filename=\"oshoosi_forensic_history.csv\""
+            .parse()
+            .unwrap(),
     );
     (StatusCode::OK, headers, csv).into_response()
 }
@@ -6612,7 +7327,11 @@ fn escape_csv(val: &str) -> String {
         val.to_string()
     };
 
-    if sanitized.contains(',') || sanitized.contains('"') || sanitized.contains('\n') || sanitized.contains('\r') {
+    if sanitized.contains(',')
+        || sanitized.contains('"')
+        || sanitized.contains('\n')
+        || sanitized.contains('\r')
+    {
         format!("\"{}\"", sanitized.replace('"', "\"\""))
     } else {
         sanitized
@@ -6624,7 +7343,9 @@ async fn get_log_files(State(state): State<DashboardState>) -> Json<Value> {
         Some(orch) => Json(json!(orch.list_log_files())),
         None => {
             let log_dir = osoosi_types::resolve_log_directory();
-            Json(json!(osoosi_core::log_retention::LogRetentionManager::list_log_files(&log_dir)))
+            Json(json!(
+                osoosi_core::log_retention::LogRetentionManager::list_log_files(&log_dir)
+            ))
         }
     }
 }
@@ -6641,7 +7362,9 @@ async fn get_log_view(
         Some(orch) => orch.read_log_tail(&file, tail, search),
         None => {
             let log_dir = osoosi_types::resolve_log_directory();
-            osoosi_core::log_retention::LogRetentionManager::read_log_tail(&log_dir, &file, tail, search)
+            osoosi_core::log_retention::LogRetentionManager::read_log_tail(
+                &log_dir, &file, tail, search,
+            )
         }
     };
 
@@ -6666,7 +7389,8 @@ async fn get_log_view(
                         "lines": lines,
                         "count": lines.len()
                     })),
-                ).into_response()
+                )
+                    .into_response()
             }
         }
         Err(e) => {
@@ -6702,7 +7426,10 @@ pub async fn post_agent_anomalies_evaluate(
     State(state): State<DashboardState>,
     Json(telemetry): Json<osoosi_agent_anomaly::ToolCallTelemetry>,
 ) -> impl IntoResponse {
-    let finding = state.agent_anomaly_detector.evaluate_immediate(&telemetry).await;
+    let finding = state
+        .agent_anomaly_detector
+        .evaluate_immediate(&telemetry)
+        .await;
     (
         StatusCode::OK,
         Json(json!({
@@ -6717,22 +7444,36 @@ pub async fn post_agent_anomalies_enforce(
     Query(query_params): Query<std::collections::HashMap<String, String>>,
     Json(payload): Json<serde_json::Value>,
 ) -> impl IntoResponse {
-    let (telemetry, mode) = if let Ok(wrapped) = serde_json::from_value::<EnforcePayload>(payload.clone()) {
-        let m = wrapped.mode.unwrap_or_else(|| query_params.get("mode").cloned().unwrap_or_else(|| "enforce".to_string()));
-        (wrapped.telemetry, m)
-    } else if let Ok(direct_tel) = serde_json::from_value::<osoosi_agent_anomaly::ToolCallTelemetry>(payload) {
-        let m = query_params.get("mode").cloned().unwrap_or_else(|| "enforce".to_string());
-        (direct_tel, m)
-    } else {
-        return api_error(
+    let (telemetry, mode) =
+        if let Ok(wrapped) = serde_json::from_value::<EnforcePayload>(payload.clone()) {
+            let m = wrapped.mode.unwrap_or_else(|| {
+                query_params
+                    .get("mode")
+                    .cloned()
+                    .unwrap_or_else(|| "enforce".to_string())
+            });
+            (wrapped.telemetry, m)
+        } else if let Ok(direct_tel) =
+            serde_json::from_value::<osoosi_agent_anomaly::ToolCallTelemetry>(payload)
+        {
+            let m = query_params
+                .get("mode")
+                .cloned()
+                .unwrap_or_else(|| "enforce".to_string());
+            (direct_tel, m)
+        } else {
+            return api_error(
             StatusCode::BAD_REQUEST,
             "INVALID_TELEMETRY_PAYLOAD",
             "Invalid ToolCallTelemetry payload",
             "Ensure payload conforms to ToolCallTelemetry schema with session_id and tool_name.",
         ).into_response();
-    };
+        };
 
-    let decision = state.agent_anomaly_detector.enforce_policy(&telemetry, &mode).await;
+    let decision = state
+        .agent_anomaly_detector
+        .enforce_policy(&telemetry, &mode)
+        .await;
     (StatusCode::OK, Json(json!(decision))).into_response()
 }
 
@@ -6740,7 +7481,10 @@ pub async fn get_agent_anomalies_findings(
     State(state): State<DashboardState>,
     Query(query): Query<AgentFindingsQuery>,
 ) -> impl IntoResponse {
-    let findings = state.agent_anomaly_detector.get_recent_findings(query.limit).await;
+    let findings = state
+        .agent_anomaly_detector
+        .get_recent_findings(query.limit)
+        .await;
     (StatusCode::OK, Json(findings))
 }
 
@@ -6751,9 +7495,7 @@ pub async fn get_agent_anomalies_sessions(
     (StatusCode::OK, Json(summaries))
 }
 
-pub async fn get_agent_anomalies_summary(
-    State(state): State<DashboardState>,
-) -> impl IntoResponse {
+pub async fn get_agent_anomalies_summary(State(state): State<DashboardState>) -> impl IntoResponse {
     let mut summary = state.agent_anomaly_detector.get_risk_summary().await;
     if let Some(obj) = summary.as_object_mut() {
         obj.insert(
@@ -6781,10 +7523,11 @@ pub struct MercuryEvaluateRequest {
     pub was_rejected: Option<bool>,
 }
 
-pub async fn get_mercury_status(
-    State(state): State<DashboardState>,
-) -> impl IntoResponse {
-    let summary = state.agent_anomaly_detector.mercury_engine.get_status_summary();
+pub async fn get_mercury_status(State(state): State<DashboardState>) -> impl IntoResponse {
+    let summary = state
+        .agent_anomaly_detector
+        .mercury_engine
+        .get_status_summary();
     (StatusCode::OK, Json(summary))
 }
 
@@ -6792,24 +7535,48 @@ pub async fn post_mercury_evaluate(
     State(state): State<DashboardState>,
     Json(payload): Json<MercuryEvaluateRequest>,
 ) -> impl IntoResponse {
-    let pore = match payload.pore_class.as_deref().unwrap_or("BrowserControl").to_ascii_lowercase().as_str() {
+    let pore = match payload
+        .pore_class
+        .as_deref()
+        .unwrap_or("BrowserControl")
+        .to_ascii_lowercase()
+        .as_str()
+    {
         "mcp" | "mcptoolserver" => osoosi_agent_anomaly::ActuationPoreClass::McpToolServer,
-        "ai" | "aisdkruntime" | "ollama" | "litert" => osoosi_agent_anomaly::ActuationPoreClass::AiSdkRuntime,
-        "shell" | "osshellinterpreter" | "cmd" | "powershell" => osoosi_agent_anomaly::ActuationPoreClass::OsShellInterpreter,
-        "ipc" | "ipcnamedpipeapi" | "pipe" => osoosi_agent_anomaly::ActuationPoreClass::IpcNamedPipeApi,
-        "ui" | "uicomputeruse" | "computeruse" => osoosi_agent_anomaly::ActuationPoreClass::UiComputerUse,
-        "fs" | "filesystem" | "filesystemstaging" => osoosi_agent_anomaly::ActuationPoreClass::FilesystemStaging,
-        "net" | "network" | "networkegress" => osoosi_agent_anomaly::ActuationPoreClass::NetworkEgress,
+        "ai" | "aisdkruntime" | "ollama" | "litert" => {
+            osoosi_agent_anomaly::ActuationPoreClass::AiSdkRuntime
+        }
+        "shell" | "osshellinterpreter" | "cmd" | "powershell" => {
+            osoosi_agent_anomaly::ActuationPoreClass::OsShellInterpreter
+        }
+        "ipc" | "ipcnamedpipeapi" | "pipe" => {
+            osoosi_agent_anomaly::ActuationPoreClass::IpcNamedPipeApi
+        }
+        "ui" | "uicomputeruse" | "computeruse" => {
+            osoosi_agent_anomaly::ActuationPoreClass::UiComputerUse
+        }
+        "fs" | "filesystem" | "filesystemstaging" => {
+            osoosi_agent_anomaly::ActuationPoreClass::FilesystemStaging
+        }
+        "net" | "network" | "networkegress" => {
+            osoosi_agent_anomaly::ActuationPoreClass::NetworkEgress
+        }
         _ => osoosi_agent_anomaly::ActuationPoreClass::BrowserControl,
     };
-    let verdict = state.agent_anomaly_detector.mercury_engine.evaluate_droplet(
-        &payload.lineage_id,
-        pore,
-        payload.target_detail.as_deref().unwrap_or("actuation_request"),
-        payload.mass_taint.unwrap_or(0.1),
-        payload.intention_vector.unwrap_or_default(),
-        payload.was_rejected.unwrap_or(false),
-    );
+    let verdict = state
+        .agent_anomaly_detector
+        .mercury_engine
+        .evaluate_droplet(
+            &payload.lineage_id,
+            pore,
+            payload
+                .target_detail
+                .as_deref()
+                .unwrap_or("actuation_request"),
+            payload.mass_taint.unwrap_or(0.1),
+            payload.intention_vector.unwrap_or_default(),
+            payload.was_rejected.unwrap_or(false),
+        );
     (StatusCode::OK, Json(verdict))
 }
 
@@ -6823,10 +7590,11 @@ pub struct SpiderWebEvaluateRequest {
     pub is_simulation: Option<bool>,
 }
 
-pub async fn get_spider_web_status(
-    State(state): State<DashboardState>,
-) -> impl IntoResponse {
-    let summary = state.agent_anomaly_detector.spider_web_engine.get_status_summary();
+pub async fn get_spider_web_status(State(state): State<DashboardState>) -> impl IntoResponse {
+    let summary = state
+        .agent_anomaly_detector
+        .spider_web_engine
+        .get_status_summary();
     (StatusCode::OK, Json(summary))
 }
 
@@ -6835,19 +7603,31 @@ pub async fn post_spider_web_evaluate(
     Json(payload): Json<SpiderWebEvaluateRequest>,
 ) -> impl IntoResponse {
     if payload.is_simulation.unwrap_or(false) || payload.tool_name.is_none() {
-        let sim_result = state.agent_anomaly_detector.spider_web_engine.simulate_email_export_scenario(
-            payload.session_id.as_deref().unwrap_or("sim-sess-interactive")
-        );
+        let sim_result = state
+            .agent_anomaly_detector
+            .spider_web_engine
+            .simulate_email_export_scenario(
+                payload
+                    .session_id
+                    .as_deref()
+                    .unwrap_or("sim-sess-interactive"),
+            );
         (StatusCode::OK, Json(sim_result))
     } else {
-        let verdict = state.agent_anomaly_detector.spider_web_engine.evaluate_tool_activity(
-            payload.session_id.as_deref().unwrap_or("sess-default"),
-            payload.agent_id.as_deref().unwrap_or("agent-default"),
-            payload.tool_name.as_deref().unwrap_or("read_file"),
-            payload.call_parameters.as_deref().unwrap_or(""),
-            payload.requested_bytes.unwrap_or(1024.0),
-        );
-        (StatusCode::OK, Json(serde_json::to_value(verdict).unwrap_or_default()))
+        let verdict = state
+            .agent_anomaly_detector
+            .spider_web_engine
+            .evaluate_tool_activity(
+                payload.session_id.as_deref().unwrap_or("sess-default"),
+                payload.agent_id.as_deref().unwrap_or("agent-default"),
+                payload.tool_name.as_deref().unwrap_or("read_file"),
+                payload.call_parameters.as_deref().unwrap_or(""),
+                payload.requested_bytes.unwrap_or(1024.0),
+            );
+        (
+            StatusCode::OK,
+            Json(serde_json::to_value(verdict).unwrap_or_default()),
+        )
     }
 }
 
@@ -6887,7 +7667,8 @@ pub async fn post_agent_anomalies_embed(
             "MISSING_EMBED_INPUT",
             "Either 'text' or 'tool_name' must be provided in request payload.",
             "Provide either 'text' or 'tool_name' in the request JSON.",
-        ).into_response();
+        )
+        .into_response();
     };
 
     let norm: f32 = embedding.iter().map(|x| x * x).sum::<f32>().sqrt();
@@ -6901,7 +7682,8 @@ pub async fn post_agent_anomalies_embed(
             "l2_norm": l2_norm,
             "status": "ok"
         })),
-    ).into_response()
+    )
+        .into_response()
 }
 
 pub async fn post_agent_anomalies_simulate_test(
@@ -6921,7 +7703,10 @@ pub async fn post_agent_anomalies_simulate_test(
         is_error: false,
         error_message: None,
     };
-    state.agent_anomaly_detector.submit_telemetry(benign.clone()).await;
+    state
+        .agent_anomaly_detector
+        .submit_telemetry(benign.clone())
+        .await;
 
     // 2. Google Inventory Agent scraping pattern attack
     let attack = osoosi_agent_anomaly::ToolCallTelemetry {
@@ -6936,7 +7721,10 @@ pub async fn post_agent_anomalies_simulate_test(
         is_error: false,
         error_message: None,
     };
-    let finding = state.agent_anomaly_detector.evaluate_immediate(&attack).await;
+    let finding = state
+        .agent_anomaly_detector
+        .evaluate_immediate(&attack)
+        .await;
 
     // 3. SAM credential dump / SSRF breakout attempt
     let breakout = osoosi_agent_anomaly::ToolCallTelemetry {
@@ -6954,7 +7742,10 @@ pub async fn post_agent_anomalies_simulate_test(
         is_error: false,
         error_message: None,
     };
-    let breakout_finding = state.agent_anomaly_detector.evaluate_immediate(&breakout).await;
+    let breakout_finding = state
+        .agent_anomaly_detector
+        .evaluate_immediate(&breakout)
+        .await;
 
     (
         StatusCode::OK,
@@ -6973,9 +7764,7 @@ pub struct SiqueryQueryRequest {
     pub format: Option<String>,
 }
 
-pub async fn post_siquery_query(
-    Json(payload): Json<SiqueryQueryRequest>,
-) -> Response {
+pub async fn post_siquery_query(Json(payload): Json<SiqueryQueryRequest>) -> Response {
     let sql = payload.query.trim();
     if sql.is_empty() {
         return (
@@ -6984,85 +7773,90 @@ pub async fn post_siquery_query(
                 "status": "error",
                 "error": "Query cannot be empty"
             })),
-        ).into_response();
+        )
+            .into_response();
     }
 
     let start_time = std::time::Instant::now();
     let engine = osoosi_agent_anomaly::SiqueryEngine::new();
-    let format = payload.format.as_deref().unwrap_or("json").to_ascii_lowercase();
+    let format = payload
+        .format
+        .as_deref()
+        .unwrap_or("json")
+        .to_ascii_lowercase();
 
     match format.as_str() {
-        "csv" => {
-            match engine.execute_csv(sql) {
-                Ok(csv) => {
-                    let elapsed = start_time.elapsed().as_millis() as u64;
-                    (
-                        StatusCode::OK,
-                        Json(json!({
-                            "status": "ok",
-                            "query": sql,
-                            "execution_duration_ms": elapsed,
-                            "csv": csv,
-                        })),
-                    ).into_response()
-                }
-                Err(e) => (
-                    StatusCode::BAD_REQUEST,
+        "csv" => match engine.execute_csv(sql) {
+            Ok(csv) => {
+                let elapsed = start_time.elapsed().as_millis() as u64;
+                (
+                    StatusCode::OK,
                     Json(json!({
-                        "status": "error",
-                        "error": e,
+                        "status": "ok",
+                        "query": sql,
+                        "execution_duration_ms": elapsed,
+                        "csv": csv,
                     })),
-                ).into_response(),
+                )
+                    .into_response()
             }
-        }
-        "pretty" => {
-            match engine.execute_pretty(sql) {
-                Ok(pretty) => {
-                    let elapsed = start_time.elapsed().as_millis() as u64;
-                    (
-                        StatusCode::OK,
-                        Json(json!({
-                            "status": "ok",
-                            "query": sql,
-                            "execution_duration_ms": elapsed,
-                            "pretty": pretty,
-                        })),
-                    ).into_response()
-                }
-                Err(e) => (
-                    StatusCode::BAD_REQUEST,
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "status": "error",
+                    "error": e,
+                })),
+            )
+                .into_response(),
+        },
+        "pretty" => match engine.execute_pretty(sql) {
+            Ok(pretty) => {
+                let elapsed = start_time.elapsed().as_millis() as u64;
+                (
+                    StatusCode::OK,
                     Json(json!({
-                        "status": "error",
-                        "error": e,
+                        "status": "ok",
+                        "query": sql,
+                        "execution_duration_ms": elapsed,
+                        "pretty": pretty,
                     })),
-                ).into_response(),
+                )
+                    .into_response()
             }
-        }
-        _ => {
-            match engine.execute_query(sql) {
-                Ok(rows) => {
-                    let count = rows.len();
-                    let elapsed = start_time.elapsed().as_millis() as u64;
-                    (
-                        StatusCode::OK,
-                        Json(json!({
-                            "status": "ok",
-                            "query": sql,
-                            "execution_duration_ms": elapsed,
-                            "count": count,
-                            "rows": rows,
-                        })),
-                    ).into_response()
-                }
-                Err(e) => (
-                    StatusCode::BAD_REQUEST,
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "status": "error",
+                    "error": e,
+                })),
+            )
+                .into_response(),
+        },
+        _ => match engine.execute_query(sql) {
+            Ok(rows) => {
+                let count = rows.len();
+                let elapsed = start_time.elapsed().as_millis() as u64;
+                (
+                    StatusCode::OK,
                     Json(json!({
-                        "status": "error",
-                        "error": e,
+                        "status": "ok",
+                        "query": sql,
+                        "execution_duration_ms": elapsed,
+                        "count": count,
+                        "rows": rows,
                     })),
-                ).into_response(),
+                )
+                    .into_response()
             }
-        }
+            Err(e) => (
+                StatusCode::BAD_REQUEST,
+                Json(json!({
+                    "status": "error",
+                    "error": e,
+                })),
+            )
+                .into_response(),
+        },
     }
 }
 
@@ -7096,20 +7890,51 @@ pub async fn get_siquery_edr_status(State(state): State<DashboardState>) -> impl
                     "live": true,
                     "telemetry": telemetry,
                 })),
-            ).into_response()
+            )
+                .into_response()
         }
         None => {
             let engine = osoosi_agent_anomaly::SiqueryEngine::new();
-            let proc_count = engine.execute_query("SELECT pid FROM processes;").map(|r| r.len()).unwrap_or(0);
-            let wmi_services_count = engine.execute_query("SELECT name FROM wmi_services;").map(|r| r.len()).unwrap_or(0);
-            let sockets_count = engine.execute_query("SELECT local_port FROM tcp_sockets;").map(|r| r.len()).unwrap_or(0);
-            let hotfixes_count = engine.execute_query("SELECT hotfix_id FROM wmi_hotfixes;").map(|r| r.len()).unwrap_or(0);
-            let shares_count = engine.execute_query("SELECT name FROM wmi_shares;").map(|r| r.len()).unwrap_or(0);
-            let dns_count = engine.execute_query("SELECT name FROM dns_cache;").map(|r| r.len()).unwrap_or(0);
-            let arp_count = engine.execute_query("SELECT address FROM arp_cache;").map(|r| r.len()).unwrap_or(0);
-            let autoruns_count = engine.execute_query("SELECT name FROM autoruns;").map(|r| r.len()).unwrap_or(0);
-            let drivers_count = engine.execute_query("SELECT name FROM drivers;").map(|r| r.len()).unwrap_or(0);
-            let fw_count = engine.execute_query("SELECT name FROM firewall_rules;").map(|r| r.len()).unwrap_or(0);
+            let proc_count = engine
+                .execute_query("SELECT pid FROM processes;")
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let wmi_services_count = engine
+                .execute_query("SELECT name FROM wmi_services;")
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let sockets_count = engine
+                .execute_query("SELECT local_port FROM tcp_sockets;")
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let hotfixes_count = engine
+                .execute_query("SELECT hotfix_id FROM wmi_hotfixes;")
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let shares_count = engine
+                .execute_query("SELECT name FROM wmi_shares;")
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let dns_count = engine
+                .execute_query("SELECT name FROM dns_cache;")
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let arp_count = engine
+                .execute_query("SELECT address FROM arp_cache;")
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let autoruns_count = engine
+                .execute_query("SELECT name FROM autoruns;")
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let drivers_count = engine
+                .execute_query("SELECT name FROM drivers;")
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let fw_count = engine
+                .execute_query("SELECT name FROM firewall_rules;")
+                .map(|r| r.len())
+                .unwrap_or(0);
             let tables_len = osoosi_agent_anomaly::SiqueryEngine::list_tables().len();
 
             (
@@ -7149,12 +7974,15 @@ pub async fn get_siquery_edr_status(State(state): State<DashboardState>) -> impl
                         "anomalies": []
                     }
                 })),
-            ).into_response()
+            )
+                .into_response()
         }
     }
 }
 
-pub async fn post_siquery_protection_sweep(State(state): State<DashboardState>) -> impl IntoResponse {
+pub async fn post_siquery_protection_sweep(
+    State(state): State<DashboardState>,
+) -> impl IntoResponse {
     match &state.backend {
         Some(orch) => {
             let cached = {
@@ -7178,18 +8006,43 @@ pub async fn post_siquery_protection_sweep(State(state): State<DashboardState>) 
                     "live": true,
                     "telemetry": telemetry,
                 })),
-            ).into_response()
+            )
+                .into_response()
         }
         None => {
             let engine = osoosi_agent_anomaly::SiqueryEngine::new();
-            let proc_count = engine.execute_query("SELECT pid FROM processes;").map(|r| r.len()).unwrap_or(0);
-            let wmi_services_count = engine.execute_query("SELECT name FROM wmi_services;").map(|r| r.len()).unwrap_or(0);
-            let sockets_count = engine.execute_query("SELECT local_port FROM tcp_sockets;").map(|r| r.len()).unwrap_or(0);
-            let dns_count = engine.execute_query("SELECT name FROM dns_cache;").map(|r| r.len()).unwrap_or(0);
-            let arp_count = engine.execute_query("SELECT address FROM arp_cache;").map(|r| r.len()).unwrap_or(0);
-            let autoruns_count = engine.execute_query("SELECT name FROM autoruns;").map(|r| r.len()).unwrap_or(0);
-            let drivers_count = engine.execute_query("SELECT name FROM drivers;").map(|r| r.len()).unwrap_or(0);
-            let fw_count = engine.execute_query("SELECT name FROM firewall_rules;").map(|r| r.len()).unwrap_or(0);
+            let proc_count = engine
+                .execute_query("SELECT pid FROM processes;")
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let wmi_services_count = engine
+                .execute_query("SELECT name FROM wmi_services;")
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let sockets_count = engine
+                .execute_query("SELECT local_port FROM tcp_sockets;")
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let dns_count = engine
+                .execute_query("SELECT name FROM dns_cache;")
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let arp_count = engine
+                .execute_query("SELECT address FROM arp_cache;")
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let autoruns_count = engine
+                .execute_query("SELECT name FROM autoruns;")
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let drivers_count = engine
+                .execute_query("SELECT name FROM drivers;")
+                .map(|r| r.len())
+                .unwrap_or(0);
+            let fw_count = engine
+                .execute_query("SELECT name FROM firewall_rules;")
+                .map(|r| r.len())
+                .unwrap_or(0);
             let tables_len = osoosi_agent_anomaly::SiqueryEngine::list_tables().len();
 
             (
@@ -7216,7 +8069,8 @@ pub async fn post_siquery_protection_sweep(State(state): State<DashboardState>) 
                         "anomalies": []
                     }
                 })),
-            ).into_response()
+            )
+                .into_response()
         }
     }
 }
@@ -7232,8 +8086,16 @@ mod tests {
         let val = resp.0;
         let nodes = val["nodes"].as_array().expect("nodes should be array");
         let edges = val["edges"].as_array().expect("edges should be array");
-        assert!(nodes.len() >= 6, "expected enriched topology nodes, got {}", nodes.len());
-        assert!(edges.len() >= 5, "expected enriched topology edges, got {}", edges.len());
+        assert!(
+            nodes.len() >= 6,
+            "expected enriched topology nodes, got {}",
+            nodes.len()
+        );
+        assert!(
+            edges.len() >= 5,
+            "expected enriched topology edges, got {}",
+            edges.len()
+        );
         assert_eq!(val["mesh_health"], "Optimal");
         assert!(nodes.iter().any(|n| n["id"] == "did:osoosi:local"));
         assert!(nodes.iter().any(|n| n["id"] == "gateway:wire-p2p"));
@@ -7249,7 +8111,10 @@ mod tests {
         let resp = get_peers(State(state)).await;
         let val = resp.0;
         let peers = val["peers"].as_array().expect("peers should be array");
-        assert!(peers.len() >= 3, "expected at least local node, gateway, and otel collector");
+        assert!(
+            peers.len() >= 3,
+            "expected at least local node, gateway, and otel collector"
+        );
         assert!(peers.iter().any(|p| p["label"] == "Local Node"));
         assert!(peers.iter().any(|p| p["id"] == "gateway:wire-p2p"));
         assert!(peers.iter().any(|p| p["id"] == "otel:collector"));
@@ -7262,8 +8127,13 @@ mod tests {
         // 1. get_zone_summary fallback
         let zone_resp = get_zone_summary(State(state.clone())).await.0;
         assert_eq!(zone_resp["status"], "idle");
-        let score = zone_resp["security_score"].as_u64().expect("security_score should be a number");
-        assert!(score >= 30 && score <= 100, "honest calibrated score must be between 30 and 100");
+        let score = zone_resp["security_score"]
+            .as_u64()
+            .expect("security_score should be a number");
+        assert!(
+            (30..=100).contains(&score),
+            "honest calibrated score must be between 30 and 100"
+        );
         assert!(zone_resp["zones"].is_array());
         assert!(zone_resp["gaps"].is_array());
         assert!(zone_resp["peer_count"].as_u64().is_some());
@@ -7271,8 +8141,14 @@ mod tests {
         assert!(zone_resp["relay_count"].as_u64().is_some());
         assert_eq!(zone_resp["zone"], "zone-alpha-mesh");
         assert!(zone_resp["tpm_attested"].is_boolean());
-        assert!(zone_resp["nodes"].as_array().unwrap().len() >= 1);
-        assert!(zone_resp["structured_recommendations"].as_array().unwrap().len() >= 3);
+        assert!(!zone_resp["nodes"].as_array().unwrap().is_empty());
+        assert!(
+            zone_resp["structured_recommendations"]
+                .as_array()
+                .unwrap()
+                .len()
+                >= 3
+        );
 
         // 2. get_behavioral_analyze fallback
         let analyze_resp = get_behavioral_analyze(
@@ -7302,12 +8178,9 @@ mod tests {
         assert!(query_resp["results"].as_array().unwrap().is_empty());
 
         // 4. get_attack_graph fallback
-        let graph_resp = get_attack_graph(
-            State(state.clone()),
-            Query(AttackGraphQuery::default()),
-        )
-        .await
-        .0;
+        let graph_resp = get_attack_graph(State(state.clone()), Query(AttackGraphQuery::default()))
+            .await
+            .0;
         assert_eq!(graph_resp["nodes"].as_array().unwrap().len(), 4);
         assert_eq!(graph_resp["edges"].as_array().unwrap().len(), 3);
     }
@@ -7326,15 +8199,27 @@ mod tests {
         let matrix = get_mitre_matrix(State(state.clone())).await.0;
         assert_eq!(matrix.tactics.len(), 15);
         assert!(!matrix.techniques.is_empty());
-        assert!(matrix.total_techniques >= 200, "Expected comprehensive technique catalog");
+        assert!(
+            matrix.total_techniques >= 200,
+            "Expected comprehensive technique catalog"
+        );
         assert!(matrix.covered_techniques >= 150);
 
         // 2. Coverage endpoint
         let coverage = get_mitre_coverage(State(state.clone())).await.0;
         assert!(coverage["coverage_percentage"].as_f64().unwrap() > 0.0);
-        assert_eq!(coverage["total_techniques"].as_u64().unwrap(), matrix.total_techniques as u64);
-        assert!(coverage["total_mitigations"].as_u64().unwrap() >= 45, "Expected full mitigations catalog");
-        assert!(coverage["total_groups"].as_u64().unwrap() >= 170, "Expected full groups catalog");
+        assert_eq!(
+            coverage["total_techniques"].as_u64().unwrap(),
+            matrix.total_techniques as u64
+        );
+        assert!(
+            coverage["total_mitigations"].as_u64().unwrap() >= 45,
+            "Expected full mitigations catalog"
+        );
+        assert!(
+            coverage["total_groups"].as_u64().unwrap() >= 170,
+            "Expected full groups catalog"
+        );
 
         // 3. Technique detail endpoint
         let (status, detail) = get_mitre_technique_detail(Path("T1082".to_string())).await;
@@ -7356,20 +8241,32 @@ mod tests {
         assert!(mitigations.iter().any(|m| m.id == "AML.M0015"));
 
         // 6. Techniques query filtering
-        let discovery_by_id = get_mitre_techniques(Query(MitreTechniquesQuery { tactic: Some("TA0007".into()) })).await.0;
+        let discovery_by_id = get_mitre_techniques(Query(MitreTechniquesQuery {
+            tactic: Some("TA0007".into()),
+        }))
+        .await
+        .0;
         assert!(!discovery_by_id.is_empty());
         assert!(discovery_by_id.iter().all(|t| t.tactic_id == "TA0007"));
 
-        let initial_access_by_slug = get_mitre_techniques(Query(MitreTechniquesQuery { tactic: Some("initial_access".into()) })).await.0;
+        let initial_access_by_slug = get_mitre_techniques(Query(MitreTechniquesQuery {
+            tactic: Some("initial_access".into()),
+        }))
+        .await
+        .0;
         assert!(!initial_access_by_slug.is_empty());
-        assert!(initial_access_by_slug.iter().all(|t| t.tactic_id == "TA0001"));
+        assert!(initial_access_by_slug
+            .iter()
+            .all(|t| t.tactic_id == "TA0001"));
 
         // 7. Non-existent technique returns 404
-        let (status_404, _) = get_mitre_technique_detail(Path("T9999_NONEXISTENT".to_string())).await;
+        let (status_404, _) =
+            get_mitre_technique_detail(Path("T9999_NONEXISTENT".to_string())).await;
         assert_eq!(status_404, axum::http::StatusCode::NOT_FOUND);
 
         // 8. MITRE ATLAS AI threat technique detail endpoint
-        let (status_atlas, detail_atlas) = get_mitre_technique_detail(Path("AML.T0043".to_string())).await;
+        let (status_atlas, detail_atlas) =
+            get_mitre_technique_detail(Path("AML.T0043".to_string())).await;
         assert_eq!(status_atlas, axum::http::StatusCode::OK);
         assert_eq!(detail_atlas["technique"]["id"], "AML.T0043");
         assert_eq!(detail_atlas["technique"]["voter"], "AiSecurityAuditVoter");
@@ -7381,13 +8278,21 @@ mod tests {
         assert_eq!(stix_status_code, axum::http::StatusCode::OK);
         assert_eq!(stix_status_body["synced"], true);
         assert_eq!(stix_status_body["manifest"]["version"], "2.1");
-        assert_eq!(stix_status_body["manifest"]["object_count"].as_u64().unwrap(), 26381);
+        assert_eq!(
+            stix_status_body["manifest"]["object_count"]
+                .as_u64()
+                .unwrap(),
+            26381
+        );
 
         // 10. STIX bundle stream endpoint
         let stix_res = get_mitre_stix().await;
         assert!(stix_res.is_ok());
         let (headers, content) = stix_res.unwrap();
-        assert_eq!(headers.get(axum::http::header::CONTENT_TYPE).unwrap(), "application/json");
+        assert_eq!(
+            headers.get(axum::http::header::CONTENT_TYPE).unwrap(),
+            "application/json"
+        );
         assert!(content.contains("\"objects\""));
 
         // 11. On-demand STIX update endpoint
@@ -7400,34 +8305,55 @@ mod tests {
     #[test]
     fn test_enrich_mitre_threat() {
         // 1. Elevated Probe / Privilege / Whoami
-        let (id, name, title) = enrich_mitre_threat("whoami.exe", "", "High-risk privilege escalation detected", None, None);
+        let (id, name, title) = enrich_mitre_threat(
+            "whoami.exe",
+            "",
+            "High-risk privilege escalation detected",
+            None,
+            None,
+        );
         assert_eq!(id, "T1033");
         assert_eq!(name, "System Owner/User Discovery");
-        assert_eq!(title, "[T1033] System Owner/User Discovery (Elevated Probe)");
+        assert_eq!(
+            title,
+            "[T1033] System Owner/User Discovery (Elevated Probe)"
+        );
 
         // 2. Debugger Evasion
-        let (id, name, title) = enrich_mitre_threat("smbiosinfo.exe", "", "anti_dbg detected", None, None);
+        let (id, name, title) =
+            enrich_mitre_threat("smbiosinfo.exe", "", "anti_dbg detected", None, None);
         assert_eq!(id, "T1622");
         assert_eq!(name, "Debugger Evasion");
         assert_eq!(title, "[T1622] Debugger Evasion (smbiosinfo.exe)");
 
         // 3. Mutex Lock
-        let (id, name, title) = enrich_mitre_threat("malware.exe", "", "win_mutex lock active", None, None);
+        let (id, name, title) =
+            enrich_mitre_threat("malware.exe", "", "win_mutex lock active", None, None);
         assert_eq!(id, "T1027");
         assert_eq!(name, "Obfuscated Files: Mutex Lock");
         assert_eq!(title, "[T1027] Obfuscated Files: Mutex Lock (malware.exe)");
 
         // 4. Intelligent Correlation
-        let (id, name, title) = enrich_mitre_threat("suspicious.exe", "", "intelligent correlation anomaly", None, None);
+        let (id, name, title) = enrich_mitre_threat(
+            "suspicious.exe",
+            "",
+            "intelligent correlation anomaly",
+            None,
+            None,
+        );
         assert_eq!(id, "T1082");
         assert_eq!(name, "System Discovery: Heuristic Anomaly");
         assert_eq!(title, "[T1082] System Discovery (Heuristic Anomaly)");
 
         // 5. Command & Scripting Interpreter
-        let (id, name, title) = enrich_mitre_threat("mcp-cli.exe", "", "Execution detected", None, None);
+        let (id, name, title) =
+            enrich_mitre_threat("mcp-cli.exe", "", "Execution detected", None, None);
         assert_eq!(id, "T1059");
         assert_eq!(name, "Command and Scripting Interpreter");
-        assert_eq!(title, "[T1059] Command and Scripting Interpreter (mcp-cli.exe)");
+        assert_eq!(
+            title,
+            "[T1059] Command and Scripting Interpreter (mcp-cli.exe)"
+        );
 
         // 6. System Tool
         let (id, name, title) = enrich_mitre_threat("invcol.exe", "", "System scan", None, None);
@@ -7439,22 +8365,43 @@ mod tests {
         let (id, name, title) = enrich_mitre_threat("temp.rbf", "", "Payload drop", None, None);
         assert_eq!(id, "T1547");
         assert_eq!(name, "Boot or Logon Autostart: Installer Rollback");
-        assert_eq!(title, "[T1547] Boot/Logon Autostart: Installer Rollback (temp.rbf)");
+        assert_eq!(
+            title,
+            "[T1547] Boot/Logon Autostart: Installer Rollback (temp.rbf)"
+        );
 
         // 8. CVE Trigger
-        let (id, name, title) = enrich_mitre_threat("nginx.exe", "CVE-2024-21413", "Remote code execution", None, None);
+        let (id, name, title) = enrich_mitre_threat(
+            "nginx.exe",
+            "CVE-2024-21413",
+            "Remote code execution",
+            None,
+            None,
+        );
         assert_eq!(id, "T1190");
         assert_eq!(name, "Exploit Public-Facing Application");
         assert_eq!(title, "[CVE-2024-21413] Vulnerability Trigger (nginx.exe)");
 
         // 9. Existing Technique and Name
-        let (id, name, title) = enrich_mitre_threat("test.exe", "", "custom", Some("T1055"), Some("Process Injection"));
+        let (id, name, title) = enrich_mitre_threat(
+            "test.exe",
+            "",
+            "custom",
+            Some("T1055"),
+            Some("Process Injection"),
+        );
         assert_eq!(id, "T1055");
         assert_eq!(name, "Process Injection");
         assert_eq!(title, "[T1055] Process Injection");
 
         // 10. Existing Combined Technique String without separate name
-        let (id, name, title) = enrich_mitre_threat("test.exe", "", "custom", Some("T1055 - Process Injection"), None);
+        let (id, name, title) = enrich_mitre_threat(
+            "test.exe",
+            "",
+            "custom",
+            Some("T1055 - Process Injection"),
+            None,
+        );
         assert_eq!(id, "T1055");
         assert_eq!(name, "Process Injection");
         assert_eq!(title, "[T1055] Process Injection");
@@ -7545,7 +8492,9 @@ mod tests {
 
         assert!(!has_static_extension(std::path::Path::new("threats")));
         assert!(!has_static_extension(std::path::Path::new("quarantine")));
-        assert!(!has_static_extension(std::path::Path::new("did:osoosi:local")));
+        assert!(!has_static_extension(std::path::Path::new(
+            "did:osoosi:local"
+        )));
         assert!(!has_static_extension(std::path::Path::new("T1059.001")));
     }
 
@@ -7553,9 +8502,11 @@ mod tests {
     async fn test_safe_serve_dir_router_spa_and_sanitization() {
         use tower::ServiceExt;
 
-        let temp_dir = std::env::temp_dir().join(format!("test_oshoosi_dash_{}", rand::random::<u64>()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("test_oshoosi_dash_{}", rand::random::<u64>()));
         std::fs::create_dir_all(&temp_dir).unwrap();
-        let index_content = "<!DOCTYPE html><html><body><h1>Oshoosi Dashboard Test</h1></body></html>";
+        let index_content =
+            "<!DOCTYPE html><html><body><h1>Oshoosi Dashboard Test</h1></body></html>";
         let css_content = "body { background: #000; }";
         std::fs::write(temp_dir.join("index.html"), index_content).unwrap();
         std::fs::write(temp_dir.join("style.css"), css_content).unwrap();
@@ -7571,7 +8522,9 @@ mod tests {
             .unwrap();
         let res = app.clone().oneshot(req).await.unwrap();
         assert_eq!(res.status(), axum::http::StatusCode::OK);
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
         assert!(String::from_utf8_lossy(&body).contains("Oshoosi Dashboard Test"));
 
         // 2. Existing static file style.css returns 200 OK
@@ -7582,7 +8535,9 @@ mod tests {
             .unwrap();
         let res = app.clone().oneshot(req).await.unwrap();
         assert_eq!(res.status(), axum::http::StatusCode::OK);
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
         assert!(String::from_utf8_lossy(&body).contains("background: #000"));
 
         // 3. Clean SPA route /threats falls back to index.html
@@ -7593,7 +8548,9 @@ mod tests {
             .unwrap();
         let res = app.clone().oneshot(req).await.unwrap();
         assert_eq!(res.status(), axum::http::StatusCode::OK);
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
         assert!(String::from_utf8_lossy(&body).contains("Oshoosi Dashboard Test"));
 
         // 4. SPA route with colons / DID (e.g. /devices/did:osoosi:local)
@@ -7605,7 +8562,9 @@ mod tests {
             .unwrap();
         let res = app.clone().oneshot(req).await.unwrap();
         assert_eq!(res.status(), axum::http::StatusCode::OK);
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
         assert!(String::from_utf8_lossy(&body).contains("Oshoosi Dashboard Test"));
 
         // 5. Missing static asset /missing.css returns 404 cleanly, never serving index.html
@@ -7625,7 +8584,9 @@ mod tests {
             .unwrap();
         let res = app.clone().oneshot(req).await.unwrap();
         assert_eq!(res.status(), axum::http::StatusCode::NOT_FOUND);
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
         assert!(String::from_utf8_lossy(&body).contains(r#"{"error":"endpoint not found"}"#));
 
         // 7. POST to static route returns 405 Method Not Allowed
@@ -7646,7 +8607,9 @@ mod tests {
                 .unwrap();
             let res = app.clone().oneshot(req).await.unwrap();
             assert_eq!(res.status(), axum::http::StatusCode::NOT_FOUND);
-            let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap();
             assert!(String::from_utf8_lossy(&body).contains(r#"{"error":"endpoint not found"}"#));
         }
 
@@ -7658,7 +8621,9 @@ mod tests {
             .unwrap();
         let res = app.clone().oneshot(req).await.unwrap();
         assert_eq!(res.status(), axum::http::StatusCode::NOT_FOUND);
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
         assert!(String::from_utf8_lossy(&body).contains(r#"{"error":"endpoint not found"}"#));
 
         // 10. Unmatched /skyrl and /skyrl/ returns 404 JSON
@@ -7670,7 +8635,9 @@ mod tests {
                 .unwrap();
             let res = app.clone().oneshot(req).await.unwrap();
             assert_eq!(res.status(), axum::http::StatusCode::NOT_FOUND);
-            let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap();
             assert!(String::from_utf8_lossy(&body).contains(r#"{"error":"endpoint not found"}"#));
         }
 
@@ -7682,7 +8649,9 @@ mod tests {
             .unwrap();
         let res = app.clone().oneshot(req).await.unwrap();
         assert_eq!(res.status(), axum::http::StatusCode::NOT_FOUND);
-        let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+        let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+            .await
+            .unwrap();
         assert!(!String::from_utf8_lossy(&body).contains("Oshoosi Dashboard Test"));
 
         // 12. Reserved DOS device names /CON and /conin$ return 404 (NEVER index.html!)
@@ -7694,7 +8663,9 @@ mod tests {
                 .unwrap();
             let res = app.clone().oneshot(req).await.unwrap();
             assert_eq!(res.status(), axum::http::StatusCode::NOT_FOUND);
-            let body = axum::body::to_bytes(res.into_body(), usize::MAX).await.unwrap();
+            let body = axum::body::to_bytes(res.into_body(), usize::MAX)
+                .await
+                .unwrap();
             assert!(!String::from_utf8_lossy(&body).contains("Oshoosi Dashboard Test"));
         }
 
@@ -7752,7 +8723,9 @@ mod tests {
             action: Some("Suspend".to_string()),
             action_id: None,
         };
-        let step_res = post_skyrl_step(State(state.clone()), Json(step_req)).await.0;
+        let step_res = post_skyrl_step(State(state.clone()), Json(step_req))
+            .await
+            .0;
         assert_eq!(step_res["session_id"], "test-session");
         assert_eq!(step_res["step"], 1);
         assert!(step_res["thought_trace"].as_str().is_some());
@@ -7764,7 +8737,9 @@ mod tests {
             learning_rate: Some(0.001),
             transitions: None,
         };
-        let train_res = post_skyrl_train(State(state.clone()), Json(train_req)).await.0;
+        let train_res = post_skyrl_train(State(state.clone()), Json(train_req))
+            .await
+            .0;
         assert_eq!(train_res["status"], "success");
         assert!(train_res["loss"].as_f64().is_some());
         assert!(train_res["samples_trained"].as_u64().unwrap() > 0);
@@ -7777,7 +8752,9 @@ mod tests {
             lora_adapter: Some("tinker-investigator-v2".to_string()),
             ..Default::default()
         };
-        let gen_res = post_skyrl_generate(State(state.clone()), Json(gen_req)).await.0;
+        let gen_res = post_skyrl_generate(State(state.clone()), Json(gen_req))
+            .await
+            .0;
         assert!(gen_res["action"].as_str().is_some());
         assert_eq!(gen_res["lora_adapter"], "tinker-investigator-v2");
 
@@ -7785,7 +8762,9 @@ mod tests {
         let adapter_req = SkyrlAdapterRequest {
             adapter: "base-policy".to_string(),
         };
-        let adapter_res = post_skyrl_adapter(State(state.clone()), Json(adapter_req)).await.0;
+        let adapter_res = post_skyrl_adapter(State(state.clone()), Json(adapter_req))
+            .await
+            .0;
         assert_eq!(adapter_res["status"], "success");
         assert_eq!(adapter_res["active_lora_adapter"], "base-policy");
     }
@@ -7883,7 +8862,11 @@ mod tests {
         let temp_dir = std::env::temp_dir().join(format!("osoosi_dash_test_{}", unique_id));
         let _ = std::fs::create_dir_all(&temp_dir);
         let temp_config = temp_dir.join("osoosi.toml");
-        std::fs::write(&temp_config, "[autonomy]\nauto_quarantine_malware = false\naction_confidence_threshold = 0.80\n").unwrap();
+        std::fs::write(
+            &temp_config,
+            "[autonomy]\nauto_quarantine_malware = false\naction_confidence_threshold = 0.80\n",
+        )
+        .unwrap();
         std::env::set_var("OSOOSI_CONFIG", &temp_config);
 
         let state = DashboardState::new(None, None);
@@ -7903,7 +8886,9 @@ mod tests {
             auto_approve_reputation_threshold: None,
             auto_replace_malware_binaries: None,
         };
-        let post_res = post_autonomy_settings(State(state.clone()), Json(post_payload)).await.0;
+        let post_res = post_autonomy_settings(State(state.clone()), Json(post_payload))
+            .await
+            .0;
         assert_eq!(post_res["status"], "success");
         assert_eq!(post_res["mode"], "active");
         assert_eq!(post_res["auto_quarantine_malware"], true);
@@ -7918,14 +8903,23 @@ mod tests {
             auto_approve_reputation_threshold: Some(0.45),
             auto_replace_malware_binaries: Some(true),
         };
-        let custom_res = post_autonomy_settings(State(state.clone()), Json(custom_payload)).await.0;
+        let custom_res = post_autonomy_settings(State(state.clone()), Json(custom_payload))
+            .await
+            .0;
         assert_eq!(custom_res["status"], "success");
         assert_eq!(custom_res["auto_quarantine_malware"], false);
         // Verify that cryptographic signature was generated for the active config file
         let sig_file = temp_dir.join("osoosi.toml.sign");
-        assert!(sig_file.exists(), "Signature file must exist after saving autonomy settings");
-        let is_valid = osoosi_core::config_integrity::verify_config_integrity(&temp_config).unwrap();
-        assert!(is_valid, "Cryptographic integrity check must pass on newly saved config");
+        assert!(
+            sig_file.exists(),
+            "Signature file must exist after saving autonomy settings"
+        );
+        let is_valid =
+            osoosi_core::config_integrity::verify_config_integrity(&temp_config).unwrap();
+        assert!(
+            is_valid,
+            "Cryptographic integrity check must pass on newly saved config"
+        );
 
         // Test POST with non-finite / invalid float values to verify safety
         let nan_payload = AutonomySettingsPayload {
@@ -7936,7 +8930,9 @@ mod tests {
             auto_approve_reputation_threshold: None,
             auto_replace_malware_binaries: None,
         };
-        let nan_res = post_autonomy_settings(State(state.clone()), Json(nan_payload)).await.0;
+        let nan_res = post_autonomy_settings(State(state.clone()), Json(nan_payload))
+            .await
+            .0;
         assert_eq!(nan_res["status"], "success");
         // NaN/Infinity should be ignored, preserving previous valid thresholds
         assert!((nan_res["action_confidence_threshold"].as_f64().unwrap() - 0.85).abs() < 1e-3);
@@ -7952,7 +8948,9 @@ mod tests {
         let resp = get_supervisor_status(State(state)).await.into_response();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
 
-        let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
         let json_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
 
         assert!(json_val.get("regime").is_some());
@@ -7965,7 +8963,9 @@ mod tests {
         assert!(json_val.get("last_evaluated_at").is_some());
         assert!(json_val.get("uptime_seconds").is_some());
 
-        let sensors = json_val["sensors"].as_array().expect("sensors must be an array");
+        let sensors = json_val["sensors"]
+            .as_array()
+            .expect("sensors must be an array");
         assert_eq!(sensors.len(), 9);
         assert!(json_val.get("hardware_selection").is_some());
         for s in sensors {
@@ -8004,7 +9004,9 @@ mod tests {
         let resp = get_skills_status().await.into_response();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
 
-        let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
         let json_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert!(json_val.get("enabled").is_some());
         assert!(json_val.get("auto_evolve_on_start").is_some());
@@ -8022,13 +9024,24 @@ mod tests {
         let resp = get_hardware_summary(State(state)).await.into_response();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
 
-        let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), 1024 * 1024)
+            .await
+            .unwrap();
         let json_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert!(json_val.get("optimal_selection").is_some());
         assert!(json_val.get("system_resources").is_some());
-        assert!(json_val["optimal_selection"]["fast_model"].as_str().is_some());
-        assert!(json_val["optimal_selection"]["deep_model"].as_str().is_some());
-        assert!(json_val["system_resources"]["logical_cores"].as_u64().unwrap_or(0) > 0);
+        assert!(json_val["optimal_selection"]["fast_model"]
+            .as_str()
+            .is_some());
+        assert!(json_val["optimal_selection"]["deep_model"]
+            .as_str()
+            .is_some());
+        assert!(
+            json_val["system_resources"]["logical_cores"]
+                .as_u64()
+                .unwrap_or(0)
+                > 0
+        );
     }
 
     #[tokio::test]
@@ -8042,14 +9055,18 @@ mod tests {
             hash: None,
             broadcast: Some(false),
         };
-        let empty_res = post_blocking_rule(State(state.clone()), Json(empty_req)).await.0;
+        let empty_res = post_blocking_rule(State(state.clone()), Json(empty_req))
+            .await
+            .0;
         assert_eq!(empty_res["ok"], false);
         assert_eq!(empty_res["error"], "Target path cannot be empty");
 
         let empty_unlock = UnlockRequest {
             path: "   ".to_string(),
         };
-        let empty_unlock_res = post_blocking_unlock(State(state.clone()), Json(empty_unlock)).await.0;
+        let empty_unlock_res = post_blocking_unlock(State(state.clone()), Json(empty_unlock))
+            .await
+            .0;
         assert_eq!(empty_unlock_res["ok"], false);
         assert_eq!(empty_unlock_res["error"], "Path cannot be empty");
 
@@ -8057,29 +9074,51 @@ mod tests {
         let hex_req = BlockingRuleRequest {
             path: r"C:\Windows\Temp\test0x.exe".to_string(),
             kind: "executable".to_string(),
-            hash: Some("0x1122334455667788990011223344556677889900112233445566778899001122".to_string()),
+            hash: Some(
+                "0x1122334455667788990011223344556677889900112233445566778899001122".to_string(),
+            ),
             broadcast: Some(true),
         };
-        let hex_res = post_blocking_rule(State(state.clone()), Json(hex_req)).await.0;
+        let hex_res = post_blocking_rule(State(state.clone()), Json(hex_req))
+            .await
+            .0;
         assert_eq!(hex_res["ok"], true);
-        assert_eq!(hex_res["hash"], "1122334455667788990011223344556677889900112233445566778899001122");
-        let _ = post_blocking_unlock(State(state.clone()), Json(UnlockRequest { path: r"C:\Windows\Temp\test0x.exe".to_string() })).await;
+        assert_eq!(
+            hex_res["hash"],
+            "1122334455667788990011223344556677889900112233445566778899001122"
+        );
+        let _ = post_blocking_unlock(
+            State(state.clone()),
+            Json(UnlockRequest {
+                path: r"C:\Windows\Temp\test0x.exe".to_string(),
+            }),
+        )
+        .await;
 
         // 2. Post standard blocking rule with broadcast: true
         let rule_req = BlockingRuleRequest {
             path: r"C:\Windows\Temp\mimikatz.exe".to_string(),
             kind: "executable".to_string(),
-            hash: Some("abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".to_string()),
+            hash: Some(
+                "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789".to_string(),
+            ),
             broadcast: Some(true),
         };
-        let res = post_blocking_rule(State(state.clone()), Json(rule_req)).await.0;
+        let res = post_blocking_rule(State(state.clone()), Json(rule_req))
+            .await
+            .0;
         assert_eq!(res["ok"], true);
         assert_eq!(res["broadcast"], true);
-        assert_eq!(res["hash"], "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789");
+        assert_eq!(
+            res["hash"],
+            "abcdef0123456789abcdef0123456789abcdef0123456789abcdef0123456789"
+        );
 
         // 2. Verify rule is returned in get_blocking_rules
         let rules_res = get_blocking_rules(State(state.clone())).await.0;
-        let rules_arr = rules_res.as_array().expect("blocking rules must be an array");
+        let rules_arr = rules_res
+            .as_array()
+            .expect("blocking rules must be an array");
         assert_eq!(rules_arr.len(), 1);
         assert_eq!(rules_arr[0]["path"], r"C:\Windows\Temp\mimikatz.exe");
 
@@ -8087,16 +9126,21 @@ mod tests {
         let unlock_req = UnlockRequest {
             path: r"C:\Windows\Temp\mimikatz.exe".to_string(),
         };
-        let unlock_res = post_blocking_unlock(State(state.clone()), Json(unlock_req)).await.0;
+        let unlock_res = post_blocking_unlock(State(state.clone()), Json(unlock_req))
+            .await
+            .0;
         assert_eq!(unlock_res["ok"], true);
 
         // 4. Verify rule list is now empty
         let rules_res_after = get_blocking_rules(State(state.clone())).await.0;
-        let rules_arr_after = rules_res_after.as_array().expect("blocking rules must be an array");
+        let rules_arr_after = rules_res_after
+            .as_array()
+            .expect("blocking rules must be an array");
         assert_eq!(rules_arr_after.len(), 0);
 
         // 5. Also verify via router endpoints
-        let temp_dir = std::env::temp_dir().join(format!("dash_test_mesh_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("dash_test_mesh_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let app = dashboard_router(state.clone(), temp_dir.clone());
 
@@ -8110,11 +9154,15 @@ mod tests {
             .uri("/api/blocking/rules")
             .method(axum::http::Method::POST)
             .header("Content-Type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&post_json).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&post_json).unwrap(),
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let post_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(post_val["ok"], true);
         assert_eq!(post_val["broadcast"], true);
@@ -8128,7 +9176,9 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let get_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(get_val.as_array().unwrap().len(), 1);
 
@@ -8140,7 +9190,9 @@ mod tests {
             .uri("/api/blocking/rules/unlock")
             .method(axum::http::Method::POST)
             .header("Content-Type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&unlock_json).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&unlock_json).unwrap(),
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
@@ -8152,7 +9204,9 @@ mod tests {
             .body(axum::body::Body::empty())
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let get_val_after: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(get_val_after.as_array().unwrap().len(), 0);
 
@@ -8163,7 +9217,8 @@ mod tests {
     #[tokio::test]
     async fn test_get_and_post_bootstrap_peers() {
         let _env_guard = TEST_CONFIG_MUTEX.lock().await;
-        let temp_dir = std::env::temp_dir().join(format!("dash_test_bootstrap_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("dash_test_bootstrap_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_config_path = temp_dir.join("osoosi.toml");
         std::fs::write(&test_config_path, "[wire]\npeers = []\n").unwrap();
@@ -8180,17 +9235,28 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let get_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert!(get_val["peers"].is_array());
         assert!(get_val["mesh_port"].as_u64().is_some());
         assert!(get_val["recommended_multiaddr"].as_str().is_some());
-        assert!(get_val["recommended_multiaddr"].as_str().unwrap().starts_with("/ip4/"));
-        assert!(get_val["duckdns_template"].as_str().unwrap().contains("duckdns.org"));
+        assert!(get_val["recommended_multiaddr"]
+            .as_str()
+            .unwrap()
+            .starts_with("/ip4/"));
+        assert!(get_val["duckdns_template"]
+            .as_str()
+            .unwrap()
+            .contains("duckdns.org"));
         assert_eq!(get_val["duckdns_domain"].as_str(), Some("oshoosi"));
         assert_eq!(get_val["auto_bootstrap_duckdns"].as_bool(), Some(false));
         assert!(get_val["is_duckdns_host"].as_bool().is_some());
-        assert!(get_val["upstream_peer"].as_str().unwrap().contains("oshoosi.duckdns.org"));
+        assert!(get_val["upstream_peer"]
+            .as_str()
+            .unwrap()
+            .contains("oshoosi.duckdns.org"));
 
         // 2. Reject empty or invalid multiaddrs
         let invalid_req = serde_json::json!({
@@ -8201,7 +9267,9 @@ mod tests {
             .uri("/api/mesh/bootstrap-peers")
             .method(axum::http::Method::POST)
             .header("Content-Type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&invalid_req).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&invalid_req).unwrap(),
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
@@ -8214,7 +9282,9 @@ mod tests {
             .uri("/api/mesh/bootstrap-peers")
             .method(axum::http::Method::POST)
             .header("Content-Type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&empty_req).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&empty_req).unwrap(),
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::BAD_REQUEST);
@@ -8231,11 +9301,15 @@ mod tests {
             .uri("/api/mesh/bootstrap-peers")
             .method(axum::http::Method::POST)
             .header("Content-Type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&valid_req).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&valid_req).unwrap(),
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let post_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(post_val["ok"], true);
         assert_eq!(post_val["peers"].as_array().unwrap().len(), 2);
@@ -8253,7 +9327,9 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let get_val_after: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         let peers_after = get_val_after["peers"].as_array().unwrap();
         assert_eq!(peers_after.len(), 2);
@@ -8270,11 +9346,15 @@ mod tests {
             .uri("/api/mesh/bootstrap-peers")
             .method(axum::http::Method::POST)
             .header("Content-Type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&duck_req).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&duck_req).unwrap(),
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let duck_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(duck_val["ok"], true);
         assert_eq!(duck_val["duckdns_domain"], "fleet-alpha");
@@ -8292,11 +9372,16 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let get_val_duck: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(get_val_duck["duckdns_domain"], "fleet-alpha");
         assert_eq!(get_val_duck["auto_bootstrap_duckdns"], false);
-        assert!(get_val_duck["upstream_peer"].as_str().unwrap().contains("fleet-alpha.duckdns.org"));
+        assert!(get_val_duck["upstream_peer"]
+            .as_str()
+            .unwrap()
+            .contains("fleet-alpha.duckdns.org"));
 
         // Clean up env and temp dir
         std::env::remove_var("OSOOSI_CONFIG");
@@ -8306,12 +9391,20 @@ mod tests {
     #[tokio::test]
     async fn test_bootstrap_peers_preserves_file_peers_with_env_var() {
         let _env_guard = TEST_CONFIG_MUTEX.lock().await;
-        let temp_dir = std::env::temp_dir().join(format!("dash_test_preserve_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("dash_test_preserve_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_config_path = temp_dir.join("osoosi.toml");
-        std::fs::write(&test_config_path, "[wire]\npeers = [\"/ip4/71.194.142.20/tcp/4001\"]\n").unwrap();
+        std::fs::write(
+            &test_config_path,
+            "[wire]\npeers = [\"/ip4/71.194.142.20/tcp/4001\"]\n",
+        )
+        .unwrap();
         std::env::set_var("OSOOSI_CONFIG", test_config_path.to_str().unwrap());
-        std::env::set_var("OSOOSI_MESH_BOOTSTRAP_PEERS", "/dns4/remote.edr.org/tcp/4001");
+        std::env::set_var(
+            "OSOOSI_MESH_BOOTSTRAP_PEERS",
+            "/dns4/remote.edr.org/tcp/4001",
+        );
 
         let state = DashboardState::new(None, None);
         let app = dashboard_router(state.clone(), temp_dir.clone());
@@ -8323,13 +9416,19 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let get_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         let peers = get_val["peers"].as_array().unwrap();
 
         assert_eq!(peers.len(), 2);
-        assert!(peers.iter().any(|p| p.as_str() == Some("/ip4/71.194.142.20/tcp/4001")));
-        assert!(peers.iter().any(|p| p.as_str() == Some("/dns4/remote.edr.org/tcp/4001")));
+        assert!(peers
+            .iter()
+            .any(|p| p.as_str() == Some("/ip4/71.194.142.20/tcp/4001")));
+        assert!(peers
+            .iter()
+            .any(|p| p.as_str() == Some("/dns4/remote.edr.org/tcp/4001")));
 
         std::env::remove_var("OSOOSI_CONFIG");
         std::env::remove_var("OSOOSI_MESH_BOOTSTRAP_PEERS");
@@ -8362,7 +9461,8 @@ mod tests {
         std::env::set_var("OSOOSI_PUBLIC_IP", "2600:1700::1");
 
         let state = DashboardState::new(None, None);
-        let temp_dir = std::env::temp_dir().join(format!("dash_test_ipv6_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("dash_test_ipv6_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let app = dashboard_router(state.clone(), temp_dir.clone());
 
@@ -8373,11 +9473,16 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let get_val: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
 
         assert_eq!(get_val["public_ip"].as_str(), Some("2600:1700::1"));
-        assert!(get_val["recommended_multiaddr"].as_str().unwrap().starts_with("/ip6/2600:1700::1/tcp/"));
+        assert!(get_val["recommended_multiaddr"]
+            .as_str()
+            .unwrap()
+            .starts_with("/ip6/2600:1700::1/tcp/"));
 
         std::env::remove_var("OSOOSI_PUBLIC_IP");
         let _ = std::fs::remove_dir_all(&temp_dir);
@@ -8386,7 +9491,8 @@ mod tests {
     #[tokio::test]
     async fn test_cors_headers_on_bootstrap_peers() {
         let _env_guard = TEST_CONFIG_MUTEX.lock().await;
-        let temp_dir = std::env::temp_dir().join(format!("dash_test_cors_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("dash_test_cors_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let test_config_path = temp_dir.join("osoosi.toml");
         std::fs::write(&test_config_path, "[wire]\npeers = []\n").unwrap();
@@ -8473,7 +9579,9 @@ mod tests {
             .method(axum::http::Method::POST)
             .header("origin", "null")
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(r#"{"peers": ["/ip4/71.194.142.20/tcp/4001"], "dial_now": false}"#))
+            .body(axum::body::Body::from(
+                r#"{"peers": ["/ip4/71.194.142.20/tcp/4001"], "dial_now": false}"#,
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
@@ -8510,11 +9618,15 @@ mod tests {
             .uri("/api/agent-anomalies/evaluate")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&benign_tel).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&benign_tel).unwrap(),
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let eval_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(eval_res["anomalous"], false);
 
@@ -8534,11 +9646,15 @@ mod tests {
             .uri("/api/agent-anomalies/enforce")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&attack_tel).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&attack_tel).unwrap(),
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let enforce_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(enforce_res["allowed"], false);
         assert_eq!(enforce_res["action"], "isolate");
@@ -8551,7 +9667,9 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let findings_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert!(findings_res.is_array());
         assert!(!findings_res.as_array().unwrap().is_empty());
@@ -8564,7 +9682,9 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let sessions_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert!(sessions_res.is_array());
 
@@ -8576,7 +9696,9 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let summary_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert!(summary_res["total_anomalies"].as_u64().unwrap() >= 1);
         assert!(summary_res["owasp_distribution"].is_object());
@@ -8593,7 +9715,9 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let sim_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(sim_res["status"], "success");
         assert_eq!(sim_res["simulated_calls"], 3);
@@ -8607,11 +9731,15 @@ mod tests {
             .uri("/api/agent-anomalies/embed")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&embed_req_text).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&embed_req_text).unwrap(),
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let embed_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(embed_res["status"], "ok");
         assert_eq!(embed_res["dimension"], 128);
@@ -8629,11 +9757,15 @@ mod tests {
             .uri("/api/agent-anomalies/embed")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&embed_req_tool).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&embed_req_tool).unwrap(),
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let embed_res_tool: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(embed_res_tool["status"], "ok");
         assert_eq!(embed_res_tool["dimension"], 128);
@@ -8647,7 +9779,9 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let cont_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert!(cont_res["metrics"].is_object());
         assert!(cont_res["discovered_agents"].is_array());
@@ -8660,7 +9794,9 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let merc_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(merc_res["status"], "active");
         assert!(merc_res["active_pores_count"].as_u64().unwrap() >= 8);
@@ -8678,11 +9814,15 @@ mod tests {
             .uri("/api/agent-anomalies/mercury-evaluate")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&eval_droplet).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&eval_droplet).unwrap(),
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let eval_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(eval_res["lineage_id"], "test-agent-droplet-1");
         assert!(eval_res["allowed"].as_bool().unwrap());
@@ -8695,7 +9835,9 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let spider_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(spider_res["status"], "active");
         assert!(spider_res["active_sectors_count"].as_u64().unwrap() >= 3);
@@ -8710,15 +9852,26 @@ mod tests {
             .uri("/api/agent-anomalies/spider-web/evaluate")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&eval_sim).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&eval_sim).unwrap(),
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let sim_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(sim_res["target_session_id"], "test-dash-sim-1");
-        assert_eq!(sim_res["mathematical_exposure_bound_verified"]["bytes_exfiltrated"], 0.0);
-        assert!(sim_res["mathematical_exposure_bound_verified"]["session_terminated"].as_bool().unwrap());
+        assert_eq!(
+            sim_res["mathematical_exposure_bound_verified"]["bytes_exfiltrated"],
+            0.0
+        );
+        assert!(
+            sim_res["mathematical_exposure_bound_verified"]["session_terminated"]
+                .as_bool()
+                .unwrap()
+        );
 
         // 14. POST /api/har/inspect
         let sample_har = serde_json::json!({
@@ -8729,11 +9882,15 @@ mod tests {
             .uri("/api/har/inspect")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&sample_har).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&sample_har).unwrap(),
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let har_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert!(har_res["total_findings"].as_u64().unwrap() >= 1);
 
@@ -8752,7 +9909,8 @@ mod tests {
     #[tokio::test]
     async fn test_calibrated_models_and_pull_endpoints() {
         let state = DashboardState::new(None, None);
-        let temp_dir = std::env::temp_dir().join(format!("dash_test_models_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("dash_test_models_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let app = dashboard_router(state.clone(), temp_dir.clone());
 
@@ -8764,16 +9922,33 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let cal_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(cal_res["status"], "ok");
-        assert!(cal_res["system_resources"]["logical_cores"].as_u64().unwrap_or(0) > 0);
-        let calibrated_models = cal_res["calibrated_models"].as_array().expect("calibrated_models should be array");
+        assert!(
+            cal_res["system_resources"]["logical_cores"]
+                .as_u64()
+                .unwrap_or(0)
+                > 0
+        );
+        let calibrated_models = cal_res["calibrated_models"]
+            .as_array()
+            .expect("calibrated_models should be array");
         assert_eq!(calibrated_models.len(), 4);
-        assert!(calibrated_models.iter().any(|m| m["role"] == "Deep Forensic Reasoning"));
-        assert!(calibrated_models.iter().any(|m| m["role"] == "Real-Time Fast Triage"));
-        assert!(calibrated_models.iter().any(|m| m["role"] == "Semantic Embedding & AAD"));
-        assert!(calibrated_models.iter().any(|m| m["role"] == "Foundation Security"));
+        assert!(calibrated_models
+            .iter()
+            .any(|m| m["role"] == "Deep Forensic Reasoning"));
+        assert!(calibrated_models
+            .iter()
+            .any(|m| m["role"] == "Real-Time Fast Triage"));
+        assert!(calibrated_models
+            .iter()
+            .any(|m| m["role"] == "Semantic Embedding & AAD"));
+        assert!(calibrated_models
+            .iter()
+            .any(|m| m["role"] == "Foundation Security"));
 
         // 2. POST /api/models/pull (single model)
         let pull_single = serde_json::json!({
@@ -8783,11 +9958,15 @@ mod tests {
             .uri("/api/models/pull")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&pull_single).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&pull_single).unwrap(),
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let pull_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert_eq!(pull_res["status"], "initiated");
 
@@ -8799,7 +9978,9 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
-        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let body_bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let status_res: serde_json::Value = serde_json::from_slice(&body_bytes).unwrap();
         assert!(status_res.get("qwen2.5:test-calibration-sim").is_some());
 
@@ -8811,7 +9992,9 @@ mod tests {
             .uri("/api/models/pull")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&pull_all).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&pull_all).unwrap(),
+            ))
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), axum::http::StatusCode::OK);
@@ -8932,7 +10115,9 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::SERVICE_UNAVAILABLE);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let resp_json: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(resp_json["status"], "error");
         assert_eq!(resp_json["error_code"], "BACKEND_UNAVAILABLE");
@@ -8953,11 +10138,16 @@ mod tests {
             .unwrap();
         let resp2 = app.clone().oneshot(req2).await.unwrap();
         assert_eq!(resp2.status(), StatusCode::OK);
-        let bytes2 = axum::body::to_bytes(resp2.into_body(), usize::MAX).await.unwrap();
+        let bytes2 = axum::body::to_bytes(resp2.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let resp_json2: serde_json::Value = serde_json::from_slice(&bytes2).unwrap();
         assert_eq!(resp_json2["status"], "error");
         assert_eq!(resp_json2["error_code"], "NO_MODEL_SPECIFIED");
-        assert_eq!(resp_json2["message"], "No model specified and download_all_calibrated is false");
+        assert_eq!(
+            resp_json2["message"],
+            "No model specified and download_all_calibrated is false"
+        );
         assert_eq!(
             resp_json2["user_guidance"],
             "Provide a valid model name or set download_all_calibrated to true."
@@ -8973,11 +10163,16 @@ mod tests {
             .unwrap();
         let resp3 = app.clone().oneshot(req3).await.unwrap();
         assert_eq!(resp3.status(), StatusCode::OK);
-        let bytes3 = axum::body::to_bytes(resp3.into_body(), usize::MAX).await.unwrap();
+        let bytes3 = axum::body::to_bytes(resp3.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let resp_json3: serde_json::Value = serde_json::from_slice(&bytes3).unwrap();
         assert_eq!(resp_json3["status"], "error");
         assert_eq!(resp_json3["error_code"], "BACKEND_UNAVAILABLE");
-        assert_eq!(resp_json3["message"], "Backend orchestrator not initialized");
+        assert_eq!(
+            resp_json3["message"],
+            "Backend orchestrator not initialized"
+        );
         assert_eq!(
             resp_json3["user_guidance"],
             "Start the OpenỌ̀ṣọ́ọ̀sì backend orchestrator to initialize the YARA manager."
@@ -8994,7 +10189,9 @@ mod tests {
             .unwrap();
         let resp4 = app.clone().oneshot(req4).await.unwrap();
         assert_eq!(resp4.status(), StatusCode::BAD_REQUEST);
-        let bytes4 = axum::body::to_bytes(resp4.into_body(), usize::MAX).await.unwrap();
+        let bytes4 = axum::body::to_bytes(resp4.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let resp_json4: serde_json::Value = serde_json::from_slice(&bytes4).unwrap();
         assert_eq!(resp_json4["status"], "error");
         assert_eq!(resp_json4["error_code"], "MISSING_EMBED_INPUT");
@@ -9010,7 +10207,9 @@ mod tests {
             .unwrap();
         let resp5 = app.clone().oneshot(req5).await.unwrap();
         assert_eq!(resp5.status(), StatusCode::BAD_REQUEST);
-        let bytes5 = axum::body::to_bytes(resp5.into_body(), usize::MAX).await.unwrap();
+        let bytes5 = axum::body::to_bytes(resp5.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let resp_json5: serde_json::Value = serde_json::from_slice(&bytes5).unwrap();
         assert_eq!(resp_json5["status"], "error");
         assert_eq!(resp_json5["error_code"], "INVALID_TELEMETRY_PAYLOAD");
@@ -9025,7 +10224,9 @@ mod tests {
             .unwrap();
         let resp6 = app.clone().oneshot(req6).await.unwrap();
         assert_eq!(resp6.status(), StatusCode::BAD_REQUEST);
-        let bytes6 = axum::body::to_bytes(resp6.into_body(), usize::MAX).await.unwrap();
+        let bytes6 = axum::body::to_bytes(resp6.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let resp_json6: serde_json::Value = serde_json::from_slice(&bytes6).unwrap();
         assert_eq!(resp_json6["status"], "error");
         assert_eq!(resp_json6["error_code"], "LOG_VIEW_FAILED");
@@ -9041,7 +10242,9 @@ mod tests {
             .unwrap();
         let resp7 = app.clone().oneshot(req7).await.unwrap();
         assert_eq!(resp7.status(), StatusCode::OK);
-        let bytes7 = axum::body::to_bytes(resp7.into_body(), usize::MAX).await.unwrap();
+        let bytes7 = axum::body::to_bytes(resp7.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let resp_json7: serde_json::Value = serde_json::from_slice(&bytes7).unwrap();
         assert_eq!(resp_json7["status"], "error");
         assert_eq!(resp_json7["error_code"], "INVALID_ADAPTER");
@@ -9051,7 +10254,8 @@ mod tests {
     #[tokio::test]
     async fn test_siquery_dashboard_endpoints() {
         let state = DashboardState::new(None, None);
-        let temp_dir = std::env::temp_dir().join(format!("dash_test_siquery_{}", uuid::Uuid::new_v4()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("dash_test_siquery_{}", uuid::Uuid::new_v4()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let app = dashboard_router(state.clone(), temp_dir.clone());
 
@@ -9063,11 +10267,15 @@ mod tests {
             .unwrap();
         let resp = app.clone().oneshot(req).await.unwrap();
         assert_eq!(resp.status(), StatusCode::OK);
-        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+        let bytes = axum::body::to_bytes(resp.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json_val: serde_json::Value = serde_json::from_slice(&bytes).unwrap();
         assert_eq!(json_val["status"], "ok");
         assert_eq!(json_val["total"], 100);
-        let tables = json_val["tables"].as_array().expect("tables must be an array");
+        let tables = json_val["tables"]
+            .as_array()
+            .expect("tables must be an array");
         assert_eq!(tables.len(), 100);
         assert!(tables.iter().any(|t| t == "processes"));
         assert!(tables.iter().any(|t| t == "wmi_os_version"));
@@ -9082,11 +10290,15 @@ mod tests {
             .uri("/api/siquery/query")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&query_payload).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&query_payload).unwrap(),
+            ))
             .unwrap();
         let resp2 = app.clone().oneshot(req2).await.unwrap();
         assert_eq!(resp2.status(), StatusCode::OK);
-        let bytes2 = axum::body::to_bytes(resp2.into_body(), usize::MAX).await.unwrap();
+        let bytes2 = axum::body::to_bytes(resp2.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json_val2: serde_json::Value = serde_json::from_slice(&bytes2).unwrap();
         assert_eq!(json_val2["status"], "ok");
         assert_eq!(json_val2["count"], 1);
@@ -9101,11 +10313,15 @@ mod tests {
             .uri("/api/siquery/query")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&csv_payload).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&csv_payload).unwrap(),
+            ))
             .unwrap();
         let resp3 = app.clone().oneshot(req3).await.unwrap();
         assert_eq!(resp3.status(), StatusCode::OK);
-        let bytes3 = axum::body::to_bytes(resp3.into_body(), usize::MAX).await.unwrap();
+        let bytes3 = axum::body::to_bytes(resp3.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json_val3: serde_json::Value = serde_json::from_slice(&bytes3).unwrap();
         assert_eq!(json_val3["status"], "ok");
         let csv_text = json_val3["csv"].as_str().expect("csv must be string");
@@ -9120,11 +10336,15 @@ mod tests {
             .uri("/api/siquery/query")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&pretty_payload).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&pretty_payload).unwrap(),
+            ))
             .unwrap();
         let resp4 = app.clone().oneshot(req4).await.unwrap();
         assert_eq!(resp4.status(), StatusCode::OK);
-        let bytes4 = axum::body::to_bytes(resp4.into_body(), usize::MAX).await.unwrap();
+        let bytes4 = axum::body::to_bytes(resp4.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json_val4: serde_json::Value = serde_json::from_slice(&bytes4).unwrap();
         assert_eq!(json_val4["status"], "ok");
         let pretty_text = json_val4["pretty"].as_str().expect("pretty must be string");
@@ -9139,7 +10359,9 @@ mod tests {
             .uri("/api/siquery/query")
             .method(axum::http::Method::POST)
             .header("content-type", "application/json")
-            .body(axum::body::Body::from(serde_json::to_vec(&empty_payload).unwrap()))
+            .body(axum::body::Body::from(
+                serde_json::to_vec(&empty_payload).unwrap(),
+            ))
             .unwrap();
         let resp5 = app.clone().oneshot(req5).await.unwrap();
         assert_eq!(resp5.status(), StatusCode::BAD_REQUEST);
@@ -9152,7 +10374,9 @@ mod tests {
             .unwrap();
         let resp6 = app.clone().oneshot(req6).await.unwrap();
         assert_eq!(resp6.status(), StatusCode::OK);
-        let bytes6 = axum::body::to_bytes(resp6.into_body(), usize::MAX).await.unwrap();
+        let bytes6 = axum::body::to_bytes(resp6.into_body(), usize::MAX)
+            .await
+            .unwrap();
         let json_val6: serde_json::Value = serde_json::from_slice(&bytes6).unwrap();
         assert_eq!(json_val6["status"], "ok");
         assert!(json_val6.get("telemetry").is_some());
@@ -9165,7 +10389,8 @@ mod tests {
         let test_token = get_or_init_dashboard_api_token();
 
         let state = DashboardState::new(None, None);
-        let temp_dir = std::env::temp_dir().join(format!("osoosi_dash_auth_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("osoosi_dash_auth_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
         let app = dashboard_router(state, temp_dir.clone());
 
@@ -9225,6 +10450,3 @@ mod tests {
         let _ = std::fs::remove_dir_all(&temp_dir);
     }
 }
-
-
-

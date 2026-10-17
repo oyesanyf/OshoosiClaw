@@ -4,6 +4,10 @@ updates:
     directory: "/"
     schedule:
       interval: "weekly"
+    groups:
+      wasmtime:
+        patterns:
+          - "wasmtime*"
   - package-ecosystem: "github-actions"
     directory: "/"
     schedule:

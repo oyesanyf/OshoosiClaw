@@ -196,13 +196,15 @@ mod tests {
 
     #[test]
     fn test_generate_yara_common_binary_with_hash() {
-        let temp_dir = std::env::temp_dir().join(format!("osoosi_test_yara_cb_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("osoosi_test_yara_cb_{}", std::process::id()));
         let _ = std::fs::create_dir_all(&temp_dir);
         std::env::set_var("OSOOSI_YARA_DIR", temp_dir.to_string_lossy().to_string());
 
         let mut sig = ThreatSignature::new("test_node".to_string());
         sig.process_name = Some("powershell.exe".to_string());
-        sig.hash_blake3 = Some("deadbeefcafebabe0123456789abcdefdeadbeefcafebabe0123456789abcdef".to_string());
+        sig.hash_blake3 =
+            Some("deadbeefcafebabe0123456789abcdefdeadbeefcafebabe0123456789abcdef".to_string());
         let rule_opt = generate_yara_from_threat(&sig);
         assert!(rule_opt.is_some());
         let rule_str = rule_opt.unwrap();
@@ -215,14 +217,16 @@ mod tests {
 
     #[test]
     fn test_generate_yara_compilation_and_matching() {
-        let temp_dir = std::env::temp_dir().join(format!("osoosi_test_yara_{}", std::process::id()));
+        let temp_dir =
+            std::env::temp_dir().join(format!("osoosi_test_yara_{}", std::process::id()));
         std::fs::create_dir_all(&temp_dir).unwrap();
         std::env::set_var("OSOOSI_YARA_DIR", temp_dir.to_string_lossy().to_string());
 
         let mut sig = ThreatSignature::new("mesh_node_01".to_string());
         sig.id = "11223344-5566-7788-99aa-bbccddeeff00".to_string();
         sig.process_name = Some("mimikatz.exe".to_string());
-        sig.hash_blake3 = Some("deadbeefcafebabe0123456789abcdefdeadbeefcafebabe0123456789abcdef".to_string());
+        sig.hash_blake3 =
+            Some("deadbeefcafebabe0123456789abcdefdeadbeefcafebabe0123456789abcdef".to_string());
         sig.confidence = 0.95;
 
         let rule_opt = generate_yara_from_threat(&sig);
@@ -231,7 +235,9 @@ mod tests {
 
         // 1. Verify the generated rule compiles with yara_x
         let mut compiler = yara_x::Compiler::new();
-        compiler.add_source(rule_str.as_str()).expect("Generated YARA rule must compile cleanly");
+        compiler
+            .add_source(rule_str.as_str())
+            .expect("Generated YARA rule must compile cleanly");
         let rules = compiler.build();
         let mut scanner = yara_x::Scanner::new(&rules);
 
@@ -242,15 +248,18 @@ mod tests {
         // 3. Verify that matching on process name alone fails
         let payload_proc_only = b"dummy process image with mimikatz.exe present";
         let results_proc = scanner.scan(payload_proc_only).unwrap();
-        assert_eq!(results_proc.matching_rules().count(), 0, "Process name alone must not trigger rule without binary hash");
+        assert_eq!(
+            results_proc.matching_rules().count(),
+            0,
+            "Process name alone must not trigger rule without binary hash"
+        );
 
         // 4. Verify that matching with BOTH process name and hash succeeds
         let mut payload_both = b"dummy process image with mimikatz.exe present ".to_vec();
         payload_both.extend_from_slice(&[
-            0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe,
-            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
-            0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe,
-            0x01, 0x23, 0x45, 0x67, 0x89, 0xab, 0xcd, 0xef,
+            0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe, 0x01, 0x23, 0x45, 0x67, 0x89, 0xab,
+            0xcd, 0xef, 0xde, 0xad, 0xbe, 0xef, 0xca, 0xfe, 0xba, 0xbe, 0x01, 0x23, 0x45, 0x67,
+            0x89, 0xab, 0xcd, 0xef,
         ]);
         let results = scanner.scan(&payload_both).unwrap();
         let matches: Vec<&str> = results.matching_rules().map(|r| r.identifier()).collect();

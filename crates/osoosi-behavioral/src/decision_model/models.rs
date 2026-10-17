@@ -118,13 +118,13 @@ pub struct DecisionResponse {
 /// High-level structured security verdict synthesized from Clef questions.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
 pub struct SecurityIncidentDecision {
-    pub verdict: String,                    // benign, suspicious, malicious, critical_emergency
+    pub verdict: String, // benign, suspicious, malicious, critical_emergency
     pub verdict_probability: f64,
-    pub containment_action: String,         // allow, alert, tarpit, ghost_tarpit, quarantine, isolate, defer_to_operator
+    pub containment_action: String, // allow, alert, tarpit, ghost_tarpit, quarantine, isolate, defer_to_operator
     pub action_probability: f64,
     pub human_escalation_required: bool,
     pub deep_reasoning_required: bool,
-    pub threat_severity: String,           // None, Low, Medium, High, Critical
+    pub threat_severity: String, // None, Low, Medium, High, Critical
     pub latency_ms: f64,
     pub provider_used: String,
 }
@@ -134,10 +134,22 @@ pub fn build_standard_incident_questions() -> HashMap<String, QuestionDefinition
     let mut q = HashMap::new();
 
     let mut verdict_criteria = HashMap::new();
-    verdict_criteria.insert("benign", "Known legitimate system administration or software operation");
-    verdict_criteria.insert("suspicious", "Anomalous command or behavior without definitive malicious proof");
-    verdict_criteria.insert("malicious", "Active credential theft, process injection, ransomware, or persistence");
-    verdict_criteria.insert("critical_emergency", "Immediate ransomware encryption or boot sector destruction");
+    verdict_criteria.insert(
+        "benign",
+        "Known legitimate system administration or software operation",
+    );
+    verdict_criteria.insert(
+        "suspicious",
+        "Anomalous command or behavior without definitive malicious proof",
+    );
+    verdict_criteria.insert(
+        "malicious",
+        "Active credential theft, process injection, ransomware, or persistence",
+    );
+    verdict_criteria.insert(
+        "critical_emergency",
+        "Immediate ransomware encryption or boot sector destruction",
+    );
 
     q.insert(
         "verdict".to_string(),
@@ -150,18 +162,37 @@ pub fn build_standard_incident_questions() -> HashMap<String, QuestionDefinition
     );
 
     let mut action_criteria = HashMap::new();
-    action_criteria.insert("allow", "No action needed; allow execution to proceed normally");
-    action_criteria.insert("alert", "Log alert to telemetry and P2P mesh without process interruption");
-    action_criteria.insert("tarpit", "Suspend thread pool and starve CPU cycles to inspect further");
-    action_criteria.insert("ghost_tarpit", "Deploy deception traps and throttle execution");
-    action_criteria.insert("isolate", "Immediately terminate process and isolate network interface");
-    action_criteria.insert("defer_to_operator", "Hold for human operator review before containment");
+    action_criteria.insert(
+        "allow",
+        "No action needed; allow execution to proceed normally",
+    );
+    action_criteria.insert(
+        "alert",
+        "Log alert to telemetry and P2P mesh without process interruption",
+    );
+    action_criteria.insert(
+        "tarpit",
+        "Suspend thread pool and starve CPU cycles to inspect further",
+    );
+    action_criteria.insert(
+        "ghost_tarpit",
+        "Deploy deception traps and throttle execution",
+    );
+    action_criteria.insert(
+        "isolate",
+        "Immediately terminate process and isolate network interface",
+    );
+    action_criteria.insert(
+        "defer_to_operator",
+        "Hold for human operator review before containment",
+    );
 
     q.insert(
         "containment_action".to_string(),
         QuestionDefinition {
             question_type: QuestionType::Choice,
-            instructions: "Determine the optimal immediate automated containment response.".to_string(),
+            instructions: "Determine the optimal immediate automated containment response."
+                .to_string(),
             criteria: Some(serde_json::to_value(action_criteria).unwrap_or_default()),
             score_levels: None,
         },
@@ -171,7 +202,9 @@ pub fn build_standard_incident_questions() -> HashMap<String, QuestionDefinition
         "human_escalation".to_string(),
         QuestionDefinition {
             question_type: QuestionType::Bool,
-            instructions: "Is human operator sign-off required prior to executing this containment?".to_string(),
+            instructions:
+                "Is human operator sign-off required prior to executing this containment?"
+                    .to_string(),
             criteria: None,
             score_levels: None,
         },
@@ -192,7 +225,9 @@ pub fn build_standard_incident_questions() -> HashMap<String, QuestionDefinition
         QuestionDefinition {
             question_type: QuestionType::Score,
             instructions: "What is the severity of host risk?".to_string(),
-            criteria: Some(serde_json::json!(["None", "Low", "Medium", "High", "Critical"])),
+            criteria: Some(serde_json::json!([
+                "None", "Low", "Medium", "High", "Critical"
+            ])),
             score_levels: Some(vec![
                 "None".to_string(),
                 "Low".to_string(),
@@ -232,14 +267,10 @@ pub fn parse_security_incident_response(res: &DecisionResponse) -> SecurityIncid
     let action_probability = action_ans.map(|a| a.get_probability()).unwrap_or(0.5);
 
     let human_ans = res.answers.get("human_escalation");
-    let human_escalation_required = human_ans
-        .and_then(|a| a.as_bool())
-        .unwrap_or(false);
+    let human_escalation_required = human_ans.and_then(|a| a.as_bool()).unwrap_or(false);
 
     let deep_ans = res.answers.get("deep_reasoning_required");
-    let deep_reasoning_required = deep_ans
-        .and_then(|a| a.as_bool())
-        .unwrap_or(false);
+    let deep_reasoning_required = deep_ans.and_then(|a| a.as_bool()).unwrap_or(false);
 
     let severity_ans = res.answers.get("threat_severity");
     let threat_severity = severity_ans

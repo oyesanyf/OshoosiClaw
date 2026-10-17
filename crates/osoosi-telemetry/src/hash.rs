@@ -19,7 +19,8 @@ pub async fn calculate_blake3_hash<P: AsRef<Path>>(path: P) -> anyhow::Result<St
             hasher.update(&buffer[..n]);
         }
         Ok(hasher.finalize().to_hex().to_string())
-    }).await?
+    })
+    .await?
 }
 
 /// Calculate BLAKE3 hash of file content in memory.

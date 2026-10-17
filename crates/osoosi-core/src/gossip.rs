@@ -43,7 +43,9 @@ impl GossipSleuth {
             match tokio::time::timeout(
                 std::time::Duration::from_secs(30),
                 self.run_sleuth_iteration(),
-            ).await {
+            )
+            .await
+            {
                 Ok(Err(e)) => {
                     error!("Gossip Sleuth iteration failed: {}", e);
                 }
@@ -116,23 +118,38 @@ impl GossipSleuth {
         let mut broadcast_count = 0;
 
         for threat in threats {
-            let conf = threat.get("confidence").and_then(|v| v.as_f64()).unwrap_or(0.0);
+            let conf = threat
+                .get("confidence")
+                .and_then(|v| v.as_f64())
+                .unwrap_or(0.0);
             if conf < 0.85 {
                 continue;
             }
 
-            let cve_id_opt = threat.get("cve_id").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
-            let reason_opt = threat.get("reason").and_then(|v| v.as_str()).filter(|s| !s.is_empty());
-            let proc_opt = threat.get("process_name").and_then(|v| v.as_str()).filter(|s| !s.is_empty() && *s != "Unknown Process");
+            let cve_id_opt = threat
+                .get("cve_id")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            let reason_opt = threat
+                .get("reason")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty());
+            let proc_opt = threat
+                .get("process_name")
+                .and_then(|v| v.as_str())
+                .filter(|s| !s.is_empty() && *s != "Unknown Process");
 
-            let has_cve_or_mitre = cve_id_opt.map(|c| c.starts_with("CVE-") || c.starts_with("T1")).unwrap_or(false)
-                || reason_opt.map(|r| r.contains("CVE-") || r.contains("T1") || r.contains("Technique")).unwrap_or(false);
+            let has_cve_or_mitre = cve_id_opt
+                .map(|c| c.starts_with("CVE-") || c.starts_with("T1"))
+                .unwrap_or(false)
+                || reason_opt
+                    .map(|r| r.contains("CVE-") || r.contains("T1") || r.contains("Technique"))
+                    .unwrap_or(false);
 
             if (has_cve_or_mitre || proc_opt.is_some()) && conf >= 0.85 {
-                let id_str = cve_id_opt.unwrap_or_else(|| {
-                    proc_opt.unwrap_or("SUSPICIOUS-PROC")
-                });
-                let summary_text = reason_opt.unwrap_or("High-confidence verified intrusion detection signal.");
+                let id_str = cve_id_opt.unwrap_or_else(|| proc_opt.unwrap_or("SUSPICIOUS-PROC"));
+                let summary_text =
+                    reason_opt.unwrap_or("High-confidence verified intrusion detection signal.");
 
                 let mut intel = GlobalIntelligence {
                     source_url: format!("threat://{}", self.node_id),
@@ -142,7 +159,10 @@ impl GossipSleuth {
                         title: format!("Defense rule for {}", id_str),
                         description: summary_text.to_string(),
                         severity: conf as f32,
-                        learned_rule: format!("rule rule_{} {{ condition: true }}", id_str.replace(['-', '.', ' '], "_")),
+                        learned_rule: format!(
+                            "rule rule_{} {{ condition: true }}",
+                            id_str.replace(['-', '.', ' '], "_")
+                        ),
                         software_target: proc_opt.unwrap_or("system").to_string(),
                         software_version: None,
                         date_learned: Utc::now(),

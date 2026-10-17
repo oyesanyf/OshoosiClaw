@@ -4,7 +4,9 @@
 //! Enables leaf Endorsement Key (EK) certificates to be authenticated 100% offline
 //! against authentic silicon manufacturer roots of trust.
 
-use osoosi_types::{AttestationError, GoldenBaseline, TpmEkCertificate, TpmOemVendor, VerifiedEkIdentity};
+use osoosi_types::{
+    AttestationError, GoldenBaseline, TpmEkCertificate, TpmOemVendor, VerifiedEkIdentity,
+};
 use sha2::{Digest, Sha256};
 use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
@@ -48,7 +50,7 @@ static REGISTERED_ROOTS: std::sync::LazyLock<RwLock<HashMap<TpmOemVendor, HashSe
 
 /// Register a runtime or test-generated OEM Root CA fingerprint into the offline trust store.
 pub fn register_trusted_oem_root(vendor: TpmOemVendor, fingerprint: impl Into<String>) {
-    let fp = fingerprint.into().to_lowercase().replace(':', "").replace(' ', "");
+    let fp = fingerprint.into().to_lowercase().replace([':', ' '], "");
     if let Ok(mut map) = REGISTERED_ROOTS.write() {
         map.entry(vendor).or_default().insert(fp);
     }
@@ -56,7 +58,7 @@ pub fn register_trusted_oem_root(vendor: TpmOemVendor, fingerprint: impl Into<St
 
 /// Query whether a given SHA-256 fingerprint corresponds to a recognized genuine OEM silicon Root CA.
 pub fn is_trusted_oem_root(vendor: TpmOemVendor, fingerprint: &str) -> bool {
-    let fp = fingerprint.to_lowercase().replace(':', "").replace(' ', "");
+    let fp = fingerprint.to_lowercase().replace([':', ' '], "");
 
     let static_match = match vendor {
         TpmOemVendor::Intel => INTEL_ROOT_FINGERPRINTS.contains(&fp.as_str()),
@@ -87,12 +89,30 @@ pub fn is_trusted_oem_root(vendor: TpmOemVendor, fingerprint: &str) -> bool {
 /// Retrieve all verified OEM Root CA fingerprints for a given vendor.
 pub fn get_verified_oem_root_fingerprints(vendor: TpmOemVendor) -> Vec<String> {
     let mut list: Vec<String> = match vendor {
-        TpmOemVendor::Intel => INTEL_ROOT_FINGERPRINTS.iter().map(|s| s.to_string()).collect(),
-        TpmOemVendor::Amd => AMD_ROOT_FINGERPRINTS.iter().map(|s| s.to_string()).collect(),
-        TpmOemVendor::Infineon => INFINEON_ROOT_FINGERPRINTS.iter().map(|s| s.to_string()).collect(),
-        TpmOemVendor::StMicro => STMICRO_ROOT_FINGERPRINTS.iter().map(|s| s.to_string()).collect(),
-        TpmOemVendor::Nuvoton => NUVOTON_ROOT_FINGERPRINTS.iter().map(|s| s.to_string()).collect(),
-        TpmOemVendor::Nationz => NATIONZ_ROOT_FINGERPRINTS.iter().map(|s| s.to_string()).collect(),
+        TpmOemVendor::Intel => INTEL_ROOT_FINGERPRINTS
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        TpmOemVendor::Amd => AMD_ROOT_FINGERPRINTS
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        TpmOemVendor::Infineon => INFINEON_ROOT_FINGERPRINTS
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        TpmOemVendor::StMicro => STMICRO_ROOT_FINGERPRINTS
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        TpmOemVendor::Nuvoton => NUVOTON_ROOT_FINGERPRINTS
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
+        TpmOemVendor::Nationz => NATIONZ_ROOT_FINGERPRINTS
+            .iter()
+            .map(|s| s.to_string())
+            .collect(),
         TpmOemVendor::Microchip => Vec::new(),
         TpmOemVendor::Unknown => Vec::new(),
     };
@@ -126,11 +146,19 @@ pub fn verify_leaf_against_oem_roots(
     };
 
     let is_pinned_leaf = policy
-        .map(|p| p.pinned_ek_fingerprints.iter().any(|f| f.to_lowercase() == verified.cert_fingerprint))
+        .map(|p| {
+            p.pinned_ek_fingerprints
+                .iter()
+                .any(|f| f.to_lowercase() == verified.cert_fingerprint)
+        })
         .unwrap_or(false);
 
     let is_pinned_root = policy
-        .map(|p| p.allowed_tpm_root_fingerprints.iter().any(|f| f.to_lowercase() == root_fp))
+        .map(|p| {
+            p.allowed_tpm_root_fingerprints
+                .iter()
+                .any(|f| f.to_lowercase() == root_fp)
+        })
         .unwrap_or(false);
 
     if !is_trusted_oem_root(verified.vendor, &root_fp) && !is_pinned_leaf && !is_pinned_root {

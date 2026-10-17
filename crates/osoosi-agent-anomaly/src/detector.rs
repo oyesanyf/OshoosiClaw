@@ -1,9 +1,9 @@
+use chrono::{DateTime, Utc};
+use dashmap::DashMap;
 use std::collections::VecDeque;
 use std::sync::atomic::Ordering;
 use std::sync::Arc;
 use std::time::Duration;
-use chrono::{DateTime, Utc};
-use dashmap::DashMap;
 use tokio::sync::{broadcast, mpsc, RwLock};
 use tracing::{debug, error, warn};
 
@@ -60,7 +60,8 @@ impl AgentAnomalyDetector {
         let session_meta = Arc::new(DashMap::new());
         let classifier = Arc::new(crate::classifier::DynamicAgentClassifier::new());
         let agentjacking_guard = Arc::new(crate::agentjacking_guard::AgentjackingGuard::new());
-        let breakout_coordinator = Arc::new(crate::breakout_defense::BreakoutDefenseCoordinator::new());
+        let breakout_coordinator =
+            Arc::new(crate::breakout_defense::BreakoutDefenseCoordinator::new());
         let containment_ring = Arc::new(crate::containment_ring::AgentContainmentRing::new());
         let atlas_matrix = Arc::new(crate::atlas_arm::MitreAtlasMatrix::new());
         let rasp_engine = Arc::new(crate::rasp::AgentRaspEngine::default());
@@ -156,7 +157,9 @@ impl AgentAnomalyDetector {
 
         // 2. Breakout Defense Coordinator check (SSRF, Path Traversal, Sensitive OS stores, ADS)
         let param_str = telemetry.call_parameters.to_string();
-        let target_resource = telemetry.call_parameters.get("path")
+        let target_resource = telemetry
+            .call_parameters
+            .get("path")
             .or_else(|| telemetry.call_parameters.get("file"))
             .or_else(|| telemetry.call_parameters.get("url"))
             .or_else(|| telemetry.call_parameters.get("target"))
@@ -174,29 +177,45 @@ impl AgentAnomalyDetector {
         let mut breakout_finding = None;
         if !breakout_eval.is_clean {
             if breakout_eval.ssrf_violation.is_some() {
-                self.containment_ring.ssrf_blocked.fetch_add(1, Ordering::Relaxed);
+                self.containment_ring
+                    .ssrf_blocked
+                    .fetch_add(1, Ordering::Relaxed);
             }
             if breakout_eval.path_violation.is_some() {
-                self.containment_ring.path_traversal_blocked.fetch_add(1, Ordering::Relaxed);
+                self.containment_ring
+                    .path_traversal_blocked
+                    .fetch_add(1, Ordering::Relaxed);
             }
 
             // Engage surgical autotomy: sever capability epoch
-            let new_epoch = self.containment_ring.sever_rogue_agent_branch(
-                &telemetry.agent_id,
-                &breakout_eval.composite_verdict,
-                None,
-            ).await;
+            let new_epoch = self
+                .containment_ring
+                .sever_rogue_agent_branch(
+                    &telemetry.agent_id,
+                    &breakout_eval.composite_verdict,
+                    None,
+                )
+                .await;
 
             // Broadcast P2P Mesh Watch-Out
-            self.containment_ring.record_mesh_watchout(
-                &telemetry.agent_id,
-                &telemetry.session_id,
-                "ASI10",
-                &breakout_eval.composite_verdict,
-            ).await;
+            self.containment_ring
+                .record_mesh_watchout(
+                    &telemetry.agent_id,
+                    &telemetry.session_id,
+                    "ASI10",
+                    &breakout_eval.composite_verdict,
+                )
+                .await;
 
             breakout_finding = Some(AnomalyFinding {
-                id: format!("aad-breakout-{}", uuid::Uuid::new_v4().to_string().chars().take(8).collect::<String>()),
+                id: format!(
+                    "aad-breakout-{}",
+                    uuid::Uuid::new_v4()
+                        .to_string()
+                        .chars()
+                        .take(8)
+                        .collect::<String>()
+                ),
                 session_id: telemetry.session_id.clone(),
                 agent_id: telemetry.agent_id.clone(),
                 risk_category: OwaspAgenticRisk::RogueAgentASI10,
@@ -206,7 +225,9 @@ impl AgentAnomalyDetector {
                     "Autonomous agent breakout intercepted: {}. Autotomy advanced epoch to Gen {}.",
                     breakout_eval.composite_verdict, new_epoch
                 ),
-                recommended_mitigation: "Sever rogue agent branch, invalidate generation epoch, and isolate session".to_string(),
+                recommended_mitigation:
+                    "Sever rogue agent branch, invalidate generation epoch, and isolate session"
+                        .to_string(),
                 flagged_at: Utc::now(),
                 evidence: serde_json::to_value(&breakout_eval).unwrap_or_default(),
             });
@@ -222,21 +243,29 @@ impl AgentAnomalyDetector {
 
         let mut aj_finding = None;
         if !aj_verdict.is_allowed {
-            let new_epoch = self.containment_ring.sever_rogue_agent_branch(
-                &telemetry.agent_id,
-                &aj_verdict.reason,
-                None,
-            ).await;
+            let new_epoch = self
+                .containment_ring
+                .sever_rogue_agent_branch(&telemetry.agent_id, &aj_verdict.reason, None)
+                .await;
 
-            self.containment_ring.record_mesh_watchout(
-                &telemetry.agent_id,
-                &telemetry.session_id,
-                "ASI02",
-                &aj_verdict.reason,
-            ).await;
+            self.containment_ring
+                .record_mesh_watchout(
+                    &telemetry.agent_id,
+                    &telemetry.session_id,
+                    "ASI02",
+                    &aj_verdict.reason,
+                )
+                .await;
 
             aj_finding = Some(AnomalyFinding {
-                id: format!("aad-aj-{}", uuid::Uuid::new_v4().to_string().chars().take(8).collect::<String>()),
+                id: format!(
+                    "aad-aj-{}",
+                    uuid::Uuid::new_v4()
+                        .to_string()
+                        .chars()
+                        .take(8)
+                        .collect::<String>()
+                ),
                 session_id: telemetry.session_id.clone(),
                 agent_id: telemetry.agent_id.clone(),
                 risk_category: OwaspAgenticRisk::ToolMisuseASI02,
@@ -246,7 +275,8 @@ impl AgentAnomalyDetector {
                     "{}. Autotomy advanced epoch to Gen {}.",
                     aj_verdict.reason, new_epoch
                 ),
-                recommended_mitigation: "Sever capability epoch and require supervisor consensus".to_string(),
+                recommended_mitigation: "Sever capability epoch and require supervisor consensus"
+                    .to_string(),
                 flagged_at: Utc::now(),
                 evidence: serde_json::json!({
                     "violation_code": aj_verdict.violation_code,
@@ -268,18 +298,19 @@ impl AgentAnomalyDetector {
 
         let mut spider_finding = None;
         if !spider_verdict.allowed || spider_verdict.session_terminated {
-            let new_epoch = self.containment_ring.sever_rogue_agent_branch(
-                &telemetry.agent_id,
-                &spider_verdict.rationale,
-                None,
-            ).await;
+            let new_epoch = self
+                .containment_ring
+                .sever_rogue_agent_branch(&telemetry.agent_id, &spider_verdict.rationale, None)
+                .await;
 
-            self.containment_ring.record_mesh_watchout(
-                &telemetry.agent_id,
-                &telemetry.session_id,
-                "ASI02",
-                &spider_verdict.rationale,
-            ).await;
+            self.containment_ring
+                .record_mesh_watchout(
+                    &telemetry.agent_id,
+                    &telemetry.session_id,
+                    "ASI02",
+                    &spider_verdict.rationale,
+                )
+                .await;
 
             spider_finding = Some(AnomalyFinding {
                 id: format!("aad-spider-{}", uuid::Uuid::new_v4().to_string().chars().take(8).collect::<String>()),
@@ -304,24 +335,26 @@ impl AgentAnomalyDetector {
         let screener_res = self.screener.inspect(telemetry);
 
         // Layer 2: Deep Semantic Reasoner
-        let maybe_finding = self
-            .reasoner
-            .evaluate(telemetry, Some(&screener_res))
-            .await;
+        let maybe_finding = self.reasoner.evaluate(telemetry, Some(&screener_res)).await;
 
         if let Some(ref finding) = maybe_finding {
             if finding.severity >= AlertSeverity::High {
-                self.containment_ring.record_mesh_watchout(
-                    &telemetry.agent_id,
-                    &telemetry.session_id,
-                    finding.risk_category.as_code(),
-                    &finding.rationale,
-                ).await;
+                self.containment_ring
+                    .record_mesh_watchout(
+                        &telemetry.agent_id,
+                        &telemetry.session_id,
+                        finding.risk_category.as_code(),
+                        &finding.rationale,
+                    )
+                    .await;
             }
         }
 
         // Prioritize critical breakout or spider-web fracture or chained abuse finding, otherwise reasoner finding
-        let active_finding = breakout_finding.or(spider_finding).or(aj_finding).or(maybe_finding);
+        let active_finding = breakout_finding
+            .or(spider_finding)
+            .or(aj_finding)
+            .or(maybe_finding);
 
         if let Some(finding) = &active_finding {
             // Update session metadata with anomaly
@@ -349,7 +382,10 @@ impl AgentAnomalyDetector {
     }
 
     /// Evaluates telemetry synchronously and immediately returns any detected anomaly finding.
-    pub async fn evaluate_immediate(&self, telemetry: &ToolCallTelemetry) -> Option<AnomalyFinding> {
+    pub async fn evaluate_immediate(
+        &self,
+        telemetry: &ToolCallTelemetry,
+    ) -> Option<AnomalyFinding> {
         self.process_internal(telemetry).await
     }
 
@@ -357,30 +393,42 @@ impl AgentAnomalyDetector {
     ///
     /// Evaluates telemetry and returns an `EnforceDecision` based on the specified mode
     /// (`"enforce"`, `"block"`, or `"audit"`).
-    pub async fn enforce_policy(&self, telemetry: &ToolCallTelemetry, mode: &str) -> EnforceDecision {
+    pub async fn enforce_policy(
+        &self,
+        telemetry: &ToolCallTelemetry,
+        mode: &str,
+    ) -> EnforceDecision {
         let finding = self.evaluate_immediate(telemetry).await;
 
         // Zero Disruption to Normal Operations:
         // Human interactive processes (P(IsAiAgent) < 0.75) receive 100% PassThrough unless Critical breakout detected
-        let record = self.classifier.get_record(&telemetry.session_id)
+        let record = self
+            .classifier
+            .get_record(&telemetry.session_id)
             .unwrap_or_else(|| self.classifier.classify_telemetry(telemetry));
 
         if !record.is_verified_agent && record.posterior_probability < 0.75 {
-            let is_critical = finding.as_ref().map(|f| f.severity == AlertSeverity::Critical).unwrap_or(false);
+            let is_critical = finding
+                .as_ref()
+                .map(|f| f.severity == AlertSeverity::Critical)
+                .unwrap_or(false);
             if !is_critical {
                 return EnforceDecision {
                     allowed: true,
                     action: "allow".to_string(),
                     finding: None,
-                    reason: Some("Human interactive process verified - zero disruption pass-through".to_string()),
+                    reason: Some(
+                        "Human interactive process verified - zero disruption pass-through"
+                            .to_string(),
+                    ),
                 };
             }
         }
 
         match finding {
             Some(f) => {
-                let is_enforcing = mode.eq_ignore_ascii_case("enforce")
-                    || mode.eq_ignore_ascii_case("block");
+                let is_enforcing =
+                    mode.eq_ignore_ascii_case("enforce") || mode.eq_ignore_ascii_case("block");
 
                 if is_enforcing {
                     match f.severity {
@@ -517,8 +565,12 @@ impl AgentAnomalyDetector {
         let mut critical_threats = 0usize;
 
         for finding in q.iter() {
-            *owasp_counts.entry(finding.risk_category.as_code()).or_default() += 1;
-            *severity_counts.entry(finding.severity.as_str()).or_default() += 1;
+            *owasp_counts
+                .entry(finding.risk_category.as_code())
+                .or_default() += 1;
+            *severity_counts
+                .entry(finding.severity.as_str())
+                .or_default() += 1;
             if finding.severity == AlertSeverity::Critical {
                 critical_threats += 1;
             }
@@ -559,12 +611,17 @@ impl AgentAnomalyDetector {
                     && !r.process_name.is_empty()
                     && r.process_name != "unknown"
                     && !r.process_name.eq_ignore_ascii_case("Program")
-                    && (r.is_verified_agent || r.posterior_probability >= 0.45 || !r.observed_signals.is_empty())
+                    && (r.is_verified_agent
+                        || r.posterior_probability >= 0.45
+                        || !r.observed_signals.is_empty())
             })
             .collect();
 
         // If any records had pid > 0 but unknown process_name, try resolving via sysinfo
-        if discovered_agents.iter().any(|r| r.process_name.is_empty() || r.process_name == "unknown") {
+        if discovered_agents
+            .iter()
+            .any(|r| r.process_name.is_empty() || r.process_name == "unknown")
+        {
             let mut sys = sysinfo::System::new();
             sys.refresh_processes();
             for ag in &mut discovered_agents {
@@ -577,7 +634,11 @@ impl AgentAnomalyDetector {
             }
         }
 
-        discovered_agents.retain(|r| !r.process_name.is_empty() && r.process_name != "unknown" && !r.process_name.eq_ignore_ascii_case("Program"));
+        discovered_agents.retain(|r| {
+            !r.process_name.is_empty()
+                && r.process_name != "unknown"
+                && !r.process_name.eq_ignore_ascii_case("Program")
+        });
 
         // Sort descending by posterior_probability
         discovered_agents.sort_by(|a, b| {
@@ -587,8 +648,14 @@ impl AgentAnomalyDetector {
         });
 
         if let Some(obj) = status.as_object_mut() {
-            obj.insert("discovered_agents".to_string(), serde_json::to_value(&discovered_agents).unwrap_or_default());
-            obj.insert("discovered_agent_count".to_string(), serde_json::json!(discovered_agents.len()));
+            obj.insert(
+                "discovered_agents".to_string(),
+                serde_json::to_value(&discovered_agents).unwrap_or_default(),
+            );
+            obj.insert(
+                "discovered_agent_count".to_string(),
+                serde_json::json!(discovered_agents.len()),
+            );
         }
         status
     }

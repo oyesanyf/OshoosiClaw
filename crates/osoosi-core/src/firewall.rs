@@ -78,7 +78,7 @@ pub fn restore_autoblock_rules() -> Result<usize> {
     for rule in rules {
         match rule {
             BlockedTarget::Program { path } => {
-                if let Ok(_) = block_process_network(None, Some(&path)) {
+                if block_process_network(None, Some(&path)).is_ok() {
                     count += 1;
                 }
             }
@@ -271,19 +271,26 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
 
     #[cfg(target_os = "windows")]
     {
-        use tokio::process::Command;
-        use tokio::time::{timeout, Duration};
         #[allow(unused_imports)]
         use std::os::windows::process::CommandExt;
+        use tokio::process::Command;
+        use tokio::time::{timeout, Duration};
 
-        let current_exe = std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("osoosi.exe"));
+        let current_exe =
+            std::env::current_exe().unwrap_or_else(|_| std::path::PathBuf::from("osoosi.exe"));
         let install_dir = current_exe
             .parent()
             .unwrap_or_else(|| Path::new("."))
             .to_path_buf();
 
-        let clean_exe_path = current_exe.to_string_lossy().trim_start_matches(r"\\?\").to_string();
-        let clean_install_dir = install_dir.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+        let clean_exe_path = current_exe
+            .to_string_lossy()
+            .trim_start_matches(r"\\?\")
+            .to_string();
+        let clean_install_dir = install_dir
+            .to_string_lossy()
+            .trim_start_matches(r"\\?\")
+            .to_string();
         let exe_name = current_exe
             .file_name()
             .map(|f| f.to_string_lossy().to_string())
@@ -296,7 +303,15 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
         );
 
         // 0. Pre-create required data directories in install_dir and grant permissions to Users
-        let subfolders = ["database", "logs", "quarantine", "runs", "yara", "models", "config"];
+        let subfolders = [
+            "database",
+            "logs",
+            "quarantine",
+            "runs",
+            "yara",
+            "models",
+            "config",
+        ];
         for sub in &subfolders {
             let sub_path = install_dir.join(sub);
             let _ = std::fs::create_dir_all(&sub_path);
@@ -330,7 +345,10 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
         );
 
         if let Some(root) = osoosi_types::resolve_project_root() {
-            let clean_root = root.to_string_lossy().trim_start_matches(r"\\?\").to_string();
+            let clean_root = root
+                .to_string_lossy()
+                .trim_start_matches(r"\\?\")
+                .to_string();
             if clean_root != clean_install_dir {
                 ps_cmd.push_str(&format!(
                     "; Add-MpPreference -ExclusionPath '{}' -ErrorAction SilentlyContinue",
@@ -364,7 +382,13 @@ pub async fn configure_install_folder_exclusions_and_firewall() -> Result<()> {
             del_cmd.stderr(std::process::Stdio::null());
             #[cfg(windows)]
             del_cmd.creation_flags(0x08000000);
-            del_cmd.args(["advfirewall", "firewall", "delete", "rule", &format!("name=\"{}\"", name)]);
+            del_cmd.args([
+                "advfirewall",
+                "firewall",
+                "delete",
+                "rule",
+                &format!("name=\"{}\"", name),
+            ]);
             del_cmd
         };
 
@@ -507,6 +531,15 @@ pub async fn open_mesh_ports() -> Result<()> {
 }
 
 pub fn block_process_network(process_id: Option<u32>, image_path: Option<&str>) -> Result<String> {
+    let is_dry_run = std::env::var("OSOOSI_DRY_RUN")
+        .map(|v| v == "1" || v.eq_ignore_ascii_case("true"))
+        .unwrap_or(false);
+
+    if is_dry_run {
+        tracing::info!("AUTONOMOUS RESPONSE: [DRY-RUN] Process network blocking simulated for {:?} (PID: {:?}).", image_path, process_id);
+        return Ok("Simulated network block (dry-run)".to_string());
+    }
+
     if is_program_in_allowlist(image_path) {
         return Err(anyhow!(
             "Program in firewall allowlist, skipping block: {:?}",
@@ -574,9 +607,7 @@ pub fn tarpit_process_network(process_id: Option<u32>, image_path: Option<&str>)
                     image
                 ))
             }
-            Err(e) => {
-                Err(anyhow!("Failed to apply QoS tarpit via registry: {}", e))
-            }
+            Err(e) => Err(anyhow!("Failed to apply QoS tarpit via registry: {}", e)),
         }
     }
 
@@ -801,7 +832,9 @@ fn block_windows_remote_ips(prefix: &str, targets: &[String]) -> Result<String> 
         }
     }
     if valid_targets.is_empty() {
-        return Err(anyhow!("No valid non-loopback remote IPs provided to Windows firewall block"));
+        return Err(anyhow!(
+            "No valid non-loopback remote IPs provided to Windows firewall block"
+        ));
     }
 
     let payload = valid_targets.join(",");
@@ -890,9 +923,9 @@ fn dns_rule_name(prefix: &str, payload: &str) -> String {
 
 #[cfg(target_os = "windows")]
 fn remove_windows_autoblock_rules() -> Result<usize> {
+    use std::collections::HashSet;
     #[allow(unused_imports)]
     use std::os::windows::process::CommandExt;
-    use std::collections::HashSet;
     let mut show_cmd = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
     #[cfg(windows)]
     show_cmd.creation_flags(0x08000000);
@@ -945,14 +978,22 @@ fn block_linux_process_uid(process_id: Option<u32>) -> Result<String> {
     let pid = process_id.ok_or_else(|| anyhow!("Linux firewall block requires ProcessId"))?;
     let uid = linux_uid_for_pid(pid)?;
     if uid == 0 {
-        return Err(anyhow!("Refusing to block UID 0 (root) - potential system lockout"));
+        return Err(anyhow!(
+            "Refusing to block UID 0 (root) - potential system lockout"
+        ));
     }
     if uid < 1000 {
-        return Err(anyhow!("Refusing to block system UID {} (< 1000) - potential system/service lockout", uid));
+        return Err(anyhow!(
+            "Refusing to block system UID {} (< 1000) - potential system/service lockout",
+            uid
+        ));
     }
     let current_uid = unsafe { libc::getuid() };
     if uid == current_uid {
-        return Err(anyhow!("Refusing to block current process UID {} - self lockout protection", uid));
+        return Err(anyhow!(
+            "Refusing to block current process UID {} - self lockout protection",
+            uid
+        ));
     }
 
     if command_exists("iptables") {
@@ -1041,7 +1082,9 @@ fn block_linux_remote_ips(targets: &[String]) -> Result<String> {
         }
     }
     if valid_targets.is_empty() {
-        return Err(anyhow!("No valid non-loopback remote IPs provided to Linux firewall block"));
+        return Err(anyhow!(
+            "No valid non-loopback remote IPs provided to Linux firewall block"
+        ));
     }
 
     if command_exists("iptables") {
@@ -1187,7 +1230,10 @@ mod tests {
     #[tokio::test]
     async fn test_configure_install_folder_exclusions_and_firewall() {
         let res = configure_install_folder_exclusions_and_firewall().await;
-        assert!(res.is_ok(), "Configuring exclusions and firewall should succeed without error");
+        assert!(
+            res.is_ok(),
+            "Configuring exclusions and firewall should succeed without error"
+        );
     }
 
     #[tokio::test]

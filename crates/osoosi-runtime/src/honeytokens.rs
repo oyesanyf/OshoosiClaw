@@ -25,18 +25,18 @@ impl HoneytokenManager {
     pub fn deploy_trap(&self, name: &str) -> anyhow::Result<PathBuf> {
         let trap_path = self.base_path.join(name);
 
-        // Environment-keyed payload: Includes asset ID and a unique canary string.
+        let rev_asset_id: String = self.asset_id.chars().rev().collect();
         let payload = format!(
             "--- OSOOSI DECEPTION LAYER ---\n\
              AssetID: {}\n\
              Key: hds-traps-v1-{}\n\
              GeneratedAt: {}\n\n\
              DB_USER=osoosi_admin\n\
-             DB_PASS={}\n",
+             DB_PASS=osoosi_{}\n",
             self.asset_id,
             uuid::Uuid::new_v4(),
             chrono::Utc::now(),
-            format!("osoosi_{}", self.asset_id.chars().rev().collect::<String>())
+            rev_asset_id
         );
 
         fs::write(&trap_path, payload)?;
@@ -79,7 +79,7 @@ impl EphemeralAgentCanary {
     /// Generates a randomized, ephemeral canary set for an agent session.
     pub fn generate_for_session(session_id: &str) -> Self {
         let rand_hex = format!("{:032x}", uuid::Uuid::new_v4().as_u128());
-        let env_var_name = format!("OSOOSI_CANARY_{}", &rand_hex[..8].to_ascii_uppercase());
+        let env_var_name = format!("OSOOSI_CANARY_{}", rand_hex[..8].to_ascii_uppercase());
         let canary_token = format!("sk-canary-{}-{}", session_id, &rand_hex[8..20]);
         let decoy_tool_name = format!("execute_admin_privilege_override_{}", &rand_hex[..6]);
 

@@ -1,9 +1,9 @@
+use nostr_sdk::prelude::*;
+use osoosi_types::ThreatSignature;
+use rand::thread_rng;
+use rand_distr::{Distribution, Exp};
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use nostr_sdk::prelude::*;
-use rand_distr::{Distribution, Exp};
-use rand::thread_rng;
-use osoosi_types::ThreatSignature;
 use tracing::{debug, info};
 
 /// Nostr Event Kinds for OshoosiClaw Mesh
@@ -48,7 +48,7 @@ impl NostrMeshOrchestrator {
         };
 
         let client = Client::new(keys.clone());
-        
+
         info!("Nostr Mesh Node Initialized. PubKey: {}", keys.public_key());
 
         Ok(Self {
@@ -83,13 +83,17 @@ impl NostrMeshOrchestrator {
         }
 
         // Mark our own broadcast threat as already seen so we don't re-process local echoes
-        self.seen_threats.insert(sig.id.clone(), std::time::Instant::now());
-        
+        self.seen_threats
+            .insert(sig.id.clone(), std::time::Instant::now());
+
         // --- 1. DIFFERENTIAL PRIVACY & ANONYMIZATION ---
         sig.confidence = (self.privacy.inject_noise(sig.confidence as f64) as f32).clamp(0.05, 1.0);
 
         // Anonymize/scrub all host-identifying fields before broadcasting to Nostr:
-        sig.source_node = format!("anon-node-{}", &blake3::hash(sig.source_node.as_bytes()).to_hex()[..12]);
+        sig.source_node = format!(
+            "anon-node-{}",
+            &blake3::hash(sig.source_node.as_bytes()).to_hex()[..12]
+        );
 
         sig.process_name = sig.process_name.map(|p| {
             if p.contains('\\') || p.contains('/') || p.contains("Users") || p.contains("home") {
@@ -111,19 +115,16 @@ impl NostrMeshOrchestrator {
 
         // --- 2. CRYPTOGRAPHIC IDENTITY & SIGNING ---
         let content = serde_json::to_string(&sig)?;
-        
+
         // Create the signed Nostr event (Kind 20001)
-        let event = EventBuilder::new(
-            KIND_EDR_ALERT,
-            content,
-        )
-        .custom_created_at(Self::randomized_timestamp())
-        .sign_with_keys(&self.keys)?;
+        let event = EventBuilder::new(KIND_EDR_ALERT, content)
+            .custom_created_at(Self::randomized_timestamp())
+            .sign_with_keys(&self.keys)?;
 
         client.send_event(event).await?;
-        
+
         info!("Privacy-hardened threat broadcasted via Nostr: {}", sig.id);
-        
+
         Ok(())
     }
 
@@ -154,7 +155,10 @@ impl NostrMeshOrchestrator {
                         }
                         if let Ok(sig) = serde_json::from_str::<ThreatSignature>(&event.content) {
                             if !Self::check_and_record_threat_map(&seen, &sig.id) {
-                                debug!("BitChat: Suppressed duplicate Nostr threat {} from relay pool", sig.id);
+                                debug!(
+                                    "BitChat: Suppressed duplicate Nostr threat {} from relay pool",
+                                    sig.id
+                                );
                                 continue;
                             }
                             info!("Received threat from Nostr mesh: {}", sig.id);
@@ -207,11 +211,8 @@ impl NostrMeshOrchestrator {
             debug!("Nostr Mesh: No relays configured; skipping heartbeat.");
             return Ok(());
         }
-        let event = EventBuilder::new(
-            KIND_NODE_HEARTBEAT,
-            format!("Node {} is active", node_id),
-        )
-        .sign_with_keys(&self.keys)?;
+        let event = EventBuilder::new(KIND_NODE_HEARTBEAT, format!("Node {} is active", node_id))
+            .sign_with_keys(&self.keys)?;
         client.send_event(event).await?;
         Ok(())
     }
@@ -233,22 +234,34 @@ mod tests {
 
     #[tokio::test]
     async fn test_broadcast_threat_no_relays_returns_ok() {
-        let orch = NostrMeshOrchestrator::new(None, 1.0).await.expect("Failed to create orchestrator");
+        let orch = NostrMeshOrchestrator::new(None, 1.0)
+            .await
+            .expect("Failed to create orchestrator");
         let sig = ThreatSignature::new("test-node".to_string());
         let res = orch.broadcast_threat(sig).await;
-        assert!(res.is_ok(), "broadcast_threat with no relays must return Ok(()) without error");
+        assert!(
+            res.is_ok(),
+            "broadcast_threat with no relays must return Ok(()) without error"
+        );
     }
 
     #[tokio::test]
     async fn test_send_heartbeat_no_relays_returns_ok() {
-        let orch = NostrMeshOrchestrator::new(None, 1.0).await.expect("Failed to create orchestrator");
+        let orch = NostrMeshOrchestrator::new(None, 1.0)
+            .await
+            .expect("Failed to create orchestrator");
         let res = orch.send_heartbeat("node-123").await;
-        assert!(res.is_ok(), "send_heartbeat with no relays must return Ok(()) without error");
+        assert!(
+            res.is_ok(),
+            "send_heartbeat with no relays must return Ok(()) without error"
+        );
     }
 
     #[tokio::test]
     async fn test_nostr_threat_deduplication_lifecycle() {
-        let orch = NostrMeshOrchestrator::new(None, 1.0).await.expect("Failed to create orchestrator");
+        let orch = NostrMeshOrchestrator::new(None, 1.0)
+            .await
+            .expect("Failed to create orchestrator");
 
         // First occurrence must be accepted
         assert!(orch.check_and_record_threat("threat-uuid-alpha"));
@@ -265,7 +278,11 @@ mod tests {
 
     #[tokio::test]
     async fn test_nostr_threat_concurrent_burst_deduplication() {
-        let orch = Arc::new(NostrMeshOrchestrator::new(None, 1.0).await.expect("Failed to create orchestrator"));
+        let orch = Arc::new(
+            NostrMeshOrchestrator::new(None, 1.0)
+                .await
+                .expect("Failed to create orchestrator"),
+        );
         let accepted_count = Arc::new(AtomicUsize::new(0));
         let mut handles = Vec::new();
 

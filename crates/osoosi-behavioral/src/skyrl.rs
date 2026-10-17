@@ -332,7 +332,10 @@ impl OshoosiSecurityGym {
                 "<thought>Step {}: Executed exploratory inquiry {:?} on PID {}. Forensic discovery: {}. Step exploration penalty: -0.05. Threat score: {:.2}.</thought><action>{:?}</action>",
                 self.current_step, action, self.target_process.pid, forensic_evidence, self.observation[15], action
             );
-            let explanation = format!("Forensic inquiry {:?} executed: {}.", action, forensic_evidence);
+            let explanation = format!(
+                "Forensic inquiry {:?} executed: {}.",
+                action, forensic_evidence
+            );
 
             return StepResult {
                 observation: self.observation.clone(),

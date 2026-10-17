@@ -1,8 +1,8 @@
 use anyhow::{anyhow, Result};
-use winreg::enums::*;
-use winreg::RegKey;
 use std::process::Command;
 use tracing::{info, warn};
+use winreg::enums::*;
+use winreg::RegKey;
 
 /// Registry persistence remediator.
 /// Targeted at common 'Run' keys and 'Services' created by malware.
@@ -82,10 +82,8 @@ impl RegistryRemediator {
         for val in key.enum_values().filter_map(|x| x.ok()) {
             let (name, value) = val;
             let val_str = value.to_string().to_lowercase();
-            if val_str.contains(&image_path.to_lowercase()) {
-                if let Ok(_) = key.delete_value(&name) {
-                    deleted.push(name);
-                }
+            if val_str.contains(&image_path.to_lowercase()) && key.delete_value(&name).is_ok() {
+                deleted.push(name);
             }
         }
 
@@ -101,18 +99,22 @@ impl RegistryRemediator {
         // Enumerate services via registry instead of WMI/PowerShell for performance and reliability
         let hklm = RegKey::predef(HKEY_LOCAL_MACHINE);
         let services_key = hklm.open_subkey(r"SYSTEM\CurrentControlSet\Services")?;
-        
+
         let mut disabled_services = Vec::new();
         let target_lower = image_path.to_lowercase();
 
         for name in services_key.enum_keys().filter_map(|x| x.ok()) {
-            if let Ok(svc_key) = services_key.open_subkey_with_flags(&name, KEY_READ | KEY_SET_VALUE) {
+            if let Ok(svc_key) =
+                services_key.open_subkey_with_flags(&name, KEY_READ | KEY_SET_VALUE)
+            {
                 if let Ok(path) = svc_key.get_value::<String, _>("ImagePath") {
                     if path.to_lowercase().contains(&target_lower) {
                         // Disable service (Start = 4)
                         let _ = svc_key.set_value("Start", &4u32);
                         // Also try to stop it via sc.exe (standard command)
-                        let _ = Command::new(osoosi_types::resolve_system_binary("sc.exe")).args(["stop", &name]).status();
+                        let _ = Command::new(osoosi_types::resolve_system_binary("sc.exe"))
+                            .args(["stop", &name])
+                            .status();
                         disabled_services.push(name);
                     }
                 }

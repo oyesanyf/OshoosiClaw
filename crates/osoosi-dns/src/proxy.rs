@@ -8,14 +8,14 @@
 
 use crate::analysis::{self, DnsVerdict};
 use crate::blocklist::DnsBlocklist;
+use dashmap::DashMap;
+use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode};
+use hickory_proto::rr::{Name, RData, Record, RecordType};
+use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
 use std::net::SocketAddr;
 use std::sync::Arc;
 use tokio::net::UdpSocket;
 use tracing::{error, info, warn};
-use hickory_proto::op::{Message, MessageType, OpCode, ResponseCode};
-use hickory_proto::rr::{Name, RData, Record, RecordType};
-use hickory_proto::serialize::binary::{BinDecodable, BinEncodable};
-use dashmap::DashMap;
 
 /// Telemetry event emitted by the DNS Shield for consumption by the consensus engine.
 #[derive(Debug, Clone, serde::Serialize)]
@@ -75,10 +75,7 @@ impl DnsShield {
             "🛡️ DNS Shield active on {} → upstream {}",
             self.listen_addr, self.upstream
         );
-        info!(
-            "🛡️ Blocklist loaded with {} entries",
-            self.blocklist.len()
-        );
+        info!("🛡️ Blocklist loaded with {} entries", self.blocklist.len());
 
         let mut buf = vec![0u8; 4096];
 
@@ -145,7 +142,10 @@ impl DnsShield {
             let analysis = analysis::analyze_domain(&domain);
 
             if analysis.verdict == DnsVerdict::Block {
-                info!("🚫 DNS BLOCKED (analysis): {} — {}", domain, analysis.reason);
+                info!(
+                    "🚫 DNS BLOCKED (analysis): {} — {}",
+                    domain, analysis.reason
+                );
 
                 let response = build_sinkhole_response(query_id, &domain, qtype);
                 if let Ok(bytes) = response.to_bytes() {
@@ -251,9 +251,13 @@ fn build_sinkhole_response(id: u16, domain: &str, qtype: RecordType) -> Message 
         response.metadata.response_code = ResponseCode::NoError;
         if let Ok(name) = Name::parse(domain, None) {
             let rdata = if qtype == RecordType::A {
-                RData::A(hickory_proto::rr::rdata::A(std::net::Ipv4Addr::new(0, 0, 0, 0)))
+                RData::A(hickory_proto::rr::rdata::A(std::net::Ipv4Addr::new(
+                    0, 0, 0, 0,
+                )))
             } else {
-                RData::AAAA(hickory_proto::rr::rdata::AAAA(std::net::Ipv6Addr::UNSPECIFIED))
+                RData::AAAA(hickory_proto::rr::rdata::AAAA(
+                    std::net::Ipv6Addr::UNSPECIFIED,
+                ))
             };
 
             let record = Record::from_rdata(name, 300, rdata);

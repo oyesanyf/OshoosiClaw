@@ -8,11 +8,11 @@ use anyhow::Result;
 use evalexpr::*;
 use ipnetwork::IpNetwork;
 use osoosi_types::HostSecurityEvent;
+use rayon::prelude::*;
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::path::Path;
-use rayon::prelude::*;
 use tracing::info;
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -68,7 +68,10 @@ pub enum FieldPattern {
 
 #[derive(Debug, Clone, Copy)]
 pub enum NumericOp {
-    Lt, Gt, Le, Ge,
+    Lt,
+    Gt,
+    Le,
+    Ge,
 }
 
 #[derive(Debug, Clone)]
@@ -100,7 +103,9 @@ pub struct SigmaEngine {
 }
 
 impl Default for SigmaEngine {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl SigmaEngine {
@@ -117,7 +122,9 @@ impl SigmaEngine {
     }
 
     pub fn load_rules_from_dir(&mut self, dir: &Path) {
-        if !dir.exists() { return; }
+        if !dir.exists() {
+            return;
+        }
         let paths: Vec<std::path::PathBuf> = walkdir::WalkDir::new(dir)
             .into_iter()
             .filter_entry(|e| {
@@ -140,7 +147,9 @@ impl SigmaEngine {
             .filter_map(|e| e.ok())
             .filter(|e| {
                 e.file_type().is_file()
-                    && e.path().extension().map_or(false, |ext| ext == "yml" || ext == "yaml")
+                    && e.path()
+                        .extension()
+                        .is_some_and(|ext| ext == "yml" || ext == "yaml")
             })
             .map(|e| e.path().to_path_buf())
             .collect();
@@ -159,14 +168,24 @@ impl SigmaEngine {
             let service = compiled.rule.logsource.service.as_deref();
             let product = compiled.rule.logsource.product.as_deref();
             if let Some(s) = service {
-                self.indexed_rules.entry(s.to_lowercase()).or_default().push(compiled);
+                self.indexed_rules
+                    .entry(s.to_lowercase())
+                    .or_default()
+                    .push(compiled);
             } else if let Some(p) = product {
-                self.indexed_rules.entry(p.to_lowercase()).or_default().push(compiled);
+                self.indexed_rules
+                    .entry(p.to_lowercase())
+                    .or_default()
+                    .push(compiled);
             } else {
                 self.global_rules.push(compiled);
             }
         }
-        info!("Loaded {} Advanced Sigma rules from {}", count, dir.display());
+        info!(
+            "Loaded {} Advanced Sigma rules from {}",
+            count,
+            dir.display()
+        );
     }
 
     fn compile_rule(&self, rule: SigmaRule) -> Result<CompiledRule> {
@@ -174,7 +193,9 @@ impl SigmaEngine {
         let mut selection_keys = Vec::new();
 
         for (id, sel) in &rule.detection.selections {
-            if id == "condition" || id == "falsepositives" || id == "timeframe" { continue; }
+            if id == "condition" || id == "falsepositives" || id == "timeframe" {
+                continue;
+            }
             selection_keys.push(id.clone());
             let mut map_alternatives = Vec::new();
             let mut keywords = Vec::new();
@@ -220,18 +241,29 @@ impl SigmaEngine {
                 }
                 Selection::Other(_) => {}
             }
-            selections.insert(id.clone(), SelectionCompiled { map_alternatives, keywords });
+            selections.insert(
+                id.clone(),
+                SelectionCompiled {
+                    map_alternatives,
+                    keywords,
+                },
+            );
         }
 
         let transpiled = self.transpile_sigma_condition(&rule.detection.condition, &selection_keys);
         let condition_tree = build_operator_tree(&transpiled).ok();
 
-        Ok(CompiledRule { rule, selections, condition_tree })
+        Ok(CompiledRule {
+            rule,
+            selections,
+            condition_tree,
+        })
     }
 
     fn transpile_sigma_condition(&self, condition: &str, keys: &[String]) -> String {
-        static RE_QUANT: std::sync::LazyLock<Regex> =
-            std::sync::LazyLock::new(|| Regex::new(r"(1|all) of ([a-zA-Z_][a-zA-Z0-9_]*)\*").unwrap());
+        static RE_QUANT: std::sync::LazyLock<Regex> = std::sync::LazyLock::new(|| {
+            Regex::new(r"(1|all) of ([a-zA-Z_][a-zA-Z0-9_]*)\*").unwrap()
+        });
         static RE_AND: std::sync::LazyLock<Regex> =
             std::sync::LazyLock::new(|| Regex::new(r"(?i)\band\b").unwrap());
         static RE_OR: std::sync::LazyLock<Regex> =
@@ -240,7 +272,7 @@ impl SigmaEngine {
             std::sync::LazyLock::new(|| Regex::new(r"(?i)\bnot\b").unwrap());
 
         let mut res = condition.to_string();
-        
+
         // Handle aggregations
         if res.contains("1 of them") {
             res = res.replace("1 of them", &format!("({})", keys.join(" || ")));
@@ -248,15 +280,23 @@ impl SigmaEngine {
         if res.contains("all of them") {
             res = res.replace("all of them", &format!("({})", keys.join(" && ")));
         }
-        
+
         // Pattern aggregations: "1 of selection*"
         let cloned_res = res.clone();
         for cap in RE_QUANT.captures_iter(&cloned_res) {
             let quant = &cap[1];
             let pat = &cap[2];
-            let matched: Vec<String> = keys.iter().filter(|k| k.starts_with(pat)).cloned().collect();
+            let matched: Vec<String> = keys
+                .iter()
+                .filter(|k| k.starts_with(pat))
+                .cloned()
+                .collect();
             if !matched.is_empty() {
-                let expr = if quant == "1" { matched.join(" || ") } else { matched.join(" && ") };
+                let expr = if quant == "1" {
+                    matched.join(" || ")
+                } else {
+                    matched.join(" && ")
+                };
                 res = res.replace(&cap[0], &format!("({})", expr));
             }
         }
@@ -265,19 +305,27 @@ impl SigmaEngine {
         res = RE_AND.replace_all(&res, "&&").to_string();
         res = RE_OR.replace_all(&res, "||").to_string();
         res = RE_NOT.replace_all(&res, "!").to_string();
-        
+
         res
     }
 
     fn parse_field_key<'a>(&self, key: &'a str) -> (&'a str, Vec<&'a str>) {
         let parts: Vec<&str> = key.split('|').collect();
-        if parts.len() == 1 { (parts[0], vec![]) } else { (parts[0], parts[1..].to_vec()) }
+        if parts.len() == 1 {
+            (parts[0], vec![])
+        } else {
+            (parts[0], parts[1..].to_vec())
+        }
     }
 
-    fn parse_field_value(&self, value: &serde_yaml::Value, modifiers: &[&str]) -> Result<Vec<FieldPattern>> {
+    fn parse_field_value(
+        &self,
+        value: &serde_yaml::Value,
+        modifiers: &[&str],
+    ) -> Result<Vec<FieldPattern>> {
         let mut patterns = Vec::new();
         let is_cased = modifiers.contains(&"cased");
-        
+
         match value {
             serde_yaml::Value::Null => {
                 patterns.push(FieldPattern::Null);
@@ -298,11 +346,23 @@ impl SigmaEngine {
                     } else if let Some(s) = item.as_str() {
                         patterns.push(self.parse_string_pattern(s, modifiers, is_cased));
                     } else if let Some(n) = item.as_i64() {
-                        patterns.push(self.parse_string_pattern(&n.to_string(), modifiers, is_cased));
+                        patterns.push(self.parse_string_pattern(
+                            &n.to_string(),
+                            modifiers,
+                            is_cased,
+                        ));
                     } else if let Some(n) = item.as_u64() {
-                        patterns.push(self.parse_string_pattern(&n.to_string(), modifiers, is_cased));
+                        patterns.push(self.parse_string_pattern(
+                            &n.to_string(),
+                            modifiers,
+                            is_cased,
+                        ));
                     } else if let Some(b) = item.as_bool() {
-                        patterns.push(self.parse_string_pattern(&b.to_string(), modifiers, is_cased));
+                        patterns.push(self.parse_string_pattern(
+                            &b.to_string(),
+                            modifiers,
+                            is_cased,
+                        ));
                     }
                 }
             }
@@ -325,7 +385,7 @@ impl SigmaEngine {
                 return FieldPattern::Regex(re);
             }
         }
-        
+
         if modifiers.contains(&"contains") {
             FieldPattern::Contains(s.to_string(), is_cased)
         } else if modifiers.contains(&"startswith") {
@@ -338,7 +398,11 @@ impl SigmaEngine {
     }
 
     fn convert_wildcard_to_regex(&self, pattern: &str, is_cased: bool) -> String {
-        let mut regex = if is_cased { "^".to_string() } else { "(?i)^".to_string() };
+        let mut regex = if is_cased {
+            "^".to_string()
+        } else {
+            "(?i)^".to_string()
+        };
         for c in pattern.chars() {
             match c {
                 '*' => regex.push_str(".*"),
@@ -390,18 +454,35 @@ impl SigmaEngine {
                 || lower.ends_with("osoosi-cli.exe")
         };
 
-        if let Some(img) = event.data.get("Image").or_else(|| event.data.get("image")).or_else(|| event.data.get("NewProcessName")).and_then(|v| v.as_str()) {
+        if let Some(img) = event
+            .data
+            .get("Image")
+            .or_else(|| event.data.get("image"))
+            .or_else(|| event.data.get("NewProcessName"))
+            .and_then(|v| v.as_str())
+        {
             if is_self_image(img) || is_internal_agent_path(img) {
                 return Vec::new();
             }
         }
-        if let Some(target) = event.data.get("TargetFilename").or_else(|| event.data.get("target_filename")).and_then(|v| v.as_str()) {
+        if let Some(target) = event
+            .data
+            .get("TargetFilename")
+            .or_else(|| event.data.get("target_filename"))
+            .and_then(|v| v.as_str())
+        {
             if is_internal_agent_path(target) {
                 return Vec::new();
             }
             // Deception traps targeted by osoosi itself are dropped
-            if (target.to_lowercase().contains("\\traps\\") || target.to_lowercase().ends_with("\\traps") || target.to_lowercase() == "traps")
-                && event.data.get("Image").and_then(|v| v.as_str()).map_or(false, is_self_image)
+            if (target.to_lowercase().contains("\\traps\\")
+                || target.to_lowercase().ends_with("\\traps")
+                || target.to_lowercase() == "traps")
+                && event
+                    .data
+                    .get("Image")
+                    .and_then(|v| v.as_str())
+                    .is_some_and(is_self_image)
             {
                 return Vec::new();
             }
@@ -409,7 +490,8 @@ impl SigmaEngine {
 
         // Throttle evaluation during high CPU load
         static LAST_CPU_CHECK: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
-        static IS_CPU_HIGH: std::sync::atomic::AtomicBool = std::sync::atomic::AtomicBool::new(false);
+        static IS_CPU_HIGH: std::sync::atomic::AtomicBool =
+            std::sync::atomic::AtomicBool::new(false);
         static SYSINFO_CPU: std::sync::Mutex<Option<sysinfo::System>> = std::sync::Mutex::new(None);
 
         let now_sec = std::time::SystemTime::now()
@@ -436,10 +518,10 @@ impl SigmaEngine {
         if is_high_cpu {
             std::thread::yield_now();
         }
-        
+
         // 1. Identify the logsource of this event
         let mut event_sources = Vec::new();
-        
+
         // Map HostEventSource to Sigma logsource strings
         match event.source {
             osoosi_types::HostEventSource::WindowsEventLog => {
@@ -495,7 +577,8 @@ impl SigmaEngine {
         }
 
         if !matches.is_empty() {
-            self.total_detections.fetch_add(matches.len() as u64, std::sync::atomic::Ordering::Relaxed);
+            self.total_detections
+                .fetch_add(matches.len() as u64, std::sync::atomic::Ordering::Relaxed);
         }
         matches
     }
@@ -519,10 +602,16 @@ impl SigmaEngine {
 
     fn check_selection(&self, sel: &SelectionCompiled, event: &HostSecurityEvent) -> bool {
         for kw in &sel.keywords {
-            if self.matches_any_field(event, kw) { return true; }
+            if self.matches_any_field(event, kw) {
+                return true;
+            }
         }
-        if sel.map_alternatives.is_empty() && sel.keywords.is_empty() { return false; }
-        if sel.map_alternatives.is_empty() { return false; }
+        if sel.map_alternatives.is_empty() && sel.keywords.is_empty() {
+            return false;
+        }
+        if sel.map_alternatives.is_empty() {
+            return false;
+        }
 
         for group in &sel.map_alternatives {
             let mut group_matched = true;
@@ -546,9 +635,12 @@ impl SigmaEngine {
                         let key_is_explicitly_null = event
                             .data
                             .get(&criterion.field)
-                            .map_or(false, |v| v.is_null());
+                            .is_some_and(|v| v.is_null());
                         key_is_explicitly_null
-                            && criterion.patterns.iter().any(|p| matches!(p, FieldPattern::Null))
+                            && criterion
+                                .patterns
+                                .iter()
+                                .any(|p| matches!(p, FieldPattern::Null))
                     }
                 };
                 if !matched {
@@ -567,7 +659,9 @@ impl SigmaEngine {
         if let Some(obj) = event.data.as_object() {
             for val in obj.values() {
                 if let Some(s) = val.as_str() {
-                    if self.match_pattern(s, pattern) { return true; }
+                    if self.match_pattern(s, pattern) {
+                        return true;
+                    }
                 }
             }
         }
@@ -576,13 +670,39 @@ impl SigmaEngine {
 
     fn match_pattern(&self, actual: &str, pattern: &FieldPattern) -> bool {
         match pattern {
-            FieldPattern::Exact(s, cased) => if *cased { actual == s } else { actual.eq_ignore_ascii_case(s) },
-            FieldPattern::Contains(s, cased) => if *cased { actual.contains(s) } else { actual.to_lowercase().contains(&s.to_lowercase()) },
-            FieldPattern::StartsWith(s, cased) => if *cased { actual.starts_with(s) } else { actual.to_lowercase().starts_with(&s.to_lowercase()) },
-            FieldPattern::EndsWith(s, cased) => if *cased { actual.ends_with(s) } else { actual.to_lowercase().ends_with(&s.to_lowercase()) },
+            FieldPattern::Exact(s, cased) => {
+                if *cased {
+                    actual == s
+                } else {
+                    actual.eq_ignore_ascii_case(s)
+                }
+            }
+            FieldPattern::Contains(s, cased) => {
+                if *cased {
+                    actual.contains(s)
+                } else {
+                    actual.to_lowercase().contains(&s.to_lowercase())
+                }
+            }
+            FieldPattern::StartsWith(s, cased) => {
+                if *cased {
+                    actual.starts_with(s)
+                } else {
+                    actual.to_lowercase().starts_with(&s.to_lowercase())
+                }
+            }
+            FieldPattern::EndsWith(s, cased) => {
+                if *cased {
+                    actual.ends_with(s)
+                } else {
+                    actual.to_lowercase().ends_with(&s.to_lowercase())
+                }
+            }
             FieldPattern::Regex(re) => re.is_match(actual),
-            FieldPattern::Cidr(net) => actual.parse::<std::net::IpAddr>().map_or(false, |ip| net.contains(ip)),
-            FieldPattern::Numeric(val, op) => actual.parse::<f64>().map_or(false, |a| match op {
+            FieldPattern::Cidr(net) => actual
+                .parse::<std::net::IpAddr>()
+                .is_ok_and(|ip| net.contains(ip)),
+            FieldPattern::Numeric(val, op) => actual.parse::<f64>().is_ok_and(|a| match op {
                 NumericOp::Lt => a < *val,
                 NumericOp::Gt => a > *val,
                 NumericOp::Le => a <= *val,
@@ -607,7 +727,11 @@ pub fn get_event_field_value(event: &HostSecurityEvent, field: &str) -> Option<S
         if let Some(ch) = event.data.get("Channel").and_then(|v| v.as_str()) {
             return Some(ch.to_string());
         }
-        let provider = event.data.get("ProviderName").and_then(|v| v.as_str()).unwrap_or("");
+        let provider = event
+            .data
+            .get("ProviderName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         if provider.to_lowercase().contains("sysmon")
             || event.source == osoosi_types::HostEventSource::WindowsEventLog
         {
@@ -617,7 +741,13 @@ pub fn get_event_field_value(event: &HostSecurityEvent, field: &str) -> Option<S
 
     // 3. Fallback aliases for image and commandline
     if field_lower == "image" {
-        for alias in &["Image", "NewProcessName", "ProcessName", "ImagePath", "SourceImage"] {
+        for alias in &[
+            "Image",
+            "NewProcessName",
+            "ProcessName",
+            "ImagePath",
+            "SourceImage",
+        ] {
             if let Some(val) = event.data.get(*alias).and_then(value_to_string) {
                 if !val.is_empty() {
                     return Some(val);
@@ -655,8 +785,17 @@ pub fn get_event_field_value(event: &HostSecurityEvent, field: &str) -> Option<S
 
     // 6. Special fallback mappings for standard process creation fields
     if field_lower == "originalfilename" || field_lower == "original_file_name" {
-        if let Some(img) = event.data.get("Image").or_else(|| event.data.get("NewProcessName")).or_else(|| event.data.get("ImagePath")).and_then(|v| v.as_str()) {
-            if let Some(fname) = std::path::Path::new(img).file_name().and_then(|n| n.to_str()) {
+        if let Some(img) = event
+            .data
+            .get("Image")
+            .or_else(|| event.data.get("NewProcessName"))
+            .or_else(|| event.data.get("ImagePath"))
+            .and_then(|v| v.as_str())
+        {
+            if let Some(fname) = std::path::Path::new(img)
+                .file_name()
+                .and_then(|n| n.to_str())
+            {
                 return Some(fname.to_string());
             }
         }
@@ -707,7 +846,10 @@ ruletype: Sigma
 "#;
 
         let rule: SigmaRule = serde_yaml::from_str(yaml_rule).expect("Must deserialize SigmaRule");
-        assert_eq!(rule.tags, vec!["attack.discovery", "attack.t1082", "sysmon"]);
+        assert_eq!(
+            rule.tags,
+            vec!["attack.discovery", "attack.t1082", "sysmon"]
+        );
 
         let mut engine = SigmaEngine::new();
         let compiled = engine.compile_rule(rule).expect("Must compile rule");
@@ -727,7 +869,11 @@ ruletype: Sigma
         };
 
         let matches = engine.check(&event);
-        assert_eq!(matches.len(), 1, "Sysmon systeminfo execution rule must match");
+        assert_eq!(
+            matches.len(),
+            1,
+            "Sysmon systeminfo execution rule must match"
+        );
         assert_eq!(matches[0].title, "Suspicious Execution of Systeminfo");
         assert!(matches[0].tags.contains(&"attack.t1082".to_string()));
     }
@@ -764,7 +910,15 @@ ruletype: Sigma
 "#;
 
         let rule: SigmaRule = serde_yaml::from_str(yaml_rule).expect("Must deserialize SigmaRule");
-        assert_eq!(rule.tags, vec!["attack.privilege-escalation", "attack.discovery", "attack.t1033", "sysmon"]);
+        assert_eq!(
+            rule.tags,
+            vec![
+                "attack.privilege-escalation",
+                "attack.discovery",
+                "attack.t1033",
+                "sysmon"
+            ]
+        );
 
         let mut engine = SigmaEngine::new();
         let compiled = engine.compile_rule(rule).expect("Must compile rule");
@@ -785,7 +939,10 @@ ruletype: Sigma
 
         let matches = engine.check(&event);
         assert_eq!(matches.len(), 1, "Sysmon whoami /priv rule must match");
-        assert_eq!(matches[0].title, "Security Privileges Enumeration Via Whoami.EXE");
+        assert_eq!(
+            matches[0].title,
+            "Security Privileges Enumeration Via Whoami.EXE"
+        );
         assert!(matches[0].tags.contains(&"attack.t1033".to_string()));
     }
 
@@ -829,7 +986,11 @@ ruletype: Sigma
             causal_parent: None,
         };
         let matches = engine.check(&attacker_trap_event);
-        assert_eq!(matches.len(), 1, "Attacker accessing trap must be evaluated by Sigma");
+        assert_eq!(
+            matches.len(),
+            1,
+            "Attacker accessing trap must be evaluated by Sigma"
+        );
 
         // 2. Osoosi itself accessing deception honeypot trap -> MUST BE SKIPPED
         let osoosi_trap_event = HostSecurityEvent {
@@ -845,7 +1006,11 @@ ruletype: Sigma
             causal_parent: None,
         };
         let matches_self = engine.check(&osoosi_trap_event);
-        assert_eq!(matches_self.len(), 0, "Osoosi self-activity in traps must be skipped by Sigma");
+        assert_eq!(
+            matches_self.len(),
+            0,
+            "Osoosi self-activity in traps must be skipped by Sigma"
+        );
 
         // 3. Process running from internal agent directory (runs/database/logs) -> MUST BE SKIPPED
         let internal_agent_event = HostSecurityEvent {
@@ -861,6 +1026,10 @@ ruletype: Sigma
             causal_parent: None,
         };
         let matches_internal = engine.check(&internal_agent_event);
-        assert_eq!(matches_internal.len(), 0, "Internal agent directory activity must be skipped by Sigma");
+        assert_eq!(
+            matches_internal.len(),
+            0,
+            "Internal agent directory activity must be skipped by Sigma"
+        );
     }
 }

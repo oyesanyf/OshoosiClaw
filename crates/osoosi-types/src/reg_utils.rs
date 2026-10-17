@@ -37,7 +37,10 @@ pub fn normalize_registry_path(path: &str) -> String {
     // 4. Handle HKCU (HKEY_CURRENT_USER is usually \Registry\User\SID)
     // If it's Hku but has _Classes, it's HKCU Classes
     if normalized.starts_with("hku\\") && normalized.contains("_classes") {
-        normalized = "hkcu\\software\\classes".to_string() + &normalized.split("_classes").last().unwrap_or("");
+        normalized = format!(
+            "hkcu\\software\\classes{}",
+            normalized.split("_classes").last().unwrap_or("")
+        );
     }
 
     normalized

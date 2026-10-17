@@ -62,28 +62,34 @@ impl ThreatCorrelator {
                 source_technique_id: "AML.T0051".to_string(),
                 target_technique_id: "AML.T0016".to_string(),
                 step_type: AttackStepType::PrivilegeEscalation,
-                correlation_rationale: "Prompt injection redirects agent to request elevated delegation".to_string(),
+                correlation_rationale:
+                    "Prompt injection redirects agent to request elevated delegation".to_string(),
             },
             // Obtain Capabilities -> Lateral Movement
             AtlasTechniqueRelationship {
                 source_technique_id: "AML.T0016".to_string(),
                 target_technique_id: "AML.T0034".to_string(),
                 step_type: AttackStepType::LateralMovement,
-                correlation_rationale: "Elevated capability allows invoking peer arm endpoints across the swarm".to_string(),
+                correlation_rationale:
+                    "Elevated capability allows invoking peer arm endpoints across the swarm"
+                        .to_string(),
             },
             // Lateral Movement -> Exfiltration
             AtlasTechniqueRelationship {
                 source_technique_id: "AML.T0034".to_string(),
                 target_technique_id: "AML.T0024".to_string(),
                 step_type: AttackStepType::EgressExfiltration,
-                correlation_rationale: "Compromised peer arm with network capability attempts exfiltration".to_string(),
+                correlation_rationale:
+                    "Compromised peer arm with network capability attempts exfiltration".to_string(),
             },
             // Lateral Movement -> Escape to Host
             AtlasTechniqueRelationship {
                 source_technique_id: "AML.T0034".to_string(),
                 target_technique_id: "AML.T0000".to_string(),
                 step_type: AttackStepType::PersistenceAttempt,
-                correlation_rationale: "Compromised arm attempts to escape sandbox into host operating system".to_string(),
+                correlation_rationale:
+                    "Compromised arm attempts to escape sandbox into host operating system"
+                        .to_string(),
             },
         ];
 
@@ -120,7 +126,11 @@ impl ThreatCorrelator {
             let mut current_tech = "AML.T0051";
             let mut step_num = 2;
 
-            while let Some(rel) = self.known_relationships.iter().find(|r| r.source_technique_id == current_tech) {
+            while let Some(rel) = self
+                .known_relationships
+                .iter()
+                .find(|r| r.source_technique_id == current_tech)
+            {
                 steps.push(AttackStep {
                     step_number: step_num,
                     step_type: rel.step_type.clone(),
@@ -131,7 +141,9 @@ impl ThreatCorrelator {
                 });
                 current_tech = &rel.target_technique_id;
                 step_num += 1;
-                if step_num > 4 { break; }
+                if step_num > 4 {
+                    break;
+                }
             }
 
             synthesized_chains.push(CandidateAttackChain {
@@ -139,7 +151,8 @@ impl ThreatCorrelator {
                 name: "ATLAS Correlated Prompt Injection to Host Escape / Exfiltration".to_string(),
                 target_asset: "Host Operating System & Protected Accounting Records".to_string(),
                 steps,
-                estimated_blast_radius: "Critical: Potential full swarm and host process compromise".to_string(),
+                estimated_blast_radius:
+                    "Critical: Potential full swarm and host process compromise".to_string(),
             });
         }
 

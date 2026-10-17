@@ -258,16 +258,19 @@ fn trigger_kill(state: &WatchdogState, reason: &str) {
     // Log to Windows Event Log or syslog before dying
     #[cfg(target_os = "windows")]
     {
-        use windows::Win32::System::EventLog::*;
         use windows::core::PCWSTR;
+        use windows::Win32::System::EventLog::*;
 
         unsafe {
-            let handle = RegisterEventSourceW(None, PCWSTR::from_raw(windows::core::w!("OsoosiWatchdog").as_ptr()));
+            let handle = RegisterEventSourceW(
+                None,
+                PCWSTR::from_raw(windows::core::w!("OsoosiWatchdog").as_ptr()),
+            );
             if let Ok(h) = handle {
                 let msg = format!("Watchdog kill-switch triggered: {}", reason);
                 let w_msg: Vec<u16> = msg.encode_utf16().chain(std::iter::once(0)).collect();
                 let strings = [PCWSTR::from_raw(w_msg.as_ptr())];
-                
+
                 let _ = ReportEventW(
                     h,
                     EVENTLOG_ERROR_TYPE,
@@ -433,7 +436,7 @@ fn open_serial_port(port: &str, baud_rate: u32) -> anyhow::Result<SerialHandle> 
         .open(&path)?;
 
     let handle = windows::Win32::Foundation::HANDLE(file.as_raw_handle());
-    
+
     unsafe {
         let mut dcb = DCB::default();
         dcb.DCBlength = std::mem::size_of::<DCB>() as u32;
@@ -481,18 +484,26 @@ fn open_serial_port(port: &str, baud_rate: u32) -> anyhow::Result<SerialHandle> 
             };
             libc::cfsetispeed(&mut termios, speed);
             libc::cfsetospeed(&mut termios, speed);
-            
+
             termios.c_cflag |= libc::CLOCAL | libc::CREAD;
             termios.c_cflag &= !libc::CSIZE;
             termios.c_cflag |= libc::CS8;
             termios.c_cflag &= !libc::PARENB;
             termios.c_cflag &= !libc::CSTOPB;
             termios.c_cflag &= !libc::CRTSCTS;
-            
-            termios.c_iflag &= !(libc::IGNBRK | libc::BRKINT | libc::PARMRK | libc::ISTRIP | libc::INLCR | libc::IGNCR | libc::ICRNL | libc::IXON);
-            termios.c_lflag &= !(libc::ECHO | libc::ECHONL | libc::ICANON | libc::ISIG | libc::IEXTEN);
+
+            termios.c_iflag &= !(libc::IGNBRK
+                | libc::BRKINT
+                | libc::PARMRK
+                | libc::ISTRIP
+                | libc::INLCR
+                | libc::IGNCR
+                | libc::ICRNL
+                | libc::IXON);
+            termios.c_lflag &=
+                !(libc::ECHO | libc::ECHONL | libc::ICANON | libc::ISIG | libc::IEXTEN);
             termios.c_oflag &= !libc::OPOST;
-            
+
             termios.c_cc[libc::VMIN] = 0;
             termios.c_cc[libc::VTIME] = 10; // 1s timeout
 

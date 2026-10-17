@@ -14,10 +14,10 @@ use hmac::{Hmac, Mac};
 use rand::RngCore;
 use serde::{Deserialize, Serialize};
 use sha2::Sha256;
-use subtle::ConstantTimeEq;
 use std::collections::VecDeque;
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::Arc;
+use subtle::ConstantTimeEq;
 use tokio::sync::RwLock;
 
 type HmacSha256 = Hmac<Sha256>;
@@ -93,11 +93,14 @@ impl AgentContainmentRing {
     /// Gets or initializes an agent's generation epoch and signing key.
     pub fn get_or_create_epoch(&self, agent_id: &str) -> (u64, [u8; 32]) {
         let epoch = *self.agent_epochs.entry(agent_id.to_string()).or_insert(1);
-        let key = *self.agent_keys.entry(agent_id.to_string()).or_insert_with(|| {
-            let mut k = [0u8; 32];
-            rand::thread_rng().fill_bytes(&mut k);
-            k
-        });
+        let key = *self
+            .agent_keys
+            .entry(agent_id.to_string())
+            .or_insert_with(|| {
+                let mut k = [0u8; 32];
+                rand::thread_rng().fill_bytes(&mut k);
+                k
+            });
         (epoch, key)
     }
 
@@ -109,7 +112,13 @@ impl AgentContainmentRing {
     /// Signs an inter-agent message payload bound to the agent's current generation epoch.
     pub fn sign_message(&self, agent_id: &str, role: &str, payload: &str) -> (u64, String) {
         let (epoch, key) = self.get_or_create_epoch(agent_id);
-        let sign_data = format!("{}:{}:{}:{}", agent_id, epoch, role.to_ascii_lowercase(), payload);
+        let sign_data = format!(
+            "{}:{}:{}:{}",
+            agent_id,
+            epoch,
+            role.to_ascii_lowercase(),
+            payload
+        );
         let hmac_bytes = compute_ring_hmac(&key, sign_data.as_bytes());
         (epoch, hex::encode(hmac_bytes))
     }
@@ -138,7 +147,9 @@ impl AgentContainmentRing {
         let lower_sink = target_sink.to_ascii_lowercase();
 
         if (lower_role == "untrusted" || lower_role == "worker" || lower_role == "tainted")
-            && (lower_sink.contains("ledger") || lower_sink.contains("policy") || lower_sink.contains("admin"))
+            && (lower_sink.contains("ledger")
+                || lower_sink.contains("policy")
+                || lower_sink.contains("admin"))
         {
             return Err(format!(
                 "Lateral movement blocked: Role '{}' forbidden from accessing privileged sink '{}'",
@@ -156,8 +167,8 @@ impl AgentContainmentRing {
             compute_ring_hmac(&key, sign_data.as_bytes())
         };
 
-        let provided_bytes = hex::decode(signature_hex)
-            .map_err(|e| format!("Invalid hex signature: {}", e))?;
+        let provided_bytes =
+            hex::decode(signature_hex).map_err(|e| format!("Invalid hex signature: {}", e))?;
 
         if provided_bytes.len() != 32 {
             return Err("Invalid signature length".to_string());
@@ -208,9 +219,15 @@ impl AgentContainmentRing {
                     }
                     let res = cmd.status();
                     if res.map(|s| s.success()).unwrap_or(false) {
-                        format!("Terminated rogue child PID {} & advanced epoch {} -> {}", pid, old_epoch, new_epoch)
+                        format!(
+                            "Terminated rogue child PID {} & advanced epoch {} -> {}",
+                            pid, old_epoch, new_epoch
+                        )
                     } else {
-                        format!("Advanced epoch {} -> {} (child PID {} could not be terminated)", old_epoch, new_epoch, pid)
+                        format!(
+                            "Advanced epoch {} -> {} (child PID {} could not be terminated)",
+                            old_epoch, new_epoch, pid
+                        )
                     }
                 }
                 #[cfg(not(target_os = "windows"))]
@@ -218,13 +235,22 @@ impl AgentContainmentRing {
                     unsafe {
                         libc::kill(pid as i32, libc::SIGKILL);
                     }
-                    format!("Terminated rogue child PID {} & advanced epoch {} -> {}", pid, old_epoch, new_epoch)
+                    format!(
+                        "Terminated rogue child PID {} & advanced epoch {} -> {}",
+                        pid, old_epoch, new_epoch
+                    )
                 }
             } else {
-                format!("Advanced epoch {} -> {} (system PID {} protected)", old_epoch, new_epoch, pid)
+                format!(
+                    "Advanced epoch {} -> {} (system PID {} protected)",
+                    old_epoch, new_epoch, pid
+                )
             }
         } else {
-            format!("Advanced epoch {} -> {} (capabilities severed)", old_epoch, new_epoch)
+            format!(
+                "Advanced epoch {} -> {} (capabilities severed)",
+                old_epoch, new_epoch
+            )
         };
 
         // Record audit entry
@@ -254,7 +280,8 @@ impl AgentContainmentRing {
         risk_code: &str,
         reason: &str,
     ) {
-        self.mesh_watchout_broadcasts.fetch_add(1, Ordering::Relaxed);
+        self.mesh_watchout_broadcasts
+            .fetch_add(1, Ordering::Relaxed);
         let current_epoch = self.get_current_epoch(agent_id);
 
         let watchout_entry = serde_json::json!({
@@ -322,15 +349,19 @@ mod tests {
         assert_eq!(epoch, 1);
 
         // Verification succeeds at Gen 1
-        let verify_res = ring.verify_inter_agent_message(agent_id, epoch, role, "data_sink", payload, &sig);
+        let verify_res =
+            ring.verify_inter_agent_message(agent_id, epoch, role, "data_sink", payload, &sig);
         assert!(verify_res.is_ok());
 
         // Surgical autotomy advances epoch: Gen 1 -> Gen 2
-        let new_epoch = ring.sever_rogue_agent_branch(agent_id, "Triggered test autotomy", None).await;
+        let new_epoch = ring
+            .sever_rogue_agent_branch(agent_id, "Triggered test autotomy", None)
+            .await;
         assert_eq!(new_epoch, 2);
 
         // Verification with stale Gen 1 message fails!
-        let stale_res = ring.verify_inter_agent_message(agent_id, epoch, role, "data_sink", payload, &sig);
+        let stale_res =
+            ring.verify_inter_agent_message(agent_id, epoch, role, "data_sink", payload, &sig);
         assert!(stale_res.is_err());
         assert!(stale_res.unwrap_err().contains("Stale generation epoch"));
     }
@@ -342,7 +373,14 @@ mod tests {
         let (epoch, sig) = ring.sign_message(agent_id, "untrusted", "transfer funds");
 
         // Attempting to message privileged ledger sink is blocked
-        let res = ring.verify_inter_agent_message(agent_id, epoch, "untrusted", "AccountingLedgerWrite", "transfer funds", &sig);
+        let res = ring.verify_inter_agent_message(
+            agent_id,
+            epoch,
+            "untrusted",
+            "AccountingLedgerWrite",
+            "transfer funds",
+            &sig,
+        );
         assert!(res.is_err());
         assert!(res.unwrap_err().contains("Lateral movement blocked"));
     }

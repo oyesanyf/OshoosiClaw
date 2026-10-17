@@ -28,6 +28,12 @@ pub struct ConfidentialOrchestrator {
     pub client_key: tfhe::ClientKey,
 }
 
+impl Default for ConfidentialOrchestrator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl ConfidentialOrchestrator {
     pub fn new() -> Self {
         let config = ConfigBuilder::default_with_big_encryption().build();
@@ -76,8 +82,12 @@ impl ConfidentialOrchestrator {
     /// This ensures that the collective intelligence is shared without leaking individual node contributions.
     pub fn finalize_with_dp(&self, tally: FheUint32, count: u32, epsilon: f32) -> f32 {
         let raw_sum: u32 = tally.decrypt(&self.client_key);
-        let avg = if count > 0 { raw_sum as f32 / count as f32 } else { 0.0 };
-        
+        let avg = if count > 0 {
+            raw_sum as f32 / count as f32
+        } else {
+            0.0
+        };
+
         // Apply Laplace noise from osoosi-dp
         let dp_config = osoosi_dp::PrivacyConfig {
             epsilon,

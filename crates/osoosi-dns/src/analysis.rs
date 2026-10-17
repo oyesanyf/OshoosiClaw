@@ -34,7 +34,10 @@ pub fn analyze_domain(domain: &str) -> DnsAnalysis {
     let max_label_len = labels.iter().map(|l| l.len()).max().unwrap_or(0);
 
     // --- 1. Known Darknet TLDs ---
-    if domain_lower.ends_with(".onion") || domain_lower.ends_with(".i2p") || domain_lower.ends_with(".bit") {
+    if domain_lower.ends_with(".onion")
+        || domain_lower.ends_with(".i2p")
+        || domain_lower.ends_with(".bit")
+    {
         return DnsAnalysis {
             domain: domain_lower,
             verdict: DnsVerdict::Block,
@@ -46,7 +49,11 @@ pub fn analyze_domain(domain: &str) -> DnsAnalysis {
     }
 
     // --- 2. DGA Detection via Shannon Entropy ---
-    let sld = if labels.len() >= 2 { labels[labels.len() - 2].to_string() } else { domain_lower.clone() };
+    let sld = if labels.len() >= 2 {
+        labels[labels.len() - 2].to_string()
+    } else {
+        domain_lower.clone()
+    };
     let entropy = shannon_entropy(&sld);
 
     if entropy > 4.0 && sld.len() > 10 {
@@ -82,13 +89,19 @@ pub fn analyze_domain(domain: &str) -> DnsAnalysis {
             entropy,
             label_count,
             max_label_len,
-            reason: format!("Unusual subdomain depth: {} labels. Possible DNS tunneling or beaconing.", label_count),
+            reason: format!(
+                "Unusual subdomain depth: {} labels. Possible DNS tunneling or beaconing.",
+                label_count
+            ),
         };
     }
 
     // --- 4. Suspicious entropy (moderate) ---
     if entropy > 3.5 && sld.len() > 8 {
-        let reason = format!("Elevated entropy {:.2} for SLD '{}'. Monitor for DGA patterns.", entropy, sld);
+        let reason = format!(
+            "Elevated entropy {:.2} for SLD '{}'. Monitor for DGA patterns.",
+            entropy, sld
+        );
         return DnsAnalysis {
             domain: domain_lower,
             verdict: DnsVerdict::Suspicious,
@@ -126,7 +139,11 @@ pub fn shannon_entropy(s: &str) -> f64 {
     freq.values()
         .map(|count| {
             let p = count / len;
-            if p > 0.0 { -p * p.log2() } else { 0.0 }
+            if p > 0.0 {
+                -p * p.log2()
+            } else {
+                0.0
+            }
         })
         .sum()
 }

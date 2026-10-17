@@ -1,6 +1,6 @@
 use osoosi_dp::{DifferentialPrivacy, PrivacyConfig};
-use osoosi_types::{GlobalIntelligence, ThreatSignature, MerkleProof};
 use osoosi_trust::TrustManager;
+use osoosi_types::{GlobalIntelligence, MerkleProof, ThreatSignature};
 use std::sync::Arc;
 use tracing::info;
 
@@ -62,7 +62,11 @@ impl PrivacyLayer {
     }
 
     /// Partially Homomorphic Encryption (PHE) wrap for numeric aggregation.
-    pub fn encrypt_for_aggregation(&self, value: u64, public_key: &osoosi_dp::homomorphic::PaillierPublicKey) -> osoosi_dp::homomorphic::EncryptedValue {
+    pub fn encrypt_for_aggregation(
+        &self,
+        value: u64,
+        public_key: &osoosi_dp::homomorphic::PaillierPublicKey,
+    ) -> osoosi_dp::homomorphic::EncryptedValue {
         osoosi_dp::homomorphic::encrypt(public_key, value)
     }
 }

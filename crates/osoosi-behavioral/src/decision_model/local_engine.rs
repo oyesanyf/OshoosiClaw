@@ -1,6 +1,6 @@
 use super::models::{
-    BoolAnswer, ChoiceAnswer, DecisionAnswer, DecisionRequest, DecisionResponse, QuestionDefinition,
-    QuestionType, ScoreAnswer,
+    BoolAnswer, ChoiceAnswer, DecisionAnswer, DecisionRequest, DecisionResponse,
+    QuestionDefinition, QuestionType, ScoreAnswer,
 };
 use anyhow::Result;
 use serde::{Deserialize, Serialize};
@@ -193,10 +193,20 @@ impl LocalDecisionEngine {
     /// precision receives maximum reward, and distribution drift is penalized.
     pub fn record_rl_feedback(&self, decision_id: &str, reward: f64, actual_outcome: &str) {
         let actual_clean = actual_outcome.trim().to_lowercase();
-        let prev_outcome = self.rl_feedback_history.get(decision_id).map(|entry| entry.value().1.clone());
+        let prev_outcome = self
+            .rl_feedback_history
+            .get(decision_id)
+            .map(|entry| entry.value().1.clone());
 
         let verdict_order = ["benign", "suspicious", "malicious", "critical_emergency"];
-        let action_order = ["allow", "alert", "tarpit", "ghost_tarpit", "isolate", "defer_to_operator"];
+        let action_order = [
+            "allow",
+            "alert",
+            "tarpit",
+            "ghost_tarpit",
+            "isolate",
+            "defer_to_operator",
+        ];
 
         let multiplier = if let Some(ref prev) = prev_outcome {
             let prev_clean = prev.to_lowercase();
@@ -253,20 +263,29 @@ impl LocalDecisionEngine {
         if self.rl_feedback_history.len() > 10_000 {
             self.rl_feedback_history.clear();
         }
-        self.rl_feedback_history.insert(decision_id.to_string(), (effective_reward, actual_clean));
+        self.rl_feedback_history
+            .insert(decision_id.to_string(), (effective_reward, actual_clean));
         self.rl_feedback_count.fetch_add(1, Ordering::Relaxed);
         let fixed_reward = (effective_reward * 1000.0) as i64;
-        self.cumulative_rl_reward_fixed.fetch_add(fixed_reward, Ordering::Relaxed);
+        self.cumulative_rl_reward_fixed
+            .fetch_add(fixed_reward, Ordering::Relaxed);
 
         tracing::info!(
             "[DECISION-RLCD] Recorded feedback for {}: reward={:.2}, effective={:.2}, outcome='{}'",
-            decision_id, reward, effective_reward, actual_outcome
+            decision_id,
+            reward,
+            effective_reward,
+            actual_outcome
         );
 
         // Persist RL feedback state to survive restarts
         let state = RlFeedbackState {
             temperature_delta: self.temperature_delta.load(Ordering::Relaxed),
-            logit_biases: self.logit_biases.iter().map(|kv| (kv.key().clone(), *kv.value())).collect(),
+            logit_biases: self
+                .logit_biases
+                .iter()
+                .map(|kv| (kv.key().clone(), *kv.value()))
+                .collect(),
             feedback_count: self.rl_feedback_count.load(Ordering::Relaxed),
         };
         let target_path = if self.model_dir.exists() {
@@ -354,9 +373,14 @@ impl LocalDecisionEngine {
                     let matches_process = process_name == *token
                         || process_name.ends_with(&format!("\\{}", token))
                         || process_name.ends_with(&format!("/{}", token))
-                        || (token == "python" && (process_name == "python.exe" || process_name == "python3.exe" || process_name.contains("python")))
-                        || (token == "python3" && (process_name == "python3.exe" || process_name.contains("python3")))
-                        || (token == "pythonsoftwarefoundation" && process_name.contains("pythonsoftwarefoundation"));
+                        || (token == "python"
+                            && (process_name == "python.exe"
+                                || process_name == "python3.exe"
+                                || process_name.contains("python")))
+                        || (token == "python3"
+                            && (process_name == "python3.exe" || process_name.contains("python3")))
+                        || (token == "pythonsoftwarefoundation"
+                            && process_name.contains("pythonsoftwarefoundation"));
                     if matches_process {
                         ben_score += weight;
                     }
@@ -404,11 +428,18 @@ impl LocalDecisionEngine {
         for (q_name, q_def) in &request.questions {
             match q_def.question_type {
                 QuestionType::Choice => {
-                    let ans = self.evaluate_choice(q_name, q_def, mal_score, ben_score, &state_lower);
+                    let ans =
+                        self.evaluate_choice(q_name, q_def, mal_score, ben_score, &state_lower);
                     answers.insert(q_name.clone(), DecisionAnswer::from_choice(ans));
                 }
                 QuestionType::Bool => {
-                    let ans = self.evaluate_bool(q_name, mal_score, ben_score, &state_lower, injection_detected);
+                    let ans = self.evaluate_bool(
+                        q_name,
+                        mal_score,
+                        ben_score,
+                        &state_lower,
+                        injection_detected,
+                    );
                     answers.insert(q_name.clone(), DecisionAnswer::from_bool(ans));
                 }
                 QuestionType::Score => {
@@ -470,7 +501,8 @@ impl LocalDecisionEngine {
             for c in &classes {
                 let logit = match c.as_str() {
                     "benign" => {
-                        let is_unsigned = state_lower.contains("signed: false") || state_lower.contains("issigned: false");
+                        let is_unsigned = state_lower.contains("signed: false")
+                            || state_lower.contains("issigned: false");
                         if mal_score > 3.0 {
                             -mal_score
                         } else if is_unsigned && mal_score >= 1.5 && ben_score < 2.5 {
@@ -526,7 +558,6 @@ impl LocalDecisionEngine {
                             -0.5
                         } else if mal_score > 1.0 {
                             1.5
-
                         } else {
                             0.5
                         }
@@ -598,7 +629,9 @@ impl LocalDecisionEngine {
         let prob: f64 = if q_name == "human_escalation" {
             if injection_detected {
                 1.0
-            } else if state_lower.contains("defer") || (mal_score > 2.0 && mal_score < 4.0 && ben_score > 1.5) {
+            } else if state_lower.contains("defer")
+                || (mal_score > 2.0 && mal_score < 4.0 && ben_score > 1.5)
+            {
                 0.85
             } else if mal_score >= 6.0 {
                 // High confidence automated attack containment does not stall for human
@@ -635,16 +668,15 @@ impl LocalDecisionEngine {
         mal_score: f64,
         _ben_score: f64,
     ) -> ScoreAnswer {
-        let levels = q_def
-            .score_levels
-            .clone()
-            .unwrap_or_else(|| vec![
+        let levels = q_def.score_levels.clone().unwrap_or_else(|| {
+            vec![
                 "None".to_string(),
                 "Low".to_string(),
                 "Medium".to_string(),
                 "High".to_string(),
                 "Critical".to_string(),
-            ]);
+            ]
+        });
 
         let mut logits = Vec::with_capacity(levels.len());
         for lvl in &levels {
@@ -657,21 +689,21 @@ impl LocalDecisionEngine {
                     }
                 }
                 "Low" => {
-                    if mal_score >= 1.0 && mal_score < 2.5 {
+                    if (1.0..2.5).contains(&mal_score) {
                         2.5
                     } else {
                         0.0
                     }
                 }
                 "Medium" => {
-                    if mal_score >= 2.5 && mal_score < 4.5 {
+                    if (2.5..4.5).contains(&mal_score) {
                         3.0
                     } else {
                         0.5
                     }
                 }
                 "High" => {
-                    if mal_score >= 4.5 && mal_score < 7.0 {
+                    if (4.5..7.0).contains(&mal_score) {
                         4.0
                     } else {
                         1.0
@@ -739,8 +771,8 @@ impl LocalDecisionEngine {
 
 #[cfg(test)]
 mod tests {
-    use super::*;
     use super::super::models::{build_security_incident_request, parse_security_incident_response};
+    use super::*;
 
     #[test]
     fn test_local_engine_blocks_token_spoofing_and_prompt_injection() {
@@ -766,7 +798,9 @@ mod tests {
         let decision_inj = parse_security_incident_response(&resp_inj);
 
         assert_ne!(decision_inj.verdict, "benign");
-        assert!(decision_inj.human_escalation_required, "Prompt injection must require human escalation!");
+        assert!(
+            decision_inj.human_escalation_required,
+            "Prompt injection must require human escalation!"
+        );
     }
 }
-

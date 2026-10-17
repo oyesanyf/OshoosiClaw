@@ -18,23 +18,47 @@ pub const fn ctl_code(device_type: u32, function: u32, method: u32, access: u32)
     (device_type << 16) | (access << 14) | (function << 2) | method
 }
 
-pub const IOCTL_OSOOSI_GET_STATUS: u32 =
-    ctl_code(FILE_DEVICE_UNKNOWN, OSOOSI_IOCTL_BASE + 0, METHOD_BUFFERED, FILE_ANY_ACCESS);
+pub const IOCTL_OSOOSI_GET_STATUS: u32 = ctl_code(
+    FILE_DEVICE_UNKNOWN,
+    OSOOSI_IOCTL_BASE,
+    METHOD_BUFFERED,
+    FILE_ANY_ACCESS,
+);
 
-pub const IOCTL_OSOOSI_SET_MODE: u32 =
-    ctl_code(FILE_DEVICE_UNKNOWN, OSOOSI_IOCTL_BASE + 1, METHOD_BUFFERED, FILE_WRITE_ACCESS);
+pub const IOCTL_OSOOSI_SET_MODE: u32 = ctl_code(
+    FILE_DEVICE_UNKNOWN,
+    OSOOSI_IOCTL_BASE + 1,
+    METHOD_BUFFERED,
+    FILE_WRITE_ACCESS,
+);
 
-pub const IOCTL_OSOOSI_ADD_BLOCK_PATH: u32 =
-    ctl_code(FILE_DEVICE_UNKNOWN, OSOOSI_IOCTL_BASE + 2, METHOD_BUFFERED, FILE_ANY_ACCESS);
+pub const IOCTL_OSOOSI_ADD_BLOCK_PATH: u32 = ctl_code(
+    FILE_DEVICE_UNKNOWN,
+    OSOOSI_IOCTL_BASE + 2,
+    METHOD_BUFFERED,
+    FILE_ANY_ACCESS,
+);
 
-pub const IOCTL_OSOOSI_ADD_BLOCK_HASH: u32 =
-    ctl_code(FILE_DEVICE_UNKNOWN, OSOOSI_IOCTL_BASE + 3, METHOD_BUFFERED, FILE_ANY_ACCESS);
+pub const IOCTL_OSOOSI_ADD_BLOCK_HASH: u32 = ctl_code(
+    FILE_DEVICE_UNKNOWN,
+    OSOOSI_IOCTL_BASE + 3,
+    METHOD_BUFFERED,
+    FILE_ANY_ACCESS,
+);
 
-pub const IOCTL_OSOOSI_CLEAR_RULES: u32 =
-    ctl_code(FILE_DEVICE_UNKNOWN, OSOOSI_IOCTL_BASE + 4, METHOD_BUFFERED, FILE_WRITE_ACCESS);
+pub const IOCTL_OSOOSI_CLEAR_RULES: u32 = ctl_code(
+    FILE_DEVICE_UNKNOWN,
+    OSOOSI_IOCTL_BASE + 4,
+    METHOD_BUFFERED,
+    FILE_WRITE_ACCESS,
+);
 
-pub const IOCTL_OSOOSI_POLL_INTERCEPTIONS: u32 =
-    ctl_code(FILE_DEVICE_UNKNOWN, OSOOSI_IOCTL_BASE + 5, METHOD_BUFFERED, FILE_ANY_ACCESS);
+pub const IOCTL_OSOOSI_POLL_INTERCEPTIONS: u32 = ctl_code(
+    FILE_DEVICE_UNKNOWN,
+    OSOOSI_IOCTL_BASE + 5,
+    METHOD_BUFFERED,
+    FILE_ANY_ACCESS,
+);
 
 pub const OSOOSI_USER_DEVICE_NAME: &str = r"\\.\OsoosiDriver";
 
@@ -207,7 +231,10 @@ impl KernelDriverClient {
 
             match handle {
                 Ok(h) if h != INVALID_HANDLE_VALUE => {
-                    info!("[KERNEL_DRIVER] Successfully connected to Ring-0 driver at {}", OSOOSI_USER_DEVICE_NAME);
+                    info!(
+                        "[KERNEL_DRIVER] Successfully connected to Ring-0 driver at {}",
+                        OSOOSI_USER_DEVICE_NAME
+                    );
                     Some(Self {
                         handle: Arc::new(SafeHandle(h)),
                     })
@@ -330,7 +357,10 @@ impl KernelDriverClient {
                     None,
                 )?;
             }
-            info!("[KERNEL_DRIVER] Added pre-exec block rule for path: {}", path);
+            info!(
+                "[KERNEL_DRIVER] Added pre-exec block rule for path: {}",
+                path
+            );
             Ok(())
         }
         #[cfg(not(windows))]
@@ -360,7 +390,10 @@ impl KernelDriverClient {
                     None,
                 )?;
             }
-            info!("[KERNEL_DRIVER] Added pre-exec block rule for hash: {}", hex::encode(hash_bytes));
+            info!(
+                "[KERNEL_DRIVER] Added pre-exec block rule for hash: {}",
+                hex::encode(hash_bytes)
+            );
             Ok(())
         }
         #[cfg(not(windows))]
@@ -423,10 +456,18 @@ impl KernelDriverClient {
             let mut results = Vec::with_capacity(count);
 
             for raw in raw_events.iter().take(count) {
-                let img_len = raw.image_path.iter().position(|&c| c == 0).unwrap_or(raw.image_path.len());
+                let img_len = raw
+                    .image_path
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(raw.image_path.len());
                 let image_path = String::from_utf16_lossy(&raw.image_path[..img_len]);
 
-                let cmd_len = raw.command_line.iter().position(|&c| c == 0).unwrap_or(raw.command_line.len());
+                let cmd_len = raw
+                    .command_line
+                    .iter()
+                    .position(|&c| c == 0)
+                    .unwrap_or(raw.command_line.len());
                 let command_line = String::from_utf16_lossy(&raw.command_line[..cmd_len]);
 
                 results.push(KernelInterceptEvent {
@@ -449,6 +490,7 @@ impl KernelDriverClient {
 }
 
 #[cfg(test)]
+#[allow(clippy::field_reassign_with_default)]
 mod tests {
     use super::*;
 
@@ -497,11 +539,19 @@ mod tests {
         let cmd_utf16: Vec<u16> = "dropper.exe -silent".encode_utf16().collect();
         raw.command_line[..cmd_utf16.len()].copy_from_slice(&cmd_utf16);
 
-        let img_len = raw.image_path.iter().position(|&c| c == 0).unwrap_or(raw.image_path.len());
+        let img_len = raw
+            .image_path
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(raw.image_path.len());
         let image = String::from_utf16_lossy(&raw.image_path[..img_len]);
         assert_eq!(image, "C:\\malware\\dropper.exe");
 
-        let cmd_len = raw.command_line.iter().position(|&c| c == 0).unwrap_or(raw.command_line.len());
+        let cmd_len = raw
+            .command_line
+            .iter()
+            .position(|&c| c == 0)
+            .unwrap_or(raw.command_line.len());
         let cmd = String::from_utf16_lossy(&raw.command_line[..cmd_len]);
         assert_eq!(cmd, "dropper.exe -silent");
     }

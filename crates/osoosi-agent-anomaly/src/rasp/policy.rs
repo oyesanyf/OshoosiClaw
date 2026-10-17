@@ -1,22 +1,19 @@
-use super::context::{AgentSecuritySubject, AgentTrustTier, RaspDecision, RaspThreatCategory, TaintLevel};
+use super::context::{
+    AgentSecuritySubject, AgentTrustTier, RaspDecision, RaspThreatCategory, TaintLevel,
+};
 use serde::{Deserialize, Serialize};
 use std::collections::{HashMap, HashSet};
 use std::sync::RwLock;
 
 /// Progressive mitigation levels in the RT-ASP dynamic mitigation ladder.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, PartialOrd, Ord, Serialize, Deserialize, Default)]
 pub enum AdaptiveMitigationTier {
     Level0Monitor = 0,
+    #[default]
     Level1Sanitize = 1,
     Level2SyntheticDecoy = 2,
     Level3TarpitStall = 3,
     Level4HardRevoke = 4,
-}
-
-impl Default for AdaptiveMitigationTier {
-    fn default() -> Self {
-        AdaptiveMitigationTier::Level1Sanitize
-    }
 }
 
 /// Configuration settings for the Real-Time Agentic Self-Protection Policy Engine.
@@ -72,17 +69,30 @@ impl Default for RaspCanaryManager {
 
 impl RaspCanaryManager {
     pub fn register_canary(&self, label: &str) -> String {
-        let token = format!("CANARY_OCTOPUS_{}_{:08x}", label.to_uppercase(), rand::random::<u32>());
-        let mut canaries = self.active_canaries.write().unwrap_or_else(|e| e.into_inner());
+        let token = format!(
+            "CANARY_OCTOPUS_{}_{:08x}",
+            label.to_uppercase(),
+            rand::random::<u32>()
+        );
+        let mut canaries = self
+            .active_canaries
+            .write()
+            .unwrap_or_else(|e| e.into_inner());
         canaries.insert(token.clone(), label.to_string());
         token
     }
 
     pub fn check_and_trip(&self, text: &str) -> Option<(String, String)> {
-        let canaries = self.active_canaries.read().unwrap_or_else(|e| e.into_inner());
+        let canaries = self
+            .active_canaries
+            .read()
+            .unwrap_or_else(|e| e.into_inner());
         for (token, label) in canaries.iter() {
             if text.contains(token) {
-                let mut compromised = self.compromised_canaries.write().unwrap_or_else(|e| e.into_inner());
+                let mut compromised = self
+                    .compromised_canaries
+                    .write()
+                    .unwrap_or_else(|e| e.into_inner());
                 compromised.insert(token.clone());
                 return Some((token.clone(), label.clone()));
             }
@@ -91,11 +101,17 @@ impl RaspCanaryManager {
     }
 
     pub fn is_compromised(&self, token: &str) -> bool {
-        self.compromised_canaries.read().unwrap_or_else(|e| e.into_inner()).contains(token)
+        self.compromised_canaries
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .contains(token)
     }
 
     pub fn compromised_count(&self) -> usize {
-        self.compromised_canaries.read().unwrap_or_else(|e| e.into_inner()).len()
+        self.compromised_canaries
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .len()
     }
 }
 
@@ -123,7 +139,10 @@ impl RaspPolicyEngine {
     }
 
     pub fn config(&self) -> RaspPolicyConfig {
-        self.config.read().unwrap_or_else(|e| e.into_inner()).clone()
+        self.config
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn set_mitigation_tier(&self, tier: AdaptiveMitigationTier) {
@@ -162,17 +181,16 @@ impl RaspPolicyEngine {
             AdaptiveMitigationTier::Level1Sanitize => {
                 // Return sanitized or denied based on category
                 match category {
-                    RaspThreatCategory::CredentialLeakage | RaspThreatCategory::ToolParameterTampering => {
-                        RaspDecision::Sanitize {
-                            modified_payload: serde_json::json!({
-                                "status": "sanitized_by_rt_asp",
-                                "original_reason": reason,
-                            }),
-                            redaction_count: 1,
-                            warnings: vec![reason.to_string()],
-                            threat_category: category,
-                        }
-                    }
+                    RaspThreatCategory::CredentialLeakage
+                    | RaspThreatCategory::ToolParameterTampering => RaspDecision::Sanitize {
+                        modified_payload: serde_json::json!({
+                            "status": "sanitized_by_rt_asp",
+                            "original_reason": reason,
+                        }),
+                        redaction_count: 1,
+                        warnings: vec![reason.to_string()],
+                        threat_category: category,
+                    },
                     _ => RaspDecision::Deny {
                         reason: reason.to_string(),
                         policy_id: policy_id.to_string(),
@@ -198,13 +216,11 @@ impl RaspPolicyEngine {
                     threat_category: category,
                 }
             }
-            AdaptiveMitigationTier::Level4HardRevoke => {
-                RaspDecision::Quarantine {
-                    agent_id: subject.agent_id.clone(),
-                    reason: format!("Hard revocation triggered: {}", reason),
-                    threat_category: category,
-                }
-            }
+            AdaptiveMitigationTier::Level4HardRevoke => RaspDecision::Quarantine {
+                agent_id: subject.agent_id.clone(),
+                reason: format!("Hard revocation triggered: {}", reason),
+                threat_category: category,
+            },
         }
     }
 
@@ -222,13 +238,15 @@ impl RaspPolicyEngine {
                 "scope": "read_telemetry_isolated",
                 "note": "Synthetic decoy generated by RT-ASP"
             }),
-            RaspThreatCategory::LateralCollusion | RaspThreatCategory::PrivilegeEscalation => serde_json::json!({
-                "transaction_status": "PENDING_HONEYPOT_VERIFICATION",
-                "decoy_ledger_id": format!("LEDGER_HONEY_{:08x}", rand::random::<u32>()),
-                "amount": 0,
-                "balance": 1000000,
-                "memo": "Decoy response. Action contained."
-            }),
+            RaspThreatCategory::LateralCollusion | RaspThreatCategory::PrivilegeEscalation => {
+                serde_json::json!({
+                    "transaction_status": "PENDING_HONEYPOT_VERIFICATION",
+                    "decoy_ledger_id": format!("LEDGER_HONEY_{:08x}", rand::random::<u32>()),
+                    "amount": 0,
+                    "balance": 1000000,
+                    "memo": "Decoy response. Action contained."
+                })
+            }
             _ => serde_json::json!({
                 "status": "ok",
                 "result": "Operation simulated within sandbox boundary",

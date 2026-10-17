@@ -57,19 +57,34 @@ struct ScoredRow {
 fn get_epss_score(client: &Client, cve_id: &str) -> Result<f64> {
     let url = format!("https://api.first.org/data/v1/epss?cve={}", cve_id);
     let json: serde_json::Value = client.get(url).send()?.json()?;
-    let epss = json["data"][0]["epss"].as_str().unwrap_or("0.01").parse::<f64>().unwrap_or(0.01);
+    let epss = json["data"][0]["epss"]
+        .as_str()
+        .unwrap_or("0.01")
+        .parse::<f64>()
+        .unwrap_or(0.01);
     Ok(epss)
 }
 
-fn get_nvd_enrichment(client: &Client, cve_id: &str, nvd_api_key: Option<&str>) -> Result<NvdEnrichment> {
-    let url = format!("https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={}", cve_id);
+fn get_nvd_enrichment(
+    client: &Client,
+    cve_id: &str,
+    nvd_api_key: Option<&str>,
+) -> Result<NvdEnrichment> {
+    let url = format!(
+        "https://services.nvd.nist.gov/rest/json/cves/2.0?cveId={}",
+        cve_id
+    );
     let mut request = client.get(url);
-    if let Some(key) = nvd_api_key { request = request.header("apiKey", key); }
+    if let Some(key) = nvd_api_key {
+        request = request.header("apiKey", key);
+    }
     let json: serde_json::Value = request.send()?.json()?;
     let mut enrichment = NvdEnrichment::default();
     if let Some(vuln) = json["vulnerabilities"].as_array().and_then(|v| v.first()) {
         let cve = &vuln["cve"];
-        enrichment.cvss_score = cve["metrics"]["cvssMetricV31"][0]["cvssData"]["baseScore"].as_f64().unwrap_or(0.0);
+        enrichment.cvss_score = cve["metrics"]["cvssMetricV31"][0]["cvssData"]["baseScore"]
+            .as_f64()
+            .unwrap_or(0.0);
         if let Some(config) = cve["configurations"].as_array().and_then(|c| c.first()) {
             if let Some(node) = config["nodes"].as_array().and_then(|n| n.first()) {
                 if let Some(cpe) = node["cpeMatch"][0]["criteria"].as_str() {
@@ -86,25 +101,55 @@ fn get_nvd_enrichment(client: &Client, cve_id: &str, nvd_api_key: Option<&str>) 
 }
 
 fn reward_reasoning_format(completion: &str) -> f64 {
-    let pattern = Regex::new(r"(?s)<reasoning>.*?</reasoning>\s*<score>\s*\d+\.?\d*\s*</score>").unwrap();
-    if pattern.is_match(completion) { 1.5 } else { 0.0 }
+    let pattern =
+        Regex::new(r"(?s)<reasoning>.*?</reasoning>\s*<score>\s*\d+\.?\d*\s*</score>").unwrap();
+    if pattern.is_match(completion) {
+        1.5
+    } else {
+        0.0
+    }
 }
 
 fn extract_score(completion: &str) -> Option<f64> {
     let pattern = Regex::new(r"<score>\s*([0-9.]+)\s*</score>").unwrap();
-    pattern.captures(completion)
+    pattern
+        .captures(completion)
         .and_then(|captures| captures.get(1))
         .and_then(|matched| matched.as_str().parse::<f64>().ok())
 }
 
 fn calculate_zero_day_score(signals: &ZeroDaySignals) -> f64 {
     let mut score: f64 = 0.0;
-    if let Some(f) = signals.fuzzing_crashes { if f > 0 { score += 3.0; } }
-    if let Some(t) = signals.taint_findings { if t > 0 { score += 2.0; } }
-    if let Some(s) = signals.symbolic_paths { if s > 0 { score += 2.0; } }
-    if let Some(v) = signals.sandbox_validated { if v { score += 3.0; } }
-    if let Some(d) = signals.crash_duplicates { if d > 10 { score -= 1.0; } } // High duplicates might mean lower novelty
-    if let Some(h) = signals.human_review_required { if h { score += 1.0; } }
+    if let Some(f) = signals.fuzzing_crashes {
+        if f > 0 {
+            score += 3.0;
+        }
+    }
+    if let Some(t) = signals.taint_findings {
+        if t > 0 {
+            score += 2.0;
+        }
+    }
+    if let Some(s) = signals.symbolic_paths {
+        if s > 0 {
+            score += 2.0;
+        }
+    }
+    if let Some(v) = signals.sandbox_validated {
+        if v {
+            score += 3.0;
+        }
+    }
+    if let Some(d) = signals.crash_duplicates {
+        if d > 10 {
+            score -= 1.0;
+        }
+    } // High duplicates might mean lower novelty
+    if let Some(h) = signals.human_review_required {
+        if h {
+            score += 1.0;
+        }
+    }
     score.min(10.0)
 }
 
@@ -123,18 +168,25 @@ fn main() -> Result<()> {
     }
 
     dotenvy::dotenv().ok();
-    let client = Client::builder().user_agent("oshoosi-auditor/0.1").build()?;
-    
+    let client = Client::builder()
+        .user_agent("oshoosi-auditor/0.1")
+        .build()?;
+
     let dataset_folder = "dataset";
     let output_path = "models/scored_dataset.json";
     let nvd_api_key = env::var("NVD_API_KEY").ok();
-    
-    if !Path::new(dataset_folder).exists() { fs::create_dir_all(dataset_folder)?; }
-    
+
+    if !Path::new(dataset_folder).exists() {
+        fs::create_dir_all(dataset_folder)?;
+    }
+
     println!("🔍 Starting Deep Dataset Crawl in: {}...", dataset_folder);
-    
+
     let mut rows = Vec::new();
-    for entry in WalkDir::new(dataset_folder).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(dataset_folder)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         let path = entry.path();
         if path.is_file() {
             let ext = path.extension().and_then(|s| s.to_str()).unwrap_or("");
@@ -181,7 +233,7 @@ fn main() -> Result<()> {
         let completion = row.completion.as_deref().unwrap_or("");
         let predicted_score = extract_score(completion);
         let format_reward = reward_reasoning_format(completion);
-        
+
         let cve_risk = (enrichment.cvss_score / 10.0) * (enrichment.epss_score * 10.0);
         let final_risk = (cve_risk + (zero_day_score / 10.0)).clamp(0.0, 1.0);
 
@@ -195,7 +247,13 @@ fn main() -> Result<()> {
             zero_day_score,
             final_risk_score: final_risk as f64,
             format_reward,
-            risk_label: if final_risk > 0.7 { "CRITICAL".into() } else if final_risk > 0.4 { "HIGH".into() } else { "LOW".into() },
+            risk_label: if final_risk > 0.7 {
+                "CRITICAL".into()
+            } else if final_risk > 0.4 {
+                "HIGH".into()
+            } else {
+                "LOW".into()
+            },
             explanation: "Auto-scored via NVD/EPSS/Signals".into(),
             product: enrichment.product,
             version: enrichment.version_range,
@@ -203,9 +261,12 @@ fn main() -> Result<()> {
             ..Default::default()
         });
     }
-    
+
     fs::create_dir_all("models")?;
     fs::write(output_path, serde_json::to_string_pretty(&scored_rows)?)?;
-    println!("✅ Scored {} rows. Clean build complete.", scored_rows.len());
+    println!(
+        "✅ Scored {} rows. Clean build complete.",
+        scored_rows.len()
+    );
     Ok(())
 }

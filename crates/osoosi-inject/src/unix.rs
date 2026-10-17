@@ -1,15 +1,15 @@
 //! Unix-like (Linux/macOS) Process Hooking Payload
 //!
-//! Uses LD_PRELOAD (Linux) or DYLD_INSERT_LIBRARIES (macOS) mechanics 
+//! Uses LD_PRELOAD (Linux) or DYLD_INSERT_LIBRARIES (macOS) mechanics
 //! to intercept standard libc functions. This gives Oshoosi inner-process
 //! telemetry and prevention capabilities on POSIX systems.
 
 #![allow(non_camel_case_types)]
 
+use lazy_static::lazy_static;
 use libc::{c_char, c_int, c_void, size_t, ssize_t};
 use std::ffi::CStr;
 use std::sync::Once;
-use lazy_static::lazy_static;
 
 // Definitions for dlsym
 extern "C" {
@@ -65,7 +65,11 @@ pub unsafe extern "C" fn execve(
 
     let ptr = REAL_EXECVE.load(Ordering::Acquire);
     if !ptr.is_null() {
-        let orig: extern "C" fn(*const c_char, *const *const c_char, *const *const c_char) -> c_int = std::mem::transmute(ptr);
+        let orig: extern "C" fn(
+            *const c_char,
+            *const *const c_char,
+            *const *const c_char,
+        ) -> c_int = std::mem::transmute(ptr);
         orig(path, argv, envp)
     } else {
         -1
@@ -85,7 +89,8 @@ pub unsafe extern "C" fn ptrace(
 
     let ptr = REAL_PTRACE.load(Ordering::Acquire);
     if !ptr.is_null() {
-        let orig: extern "C" fn(c_int, c_int, *mut c_void, *mut c_void) -> c_int = std::mem::transmute(ptr);
+        let orig: extern "C" fn(c_int, c_int, *mut c_void, *mut c_void) -> c_int =
+            std::mem::transmute(ptr);
         orig(request, pid, addr, data)
     } else {
         -1
@@ -105,7 +110,8 @@ pub unsafe extern "C" fn send(
 
     let ptr = REAL_SEND.load(Ordering::Acquire);
     if !ptr.is_null() {
-        let orig: extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t = std::mem::transmute(ptr);
+        let orig: extern "C" fn(c_int, *const c_void, size_t, c_int) -> ssize_t =
+            std::mem::transmute(ptr);
         orig(sockfd, buf, len, flags)
     } else {
         -1

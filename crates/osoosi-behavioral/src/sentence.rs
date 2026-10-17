@@ -44,8 +44,16 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             .or(event.data.get("Command"))
             .and_then(|v| v.as_str())
             .unwrap_or("");
-        let hashes = event.data.get("Hashes").and_then(|v| v.as_str()).unwrap_or("");
-        let integrity = event.data.get("IntegrityLevel").and_then(|v| v.as_str()).unwrap_or("unknown");
+        let hashes = event
+            .data
+            .get("Hashes")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let integrity = event
+            .data
+            .get("IntegrityLevel")
+            .and_then(|v| v.as_str())
+            .unwrap_or("unknown");
 
         let (proc_path, _) = osoosi_types::sanitize_untrusted_log_field(raw_proc_path, 256);
         let (proc_name, _) = osoosi_types::sanitize_untrusted_log_field(raw_proc_name, 128);
@@ -68,9 +76,21 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
 
     // Sysmon-style (from Event ID 1 to 29)
     let is_sysmon = event.source.to_lowercase().contains("sysmon")
-        || event.data.get("Provider").and_then(|v| v.as_str()).map(|p| p.to_lowercase().contains("sysmon")).unwrap_or(false)
-        || event.data.get("Channel").and_then(|v| v.as_str()).map(|c| c.to_lowercase().contains("sysmon")).unwrap_or(false)
-        || (event.event_id >= 1 && event.event_id <= 29 && (event.data.contains_key("UtcTime") || event.data.contains_key("ProcessGuid")));
+        || event
+            .data
+            .get("Provider")
+            .and_then(|v| v.as_str())
+            .map(|p| p.to_lowercase().contains("sysmon"))
+            .unwrap_or(false)
+        || event
+            .data
+            .get("Channel")
+            .and_then(|v| v.as_str())
+            .map(|c| c.to_lowercase().contains("sysmon"))
+            .unwrap_or(false)
+        || (event.event_id >= 1
+            && event.event_id <= 29
+            && (event.data.contains_key("UtcTime") || event.data.contains_key("ProcessGuid")));
 
     if is_sysmon {
         let event_id = event
@@ -116,145 +136,305 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             }
             2 => {
                 // Change File Creation Time (Timestomping)
-                let raw_target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("file");
+                let raw_target = event
+                    .data
+                    .get("TargetFilename")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("file");
                 let (target, _) = osoosi_types::sanitize_untrusted_log_field(raw_target, 256);
-                parts.push(format!("Process {} altered creation time on {} (Timestomping Anti-Forensics).", exe, target));
+                parts.push(format!(
+                    "Process {} altered creation time on {} (Timestomping Anti-Forensics).",
+                    exe, target
+                ));
             }
             3 => {
                 // Network Connect
-                let dest_ip = event.data.get("DestinationIp").and_then(|v| v.as_str()).unwrap_or("unknown");
-                let port = event.data.get("DestinationPort")
-                    .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+                let dest_ip = event
+                    .data
+                    .get("DestinationIp")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                let port = event
+                    .data
+                    .get("DestinationPort")
+                    .and_then(|v| {
+                        v.as_u64()
+                            .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                    })
                     .unwrap_or(0);
-                let proto = event.data.get("Protocol").and_then(|v| v.as_str()).unwrap_or("TCP");
-                parts.push(format!("Process {} established network connection to {}:{} ({}).", exe, dest_ip, port, proto));
+                let proto = event
+                    .data
+                    .get("Protocol")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("TCP");
+                parts.push(format!(
+                    "Process {} established network connection to {}:{} ({}).",
+                    exe, dest_ip, port, proto
+                ));
             }
             4 => {
                 // Sysmon Service State Change
-                let state = event.data.get("State").and_then(|v| v.as_str()).unwrap_or("state changed");
+                let state = event
+                    .data
+                    .get("State")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("state changed");
                 parts.push(format!("Sysmon service state changed: {}.", state));
             }
             5 => {
                 // Process Terminated
-                let pid = event.data.get("ProcessId")
-                    .and_then(|v| v.as_u64().map(|n| n.to_string()).or_else(|| v.as_str().map(String::from)))
+                let pid = event
+                    .data
+                    .get("ProcessId")
+                    .and_then(|v| {
+                        v.as_u64()
+                            .map(|n| n.to_string())
+                            .or_else(|| v.as_str().map(String::from))
+                    })
                     .unwrap_or_else(|| "unknown".to_string());
                 parts.push(format!("Process {} (PID {}) terminated.", exe, pid));
             }
             6 => {
                 // Driver Loaded (Kernel Rootkit / BYOVD)
-                let loaded = event.data.get("ImageLoaded").and_then(|v| v.as_str()).unwrap_or("driver");
-                let sig = event.data.get("Signature").and_then(|v| v.as_str()).unwrap_or("unsigned");
-                parts.push(format!("Kernel driver loaded: {} (Signature: {}).", loaded, sig));
+                let loaded = event
+                    .data
+                    .get("ImageLoaded")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("driver");
+                let sig = event
+                    .data
+                    .get("Signature")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unsigned");
+                parts.push(format!(
+                    "Kernel driver loaded: {} (Signature: {}).",
+                    loaded, sig
+                ));
             }
             7 => {
                 // Image Loaded (DLL Hijacking)
-                let loaded_full = event.data.get("ImageLoaded").and_then(|v| v.as_str()).unwrap_or("module");
+                let loaded_full = event
+                    .data
+                    .get("ImageLoaded")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("module");
                 let loaded_name = std::path::Path::new(loaded_full)
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or(loaded_full);
                 let (loaded, _) = osoosi_types::sanitize_untrusted_log_field(loaded_name, 128);
-                let sig = event.data.get("Signature").and_then(|v| v.as_str()).unwrap_or("unsigned");
-                parts.push(format!("Process {} loaded dynamic module {} (Signature: {}).", exe, loaded, sig));
+                let sig = event
+                    .data
+                    .get("Signature")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unsigned");
+                parts.push(format!(
+                    "Process {} loaded dynamic module {} (Signature: {}).",
+                    exe, loaded, sig
+                ));
             }
             8 => {
                 // CreateRemoteThread (Process Injection)
-                let target_full = event.data.get("TargetImage").and_then(|v| v.as_str()).unwrap_or("target");
+                let target_full = event
+                    .data
+                    .get("TargetImage")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("target");
                 let target_name = std::path::Path::new(target_full)
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or(target_full);
                 let (target, _) = osoosi_types::sanitize_untrusted_log_field(target_name, 128);
-                let start_addr = event.data.get("StartAddress").and_then(|v| v.as_str()).unwrap_or("0x0");
-                parts.push(format!("Process {} injected remote thread into target {} at {}.", exe, target, start_addr));
+                let start_addr = event
+                    .data
+                    .get("StartAddress")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("0x0");
+                parts.push(format!(
+                    "Process {} injected remote thread into target {} at {}.",
+                    exe, target, start_addr
+                ));
             }
             9 => {
                 // RawAccessRead (Direct Volume / Shadow Copy Access)
-                let device = event.data.get("Device").and_then(|v| v.as_str()).unwrap_or("volume");
-                parts.push(format!("Process {} attempted direct raw access read on {}.", exe, device));
+                let device = event
+                    .data
+                    .get("Device")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("volume");
+                parts.push(format!(
+                    "Process {} attempted direct raw access read on {}.",
+                    exe, device
+                ));
             }
             10 => {
                 // ProcessAccess (LSASS Credential Dumping)
-                let target_full = event.data.get("TargetImage").and_then(|v| v.as_str()).unwrap_or("target");
+                let target_full = event
+                    .data
+                    .get("TargetImage")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("target");
                 let target_name = std::path::Path::new(target_full)
                     .file_name()
                     .and_then(|n| n.to_str())
                     .unwrap_or(target_full);
                 let (target, _) = osoosi_types::sanitize_untrusted_log_field(target_name, 128);
-                let access = event.data.get("GrantedAccess").and_then(|v| v.as_str()).unwrap_or("unknown");
-                parts.push(format!("Process {} requested handle access ({}) into target {}.", exe, access, target));
+                let access = event
+                    .data
+                    .get("GrantedAccess")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("unknown");
+                parts.push(format!(
+                    "Process {} requested handle access ({}) into target {}.",
+                    exe, access, target
+                ));
             }
             11 => {
                 // FileCreate (Drop / Ransomware)
-                let raw_target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("file");
+                let raw_target = event
+                    .data
+                    .get("TargetFilename")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("file");
                 let (target, _) = osoosi_types::sanitize_untrusted_log_field(raw_target, 256);
                 parts.push(format!("Process {} created file: {}.", exe, target));
             }
-            12 | 13 | 14 => {
+            12..=14 => {
                 // Registry Event (Persistence / Run Keys)
-                let raw_obj = event.data.get("TargetObject").and_then(|v| v.as_str()).unwrap_or("key");
+                let raw_obj = event
+                    .data
+                    .get("TargetObject")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("key");
                 let (obj, _) = osoosi_types::sanitize_untrusted_log_field(raw_obj, 256);
-                let op = event.data.get("EventType").and_then(|v| v.as_str()).unwrap_or("RegistryModification");
-                parts.push(format!("Process {} performed registry operation ({}) on {}.", exe, op, obj));
+                let op = event
+                    .data
+                    .get("EventType")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("RegistryModification");
+                parts.push(format!(
+                    "Process {} performed registry operation ({}) on {}.",
+                    exe, op, obj
+                ));
             }
             15 => {
                 // Alternate Data Stream (MOTW Bypass)
-                let target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("stream");
-                let hash = event.data.get("Hash").and_then(|v| v.as_str()).unwrap_or("");
-                parts.push(format!("Alternate Data Stream (ADS) written to {} by {} (Hash: {}).", target, exe, hash));
+                let target = event
+                    .data
+                    .get("TargetFilename")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("stream");
+                let hash = event
+                    .data
+                    .get("Hash")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                parts.push(format!(
+                    "Alternate Data Stream (ADS) written to {} by {} (Hash: {}).",
+                    target, exe, hash
+                ));
             }
             16 => {
                 // Sysmon Config Change
-                let config = event.data.get("Configuration").and_then(|v| v.as_str()).unwrap_or("updated");
+                let config = event
+                    .data
+                    .get("Configuration")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("updated");
                 parts.push(format!("Sysmon configuration change detected: {}.", config));
             }
             17 | 18 => {
                 // Pipe Created / Connected (Cobalt Strike / C2)
-                let raw_pipe = event.data.get("PipeName").and_then(|v| v.as_str()).unwrap_or("pipe");
+                let raw_pipe = event
+                    .data
+                    .get("PipeName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("pipe");
                 let (pipe, _) = osoosi_types::sanitize_untrusted_log_field(raw_pipe, 128);
-                parts.push(format!("Process {} created or connected to named pipe {}.", exe, pipe));
+                parts.push(format!(
+                    "Process {} created or connected to named pipe {}.",
+                    exe, pipe
+                ));
             }
-            19 | 20 | 21 => {
+            19..=21 => {
                 // WMI Event Filter / Consumer (WMI Persistence)
-                let raw_name = event.data.get("Name").and_then(|v| v.as_str()).unwrap_or("WMI");
-                let raw_query = event.data.get("Query").and_then(|v| v.as_str()).unwrap_or("");
+                let raw_name = event
+                    .data
+                    .get("Name")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("WMI");
+                let raw_query = event
+                    .data
+                    .get("Query")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
                 let (name, _) = osoosi_types::sanitize_untrusted_log_field(raw_name, 128);
                 let (query, _) = osoosi_types::sanitize_untrusted_log_field(raw_query, 256);
-                parts.push(format!("WMI persistence event detected (Name: {}, Query: {}).", name, query));
+                parts.push(format!(
+                    "WMI persistence event detected (Name: {}, Query: {}).",
+                    name, query
+                ));
             }
             22 => {
                 // DNS Query
-                let raw_query = event.data.get("QueryName").and_then(|v| v.as_str()).unwrap_or("query");
+                let raw_query = event
+                    .data
+                    .get("QueryName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("query");
                 let (query, _) = osoosi_types::sanitize_untrusted_log_field(raw_query, 256);
                 parts.push(format!("Process {} queried DNS record: {}.", exe, query));
             }
             23 | 26 => {
                 // File Delete / Shredding
-                let raw_target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("file");
+                let raw_target = event
+                    .data
+                    .get("TargetFilename")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("file");
                 let (target, _) = osoosi_types::sanitize_untrusted_log_field(raw_target, 256);
                 parts.push(format!("Process {} deleted file: {}.", exe, target));
             }
             24 => {
                 // Clipboard Capture
-                parts.push(format!("Process {} accessed or modified system clipboard contents.", exe));
+                parts.push(format!(
+                    "Process {} accessed or modified system clipboard contents.",
+                    exe
+                ));
             }
             25 => {
                 // Process Tampering (Process Hollowing / Herpaderping)
-                let kind = event.data.get("Type").and_then(|v| v.as_str()).unwrap_or("Hollowing");
-                parts.push(format!("Process tampering/hollowing anomaly detected on {} (Type: {}).", exe, kind));
+                let kind = event
+                    .data
+                    .get("Type")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Hollowing");
+                parts.push(format!(
+                    "Process tampering/hollowing anomaly detected on {} (Type: {}).",
+                    exe, kind
+                ));
             }
-            27 | 28 | 29 => {
+            27..=29 => {
                 // File Block / Executable Intercept
-                let raw_target = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("executable");
+                let raw_target = event
+                    .data
+                    .get("TargetFilename")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("executable");
                 let (target, _) = osoosi_types::sanitize_untrusted_log_field(raw_target, 256);
-                parts.push(format!("Sysmon executable/shredding defense triggered on {} by {}.", target, exe));
+                parts.push(format!(
+                    "Sysmon executable/shredding defense triggered on {} by {}.",
+                    target, exe
+                ));
             }
             _ => {
                 // Generic Sysmon event
                 if let Some(raw_cmd) = event.data.get("CommandLine").and_then(|v| v.as_str()) {
                     let (safe_cmd, _) = osoosi_types::sanitize_untrusted_log_field(raw_cmd, 512);
-                    parts.push(format!("Sysmon Event {} from {}: {}", event_id, exe, safe_cmd));
+                    parts.push(format!(
+                        "Sysmon Event {} from {}: {}",
+                        event_id, exe, safe_cmd
+                    ));
                 } else {
                     parts.push(format!("Sysmon Event {} from {}.", event_id, exe));
                 }
@@ -263,7 +443,9 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
     }
 
     // Network / DNS (Generic, only if not already handled by Sysmon)
-    if !is_sysmon && (event.data.contains_key("QueryName") || event.data.contains_key("DestinationIp")) {
+    if !is_sysmon
+        && (event.data.contains_key("QueryName") || event.data.contains_key("DestinationIp"))
+    {
         if let Some(q) = event.data.get("QueryName").and_then(|v| v.as_str()) {
             let img = event
                 .data
@@ -281,14 +463,20 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
             let port = event
                 .data
                 .get("DestinationPort")
-                .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok())))
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+                })
                 .unwrap_or(0);
             parts.push(format!("Process {} connected to {}:{}", img, ip, port));
         }
     }
 
     // File creation (Generic, only if not already handled by Sysmon and not 4688)
-    if !is_sysmon && !is_4688 && (event.data.contains_key("TargetFilename") || event.data.contains_key("TargetFileName")) {
+    if !is_sysmon
+        && !is_4688
+        && (event.data.contains_key("TargetFilename") || event.data.contains_key("TargetFileName"))
+    {
         let target = event
             .data
             .get("TargetFilename")
@@ -304,23 +492,51 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
     }
 
     // Windows Security Auditing & Management Events
-    if (event.source.contains("Security") || event.source.contains("Microsoft-Windows-Security-Auditing")) && !is_4688 {
+    if (event.source.contains("Security")
+        || event.source.contains("Microsoft-Windows-Security-Auditing"))
+        && !is_4688
+    {
         match event.event_id {
             4698 | 4702 => {
                 // Scheduled Task Created / Updated (Persistence)
-                let task_name = event.data.get("TaskName").and_then(|v| v.as_str()).unwrap_or("Task");
-                let task_content = event.data.get("TaskContent").and_then(|v| v.as_str()).unwrap_or("");
-                parts.push(format!("Scheduled task created/updated: {} (Content: {}).", task_name, task_content));
+                let task_name = event
+                    .data
+                    .get("TaskName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Task");
+                let task_content = event
+                    .data
+                    .get("TaskContent")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                parts.push(format!(
+                    "Scheduled task created/updated: {} (Content: {}).",
+                    task_name, task_content
+                ));
             }
             4720 | 4726 | 4728 | 4738 => {
                 // User & Group Management (Privilege Escalation)
-                let target_user = event.data.get("TargetUserName").and_then(|v| v.as_str()).unwrap_or("user");
-                let member_name = event.data.get("MemberName").and_then(|v| v.as_str()).unwrap_or("");
-                parts.push(format!("User/Group modification event {} on target {} (Member: {}).", event.event_id, target_user, member_name));
+                let target_user = event
+                    .data
+                    .get("TargetUserName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("user");
+                let member_name = event
+                    .data
+                    .get("MemberName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                parts.push(format!(
+                    "User/Group modification event {} on target {} (Member: {}).",
+                    event.event_id, target_user, member_name
+                ));
             }
             1102 => {
                 // Audit Log Cleared (Anti-Forensics)
-                parts.push("Windows Security Audit Log was explicitly cleared (Event ID 1102).".to_string());
+                parts.push(
+                    "Windows Security Audit Log was explicitly cleared (Event ID 1102)."
+                        .to_string(),
+                );
             }
             _ => {}
         }
@@ -328,22 +544,51 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
 
     // Windows Service Control Manager (System Event 7045 - Service Installed)
     if event.event_id == 7045 || event.source.contains("Service Control Manager") {
-        let svc_name = event.data.get("ServiceName").and_then(|v| v.as_str()).unwrap_or("service");
-        let img_path = event.data.get("ImagePath").and_then(|v| v.as_str()).unwrap_or("");
-        let svc_type = event.data.get("ServiceType").and_then(|v| v.as_str()).unwrap_or("");
-        parts.push(format!("New Windows Service installed: {} (Binary: {}, Type: {}).", svc_name, img_path, svc_type));
+        let svc_name = event
+            .data
+            .get("ServiceName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("service");
+        let img_path = event
+            .data
+            .get("ImagePath")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let svc_type = event
+            .data
+            .get("ServiceType")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        parts.push(format!(
+            "New Windows Service installed: {} (Binary: {}, Type: {}).",
+            svc_name, img_path, svc_type
+        ));
     }
 
     // Windows Defender Events (1116: Malware Detected, 1117: Action Taken, 5001: Real-time Disabled)
     if event.source.contains("Windows Defender") {
         match event.event_id {
             1116 | 1117 => {
-                let threat = event.data.get("ThreatName").and_then(|v| v.as_str()).unwrap_or("Threat");
-                let path = event.data.get("Path").and_then(|v| v.as_str()).unwrap_or("");
-                parts.push(format!("Windows Defender threat alert (Event {}): {} found at {}.", event.event_id, threat, path));
+                let threat = event
+                    .data
+                    .get("ThreatName")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("Threat");
+                let path = event
+                    .data
+                    .get("Path")
+                    .and_then(|v| v.as_str())
+                    .unwrap_or("");
+                parts.push(format!(
+                    "Windows Defender threat alert (Event {}): {} found at {}.",
+                    event.event_id, threat, path
+                ));
             }
             5001 => {
-                parts.push("Windows Defender Real-time Protection was disabled (Event ID 5001).".to_string());
+                parts.push(
+                    "Windows Defender Real-time Protection was disabled (Event ID 5001)."
+                        .to_string(),
+                );
             }
             _ => {}
         }
@@ -351,9 +596,20 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
 
     // AppLocker / Code Integrity (8002: Allowed, 8004: Blocked)
     if event.source.contains("AppLocker") || event.source.contains("CodeIntegrity") {
-        let policy_name = event.data.get("PolicyName").and_then(|v| v.as_str()).unwrap_or("AppLocker");
-        let file = event.data.get("FilePath").and_then(|v| v.as_str()).unwrap_or("");
-        parts.push(format!("AppLocker policy event {} on file {}: {}.", event.event_id, file, policy_name));
+        let policy_name = event
+            .data
+            .get("PolicyName")
+            .and_then(|v| v.as_str())
+            .unwrap_or("AppLocker");
+        let file = event
+            .data
+            .get("FilePath")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        parts.push(format!(
+            "AppLocker policy event {} on file {}: {}.",
+            event.event_id, file, policy_name
+        ));
     }
 
     // PowerShell Behavioral (EventID 4104 is ScriptBlock logging, 4103 is Pipeline)
@@ -364,7 +620,10 @@ pub fn event_to_behavioral_sentence(event: &LogEvent) -> String {
                 script.chars().take(2000).collect::<String>()
             ));
         } else if let Some(cmd) = event.data.get("CommandLine").and_then(|v| v.as_str()) {
-            parts.push(format!("PowerShell command: {}", cmd.chars().take(1024).collect::<String>()));
+            parts.push(format!(
+                "PowerShell command: {}",
+                cmd.chars().take(1024).collect::<String>()
+            ));
         }
     }
 
@@ -429,7 +688,10 @@ mod tests {
 
     fn make_sysmon_event(event_id: u32, data_kv: Vec<(&str, serde_json::Value)>) -> LogEvent {
         let mut data = HashMap::new();
-        data.insert("Provider".to_string(), serde_json::json!("Microsoft-Windows-Sysmon"));
+        data.insert(
+            "Provider".to_string(),
+            serde_json::json!("Microsoft-Windows-Sysmon"),
+        );
         for (k, v) in data_kv {
             data.insert(k.to_string(), v);
         }
@@ -444,34 +706,49 @@ mod tests {
 
     #[test]
     fn test_sysmon_process_creation() {
-        let ev = make_sysmon_event(1, vec![
-            ("Image", serde_json::json!(r"C:\Windows\System32\cmd.exe")),
-            ("ParentImage", serde_json::json!(r"C:\Windows\explorer.exe")),
-            ("CommandLine", serde_json::json!("cmd.exe /c dir")),
-        ]);
+        let ev = make_sysmon_event(
+            1,
+            vec![
+                ("Image", serde_json::json!(r"C:\Windows\System32\cmd.exe")),
+                ("ParentImage", serde_json::json!(r"C:\Windows\explorer.exe")),
+                ("CommandLine", serde_json::json!("cmd.exe /c dir")),
+            ],
+        );
         let s = event_to_behavioral_sentence(&ev);
         assert!(s.contains("cmd.exe started by parent explorer.exe"));
     }
 
     #[test]
     fn test_sysmon_network_connect() {
-        let ev = make_sysmon_event(3, vec![
-            ("Image", serde_json::json!(r"C:\Windows\System32\curl.exe")),
-            ("DestinationIp", serde_json::json!("198.51.100.1")),
-            ("DestinationPort", serde_json::json!(443)),
-            ("Protocol", serde_json::json!("TCP")),
-        ]);
+        let ev = make_sysmon_event(
+            3,
+            vec![
+                ("Image", serde_json::json!(r"C:\Windows\System32\curl.exe")),
+                ("DestinationIp", serde_json::json!("198.51.100.1")),
+                ("DestinationPort", serde_json::json!(443)),
+                ("Protocol", serde_json::json!("TCP")),
+            ],
+        );
         let s = event_to_behavioral_sentence(&ev);
         assert!(s.contains("curl.exe established network connection to 198.51.100.1:443 (TCP)"));
     }
 
     #[test]
     fn test_sysmon_image_load() {
-        let ev = make_sysmon_event(7, vec![
-            ("Image", serde_json::json!(r"C:\Windows\System32\notepad.exe")),
-            ("ImageLoaded", serde_json::json!(r"C:\Windows\System32\amsi.dll")),
-            ("Signature", serde_json::json!("Microsoft Windows")),
-        ]);
+        let ev = make_sysmon_event(
+            7,
+            vec![
+                (
+                    "Image",
+                    serde_json::json!(r"C:\Windows\System32\notepad.exe"),
+                ),
+                (
+                    "ImageLoaded",
+                    serde_json::json!(r"C:\Windows\System32\amsi.dll"),
+                ),
+                ("Signature", serde_json::json!("Microsoft Windows")),
+            ],
+        );
         let s = event_to_behavioral_sentence(&ev);
         assert!(s.contains("notepad.exe loaded dynamic module amsi.dll"));
         assert!(!s.contains("created file"));
@@ -479,73 +756,116 @@ mod tests {
 
     #[test]
     fn test_sysmon_create_remote_thread() {
-        let ev = make_sysmon_event(8, vec![
-            ("SourceImage", serde_json::json!(r"C:\Malware\inject.exe")),
-            ("TargetImage", serde_json::json!(r"C:\Windows\System32\svchost.exe")),
-            ("StartAddress", serde_json::json!("0x7FFE0000")),
-        ]);
+        let ev = make_sysmon_event(
+            8,
+            vec![
+                ("SourceImage", serde_json::json!(r"C:\Malware\inject.exe")),
+                (
+                    "TargetImage",
+                    serde_json::json!(r"C:\Windows\System32\svchost.exe"),
+                ),
+                ("StartAddress", serde_json::json!("0x7FFE0000")),
+            ],
+        );
         let s = event_to_behavioral_sentence(&ev);
         assert!(s.contains("inject.exe injected remote thread into target svchost.exe"));
     }
 
     #[test]
     fn test_sysmon_process_access() {
-        let ev = make_sysmon_event(10, vec![
-            ("SourceImage", serde_json::json!(r"C:\Tools\mimikatz.exe")),
-            ("TargetImage", serde_json::json!(r"C:\Windows\System32\lsass.exe")),
-            ("GrantedAccess", serde_json::json!("0x1010")),
-        ]);
+        let ev = make_sysmon_event(
+            10,
+            vec![
+                ("SourceImage", serde_json::json!(r"C:\Tools\mimikatz.exe")),
+                (
+                    "TargetImage",
+                    serde_json::json!(r"C:\Windows\System32\lsass.exe"),
+                ),
+                ("GrantedAccess", serde_json::json!("0x1010")),
+            ],
+        );
         let s = event_to_behavioral_sentence(&ev);
         assert!(s.contains("mimikatz.exe requested handle access (0x1010) into target lsass.exe"));
     }
 
     #[test]
     fn test_sysmon_file_create() {
-        let ev = make_sysmon_event(11, vec![
-            ("Image", serde_json::json!(r"C:\Tools\drop.exe")),
-            ("TargetFilename", serde_json::json!(r"C:\Temp\payload.dll")),
-        ]);
+        let ev = make_sysmon_event(
+            11,
+            vec![
+                ("Image", serde_json::json!(r"C:\Tools\drop.exe")),
+                ("TargetFilename", serde_json::json!(r"C:\Temp\payload.dll")),
+            ],
+        );
         let s = event_to_behavioral_sentence(&ev);
         assert!(s.contains(r"drop.exe created file: C:\Temp\payload.dll"));
     }
 
     #[test]
     fn test_sysmon_registry_events() {
-        let ev = make_sysmon_event(13, vec![
-            ("Image", serde_json::json!(r"C:\Windows\reg.exe")),
-            ("TargetObject", serde_json::json!(r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run\Persist")),
-            ("EventType", serde_json::json!("SetValue")),
-        ]);
+        let ev = make_sysmon_event(
+            13,
+            vec![
+                ("Image", serde_json::json!(r"C:\Windows\reg.exe")),
+                (
+                    "TargetObject",
+                    serde_json::json!(
+                        r"HKLM\Software\Microsoft\Windows\CurrentVersion\Run\Persist"
+                    ),
+                ),
+                ("EventType", serde_json::json!("SetValue")),
+            ],
+        );
         let s = event_to_behavioral_sentence(&ev);
         assert!(s.contains("reg.exe performed registry operation (SetValue) on HKLM"));
     }
 
     #[test]
     fn test_sysmon_dns_query() {
-        let ev = make_sysmon_event(22, vec![
-            ("Image", serde_json::json!(r"C:\Windows\System32\nslookup.exe")),
-            ("QueryName", serde_json::json!("c2-beacon.example.com")),
-        ]);
+        let ev = make_sysmon_event(
+            22,
+            vec![
+                (
+                    "Image",
+                    serde_json::json!(r"C:\Windows\System32\nslookup.exe"),
+                ),
+                ("QueryName", serde_json::json!("c2-beacon.example.com")),
+            ],
+        );
         let s = event_to_behavioral_sentence(&ev);
         assert!(s.contains("nslookup.exe queried DNS record: c2-beacon.example.com"));
     }
 
     #[test]
     fn test_sysmon_process_tampering() {
-        let ev = make_sysmon_event(25, vec![
-            ("Image", serde_json::json!(r"C:\Malware\hollow.exe")),
-            ("Type", serde_json::json!("ProcessHollowing")),
-        ]);
+        let ev = make_sysmon_event(
+            25,
+            vec![
+                ("Image", serde_json::json!(r"C:\Malware\hollow.exe")),
+                ("Type", serde_json::json!("ProcessHollowing")),
+            ],
+        );
         let s = event_to_behavioral_sentence(&ev);
-        assert!(s.contains("Process tampering/hollowing anomaly detected on hollow.exe (Type: ProcessHollowing)"));
+        assert!(s.contains(
+            "Process tampering/hollowing anomaly detected on hollow.exe (Type: ProcessHollowing)"
+        ));
     }
 
     #[test]
     fn test_windows_security_4688_process_creation() {
         let mut data = HashMap::new();
-        data.insert("NewProcessName".to_string(), serde_json::json!(r"C:\Windows\System32\powershell.exe"));
-        data.insert("ParentProcessName".to_string(), serde_json::json!(r"C:\Windows\System32\cmd.exe"));
-        data.insert("CommandLine".to_string(), serde_json::json!("powershell.exe -enc AAAA"));
+        data.insert(
+            "NewProcessName".to_string(),
+            serde_json::json!(r"C:\Windows\System32\powershell.exe"),
+        );
+        data.insert(
+            "ParentProcessName".to_string(),
+            serde_json::json!(r"C:\Windows\System32\cmd.exe"),
+        );
+        data.insert(
+            "CommandLine".to_string(),
+            serde_json::json!("powershell.exe -enc AAAA"),
+        );
         data.insert("SubjectUserName".to_string(), serde_json::json!("SYSTEM"));
 
         let ev = LogEvent {

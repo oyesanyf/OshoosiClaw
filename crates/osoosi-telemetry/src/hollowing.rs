@@ -3,8 +3,8 @@
 //! Intercepts process creation with CREATE_SUSPENDED (0x00000004),
 //! remote memory modifications (WriteProcessMemory), and thread context redirection (SetThreadContext).
 
-use std::sync::Arc;
 use dashmap::DashMap;
+use std::sync::Arc;
 use tracing::{info, warn};
 
 pub const CREATE_SUSPENDED: u32 = 0x00000004;
@@ -34,7 +34,8 @@ impl ProcessHollowingDetector {
     }
 
     pub fn prune_stale(&self, max_age: std::time::Duration) {
-        self.state_map.retain(|_, state| state.created_at.elapsed() < max_age);
+        self.state_map
+            .retain(|_, state| state.created_at.elapsed() < max_age);
     }
 
     /// Called when a new process is created.
@@ -106,12 +107,18 @@ impl ProcessHollowingDetector {
     /// Called when process terminates.
     pub fn on_process_terminate(&self, pid: u32) {
         if self.state_map.remove(&pid).is_some() {
-            info!("ProcessHollowingDetector: Removed PID {} on termination", pid);
+            info!(
+                "ProcessHollowingDetector: Removed PID {} on termination",
+                pid
+            );
         }
     }
 
     pub fn is_hollowing_confirmed(&self, pid: u32) -> bool {
-        self.state_map.get(&pid).map(|s| s.hollowing_confirmed).unwrap_or(false)
+        self.state_map
+            .get(&pid)
+            .map(|s| s.hollowing_confirmed)
+            .unwrap_or(false)
     }
 }
 
@@ -181,4 +188,3 @@ mod tests {
         assert_eq!(detector.state_map.len(), 0);
     }
 }
-

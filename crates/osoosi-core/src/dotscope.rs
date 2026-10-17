@@ -9,6 +9,12 @@ pub struct DotscopeResult {
 /// A native .NET CIL forensic analyzer wrapper for OshoosiClaw.
 pub struct DotscopeAnalyzer;
 
+impl Default for DotscopeAnalyzer {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl DotscopeAnalyzer {
     pub fn new() -> Self {
         Self

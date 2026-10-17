@@ -70,29 +70,42 @@ impl MeshReconciliationEngine {
             reason: String::new(),
         };
 
-        let mut entry = self.liveness_map.entry(hb.peer_id.clone()).or_insert_with(|| PeerLiveness {
-            peer_id: hb.peer_id.clone(),
-            zone: hb.zone.clone(),
-            last_seen: now,
-            last_sequence: hb.sequence,
-            missed_heartbeats: 0,
-            is_healthy: true,
-            partition_detected: false,
-            uptime_secs: hb.uptime_secs,
-        });
+        let mut entry = self
+            .liveness_map
+            .entry(hb.peer_id.clone())
+            .or_insert_with(|| PeerLiveness {
+                peer_id: hb.peer_id.clone(),
+                zone: hb.zone.clone(),
+                last_seen: now,
+                last_sequence: hb.sequence,
+                missed_heartbeats: 0,
+                is_healthy: true,
+                partition_detected: false,
+                uptime_secs: hb.uptime_secs,
+            });
 
         // Check if recovering from a detected partition
         if entry.partition_detected {
-            info!("Self-healing: Peer {} recovered from partition! Triggering gossip reconciliation.", hb.peer_id);
+            info!(
+                "Self-healing: Peer {} recovered from partition! Triggering gossip reconciliation.",
+                hb.peer_id
+            );
             entry.partition_detected = false;
             entry.is_healthy = true;
             entry.missed_heartbeats = 0;
             action.action = ReconciliationKind::CatchUpGossip;
-            action.reason = format!("Recovered from partition after sequence gap (new seq={})", hb.sequence);
+            action.reason = format!(
+                "Recovered from partition after sequence gap (new seq={})",
+                hb.sequence
+            );
         } else if hb.sequence > entry.last_sequence + 1 {
             // Sequence jump detected: missed intermediate heartbeats or network hiccup
             action.action = ReconciliationKind::CatchUpGossip;
-            action.reason = format!("Sequence gap detected: expected {}, got {}", entry.last_sequence + 1, hb.sequence);
+            action.reason = format!(
+                "Sequence gap detected: expected {}, got {}",
+                entry.last_sequence + 1,
+                hb.sequence
+            );
         }
 
         entry.last_seen = now;
@@ -122,7 +135,10 @@ impl MeshReconciliationEngine {
                     actions.push(ReconciliationAction {
                         peer_id: entry.peer_id.clone(),
                         action: ReconciliationKind::RedialPartition,
-                        reason: format!("Partition detected after {}s without heartbeat", elapsed_secs),
+                        reason: format!(
+                            "Partition detected after {}s without heartbeat",
+                            elapsed_secs
+                        ),
                     });
                 }
             }
@@ -245,4 +261,3 @@ mod tests {
         assert!(!liveness.partition_detected);
     }
 }
-

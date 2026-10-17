@@ -108,7 +108,7 @@ impl JoinGate {
 
             // Freshness defense: check announcement timestamp age (max 300s TTL)
             let age = (Utc::now() - announce.timestamp).num_seconds();
-            if age < 0 || age > 300 {
+            if !(0..=300).contains(&age) {
                 let reason = "Expired announce attestation timestamp";
                 warn!("Peer {} quarantined: {}", announce.source_node, reason);
                 self.quarantine_peer(&announce.source_node, reason)?;
@@ -405,13 +405,16 @@ impl JoinGate {
     /// Drops reputation score to 0.0, ejects from routing, severs socket connectivity, and broadcasts a tripwire alert.
     pub fn quarantine_peer(&self, peer_id: &str, reason: &str) -> anyhow::Result<()> {
         self.verified_peers.remove(peer_id);
-        let mut rep = self.memory.get_reputation(peer_id)?.unwrap_or(ReputationScore {
-            node_id: peer_id.to_string(),
-            score: 0.0,
-            alerts_verified: 0,
-            false_positives: 0,
-            last_updated: Utc::now(),
-        });
+        let mut rep = self
+            .memory
+            .get_reputation(peer_id)?
+            .unwrap_or(ReputationScore {
+                node_id: peer_id.to_string(),
+                score: 0.0,
+                alerts_verified: 0,
+                false_positives: 0,
+                last_updated: Utc::now(),
+            });
         rep.score = 0.0;
         rep.last_updated = Utc::now();
         self.memory.upsert_reputation(&rep)?;
@@ -440,9 +443,14 @@ impl JoinGate {
             cryptographic_signature: Vec::new(),
             merkle_proof: None,
         };
-        let _ = self.command_tx.try_send(MeshCommand::BroadcastTripwire(alert));
+        let _ = self
+            .command_tx
+            .try_send(MeshCommand::BroadcastTripwire(alert));
 
-        warn!("Peer {} quarantined (reputation 0.0, severed, tripwire alert broadcast): {}", peer_id, reason);
+        warn!(
+            "Peer {} quarantined (reputation 0.0, severed, tripwire alert broadcast): {}",
+            peer_id, reason
+        );
         Ok(())
     }
 
@@ -526,7 +534,9 @@ impl JoinGate {
             if self.is_quarantined(&req.peer_id)? {
                 continue;
             }
-            if self.peer_rules.require_tpm_attestation && !self.is_attestation_verified(&req.peer_id) {
+            if self.peer_rules.require_tpm_attestation
+                && !self.is_attestation_verified(&req.peer_id)
+            {
                 continue;
             }
             if req.reputation_score >= self.min_reputation_auto_approve
@@ -563,29 +573,47 @@ impl JoinGate {
     }
 
     pub fn with_trust_manager(self, tm: Arc<TrustManager>) -> Self {
-        *self.trust_manager.write().unwrap_or_else(|e| e.into_inner()) = Some(tm);
+        *self
+            .trust_manager
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(tm);
         self
     }
 
     pub fn set_trust_manager(&self, tm: Arc<TrustManager>) {
-        *self.trust_manager.write().unwrap_or_else(|e| e.into_inner()) = Some(tm);
+        *self
+            .trust_manager
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(tm);
     }
 
     pub fn trust_manager(&self) -> Option<Arc<TrustManager>> {
-        self.trust_manager.read().unwrap_or_else(|e| e.into_inner()).clone()
+        self.trust_manager
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     pub fn with_golden_baseline(self, baseline: GoldenBaseline) -> Self {
-        *self.golden_baseline.write().unwrap_or_else(|e| e.into_inner()) = Some(baseline);
+        *self
+            .golden_baseline
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(baseline);
         self
     }
 
     pub fn set_golden_baseline(&self, baseline: GoldenBaseline) {
-        *self.golden_baseline.write().unwrap_or_else(|e| e.into_inner()) = Some(baseline);
+        *self
+            .golden_baseline
+            .write()
+            .unwrap_or_else(|e| e.into_inner()) = Some(baseline);
     }
 
     pub fn golden_baseline(&self) -> Option<GoldenBaseline> {
-        self.golden_baseline.read().unwrap_or_else(|e| e.into_inner()).clone()
+        self.golden_baseline
+            .read()
+            .unwrap_or_else(|e| e.into_inner())
+            .clone()
     }
 
     /// Create and record an active TPM 2.0 attestation challenge for a peer.
@@ -699,19 +727,32 @@ mod tests {
 
     #[async_trait::async_trait]
     impl osoosi_types::SecuredExecutor for DummyExecutor {
-        async fn execute(&self, _cmd: std::process::Command) -> anyhow::Result<std::process::Output> {
+        async fn execute(
+            &self,
+            _cmd: std::process::Command,
+        ) -> anyhow::Result<std::process::Output> {
             Ok(std::process::Output {
                 status: std::process::ExitStatus::default(),
                 stdout: Vec::new(),
                 stderr: Vec::new(),
             })
         }
-        async fn download(&self, _url: &str, _dest: &std::path::Path, _resume: bool) -> anyhow::Result<()> {
+        async fn download(
+            &self,
+            _url: &str,
+            _dest: &std::path::Path,
+            _resume: bool,
+        ) -> anyhow::Result<()> {
             Ok(())
         }
     }
 
-    fn test_gate_setup() -> (JoinGate, tokio::sync::mpsc::Receiver<MeshCommand>, Arc<MemoryStore>, Arc<TrustManager>) {
+    fn test_gate_setup() -> (
+        JoinGate,
+        tokio::sync::mpsc::Receiver<MeshCommand>,
+        Arc<MemoryStore>,
+        Arc<TrustManager>,
+    ) {
         let memory = Arc::new(MemoryStore::new(":memory:").unwrap());
         let (tx, rx) = tokio::sync::mpsc::channel(32);
         let rules = PeerRulesConfig {
@@ -720,8 +761,8 @@ mod tests {
             require_tpm_attestation: false,
         };
         let tm = Arc::new(TrustManager::new(Arc::new(DummyExecutor)).unwrap());
-        let gate = JoinGate::new(memory.clone(), tx, 0.8, rules, None)
-            .with_trust_manager(tm.clone());
+        let gate =
+            JoinGate::new(memory.clone(), tx, 0.8, rules, None).with_trust_manager(tm.clone());
         (gate, rx, memory, tm)
     }
 
@@ -756,12 +797,18 @@ mod tests {
         let response = peer_tm.respond_to_attestation(challenge).unwrap();
 
         let res = gate.handle_attestation_response(&peer_id, &response);
-        assert!(res.is_err(), "Attestation should fail on binary hash mismatch");
+        assert!(
+            res.is_err(),
+            "Attestation should fail on binary hash mismatch"
+        );
 
         // Verify peer was automatically quarantined
         assert!(gate.is_quarantined(&peer_id).unwrap());
         let rep = memory.get_reputation(&peer_id).unwrap().unwrap();
-        assert_eq!(rep.score, 0.0, "Reputation score must drop to 0.0 on quarantine");
+        assert_eq!(
+            rep.score, 0.0,
+            "Reputation score must drop to 0.0 on quarantine"
+        );
 
         // Verify MeshCommand::QuarantinePeer and MeshCommand::BroadcastTripwire were dispatched
         let mut received_quarantine = false;
@@ -773,8 +820,14 @@ mod tests {
                 _ => (),
             }
         }
-        assert!(received_quarantine, "QuarantinePeer mesh command should be dispatched");
-        assert!(received_tripwire, "BroadcastTripwire mesh command should be dispatched");
+        assert!(
+            received_quarantine,
+            "QuarantinePeer mesh command should be dispatched"
+        );
+        assert!(
+            received_tripwire,
+            "BroadcastTripwire mesh command should be dispatched"
+        );
     }
 
     #[test]
@@ -829,8 +882,8 @@ mod tests {
             require_tpm_attestation: true,
         };
         let tm = Arc::new(TrustManager::new(Arc::new(DummyExecutor)).unwrap());
-        let gate = JoinGate::new(memory.clone(), tx, 0.8, rules, None)
-            .with_trust_manager(tm.clone());
+        let gate =
+            JoinGate::new(memory.clone(), tx, 0.8, rules, None).with_trust_manager(tm.clone());
 
         let peer_tm = TrustManager::new(Arc::new(DummyExecutor)).unwrap();
         let peer_id = PeerId::random().to_string();
@@ -847,7 +900,10 @@ mod tests {
 
         // Approval must fail because TPM attestation has not been verified yet
         let res = gate.allow(&peer_id).await;
-        assert!(res.is_err(), "Allow should fail when require_tpm_attestation is set and peer not verified");
+        assert!(
+            res.is_err(),
+            "Allow should fail when require_tpm_attestation is set and peer not verified"
+        );
 
         // Now run TPM attestation successfully
         let challenge = gate.create_attestation_challenge(&peer_id, None);
@@ -858,7 +914,10 @@ mod tests {
 
         // Now approval should succeed
         let allow_res = gate.allow(&peer_id).await;
-        assert!(allow_res.is_ok(), "Allow must succeed once peer passes TPM attestation");
+        assert!(
+            allow_res.is_ok(),
+            "Allow must succeed once peer passes TPM attestation"
+        );
     }
 
     #[test]
@@ -890,7 +949,10 @@ mod tests {
         // Replaying the exact same announce must be detected as replay and trigger quarantine
         let res2 = gate.on_peer_announce_received(&announce, &rules);
         assert!(res2.is_ok());
-        assert!(gate.is_quarantined(&peer_id).unwrap(), "Replayed announce must trigger peer quarantine");
+        assert!(
+            gate.is_quarantined(&peer_id).unwrap(),
+            "Replayed announce must trigger peer quarantine"
+        );
 
         let rep = memory.get_reputation(&peer_id).unwrap().unwrap();
         assert_eq!(rep.score, 0.0);
@@ -929,7 +991,10 @@ mod tests {
         let rules = PeerRulesConfig::default();
         let _ = gate.on_peer_announce_received(&announce, &rules);
 
-        assert!(gate.is_quarantined(&peer_id).unwrap(), "Stale announce must trigger quarantine");
+        assert!(
+            gate.is_quarantined(&peer_id).unwrap(),
+            "Stale announce must trigger quarantine"
+        );
         let rep = memory.get_reputation(&peer_id).unwrap().unwrap();
         assert_eq!(rep.score, 0.0);
 
@@ -973,7 +1038,8 @@ mod tests {
         let (gate, _rx, _memory, _tm) = test_gate_setup();
         let peer_id = PeerId::random().to_string();
 
-        gate.quarantine_peer(&peer_id, "Hostile behavioral pattern").unwrap();
+        gate.quarantine_peer(&peer_id, "Hostile behavioral pattern")
+            .unwrap();
         assert!(gate.is_quarantined(&peer_id).unwrap());
 
         let res = gate.allow(&peer_id).await;
@@ -997,13 +1063,15 @@ mod tests {
         memory.upsert_reputation(&rep).unwrap();
 
         // First penalty: 0.35 -> score becomes 0.55
-        gate.penalize_peer(&peer_id, "Suspicious rapid egress", 0.35).unwrap();
+        gate.penalize_peer(&peer_id, "Suspicious rapid egress", 0.35)
+            .unwrap();
         assert!(!gate.is_quarantined(&peer_id).unwrap());
         let rep1 = memory.get_reputation(&peer_id).unwrap().unwrap();
         assert!((rep1.score - 0.55).abs() < 1e-4);
 
         // Second penalty: 0.40 -> score becomes 0.15 <= 0.20 (quarantine threshold)
-        gate.penalize_peer(&peer_id, "Poisoned gossip injection", 0.40).unwrap();
+        gate.penalize_peer(&peer_id, "Poisoned gossip injection", 0.40)
+            .unwrap();
         assert!(gate.is_quarantined(&peer_id).unwrap());
         let rep2 = memory.get_reputation(&peer_id).unwrap().unwrap();
         assert_eq!(rep2.score, 0.0);
@@ -1021,4 +1089,3 @@ mod tests {
         assert!(received_tripwire);
     }
 }
-

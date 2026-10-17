@@ -1,7 +1,7 @@
 use anyhow::{Context, Result};
-use reqwest::{Client, header};
+use reqwest::{header, Client};
 use serde::{Deserialize, Serialize};
-use std::{env, fs, collections::HashMap, time::Duration};
+use std::{collections::HashMap, env, fs, time::Duration};
 use walkdir::WalkDir;
 
 #[derive(Debug, Serialize, Deserialize, Default, Clone)]
@@ -32,7 +32,9 @@ struct RateLimiter {
 
 impl RateLimiter {
     fn new() -> Self {
-        Self { next_request_at: std::time::Instant::now() }
+        Self {
+            next_request_at: std::time::Instant::now(),
+        }
     }
 
     async fn wait_for_slot(&self) {
@@ -47,7 +49,8 @@ impl RateLimiter {
             if let Ok(s) = retry_after.to_str() {
                 if let Ok(seconds) = s.parse::<u64>() {
                     println!("⏳ NVD requested wait: {}s", seconds);
-                    self.next_request_at = std::time::Instant::now() + Duration::from_secs(seconds + 1);
+                    self.next_request_at =
+                        std::time::Instant::now() + Duration::from_secs(seconds + 1);
                 }
             }
         }
@@ -56,7 +59,9 @@ impl RateLimiter {
 
 async fn fetch_epss_batch(client: &Client, cve_ids: &[String]) -> Result<HashMap<String, f64>> {
     let mut scores = HashMap::new();
-    if cve_ids.is_empty() { return Ok(scores); }
+    if cve_ids.is_empty() {
+        return Ok(scores);
+    }
     let cve_list = cve_ids.join(",");
     let url = format!("https://api.first.org/data/v1/epss?cve={}", cve_list);
     let resp = client.get(url).send().await?;
@@ -64,7 +69,9 @@ async fn fetch_epss_batch(client: &Client, cve_ids: &[String]) -> Result<HashMap
     if let Some(data) = json["data"].as_array() {
         for entry in data {
             if let (Some(cve), Some(epss)) = (entry["cve"].as_str(), entry["epss"].as_str()) {
-                if let Ok(val) = epss.parse::<f64>() { scores.insert(cve.to_string(), val); }
+                if let Ok(val) = epss.parse::<f64>() {
+                    scores.insert(cve.to_string(), val);
+                }
             }
         }
     }
@@ -72,19 +79,26 @@ async fn fetch_epss_batch(client: &Client, cve_ids: &[String]) -> Result<HashMap
 }
 
 async fn fetch_nvd_batch(
-    client: &Client, 
-    start_index: u32, 
-    results_per_page: u32, 
+    client: &Client,
+    start_index: u32,
+    results_per_page: u32,
     api_key: Option<&str>,
-    limiter: &mut RateLimiter
+    limiter: &mut RateLimiter,
 ) -> Result<(Vec<BulkCveRow>, bool)> {
     limiter.wait_for_slot().await;
-    let url = format!("https://services.nvd.nist.gov/rest/json/cves/2.0?startIndex={}&resultsPerPage={}", start_index, results_per_page);
+    let url = format!(
+        "https://services.nvd.nist.gov/rest/json/cves/2.0?startIndex={}&resultsPerPage={}",
+        start_index, results_per_page
+    );
     let mut request = client.get(url);
-    if let Some(key) = api_key { request = request.header("apiKey", key); }
+    if let Some(key) = api_key {
+        request = request.header("apiKey", key);
+    }
     let response = request.send().await?;
     limiter.update_from_headers(response.headers());
-    if response.status().as_u16() == 429 { return Ok((Vec::new(), true)); }
+    if response.status().as_u16() == 429 {
+        return Ok((Vec::new(), true));
+    }
     let json: serde_json::Value = response.json().await.context("Failed to parse NVD JSON")?;
     let mut rows = Vec::new();
     if let Some(vulnerabilities) = json["vulnerabilities"].as_array() {
@@ -92,7 +106,11 @@ async fn fetch_nvd_batch(
             let cve = &vuln["cve"];
             let id = cve["id"].as_str().unwrap_or("unknown").to_string();
             let metrics = &cve["metrics"];
-            let cvss = metrics["cvssMetricV31"][0]["cvssData"]["baseScore"].as_f64().or_else(|| metrics["cvssMetricV30"][0]["cvssData"]["baseScore"].as_f64()).or_else(|| metrics["cvssMetricV2"][0]["cvssData"]["baseScore"].as_f64()).unwrap_or(0.0);
+            let cvss = metrics["cvssMetricV31"][0]["cvssData"]["baseScore"]
+                .as_f64()
+                .or_else(|| metrics["cvssMetricV30"][0]["cvssData"]["baseScore"].as_f64())
+                .or_else(|| metrics["cvssMetricV2"][0]["cvssData"]["baseScore"].as_f64())
+                .unwrap_or(0.0);
             let mut product = "generic_vuln".to_string();
             let mut version = "*".to_string();
             if let Some(config) = cve["configurations"].as_array().and_then(|c| c.first()) {
@@ -100,12 +118,21 @@ async fn fetch_nvd_batch(
                     if let Some(cpe_match) = node["cpeMatch"].as_array().and_then(|m| m.first()) {
                         if let Some(criteria) = cpe_match["criteria"].as_str() {
                             let parts: Vec<&str> = criteria.split(':').collect();
-                            if parts.len() >= 6 { product = parts[4].to_string(); version = parts[5].to_string(); }
+                            if parts.len() >= 6 {
+                                product = parts[4].to_string();
+                                version = parts[5].to_string();
+                            }
                         }
                     }
                 }
             }
-            rows.push(BulkCveRow { cve_id: id, cvss_score: cvss, product, version, epss_score: 0.01 });
+            rows.push(BulkCveRow {
+                cve_id: id,
+                cvss_score: cvss,
+                product,
+                version,
+                epss_score: 0.01,
+            });
         }
     }
     Ok((rows, false))
@@ -115,28 +142,44 @@ async fn fetch_nvd_batch(
 async fn main() -> Result<()> {
     dotenvy::dotenv().ok();
     let target_count = 100000;
-    let batch_size = 2000; 
+    let batch_size = 2000;
     let nvd_api_key = env::var("NVD_API_KEY").ok();
-    let client = Client::builder().user_agent("oshoosi-bulk-trainer/0.1").timeout(Duration::from_secs(60)).build()?;
-    let mut model_weights = ModelWeights::default();
-    model_weights.trained_at = Some(chrono::Utc::now().to_rfc3339());
+    let client = Client::builder()
+        .user_agent("oshoosi-bulk-trainer/0.1")
+        .timeout(Duration::from_secs(60))
+        .build()?;
+    let mut model_weights = ModelWeights {
+        trained_at: Some(chrono::Utc::now().to_rfc3339()),
+        ..Default::default()
+    };
     let mut limiter = RateLimiter::new();
 
     // 1. INGEST LOCAL DATASET (Recursive)
     println!("📂 Phase 1: Ingesting local dataset files...");
     let dataset_folder = "dataset";
-    for entry in WalkDir::new(dataset_folder).into_iter().filter_map(|e| e.ok()) {
+    for entry in WalkDir::new(dataset_folder)
+        .into_iter()
+        .filter_map(|e| e.ok())
+    {
         if entry.path().is_file() {
-            let ext = entry.path().extension().and_then(|s| s.to_str()).unwrap_or("");
+            let ext = entry
+                .path()
+                .extension()
+                .and_then(|s| s.to_str())
+                .unwrap_or("");
             if ext == "jsonl" || ext == "json" {
                 let text = fs::read_to_string(entry.path())?;
                 let mut local_rows = Vec::new();
                 if ext == "jsonl" {
                     for line in text.lines().filter(|l| !l.trim().is_empty()) {
-                        if let Ok(r) = serde_json::from_str::<LocalDatasetRow>(line) { local_rows.push(r); }
+                        if let Ok(r) = serde_json::from_str::<LocalDatasetRow>(line) {
+                            local_rows.push(r);
+                        }
                     }
                 } else {
-                    if let Ok(rs) = serde_json::from_str::<Vec<LocalDatasetRow>>(&text) { local_rows.extend(rs); }
+                    if let Ok(rs) = serde_json::from_str::<Vec<LocalDatasetRow>>(&text) {
+                        local_rows.extend(rs);
+                    }
                 }
 
                 for row in local_rows {
@@ -147,17 +190,25 @@ async fn main() -> Result<()> {
                     }
                     if let Some(ref cve_id) = row.target_cve {
                         // We will enrich these in the bulk phase if they match
-                        model_weights.features.insert(format!("cve:{}", cve_id.to_lowercase()), 0.5);
+                        model_weights
+                            .features
+                            .insert(format!("cve:{}", cve_id.to_lowercase()), 0.5);
                     }
                     model_weights.sample_count += 1;
                 }
             }
         }
     }
-    println!("📈 Phase 1 Complete. Ingested {} local samples.", model_weights.sample_count);
+    println!(
+        "📈 Phase 1 Complete. Ingested {} local samples.",
+        model_weights.sample_count
+    );
 
     // 2. BULK API INGESTION
-    println!("🚀 Phase 2: Bulk API Training (Target: {})...", target_count);
+    println!(
+        "🚀 Phase 2: Bulk API Training (Target: {})...",
+        target_count
+    );
     let mut current_index = 0;
     loop {
         tokio::select! {
@@ -191,12 +242,17 @@ async fn main() -> Result<()> {
                 }
             }
         }
-        if model_weights.sample_count >= target_count as usize { break; }
+        if model_weights.sample_count >= target_count as usize {
+            break;
+        }
     }
 
     let model_path = "models/bulk_threat_model.json";
     fs::create_dir_all("models")?;
     fs::write(model_path, serde_json::to_string_pretty(&model_weights)?)?;
-    println!("📦 Ultimate Model saved to {}. Total Samples: {}", model_path, model_weights.sample_count);
+    println!(
+        "📦 Ultimate Model saved to {}. Total Samples: {}",
+        model_path, model_weights.sample_count
+    );
     Ok(())
 }

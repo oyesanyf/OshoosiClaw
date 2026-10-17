@@ -374,7 +374,13 @@ fn is_ssrf_ip(ip: std::net::IpAddr) -> bool {
         std::net::IpAddr::V6(v6) => {
             // Check for IPv4-mapped IPv6 (::ffff:0:0/96)
             let segs = v6.segments();
-            if segs[0] == 0 && segs[1] == 0 && segs[2] == 0 && segs[3] == 0 && segs[4] == 0 && segs[5] == 0xffff {
+            if segs[0] == 0
+                && segs[1] == 0
+                && segs[2] == 0
+                && segs[3] == 0
+                && segs[4] == 0
+                && segs[5] == 0xffff
+            {
                 let v4 = std::net::Ipv4Addr::new(
                     (segs[6] >> 8) as u8,
                     (segs[6] & 0xff) as u8,
@@ -406,7 +412,8 @@ fn is_ssrf_ipv4(v4: std::net::Ipv4Addr) -> bool {
         || v4.is_unspecified() // 0.0.0.0
         || v4.is_broadcast()   // 255.255.255.255
         || v4.is_multicast()   // 224.0.0.0/4
-        || octets[0] == 0      // 0.0.0.0/8
+        || octets[0] == 0
+    // 0.0.0.0/8
     {
         return true;
     }

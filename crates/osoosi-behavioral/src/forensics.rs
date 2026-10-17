@@ -18,6 +18,12 @@ pub struct PacketForensics {
     pub tools_root: String,
 }
 
+impl Default for PacketForensics {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl PacketForensics {
     pub fn new() -> Self {
         let tools_root = std::env::var("OSOOSI_TOOLS_ROOT").unwrap_or_else(|_| "tools".to_string());
@@ -37,7 +43,9 @@ impl PacketForensics {
 
         #[cfg(target_os = "windows")]
         {
-            let candidate_sub = std::path::Path::new(&self.tools_root).join("ngrep").join("ngrep.exe");
+            let candidate_sub = std::path::Path::new(&self.tools_root)
+                .join("ngrep")
+                .join("ngrep.exe");
             let candidate_root = std::path::Path::new(&self.tools_root).join("ngrep.exe");
             let ngrep_path = if candidate_sub.is_file() {
                 Some(candidate_sub)
@@ -66,7 +74,10 @@ impl PacketForensics {
                 info!("FORENSICS: ngrep.exe not found; falling back to native Rust socket inspection for {}", target_ip);
                 Ok(TriageResult {
                     tool_used: "Native Rust Socket Inspector".to_string(),
-                    raw_output: format!("Native DPI triage: Flow to {} analyzed via built-in socket heuristics.", target_ip),
+                    raw_output: format!(
+                        "Native DPI triage: Flow to {} analyzed via built-in socket heuristics.",
+                        target_ip
+                    ),
                     detected_indicators: vec!["T1071 - Application Layer Protocol".to_string()],
                 })
             }
@@ -87,8 +98,6 @@ impl PacketForensics {
             })
         }
     }
-
-
 
     /// Run Chainsaw for fast forensic triage of event logs and MFT.
     pub async fn run_chainsaw(&self, log_path: &std::path::Path) -> anyhow::Result<TriageResult> {
@@ -115,8 +124,13 @@ impl PacketForensics {
     pub fn verify_provisioning(&self) -> bool {
         #[cfg(target_os = "windows")]
         {
-            std::path::Path::new(&self.tools_root).join("ngrep").join("ngrep.exe").exists()
-                || std::path::Path::new(&self.tools_root).join("ngrep.exe").exists()
+            std::path::Path::new(&self.tools_root)
+                .join("ngrep")
+                .join("ngrep.exe")
+                .exists()
+                || std::path::Path::new(&self.tools_root)
+                    .join("ngrep.exe")
+                    .exists()
                 || osoosi_types::resolve_system_binary("ngrep.exe").is_file()
                 || true // Native Rust socket inspection is always built-in and provisioned
         }

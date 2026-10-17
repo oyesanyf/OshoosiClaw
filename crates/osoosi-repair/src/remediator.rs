@@ -35,7 +35,8 @@ impl StandaloneRemediator {
     /// Download a file and replace the target path atomically.
     /// Returns the backup path of the original file.
     pub async fn remediate_file(&self, target_path: &str, download_url: &str) -> Result<PathBuf> {
-        self.remediate_file_with_hash(target_path, download_url, None).await
+        self.remediate_file_with_hash(target_path, download_url, None)
+            .await
     }
 
     /// Download a file with SHA-256 verification and replace target path atomically.
@@ -51,7 +52,10 @@ impl StandaloneRemediator {
         );
 
         let target = Path::new(target_path);
-        if target.components().any(|c| matches!(c, std::path::Component::ParentDir)) {
+        if target
+            .components()
+            .any(|c| matches!(c, std::path::Component::ParentDir))
+        {
             return Err(anyhow!(
                 "Path traversal rejected in target file path: {}",
                 target_path
@@ -83,13 +87,65 @@ impl StandaloneRemediator {
 
         let blocked_hosts = ["localhost", "127.", "10.", "192.168.", "169.254."];
         let url_lower = download_url.to_lowercase();
+        let mut is_blocked = false;
         for b in blocked_hosts {
-            if url_lower.contains(&format!("://{}", b)) || url_lower.contains(&format!("://{}:", b)) {
-                return Err(anyhow!(
-                    "SSRF Protection: Blocked private/loopback download host in URL: {}",
-                    download_url
-                ));
+            if url_lower.contains(&format!("://{}", b)) || url_lower.contains(&format!("://{}:", b))
+            {
+                is_blocked = true;
+                break;
             }
+        }
+
+        // Mathematical IP parsing defense for RFC1918, loopback, link-local, CGNAT, ULA, unspecified, IPv4-mapped
+        let host_part = if let Some(idx) = download_url.find("://") {
+            let rest = &download_url[idx + 3..];
+            let end_idx = rest.find(['/', ':', '?', '#']).unwrap_or(rest.len());
+            &rest[..end_idx]
+        } else {
+            download_url
+        };
+        let host_clean = host_part.trim_start_matches('[').trim_end_matches(']');
+        if host_clean.eq_ignore_ascii_case("localhost") {
+            is_blocked = true;
+        } else if let Ok(ip) = host_clean.parse::<std::net::IpAddr>() {
+            match ip {
+                std::net::IpAddr::V4(ipv4) => {
+                    let octets = ipv4.octets();
+                    if ipv4.is_loopback()
+                        || ipv4.is_unspecified()
+                        || octets[0] == 10
+                        || (octets[0] == 172 && (16..=31).contains(&octets[1]))
+                        || (octets[0] == 192 && octets[1] == 168)
+                        || (octets[0] == 169 && octets[1] == 254)
+                        || (octets[0] == 100 && (64..=127).contains(&octets[1]))
+                    {
+                        is_blocked = true;
+                    }
+                }
+                std::net::IpAddr::V6(ipv6) => {
+                    let segs = ipv6.segments();
+                    if ipv6.is_loopback()
+                        || ipv6.is_unspecified()
+                        || (segs[0] & 0xfe00) == 0xfc00
+                        || (segs[0] & 0xffc0) == 0xfe80
+                        || (segs[0] == 0
+                            && segs[1] == 0
+                            && segs[2] == 0
+                            && segs[3] == 0
+                            && segs[4] == 0
+                            && segs[5] == 0xffff)
+                    {
+                        is_blocked = true;
+                    }
+                }
+            }
+        }
+
+        if is_blocked {
+            return Err(anyhow!(
+                "SSRF Protection: Blocked private/loopback download host in URL: {}",
+                download_url
+            ));
         }
 
         // 1. Download to memory first to ensure it's valid
@@ -104,7 +160,7 @@ impl StandaloneRemediator {
         let data = response.bytes().await?;
 
         // Compute SHA-256
-        use sha2::{Sha256, Digest};
+        use sha2::{Digest, Sha256};
         let mut hasher = Sha256::new();
         hasher.update(&data);
         let computed_sha256 = hex::encode(hasher.finalize());
@@ -136,11 +192,9 @@ impl StandaloneRemediator {
         fs::write(&temp_file, &data)?;
 
         // If no hash was provided, verify Authenticode digital signature
-        if !verified {
-            if osoosi_types::is_trusted_signed_binary(&temp_file) {
-                info!("Downloaded remediation payload verified via trusted Authenticode digital signature.");
-                verified = true;
-            }
+        if !verified && osoosi_types::is_trusted_signed_binary(&temp_file) {
+            info!("Downloaded remediation payload verified via trusted Authenticode digital signature.");
+            verified = true;
         }
 
         if !verified {
@@ -160,7 +214,7 @@ impl StandaloneRemediator {
                         "File {} is in use. Scheduling replacement on next reboot...",
                         target_path
                     );
-                    if let Ok(_) = self.schedule_reboot_move(&temp_file, target) {
+                    if self.schedule_reboot_move(&temp_file, target).is_ok() {
                         info!("Reboot-time replacement scheduled for {}. Patch will complete after restart.", target_path);
                         return Ok(backup_path);
                     }
@@ -182,8 +236,10 @@ impl StandaloneRemediator {
 
     #[cfg(target_os = "windows")]
     fn schedule_reboot_move(&self, from: &Path, to: &Path) -> Result<()> {
-        use windows::Win32::Storage::FileSystem::{MoveFileExW, MOVEFILE_DELAY_UNTIL_REBOOT, MOVEFILE_REPLACE_EXISTING};
         use windows::core::PCWSTR;
+        use windows::Win32::Storage::FileSystem::{
+            MoveFileExW, MOVEFILE_DELAY_UNTIL_REBOOT, MOVEFILE_REPLACE_EXISTING,
+        };
 
         fn to_wide(path: &Path) -> Vec<u16> {
             path.as_os_str()
@@ -200,7 +256,8 @@ impl StandaloneRemediator {
                 PCWSTR::from_raw(from_w.as_ptr()),
                 PCWSTR::from_raw(to_w.as_ptr()),
                 MOVEFILE_DELAY_UNTIL_REBOOT | MOVEFILE_REPLACE_EXISTING,
-            ).map_err(|e| {
+            )
+            .map_err(|e| {
                 error!("MoveFileExW failed: {}", e);
                 anyhow!("Failed to schedule reboot move: {}", e)
             })?;

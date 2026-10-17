@@ -131,7 +131,10 @@ mod tests {
             error_message: None,
         };
         let finding = detector.evaluate_immediate(&attack_tel).await;
-        assert!(finding.is_some(), "Inventory scraping attack must be flagged");
+        assert!(
+            finding.is_some(),
+            "Inventory scraping attack must be flagged"
+        );
         let f = finding.unwrap();
         assert_eq!(f.risk_category, OwaspAgenticRisk::ResourceExhaustionASI09);
         assert_eq!(f.severity, AlertSeverity::Critical);
@@ -221,7 +224,11 @@ mod tests {
 
         // Wait briefly for cleaner to tick
         tokio::time::sleep(Duration::from_millis(150)).await;
-        assert_eq!(screener.sessions.len(), 0, "Dormant session should be pruned");
+        assert_eq!(
+            screener.sessions.len(),
+            0,
+            "Dormant session should be pruned"
+        );
     }
 
     #[tokio::test]
@@ -243,7 +250,10 @@ mod tests {
 
         // Enforce mode: should isolate or block
         let decision = detector.enforce_policy(&attack_tel, "enforce").await;
-        assert!(!decision.allowed, "Rogue command must not be allowed in enforce mode");
+        assert!(
+            !decision.allowed,
+            "Rogue command must not be allowed in enforce mode"
+        );
         assert_eq!(decision.action, "isolate");
         assert!(decision.finding.is_some());
         assert_eq!(
@@ -282,7 +292,9 @@ mod tests {
             f.evidence.get("embedding_gemma2_cosine_score").is_some(),
             "Evidence must include embedding_gemma2_cosine_score"
         );
-        let score = f.evidence["embedding_gemma2_cosine_score"].as_f64().unwrap();
+        let score = f.evidence["embedding_gemma2_cosine_score"]
+            .as_f64()
+            .unwrap();
         assert!(score >= 0.82, "Cosine score must be >= 0.82, got {}", score);
         assert_eq!(f.evidence["embedding_gemma2_dimension"], 128);
     }

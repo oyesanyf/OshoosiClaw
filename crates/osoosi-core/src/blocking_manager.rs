@@ -23,7 +23,11 @@ impl BlockingManager {
         if path.exists() {
             let data = std::fs::read_to_string(&path)?;
             let rules: Vec<BlockingRule> = serde_json::from_str(&data)?;
-            info!("BlockingManager: Loaded {} persistent rules from {:?}.", rules.len(), path);
+            info!(
+                "BlockingManager: Loaded {} persistent rules from {:?}.",
+                rules.len(),
+                path
+            );
             Ok(rules)
         } else {
             Ok(Vec::new())
@@ -76,8 +80,11 @@ impl BlockingManager {
 
     /// Autonomous termination of a process by its PID.
     pub async fn block_by_pid(&self, pid: u32) -> anyhow::Result<()> {
-        info!("BlockingManager: Autonomous termination triggered for PID {}", pid);
-        
+        info!(
+            "BlockingManager: Autonomous termination triggered for PID {}",
+            pid
+        );
+
         #[cfg(target_os = "windows")]
         {
             let _ = std::process::Command::new(osoosi_types::resolve_system_binary("taskkill.exe"))
@@ -108,10 +115,10 @@ mod tests {
     #[async_trait]
     impl SecuredExecutor for MockTestExecutor {
         async fn execute(&self, _cmd: Command) -> anyhow::Result<Output> {
-            #[cfg(windows)]
-            use std::os::windows::process::ExitStatusExt;
             #[cfg(unix)]
             use std::os::unix::process::ExitStatusExt;
+            #[cfg(windows)]
+            use std::os::windows::process::ExitStatusExt;
 
             Ok(Output {
                 status: ExitStatusExt::from_raw(0),

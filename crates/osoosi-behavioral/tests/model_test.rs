@@ -1,5 +1,5 @@
+use osoosi_behavioral::llm_engine::{Gemma4Analyzer, SecureBertAnalyzer};
 use std::path::Path;
-use osoosi_behavioral::llm_engine::{SecureBertAnalyzer, Gemma4Analyzer};
 
 #[tokio::test]
 async fn test_load_models() {

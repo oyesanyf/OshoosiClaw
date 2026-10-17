@@ -91,6 +91,7 @@ pub struct MeshHeartbeat {
 
 /// Attestation exchange messages across the Gossip mesh.
 #[derive(serde::Serialize, serde::Deserialize, Debug, Clone)]
+#[allow(clippy::large_enum_variant)]
 pub enum MeshAttestationMessage {
     Challenge {
         challenger_peer_id: String,

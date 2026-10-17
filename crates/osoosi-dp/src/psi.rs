@@ -166,10 +166,8 @@ pub fn compute_intersection(
     let mut common_iocs = Vec::new();
 
     for (i, our_doubly_blinded) in our_values_doubly_blinded_by_peer.values.iter().enumerate() {
-        if peer_set.contains(our_doubly_blinded) {
-            if i < session.our_iocs.len() {
-                common_iocs.push(session.our_iocs[i].clone());
-            }
+        if peer_set.contains(our_doubly_blinded) && i < session.our_iocs.len() {
+            common_iocs.push(session.our_iocs[i].clone());
         }
     }
 

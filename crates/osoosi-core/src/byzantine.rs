@@ -266,7 +266,7 @@ pub fn analyze_policy_consensus(
     let quorum = if both_high_trust {
         2usize
     } else {
-        std::cmp::max(3usize, (2 * participating + 2) / 3)
+        std::cmp::max(3usize, (2 * participating).div_ceil(3))
     };
 
     let mut optimal_ids = Vec::new();
@@ -362,7 +362,8 @@ pub fn analyze_policy_consensus(
         let mut freshest_witness_vote: Option<&WitnessVote> = None;
 
         // Witness resolution is only permitted when a designated witness or public key is configured
-        let witness_configured = params.designated_witness_id.is_some() || params.witness_public_key.is_some();
+        let witness_configured =
+            params.designated_witness_id.is_some() || params.witness_public_key.is_some();
         if witness_configured {
             for msg in messages {
                 if let PolicyConsensusMessage::Witness(w) = msg {
@@ -391,10 +392,18 @@ pub fn analyze_policy_consensus(
                         // Reject unauthenticated witness votes if no verifying key is configured
                         continue;
                     };
-                    let Ok(pk_bytes) = hex::decode(pk_hex) else { continue };
-                    let Ok(verifying_key) = VerifyingKey::try_from(pk_bytes.as_slice()) else { continue };
-                    let Ok(sig_bytes) = hex::decode(&w.signature) else { continue };
-                    let Ok(sig) = Signature::try_from(sig_bytes.as_slice()) else { continue };
+                    let Ok(pk_bytes) = hex::decode(pk_hex) else {
+                        continue;
+                    };
+                    let Ok(verifying_key) = VerifyingKey::try_from(pk_bytes.as_slice()) else {
+                        continue;
+                    };
+                    let Ok(sig_bytes) = hex::decode(&w.signature) else {
+                        continue;
+                    };
+                    let Ok(sig) = Signature::try_from(sig_bytes.as_slice()) else {
+                        continue;
+                    };
                     let digest = osoosi_types::compute_witness_digest(
                         &w.policy_id,
                         &w.witness_id,
@@ -423,11 +432,7 @@ pub fn analyze_policy_consensus(
             witness_resolved = true;
             stalemate_conflict = false;
             winning_status = Some(w.favored_status.clone());
-            if w.favored_status == PolicyHealthStatus::Optimal {
-                mesh_validated = true;
-            } else {
-                mesh_validated = false;
-            }
+            mesh_validated = w.favored_status == PolicyHealthStatus::Optimal;
         } else if params.enable_reputation_tie_breaker {
             let opt_rep = optimal_ids.first().map(|id| reputation(id)).unwrap_or(0.0);
             let crit_rep = critical_ids.first().map(|id| reputation(id)).unwrap_or(0.0);
@@ -532,7 +537,10 @@ impl AutonomousWitnessProvider {
         let seed: [u8; 32] = hasher.finalize().into();
         let signing_key = ed25519_dalek::SigningKey::from_bytes(&seed);
         let verifying_key = signing_key.verifying_key();
-        let witness_id = format!("arbiter:virtual:{}", &hex::encode(verifying_key.to_bytes())[..16]);
+        let witness_id = format!(
+            "arbiter:virtual:{}",
+            &hex::encode(verifying_key.to_bytes())[..16]
+        );
         Self {
             signing_key,
             verifying_key,
@@ -784,7 +792,10 @@ mod tests {
         };
         let o = analyze_policy_consensus(&msgs, |_| 0.85, &p);
         assert!(!o.mesh_validated);
-        assert!(o.stalemate_conflict, "1-vs-1 split vote must trigger stalemate_conflict");
+        assert!(
+            o.stalemate_conflict,
+            "1-vs-1 split vote must trigger stalemate_conflict"
+        );
     }
 
     #[test]
@@ -1181,6 +1192,3 @@ mod tests {
         assert_eq!(o.winning_status, Some(PolicyHealthStatus::Optimal));
     }
 }
-
-
-

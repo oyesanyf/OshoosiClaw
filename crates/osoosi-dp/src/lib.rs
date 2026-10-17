@@ -42,7 +42,7 @@ impl DifferentialPrivacy {
     pub fn laplace_noise(&self) -> f32 {
         let mut rng = rand::thread_rng();
         let u: f32 = rng.gen_range(-0.4999999..0.4999999);
-        let eff_eps = (self.config.epsilon as f32).max(1e-6);
+        let eff_eps = self.config.epsilon.max(1e-6);
         let scale = self.config.sensitivity / eff_eps;
 
         // Laplacian noise = -scale * sign(u) * ln(1 - 2|u|)
@@ -107,7 +107,10 @@ impl LocalTelemetryNoiseEngine {
 
     /// Privatize a vector of incident counts ensuring all elements are non-negative.
     pub fn privatize_incident_vector(&self, counts: &[usize]) -> Vec<f64> {
-        counts.iter().map(|&c| self.privatize_count(c as u64)).collect()
+        counts
+            .iter()
+            .map(|&c| self.privatize_count(c as u64))
+            .collect()
     }
 }
 
@@ -169,10 +172,18 @@ mod tests {
 
         for _ in 0..1000 {
             let priv_count = engine.privatize_count(1);
-            assert!(priv_count >= 0.0, "Count must be non-negative: {}", priv_count);
+            assert!(
+                priv_count >= 0.0,
+                "Count must be non-negative: {}",
+                priv_count
+            );
 
             let priv_zero = engine.privatize_count(0);
-            assert!(priv_zero >= 0.0, "Zero count must be non-negative: {}", priv_zero);
+            assert!(
+                priv_zero >= 0.0,
+                "Zero count must be non-negative: {}",
+                priv_zero
+            );
 
             let priv_rate = engine.privatize_rate(0.05);
             assert!(priv_rate >= 0.0, "Rate must be non-negative: {}", priv_rate);
@@ -186,4 +197,3 @@ mod tests {
         }
     }
 }
-

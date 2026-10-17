@@ -1563,7 +1563,9 @@ pub fn get_matrix_summary() -> MitreMatrixSummary {
     let mut active_detections_by_tactic: HashMap<String, usize> = HashMap::new();
     let mut active_detections_by_technique: HashMap<String, usize> = HashMap::new();
     for tech in &techniques {
-        let count = active_detections_by_tactic.entry(tech.tactic_id.clone()).or_insert(0);
+        let count = active_detections_by_tactic
+            .entry(tech.tactic_id.clone())
+            .or_insert(0);
         *count += tech.detection_mechanisms.len();
         if !tech.detection_mechanisms.is_empty() {
             active_detections_by_technique.insert(tech.id.clone(), tech.detection_mechanisms.len());
@@ -1619,11 +1621,26 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
 
     // Look for explicit T-pattern like T1082 or t1059.001 or ATLAS AML.T0043
     let words = text_lower.split(|c: char| {
-        c.is_whitespace() || c == ',' || c == ';' || c == ':' || c == '[' || c == ']' || c == '(' || c == ')' || c == '{' || c == '}' || c == '|' || c == '/' || c == '\\' || c == '"' || c == '\''
+        c.is_whitespace()
+            || c == ','
+            || c == ';'
+            || c == ':'
+            || c == '['
+            || c == ']'
+            || c == '('
+            || c == ')'
+            || c == '{'
+            || c == '}'
+            || c == '|'
+            || c == '/'
+            || c == '\\'
+            || c == '"'
+            || c == '\''
     });
     let mut matches = Vec::new();
     for raw_word in words {
-        let word = raw_word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_');
+        let word = raw_word
+            .trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '-' && c != '_');
         let candidate = word
             .strip_prefix("attack.")
             .or_else(|| word.strip_prefix("atlas."))
@@ -1639,8 +1656,16 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
             if num_part.chars().all(|c| c.is_ascii_digit()) {
                 if let Some(tech) = lookup_technique(candidate) {
                     // Check if candidate matched a specific subtechnique
-                    if let Some(sub) = tech.subtechniques.iter().find(|s| s.id.eq_ignore_ascii_case(candidate)) {
-                        matches.push((tech.tactic_name, sub.id.clone(), format!("{}: {}", tech.name, sub.name)));
+                    if let Some(sub) = tech
+                        .subtechniques
+                        .iter()
+                        .find(|s| s.id.eq_ignore_ascii_case(candidate))
+                    {
+                        matches.push((
+                            tech.tactic_name,
+                            sub.id.clone(),
+                            format!("{}: {}", tech.name, sub.name),
+                        ));
                     } else {
                         matches.push((tech.tactic_name, tech.id, tech.name));
                     }
@@ -1651,7 +1676,9 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
 
     if !matches.is_empty() {
         // Prioritize specific high-impact subtechniques like T1136.001 over generic execution like T1059.001
-        if let Some(pos) = matches.iter().position(|m| m.1.eq_ignore_ascii_case("T1136.001") || m.1.eq_ignore_ascii_case("T1136")) {
+        if let Some(pos) = matches.iter().position(|m| {
+            m.1.eq_ignore_ascii_case("T1136.001") || m.1.eq_ignore_ascii_case("T1136")
+        }) {
             return Some(matches.remove(pos));
         }
         // Also prioritize credential access T1003, process injection T1055, or impact T1490 over generic execution
@@ -1662,7 +1689,10 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
             return Some(matches.remove(pos));
         }
         // Prioritize any specific non-T1059 technique over generic script execution T1059
-        if let Some(pos) = matches.iter().position(|m| !m.1.to_ascii_uppercase().starts_with("T1059")) {
+        if let Some(pos) = matches
+            .iter()
+            .position(|m| !m.1.to_ascii_uppercase().starts_with("T1059"))
+        {
             return Some(matches.remove(pos));
         }
         return Some(matches.remove(0));
@@ -1670,9 +1700,11 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
 
     // Check for tactic-level tags like attack.execution, attack.defense_evasion, etc.
     // Require explicit tag prefix so ordinary words like 'execution' in reasons don't trigger.
-    let words = text_lower.split(|c: char| !c.is_alphanumeric() && c != '.' && c != '_' && c != '-');
+    let words =
+        text_lower.split(|c: char| !c.is_alphanumeric() && c != '.' && c != '_' && c != '-');
     for word in words {
-        if let Some(candidate) = word.strip_prefix("attack.")
+        if let Some(candidate) = word
+            .strip_prefix("attack.")
             .or_else(|| word.strip_prefix("tactic."))
             .or_else(|| word.strip_prefix("atlas."))
         {
@@ -1680,10 +1712,17 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
             if let Some(tac) = lookup_tactic(&normalized) {
                 // For generic execution tactic tag without specific technique ID, prefer T1059 over ATLAS AML.T0011
                 if tac.id == "TA0002" {
-                    return Some(("Execution".into(), "T1059".into(), "Command and Scripting Interpreter".into()));
+                    return Some((
+                        "Execution".into(),
+                        "T1059".into(),
+                        "Command and Scripting Interpreter".into(),
+                    ));
                 }
                 // Prefer traditional Enterprise ATT&CK technique over ATLAS for generic tactic tags
-                if let Some(first_tech) = get_all_techniques().into_iter().find(|t| t.tactic_id == tac.id && !t.id.starts_with("AML.")) {
+                if let Some(first_tech) = get_all_techniques()
+                    .into_iter()
+                    .find(|t| t.tactic_id == tac.id && !t.id.starts_with("AML."))
+                {
                     return Some((tac.name, first_tech.id, first_tech.name));
                 }
             }
@@ -1691,7 +1730,8 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
     }
 
     // Keyword heuristics if no explicit ID found
-    if ((text_lower.contains("net user") || text_lower.contains("net1 user")) && text_lower.contains("/add"))
+    if ((text_lower.contains("net user") || text_lower.contains("net1 user"))
+        && text_lower.contains("/add"))
         || text_lower.contains("new-localuser")
         || text_lower.contains("t1136.001")
         || text_lower.contains("t1136")
@@ -1709,16 +1749,34 @@ pub fn extract_mitre_from_text(text: &str) -> Option<(String, String, String)> {
         return lookup_technique("T1033").map(|t| (t.tactic_name, t.id, t.name));
     }
     if text_lower.contains("powershell") || text_lower.contains("pwsh") {
-        return lookup_technique("T1059").map(|t| (t.tactic_name, "T1059.001".into(), "Command and Scripting Interpreter: PowerShell".into()));
+        return lookup_technique("T1059").map(|t| {
+            (
+                t.tactic_name,
+                "T1059.001".into(),
+                "Command and Scripting Interpreter: PowerShell".into(),
+            )
+        });
     }
     if text_lower.contains("shadows") || text_lower.contains("vssadmin") {
         return lookup_technique("T1490").map(|t| (t.tactic_name, t.id, t.name));
     }
     if text_lower.contains("lsass") || text_lower.contains("mimikatz") {
-        return lookup_technique("T1003").map(|t| (t.tactic_name, "T1003.001".into(), "OS Credential Dumping: LSASS Memory".into()));
+        return lookup_technique("T1003").map(|t| {
+            (
+                t.tactic_name,
+                "T1003.001".into(),
+                "OS Credential Dumping: LSASS Memory".into(),
+            )
+        });
     }
     if text_lower.contains("attrib") {
-        return lookup_technique("T1564").map(|t| (t.tactic_name, "T1564.001".into(), "Hide Artifacts: Hidden Files and Directories".into()));
+        return lookup_technique("T1564").map(|t| {
+            (
+                t.tactic_name,
+                "T1564.001".into(),
+                "Hide Artifacts: Hidden Files and Directories".into(),
+            )
+        });
     }
 
     None
@@ -1736,7 +1794,8 @@ pub fn infer_mitre_from_event(
     // 1. Process Creation & Execution Commands (Sysmon Event ID 1 / Windows Security 4688)
     if event_id == 1 || event_id == 0 || event_id == 4688 {
         // Persistence: Create Account: Local Account (T1136.001)
-        if (cmd_lower.contains("net user") || cmd_lower.contains("net1 user")) && cmd_lower.contains("/add")
+        if (cmd_lower.contains("net user") || cmd_lower.contains("net1 user"))
+            && cmd_lower.contains("/add")
             || cmd_lower.contains("new-localuser")
         {
             return Some((
@@ -1749,7 +1808,8 @@ pub fn infer_mitre_from_event(
         if cmd_lower.contains("vssadmin delete shadows")
             || cmd_lower.contains("wbadmin delete catalog")
             || (cmd_lower.contains("bcdedit") && cmd_lower.contains("recoveryenabled no"))
-            || (cmd_lower.contains("bcdedit") && cmd_lower.contains("bootstatuspolicy ignoreallfailures"))
+            || (cmd_lower.contains("bcdedit")
+                && cmd_lower.contains("bootstatuspolicy ignoreallfailures"))
         {
             return Some((
                 "Impact".into(),
@@ -1759,18 +1819,20 @@ pub fn infer_mitre_from_event(
         }
 
         // Impact: Service Stop (T1489)
-        if (cmd_lower.contains("net stop") || cmd_lower.contains("sc stop") || cmd_lower.contains("stop-service"))
-            && (cmd_lower.contains("windefend") || cmd_lower.contains("mssql") || cmd_lower.contains("backup"))
+        if (cmd_lower.contains("net stop")
+            || cmd_lower.contains("sc stop")
+            || cmd_lower.contains("stop-service"))
+            && (cmd_lower.contains("windefend")
+                || cmd_lower.contains("mssql")
+                || cmd_lower.contains("backup"))
         {
-            return Some((
-                "Impact".into(),
-                "T1489".into(),
-                "Service Stop".into(),
-            ));
+            return Some(("Impact".into(), "T1489".into(), "Service Stop".into()));
         }
 
         // Defense Evasion: Hide Artifacts (T1564.001)
-        if (img_lower.ends_with("attrib.exe") || cmd_lower.contains("attrib")) && cmd_lower.contains("+h") {
+        if (img_lower.ends_with("attrib.exe") || cmd_lower.contains("attrib"))
+            && cmd_lower.contains("+h")
+        {
             return Some((
                 "Defense Evasion".into(),
                 "T1564.001".into(),
@@ -1803,7 +1865,9 @@ pub fn infer_mitre_from_event(
         }
 
         // Discovery: Account Discovery (T1087.001)
-        if (cmd_lower.contains("net user") || cmd_lower.contains("net localgroup") || cmd_lower.contains("whoami /all"))
+        if (cmd_lower.contains("net user")
+            || cmd_lower.contains("net localgroup")
+            || cmd_lower.contains("whoami /all"))
             && !cmd_lower.contains("/add")
         {
             return Some((
@@ -1865,7 +1929,9 @@ pub fn infer_mitre_from_event(
         }
 
         // Persistence: Scheduled Task/Job (T1053.005)
-        if (img_lower.ends_with("schtasks.exe") || cmd_lower.contains("schtasks")) && cmd_lower.contains("/create") {
+        if (img_lower.ends_with("schtasks.exe") || cmd_lower.contains("schtasks"))
+            && cmd_lower.contains("/create")
+        {
             return Some((
                 "Persistence".into(),
                 "T1053.005".into(),
@@ -1892,7 +1958,9 @@ pub fn infer_mitre_from_event(
         }
 
         // Defense Evasion: Modify Registry (T1112)
-        if (img_lower.ends_with("reg.exe") || cmd_lower.contains("reg add")) && cmd_lower.contains("add") {
+        if (img_lower.ends_with("reg.exe") || cmd_lower.contains("reg add"))
+            && cmd_lower.contains("add")
+        {
             return Some((
                 "Defense Evasion".into(),
                 "T1112".into(),
@@ -1981,7 +2049,10 @@ pub fn infer_mitre_from_event(
                 "OS Credential Dumping: LSASS Memory".into(),
             ));
         }
-        if cmd_lower.contains("sam") || cmd_lower.contains("security") || cmd_lower.contains("ntds.dit") {
+        if cmd_lower.contains("sam")
+            || cmd_lower.contains("security")
+            || cmd_lower.contains("ntds.dit")
+        {
             return Some((
                 "Credential Access".into(),
                 "T1003.002".into(),
@@ -2005,8 +2076,13 @@ pub fn infer_mitre_from_event(
             ));
         }
         // Dropping executables or scripts into user AppData/Temp paths for persistence
-        if (cmd_lower.ends_with(".exe") || cmd_lower.ends_with(".dll") || cmd_lower.ends_with(".ps1") || cmd_lower.ends_with(".vbs"))
-            && (cmd_lower.contains("\\appdata\\") || cmd_lower.contains("\\temp\\") || cmd_lower.contains("\\public\\"))
+        if (cmd_lower.ends_with(".exe")
+            || cmd_lower.ends_with(".dll")
+            || cmd_lower.ends_with(".ps1")
+            || cmd_lower.ends_with(".vbs"))
+            && (cmd_lower.contains("\\appdata\\")
+                || cmd_lower.contains("\\temp\\")
+                || cmd_lower.contains("\\public\\"))
         {
             return Some((
                 "Persistence".into(),
@@ -2094,7 +2170,10 @@ mod tests {
         }
 
         let summary = get_matrix_summary();
-        assert!(summary.coverage_percentage > 80.0, "Coverage should be high");
+        assert!(
+            summary.coverage_percentage > 80.0,
+            "Coverage should be high"
+        );
     }
 
     #[test]
@@ -2113,67 +2192,74 @@ mod tests {
     #[test]
     fn test_infer_mitre_from_event() {
         // vssadmin delete shadows -> T1490
-        let (tac, tech, name) = infer_mitre_from_event(1, "vssadmin.exe", "vssadmin delete shadows /all /quiet")
-            .expect("infer T1490");
+        let (tac, tech, name) =
+            infer_mitre_from_event(1, "vssadmin.exe", "vssadmin delete shadows /all /quiet")
+                .expect("infer T1490");
         assert_eq!(tac, "Impact");
         assert_eq!(tech, "T1490");
         assert_eq!(name, "Inhibit System Recovery");
 
         // powershell.exe -> T1059.001
-        let (tac, tech, _) = infer_mitre_from_event(1, "powershell.exe", "powershell.exe -enc AAAA")
-            .expect("infer T1059.001");
+        let (tac, tech, _) =
+            infer_mitre_from_event(1, "powershell.exe", "powershell.exe -enc AAAA")
+                .expect("infer T1059.001");
         assert_eq!(tac, "Execution");
         assert_eq!(tech, "T1059.001");
 
         // systeminfo.exe -> T1082
-        let (tac, tech, _) = infer_mitre_from_event(1, "systeminfo.exe", "systeminfo")
-            .expect("infer T1082");
+        let (tac, tech, _) =
+            infer_mitre_from_event(1, "systeminfo.exe", "systeminfo").expect("infer T1082");
         assert_eq!(tac, "Discovery");
         assert_eq!(tech, "T1082");
 
         // whoami.exe -> T1033
-        let (tac, tech, name) = infer_mitre_from_event(1, "whoami.exe", "whoami /priv")
-            .expect("infer T1033");
+        let (tac, tech, name) =
+            infer_mitre_from_event(1, "whoami.exe", "whoami /priv").expect("infer T1033");
         assert_eq!(tac, "Discovery");
         assert_eq!(tech, "T1033");
         assert_eq!(name, "System Owner/User Discovery");
 
         // mimikatz / lsass credential dumping -> T1003.001
-        let (tac, tech, name) = infer_mitre_from_event(1, "mimikatz.exe", "sekurlsa::logonpasswords")
-            .expect("infer T1003.001");
+        let (tac, tech, name) =
+            infer_mitre_from_event(1, "mimikatz.exe", "sekurlsa::logonpasswords")
+                .expect("infer T1003.001");
         assert_eq!(tac, "Credential Access");
         assert_eq!(tech, "T1003.001");
         assert_eq!(name, "OS Credential Dumping: LSASS Memory");
 
         // Sysmon Event 8 -> T1055.001
-        let (tac, tech, _) = infer_mitre_from_event(8, "injector.exe", "")
-            .expect("infer T1055.001");
+        let (tac, tech, _) =
+            infer_mitre_from_event(8, "injector.exe", "").expect("infer T1055.001");
         assert_eq!(tac, "Privilege Escalation");
         assert_eq!(tech, "T1055.001");
 
         // net user /add -> T1136.001
-        let (tac, tech, name) = infer_mitre_from_event(1, "net.exe", "net user attacker P@ss123 /add")
-            .expect("infer T1136.001");
+        let (tac, tech, name) =
+            infer_mitre_from_event(1, "net.exe", "net user attacker P@ss123 /add")
+                .expect("infer T1136.001");
         assert_eq!(tac, "Persistence");
         assert_eq!(tech, "T1136.001");
         assert_eq!(name, "Create Account: Local Account");
 
         // New-LocalUser -> T1136.001
-        let (tac, tech, _) = infer_mitre_from_event(1, "powershell.exe", "New-LocalUser -Name backdoor")
-            .expect("infer T1136.001");
+        let (tac, tech, _) =
+            infer_mitre_from_event(1, "powershell.exe", "New-LocalUser -Name backdoor")
+                .expect("infer T1136.001");
         assert_eq!(tac, "Persistence");
         assert_eq!(tech, "T1136.001");
     }
 
     #[test]
     fn test_extract_mitre_from_text() {
-        let res = extract_mitre_from_text("Sigma rule match: attack.t1082 systeminfo discovery detected")
-            .expect("extract T1082");
+        let res =
+            extract_mitre_from_text("Sigma rule match: attack.t1082 systeminfo discovery detected")
+                .expect("extract T1082");
         assert_eq!(res.1, "T1082");
         assert_eq!(res.0, "Discovery");
 
-        let whoami_res = extract_mitre_from_text("Sigma rule match: attack.t1033 whoami priv discovery")
-            .expect("extract T1033");
+        let whoami_res =
+            extract_mitre_from_text("Sigma rule match: attack.t1033 whoami priv discovery")
+                .expect("extract T1033");
         assert_eq!(whoami_res.1, "T1033");
         assert_eq!(whoami_res.0, "Discovery");
 
@@ -2184,14 +2270,16 @@ mod tests {
         assert_eq!(sub_res.0, "Execution");
 
         // Prioritization test: attack.t1136.001 must take precedence over attack.t1059.001
-        let prio_res = extract_mitre_from_text("Alert: attack.t1059.001 attack.t1136.001 rogue user creation")
-            .expect("prioritize T1136.001");
+        let prio_res =
+            extract_mitre_from_text("Alert: attack.t1059.001 attack.t1136.001 rogue user creation")
+                .expect("prioritize T1136.001");
         assert_eq!(prio_res.1, "T1136.001");
         assert_eq!(prio_res.0, "Persistence");
 
         // Keyword heuristic test
-        let kw_res = extract_mitre_from_text("Unauthorized local account: net user rogue_admin /add")
-            .expect("extract from keyword heuristic");
+        let kw_res =
+            extract_mitre_from_text("Unauthorized local account: net user rogue_admin /add")
+                .expect("extract from keyword heuristic");
         assert_eq!(kw_res.1, "T1136.001");
         assert_eq!(kw_res.0, "Persistence");
 
@@ -2217,30 +2305,50 @@ mod tests {
 
         // Bare words like 'execution' or 'defense-evasion' without tag prefix MUST NOT extract AML.T0011 or any tactic
         let bare_exec = extract_mitre_from_text("Normal process execution completed successfully");
-        assert!(bare_exec.is_none(), "Bare word 'execution' must not extract MITRE technique");
+        assert!(
+            bare_exec.is_none(),
+            "Bare word 'execution' must not extract MITRE technique"
+        );
 
         let bare_de = extract_mitre_from_text("Routine defense-evasion checking in logs");
-        assert!(bare_de.is_none(), "Bare hyphenated words must not extract MITRE technique without prefix");
+        assert!(
+            bare_de.is_none(),
+            "Bare hyphenated words must not extract MITRE technique without prefix"
+        );
     }
 
     #[test]
     fn test_infer_mitre_false_positive_prevention() {
         // Benign notepad creating a text file should NOT be flagged as T1547
-        let benign_file = infer_mitre_from_event(11, "C:\\Windows\\notepad.exe", "notepad.exe C:\\Users\\Alice\\notes.txt");
-        assert!(benign_file.is_none(), "Benign file creation should not be flagged as persistence");
+        let benign_file = infer_mitre_from_event(
+            11,
+            "C:\\Windows\\notepad.exe",
+            "notepad.exe C:\\Users\\Alice\\notes.txt",
+        );
+        assert!(
+            benign_file.is_none(),
+            "Benign file creation should not be flagged as persistence"
+        );
 
         // Dropping executable into AppData should be flagged
-        let drop_file = infer_mitre_from_event(11, "dropper.exe", "C:\\Users\\Alice\\AppData\\Local\\Temp\\update.exe")
-            .expect("drop into Temp");
+        let drop_file = infer_mitre_from_event(
+            11,
+            "dropper.exe",
+            "C:\\Users\\Alice\\AppData\\Local\\Temp\\update.exe",
+        )
+        .expect("drop into Temp");
         assert_eq!(drop_file.1, "T1547");
 
         // Generic benign process handle should NOT be flagged as credential dumping
         let benign_handle = infer_mitre_from_event(10, "C:\\Windows\\explorer.exe", "notepad.exe");
-        assert!(benign_handle.is_none(), "Generic process handle should not be flagged as credential dumping");
+        assert!(
+            benign_handle.is_none(),
+            "Generic process handle should not be flagged as credential dumping"
+        );
 
         // LSASS process access should be flagged as T1003.001
-        let lsass_handle = infer_mitre_from_event(10, "mimikatz.exe", "lsass.exe")
-            .expect("lsass access");
+        let lsass_handle =
+            infer_mitre_from_event(10, "mimikatz.exe", "lsass.exe").expect("lsass access");
         assert_eq!(lsass_handle.1, "T1003.001");
         assert_eq!(lsass_handle.0, "Credential Access");
     }
@@ -2248,12 +2356,20 @@ mod tests {
     #[test]
     fn test_mitigations_and_groups() {
         let mitigations = get_mitigations();
-        assert!(mitigations.len() >= 45, "Expected comprehensive mitigations from catalog, got {}", mitigations.len());
+        assert!(
+            mitigations.len() >= 45,
+            "Expected comprehensive mitigations from catalog, got {}",
+            mitigations.len()
+        );
         assert!(mitigations.iter().any(|m| m.id == "AML.M0015"));
         assert!(mitigations.iter().any(|m| m.id == "AML.M0018"));
 
         let groups = get_threat_groups();
-        assert!(groups.len() >= 170, "Expected comprehensive threat groups from catalog, got {}", groups.len());
+        assert!(
+            groups.len() >= 170,
+            "Expected comprehensive threat groups from catalog, got {}",
+            groups.len()
+        );
         assert!(groups.iter().any(|g| g.name == "APT29"));
         assert!(groups.iter().any(|g| g.name == "LockBit"));
         assert!(groups.iter().any(|g| g.name == "Volt Typhoon"));
@@ -2264,7 +2380,10 @@ mod tests {
     fn test_mitre_atlas_catalog_and_extraction() {
         // 1. ATLAS technique lookup (standard and hyphenated/underscore formats)
         let aml43 = lookup_technique("AML.T0043").expect("AML.T0043 technique found");
-        assert_eq!(aml43.name, "Adversarial Prompt Injection / Tool-Argument Injection");
+        assert_eq!(
+            aml43.name,
+            "Adversarial Prompt Injection / Tool-Argument Injection"
+        );
         assert_eq!(aml43.voter, "AiSecurityAuditVoter");
         assert_eq!(aml43.consensus_action, "Tarpit");
         assert!(aml43.is_atlas);
@@ -2303,8 +2422,9 @@ mod tests {
 
         // Hyphenated ATLAS token in text extraction
         let (_, tech4, _) = extract_mitre_from_text(
-            "Detection match: MITRE ATLAS AML-T0040 AI Runtime Remote Thread Injection"
-        ).expect("extract hyphenated AML-T0040");
+            "Detection match: MITRE ATLAS AML-T0040 AI Runtime Remote Thread Injection",
+        )
+        .expect("extract hyphenated AML-T0040");
         assert_eq!(tech4, "AML.T0040");
     }
 }

@@ -72,12 +72,20 @@ impl AgentEgressEnforcer {
     /// deploys targeted firewall isolation rules or network QoS throttling dynamically based on confidence/threat level.
     pub fn enforce_containment(&self, event: &HostSecurityEvent) -> Result<Option<String>> {
         // First, check policy voter evaluation; if None, check covert side-channel detector
-        let vote = self.policy.evaluate_network_egress(event)
-            .or_else(|| self.voter.side_channel_detector().evaluate_channel_event(event));
+        let vote = self.policy.evaluate_network_egress(event).or_else(|| {
+            self.voter
+                .side_channel_detector()
+                .evaluate_channel_event(event)
+        });
 
         if let Some(vote) = vote {
-            let pid = event.data.get("ProcessId")
-                .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok())))
+            let pid = event
+                .data
+                .get("ProcessId")
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+                })
                 .map(|p| p as u32);
             let image = event.data.get("Image").and_then(|v| v.as_str());
 
@@ -108,7 +116,9 @@ impl AgentEgressEnforcer {
                         let query_results = event.data.get("QueryResults").and_then(|v| v.as_str());
 
                         // Attempt DNS destination firewall block
-                        if let Ok(dns_block_msg) = crate::firewall::block_dns_destinations(query_name, query_results) {
+                        if let Ok(dns_block_msg) =
+                            crate::firewall::block_dns_destinations(query_name, query_results)
+                        {
                             info!("DNS firewall block enforced: {}", dns_block_msg);
                             return Ok(Some(format!("DNS containment: {}", dns_block_msg)));
                         }
@@ -129,14 +139,20 @@ impl AgentEgressEnforcer {
                     // Side-channel events (Event 11, 17, 18)
                     11 | 17 | 18 => {
                         if let Ok(proc_msg) = crate::firewall::block_process_network(pid, image) {
-                            info!("Process network isolation enforced for side-channel: {}", proc_msg);
+                            info!(
+                                "Process network isolation enforced for side-channel: {}",
+                                proc_msg
+                            );
                             return Ok(Some(format!("Process containment: {}", proc_msg)));
                         }
                     }
                     _ => {}
                 }
 
-                return Ok(Some(format!("Hostile containment evaluated: {}", vote.reason)));
+                return Ok(Some(format!(
+                    "Hostile containment evaluated: {}",
+                    vote.reason
+                )));
             }
         }
 
@@ -166,26 +182,35 @@ mod tests {
         let enforcer = AgentEgressEnforcer::new();
 
         // Allowed DNS query to huggingface.co
-        let ev = make_test_event(22, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": 1234,
-            "QueryName": "huggingface.co",
-            "QueryStatus": "0"
-        }));
+        let ev = make_test_event(
+            22,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": 1234,
+                "QueryName": "huggingface.co",
+                "QueryStatus": "0"
+            }),
+        );
 
         let res = enforcer.enforce_containment(&ev).unwrap();
         assert!(res.is_none());
 
         // Benign process accessing unlisted domain (e.g. github.com)
-        let ev_benign = make_test_event(22, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": 1234,
-            "QueryName": "github.com",
-            "QueryStatus": "0"
-        }));
+        let ev_benign = make_test_event(
+            22,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": 1234,
+                "QueryName": "github.com",
+                "QueryStatus": "0"
+            }),
+        );
 
         let res_benign = enforcer.enforce_containment(&ev_benign).unwrap();
-        assert!(res_benign.is_none(), "Benign agent should not trigger containment for github.com");
+        assert!(
+            res_benign.is_none(),
+            "Benign agent should not trigger containment for github.com"
+        );
     }
 
     #[test]
@@ -197,12 +222,15 @@ mod tests {
         enforcer.elevate_threat_level(pid, ProcessThreatLevel::Suspicious);
 
         // Connection to unapproved destination triggers throttling action
-        let ev = make_test_event(3, json!({
-            "Image": "C:\\Program Files\\nodejs\\node.exe",
-            "ProcessId": pid,
-            "DestinationIp": "198.51.100.55",
-            "DestinationPort": 8080
-        }));
+        let ev = make_test_event(
+            3,
+            json!({
+                "Image": "C:\\Program Files\\nodejs\\node.exe",
+                "ProcessId": pid,
+                "DestinationIp": "198.51.100.55",
+                "DestinationPort": 8080
+            }),
+        );
 
         let res = enforcer.enforce_containment(&ev).unwrap();
         assert!(res.is_some());
@@ -219,12 +247,15 @@ mod tests {
         enforcer.elevate_threat_level(pid, ProcessThreatLevel::Hostile);
 
         // Unapproved connection to attacker server
-        let ev = make_test_event(3, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": pid,
-            "DestinationIp": "198.51.100.22",
-            "DestinationPort": 4444
-        }));
+        let ev = make_test_event(
+            3,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": pid,
+                "DestinationIp": "198.51.100.22",
+                "DestinationPort": 4444
+            }),
+        );
 
         let res = enforcer.enforce_containment(&ev).unwrap();
         assert!(res.is_some());
@@ -241,15 +272,21 @@ mod tests {
         enforcer.elevate_threat_level(pid, ProcessThreatLevel::Hostile);
 
         // Allowlisted endpoint like api.openai.com survives hostile threat level
-        let ev = make_test_event(22, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": pid,
-            "QueryName": "api.openai.com",
-            "QueryStatus": "0"
-        }));
+        let ev = make_test_event(
+            22,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": pid,
+                "QueryName": "api.openai.com",
+                "QueryStatus": "0"
+            }),
+        );
 
         let res = enforcer.enforce_containment(&ev).unwrap();
-        assert!(res.is_none(), "Allowlisted endpoint must survive Hostile threat level");
+        assert!(
+            res.is_none(),
+            "Allowlisted endpoint must survive Hostile threat level"
+        );
     }
 
     #[test]
@@ -258,20 +295,26 @@ mod tests {
         let pid = 7777;
 
         // Initially Benign: unlisted connection passes
-        let ev_net = make_test_event(3, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": pid,
-            "DestinationIp": "198.51.100.33",
-            "DestinationPort": 80
-        }));
+        let ev_net = make_test_event(
+            3,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": pid,
+                "DestinationIp": "198.51.100.33",
+                "DestinationPort": 80
+            }),
+        );
         assert!(enforcer.enforce_containment(&ev_net).unwrap().is_none());
 
         // Covert side-channel (Sysmon Event 17: named pipe creation)
-        let ev_pipe = make_test_event(17, json!({
-            "Image": "C:\\Python311\\python.exe",
-            "ProcessId": pid,
-            "PipeName": "\\pipe\\covert_side_channel_77"
-        }));
+        let ev_pipe = make_test_event(
+            17,
+            json!({
+                "Image": "C:\\Python311\\python.exe",
+                "ProcessId": pid,
+                "PipeName": "\\pipe\\covert_side_channel_77"
+            }),
+        );
 
         let res_pipe = enforcer.enforce_containment(&ev_pipe).unwrap();
         assert!(res_pipe.is_some());

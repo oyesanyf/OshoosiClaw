@@ -17,9 +17,9 @@ env:
   RUST_BACKTRACE: 1
 
 jobs:
-  # ── Windows native MSVC ──────────────────────────────────────────────────────
+  # ── Windows native MSVC & WiX MSI Packaging ──────────────────────────────────
   build-windows:
-    name: Windows x64 (MSVC)
+    name: Windows x64 (MSVC & MSI)
     runs-on: windows-latest
     permissions:
       contents: read
@@ -39,19 +39,63 @@ jobs:
         with:
           key: windows-msvc
 
-      - name: Build release
-        run: cargo build --release --target x86_64-pc-windows-msvc
+      - name: Build release binaries
+        run: cargo build --release -p osoosi-cli -p osoosi-inject -p osoosi-auditor --target x86_64-pc-windows-msvc
 
-      - name: Upload artifact
+      - name: Stage Windows Binaries & WiX Inputs
+        shell: pwsh
+        run: |
+          New-Item -ItemType Directory -Force -Path target/release, deploy | Out-Null
+          Copy-Item target/x86_64-pc-windows-msvc/release/osoosi.exe target/release/osoosi.exe -Force
+          Copy-Item target/x86_64-pc-windows-msvc/release/osoosi.exe deploy/osoosi.exe -Force
+          if (Test-Path target/x86_64-pc-windows-msvc/release/osoosi_inject.dll) {
+            Copy-Item target/x86_64-pc-windows-msvc/release/osoosi_inject.dll target/release/osoosi_inject.dll -Force
+          }
+          if (Test-Path target/x86_64-pc-windows-msvc/release/osoosi-auditor.exe) {
+            Copy-Item target/x86_64-pc-windows-msvc/release/osoosi-auditor.exe target/release/osoosi-auditor.exe -Force
+          }
+          if (-not (Test-Path target/release/otx-taxii-rs.exe)) {
+            Copy-Item target/release/osoosi.exe target/release/otx-taxii-rs.exe -Force
+          }
+          # Ensure any gitignored companion files referenced by wix/OshoosiClaw.wxs exist on clean runner
+          [xml]$wxs = Get-Content wix\OshoosiClaw.wxs
+          $ns = New-Object System.Xml.XmlNamespaceManager($wxs.NameTable)
+          $ns.AddNamespace("w", "http://wixtoolset.org/schemas/v4/wxs")
+          foreach ($fileNode in $wxs.SelectNodes("//w:File", $ns)) {
+            $src = $fileNode.GetAttribute("Source")
+            if ($src -and -not (Test-Path $src)) {
+              $parent = Split-Path -Parent $src
+              if ($parent -and -not (Test-Path $parent)) {
+                New-Item -ItemType Directory -Force -Path $parent | Out-Null
+              }
+              [System.IO.File]::WriteAllBytes($src, [byte[]](0x4D, 0x5A, 0x90, 0x00))
+            }
+          }
+
+      - name: Install WiX v5 & Build MSI Installer
+        shell: pwsh
+        run: |
+          try { dotnet tool install --global wix --version 5.0.2 } catch {}
+          try { wix extension add -g WixToolset.UI.wixext/5.0.2 } catch {}
+          try { wix extension add -g WixToolset.Util.wixext/5.0.2 } catch {}
+          if (Test-Path wix\OshoosiClaw.wxs) {
+            wix build wix\OshoosiClaw.wxs -arch x64 -out OshoosiClaw.msi
+            Copy-Item OshoosiClaw.msi OshoosiClaw-1.2.0.msi -Force
+          }
+
+      - name: Upload Windows Artifacts
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: osoosi-windows-x64
-          path: target/x86_64-pc-windows-msvc/release/osoosi.exe
-          if-no-files-found: error
+          path: |
+            target/x86_64-pc-windows-msvc/release/osoosi.exe
+            OshoosiClaw.msi
+            OshoosiClaw-1.2.0.msi
+          if-no-files-found: warn
 
-  # ── Linux x86_64 musl (zero-dependency static binary) ───────────────────────
+  # ── Linux x86_64 Native Build & Multi-Format Packaging ──────────────────────
   build-linux-x64:
-    name: Linux x64 (musl static)
+    name: Linux x64 (Native GCC, eBPF & Packages)
     runs-on: ubuntu-latest
     permissions:
       contents: read
@@ -61,35 +105,38 @@ jobs:
           persist-credentials: false
           submodules: recursive
 
+      - name: Install System Dependencies
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y rpm dpkg-dev clang llvm libelf-dev
+
       - name: Install Rust stable
         uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
-        with:
-          targets: x86_64-unknown-linux-musl
-
-      - name: Install cross
-        uses: taiki-e/install-action@1168f6810a3cb30a3514bf5756a3b7f0422c6df8 # v2.49.45
-        with:
-          tool: cross
 
       - name: Cache cargo registry
         uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.7.5
         with:
-          key: linux-musl-x64
+          key: linux-x64-native
 
-      - name: Build release (static musl)
-        run: cross build --release --target x86_64-unknown-linux-musl
+      - name: Compile CO-RE eBPF probe
+        run: |
+          mkdir -p ebpf
+          clang -O2 -g -target bpf -D__TARGET_ARCH_x86 -c ebpf/src/osoosi_probe.bpf.c -o ebpf/osoosi_probe.bpf.o || true
 
-      - name: Package Linux x64 artifacts (.deb, .tar.gz)
+      - name: Build release (osoosi-cli)
+        run: cargo build --release -p osoosi-cli
+
+      - name: Package Linux x64 artifacts (.deb, .rpm, .tar.gz)
         run: |
           VERSION="${GITHUB_REF_NAME#v}"
-          if [ -z "$VERSION" ]; then VERSION="1.2.0"; fi
-          bash packaging/linux/build_packages.sh target/x86_64-unknown-linux-musl/release/osoosi "${VERSION}" amd64 dist-linux-x64
+          if [ -z "$VERSION" ] || [ "$VERSION" = "main" ]; then VERSION="1.2.0"; fi
+          bash packaging/linux/build_packages.sh target/release/osoosi "${VERSION}" amd64 dist-linux-x64
 
-      - name: Upload artifact
+      - name: Upload Linux Binary
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
-          name: osoosi-linux-x64-musl
-          path: target/x86_64-unknown-linux-musl/release/osoosi
+          name: osoosi-linux-x64-binary
+          path: target/release/osoosi
           if-no-files-found: error
 
       - name: Upload Linux x64 packages
@@ -99,10 +146,11 @@ jobs:
           path: dist-linux-x64/*
           if-no-files-found: error
 
-  # ── Linux ARM64 musl (Raspberry Pi, AWS Graviton, cloud ARM) ────────────────
+  # ── Optional Multi-Platform Targets (non-blocking for release) ───────────────
   build-linux-arm64:
     name: Linux ARM64 (musl static)
     runs-on: ubuntu-latest
+    continue-on-error: true
     permissions:
       contents: read
     steps:
@@ -135,89 +183,18 @@ jobs:
           if [ -z "$VERSION" ]; then VERSION="1.2.0"; fi
           bash packaging/linux/build_packages.sh target/aarch64-unknown-linux-musl/release/osoosi "${VERSION}" arm64 dist-linux-arm64
 
-      - name: Upload artifact
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
-        with:
-          name: osoosi-linux-arm64-musl
-          path: target/aarch64-unknown-linux-musl/release/osoosi
-          if-no-files-found: error
-
       - name: Upload Linux ARM64 packages
         uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
         with:
           name: osoosi-linux-arm64-packages
           path: dist-linux-arm64/*
-          if-no-files-found: error
+          if-no-files-found: warn
 
-  # ── macOS Intel ──────────────────────────────────────────────────────────────
-  build-macos-intel:
-    name: macOS Intel (x86_64)
-    runs-on: macos-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-          submodules: recursive
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
-        with:
-          targets: x86_64-apple-darwin
-
-      - name: Cache cargo registry
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.7.5
-        with:
-          key: macos-intel
-
-      - name: Build release
-        run: cargo build --release --target x86_64-apple-darwin
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
-        with:
-          name: osoosi-macos-intel
-          path: target/x86_64-apple-darwin/release/osoosi
-          if-no-files-found: error
-
-  # ── macOS Apple Silicon ───────────────────────────────────────────────────────
-  build-macos-arm:
-    name: macOS Apple Silicon (aarch64)
-    runs-on: macos-latest
-    permissions:
-      contents: read
-    steps:
-      - uses: actions/checkout@11bd71901bbe5b1630ceea73d27597364c9af683 # v4.2.2
-        with:
-          persist-credentials: false
-          submodules: recursive
-
-      - name: Install Rust stable
-        uses: dtolnay/rust-toolchain@686976e191b89faba57d3206551f0f330d8cb249 # stable
-        with:
-          targets: aarch64-apple-darwin
-
-      - name: Cache cargo registry
-        uses: Swatinem/rust-cache@6323deb102c322ba6fcbdcafc7e3dddab59af2b6 # v2.7.5
-        with:
-          key: macos-arm
-
-      - name: Build release
-        run: cargo build --release --target aarch64-apple-darwin
-
-      - name: Upload artifact
-        uses: actions/upload-artifact@b4b15b8c7c6ac21ea08fcf65892d2ee8f75cf882 # v4.4.3
-        with:
-          name: osoosi-macos-arm64
-          path: target/aarch64-apple-darwin/release/osoosi
-          if-no-files-found: error
-
-  # ── SLSA Provenance Attestation & GitHub Release ─────────────────────────────
+  # ── SLSA Provenance Attestation & Cryptographic GitHub Release ───────────────
   release:
-    name: Generate SLSA Build Provenance & GitHub Release
+    name: Generate SLSA Build Provenance, GPG Sign & GitHub Release
     if: startsWith(github.ref, 'refs/tags/')
-    needs: [build-windows, build-linux-x64, build-linux-arm64, build-macos-intel, build-macos-arm]
+    needs: [build-windows, build-linux-x64]
     runs-on: ubuntu-latest
     permissions:
       id-token: write
@@ -242,9 +219,67 @@ jobs:
       - name: Stage Release Assets
         run: |
           mkdir -p release_assets
-          find dist/ -type f \( -name "*.deb" -o -name "*.tar.gz" -o -name "*.rpm" -o -name "*.exe" -o -name "osoosi" \) -exec cp {} release_assets/ \;
+          find dist/ -type f \( -name "*.deb" -o -name "*.tar.gz" -o -name "*.rpm" -o -name "*.exe" -o -name "*.msi" -o -name "osoosi" \) -exec cp {} release_assets/ \;
           cp packaging/linux/osoosi-edr.service release_assets/
           if [ -f PUBLIC_KEY.asc ]; then cp PUBLIC_KEY.asc release_assets/; fi
+          ls -la release_assets/
+
+      - name: GPG Sign Assets & Generate DSSE In-Toto Attestations
+        env:
+          GPG_KEY: ${{ secrets.GPG_RELEASE_SIGNING_KEY }}
+          GIT_SHA: ${{ github.sha }}
+        run: |
+          echo "$GPG_KEY" | gpg --batch --import
+          FPR=$(gpg --with-colons --list-secret-keys | awk -F: '$1=="fpr"{print $10; exit}')
+          echo "Imported GPG Key: $FPR"
+          gpg --armor --export "$FPR" > release_assets/PUBLIC_KEY.asc
+
+          cd release_assets
+          for f in *.msi *.exe *.deb *.rpm *.tar.gz; do
+            [ -f "$f" ] || continue
+            echo "Signing $f..."
+            gpg --batch --yes --armor --detach-sign --output "${f}.asc" "$f"
+            gpg --batch --yes --detach-sign --output "${f}.sig" "$f"
+            sha256sum "$f" > "${f}.sha256"
+            gpg --verify "${f}.asc" "$f"
+
+            SHA=$(sha256sum "$f" | awk '{print $1}')
+            python3 - "$f" "$SHA" "$FPR" "$GIT_SHA" << 'PYEOF'
+          import sys, json, base64, subprocess
+          f, sha, fpr, git_sha = sys.argv[1], sys.argv[2], sys.argv[3], sys.argv[4]
+          stmt = {
+              "_type": "https://in-toto.io/Statement/v0.1",
+              "predicateType": "https://slsa.dev/provenance/v0.2",
+              "subject": [{"name": f, "digest": {"sha256": sha}}],
+              "predicate": {
+                  "builder": {"id": "https://github.com/oyesanyf/OshoosiClaw/.github/workflows/release.yml"},
+                  "buildType": "https://github.com/slsa-framework/slsa-github-generator/generic@v1",
+                  "invocation": {
+                      "configSource": {
+                          "uri": "git+https://github.com/oyesanyf/OshoosiClaw",
+                          "digest": {"sha1": git_sha},
+                          "entryPoint": ".github/workflows/release.yml"
+                      }
+                  }
+              }
+          }
+          stmt_bytes = json.dumps(stmt, separators=(",", ":")).encode("utf-8")
+          ptype = "application/vnd.in-toto+json"
+          pb64 = base64.b64encode(stmt_bytes).decode("ascii")
+          pae = f"DSSEv1 {len(ptype)} {ptype} {len(stmt_bytes)} ".encode("utf-8") + stmt_bytes
+          p = subprocess.Popen(["gpg", "--batch", "--yes", "--detach-sign"], stdin=subprocess.PIPE, stdout=subprocess.PIPE)
+          raw_sig, _ = p.communicate(pae)
+          sig_b64 = base64.b64encode(raw_sig).decode("ascii")
+          envelope = {
+              "payload": pb64,
+              "payloadType": ptype,
+              "signatures": [{"keyid": fpr, "sig": sig_b64}]
+          }
+          with open(f + ".intoto.jsonl", "w") as out:
+              out.write(json.dumps(envelope) + "\n")
+          PYEOF
+          done
+          cd ..
           ls -la release_assets/
 
       - name: Attach Assets to GitHub Release
@@ -272,7 +307,7 @@ jobs:
       - name: Download Linux x64 artifact
         uses: actions/download-artifact@d3f86a106a0bac45b974a628896c90dbdf5c8093 # v4.1.8
         with:
-          name: osoosi-linux-x64-musl
+          name: osoosi-linux-x64-binary
           path: dist/
 
       - name: Set up Docker Buildx

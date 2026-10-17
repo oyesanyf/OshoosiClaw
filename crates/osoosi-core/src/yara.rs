@@ -1,7 +1,7 @@
-use yara_x;
 use std::path::{Path, PathBuf};
 use std::sync::{Arc, OnceLock};
-use tracing::{info, warn, debug};
+use tracing::{debug, info, warn};
+use yara_x;
 
 fn string_regex() -> &'static regex::Regex {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
@@ -15,7 +15,9 @@ fn regex_decl_regex() -> &'static regex::Regex {
 
 fn regex_fixer() -> &'static regex::Regex {
     static RE: OnceLock<regex::Regex> = OnceLock::new();
-    RE.get_or_init(|| regex::Regex::new(r"/[^ \n].*?/[ ]*(wide|ascii|nocase|fullword|\n|;)").unwrap())
+    RE.get_or_init(|| {
+        regex::Regex::new(r"/[^ \n].*?/[ ]*(wide|ascii|nocase|fullword|\n|;)").unwrap()
+    })
 }
 
 fn boundary_regex() -> &'static regex::Regex {
@@ -35,7 +37,7 @@ fn fix_yara_escapes(s: &str) -> String {
     let mut i = 0;
     while i < chars.len() {
         if chars[i] == '\\' && i + 1 < chars.len() {
-            let next = chars[i+1];
+            let next = chars[i + 1];
             if next == '\\' {
                 result.push('\\');
                 result.push('\\');
@@ -62,7 +64,12 @@ fn fix_yara_escapes(s: &str) -> String {
 
 pub fn sanitize_yara_content(content: &str) -> String {
     // Fast path: avoid expensive regex passes if content doesn't contain problematic characters
-    if !content.contains('\\') && !content.contains("/condition:") && !content.contains("||") && !content.contains("|/") && !content.contains("/|") {
+    if !content.contains('\\')
+        && !content.contains("/condition:")
+        && !content.contains("||")
+        && !content.contains("|/")
+        && !content.contains("/|")
+    {
         return content.to_string();
     }
 
@@ -70,39 +77,43 @@ pub fn sanitize_yara_content(content: &str) -> String {
 
     // 1. Fix invalid escapes in strings and regexes
     if result.contains('\\') {
-        result = string_regex().replace_all(&result, |caps: &regex::Captures| {
-            fix_yara_escapes(&caps[0])
-        }).to_string();
+        result = string_regex()
+            .replace_all(&result, |caps: &regex::Captures| fix_yara_escapes(&caps[0]))
+            .to_string();
 
-        result = regex_decl_regex().replace_all(&result, |caps: &regex::Captures| {
-            fix_yara_escapes(&caps[0])
-        }).to_string();
+        result = regex_decl_regex()
+            .replace_all(&result, |caps: &regex::Captures| fix_yara_escapes(&caps[0]))
+            .to_string();
     }
 
     // 2. Fix unescaped forward slashes in regex: /.../.../ -> /...\/.../
-    result = regex_fixer().replace_all(&result, |caps: &regex::Captures| {
-        let r = &caps[0];
-        if r.len() < 3 { return r.to_string(); }
-        
-        if let Some(end_idx) = r[1..].find('/') {
-            let internal = &r[1..end_idx + 1];
-            let mut fixed_internal = String::with_capacity(internal.len());
-            let mut escaped = false;
-            for c in internal.chars() {
-                if c == '\\' {
-                    escaped = !escaped;
-                } else if c == '/' && !escaped {
-                    fixed_internal.push('\\');
-                } else {
-                    escaped = false;
-                }
-                fixed_internal.push(c);
+    result = regex_fixer()
+        .replace_all(&result, |caps: &regex::Captures| {
+            let r = &caps[0];
+            if r.len() < 3 {
+                return r.to_string();
             }
-            format!("/{}/{}", fixed_internal, &r[end_idx + 2..])
-        } else {
-            r.to_string()
-        }
-    }).to_string();
+
+            if let Some(end_idx) = r[1..].find('/') {
+                let internal = &r[1..end_idx + 1];
+                let mut fixed_internal = String::with_capacity(internal.len());
+                let mut escaped = false;
+                for c in internal.chars() {
+                    if c == '\\' {
+                        escaped = !escaped;
+                    } else if c == '/' && !escaped {
+                        fixed_internal.push('\\');
+                    } else {
+                        escaped = false;
+                    }
+                    fixed_internal.push(c);
+                }
+                format!("/{}/{}", fixed_internal, &r[end_idx + 2..])
+            } else {
+                r.to_string()
+            }
+        })
+        .to_string();
 
     // 3. Fix empty alternatives
     result = result.replace("|/", "/");
@@ -181,7 +192,9 @@ pub fn is_unsafe_generic_generated_rule(path_or_ident: &str, content: &str) -> b
             "trustedinstaller.exe",
         ];
 
-        let has_generic_name = generic_proc_names.iter().any(|name| lower_content.contains(name));
+        let has_generic_name = generic_proc_names
+            .iter()
+            .any(|name| lower_content.contains(name));
         if has_proc || has_generic_name {
             return true;
         }
@@ -202,7 +215,6 @@ pub fn is_unsafe_generic_generated_rule(path_or_ident: &str, content: &str) -> b
 
     false
 }
-
 
 #[derive(Debug, Clone, serde::Serialize, serde::Deserialize)]
 pub struct YaraRuleMetadata {
@@ -320,7 +332,10 @@ impl YaraManager {
             *sources_guard = new_metadata;
         }
 
-        info!("[YARA] Dynamically hot-swapped rules pointer. Total active: {}.", total);
+        info!(
+            "[YARA] Dynamically hot-swapped rules pointer. Total active: {}.",
+            total
+        );
         Ok(total)
     }
 
@@ -352,8 +367,14 @@ impl YaraManager {
     /// Validate, write (best-effort), and atomically hot-load a single YARA rule without restarting the EDR agent.
     pub fn hot_load_rule(&self, rule_content: &str, identifier: &str) -> anyhow::Result<bool> {
         if is_unsafe_generic_generated_rule(identifier, rule_content) {
-            debug!("[YARA] Skipping generic process rule without hash: {}", identifier);
-            anyhow::bail!("Rule {} rejected: generic process name without cryptographic hash", identifier);
+            debug!(
+                "[YARA] Skipping generic process rule without hash: {}",
+                identifier
+            );
+            anyhow::bail!(
+                "Rule {} rejected: generic process name without cryptographic hash",
+                identifier
+            );
         }
         let sanitized = sanitize_yara_content(rule_content);
 
@@ -399,10 +420,20 @@ impl YaraManager {
     }
 
     /// Hot-load in-memory rule directly without touching disk.
-    pub fn hot_load_memory_rule(&self, rule_content: &str, identifier: &str) -> anyhow::Result<bool> {
+    pub fn hot_load_memory_rule(
+        &self,
+        rule_content: &str,
+        identifier: &str,
+    ) -> anyhow::Result<bool> {
         if is_unsafe_generic_generated_rule(identifier, rule_content) {
-            debug!("[YARA] Skipping generic process rule without hash: {}", identifier);
-            anyhow::bail!("Rule {} rejected: generic process name without cryptographic hash", identifier);
+            debug!(
+                "[YARA] Skipping generic process rule without hash: {}",
+                identifier
+            );
+            anyhow::bail!(
+                "Rule {} rejected: generic process name without cryptographic hash",
+                identifier
+            );
         }
         let sanitized = sanitize_yara_content(rule_content);
         let mut test_compiler = yara_x::Compiler::new();
@@ -547,7 +578,10 @@ impl YaraManager {
                                     }
                                 }
                                 downloaded_any = true;
-                                info!("[YARA] Downloaded, verified, and cached threat feed: {}", filename);
+                                info!(
+                                    "[YARA] Downloaded, verified, and cached threat feed: {}",
+                                    filename
+                                );
                             }
                         }
                     }
@@ -555,7 +589,10 @@ impl YaraManager {
                         debug!("[YARA] Feed download HTTP {} for {}", resp.status(), url);
                     }
                     Err(e) => {
-                        debug!("[YARA] Feed download error for {}: {} (offline fallback active)", url, e);
+                        debug!(
+                            "[YARA] Feed download error for {}: {} (offline fallback active)",
+                            url, e
+                        );
                     }
                 }
             }
@@ -564,7 +601,9 @@ impl YaraManager {
         }
 
         if !downloaded_any && !offline {
-            info!("[YARA] Feed update skipped or offline; falling back to existing local rule sets.");
+            info!(
+                "[YARA] Feed update skipped or offline; falling back to existing local rule sets."
+            );
         }
 
         let count = self.reload_rules()?;
@@ -582,6 +621,7 @@ impl YaraManager {
 }
 
 /// Discover all candidate YARA rule directories and collect all file paths and their contents.
+#[allow(clippy::type_complexity)]
 pub fn collect_file_sources() -> (Vec<String>, Vec<PathBuf>, Vec<(PathBuf, String, String)>) {
     let mut dirs_searched: Vec<String> = Vec::new();
     let mut canonical_dirs: Vec<PathBuf> = Vec::new();
@@ -610,7 +650,9 @@ pub fn collect_file_sources() -> (Vec<String>, Vec<PathBuf>, Vec<(PathBuf, Strin
 
     for candidate in candidate_list {
         if candidate.exists() && candidate.is_dir() {
-            let canonical = candidate.canonicalize().unwrap_or_else(|_| candidate.clone());
+            let canonical = candidate
+                .canonicalize()
+                .unwrap_or_else(|_| candidate.clone());
             if !canonical_dirs.contains(&canonical) {
                 dirs_searched.push(candidate.to_string_lossy().to_string());
                 canonical_dirs.push(canonical);
@@ -623,7 +665,11 @@ pub fn collect_file_sources() -> (Vec<String>, Vec<PathBuf>, Vec<(PathBuf, Strin
     let mut gen_files: Vec<(PathBuf, std::time::SystemTime)> = Vec::new();
 
     for dir in &canonical_dirs {
-        for entry in walkdir::WalkDir::new(dir).follow_links(true).into_iter().flatten() {
+        for entry in walkdir::WalkDir::new(dir)
+            .follow_links(true)
+            .into_iter()
+            .flatten()
+        {
             let path = entry.path();
             if path.is_file() {
                 let ext = path.extension().and_then(|e| e.to_str()).unwrap_or("");
@@ -639,7 +685,9 @@ pub fn collect_file_sources() -> (Vec<String>, Vec<PathBuf>, Vec<(PathBuf, Strin
 
                         let p_str = path.to_string_lossy();
                         if p_str.contains("osoosi_generated") {
-                            let mtime = file_meta.modified().unwrap_or(std::time::SystemTime::UNIX_EPOCH);
+                            let mtime = file_meta
+                                .modified()
+                                .unwrap_or(std::time::SystemTime::UNIX_EPOCH);
                             gen_files.push((path.to_path_buf(), mtime));
                         } else {
                             curated_files.push(path.to_path_buf());
@@ -667,7 +715,10 @@ pub fn collect_file_sources() -> (Vec<String>, Vec<PathBuf>, Vec<(PathBuf, Strin
         if let Ok(content) = std::fs::read_to_string(&path) {
             let path_str = path.to_string_lossy().to_string();
             if is_unsafe_generic_generated_rule(&path_str, &content) {
-                debug!("[YARA] Skipping generic process rule without hash from disk: {}", path_str);
+                debug!(
+                    "[YARA] Skipping generic process rule without hash from disk: {}",
+                    path_str
+                );
                 continue;
             }
             let sanitized = sanitize_yara_content(&content);
@@ -711,7 +762,10 @@ pub fn compile_sources_to_rules(
 
         for (path, path_str, sanitized) in chunk {
             if is_unsafe_generic_generated_rule(path_str, sanitized) {
-                debug!("[YARA] Skipping generic process rule without hash: {}", path_str);
+                debug!(
+                    "[YARA] Skipping generic process rule without hash: {}",
+                    path_str
+                );
                 continue;
             }
             batched_src.push_str(sanitized);
@@ -731,10 +785,7 @@ pub fn compile_sources_to_rules(
                 found_rules += 1;
             }
             if found_rules == 0 {
-                let stem = path
-                    .file_stem()
-                    .and_then(|s| s.to_str())
-                    .unwrap_or("rule");
+                let stem = path.file_stem().and_then(|s| s.to_str()).unwrap_or("rule");
                 chunk_metadata.push(YaraRuleMetadata {
                     identifier: stem.to_string(),
                     file_path: path_str.clone(),
@@ -752,11 +803,14 @@ pub fn compile_sources_to_rules(
                 // Fallback: compile items in this batch one-by-one to preserve valid rules
                 for (path, path_str, sanitized) in chunk {
                     if is_unsafe_generic_generated_rule(path_str, sanitized) {
-                        debug!("[YARA] Skipping generic process rule without hash: {}", path_str);
+                        debug!(
+                            "[YARA] Skipping generic process rule without hash: {}",
+                            path_str
+                        );
                         continue;
                     }
-                    let single_source = yara_x::SourceCode::from(sanitized.as_str())
-                        .with_origin(path_str.as_str());
+                    let single_source =
+                        yara_x::SourceCode::from(sanitized.as_str()).with_origin(path_str.as_str());
                     match compiler.add_source(single_source) {
                         Ok(_) => {
                             for cap in rule_ident_regex().captures_iter(sanitized) {
@@ -772,7 +826,10 @@ pub fn compile_sources_to_rules(
                             }
                         }
                         Err(e) => {
-                            debug!("Skipping YARA file {:?} due to compilation note: {}", path, e);
+                            debug!(
+                                "Skipping YARA file {:?} due to compilation note: {}",
+                                path, e
+                            );
                         }
                     }
                 }
@@ -819,14 +876,15 @@ pub fn compile_sources_to_rules(
     }
 
     // Add In-Memory Dynamic Rules (Hot-loaded via mesh, auto-gen threats, feeds, or operator)
-    let mut compiled_idents: std::collections::HashSet<String> = metadata
-        .iter()
-        .map(|m| m.identifier.clone())
-        .collect();
+    let mut compiled_idents: std::collections::HashSet<String> =
+        metadata.iter().map(|m| m.identifier.clone()).collect();
 
     for (ident, rule_src) in dynamic_rules {
         if is_unsafe_generic_generated_rule(ident, rule_src) {
-            debug!("[YARA] Skipping generic process rule without hash from dynamic memory: {}", ident);
+            debug!(
+                "[YARA] Skipping generic process rule without hash from dynamic memory: {}",
+                ident
+            );
             continue;
         }
         let sanitized = sanitize_yara_content(rule_src);
@@ -840,7 +898,10 @@ pub fn compile_sources_to_rules(
 
         // Avoid duplicate collision if the rule was already read from file during batched loading
         if parsed_idents.iter().any(|id| compiled_idents.contains(id)) {
-            debug!("Dynamic rule '{}' already present in compiled set, skipping duplicate", ident);
+            debug!(
+                "Dynamic rule '{}' already present in compiled set, skipping duplicate",
+                ident
+            );
             continue;
         }
 
@@ -857,7 +918,10 @@ pub fn compile_sources_to_rules(
                 }
             }
             Err(e) => {
-                warn!("Failed to compile dynamic in-memory rule '{}': {}", ident, e);
+                warn!(
+                    "Failed to compile dynamic in-memory rule '{}': {}",
+                    ident, e
+                );
             }
         }
     }
@@ -895,7 +959,10 @@ pub fn compile_sources_to_rules(
     };
 
     let rules = compiler.build();
-    info!("Loaded {} YARA rule(s) into native Yara-X engine.", total_rules);
+    info!(
+        "Loaded {} YARA rule(s) into native Yara-X engine.",
+        total_rules
+    );
     (rules, status, metadata)
 }
 
@@ -903,7 +970,12 @@ pub fn compile_sources_to_rules(
 pub fn load_rules_recursive() -> (yara_x::Rules, YaraEngineStatus, Vec<YaraRuleMetadata>) {
     let (dirs_searched, canonical_dirs, collected_files) = collect_file_sources();
     let empty_dynamic = std::collections::HashMap::new();
-    compile_sources_to_rules(&canonical_dirs, dirs_searched, &collected_files, &empty_dynamic)
+    compile_sources_to_rules(
+        &canonical_dirs,
+        dirs_searched,
+        &collected_files,
+        &empty_dynamic,
+    )
 }
 
 /// Backward-compatible load_rules wrapper.
@@ -939,7 +1011,8 @@ mod tests {
         assert!(matches.contains(&"C2_Beacon_Generic"));
 
         // Binary with MZ header and github.com/bishopfox/sliver (SHOULD trigger C2_Beacon_Generic)
-        let malicious_sliver_pkg = b"MZ binary payload containing github.com/bishopfox/sliver bytes";
+        let malicious_sliver_pkg =
+            b"MZ binary payload containing github.com/bishopfox/sliver bytes";
         let results = scanner.scan(malicious_sliver_pkg).unwrap();
         let matches: Vec<&str> = results.matching_rules().map(|r| r.identifier()).collect();
         assert!(matches.contains(&"C2_Beacon_Generic"));
@@ -975,14 +1048,17 @@ mod tests {
         let unique_suffix = uuid::Uuid::new_v4().to_string().replace('-', "_");
         let rule_name = format!("Test_HotLoad_{}", unique_suffix);
         let sig = format!("SUPER_SECRET_{}", unique_suffix);
-        let test_rule = format!(r#"
+        let test_rule = format!(
+            r#"
             rule {} {{
                 strings:
                     $sig = "{}"
                 condition:
                     $sig
             }}
-        "#, rule_name, sig);
+        "#,
+            rule_name, sig
+        );
 
         let res = manager.hot_load_rule(&test_rule, &rule_name);
         assert!(res.is_ok(), "Hot-loading valid rule must succeed");
@@ -1011,16 +1087,21 @@ mod tests {
         );
 
         // Step 2: Dynamically add rule on the fly
-        let new_rule = format!(r#"
+        let new_rule = format!(
+            r#"
             rule {} {{
                 strings:
                     $payload = "{}"
                 condition:
                     $payload
             }}
-        "#, rule_name, sig_string);
+        "#,
+            rule_name, sig_string
+        );
 
-        let loaded = manager.hot_load_rule(&new_rule, &rule_name).expect("hot load must succeed");
+        let loaded = manager
+            .hot_load_rule(&new_rule, &rule_name)
+            .expect("hot load must succeed");
         assert!(loaded);
 
         // Step 3: Immediately scan the exact same payload without restart: MUST match!
@@ -1079,15 +1160,23 @@ mod tests {
         "#;
 
         // Hot load memory rule
-        manager.hot_load_memory_rule(temp_rule, "Ephemeral_Dynamic_Threat").expect("hot load ok");
-        assert!(manager.scan_bytes(probe_payload).contains(&"Ephemeral_Dynamic_Threat".to_string()));
+        manager
+            .hot_load_memory_rule(temp_rule, "Ephemeral_Dynamic_Threat")
+            .expect("hot load ok");
+        assert!(manager
+            .scan_bytes(probe_payload)
+            .contains(&"Ephemeral_Dynamic_Threat".to_string()));
 
         // Remove rule dynamically
-        let removed = manager.remove_rule("Ephemeral_Dynamic_Threat").expect("remove ok");
+        let removed = manager
+            .remove_rule("Ephemeral_Dynamic_Threat")
+            .expect("remove ok");
         assert!(removed);
 
         // Immediately after removal, payload should no longer match
-        assert!(!manager.scan_bytes(probe_payload).contains(&"Ephemeral_Dynamic_Threat".to_string()));
+        assert!(!manager
+            .scan_bytes(probe_payload)
+            .contains(&"Ephemeral_Dynamic_Threat".to_string()));
     }
 
     #[test]
@@ -1098,14 +1187,17 @@ mod tests {
         let sig_string = format!("CONCURRENT_PROBE_{}", unique_suffix);
         let probe = format!("Some prefix {} suffix", sig_string).into_bytes();
 
-        let rule_src = format!(r#"
+        let rule_src = format!(
+            r#"
             rule {} {{
                 strings:
                     $str = "{}"
                 condition:
                     $str
             }}
-        "#, rule_name, sig_string);
+        "#,
+            rule_name, sig_string
+        );
 
         // Spawn multiple reader threads scanning simultaneously
         let mut handles = Vec::new();
@@ -1121,7 +1213,9 @@ mod tests {
         }
 
         // Hot-swap in the middle of active reading
-        manager.hot_load_rule(&rule_src, &rule_name).expect("concurrent hot load ok");
+        manager
+            .hot_load_rule(&rule_src, &rule_name)
+            .expect("concurrent hot load ok");
 
         for h in handles {
             h.join().expect("thread joined successfully");
@@ -1144,12 +1238,21 @@ mod tests {
                     $proc
             }
         "#;
-        assert!(is_unsafe_generic_generated_rule("yara/osoosi_generated/OsoosiGen_TestGeneric.yar", unsafe_rule));
-        assert!(is_unsafe_generic_generated_rule("OsoosiGen_TestGeneric", unsafe_rule));
+        assert!(is_unsafe_generic_generated_rule(
+            "yara/osoosi_generated/OsoosiGen_TestGeneric.yar",
+            unsafe_rule
+        ));
+        assert!(is_unsafe_generic_generated_rule(
+            "OsoosiGen_TestGeneric",
+            unsafe_rule
+        ));
 
         let manager = YaraManager::new();
         let res = manager.hot_load_rule(unsafe_rule, "OsoosiGen_TestGeneric");
-        assert!(res.is_err(), "Generic process rule without hash must be rejected by hot_load_rule");
+        assert!(
+            res.is_err(),
+            "Generic process rule without hash must be rejected by hot_load_rule"
+        );
 
         let safe_rule = r#"
             rule OsoosiGen_SafeRule {
@@ -1160,7 +1263,10 @@ mod tests {
                     $proc and $h
             }
         "#;
-        assert!(!is_unsafe_generic_generated_rule("yara/osoosi_generated/OsoosiGen_SafeRule.yar", safe_rule));
+        assert!(!is_unsafe_generic_generated_rule(
+            "yara/osoosi_generated/OsoosiGen_SafeRule.yar",
+            safe_rule
+        ));
     }
 
     #[test]
@@ -1174,7 +1280,10 @@ mod tests {
                     $proc or $h
             }
         "#;
-        assert!(is_unsafe_generic_generated_rule("OsoosiGen_OrCond", or_rule));
+        assert!(is_unsafe_generic_generated_rule(
+            "OsoosiGen_OrCond",
+            or_rule
+        ));
 
         let any_rule = r#"
             rule OsoosiGen_AnyCond {
@@ -1185,7 +1294,10 @@ mod tests {
                     any of them
             }
         "#;
-        assert!(is_unsafe_generic_generated_rule("OsoosiGen_AnyCond", any_rule));
+        assert!(is_unsafe_generic_generated_rule(
+            "OsoosiGen_AnyCond",
+            any_rule
+        ));
 
         let unused_hash_rule = r#"
             rule OsoosiGen_UnusedHash {
@@ -1196,7 +1308,10 @@ mod tests {
                     $proc
             }
         "#;
-        assert!(is_unsafe_generic_generated_rule("OsoosiGen_UnusedHash", unused_hash_rule));
+        assert!(is_unsafe_generic_generated_rule(
+            "OsoosiGen_UnusedHash",
+            unused_hash_rule
+        ));
 
         let hash_only_rule = r#"
             rule OsoosiGen_HashOnly {
@@ -1206,7 +1321,9 @@ mod tests {
                     $h
             }
         "#;
-        assert!(!is_unsafe_generic_generated_rule("OsoosiGen_HashOnly", hash_only_rule));
+        assert!(!is_unsafe_generic_generated_rule(
+            "OsoosiGen_HashOnly",
+            hash_only_rule
+        ));
     }
 }
-

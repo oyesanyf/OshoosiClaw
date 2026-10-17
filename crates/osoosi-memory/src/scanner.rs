@@ -46,12 +46,8 @@ impl MemoryHeaderScanner {
                 if label == "exe" || label == "elf" || label == "mach-o" {
                     // 2. Goblin validation (Structural check)
                     if let Ok(obj) = Object::parse(chunk) {
-                        let is_valid = match obj {
-                            Object::PE(_) => true,
-                            Object::Elf(_) => true,
-                            Object::Mach(_) => true,
-                            _ => false,
-                        };
+                        let is_valid =
+                            matches!(obj, Object::PE(_) | Object::Elf(_) | Object::Mach(_));
 
                         if is_valid {
                             info!("DETECTED: {} header found in memory at offset {}", label, i);

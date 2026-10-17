@@ -130,7 +130,7 @@ fn discover_git_unconstrained() -> Option<PathBuf> {
     }
     #[cfg(windows)]
     {
-        return program_files_git_cmd();
+        program_files_git_cmd()
     }
     #[cfg(not(windows))]
     {
@@ -286,14 +286,19 @@ fn find_in_path_directories(stem: &str) -> Option<PathBuf> {
         let sys_root = env::var("SystemRoot")
             .or_else(|_| env::var("windir"))
             .unwrap_or_else(|_| r"C:\Windows".to_string());
-        let sys32_candidate = PathBuf::from(&sys_root).join("System32").join(format!("{stem}.exe"));
+        let sys32_candidate = PathBuf::from(&sys_root)
+            .join("System32")
+            .join(format!("{stem}.exe"));
         if sys32_candidate.is_file() {
             return Some(sys32_candidate);
         }
 
         if stem.eq_ignore_ascii_case("ollama") {
             if let Ok(local) = env::var("LOCALAPPDATA") {
-                let p = PathBuf::from(local).join("Programs").join("Ollama").join("ollama.exe");
+                let p = PathBuf::from(local)
+                    .join("Programs")
+                    .join("Ollama")
+                    .join("ollama.exe");
                 if p.is_file() {
                     return Some(p);
                 }
@@ -336,4 +341,3 @@ mod tests {
         assert!(nonexistent.is_none());
     }
 }
-

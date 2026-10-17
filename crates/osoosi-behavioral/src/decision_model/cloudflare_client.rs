@@ -97,7 +97,10 @@ impl CloudflareClient {
             .context("Cloudflare Workers AI HTTP request failed or timed out")?;
 
         let status = response.status();
-        let body_bytes = response.bytes().await.context("Failed to read response body")?;
+        let body_bytes = response
+            .bytes()
+            .await
+            .context("Failed to read response body")?;
         let latency_ms = start.elapsed().as_secs_f64() * 1000.0;
 
         if !status.is_success() {
@@ -137,7 +140,9 @@ impl CloudflareClient {
                 raw_map
             };
 
-            if let Ok(answers) = serde_json::from_value::<HashMap<String, DecisionAnswer>>(target_answers) {
+            if let Ok(answers) =
+                serde_json::from_value::<HashMap<String, DecisionAnswer>>(target_answers)
+            {
                 return Ok(DecisionResponse {
                     answers,
                     latency_ms,
@@ -146,6 +151,8 @@ impl CloudflareClient {
             }
         }
 
-        bail!("Failed to parse Cloudflare Workers AI response into expected DecisionResponse schema");
+        bail!(
+            "Failed to parse Cloudflare Workers AI response into expected DecisionResponse schema"
+        );
     }
 }

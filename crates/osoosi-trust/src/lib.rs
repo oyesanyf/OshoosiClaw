@@ -3,20 +3,20 @@
 //! Manages identity (DID), Merkle Proofs, and S2S Certificates.
 
 use ed25519_dalek::{Signature, Signer, SigningKey, Verifier, VerifyingKey};
-use osoosi_types::{
-    AttestationChallenge, AttestationError, AttestationResponse, GoldenBaseline, NodeDID, TpmQuote,
-};
 pub use osoosi_types::{
     verify_tpm_ek_certificate, TpmEkCertificate, TpmOemVendor, VerifiedEkIdentity,
+};
+use osoosi_types::{
+    AttestationChallenge, AttestationError, AttestationResponse, GoldenBaseline, NodeDID, TpmQuote,
 };
 pub mod oem_roots;
 pub mod tbs;
 
 pub use oem_roots::*;
-pub use tbs::*;
 use sha2::{Digest, Sha256};
 use std::fs;
 use std::path::Path;
+pub use tbs::*;
 use tracing::info;
 
 pub struct TrustManager {
@@ -185,7 +185,7 @@ impl TrustManager {
 
     /// Set up a local Certificate Authority (CA) using rcgen (pure Rust).
     pub async fn init_ca(&self, path: &str) -> anyhow::Result<()> {
-        use rcgen::{CertificateParams, KeyPair, DistinguishedName, IsCa};
+        use rcgen::{CertificateParams, DistinguishedName, IsCa, KeyPair};
 
         let path = Path::new(path);
         if !path.exists() {
@@ -198,13 +198,25 @@ impl TrustManager {
         let mut params = CertificateParams::default();
         params.is_ca = IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
         params.distinguished_name = DistinguishedName::new();
-        params.distinguished_name.push(rcgen::DnType::CountryName, "US");
-        params.distinguished_name.push(rcgen::DnType::StateOrProvinceName, "Cyber");
-        params.distinguished_name.push(rcgen::DnType::LocalityName, "Decentralized");
-        params.distinguished_name.push(rcgen::DnType::OrganizationName, "Osoosi");
-        params.distinguished_name.push(rcgen::DnType::OrganizationalUnitName, "Security");
-        params.distinguished_name.push(rcgen::DnType::CommonName, "OsoosiRootCA");
-        
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CountryName, "US");
+        params
+            .distinguished_name
+            .push(rcgen::DnType::StateOrProvinceName, "Cyber");
+        params
+            .distinguished_name
+            .push(rcgen::DnType::LocalityName, "Decentralized");
+        params
+            .distinguished_name
+            .push(rcgen::DnType::OrganizationName, "Osoosi");
+        params
+            .distinguished_name
+            .push(rcgen::DnType::OrganizationalUnitName, "Security");
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, "OsoosiRootCA");
+
         let key_pair = KeyPair::generate()?;
         fs::write(path.join("rootCA.key"), key_pair.serialize_pem())?;
 
@@ -222,7 +234,7 @@ impl TrustManager {
         peer_did: &str,
         output_path: &str,
     ) -> anyhow::Result<()> {
-        use rcgen::{CertificateParams, KeyPair, DistinguishedName, IsCa};
+        use rcgen::{CertificateParams, DistinguishedName, IsCa, KeyPair};
 
         let ca_path = Path::new(ca_path);
         let out_path = Path::new(output_path);
@@ -235,9 +247,10 @@ impl TrustManager {
         // 1. Load CA
         let ca_cert_pem = fs::read_to_string(ca_path.join("rootCA.crt"))?;
         let ca_key_pem = fs::read_to_string(ca_path.join("rootCA.key"))?;
-        
+
         let ca_key_pair = KeyPair::from_pem(&ca_key_pem)?;
-        let ca_cert = CertificateParams::from_ca_cert_pem(&ca_cert_pem)?.self_signed(&ca_key_pair)?;
+        let ca_cert =
+            CertificateParams::from_ca_cert_pem(&ca_cert_pem)?.self_signed(&ca_key_pair)?;
 
         // 2. Generate Peer Key
         let peer_key_pair = KeyPair::generate()?;
@@ -246,11 +259,21 @@ impl TrustManager {
         // 3. Generate Peer Certificate Params
         let mut params = CertificateParams::default();
         params.distinguished_name = DistinguishedName::new();
-        params.distinguished_name.push(rcgen::DnType::CountryName, "US");
-        params.distinguished_name.push(rcgen::DnType::StateOrProvinceName, "Cyber");
-        params.distinguished_name.push(rcgen::DnType::LocalityName, "Node");
-        params.distinguished_name.push(rcgen::DnType::OrganizationName, "Osoosi");
-        params.distinguished_name.push(rcgen::DnType::CommonName, peer_did);
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CountryName, "US");
+        params
+            .distinguished_name
+            .push(rcgen::DnType::StateOrProvinceName, "Cyber");
+        params
+            .distinguished_name
+            .push(rcgen::DnType::LocalityName, "Node");
+        params
+            .distinguished_name
+            .push(rcgen::DnType::OrganizationName, "Osoosi");
+        params
+            .distinguished_name
+            .push(rcgen::DnType::CommonName, peer_did);
         params.is_ca = IsCa::NoCa;
 
         // 4. Sign with CA
@@ -297,7 +320,7 @@ impl TrustManager {
 
         // Quoted digest binding challenge nonce and composite PCR digest
         let mut quote_hasher = Sha256::new();
-        quote_hasher.update(&challenge.nonce);
+        quote_hasher.update(challenge.nonce);
         quote_hasher.update(pcr_digest.as_bytes());
         let quoted_digest = hex::encode(quote_hasher.finalize());
 
@@ -353,7 +376,8 @@ impl TrustManager {
         challenge: &AttestationChallenge,
         response: &AttestationResponse,
     ) -> bool {
-        self.verify_attestation_with_policy(challenge, response, None).is_ok()
+        self.verify_attestation_with_policy(challenge, response, None)
+            .is_ok()
     }
 }
 
@@ -426,7 +450,11 @@ pub fn verify_attestation_with_policy(
     if let Some(ref ek_cert) = response.ek_certificate {
         let verified_ek = verify_tpm_ek_certificate(ek_cert, policy)?;
         let data_hash = hex::encode(Sha256::digest(
-            format!("ek_verified:{}:{}", verified_ek.vendor, verified_ek.cert_fingerprint).as_bytes(),
+            format!(
+                "ek_verified:{}:{}",
+                verified_ek.vendor, verified_ek.cert_fingerprint
+            )
+            .as_bytes(),
         ));
         let _ = osoosi_audit::tpm::extend_audit_to_tpm("ek_chain_verified", &data_hash);
     } else if let Some(pol) = policy {
@@ -444,7 +472,9 @@ pub fn verify_attestation_with_policy(
         if !response.pcr_values.contains_key(&pcr_idx) {
             let _ = osoosi_audit::tpm::extend_audit_to_tpm(
                 "attestation_failed",
-                &hex::encode(Sha256::digest(format!("missing_pcr_{}", pcr_idx).as_bytes())),
+                &hex::encode(Sha256::digest(
+                    format!("missing_pcr_{}", pcr_idx).as_bytes(),
+                )),
             );
             return Err(AttestationError::MissingPcr(pcr_idx));
         }
@@ -464,7 +494,9 @@ pub fn verify_attestation_with_policy(
             if !quote.pcr_indices.contains(&pcr_idx) {
                 let _ = osoosi_audit::tpm::extend_audit_to_tpm(
                     "attestation_failed",
-                    &hex::encode(Sha256::digest(format!("quote_missing_pcr_{}", pcr_idx).as_bytes())),
+                    &hex::encode(Sha256::digest(
+                        format!("quote_missing_pcr_{}", pcr_idx).as_bytes(),
+                    )),
                 );
                 return Err(AttestationError::MissingPcr(pcr_idx));
             }
@@ -486,7 +518,7 @@ pub fn verify_attestation_with_policy(
 
         // Verify quoted digest: Sha256(challenge_nonce || pcr_digest)
         let mut quote_hasher = Sha256::new();
-        quote_hasher.update(&challenge.nonce);
+        quote_hasher.update(challenge.nonce);
         quote_hasher.update(quote.pcr_digest.as_bytes());
         let expected_quoted_digest = hex::encode(quote_hasher.finalize());
         if expected_quoted_digest != quote.quoted_digest {
@@ -513,8 +545,8 @@ pub fn verify_attestation_with_policy(
         pcr_digest_opt,
     );
 
-    let sig_bytes = hex::decode(&response.signature)
-        .map_err(|_| AttestationError::InvalidSignature)?;
+    let sig_bytes =
+        hex::decode(&response.signature).map_err(|_| AttestationError::InvalidSignature)?;
     let signature = Signature::try_from(sig_bytes.as_slice())
         .map_err(|_| AttestationError::InvalidSignature)?;
 
@@ -569,7 +601,9 @@ pub fn verify_attestation_with_policy(
             } else if !expected_vals.is_empty() {
                 let _ = osoosi_audit::tpm::extend_audit_to_tpm(
                     "attestation_failed",
-                    &hex::encode(Sha256::digest(format!("missing_pcr_{}", pcr_idx).as_bytes())),
+                    &hex::encode(Sha256::digest(
+                        format!("missing_pcr_{}", pcr_idx).as_bytes(),
+                    )),
                 );
                 return Err(AttestationError::MissingPcr(*pcr_idx));
             }
@@ -613,8 +647,12 @@ pub fn generate_mock_oem_ek_certificate(
     let mut ca_params = CertificateParams::default();
     ca_params.is_ca = IsCa::Ca(rcgen::BasicConstraints::Unconstrained);
     ca_params.distinguished_name = DistinguishedName::new();
-    ca_params.distinguished_name.push(rcgen::DnType::OrganizationName, org);
-    ca_params.distinguished_name.push(rcgen::DnType::CommonName, format!("{} EK Root CA", org));
+    ca_params
+        .distinguished_name
+        .push(rcgen::DnType::OrganizationName, org);
+    ca_params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, format!("{} EK Root CA", org));
     let ca_key_pair = KeyPair::generate()?;
     let ca_cert = ca_params.self_signed(&ca_key_pair)?;
     let ca_der = ca_cert.der().to_vec();
@@ -622,8 +660,12 @@ pub fn generate_mock_oem_ek_certificate(
     // 2. Generate Leaf EK Certificate signed by the OEM Root CA
     let mut leaf_params = CertificateParams::default();
     leaf_params.distinguished_name = DistinguishedName::new();
-    leaf_params.distinguished_name.push(rcgen::DnType::OrganizationName, org);
-    leaf_params.distinguished_name.push(rcgen::DnType::CommonName, common_name);
+    leaf_params
+        .distinguished_name
+        .push(rcgen::DnType::OrganizationName, org);
+    leaf_params
+        .distinguished_name
+        .push(rcgen::DnType::CommonName, common_name);
     leaf_params.is_ca = IsCa::NoCa;
     let leaf_key_pair = KeyPair::generate()?;
     let leaf_cert = leaf_params.signed_by(&leaf_key_pair, &ca_cert, &ca_key_pair)?;

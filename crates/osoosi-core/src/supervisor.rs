@@ -26,7 +26,6 @@ pub fn get_current_process_handle_count() -> u32 {
     180
 }
 
-
 /// Adaptive operational regimes managed by the Cognitive Fusion Supervisor.
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq, Eq)]
 pub enum SupervisorRegime {
@@ -111,7 +110,8 @@ impl BeliefMass {
         let critical_conflict = self.critical * (other.optimal + other.degraded)
             + self.optimal * other.critical
             + self.degraded * other.critical;
-        let moderate_divergence = (self.optimal * other.degraded + self.degraded * other.optimal) * 0.25;
+        let moderate_divergence =
+            (self.optimal * other.degraded + self.degraded * other.optimal) * 0.25;
         (critical_conflict + moderate_divergence).clamp(0.0, 1.0)
     }
 
@@ -273,7 +273,8 @@ impl MultiSensorFusionEngine {
                 let pid = *entry.key();
                 let name = osoosi_runtime::tarpit::get_process_name(pid);
                 let lower = name.to_lowercase();
-                if lower.contains("sysmon") || lower.contains("osoosi") || lower.contains("msmpeng") {
+                if lower.contains("sysmon") || lower.contains("osoosi") || lower.contains("msmpeng")
+                {
                     invariant_tampered = true;
                     break;
                 }
@@ -522,7 +523,9 @@ impl MultiSensorFusionEngine {
         let forensics_client = osoosi_forensics::VelociraptorClient::new(forensics_cfg.clone());
         let is_avail = forensics_client.is_available();
         let version_str = if is_avail {
-            forensics_client.probe_version().unwrap_or_else(|| "Detected".to_string())
+            forensics_client
+                .probe_version()
+                .unwrap_or_else(|| "Detected".to_string())
         } else {
             "NOT_FOUND".to_string()
         };
@@ -602,7 +605,11 @@ impl MultiSensorFusionEngine {
             let (total_evals, avg_latency_ms, error_rate) = if let Some(ref m) = metrics {
                 let total = m.total_evaluations;
                 let errs = m.error_count;
-                let err_rate = if total > 0 { errs as f64 / total as f64 } else { 0.0 };
+                let err_rate = if total > 0 {
+                    errs as f64 / total as f64
+                } else {
+                    0.0
+                };
                 (total, m.avg_latency_ms, err_rate)
             } else {
                 (0, 0.45, 0.0)
@@ -759,10 +766,7 @@ impl StrandedResourceReaper {
     }
 
     /// Reaps traps that have exceeded 120 seconds.
-    pub fn reap_stranded_traps(
-        &self,
-        tarpit: &osoosi_runtime::tarpit::ActiveProcessTarpit,
-    ) -> u64 {
+    pub fn reap_stranded_traps(&self, tarpit: &osoosi_runtime::tarpit::ActiveProcessTarpit) -> u64 {
         self.reap_traps_with_timeout(tarpit, Duration::from_secs(120))
     }
 
@@ -793,7 +797,11 @@ impl StrandedResourceReaper {
         for entry in self.tracked_traps.iter() {
             let pid = *entry.key();
             let start = *entry.value();
-            if now.checked_duration_since(start).map(|d| d >= timeout).unwrap_or(false) {
+            if now
+                .checked_duration_since(start)
+                .map(|d| d >= timeout)
+                .unwrap_or(false)
+            {
                 to_release.push(pid);
             }
         }
@@ -885,25 +893,38 @@ impl SupervisorDiagnosticEngine {
         let hw_info = if let Some(hw) = hardware_selection {
             format!(
                 "\nHardware AI Routing: Tier {} [{}] -> Fast: [{}] | Deep: [{}] via {}.",
-                hw.hardware_tier_label, hw.rationale, hw.fast_model, hw.deep_model, hw.recommended_device
+                hw.hardware_tier_label,
+                hw.rationale,
+                hw.fast_model,
+                hw.deep_model,
+                hw.recommended_device
             )
         } else {
             String::new()
         };
 
-        let skills_info = if let Some(s) = sensors.iter().find(|s| s.sensor_id == "wikiskill_evolution_sensor") {
+        let skills_info = if let Some(s) = sensors
+            .iter()
+            .find(|s| s.sensor_id == "wikiskill_evolution_sensor")
+        {
             format!("\nSkills: {}.", s.details)
         } else {
             String::new()
         };
 
-        let forensics_info = if let Some(s) = sensors.iter().find(|s| s.sensor_id == "forensic_service_sensor") {
+        let forensics_info = if let Some(s) = sensors
+            .iter()
+            .find(|s| s.sensor_id == "forensic_service_sensor")
+        {
             format!("\nForensics: {}.", s.details)
         } else {
             String::new()
         };
 
-        let decision_info = if let Some(s) = sensors.iter().find(|s| s.sensor_id == "decision_model_sensor") {
+        let decision_info = if let Some(s) = sensors
+            .iter()
+            .find(|s| s.sensor_id == "decision_model_sensor")
+        {
             format!("\nDecision Model: {}.", s.details)
         } else {
             String::new()
@@ -949,12 +970,14 @@ impl CognitiveFusionSupervisor {
         let regime = MultiSensorFusionEngine::map_regime(health_score);
         let hw_res = osoosi_behavioral::hardware_selection::get_system_resources();
         let ai_cfg = osoosi_types::config::load_ai_config();
-        let initial_hw = Some(osoosi_behavioral::hardware_selection::select_optimal_models(
-            &hw_res,
-            &[],
-            &ai_cfg.reasoning_model,
-            &ai_cfg.foundation_sec_model,
-        ));
+        let initial_hw = Some(
+            osoosi_behavioral::hardware_selection::select_optimal_models(
+                &hw_res,
+                &[],
+                &ai_cfg.reasoning_model,
+                &ai_cfg.foundation_sec_model,
+            ),
+        );
         let diagnostic_narrative = SupervisorDiagnosticEngine::synthesize(
             regime.clone(),
             health_score,
@@ -988,7 +1011,10 @@ impl CognitiveFusionSupervisor {
     }
 
     /// Attaches the Clef Decision Engine instance for real-time telemetry inspection.
-    pub fn set_decision_engine(&self, engine: Arc<osoosi_behavioral::decision_model::ClefDecisionEngine>) {
+    pub fn set_decision_engine(
+        &self,
+        engine: Arc<osoosi_behavioral::decision_model::ClefDecisionEngine>,
+    ) {
         if let Ok(mut guard) = self.fusion_engine.write() {
             guard.decision_engine = Some(engine);
         }
@@ -1013,7 +1039,7 @@ impl CognitiveFusionSupervisor {
 
                 while running.load(Ordering::Relaxed) {
                     // Periodically probe installed Ollama models (every 10 loops = 20s)
-                    if loop_count % 10 == 0 {
+                    if loop_count.is_multiple_of(10) {
                         cached_installed_models = osoosi_behavioral::hardware_selection::query_installed_ollama_models_sync(&ai_cfg.reasoning_url);
                     }
                     loop_count = loop_count.wrapping_add(1);
@@ -1337,9 +1363,18 @@ mod tests {
             .find(|s| s.sensor_id == "system_invariants")
             .expect("system_invariants sensor must exist");
 
-        assert!(invariant_sensor.raw_value > 0.0, "Working set memory must be positive");
-        assert!(invariant_sensor.details.contains("Handle count:"), "Details must report handle count");
-        assert!(invariant_sensor.details.contains("Core OS PIDs [0, 1, 4]"), "Details must report core OS PID verification");
+        assert!(
+            invariant_sensor.raw_value > 0.0,
+            "Working set memory must be positive"
+        );
+        assert!(
+            invariant_sensor.details.contains("Handle count:"),
+            "Details must report handle count"
+        );
+        assert!(
+            invariant_sensor.details.contains("Core OS PIDs [0, 1, 4]"),
+            "Details must report core OS PID verification"
+        );
     }
 
     #[test]
@@ -1366,7 +1401,9 @@ mod tests {
             .expect("asymmetric_containment sensor must exist");
 
         assert!(
-            containment_sensor.details.contains("Stranded traps detected:"),
+            containment_sensor
+                .details
+                .contains("Stranded traps detected:"),
             "Containment details must state stranded traps"
         );
     }
@@ -1410,8 +1447,15 @@ mod tests {
     fn test_initial_supervisor_status_has_populated_sensors() {
         let supervisor = CognitiveFusionSupervisor::new();
         let status = supervisor.get_status();
-        assert_eq!(status.sensors.len(), 9, "Initial supervisor status must have all 9 sensors pre-populated");
-        assert!(status.hardware_selection.is_some(), "Initial status must include hardware_selection");
+        assert_eq!(
+            status.sensors.len(),
+            9,
+            "Initial supervisor status must have all 9 sensors pre-populated"
+        );
+        assert!(
+            status.hardware_selection.is_some(),
+            "Initial status must include hardware_selection"
+        );
         assert!(status.health_score >= 85.0);
         assert_eq!(status.regime, SupervisorRegime::Optimal);
     }
@@ -1458,7 +1502,9 @@ mod tests {
 
         assert!(forensics_sensor.health_score > 0.0);
         assert!(forensics_sensor.confidence >= 0.85);
-        assert!(forensics_sensor.details.contains("Embedded Velociraptor Forensics:"));
+        assert!(forensics_sensor
+            .details
+            .contains("Embedded Velociraptor Forensics:"));
     }
 
     #[test]
@@ -1480,12 +1526,18 @@ mod tests {
     fn test_decision_model_sensor_health_degrades_on_high_error_rate() {
         let mut fusion = MultiSensorFusionEngine::new();
         let cfg = osoosi_types::config::DecisionModelConfig::default();
-        let engine = Arc::new(osoosi_behavioral::decision_model::ClefDecisionEngine::new(cfg));
+        let engine = Arc::new(osoosi_behavioral::decision_model::ClefDecisionEngine::new(
+            cfg,
+        ));
 
         // Inject simulated telemetry: 100 evaluations, 15 errors (15% error rate > 5% threshold)
         let metrics = engine.metrics_handle();
-        metrics.total_evaluations.store(100, std::sync::atomic::Ordering::Relaxed);
-        metrics.error_count.store(15, std::sync::atomic::Ordering::Relaxed);
+        metrics
+            .total_evaluations
+            .store(100, std::sync::atomic::Ordering::Relaxed);
+        metrics
+            .error_count
+            .store(15, std::sync::atomic::Ordering::Relaxed);
 
         fusion.decision_engine = Some(engine);
         let readings = fusion.evaluate_sensors(None, None, None);

@@ -42,10 +42,12 @@ impl TechniqueMapper {
         rules.insert("OCT-VULN-003".to_string(), "AML.T0001".to_string()); // Token exposure -> Tool Poisoning
         rules.insert("OCT-VULN-004".to_string(), "AML.T0031".to_string()); // Permissive egress -> C2
         rules.insert("OCT-VULN-005".to_string(), "AML.T0042".to_string()); // Memory clamp -> Resource Hijacking
-        rules.insert("INJECTION".to_string(), "AML.T0051".to_string());    // Prompt Injection
-        rules.insert("ESCAPE".to_string(), "AML.T0000".to_string());       // Host Escape
-        rules.insert("REPLAY".to_string(), "AML.T0003".to_string());       // Identity Spoofing
-        Self { mapping_rules: rules }
+        rules.insert("INJECTION".to_string(), "AML.T0051".to_string()); // Prompt Injection
+        rules.insert("ESCAPE".to_string(), "AML.T0000".to_string()); // Host Escape
+        rules.insert("REPLAY".to_string(), "AML.T0003".to_string()); // Identity Spoofing
+        Self {
+            mapping_rules: rules,
+        }
     }
 
     /// Maps an internal Octopus finding to an authoritative MITRE ATLAS technique ID.

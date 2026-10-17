@@ -2,21 +2,16 @@ use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 
 /// Trust tier classification of the agent subject requesting execution.
-#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
+#[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize, Default)]
 pub enum RaspAgentTrustTier {
     SystemKernel,
     SupervisorAttested,
+    #[default]
     WorkerSandboxed,
     UntrustedExternal,
 }
 
 pub type AgentTrustTier = RaspAgentTrustTier;
-
-impl Default for RaspAgentTrustTier {
-    fn default() -> Self {
-        RaspAgentTrustTier::WorkerSandboxed
-    }
-}
 
 /// Subject identity and security attributes of an agent requesting execution.
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -135,13 +130,18 @@ pub enum RaspDecision {
 
 impl RaspDecision {
     pub fn is_allowed(&self) -> bool {
-        matches!(self, RaspDecision::Allow { .. } | RaspDecision::Sanitize { .. })
+        matches!(
+            self,
+            RaspDecision::Allow { .. } | RaspDecision::Sanitize { .. }
+        )
     }
 
     pub fn is_blocked(&self) -> bool {
         matches!(
             self,
-            RaspDecision::Deny { .. } | RaspDecision::Quarantine { .. } | RaspDecision::Tarpit { .. }
+            RaspDecision::Deny { .. }
+                | RaspDecision::Quarantine { .. }
+                | RaspDecision::Tarpit { .. }
         )
     }
 

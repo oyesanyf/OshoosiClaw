@@ -24,17 +24,11 @@ pub enum AgentEvidenceSignal {
         is_streaming: bool,
     },
     /// Model Context Protocol (MCP) JSON-RPC 2.0 framing on stdio or loopback socket
-    McpJsonRpcFraming {
-        method: String,
-    },
+    McpJsonRpcFraming { method: String },
     /// Memory-mapped weights/tensor file
-    ModelTensorMemoryMapped {
-        format: String,
-    },
+    ModelTensorMemoryMapped { format: String },
     /// OpenTelemetry GenAI or OpenInference semantic convention span attributes
-    OpenTelemetryGenAiSpan {
-        attribute_key: String,
-    },
+    OpenTelemetryGenAiSpan { attribute_key: String },
     /// Autonomous pipe-driven child process spawn burst following network inference wait
     PipeDrivenToolBurst {
         child_count_10s: usize,
@@ -42,17 +36,11 @@ pub enum AgentEvidenceSignal {
         post_network_wait_ms: u64,
     },
     /// High-velocity child spawn burst (e.g. > 5 children in 3 seconds from ETW)
-    ChildSpawnVelocityBurst {
-        count_3s: usize,
-    },
+    ChildSpawnVelocityBurst { count_3s: usize },
     /// EmbeddingGemma 2 cosine similarity to canonical agent tool loop manifolds
-    SemanticLineageSimilarity {
-        cosine_score: f32,
-    },
+    SemanticLineageSimilarity { cosine_score: f32 },
     /// Interactive human console (e.g. ConPTY keyboard input with human stroke variance)
-    InteractiveHumanConsole {
-        has_conpty_keyboard_input: bool,
-    },
+    InteractiveHumanConsole { has_conpty_keyboard_input: bool },
     /// Adrian tool-call boundary intent or Arize Phoenix reasoning path drift
     AdrianRuntimeBoundary {
         boundary_event: String,
@@ -68,7 +56,11 @@ impl AgentEvidenceSignal {
             Self::McpJsonRpcFraming { .. } => 2.8,
             Self::ModelTensorMemoryMapped { .. } => 2.2,
             Self::OpenTelemetryGenAiSpan { .. } => 2.6,
-            Self::PipeDrivenToolBurst { child_count_10s, non_interactive_stdio, .. } => {
+            Self::PipeDrivenToolBurst {
+                child_count_10s,
+                non_interactive_stdio,
+                ..
+            } => {
                 if *non_interactive_stdio && *child_count_10s >= 2 {
                     1.6
                 } else {
@@ -98,7 +90,9 @@ impl AgentEvidenceSignal {
                     1.0
                 }
             }
-            Self::InteractiveHumanConsole { has_conpty_keyboard_input } => {
+            Self::InteractiveHumanConsole {
+                has_conpty_keyboard_input,
+            } => {
                 if *has_conpty_keyboard_input {
                     // Strong negative evidence: interactive human terminal!
                     -3.0
@@ -112,13 +106,19 @@ impl AgentEvidenceSignal {
     /// Descriptive summary tag for audit logging.
     pub fn description(&self) -> String {
         match self {
-            Self::InferenceProtocolTraffic { endpoint_pattern, .. } => {
+            Self::InferenceProtocolTraffic {
+                endpoint_pattern, ..
+            } => {
                 format!("InferenceProtocol({})", endpoint_pattern)
             }
             Self::McpJsonRpcFraming { method } => format!("McpFraming({})", method),
             Self::ModelTensorMemoryMapped { format } => format!("TensorMap({})", format),
-            Self::OpenTelemetryGenAiSpan { attribute_key } => format!("OTelGenAI({})", attribute_key),
-            Self::PipeDrivenToolBurst { child_count_10s, .. } => {
+            Self::OpenTelemetryGenAiSpan { attribute_key } => {
+                format!("OTelGenAI({})", attribute_key)
+            }
+            Self::PipeDrivenToolBurst {
+                child_count_10s, ..
+            } => {
                 format!("PipeBurst(children={})", child_count_10s)
             }
             Self::ChildSpawnVelocityBurst { count_3s } => {
@@ -170,23 +170,27 @@ pub fn infer_agent_metadata(name: &str, cmdline: &str) -> (String, String, Strin
     let lower_name = name.to_ascii_lowercase();
     let lower_cmd = cmdline.to_ascii_lowercase();
 
-    let resolved_name = if !name.is_empty() && name != "unknown" && !name.eq_ignore_ascii_case("Program") {
+    let resolved_name = if !name.is_empty()
+        && name != "unknown"
+        && !name.eq_ignore_ascii_case("Program")
+    {
         name.to_string()
     } else {
         let trimmed_cmd = cmdline.trim();
-        let extracted_path = if trimmed_cmd.starts_with('"') {
-            if let Some(end_quote) = trimmed_cmd[1..].find('"') {
-                Some(&trimmed_cmd[1..=end_quote])
-            } else {
-                None
-            }
+        let extracted_path = if let Some(stripped) = trimmed_cmd.strip_prefix('"') {
+            stripped
+                .find('"')
+                .map(|end_quote| &trimmed_cmd[1..=end_quote])
         } else if trimmed_cmd.starts_with("C:\\Program Files")
             || trimmed_cmd.starts_with("C:\\Program Files (x86)")
-            || trimmed_cmd.to_ascii_lowercase().starts_with("c:\\program files")
+            || trimmed_cmd
+                .to_ascii_lowercase()
+                .starts_with("c:\\program files")
         {
             if let Some(exe_pos) = trimmed_cmd.to_ascii_lowercase().find(".exe") {
                 Some(&trimmed_cmd[..exe_pos + 4])
-            } else if !name.is_empty() && name != "unknown" && !name.eq_ignore_ascii_case("Program") {
+            } else if !name.is_empty() && name != "unknown" && !name.eq_ignore_ascii_case("Program")
+            {
                 None
             } else {
                 trimmed_cmd.split_whitespace().next()
@@ -218,7 +222,10 @@ pub fn infer_agent_metadata(name: &str, cmdline: &str) -> (String, String, Strin
         {
             if let Some(exe_pos) = cmdline.to_ascii_lowercase().find(".exe") {
                 let prefix = &cmdline[..exe_pos + 4];
-                let file_part = prefix.rsplit(['\\', '/', ' ']).next().unwrap_or("system_agent.exe");
+                let file_part = prefix
+                    .rsplit(['\\', '/', ' '])
+                    .next()
+                    .unwrap_or("system_agent.exe");
                 candidate = file_part.trim_matches('"').trim_matches('\'').to_string();
             }
             if candidate.is_empty()
@@ -237,19 +244,51 @@ pub fn infer_agent_metadata(name: &str, cmdline: &str) -> (String, String, Strin
         || lower_name.contains("language_server")
         || lower_name.contains("antigravity")
     {
-        ("Coding & Tool Orchestrator".to_string(), "Google Antigravity / CloudCode".to_string())
-    } else if lower_cmd.contains("mcp") || lower_cmd.contains("jsonrpc") || lower_cmd.contains("--stdio") || lower_name.contains("mcp") {
-        ("MCP Tool Server".to_string(), "Model Context Protocol (MCP)".to_string())
-    } else if lower_cmd.contains("ollama") || lower_cmd.contains("llama") || lower_cmd.contains(".gguf") || lower_name.contains("ollama") {
-        ("Local LLM Inference Daemon".to_string(), "Ollama / GGUF Runtime".to_string())
+        (
+            "Coding & Tool Orchestrator".to_string(),
+            "Google Antigravity / CloudCode".to_string(),
+        )
+    } else if lower_cmd.contains("mcp")
+        || lower_cmd.contains("jsonrpc")
+        || lower_cmd.contains("--stdio")
+        || lower_name.contains("mcp")
+    {
+        (
+            "MCP Tool Server".to_string(),
+            "Model Context Protocol (MCP)".to_string(),
+        )
+    } else if lower_cmd.contains("ollama")
+        || lower_cmd.contains("llama")
+        || lower_cmd.contains(".gguf")
+        || lower_name.contains("ollama")
+    {
+        (
+            "Local LLM Inference Daemon".to_string(),
+            "Ollama / GGUF Runtime".to_string(),
+        )
     } else if lower_cmd.contains("osoosi") || lower_name.contains("osoosi") {
-        ("Autonomous Security Supervisor".to_string(), "OpenOsoosi EDR Cortex (ONNX)".to_string())
-    } else if lower_cmd.contains("python") || lower_cmd.contains("uv") || lower_name.contains("python") {
-        ("Python Automation Agent".to_string(), "Python / Agentic SDK".to_string())
+        (
+            "Autonomous Security Supervisor".to_string(),
+            "OpenOsoosi EDR Cortex (ONNX)".to_string(),
+        )
+    } else if lower_cmd.contains("python")
+        || lower_cmd.contains("uv")
+        || lower_name.contains("python")
+    {
+        (
+            "Python Automation Agent".to_string(),
+            "Python / Agentic SDK".to_string(),
+        )
     } else if lower_cmd.contains("node") || lower_name.contains("node") {
-        ("Node.js Extension Host / Agent".to_string(), "Node.js / V8 Agent Runtime".to_string())
+        (
+            "Node.js Extension Host / Agent".to_string(),
+            "Node.js / V8 Agent Runtime".to_string(),
+        )
     } else {
-        ("Autonomous Subprocess".to_string(), "Native OS / Pipe-Driven".to_string())
+        (
+            "Autonomous Subprocess".to_string(),
+            "Native OS / Pipe-Driven".to_string(),
+        )
     };
 
     (resolved_name, role, framework)
@@ -380,8 +419,8 @@ impl DynamicAgentClassifier {
         if record.pid == 0 {
             if let Ok(p) = subject_id.parse::<u32>() {
                 record.pid = p;
-            } else if subject_id.starts_with("pid_") {
-                if let Ok(p) = subject_id[4..].parse::<u32>() {
+            } else if let Some(stripped) = subject_id.strip_prefix("pid_") {
+                if let Ok(p) = stripped.parse::<u32>() {
                     record.pid = p;
                 }
             }
@@ -499,7 +538,9 @@ impl DynamicAgentClassifier {
 
         // 5. Semantic Lineage Similarity via EmbeddingGemma 2 (128-dim MRL)
         let vec_input = self.embedding_engine.embed_text(cmd_or_payload);
-        let ref_prompt_inj = self.embedding_engine.embed_text("tool_call: send_message (content: agentic tool call loop)");
+        let ref_prompt_inj = self
+            .embedding_engine
+            .embed_text("tool_call: send_message (content: agentic tool call loop)");
         let cos = EmbeddingGemma2Engine::cosine_similarity(&vec_input, &ref_prompt_inj);
         if cos >= 0.78 {
             self.record_signal(
@@ -516,40 +557,37 @@ impl DynamicAgentClassifier {
             .parse::<u32>()
             .ok()
             .or_else(|| {
-                if subject_id.starts_with("pid_") {
-                    subject_id[4..].parse::<u32>().ok()
-                } else {
-                    None
-                }
+                subject_id
+                    .strip_prefix("pid_")
+                    .and_then(|s| s.parse::<u32>().ok())
             })
             .unwrap_or(0);
 
         let mut rec = self
             .records
             .entry(subject_id.to_string())
-            .or_insert_with(|| {
-                AgentClassificationRecord {
-                    subject_id: subject_id.to_string(),
-                    parent_id: parent_id.map(|s| s.to_string()),
-                    log_odds: -1.5,
-                    posterior_probability: 0.18,
-                    is_verified_agent: false,
-                    inferred_workspace_root: workspace_hint.map(|s| s.to_string()),
-                    observed_signals: Vec::new(),
-                    generation_epoch: 1,
-                    last_updated: Utc::now(),
-                    pid: parsed_pid,
-                    process_name: proc_name.clone(),
-                    agent_role: role.clone(),
-                    framework: framework.clone(),
-                    agent_probability: 0.18,
-                    protocol_provenance: Vec::new(),
-                    child_spawn_velocity_3s: 0,
-                    containment_state: "PassThrough".to_string(),
-                }
+            .or_insert_with(|| AgentClassificationRecord {
+                subject_id: subject_id.to_string(),
+                parent_id: parent_id.map(|s| s.to_string()),
+                log_odds: -1.5,
+                posterior_probability: 0.18,
+                is_verified_agent: false,
+                inferred_workspace_root: workspace_hint.map(|s| s.to_string()),
+                observed_signals: Vec::new(),
+                generation_epoch: 1,
+                last_updated: Utc::now(),
+                pid: parsed_pid,
+                process_name: proc_name.clone(),
+                agent_role: role.clone(),
+                framework: framework.clone(),
+                agent_probability: 0.18,
+                protocol_provenance: Vec::new(),
+                child_spawn_velocity_3s: 0,
+                containment_state: "PassThrough".to_string(),
             });
 
-        if (rec.process_name.is_empty() || rec.process_name == "unknown") && proc_name != "unknown" {
+        if (rec.process_name.is_empty() || rec.process_name == "unknown") && proc_name != "unknown"
+        {
             rec.process_name = proc_name;
         }
         if rec.agent_role.is_empty() || rec.agent_role == "Autonomous Subprocess" {
@@ -566,7 +604,10 @@ impl DynamicAgentClassifier {
 
     /// Classifies structured tool call telemetry.
     /// Structured tool calls from agents immediately record MCP + OpenTelemetry signals.
-    pub fn classify_telemetry(&self, telemetry: &crate::types::ToolCallTelemetry) -> AgentClassificationRecord {
+    pub fn classify_telemetry(
+        &self,
+        telemetry: &crate::types::ToolCallTelemetry,
+    ) -> AgentClassificationRecord {
         let subject_id = &telemetry.session_id;
 
         self.record_signal(
@@ -633,20 +674,33 @@ impl DynamicAgentClassifier {
             for row in rows {
                 let pid_str = row
                     .get("pid")
-                    .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+                    .and_then(|v| {
+                        v.as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| v.as_i64().map(|n| n.to_string()))
+                    })
                     .unwrap_or_default();
                 let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let cmdline = row.get("cmdline").and_then(|v| v.as_str()).unwrap_or("");
                 let cwd = row.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
-                let parent_str = row
-                    .get("parent")
-                    .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())));
+                let parent_str = row.get("parent").and_then(|v| {
+                    v.as_str()
+                        .map(|s| s.to_string())
+                        .or_else(|| v.as_i64().map(|n| n.to_string()))
+                });
 
                 if !pid_str.is_empty() {
                     let ws_hint = if !cwd.is_empty() { Some(cwd) } else { None };
-                    let mut rec = self.inspect_command_and_context(&pid_str, parent_str.as_deref(), cmdline, ws_hint);
+                    let mut rec = self.inspect_command_and_context(
+                        &pid_str,
+                        parent_str.as_deref(),
+                        cmdline,
+                        ws_hint,
+                    );
                     let (p_name, role, framework) = infer_agent_metadata(name, cmdline);
-                    if (rec.process_name.is_empty() || rec.process_name == "unknown") && p_name != "unknown" {
+                    if (rec.process_name.is_empty() || rec.process_name == "unknown")
+                        && p_name != "unknown"
+                    {
                         rec.process_name = p_name;
                     }
                     if rec.agent_role.is_empty() || rec.agent_role == "Autonomous Subprocess" {
@@ -684,15 +738,22 @@ impl DynamicAgentClassifier {
             for row in rows {
                 let pid_str = row
                     .get("pid")
-                    .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+                    .and_then(|v| {
+                        v.as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| v.as_i64().map(|n| n.to_string()))
+                    })
                     .unwrap_or_default();
                 let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let cmdline = row.get("cmdline").and_then(|v| v.as_str()).unwrap_or("");
                 let cwd = row.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
-                let parent_str = row
-                    .get("parent")
-                    .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())));
-                let child_count = row.get("child_count").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
+                let parent_str = row.get("parent").and_then(|v| {
+                    v.as_str()
+                        .map(|s| s.to_string())
+                        .or_else(|| v.as_i64().map(|n| n.to_string()))
+                });
+                let child_count =
+                    row.get("child_count").and_then(|v| v.as_u64()).unwrap_or(1) as usize;
 
                 let lower_cmd = cmdline.to_ascii_lowercase();
                 let lower_cwd = cwd.to_ascii_lowercase();
@@ -743,13 +804,19 @@ impl DynamicAgentClassifier {
                         },
                     );
                     let (p_name, role, framework) = infer_agent_metadata(name, cmdline);
-                    if (parent_rec.process_name.is_empty() || parent_rec.process_name == "unknown") && p_name != "unknown" {
+                    if (parent_rec.process_name.is_empty() || parent_rec.process_name == "unknown")
+                        && p_name != "unknown"
+                    {
                         parent_rec.process_name = p_name;
                     }
-                    if parent_rec.agent_role.is_empty() || parent_rec.agent_role == "Autonomous Subprocess" {
+                    if parent_rec.agent_role.is_empty()
+                        || parent_rec.agent_role == "Autonomous Subprocess"
+                    {
                         parent_rec.agent_role = role;
                     }
-                    if parent_rec.framework.is_empty() || parent_rec.framework == "Native OS / Pipe-Driven" {
+                    if parent_rec.framework.is_empty()
+                        || parent_rec.framework == "Native OS / Pipe-Driven"
+                    {
                         parent_rec.framework = framework;
                     }
                     if let Some(mut existing) = self.records.get_mut(&pid_str) {
@@ -768,7 +835,11 @@ impl DynamicAgentClassifier {
                         for c_row in child_rows {
                             let c_pid = c_row
                                 .get("pid")
-                                .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+                                .and_then(|v| {
+                                    v.as_str()
+                                        .map(|s| s.to_string())
+                                        .or_else(|| v.as_i64().map(|n| n.to_string()))
+                                })
                                 .unwrap_or_default();
                             let c_name = c_row.get("name").and_then(|v| v.as_str()).unwrap_or("");
                             let c_cmd = c_row.get("cmdline").and_then(|v| v.as_str()).unwrap_or("");
@@ -776,7 +847,11 @@ impl DynamicAgentClassifier {
                             let c_lower = c_cmd.to_ascii_lowercase();
 
                             if !c_pid.is_empty() {
-                                let c_ws = if !c_cwd.is_empty() { Some(c_cwd) } else { ws_hint };
+                                let c_ws = if !c_cwd.is_empty() {
+                                    Some(c_cwd)
+                                } else {
+                                    ws_hint
+                                };
 
                                 // Check if child is an MCP server or tool subprocess
                                 if c_lower.contains("mcp")
@@ -793,15 +868,28 @@ impl DynamicAgentClassifier {
                                     );
                                 }
 
-                                let mut c_rec = self.inspect_command_and_context(&c_pid, Some(&pid_str), c_cmd, c_ws);
-                                let (cp_name, c_role, c_framework) = infer_agent_metadata(c_name, c_cmd);
-                                if (c_rec.process_name.is_empty() || c_rec.process_name == "unknown") && cp_name != "unknown" {
+                                let mut c_rec = self.inspect_command_and_context(
+                                    &c_pid,
+                                    Some(&pid_str),
+                                    c_cmd,
+                                    c_ws,
+                                );
+                                let (cp_name, c_role, c_framework) =
+                                    infer_agent_metadata(c_name, c_cmd);
+                                if (c_rec.process_name.is_empty()
+                                    || c_rec.process_name == "unknown")
+                                    && cp_name != "unknown"
+                                {
                                     c_rec.process_name = cp_name;
                                 }
-                                if c_rec.agent_role.is_empty() || c_rec.agent_role == "Autonomous Subprocess" {
+                                if c_rec.agent_role.is_empty()
+                                    || c_rec.agent_role == "Autonomous Subprocess"
+                                {
                                     c_rec.agent_role = c_role;
                                 }
-                                if c_rec.framework.is_empty() || c_rec.framework == "Native OS / Pipe-Driven" {
+                                if c_rec.framework.is_empty()
+                                    || c_rec.framework == "Native OS / Pipe-Driven"
+                                {
                                     c_rec.framework = c_framework;
                                 }
                                 if let Some(mut existing) = self.records.get_mut(&c_pid) {
@@ -835,14 +923,20 @@ impl DynamicAgentClassifier {
             for row in rows {
                 let pid_str = row
                     .get("pid")
-                    .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+                    .and_then(|v| {
+                        v.as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| v.as_i64().map(|n| n.to_string()))
+                    })
                     .unwrap_or_default();
                 let name = row.get("name").and_then(|v| v.as_str()).unwrap_or("");
                 let cmdline = row.get("cmdline").and_then(|v| v.as_str()).unwrap_or("");
                 let cwd = row.get("cwd").and_then(|v| v.as_str()).unwrap_or("");
-                let parent_str = row
-                    .get("parent")
-                    .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())));
+                let parent_str = row.get("parent").and_then(|v| {
+                    v.as_str()
+                        .map(|s| s.to_string())
+                        .or_else(|| v.as_i64().map(|n| n.to_string()))
+                });
                 let key = row.get("key").and_then(|v| v.as_str()).unwrap_or("");
 
                 if !pid_str.is_empty() {
@@ -856,9 +950,16 @@ impl DynamicAgentClassifier {
                             is_streaming: false,
                         },
                     );
-                    let mut rec = self.inspect_command_and_context(&pid_str, parent_str.as_deref(), cmdline, ws_hint);
+                    let mut rec = self.inspect_command_and_context(
+                        &pid_str,
+                        parent_str.as_deref(),
+                        cmdline,
+                        ws_hint,
+                    );
                     let (p_name, role, framework) = infer_agent_metadata(name, cmdline);
-                    if (rec.process_name.is_empty() || rec.process_name == "unknown") && p_name != "unknown" {
+                    if (rec.process_name.is_empty() || rec.process_name == "unknown")
+                        && p_name != "unknown"
+                    {
                         rec.process_name = p_name;
                     }
                     if rec.agent_role.is_empty() || rec.agent_role == "Autonomous Subprocess" {
@@ -888,7 +989,11 @@ impl DynamicAgentClassifier {
             for row in rows {
                 let pid_str = row
                     .get("pid")
-                    .and_then(|v| v.as_str().map(|s| s.to_string()).or_else(|| v.as_i64().map(|n| n.to_string())))
+                    .and_then(|v| {
+                        v.as_str()
+                            .map(|s| s.to_string())
+                            .or_else(|| v.as_i64().map(|n| n.to_string()))
+                    })
                     .unwrap_or_default();
                 let path = row.get("path").and_then(|v| v.as_str()).unwrap_or("");
 
@@ -909,7 +1014,9 @@ impl DynamicAgentClassifier {
                         },
                     );
                     let (p_name, role, framework) = infer_agent_metadata("", path);
-                    if (rec.process_name.is_empty() || rec.process_name == "unknown") && p_name != "unknown" {
+                    if (rec.process_name.is_empty() || rec.process_name == "unknown")
+                        && p_name != "unknown"
+                    {
                         rec.process_name = p_name;
                     }
                     if rec.agent_role.is_empty() || rec.agent_role == "Autonomous Subprocess" {
@@ -979,7 +1086,11 @@ mod tests {
 
         let rec = classifier.get_record(dev_pid).unwrap();
         // Posterior probability must be low (< 0.20), not verified as AI agent!
-        assert!(rec.posterior_probability < 0.20, "Human console must score low probability, got {}", rec.posterior_probability);
+        assert!(
+            rec.posterior_probability < 0.20,
+            "Human console must score low probability, got {}",
+            rec.posterior_probability
+        );
         assert!(!rec.is_verified_agent);
     }
 
@@ -991,9 +1102,14 @@ mod tests {
         let agent_pid = "pid_9844";
         let payload = r#"C:\CustomAi\autonomous_worker_xyz.exe --mcp --endpoint https://api.openai.com/v1/chat/completions --model mistral.gguf"#;
 
-        let rec = classifier.inspect_command_and_context(agent_pid, None, payload, Some("C:\\CustomAi"));
+        let rec =
+            classifier.inspect_command_and_context(agent_pid, None, payload, Some("C:\\CustomAi"));
         // Multiple protocol signals (LLM API + MCP + .gguf) must drive probability >= 0.75!
-        assert!(rec.posterior_probability >= 0.75, "Custom binary with inference/MCP signals must be verified, got {}", rec.posterior_probability);
+        assert!(
+            rec.posterior_probability >= 0.75,
+            "Custom binary with inference/MCP signals must be verified, got {}",
+            rec.posterior_probability
+        );
         assert!(rec.is_verified_agent);
         assert_eq!(rec.inferred_workspace_root.as_deref(), Some("C:\\CustomAi"));
     }
@@ -1009,7 +1125,9 @@ mod tests {
             parent_pid,
             None,
             Some("C:\\AgentWorkspace"),
-            AgentEvidenceSignal::McpJsonRpcFraming { method: "tools/call".to_string() },
+            AgentEvidenceSignal::McpJsonRpcFraming {
+                method: "tools/call".to_string(),
+            },
         );
         classifier.record_signal(
             parent_pid,
@@ -1038,7 +1156,10 @@ mod tests {
         );
 
         assert!(child_rec.is_verified_agent);
-        assert_eq!(child_rec.inferred_workspace_root.as_deref(), Some("C:\\AgentWorkspace"));
+        assert_eq!(
+            child_rec.inferred_workspace_root.as_deref(),
+            Some("C:\\AgentWorkspace")
+        );
     }
 
     #[test]
@@ -1046,7 +1167,11 @@ mod tests {
         let detector = OsqueryAgentDetector::new();
         // Should execute cleanly using either osqueryi or embedded engine
         let res = detector.execute_query("SELECT count(*) as count FROM processes;");
-        assert!(res.is_ok(), "Osquery query execution must succeed: {:?}", res.err());
+        assert!(
+            res.is_ok(),
+            "Osquery query execution must succeed: {:?}",
+            res.err()
+        );
     }
 
     #[test]
@@ -1082,9 +1207,15 @@ mod tests {
         let classifier = DynamicAgentClassifier::new();
         let discovered = classifier.run_siquery_host_scan();
 
-        println!("=== Siquery Host Scan: Total Discovered Subjects: {} ===", discovered.len());
+        println!(
+            "=== Siquery Host Scan: Total Discovered Subjects: {} ===",
+            discovered.len()
+        );
         let verified = classifier.list_verified_agents();
-        println!("=== Siquery Host Scan: Total Verified AI Agents (P >= 0.75): {} ===", verified.len());
+        println!(
+            "=== Siquery Host Scan: Total Verified AI Agents (P >= 0.75): {} ===",
+            verified.len()
+        );
 
         for agent in &verified {
             println!(
@@ -1106,6 +1237,10 @@ mod tests {
             .iter()
             .map(|a| a.posterior_probability)
             .fold(0.0f32, f32::max);
-        assert!(highest_prob >= 0.75, "Highest verified probability must be >= 0.75, got {}", highest_prob);
+        assert!(
+            highest_prob >= 0.75,
+            "Highest verified probability must be >= 0.75, got {}",
+            highest_prob
+        );
     }
 }

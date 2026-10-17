@@ -26,7 +26,10 @@ impl Ipv6SuspensionGuard {
                         continue;
                     }
                     let escaped_adapter = adapter.replace('\'', "''");
-                    info!("Temporarily disabling IPv6 on adapter '{}' for reliable model download...", adapter);
+                    info!(
+                        "Temporarily disabling IPv6 on adapter '{}' for reliable model download...",
+                        adapter
+                    );
                     let direct_cmd = format!("Disable-NetAdapterBinding -Name '{}' -ComponentID ms_tcpip6 -ErrorAction Stop", escaped_adapter);
                     let mut cmd = tokio::process::Command::new("powershell");
                     cmd.args(["-NoProfile", "-NonInteractive", "-Command", &direct_cmd]);
@@ -44,11 +47,17 @@ impl Ipv6SuspensionGuard {
                         runas_proc.args(["-NoProfile", "-NonInteractive", "-Command", &runas_cmd]);
                         runas_proc.creation_flags(0x0800_0000);
                         let runas_res = runas_proc.output().await;
-                        success = runas_res.as_ref().map(|r| r.status.success()).unwrap_or(false);
+                        success = runas_res
+                            .as_ref()
+                            .map(|r| r.status.success())
+                            .unwrap_or(false);
                     }
 
                     if success {
-                        info!("Successfully disabled IPv6 on '{}' for model download.", adapter);
+                        info!(
+                            "Successfully disabled IPv6 on '{}' for model download.",
+                            adapter
+                        );
                         disabled.push(adapter.to_string());
                     } else {
                         warn!("Could not disable IPv6 on '{}' (elevation may be required). Proceeding with download attempt.", adapter);
@@ -73,8 +82,14 @@ impl Ipv6SuspensionGuard {
         {
             for adapter in self.disabled_adapters.drain(..) {
                 let escaped_adapter = adapter.replace('\'', "''");
-                info!("Re-enabling IPv6 binding on network adapter '{}'...", adapter);
-                let direct_cmd = format!("Enable-NetAdapterBinding -Name '{}' -ComponentID ms_tcpip6 -ErrorAction Stop", escaped_adapter);
+                info!(
+                    "Re-enabling IPv6 binding on network adapter '{}'...",
+                    adapter
+                );
+                let direct_cmd = format!(
+                    "Enable-NetAdapterBinding -Name '{}' -ComponentID ms_tcpip6 -ErrorAction Stop",
+                    escaped_adapter
+                );
                 let mut cmd = tokio::process::Command::new("powershell");
                 cmd.args(["-NoProfile", "-NonInteractive", "-Command", &direct_cmd]);
                 cmd.creation_flags(0x0800_0000);

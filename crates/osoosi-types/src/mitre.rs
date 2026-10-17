@@ -85,7 +85,9 @@ pub struct MitreTechnique {
 
 impl MitreTechnique {
     pub fn is_covered(&self) -> bool {
-        !self.detection_mechanisms.is_empty() || !self.mitigations.is_empty() || !self.sigma_rules.is_empty()
+        !self.detection_mechanisms.is_empty()
+            || !self.mitigations.is_empty()
+            || !self.sigma_rules.is_empty()
     }
 }
 
@@ -203,7 +205,10 @@ mod tests {
         assert_eq!(summary.covered_techniques, 9);
         assert_eq!(summary.coverage_percentage, 90.0);
         assert_eq!(summary.active_detections_by_tactic.get("TA0002"), Some(&3));
-        assert_eq!(summary.active_detections_by_technique.get("T1059"), Some(&2));
+        assert_eq!(
+            summary.active_detections_by_technique.get("T1059"),
+            Some(&2)
+        );
         assert_eq!(summary.total_mitigations, 24);
         assert_eq!(summary.total_groups, 16);
     }
@@ -211,9 +216,8 @@ mod tests {
     #[test]
     fn test_mitre_tactics_and_techniques_associations() {
         let expected_tactics = [
-            "TA0043", "TA0042", "TA0001", "TA0002", "TA0003",
-            "TA0004", "TA0005", "TA0112", "TA0006", "TA0007",
-            "TA0008", "TA0009", "TA0011", "TA0010", "TA0040",
+            "TA0043", "TA0042", "TA0001", "TA0002", "TA0003", "TA0004", "TA0005", "TA0112",
+            "TA0006", "TA0007", "TA0008", "TA0009", "TA0011", "TA0010", "TA0040",
         ];
         let tactics: Vec<MitreTactic> = expected_tactics
             .iter()

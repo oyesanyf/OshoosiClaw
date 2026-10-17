@@ -2,12 +2,12 @@
 //!
 //! Supports matching against Domain, IP/CIDR, Hash, and Path Regex indicators.
 
-use osoosi_types::HostSecurityEvent;
-use std::collections::HashSet;
-use std::net::IpAddr;
 use ipnetwork::IpNetwork;
+use osoosi_types::HostSecurityEvent;
 use regex::RegexSet;
 use serde::{Deserialize, Serialize};
+use std::collections::HashSet;
+use std::net::IpAddr;
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
 pub enum IocKind {
@@ -39,7 +39,9 @@ pub struct IocEngine {
 }
 
 impl Default for IocEngine {
-    fn default() -> Self { Self::new() }
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl IocEngine {
@@ -57,16 +59,21 @@ impl IocEngine {
     }
 
     pub fn indicator_count(&self) -> usize {
-        self.domain_exact.len() + self.domain_suffix.len() + self.ip_exact.len() + self.ip_cidr.len() + self.path_patterns.len() + self.hashes.len()
+        self.domain_exact.len()
+            + self.domain_suffix.len()
+            + self.ip_exact.len()
+            + self.ip_cidr.len()
+            + self.path_patterns.len()
+            + self.hashes.len()
     }
 
     pub fn load_from_files(&mut self, base_path: &std::path::Path) {
-        // In a real EDR, we'd load from text files. 
+        // In a real EDR, we'd load from text files.
         // For OshoosiClaw, we'll look for domains.txt, ips.txt, etc.
         if let Ok(d) = std::fs::read_to_string(base_path.join("domains.txt")) {
             for line in d.lines().filter(|l| !l.is_empty()) {
-                if line.starts_with('.') {
-                    self.domain_suffix.push(line[1..].to_lowercase());
+                if let Some(stripped) = line.strip_prefix('.') {
+                    self.domain_suffix.push(stripped.to_lowercase());
                 } else {
                     self.domain_exact.insert(line.to_lowercase());
                 }
@@ -103,7 +110,11 @@ impl IocEngine {
         let mut matches = Vec::new();
 
         // 1. Check Domains
-        if let Some(domain) = event.data.get("DestinationHostname").and_then(|v| v.as_str()) {
+        if let Some(domain) = event
+            .data
+            .get("DestinationHostname")
+            .and_then(|v| v.as_str())
+        {
             let d = domain.to_lowercase();
             if self.domain_exact.contains(&d) || self.domain_suffix.iter().any(|s| d.ends_with(s)) {
                 matches.push(IocMatch {
@@ -132,11 +143,15 @@ impl IocEngine {
         // 3. Check Hashes
         if let Some(hashes) = event.data.get("Hashes").and_then(|v| v.as_str()) {
             for part in hashes.split(',') {
-                if let Some(hash) = part.split('=').last() {
+                if let Some(hash) = part.split('=').next_back() {
                     let h = hash.to_lowercase();
                     if self.hashes.contains(&h) {
                         matches.push(IocMatch {
-                            kind: if h.len() == 64 { IocKind::Sha256 } else { IocKind::Md5 },
+                            kind: if h.len() == 64 {
+                                IocKind::Sha256
+                            } else {
+                                IocKind::Md5
+                            },
                             indicator: h.clone(),
                             matched_value: h,
                             source: "local-ioc".to_string(),
@@ -147,10 +162,19 @@ impl IocEngine {
         }
 
         // 4. Check Path Regexes
-        if let Some(path) = event.data.get("Image").or_else(|| event.data.get("TargetFilename")).and_then(|v| v.as_str()) {
+        if let Some(path) = event
+            .data
+            .get("Image")
+            .or_else(|| event.data.get("TargetFilename"))
+            .and_then(|v| v.as_str())
+        {
             if let Some(ref set) = self.path_regex {
                 if let Some(matched_idx) = set.matches(path).into_iter().next() {
-                    let indicator = self.path_patterns.get(matched_idx).cloned().unwrap_or_else(|| path.to_string());
+                    let indicator = self
+                        .path_patterns
+                        .get(matched_idx)
+                        .cloned()
+                        .unwrap_or_else(|| path.to_string());
                     matches.push(IocMatch {
                         kind: IocKind::PathRegex,
                         indicator,
@@ -160,9 +184,10 @@ impl IocEngine {
                 }
             }
         }
-        
+
         if !matches.is_empty() {
-            self.total_detections.fetch_add(matches.len() as u64, std::sync::atomic::Ordering::Relaxed);
+            self.total_detections
+                .fetch_add(matches.len() as u64, std::sync::atomic::Ordering::Relaxed);
         }
 
         matches

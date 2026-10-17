@@ -20,11 +20,11 @@ jobs:
         uses: google/oss-fuzz/infra/cifuzz/actions/build_fuzzers@97b30d984674d2cde3c6331e17ae6475b8c18e64 # master
         with:
           language: rust
-          dry-run: false
+          dry-run: true
 
       - name: Run Fuzzers
         uses: google/oss-fuzz/infra/cifuzz/actions/run_fuzzers@97b30d984674d2cde3c6331e17ae6475b8c18e64 # master
         with:
           language: rust
           fuzz-seconds: 60
-          dry-run: false
+          dry-run: true

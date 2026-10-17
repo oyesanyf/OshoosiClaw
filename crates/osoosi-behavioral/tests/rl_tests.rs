@@ -8,6 +8,9 @@
 //! 5. Self-play digital twin rollout and loss convergence over 50 iterations.
 //! 6. Shadow / dry-run mode telemetry verification without execution dispatch.
 
+#![allow(clippy::needless_range_loop)]
+#![allow(clippy::same_item_push)]
+
 use osoosi_behavioral::rl_engine::{
     ActionScope, ActionTier, AdvantageTracker, DigitalTwinSimulator, DoubleDeepQEngine,
     DuelingQuantileNetwork, EDRRuntimeController, EdrAction, EdrRewardEngine, HeuristicPriorScores,
@@ -168,7 +171,12 @@ fn test_double_dqn_reduces_overestimation_bias() {
 
     // Train online network for several steps while target network remains fixed (lagging)
     for _ in 0..20 {
-        let _ = double_dqn.train_step_cql(&[optimistic_transition.clone()], gamma, 0.02, None);
+        let _ = double_dqn.train_step_cql(
+            std::slice::from_ref(&optimistic_transition),
+            gamma,
+            0.02,
+            None,
+        );
     }
 
     // Evaluate on the optimistic state:
@@ -329,8 +337,8 @@ async fn test_shadow_mode_dry_run_telemetry() {
     let (action_tx, mut action_rx) = mpsc::channel(100);
 
     // Initialize controller in shadow mode
-    let controller = EDRRuntimeController::new(24, 5, telemetry_rx, Some(action_tx))
-        .with_shadow_mode(true);
+    let controller =
+        EDRRuntimeController::new(24, 5, telemetry_rx, Some(action_tx)).with_shadow_mode(true);
 
     assert!(controller.shadow_mode);
     let replay_buffer = Arc::clone(&controller.replay_buffer);
@@ -409,7 +417,8 @@ fn test_exploration_annealing_decays_correctly() {
             curr
         );
 
-        let expected = (bandit.alpha_0 / (1.0 + bandit.alpha_decay * (t as f64))).max(bandit.min_alpha);
+        let expected =
+            (bandit.alpha_0 / (1.0 + bandit.alpha_decay * (t as f64))).max(bandit.min_alpha);
         assert!(
             (curr - expected).abs() < 1e-6,
             "Alpha formula mismatch at step {}: expected {}, got {}",
@@ -442,7 +451,10 @@ fn test_stable_cholesky_inverse_handles_ill_conditioned_and_collinear() {
         vec![1.0, 1.0, 1.0],
     ];
     let inv_collinear_res = LinUcbBandit::stable_cholesky_inverse(&collinear, 0.05);
-    assert!(inv_collinear_res.is_ok(), "Stable Cholesky must succeed on collinear matrix");
+    assert!(
+        inv_collinear_res.is_ok(),
+        "Stable Cholesky must succeed on collinear matrix"
+    );
     let inv_collinear = inv_collinear_res.unwrap();
     assert_eq!(inv_collinear.len(), 3);
     for i in 0..3 {
@@ -453,7 +465,12 @@ fn test_stable_cholesky_inverse_handles_ill_conditioned_and_collinear() {
             assert!(
                 (v - inv_collinear[j][i]).abs() < 1e-6,
                 "Inverse must be symmetric: ({},{})={}, ({},{})={}",
-                i, j, v, j, i, inv_collinear[j][i]
+                i,
+                j,
+                v,
+                j,
+                i,
+                inv_collinear[j][i]
             );
         }
     }
@@ -481,7 +498,10 @@ fn test_stable_cholesky_inverse_handles_ill_conditioned_and_collinear() {
         vec![f64::INFINITY, 0.5, 3.0],
     ];
     let sanitized = LinUcbBandit::stable_cholesky_inverse(&corrupted, 0.1);
-    assert!(sanitized.is_ok(), "Must gracefully sanitize corrupted inputs");
+    assert!(
+        sanitized.is_ok(),
+        "Must gracefully sanitize corrupted inputs"
+    );
     let san_mat = sanitized.unwrap();
     for i in 0..3 {
         for j in 0..3 {
@@ -504,10 +524,7 @@ fn test_stable_cholesky_inverse_handles_ill_conditioned_and_collinear() {
     }
 
     // 5. Sherman-Morrison rank-1 update consistency
-    let mut a_inv = vec![
-        vec![1.0, 0.0],
-        vec![0.0, 1.0],
-    ];
+    let mut a_inv = vec![vec![1.0, 0.0], vec![0.0, 1.0]];
     let x = vec![1.0, 0.0];
     let sm_res = LinUcbBandit::sherman_morrison_rank1_update(&mut a_inv, &x);
     assert!(sm_res.is_ok());
@@ -605,13 +622,8 @@ fn test_counterfactual_security_gain_prevents_zero_gain() {
     );
 
     // 3. Proportionality test: higher unmitigated threat yields proportionally higher containment reward
-    let r_lower_threat = engine.calculate_counterfactual_reward(
-        EdrAction::HardMitigation,
-        0.45,
-        true,
-        false,
-        0.8,
-    );
+    let r_lower_threat =
+        engine.calculate_counterfactual_reward(EdrAction::HardMitigation, 0.45, true, false, 0.8);
     assert!(
         r_hard > r_lower_threat,
         "Reward for eliminating 0.90 threat ({}) must exceed reward for 0.45 threat ({})",
@@ -743,7 +755,7 @@ fn test_policy_checkpoint_serialization_roundtrip() {
         1.0,
     );
     for _ in 0..10 {
-        let _ = dqn.train_step_cql(&[transition.clone()], 0.95, 0.01, None);
+        let _ = dqn.train_step_cql(std::slice::from_ref(&transition), 0.95, 0.01, None);
     }
     let dqn_file = temp_dir.join("test_dqn_checkpoint.json");
     dqn.save_to_json(&dqn_file).unwrap();
@@ -817,7 +829,8 @@ fn test_advantage_counting_and_regret_decay() {
         summary.advantage.advantage > 0.0,
         "Net mean advantage must be positive"
     );
-    let total_pct = summary.advantage.pct_greater + summary.advantage.pct_equal + summary.advantage.pct_less;
+    let total_pct =
+        summary.advantage.pct_greater + summary.advantage.pct_equal + summary.advantage.pct_less;
     assert!(
         (total_pct - 100.0).abs() < 1e-4,
         "Advantage percentages must sum to 100%, got {}",
@@ -848,7 +861,7 @@ fn test_unified_edr_state_and_structured_action_representations() {
     assert_eq!(vec32.len(), 32);
     assert_eq!(vec32.len(), UnifiedEdrState::DIM);
     assert_eq!(vec32[0], 0.5);
-    assert_eq!(vec32[24], 0.7);  // lateral
+    assert_eq!(vec32[24], 0.7); // lateral
     assert_eq!(vec32[25], 0.85); // cred_dump
     assert_eq!(vec32[31], 0.92); // overall threat
 
@@ -856,7 +869,10 @@ fn test_unified_edr_state_and_structured_action_representations() {
     let struct_action = StructuredEdrAction::from_edr_action(EdrAction::HardMitigation);
     assert_eq!(struct_action.scope, ActionScope::Host);
     assert_eq!(struct_action.tier, ActionTier::HardMitigation);
-    assert_eq!(struct_action.technique, MitigationTechnique::ProcessTerminate);
+    assert_eq!(
+        struct_action.technique,
+        MitigationTechnique::ProcessTerminate
+    );
     assert_eq!(struct_action.rollback, RollbackStrategy::SnapshotRevert);
     assert_eq!(struct_action.telemetry_level, TelemetryLevel::MemoryDump);
 
@@ -962,7 +978,8 @@ fn test_guardrail_penalizes_and_degrades_containment_on_protected_targets() {
     assert!(reward_csrss <= -500.0);
 
     // 3. Directly calling compute_reward on critical target with HardMitigation enforces -500.0
-    let direct_penalty = reward_engine.compute_reward(EdrAction::HardMitigation, false, 0.9, 0.9, true);
+    let direct_penalty =
+        reward_engine.compute_reward(EdrAction::HardMitigation, false, 0.9, 0.9, true);
     assert_eq!(
         direct_penalty, -500.0,
         "compute_reward must enforce -500.0 when containment touches critical target"
@@ -1001,21 +1018,30 @@ fn test_checkpoint_schema_and_dimension_validation() {
     let corrupted_bandit_path = temp_dir.join("corrupted_bandit.json");
     std::fs::write(&corrupted_bandit_path, r#"{"version":0,"num_actions":3,"context_dim":4,"a_matrices":[],"b_vectors":[],"a_inv_matrices":[]}"#).unwrap();
     let load_res = LinUcbBandit::load_from_json(&corrupted_bandit_path);
-    assert!(load_res.is_err(), "Loading checkpoint with version 0 must fail validation");
+    assert!(
+        load_res.is_err(),
+        "Loading checkpoint with version 0 must fail validation"
+    );
     let _ = std::fs::remove_file(corrupted_bandit_path);
 
     // 2. Corrupted dimension mismatch SharedBilinearBandit
     let corrupted_bilinear_path = temp_dir.join("corrupted_bilinear.json");
     std::fs::write(&corrupted_bilinear_path, r#"{"version":1,"num_actions":3,"state_dim":4,"total_dim":10,"a_matrix":[],"a_inv":[],"b_vector":[],"theta_hat":[]}"#).unwrap();
     let load_bilinear_res = SharedBilinearBandit::load_from_json(&corrupted_bilinear_path);
-    assert!(load_bilinear_res.is_err(), "Loading checkpoint with total_dim mismatch must fail validation");
+    assert!(
+        load_bilinear_res.is_err(),
+        "Loading checkpoint with total_dim mismatch must fail validation"
+    );
     let _ = std::fs::remove_file(corrupted_bilinear_path);
 
     // 3. Corrupted DoubleDeepQEngine with 0 action_dim
     let corrupted_dqn_path = temp_dir.join("corrupted_dqn.json");
     std::fs::write(&corrupted_dqn_path, r#"{"version":1,"state_dim":24,"action_dim":0,"online_net":{"state_dim":24,"action_dim":0,"fc1":{"weights":[],"biases":[]},"fc2":{"weights":[],"biases":[]},"fc3":{"weights":[],"biases":[]},"fc_out":{"weights":[],"biases":[]}},"target_net":{"state_dim":24,"action_dim":0,"fc1":{"weights":[],"biases":[]},"fc2":{"weights":[],"biases":[]},"fc3":{"weights":[],"biases":[]},"fc_out":{"weights":[],"biases":[]}},"cql_alpha":1.0}"#).unwrap();
     let load_dqn_res = DoubleDeepQEngine::load_from_json(&corrupted_dqn_path);
-    assert!(load_dqn_res.is_err(), "Loading checkpoint with action_dim=0 must fail validation");
+    assert!(
+        load_dqn_res.is_err(),
+        "Loading checkpoint with action_dim=0 must fail validation"
+    );
     let _ = std::fs::remove_file(corrupted_dqn_path);
 }
 
@@ -1043,7 +1069,8 @@ fn test_sherman_morrison_drift_and_collinear_stress() {
             assert!(
                 (v - bilinear.a_inv[j][i]).abs() < 1e-7,
                 "Inverse must remain symmetric at ({}, {})",
-                i, j
+                i,
+                j
             );
         }
     }
@@ -1057,9 +1084,12 @@ fn test_sherman_morrison_drift_and_collinear_stress() {
 
     // Also verify dimension mismatch rejection
     let mismatch_vec = vec![1.0, 0.5];
-    let res_mismatch = LinUcbBandit::sherman_morrison_rank1_update(&mut bilinear.a_inv, &mismatch_vec);
+    let res_mismatch =
+        LinUcbBandit::sherman_morrison_rank1_update(&mut bilinear.a_inv, &mismatch_vec);
     assert!(res_mismatch.is_err());
-    assert!(res_mismatch.unwrap_err().contains("does not match matrix dimension"));
+    assert!(res_mismatch
+        .unwrap_err()
+        .contains("does not match matrix dimension"));
 }
 
 #[test]
@@ -1144,7 +1174,8 @@ fn test_state_feature_pipeline_unified_32d() {
         overall_threat_score: 0.95,
     };
 
-    let unified_vec = pipeline.build_unified_state_vector(&lineage, &velocity, &priors, &mesh, &mitre);
+    let unified_vec =
+        pipeline.build_unified_state_vector(&lineage, &velocity, &priors, &mesh, &mitre);
     assert_eq!(unified_vec.len(), StateFeaturePipeline::UNIFIED_STATE_DIM);
     assert_eq!(unified_vec.len(), 32);
     assert_eq!(unified_vec[0], 0.35);
@@ -1197,7 +1228,7 @@ fn test_quantile_huber_loss_and_quantiles() {
     // Check asymmetric quantile weighting: |tau - I(u < 0)|
     let tau_high = 0.9f32;
     let weight_underestimate = (tau_high - 0.0).abs(); // u > 0 (prediction < target)
-    let weight_overestimate = (tau_high - 1.0).abs();  // u < 0 (prediction > target)
+    let weight_overestimate = (tau_high - 1.0).abs(); // u < 0 (prediction > target)
     assert!((weight_underestimate - 0.9).abs() < 1e-6);
     assert!((weight_overestimate - 0.1).abs() < 1e-6);
     assert!(weight_underestimate > weight_overestimate);
@@ -1309,15 +1340,39 @@ fn test_n_step_transition_buffer_discounting() {
     let s2 = vec![3.0, 4.0];
     let s3 = vec![4.0, 5.0];
 
-    let t0 = Transition::new(s0.clone(), EdrAction::PassiveObserve, 10.0, s1.clone(), false, 1.0);
-    let t1 = Transition::new(s1.clone(), EdrAction::TraceElevation, 5.0, s2.clone(), false, 1.0);
-    let t2 = Transition::new(s2.clone(), EdrAction::MemoryIntrospection, 20.0, s3.clone(), false, 1.0);
+    let t0 = Transition::new(
+        s0.clone(),
+        EdrAction::PassiveObserve,
+        10.0,
+        s1.clone(),
+        false,
+        1.0,
+    );
+    let t1 = Transition::new(
+        s1.clone(),
+        EdrAction::TraceElevation,
+        5.0,
+        s2.clone(),
+        false,
+        1.0,
+    );
+    let t2 = Transition::new(
+        s2.clone(),
+        EdrAction::MemoryIntrospection,
+        20.0,
+        s3.clone(),
+        false,
+        1.0,
+    );
 
     assert!(buffer.push(t0).is_none());
     assert!(buffer.push(t1).is_none());
 
     let res = buffer.push(t2);
-    assert!(res.is_some(), "Buffer of size 3 should emit upon 3rd transition");
+    assert!(
+        res.is_some(),
+        "Buffer of size 3 should emit upon 3rd transition"
+    );
 
     let compacted = res.unwrap();
     // Accumulated reward = 10.0 + 0.9 * 5.0 + 0.9^2 * 20.0 = 10.0 + 4.5 + 16.2 = 30.7
@@ -1388,8 +1443,8 @@ fn test_qr_dqn_checkpoint_roundtrip_and_validation() {
     let engine = QuantileRegressionDqnEngine::with_warm_priors(16, 5);
     let json_str = engine.to_json_string().expect("Serialization failed");
 
-    let deserialized = QuantileRegressionDqnEngine::from_json_string(&json_str)
-        .expect("Deserialization failed");
+    let deserialized =
+        QuantileRegressionDqnEngine::from_json_string(&json_str).expect("Deserialization failed");
     assert_eq!(deserialized.state_dim, 16);
     assert_eq!(deserialized.action_dim, 5);
     assert_eq!(deserialized.num_quantiles, 32);
@@ -1401,8 +1456,7 @@ fn test_qr_dqn_checkpoint_roundtrip_and_validation() {
     let temp_path = temp_dir.join(format!("qr_dqn_test_{}.json", std::process::id()));
     engine.save_to_json(&temp_path).expect("File save failed");
 
-    let loaded = QuantileRegressionDqnEngine::load_from_json(&temp_path)
-        .expect("File load failed");
+    let loaded = QuantileRegressionDqnEngine::load_from_json(&temp_path).expect("File load failed");
     let _ = std::fs::remove_file(&temp_path);
 
     assert_eq!(loaded.state_dim, engine.state_dim);
@@ -1417,4 +1471,3 @@ fn test_qr_dqn_checkpoint_roundtrip_and_validation() {
     corrupted_dim.state_dim = 999;
     assert!(corrupted_dim.validate().is_err());
 }
-

@@ -1,12 +1,12 @@
-use ferrisetw::provider::Provider;
-use ferrisetw::trace::UserTrace;
-use ferrisetw::parser::*;
-use osoosi_types::{HostSecurityEvent, HostEventSource};
-use tokio::sync::mpsc;
-use tracing::{error, info, warn};
 use chrono::Utc;
 use dashmap::DashMap;
+use ferrisetw::parser::*;
+use ferrisetw::provider::Provider;
+use ferrisetw::trace::UserTrace;
+use osoosi_types::{HostEventSource, HostSecurityEvent};
 use std::sync::Arc;
+use tokio::sync::mpsc;
+use tracing::{error, info, warn};
 
 #[derive(Debug, Clone)]
 pub struct ProcessMeta {
@@ -57,7 +57,7 @@ impl NativeTelemetryEngine {
 
         // 2. Sysmon-Zero: Port of SysmonX native ETW logic
         // We listen to the official Sysmon provider IF present, or kernel providers as fallback.
-        
+
         tokio::task::spawn_blocking(move || {
             let tx_p = tx.clone();
             let computer_p = computer.clone();
@@ -68,17 +68,25 @@ impl NativeTelemetryEngine {
                     if let Ok(schema) = schema_locator.event_schema(event) {
                         let parser = Parser::create(event, &schema);
                         let event_id = event.event_id();
-                        
+
                         let mut data = serde_json::Map::new();
                         // Extract common Sysmon fields by name (cannot iterate properties due to private API)
-                        let keys = ["Image", "CommandLine", "ParentImage", "ParentCommandLine", 
-                                   "User", "SourceIp", "DestinationIp", "Protocol"];
+                        let keys = [
+                            "Image",
+                            "CommandLine",
+                            "ParentImage",
+                            "ParentCommandLine",
+                            "User",
+                            "SourceIp",
+                            "DestinationIp",
+                            "Protocol",
+                        ];
                         for key in keys {
                             if let Ok(val) = parser.try_parse::<String>(key) {
                                 data.insert(key.to_string(), serde_json::json!(val.trim()));
                             }
                         }
-                        
+
                         // Handle numeric IDs specifically
                         if let Ok(pid) = parser.try_parse::<u32>("ProcessId") {
                             data.insert("ProcessId".to_string(), serde_json::json!(pid));
@@ -115,19 +123,27 @@ impl NativeTelemetryEngine {
                     if event_id == 1 || event_id == 2 {
                         if let Ok(schema) = schema_locator.event_schema(event) {
                             let parser = Parser::create(event, &schema);
-                            let pid: u32 = parser.try_parse("ProcessID")
+                            let pid: u32 = parser
+                                .try_parse("ProcessID")
                                 .or_else(|_| parser.try_parse("ProcessId"))
                                 .unwrap_or(0);
-                            let parent_pid: u32 = parser.try_parse("ParentProcessID")
+                            let parent_pid: u32 = parser
+                                .try_parse("ParentProcessID")
                                 .or_else(|_| parser.try_parse("ParentProcessId"))
                                 .unwrap_or(0);
-                            let image: String = parser.try_parse("ImageName")
+                            let image: String = parser
+                                .try_parse("ImageName")
                                 .or_else(|_| parser.try_parse("ImageFileName"))
-                                .unwrap_or_else(|_| parser.try_parse("CommandLine").unwrap_or_default());
-                            
+                                .unwrap_or_else(|_| {
+                                    parser.try_parse("CommandLine").unwrap_or_default()
+                                });
+
                             let mut data = serde_json::Map::new();
                             data.insert("ProcessId".to_string(), serde_json::json!(pid));
-                            data.insert("ParentProcessId".to_string(), serde_json::json!(parent_pid));
+                            data.insert(
+                                "ParentProcessId".to_string(),
+                                serde_json::json!(parent_pid),
+                            );
                             data.insert("Image".to_string(), serde_json::json!(image));
                             if let Ok(cmd) = parser.try_parse::<String>("CommandLine") {
                                 data.insert("CommandLine".to_string(), serde_json::json!(cmd));
@@ -139,26 +155,42 @@ impl NativeTelemetryEngine {
                                 let mut velocity_3s = 0usize;
 
                                 if parent_pid != 0 {
-                                    if let Some(mut parent_meta) = active_procs_cb.get_mut(&parent_pid) {
+                                    if let Some(mut parent_meta) =
+                                        active_procs_cb.get_mut(&parent_pid)
+                                    {
                                         parent_image = parent_meta.image_name.clone();
-                                        parent_meta.child_spawn_times.retain(|t| now.duration_since(*t).as_secs() < 3);
+                                        parent_meta
+                                            .child_spawn_times
+                                            .retain(|t| now.duration_since(*t).as_secs() < 3);
                                         parent_meta.child_spawn_times.push(now);
                                         velocity_3s = parent_meta.child_spawn_times.len();
                                     }
                                 }
 
                                 if !parent_image.is_empty() {
-                                    data.insert("ParentImage".to_string(), serde_json::json!(parent_image));
+                                    data.insert(
+                                        "ParentImage".to_string(),
+                                        serde_json::json!(parent_image),
+                                    );
                                 }
-                                data.insert("ChildSpawnVelocity3s".to_string(), serde_json::json!(velocity_3s));
-                                data.insert("IsVelocityAnomaly".to_string(), serde_json::json!(velocity_3s > 5));
+                                data.insert(
+                                    "ChildSpawnVelocity3s".to_string(),
+                                    serde_json::json!(velocity_3s),
+                                );
+                                data.insert(
+                                    "IsVelocityAnomaly".to_string(),
+                                    serde_json::json!(velocity_3s > 5),
+                                );
 
-                                active_procs_cb.insert(pid, ProcessMeta {
+                                active_procs_cb.insert(
                                     pid,
-                                    image_name: image.clone(),
-                                    started_at: now,
-                                    child_spawn_times: Vec::new(),
-                                });
+                                    ProcessMeta {
+                                        pid,
+                                        image_name: image.clone(),
+                                        started_at: now,
+                                        child_spawn_times: Vec::new(),
+                                    },
+                                );
 
                                 let ev = HostSecurityEvent {
                                     source: HostEventSource::WindowsEventLog,
@@ -170,12 +202,16 @@ impl NativeTelemetryEngine {
                                 };
                                 let _ = tx_k.blocking_send(ev);
                             } else {
-                                let lifetime_ms = if let Some((_, meta)) = active_procs_cb.remove(&pid) {
-                                    meta.started_at.elapsed().as_millis() as u64
-                                } else {
-                                    0u64
-                                };
-                                data.insert("ProcessLifetimeMs".to_string(), serde_json::json!(lifetime_ms));
+                                let lifetime_ms =
+                                    if let Some((_, meta)) = active_procs_cb.remove(&pid) {
+                                        meta.started_at.elapsed().as_millis() as u64
+                                    } else {
+                                        0u64
+                                    };
+                                data.insert(
+                                    "ProcessLifetimeMs".to_string(),
+                                    serde_json::json!(lifetime_ms),
+                                );
 
                                 let ev = HostSecurityEvent {
                                     source: HostEventSource::WindowsEventLog,
@@ -200,16 +236,19 @@ impl NativeTelemetryEngine {
                     if let Ok(schema) = schema_locator.event_schema(event) {
                         let parser = Parser::create(event, &schema);
                         let mut data = serde_json::Map::new();
-                        
+
                         let dest_ip: String = parser.try_parse("daddr").unwrap_or_default();
                         let dest_port: u16 = parser.try_parse("dport").unwrap_or(0);
                         let pid: u32 = parser.try_parse("PID").unwrap_or(0);
-                        
+
                         if !dest_ip.is_empty() && dest_port != 0 {
                             data.insert("DestinationIp".to_string(), serde_json::json!(dest_ip));
-                            data.insert("DestinationPort".to_string(), serde_json::json!(dest_port));
+                            data.insert(
+                                "DestinationPort".to_string(),
+                                serde_json::json!(dest_port),
+                            );
                             data.insert("ProcessId".to_string(), serde_json::json!(pid));
-                            
+
                             let ev = HostSecurityEvent {
                                 source: HostEventSource::WindowsEventLog,
                                 event_id: 3, // Sysmon Network Connection
@@ -232,7 +271,7 @@ impl NativeTelemetryEngine {
                     if let Ok(schema) = schema_locator.event_schema(event) {
                         let parser = Parser::create(event, &schema);
                         let mut data = serde_json::Map::new();
-                        
+
                         let event_id = event.event_id();
                         // Mapping various file ops to Sysmon 11 (Create) or 23 (Delete)
                         let sysmon_id = match event_id {
@@ -264,11 +303,12 @@ impl NativeTelemetryEngine {
             let computer_d = computer.clone();
             let dns_client_provider = Provider::by_guid("1C95126E-7EEA-49A9-A3FE-13F157579402")
                 .add_callback(move |event, schema_locator| {
-                    if event.event_id() == 3008 { // DNS Query
+                    if event.event_id() == 3008 {
+                        // DNS Query
                         if let Ok(schema) = schema_locator.event_schema(event) {
                             let parser = Parser::create(event, &schema);
                             let mut data = serde_json::Map::new();
-                            
+
                             if let Ok(query) = parser.try_parse::<String>("QueryName") {
                                 data.insert("QueryName".to_string(), serde_json::json!(query));
                                 let ev = HostSecurityEvent {
@@ -287,12 +327,12 @@ impl NativeTelemetryEngine {
                 .build();
 
             info!("🚀 [NATIVE-TELEMETRY] Starting Multi-Engine ETW Session...");
-            
+
             // Clean up any stale session using logman (ferrisetw doesn't expose stop-by-name easily)
             let _ = std::process::Command::new(osoosi_types::resolve_system_binary("logman.exe"))
-                .args(&["stop", "OshoosiNativeTelemetry", "-ets"])
+                .args(["stop", "OshoosiNativeTelemetry", "-ets"])
                 .output();
-            
+
             let trace_res = UserTrace::new()
                 .named("OshoosiNativeTelemetry".to_string())
                 .enable(sysmon_provider)
@@ -301,7 +341,7 @@ impl NativeTelemetryEngine {
                 .enable(kernel_file_provider)
                 .enable(dns_client_provider)
                 .start();
-            
+
             match trace_res {
                 Ok(_) => info!("✅ [NATIVE-TELEMETRY] ETW Session started successfully."),
                 Err(e) => {
@@ -313,13 +353,13 @@ impl NativeTelemetryEngine {
                     }
                 }
             }
-            
+
             // Loop while trace is active (blocks the spawn_blocking thread)
             loop {
                 std::thread::sleep(std::time::Duration::from_secs(10));
             }
         });
-        
+
         // Keep the main loop alive
         loop {
             tokio::time::sleep(tokio::time::Duration::from_secs(60)).await;
@@ -327,12 +367,14 @@ impl NativeTelemetryEngine {
     }
 }
 
-async fn run_hook_telemetry_listener(tx: tokio::sync::mpsc::Sender<HostSecurityEvent>) -> anyhow::Result<()> {
+async fn run_hook_telemetry_listener(
+    tx: tokio::sync::mpsc::Sender<HostSecurityEvent>,
+) -> anyhow::Result<()> {
     tokio::task::spawn_blocking(move || {
-        use winapi::um::namedpipeapi::*;
         use winapi::um::fileapi::ReadFile;
-        use winapi::um::winbase::*;
         use winapi::um::handleapi::CloseHandle;
+        use winapi::um::namedpipeapi::*;
+        use winapi::um::winbase::*;
 
         let computer = hostname::get()
             .ok()
@@ -343,7 +385,10 @@ async fn run_hook_telemetry_listener(tx: tokio::sync::mpsc::Sender<HostSecurityE
 
         loop {
             let event = unsafe {
-                let pipe_name = "\\\\.\\pipe\\osoosi_injection".encode_utf16().chain(std::iter::once(0)).collect::<Vec<u16>>();
+                let pipe_name = "\\\\.\\pipe\\osoosi_injection"
+                    .encode_utf16()
+                    .chain(std::iter::once(0))
+                    .collect::<Vec<u16>>();
                 let h_pipe = CreateNamedPipeW(
                     pipe_name.as_ptr(),
                     PIPE_ACCESS_INBOUND,
@@ -362,14 +407,24 @@ async fn run_hook_telemetry_listener(tx: tokio::sync::mpsc::Sender<HostSecurityE
 
                 let mut result = None;
                 let connected = ConnectNamedPipe(h_pipe, std::ptr::null_mut()) != 0
-                    || windows_sys::Win32::Foundation::GetLastError() == windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED;
+                    || windows_sys::Win32::Foundation::GetLastError()
+                        == windows_sys::Win32::Foundation::ERROR_PIPE_CONNECTED;
                 if connected {
                     let mut buffer = [0u8; 4096];
                     let mut bytes_read = 0;
-                    if ReadFile(h_pipe, buffer.as_mut_ptr() as *mut _, 4096, &mut bytes_read, std::ptr::null_mut()) != 0 {
-                        if let Ok(data) = serde_json::from_slice::<serde_json::Value>(&buffer[..bytes_read as usize]) {
+                    if ReadFile(
+                        h_pipe,
+                        buffer.as_mut_ptr() as *mut _,
+                        4096,
+                        &mut bytes_read,
+                        std::ptr::null_mut(),
+                    ) != 0
+                    {
+                        if let Ok(data) = serde_json::from_slice::<serde_json::Value>(
+                            &buffer[..bytes_read as usize],
+                        ) {
                             result = Some(HostSecurityEvent {
-                                source: HostEventSource::WindowsEventLog, 
+                                source: HostEventSource::WindowsEventLog,
                                 event_id: 999, // Custom Hook ID
                                 timestamp: Utc::now(),
                                 computer: computer.clone(),
@@ -391,6 +446,7 @@ async fn run_hook_telemetry_listener(tx: tokio::sync::mpsc::Sender<HostSecurityE
                 let _ = tx.blocking_send(ev);
             }
         }
-    }).await?;
+    })
+    .await?;
     Ok(())
 }

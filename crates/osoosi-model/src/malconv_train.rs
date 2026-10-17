@@ -1,7 +1,7 @@
 use crate::malconv::{preprocess_bytes, MalConv};
 use anyhow::Result;
 use candle_core::{DType, Device, Module, Tensor};
-use candle_nn::{Optimizer, SGD, VarBuilder, VarMap};
+use candle_nn::{Optimizer, VarBuilder, VarMap, SGD};
 use std::path::{Path, PathBuf};
 use tracing::{info, warn};
 
@@ -15,12 +15,12 @@ fn binary_crossentropy(logits: &Tensor, target: &Tensor) -> Result<Tensor> {
     let eps = 1e-7;
     let logits = logits.clamp(eps, 1.0 - eps)?;
     let pos_loss = (target * logits.log()?)?;
-    
+
     let ones = target.ones_like()?;
     let neg_target = (ones.clone() - target)?;
     let neg_logits = (ones - logits)?;
     let neg_loss = (neg_target * neg_logits.log()?)?;
-    
+
     let loss = (pos_loss + neg_loss)?.neg()?.mean_all()?;
     Ok(loss)
 }
@@ -72,9 +72,9 @@ impl MalConvTrainer {
 
                 let logits = self.model.forward(&x)?;
                 let loss = binary_crossentropy(&logits, &y)?;
-                
+
                 sgd.backward_step(&loss)?;
-                
+
                 total_loss += loss.to_vec0::<f32>()?;
                 batch_count += 1;
             }
@@ -100,9 +100,13 @@ impl MalConvTrainer {
 
         let logits = self.model.forward(&input)?;
         let loss = binary_crossentropy(&logits, &target)?;
-        
+
         sgd.backward_step(&loss)?;
-        info!("MalConv fine-tuned on new signal (label={}): loss={:.4}", label, loss.to_vec0::<f32>()?);
+        info!(
+            "MalConv fine-tuned on new signal (label={}): loss={:.4}",
+            label,
+            loss.to_vec0::<f32>()?
+        );
         Ok(())
     }
 
@@ -131,7 +135,7 @@ pub async fn download_and_extract_dataset(base_dir: &Path) -> Result<Vec<(PathBu
         let dest_dir = base_dir.join(label_dir);
         std::fs::create_dir_all(&dest_dir)?;
 
-        let filename = url.split('/').last().unwrap_or("sample.7z");
+        let filename = url.split('/').next_back().unwrap_or("sample.7z");
         let archive_path = base_dir.join(filename);
 
         if !archive_path.exists() {
@@ -142,54 +146,62 @@ pub async fn download_and_extract_dataset(base_dir: &Path) -> Result<Vec<(PathBu
         }
 
         info!("Extracting {}...", filename);
-        let label = if label_dir.contains("Benign") { 0.0f32 } else { 1.0f32 };
-        
+        let label = if label_dir.contains("Benign") {
+            0.0f32
+        } else {
+            1.0f32
+        };
+
         // Extract using sevenz-rust
         let password = if label == 1.0 { "infected" } else { "" };
-        
+
         // Correct API: Password is passed directly or via Password::from
-        if let Err(e) = sevenz_rust::decompress_file_with_password(&archive_path, &dest_dir, password.into()) {
-             warn!("Native extraction failed for {}: {}. Trying system 7z...", filename, e);
-             
-             // Fallback to system 7z if available
-             let candidates = [
-                 "7z",
-                 "tools\\7zip\\7z.exe",
-                 "C:\\tools\\7z.exe",
-                 "C:\\Program Files\\7-Zip\\7z.exe",
-             ];
-             
-             let mut success = false;
-             for cmd in candidates {
-                 let mut command = std::process::Command::new(cmd);
-                 command.arg("x")
-                        .arg("-y")
-                        .arg(format!("-p{}", password))
-                        .arg(format!("-o{}", dest_dir.display()))
-                        .arg(&archive_path);
-                 
-                 if let Ok(status) = command.status() {
-                     if status.success() {
-                         success = true;
-                         info!("System 7z successfully extracted {}", filename);
-                         break;
-                     }
-                 }
-             }
-             
-             if !success {
-                 warn!("All extraction methods failed for {}", filename);
-             }
+        if let Err(e) =
+            sevenz_rust::decompress_file_with_password(&archive_path, &dest_dir, password.into())
+        {
+            warn!(
+                "Native extraction failed for {}: {}. Trying system 7z...",
+                filename, e
+            );
+
+            // Fallback to system 7z if available
+            let candidates = [
+                "7z",
+                "tools\\7zip\\7z.exe",
+                "C:\\tools\\7z.exe",
+                "C:\\Program Files\\7-Zip\\7z.exe",
+            ];
+
+            let mut success = false;
+            for cmd in candidates {
+                let mut command = std::process::Command::new(cmd);
+                command
+                    .arg("x")
+                    .arg("-y")
+                    .arg(format!("-p{}", password))
+                    .arg(format!("-o{}", dest_dir.display()))
+                    .arg(&archive_path);
+
+                if let Ok(status) = command.status() {
+                    if status.success() {
+                        success = true;
+                        info!("System 7z successfully extracted {}", filename);
+                        break;
+                    }
+                }
+            }
+
+            if !success {
+                warn!("All extraction methods failed for {}", filename);
+            }
         }
 
         // Add extracted files to the list recursively
         if dest_dir.exists() {
-            for entry in walkdir::WalkDir::new(&dest_dir) {
-                if let Ok(entry) = entry {
-                    let path = entry.path();
-                    if path.is_file() {
-                        samples.push((path.to_path_buf(), label));
-                    }
+            for entry in walkdir::WalkDir::new(&dest_dir).into_iter().flatten() {
+                let path = entry.path();
+                if path.is_file() {
+                    samples.push((path.to_path_buf(), label));
                 }
             }
         }
@@ -197,6 +209,3 @@ pub async fn download_and_extract_dataset(base_dir: &Path) -> Result<Vec<(PathBu
 
     Ok(samples)
 }
-
-
-

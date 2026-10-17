@@ -19,16 +19,26 @@ pub fn quarantine_file(file_path: &str) -> anyhow::Result<PathBuf> {
     }
 
     // Self-protection: refuse to quarantine self infrastructure files
-    let fname_lc = src.file_name().and_then(|n| n.to_str()).unwrap_or("").to_ascii_lowercase();
+    let fname_lc = src
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("")
+        .to_ascii_lowercase();
     if fname_lc == "osoosi.exe" || fname_lc == "osoosi.db" || fname_lc == "osoosi.toml" {
-        anyhow::bail!("Refusing to quarantine self-infrastructure binary/file: {}", file_path);
+        anyhow::bail!(
+            "Refusing to quarantine self-infrastructure binary/file: {}",
+            file_path
+        );
     }
     if let Ok(cur_exe) = std::env::current_exe() {
         if let Some(parent) = cur_exe.parent() {
             if let Ok(canon_src) = src.canonicalize() {
                 if let Ok(canon_parent) = parent.canonicalize() {
                     if canon_src.starts_with(&canon_parent) {
-                        anyhow::bail!("Refusing to quarantine application directory file: {}", file_path);
+                        anyhow::bail!(
+                            "Refusing to quarantine application directory file: {}",
+                            file_path
+                        );
                     }
                 }
             }
@@ -42,13 +52,19 @@ pub fn quarantine_file(file_path: &str) -> anyhow::Result<PathBuf> {
         || path_lc.contains(r"\windows\winsxs\")
         || crate::system_check::is_administrative_lolbin(file_path)
     {
-        anyhow::bail!("Refusing to quarantine Windows system binary / administrative LOLBin: {}", file_path);
+        anyhow::bail!(
+            "Refusing to quarantine Windows system binary / administrative LOLBin: {}",
+            file_path
+        );
     }
-    
+
     let quarantine_dir = "quarantine";
     std::fs::create_dir_all(quarantine_dir)?;
-    
-    let filename = src.file_name().and_then(|n| n.to_str()).unwrap_or("unknown");
+
+    let filename = src
+        .file_name()
+        .and_then(|n| n.to_str())
+        .unwrap_or("unknown");
     let nanos = std::time::SystemTime::now()
         .duration_since(std::time::UNIX_EPOCH)
         .unwrap_or_default()
@@ -98,9 +114,7 @@ mod tests {
         f.write_all(b"test content").unwrap();
         drop(f);
 
-        let result = quarantine_file(
-            test_file.to_str().unwrap(),
-        );
+        let result = quarantine_file(test_file.to_str().unwrap());
         assert!(result.is_ok());
         let dest = result.unwrap();
         assert!(dest.exists());

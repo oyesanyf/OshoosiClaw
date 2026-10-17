@@ -40,13 +40,18 @@ impl StatisticalFilter {
 
         let mut filtered = Vec::new();
         let target_len = (tokens.len() as f32 * self.config.compression_ratio) as usize;
-        
+
         // Simple heuristic: Keep keywords, then keep every Nth token until target_len
         let mut important_indices = std::collections::HashSet::new();
-        
+
         for (i, token) in tokens.iter().enumerate() {
             let lower = token.to_lowercase();
-            if self.config.preserve_keywords.iter().any(|k| lower.contains(&k.to_lowercase())) {
+            if self
+                .config
+                .preserve_keywords
+                .iter()
+                .any(|k| lower.contains(&k.to_lowercase()))
+            {
                 important_indices.insert(i);
             }
         }
@@ -57,9 +62,9 @@ impl StatisticalFilter {
             current_idx += (1.0 / self.config.compression_ratio).max(1.0) as usize;
         }
 
-        for i in 0..tokens.len() {
+        for (i, token) in tokens.iter().enumerate() {
             if important_indices.contains(&i) {
-                filtered.push(tokens[i].clone());
+                filtered.push(token.clone());
             }
         }
 

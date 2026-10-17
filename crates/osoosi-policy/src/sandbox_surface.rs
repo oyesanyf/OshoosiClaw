@@ -2,10 +2,9 @@
 use windows::Win32::Foundation::{CloseHandle, HANDLE};
 #[cfg(target_os = "windows")]
 use windows::Win32::Security::{
-    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, IsValidSid,
-    TokenElevation, TokenIntegrityLevel, TokenIsAppContainer, TokenPrivileges,
-    LUID_AND_ATTRIBUTES, SE_PRIVILEGE_ENABLED, TOKEN_ELEVATION, TOKEN_MANDATORY_LABEL,
-    TOKEN_PRIVILEGES, TOKEN_QUERY,
+    GetSidSubAuthority, GetSidSubAuthorityCount, GetTokenInformation, IsValidSid, TokenElevation,
+    TokenIntegrityLevel, TokenIsAppContainer, TokenPrivileges, LUID_AND_ATTRIBUTES,
+    SE_PRIVILEGE_ENABLED, TOKEN_ELEVATION, TOKEN_MANDATORY_LABEL, TOKEN_PRIVILEGES, TOKEN_QUERY,
 };
 #[cfg(target_os = "windows")]
 use windows::Win32::System::Threading::{
@@ -86,7 +85,10 @@ pub fn analyze_process_sandbox(pid: u32) -> anyhow::Result<SandboxSurfaceInfo> {
             Some(integrity_info_buf.0.as_mut_ptr() as *mut _),
             128,
             &mut return_len,
-        ).is_ok() && return_len as usize >= std::mem::size_of::<TOKEN_MANDATORY_LABEL>() {
+        )
+        .is_ok()
+            && return_len as usize >= std::mem::size_of::<TOKEN_MANDATORY_LABEL>()
+        {
             let label = &*(integrity_info_buf.0.as_ptr() as *const TOKEN_MANDATORY_LABEL);
             let sid = label.Label.Sid;
             if !sid.is_invalid() && IsValidSid(sid).as_bool() {
@@ -123,14 +125,18 @@ pub fn analyze_process_sandbox(pid: u32) -> anyhow::Result<SandboxSurfaceInfo> {
                 Some(priv_buf.as_mut_ptr() as *mut _),
                 req_len,
                 &mut return_len,
-            ).is_ok() && return_len as usize >= std::mem::size_of::<u32>() {
+            )
+            .is_ok()
+                && return_len as usize >= std::mem::size_of::<u32>()
+            {
                 let token_privs = &*(priv_buf.as_ptr() as *const TOKEN_PRIVILEGES);
                 let count = token_privs.PrivilegeCount as usize;
                 let max_count = (return_len as usize).saturating_sub(std::mem::size_of::<u32>())
                     / std::mem::size_of::<LUID_AND_ATTRIBUTES>();
                 let safe_count = count.min(max_count);
                 if safe_count > 0 {
-                    let privs_slice = std::slice::from_raw_parts(token_privs.Privileges.as_ptr(), safe_count);
+                    let privs_slice =
+                        std::slice::from_raw_parts(token_privs.Privileges.as_ptr(), safe_count);
                     privileges = parse_risk_privileges(privs_slice);
                 }
             }
@@ -210,23 +216,38 @@ mod tests {
 
         let privs = vec![
             LUID_AND_ATTRIBUTES {
-                Luid: LUID { LowPart: 20, HighPart: 0 },
+                Luid: LUID {
+                    LowPart: 20,
+                    HighPart: 0,
+                },
                 Attributes: SE_PRIVILEGE_ENABLED,
             },
             LUID_AND_ATTRIBUTES {
-                Luid: LUID { LowPart: 29, HighPart: 0 },
+                Luid: LUID {
+                    LowPart: 29,
+                    HighPart: 0,
+                },
                 Attributes: SE_PRIVILEGE_ENABLED,
             },
             LUID_AND_ATTRIBUTES {
-                Luid: LUID { LowPart: 7, HighPart: 0 },
+                Luid: LUID {
+                    LowPart: 7,
+                    HighPart: 0,
+                },
                 Attributes: SE_PRIVILEGE_ENABLED,
             },
             LUID_AND_ATTRIBUTES {
-                Luid: LUID { LowPart: 30, HighPart: 0 },
+                Luid: LUID {
+                    LowPart: 30,
+                    HighPart: 0,
+                },
                 Attributes: SE_PRIVILEGE_ENABLED,
             },
             LUID_AND_ATTRIBUTES {
-                Luid: LUID { LowPart: 99, HighPart: 0 },
+                Luid: LUID {
+                    LowPart: 99,
+                    HighPart: 0,
+                },
                 Attributes: SE_PRIVILEGE_ENABLED,
             },
         ];
@@ -251,15 +272,24 @@ mod tests {
 
         let privs = vec![
             LUID_AND_ATTRIBUTES {
-                Luid: LUID { LowPart: 20, HighPart: 0 },
+                Luid: LUID {
+                    LowPart: 20,
+                    HighPart: 0,
+                },
                 Attributes: TOKEN_PRIVILEGES_ATTRIBUTES(0), // Disabled
             },
             LUID_AND_ATTRIBUTES {
-                Luid: LUID { LowPart: 29, HighPart: 0 },
+                Luid: LUID {
+                    LowPart: 29,
+                    HighPart: 0,
+                },
                 Attributes: TOKEN_PRIVILEGES_ATTRIBUTES(1), // SE_PRIVILEGE_ENABLED_BY_DEFAULT but not enabled
             },
             LUID_AND_ATTRIBUTES {
-                Luid: LUID { LowPart: 7, HighPart: 0 },
+                Luid: LUID {
+                    LowPart: 7,
+                    HighPart: 0,
+                },
                 Attributes: SE_PRIVILEGE_ENABLED, // Enabled
             },
         ];

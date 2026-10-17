@@ -91,6 +91,12 @@ pub struct EventCorrelator {
     _global_timeline: VecDeque<TimelinedEvent>,
 }
 
+impl Default for EventCorrelator {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EventCorrelator {
     pub fn new() -> Self {
         Self {
@@ -101,13 +107,10 @@ impl EventCorrelator {
 
     /// Process a new host event and correlate it with existing findings.
     pub async fn correlate_sysmon(&self, event: &HostSecurityEvent) -> Option<ThreatSignature> {
-        let pid = event
-            .data
-            .get("ProcessId")
-            .and_then(|v| {
-                v.as_u64()
-                    .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
-            })? as u32;
+        let pid = event.data.get("ProcessId").and_then(|v| {
+            v.as_u64()
+                .or_else(|| v.as_str().and_then(|s| s.parse::<u64>().ok()))
+        })? as u32;
 
         // Ignore PID 0 (Idle) and PID 4 (System) from generic network/IO correlation
         if pid == 0 || pid == 4 {
@@ -310,7 +313,7 @@ impl EventCorrelator {
                 if target_image.contains("lsass.exe") {
                     alert_score = 0.7;
                     reason =
-                        format!("Process accessed LSASS memory (potential credential dumping)");
+                        "Process accessed LSASS memory (potential credential dumping)".to_string();
                 }
                 ctx.add_event(
                     "ProcessAccess",
@@ -321,7 +324,7 @@ impl EventCorrelator {
             25 => {
                 // Process Tampering
                 alert_score = 0.8;
-                reason = format!("Process tampering detected (hollowing/herpaderping)");
+                reason = "Process tampering detected (hollowing/herpaderping)".to_string();
                 ctx.add_event("Tampering", "Detected", alert_score);
             }
             _ => {}
@@ -460,7 +463,12 @@ impl EventCorrelator {
 mod tests {
     use super::*;
 
-    fn make_sysmon_event(event_id: u32, pid: u64, image: &str, extra_data: Vec<(&str, &str)>) -> HostSecurityEvent {
+    fn make_sysmon_event(
+        event_id: u32,
+        pid: u64,
+        image: &str,
+        extra_data: Vec<(&str, &str)>,
+    ) -> HostSecurityEvent {
         let mut map = serde_json::Map::new();
         map.insert("ProcessId".to_string(), serde_json::json!(pid));
         map.insert("Image".to_string(), serde_json::json!(image));
@@ -483,12 +491,22 @@ mod tests {
         let correlator = EventCorrelator::new();
 
         // PID 0 (Idle)
-        let ev0 = make_sysmon_event(3, 0, "unknown", vec![("DestinationIp", "8.8.8.8"), ("DestinationPort", "53")]);
+        let ev0 = make_sysmon_event(
+            3,
+            0,
+            "unknown",
+            vec![("DestinationIp", "8.8.8.8"), ("DestinationPort", "53")],
+        );
         assert!(correlator.correlate_sysmon(&ev0).await.is_none());
         assert!(!correlator.processes.contains_key(&0));
 
         // PID 4 (System)
-        let ev4 = make_sysmon_event(3, 4, "System", vec![("DestinationIp", "1.1.1.1"), ("DestinationPort", "445")]);
+        let ev4 = make_sysmon_event(
+            3,
+            4,
+            "System",
+            vec![("DestinationIp", "1.1.1.1"), ("DestinationPort", "445")],
+        );
         assert!(correlator.correlate_sysmon(&ev4).await.is_none());
         assert!(!correlator.processes.contains_key(&4));
     }
@@ -506,7 +524,10 @@ mod tests {
         // Send a benign event (event_id 999 with alert_score 0.0)
         let benign = make_sysmon_event(999, pid as u64, "malicious.exe", vec![]);
         let alert = correlator.correlate_sysmon(&benign).await;
-        assert!(alert.is_none(), "Benign event with alert_score 0.0 must not trigger an alert");
+        assert!(
+            alert.is_none(),
+            "Benign event with alert_score 0.0 must not trigger an alert"
+        );
     }
 
     #[tokio::test]
@@ -519,14 +540,30 @@ mod tests {
         correlator.add_static_finding(pid, "cmd.exe", "credential_dump", 1.0);
 
         // High alert_score event: Process Access to lsass.exe (alert_score 0.7)
-        let ev1 = make_sysmon_event(10, pid as u64, "cmd.exe", vec![("TargetImage", "C:\\Windows\\System32\\lsass.exe")]);
+        let ev1 = make_sysmon_event(
+            10,
+            pid as u64,
+            "cmd.exe",
+            vec![("TargetImage", "C:\\Windows\\System32\\lsass.exe")],
+        );
         let sig1 = correlator.correlate_sysmon(&ev1).await;
-        assert!(sig1.is_some(), "First suspicious event should trigger threat signature");
+        assert!(
+            sig1.is_some(),
+            "First suspicious event should trigger threat signature"
+        );
 
         // Immediately send another suspicious event (Process Creation with -enc)
-        let ev2 = make_sysmon_event(1, pid as u64, "cmd.exe", vec![("CommandLine", "powershell -enc AAAA")]);
+        let ev2 = make_sysmon_event(
+            1,
+            pid as u64,
+            "cmd.exe",
+            vec![("CommandLine", "powershell -enc AAAA")],
+        );
         let sig2 = correlator.correlate_sysmon(&ev2).await;
-        assert!(sig2.is_none(), "Second event within 60s debounce window should be suppressed");
+        assert!(
+            sig2.is_none(),
+            "Second event within 60s debounce window should be suppressed"
+        );
     }
 
     #[tokio::test]
@@ -539,9 +576,21 @@ mod tests {
         correlator.add_static_finding(pid, "unknown", "tamper", 1.0);
 
         // Process Access lsass.exe (alert_score 0.7) -> total_score > 0.85
-        let ev = make_sysmon_event(10, pid as u64, "unknown", vec![("TargetImage", "lsass.exe")]);
-        let sig = correlator.correlate_sysmon(&ev).await.expect("Should trigger");
-        assert_eq!(sig.recommended_action, ResponseAction::Alert, "Unknown image must never be isolated");
+        let ev = make_sysmon_event(
+            10,
+            pid as u64,
+            "unknown",
+            vec![("TargetImage", "lsass.exe")],
+        );
+        let sig = correlator
+            .correlate_sysmon(&ev)
+            .await
+            .expect("Should trigger");
+        assert_eq!(
+            sig.recommended_action,
+            ResponseAction::Alert,
+            "Unknown image must never be isolated"
+        );
     }
 
     #[test]
@@ -576,7 +625,11 @@ mod tests {
         }
 
         // Over 60 seconds of activity, score must have decayed from 0.8 down to ~0.6 or lower
-        assert!(ctx.total_score < 0.75, "Continuous traffic must not prevent score decay; got {:.2}", ctx.total_score);
+        assert!(
+            ctx.total_score < 0.75,
+            "Continuous traffic must not prevent score decay; got {:.2}",
+            ctx.total_score
+        );
     }
 
     #[tokio::test]
@@ -585,7 +638,12 @@ mod tests {
         let pid = 7777;
 
         // Populate context with network connection
-        let ev_net = make_sysmon_event(3, pid, "app.exe", vec![("DestinationIp", "1.1.1.1"), ("DestinationPort", "80")]);
+        let ev_net = make_sysmon_event(
+            3,
+            pid,
+            "app.exe",
+            vec![("DestinationIp", "1.1.1.1"), ("DestinationPort", "80")],
+        );
         let _ = correlator.correlate_sysmon(&ev_net).await;
         assert!(correlator.processes.contains_key(&(pid as u32)));
 
@@ -603,7 +661,10 @@ mod tests {
 
         let res = correlator.correlate_sysmon(&ev_term).await;
         assert!(res.is_none());
-        assert!(!correlator.processes.contains_key(&(pid as u32)), "Event 5 must purge terminated process from context table");
+        assert!(
+            !correlator.processes.contains_key(&(pid as u32)),
+            "Event 5 must purge terminated process from context table"
+        );
     }
 
     #[tokio::test]
@@ -617,12 +678,26 @@ mod tests {
         assert_eq!(correlator.processes.get(&pid).unwrap().total_score, 1.0);
 
         // A new benign process is spawned with recycled PID (Event 1)
-        let ev_spawn = make_sysmon_event(1, pid as u64, "notepad.exe", vec![("CommandLine", "notepad.exe file.txt")]);
+        let ev_spawn = make_sysmon_event(
+            1,
+            pid as u64,
+            "notepad.exe",
+            vec![("CommandLine", "notepad.exe file.txt")],
+        );
         let _ = correlator.correlate_sysmon(&ev_spawn).await;
 
-        let ctx = correlator.processes.get(&pid).expect("Context should exist");
-        assert_eq!(ctx.image, "notepad.exe", "Recycled PID context must update image name");
-        assert_eq!(ctx.total_score, 0.0, "Recycled PID must reset total_score on Event 1");
+        let ctx = correlator
+            .processes
+            .get(&pid)
+            .expect("Context should exist");
+        assert_eq!(
+            ctx.image, "notepad.exe",
+            "Recycled PID context must update image name"
+        );
+        assert_eq!(
+            ctx.total_score, 0.0,
+            "Recycled PID must reset total_score on Event 1"
+        );
     }
 
     #[tokio::test]
@@ -635,8 +710,15 @@ mod tests {
 
         // Event with whitespace / empty string image
         let ev = make_sysmon_event(10, pid as u64, "   ", vec![("TargetImage", "lsass.exe")]);
-        let sig = correlator.correlate_sysmon(&ev).await.expect("Should trigger");
-        assert_eq!(sig.recommended_action, ResponseAction::Alert, "Empty image must be capped to Alert");
+        let sig = correlator
+            .correlate_sysmon(&ev)
+            .await
+            .expect("Should trigger");
+        assert_eq!(
+            sig.recommended_action,
+            ResponseAction::Alert,
+            "Empty image must be capped to Alert"
+        );
     }
 
     #[tokio::test]
@@ -658,11 +740,15 @@ mod tests {
         };
 
         let _ = correlator.correlate_sysmon(&ev).await;
-        let ctx = correlator.processes.get(&5555).expect("String PID should be parsed into context table");
+        let ctx = correlator
+            .processes
+            .get(&5555)
+            .expect("String PID should be parsed into context table");
         assert_eq!(ctx.pid, 5555);
         let timeline_last = ctx.timeline.back().unwrap();
-        assert!(timeline_last.details.contains("To 9.9.9.9:443"), "Numeric port must be formatted into details string");
+        assert!(
+            timeline_last.details.contains("To 9.9.9.9:443"),
+            "Numeric port must be formatted into details string"
+        );
     }
 }
-
-

@@ -74,27 +74,7 @@ def ensure_gpg_key(gpg_path: str, public_key_file: str) -> str:
                 break
 
     if not fingerprint:
-        print(f"[*] Generating new Ed25519 signing key for {SIGNER_NAME} <{SIGNER_EMAIL}>...")
-        gen_cmd = [
-            gpg_path, "--batch", "--passphrase", "",
-            "--quick-generate-key",
-            f"{SIGNER_NAME} <{SIGNER_EMAIL}>",
-            "ed25519", "sign", "never"
-        ]
-        res = subprocess.run(gen_cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        if res.returncode != 0:
-            raise RuntimeError(f"GPG key generation failed: {res.stderr}")
-
-        # Re-query fingerprint
-        proc = subprocess.run(cmd, stdout=subprocess.PIPE, stderr=subprocess.PIPE, text=True)
-        for line in proc.stdout.splitlines():
-            parts = line.split(":")
-            if parts[0] == "fpr" and len(parts) > 9 and len(parts[9]) >= 32:
-                fingerprint = parts[9].strip()
-                break
-
-    if not fingerprint:
-        raise RuntimeError("Failed to resolve GnuPG signing key fingerprint.")
+        raise RuntimeError(f"GnuPG signing key for {SIGNER_NAME} <{SIGNER_EMAIL}> not found in keyring. Refusing to auto-generate ephemeral signing keys.")
 
     # Export armored public key to PUBLIC_KEY.asc
     export_cmd = [gpg_path, "--batch", "--yes", "--armor", "--export", f"{SIGNER_NAME} <{SIGNER_EMAIL}>"]

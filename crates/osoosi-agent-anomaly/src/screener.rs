@@ -1,8 +1,8 @@
-use std::sync::Arc;
-use std::time::Duration;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use serde::{Deserialize, Serialize};
+use std::sync::Arc;
+use std::time::Duration;
 
 use crate::types::{AlertSeverity, OwaspAgenticRisk, ToolCallTelemetry};
 
@@ -91,10 +91,7 @@ impl StatisticalScreener {
         let items_in_call = Self::extract_requested_items(&event.call_parameters);
         let tokens_in_call = event.tokens_used.unwrap_or(0);
 
-        let mut window = self
-            .sessions
-            .entry(event.session_id.clone())
-            .or_default();
+        let mut window = self.sessions.entry(event.session_id.clone()).or_default();
 
         window.last_seen = event.timestamp;
         window.total_calls = window.total_calls.saturating_add(1);
@@ -274,9 +271,8 @@ impl StatisticalScreener {
             loop {
                 ticker.tick().await;
                 let now = Utc::now();
-                self.sessions.retain(|_id, window| {
-                    (now - window.last_seen).num_seconds() < ttl_seconds
-                });
+                self.sessions
+                    .retain(|_id, window| (now - window.last_seen).num_seconds() < ttl_seconds);
             }
         });
     }

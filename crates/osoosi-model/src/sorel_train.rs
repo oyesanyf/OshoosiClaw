@@ -1,8 +1,8 @@
-use crate::sorel_ffnn::SorelFFNN;
 use crate::malware::extract_pe_ensemble_features;
+use crate::sorel_ffnn::SorelFFNN;
 use anyhow::Result;
 use candle_core::{DType, Device, Module, Tensor};
-use candle_nn::{Optimizer, SGD, VarBuilder, VarMap};
+use candle_nn::{Optimizer, VarBuilder, VarMap, SGD};
 use std::path::{Path, PathBuf};
 use tracing::info;
 
@@ -14,17 +14,17 @@ pub struct SorelTrainer {
 
 fn binary_crossentropy(logits: &Tensor, target: &Tensor) -> Result<Tensor> {
     let eps = 1e-7;
-    // Sigmoid is usually applied outside or inside the model. 
+    // Sigmoid is usually applied outside or inside the model.
     // SorelFFNN doesn't have sigmoid at the end.
     let probs = (logits.neg()?.exp()? + 1.0)?.recip()?;
     let probs = probs.clamp(eps, 1.0 - eps)?;
-    
+
     let pos_loss = (target * probs.log()?)?;
     let ones = target.ones_like()?;
     let neg_target = (ones.clone() - target)?;
     let neg_probs = (ones - probs)?;
     let neg_loss = (neg_target * neg_probs.log()?)?;
-    
+
     let loss = (pos_loss + neg_loss)?.neg()?.mean_all()?;
     Ok(loss)
 }
@@ -59,14 +59,17 @@ impl SorelTrainer {
                 let mut batch_labels = Vec::new();
 
                 use rayon::prelude::*;
-                let results: Vec<_> = chunk.par_iter().map(|(path, label)| {
-                    if let Ok(bytes) = std::fs::read(path) {
-                        if let Some(features) = extract_pe_ensemble_features(&bytes) {
-                            return Some((features, *label));
+                let results: Vec<_> = chunk
+                    .par_iter()
+                    .map(|(path, label)| {
+                        if let Ok(bytes) = std::fs::read(path) {
+                            if let Some(features) = extract_pe_ensemble_features(&bytes) {
+                                return Some((features, *label));
+                            }
                         }
-                    }
-                    None
-                }).collect();
+                        None
+                    })
+                    .collect();
 
                 for res in results.into_iter().flatten() {
                     let (features, label) = res;
@@ -83,9 +86,9 @@ impl SorelTrainer {
 
                 let logits = self.model.forward(&x)?;
                 let loss = binary_crossentropy(&logits, &y)?;
-                
+
                 sgd.backward_step(&loss)?;
-                
+
                 total_loss += loss.to_vec0::<f32>()?;
                 batch_count += 1;
             }
@@ -121,7 +124,11 @@ impl SorelTrainer {
                 let mut batch_labels = Vec::with_capacity(chunk.len());
 
                 for (features, label) in chunk {
-                    batch_features.push(Tensor::from_vec(features.clone(), (1, 2381), &self.device)?);
+                    batch_features.push(Tensor::from_vec(
+                        features.clone(),
+                        (1, 2381),
+                        &self.device,
+                    )?);
                     batch_labels.push(*label);
                 }
 

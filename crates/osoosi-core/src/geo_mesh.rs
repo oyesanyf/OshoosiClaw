@@ -1,6 +1,6 @@
+use serde::Deserialize;
 use std::sync::Arc;
 use tokio::sync::RwLock;
-use serde::Deserialize;
 use tracing::{info, warn};
 
 /// Haversine formula to calculate distance between two coordinates in km.
@@ -23,6 +23,12 @@ pub struct GeoRelayEntry {
 
 pub struct GeoRelayDirectory {
     entries: Arc<RwLock<Vec<GeoRelayEntry>>>,
+}
+
+impl Default for GeoRelayDirectory {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl GeoRelayDirectory {
@@ -59,7 +65,9 @@ impl GeoRelayDirectory {
         sorted.sort_by(|a, b| {
             let dist_a = haversine_km(lat, lon, a.lat, a.lon);
             let dist_b = haversine_km(lat, lon, b.lat, b.lon);
-            dist_a.partial_cmp(&dist_b).unwrap_or(std::cmp::Ordering::Equal)
+            dist_a
+                .partial_cmp(&dist_b)
+                .unwrap_or(std::cmp::Ordering::Equal)
         });
 
         sorted.into_iter().take(count).map(|e| e.url).collect()
@@ -81,7 +89,10 @@ impl GeoRelayDirectory {
                     lon: f64,
                 }
                 if let Ok(geo) = resp.json::<IpGeo>().await {
-                    info!("GeoRelayDirectory: Detected location ({}, {})", geo.lat, geo.lon);
+                    info!(
+                        "GeoRelayDirectory: Detected location ({}, {})",
+                        geo.lat, geo.lon
+                    );
                     return self.closest_relays(geo.lat, geo.lon, 5).await;
                 }
             }

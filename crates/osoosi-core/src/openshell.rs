@@ -14,8 +14,9 @@ use std::path::{Path, PathBuf};
 use std::process::Command;
 use tracing::{error, info, warn};
 
-/// `pip install git+https://...` (VCS) — pinned to v0.0.36 for supply-chain integrity.
-const OPENSHELL_PIP_GIT_URL: &str = "git+https://github.com/NVIDIA/OpenShell.git@v0.0.36";
+/// `pip install git+https://...` (VCS) — pinned to immutable commit hash for supply-chain integrity.
+const OPENSHELL_PIP_GIT_URL: &str =
+    "git+https://github.com/NVIDIA/OpenShell.git@e8c92a514c703196d110e81a549263834315463b";
 
 /// Default sandbox policy path relative to the osoosi installation directory.
 const DEFAULT_POLICY_PATH: &str = "config/openshell-policy.yaml";
@@ -52,6 +53,12 @@ pub struct OpenShellManager {
     policy_path: PathBuf,
     /// Use `wsl.exe openshell ...` on Windows when no native OpenShell exists.
     use_wsl: bool,
+}
+
+impl Default for OpenShellManager {
+    fn default() -> Self {
+        Self::new()
+    }
 }
 
 impl OpenShellManager {
@@ -664,7 +671,7 @@ echo "DONE: YARA provisioning complete"
 
         #[cfg(windows)]
         {
-            return Self::install_openshell_windows();
+            Self::install_openshell_windows()
         }
     }
 

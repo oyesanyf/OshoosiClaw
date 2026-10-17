@@ -48,37 +48,49 @@ impl PatchDiscoverer {
 
         unsafe {
             let _ = CoInitializeEx(None, COINIT_MULTITHREADED);
-            let session: IUpdateSession = match CoCreateInstance(&UpdateSession, None, CLSCTX_INPROC_SERVER) {
-                Ok(s) => s,
-                Err(e) => return Err(anyhow!("Failed to create UpdateSession: {}", e)),
-            };
-            
+            let session: IUpdateSession =
+                match CoCreateInstance(&UpdateSession, None, CLSCTX_INPROC_SERVER) {
+                    Ok(s) => s,
+                    Err(e) => return Err(anyhow!("Failed to create UpdateSession: {}", e)),
+                };
+
             let searcher = session.CreateUpdateSearcher()?;
-            let result = match searcher.Search(&windows::core::BSTR::from("IsInstalled=0 and IsHidden=0 and Type='Software'")) {
+            let result = match searcher.Search(&windows::core::BSTR::from(
+                "IsInstalled=0 and IsHidden=0 and Type='Software'",
+            )) {
                 Ok(r) => r,
                 Err(e) => {
-                    warn!("Windows Update search failed: {}. Falling back to empty.", e);
+                    warn!(
+                        "Windows Update search failed: {}. Falling back to empty.",
+                        e
+                    );
                     return Ok(vec![]);
                 }
             };
-            
+
             let updates = result.Updates()?;
             let count = updates.Count()?;
-            
+
             let mut patches = Vec::new();
             for i in 0..count {
                 // IUpdateCollection::get_Item takes i32
-                if let Ok(update) = updates.get_Item(i as i32) {
+                if let Ok(update) = updates.get_Item(i) {
                     let title = update.Title().map(|t| t.to_string()).unwrap_or_default();
-                    let desc = update.Description().map(|d| d.to_string()).unwrap_or_default();
+                    let desc = update
+                        .Description()
+                        .map(|d| d.to_string())
+                        .unwrap_or_default();
                     if let Ok(kb_ids) = update.KBArticleIDs() {
                         let kb_count = kb_ids.Count().unwrap_or(0);
                         let kb = if kb_count > 0 {
-                            kb_ids.get_Item(0).map(|id| format!("KB{}", id)).unwrap_or_default()
+                            kb_ids
+                                .get_Item(0)
+                                .map(|id| format!("KB{}", id))
+                                .unwrap_or_default()
                         } else {
                             String::new()
                         };
-                        
+
                         if !kb.is_empty() {
                             patches.push(PatchMetadata {
                                 cve_id: kb.clone(),
@@ -93,8 +105,11 @@ impl PatchDiscoverer {
                     }
                 }
             }
-            
-            info!("Windows discovery: {} pending updates found.", patches.len());
+
+            info!(
+                "Windows discovery: {} pending updates found.",
+                patches.len()
+            );
             Ok(patches)
         }
     }

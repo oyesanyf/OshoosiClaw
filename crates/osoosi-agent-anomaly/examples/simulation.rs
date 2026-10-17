@@ -10,9 +10,9 @@ async fn main() {
     info!("Initializing OpenỌ̀ṣọ́ọ̀sì EDR Agent Anomaly Detection Module...");
 
     let (detector, mut alert_stream) = AgentAnomalyDetector::bootstrap(
-        1000,                                 // channel buffer
-        3,                                    // trigger if > 3 calls/min
-        200,                                  // trigger if cumulative items requested > 200
+        1000,                                // channel buffer
+        3,                                   // trigger if > 3 calls/min
+        200,                                 // trigger if cumulative items requested > 200
         "http://localhost:8080/eval".into(), // reasoning evaluator url
     );
 
@@ -97,6 +97,9 @@ async fn main() {
     tokio::time::sleep(Duration::from_millis(500)).await;
 
     let summary = detector.get_risk_summary().await;
-    info!("Risk posture summary:\n{}", serde_json::to_string_pretty(&summary).unwrap());
+    info!(
+        "Risk posture summary:\n{}",
+        serde_json::to_string_pretty(&summary).unwrap()
+    );
     println!("\n[+] Agent Anomaly Detection simulation completed successfully.");
 }

@@ -23,6 +23,7 @@ impl OtelSessionTelemetry {
     pub fn new() -> Self {
         Self
     }
+    #[allow(clippy::too_many_arguments)]
     pub fn record_span(
         &self,
         _trace_id: &str,
@@ -35,8 +36,10 @@ impl OtelSessionTelemetry {
         _status_message: Option<String>,
         _attributes: HashMap<String, String>,
         _events: Vec<()>,
-    ) {}
-    pub fn record_resilience_event(&self, _mttd_ms: f64, _mttr_ms: f64, _session_id: Option<&str>) {}
+    ) {
+    }
+    pub fn record_resilience_event(&self, _mttd_ms: f64, _mttr_ms: f64, _session_id: Option<&str>) {
+    }
 }
 
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
@@ -75,7 +78,14 @@ impl AdaptiveRlDefenseEngine {
     pub fn new() -> Self {
         Self
     }
-    pub fn tune_on_failure(&self, _bucket: usize, _penalized: usize, _boosted: usize, _reward: f32) {}
+    pub fn tune_on_failure(
+        &self,
+        _bucket: usize,
+        _penalized: usize,
+        _boosted: usize,
+        _reward: f32,
+    ) {
+    }
 }
 
 /// Real-time self-healing feedback controller integrating RT-ASP with RL defense and OTel.
@@ -106,24 +116,34 @@ impl RaspSelfHealingController {
             .unwrap_or_default()
             .as_nanos() as u64;
 
-        let start_nano = now_nano.saturating_sub((event.latency_micros * 1000) as u64);
+        let start_nano = now_nano.saturating_sub(event.latency_micros * 1000);
 
         // 1. Record distributed OTel span
         let mut attributes = HashMap::new();
         attributes.insert("rasp.event_id".to_string(), event.event_id.clone());
-        attributes.insert("rasp.interceptor".to_string(), event.interceptor_name.clone());
+        attributes.insert(
+            "rasp.interceptor".to_string(),
+            event.interceptor_name.clone(),
+        );
         attributes.insert("rasp.agent_id".to_string(), event.subject.agent_id.clone());
-        attributes.insert("rasp.verdict".to_string(), event.decision.verdict_str().to_string());
+        attributes.insert(
+            "rasp.verdict".to_string(),
+            event.decision.verdict_str().to_string(),
+        );
         if let Some(cat) = event.threat_category {
             attributes.insert("rasp.threat_category".to_string(), cat.to_string());
         }
 
         let (otel_status, status_msg) = match &event.decision {
             RaspDecision::Allow { .. } => (OtelStatusCode::Ok, None),
-            RaspDecision::Sanitize { .. } => (OtelStatusCode::Ok, Some("Sanitized inline".to_string())),
+            RaspDecision::Sanitize { .. } => {
+                (OtelStatusCode::Ok, Some("Sanitized inline".to_string()))
+            }
             RaspDecision::Deny { reason, .. } => (OtelStatusCode::Error, Some(reason.clone())),
             RaspDecision::Tarpit { reason, .. } => (OtelStatusCode::Error, Some(reason.clone())),
-            RaspDecision::Quarantine { reason, .. } => (OtelStatusCode::Error, Some(reason.clone())),
+            RaspDecision::Quarantine { reason, .. } => {
+                (OtelStatusCode::Error, Some(reason.clone()))
+            }
         };
 
         self.otel_telemetry.record_span(
@@ -143,11 +163,12 @@ impl RaspSelfHealingController {
         if event.decision.is_blocked() {
             let breaches = self.consecutive_breaches.fetch_add(1, Ordering::Relaxed) + 1;
 
-            let mut state = AdaptiveStateVector::default();
-            state.schema_tamper_score = (breaches as f32 * 0.2).min(1.0);
-            state.prompt_injection_semantic_anomaly = (breaches as f32 * 0.25).min(1.0);
-            state.credential_access_pressure = (breaches as f32 * 0.3).min(1.0);
-            state.error_frequency = (breaches as f32 * 0.2).min(1.0);
+            let state = AdaptiveStateVector {
+                schema_tamper_score: (breaches as f32 * 0.2).min(1.0),
+                prompt_injection_semantic_anomaly: (breaches as f32 * 0.25).min(1.0),
+                credential_access_pressure: (breaches as f32 * 0.3).min(1.0),
+                error_frequency: (breaches as f32 * 0.2).min(1.0),
+            };
 
             let bucket = state.discretize_bucket();
 
@@ -160,7 +181,11 @@ impl RaspSelfHealingController {
 
             let mttd_ms = (event.latency_micros as f64) / 1000.0;
             let mttr_ms = mttd_ms + 0.5;
-            self.otel_telemetry.record_resilience_event(mttd_ms, mttr_ms, Some(&event.subject.session_id));
+            self.otel_telemetry.record_resilience_event(
+                mttd_ms,
+                mttr_ms,
+                Some(&event.subject.session_id),
+            );
 
             let now_secs = (now_nano / 1_000_000_000) as usize;
             let last_esc = self.last_escalation_secs.load(Ordering::Relaxed);
@@ -168,10 +193,18 @@ impl RaspSelfHealingController {
                 let current_tier = policy_engine.config().active_mitigation_tier;
                 let next_tier = match current_tier {
                     AdaptiveMitigationTier::Level0Monitor => AdaptiveMitigationTier::Level1Sanitize,
-                    AdaptiveMitigationTier::Level1Sanitize => AdaptiveMitigationTier::Level2SyntheticDecoy,
-                    AdaptiveMitigationTier::Level2SyntheticDecoy => AdaptiveMitigationTier::Level3TarpitStall,
-                    AdaptiveMitigationTier::Level3TarpitStall => AdaptiveMitigationTier::Level4HardRevoke,
-                    AdaptiveMitigationTier::Level4HardRevoke => AdaptiveMitigationTier::Level4HardRevoke,
+                    AdaptiveMitigationTier::Level1Sanitize => {
+                        AdaptiveMitigationTier::Level2SyntheticDecoy
+                    }
+                    AdaptiveMitigationTier::Level2SyntheticDecoy => {
+                        AdaptiveMitigationTier::Level3TarpitStall
+                    }
+                    AdaptiveMitigationTier::Level3TarpitStall => {
+                        AdaptiveMitigationTier::Level4HardRevoke
+                    }
+                    AdaptiveMitigationTier::Level4HardRevoke => {
+                        AdaptiveMitigationTier::Level4HardRevoke
+                    }
                 };
                 policy_engine.set_mitigation_tier(next_tier);
                 self.last_escalation_secs.store(now_secs, Ordering::Relaxed);

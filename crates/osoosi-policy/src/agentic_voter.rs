@@ -6,12 +6,12 @@
 //! detects reconnaissance/lateral movement/credential access loops, and flags
 //! canary environment variables or canary file traps.
 
+use crate::engine::{ThreatVoter, VoteResult};
 use async_trait::async_trait;
 use chrono::{DateTime, Utc};
 use dashmap::DashMap;
 use osoosi_behavioral::{AgentTrajectoryTracker, AgenticToolValidator, DefenseAction};
 use osoosi_types::HostSecurityEvent;
-use crate::engine::{ThreatVoter, VoteResult};
 use regex::Regex;
 use serde::{Deserialize, Serialize};
 use std::collections::VecDeque;
@@ -105,7 +105,8 @@ impl AgentTrajectory {
 
         if self.history.len() >= MAX_TRAJECTORY_STEPS {
             if let Some(evicted) = self.history.pop_front() {
-                self.cumulative_penalty = (self.cumulative_penalty - evicted.step_risk * 0.5).max(0.0);
+                self.cumulative_penalty =
+                    (self.cumulative_penalty - evicted.step_risk * 0.5).max(0.0);
             }
         }
 
@@ -127,7 +128,8 @@ impl AgentTrajectory {
             (-0.5, 0.0)
         };
 
-        self.tracker.update_state(&format!("{:?}", stage), &command, log_odds, judge_score)
+        self.tracker
+            .update_state(&format!("{:?}", stage), &command, log_odds, judge_score)
     }
 
     /// Compute cumulative confidence using a sigmoid saturation curve.
@@ -161,14 +163,14 @@ impl Default for AgenticPolicyVoter {
 impl AgenticPolicyVoter {
     pub fn new() -> Self {
         // AI runtimes: python, python3, node, cargo, ollama, uv, deno, code
-        let ai_runtime_regex = Regex::new(
-            r"(?i)(?:^|[\\/])(python3?|node|cargo|ollama|uv|deno|code)(?:\.exe)?$"
-        ).expect("Valid AI runtime regex");
+        let ai_runtime_regex =
+            Regex::new(r"(?i)(?:^|[\\/])(python3?|node|cargo|ollama|uv|deno|code)(?:\.exe)?$")
+                .expect("Valid AI runtime regex");
 
         // Command interpreters: cmd, powershell, pwsh, bash, sh, wscript, cscript
-        let command_interpreter_regex = Regex::new(
-            r"(?i)(?:^|[\\/])(cmd|powershell|pwsh|bash|sh|wscript|cscript)(?:\.exe)?$"
-        ).expect("Valid command interpreter regex");
+        let command_interpreter_regex =
+            Regex::new(r"(?i)(?:^|[\\/])(cmd|powershell|pwsh|bash|sh|wscript|cscript)(?:\.exe)?$")
+                .expect("Valid command interpreter regex");
 
         // Recon LOLBins: whoami, net, net1, curl, wget, ipconfig, systeminfo
         let recon_lolbin_regex = Regex::new(
@@ -208,9 +210,21 @@ impl AgenticPolicyVoter {
 
         let mut belief = self.agent_beliefs.get(&pid).map(|b| *b).unwrap_or(0.20);
 
-        let parent_image = event.data.get("ParentImage").and_then(|v| v.as_str()).unwrap_or("");
-        let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
-        let cmd_line = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("");
+        let parent_image = event
+            .data
+            .get("ParentImage")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let image = event
+            .data
+            .get("Image")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let cmd_line = event
+            .data
+            .get("CommandLine")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
         let lower = format!("{} {} {}", image, parent_image, cmd_line).to_ascii_lowercase();
 
         // 1. LLM API / Inference Endpoints
@@ -243,15 +257,22 @@ impl AgenticPolicyVoter {
         }
 
         // 4. OpenTelemetry GenAI spans
-        if lower.contains("gen_ai.") || lower.contains("openinference.") || lower.contains("adrian_tool_intent") {
+        if lower.contains("gen_ai.")
+            || lower.contains("openinference.")
+            || lower.contains("adrian_tool_intent")
+        {
             belief += 0.40;
         }
 
         // 5. ETW Velocity / Actuation Cadence
-        let velocity = event.data.get("ChildSpawnVelocity3s")
+        let velocity = event
+            .data
+            .get("ChildSpawnVelocity3s")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
-        let is_velocity_anomaly = event.data.get("IsVelocityAnomaly")
+        let is_velocity_anomaly = event
+            .data
+            .get("IsVelocityAnomaly")
             .and_then(|v| v.as_bool())
             .unwrap_or(false);
 
@@ -259,7 +280,9 @@ impl AgenticPolicyVoter {
             belief += 0.25;
         }
 
-        let lifetime_ms = event.data.get("ProcessLifetimeMs")
+        let lifetime_ms = event
+            .data
+            .get("ProcessLifetimeMs")
             .and_then(|v| v.as_u64())
             .unwrap_or(0);
         if lifetime_ms > 0 && lifetime_ms < 4000 {
@@ -301,22 +324,42 @@ impl AgenticPolicyVoter {
     pub fn prune_stale(&self) {
         let now = Utc::now();
         if self.trajectories.len() > MAX_TRACKED_AGENTS {
-            self.trajectories.retain(|_, traj| {
-                (now - traj.last_updated).num_seconds() < TRAJECTORY_TTL_SECS
-            });
+            self.trajectories
+                .retain(|_, traj| (now - traj.last_updated).num_seconds() < TRAJECTORY_TTL_SECS);
         }
     }
 
     /// Evaluates a host security event synchronously.
     pub fn evaluate_event(&self, event: &HostSecurityEvent) -> Option<VoteResult> {
         // Event ID 1: Process Creation, Event ID 3: Network Connection, Event ID 11: File Creation
-        let parent_image = event.data.get("ParentImage").and_then(|v| v.as_str()).unwrap_or("");
-        let image = event.data.get("Image").and_then(|v| v.as_str()).unwrap_or("");
-        let cmd_line = event.data.get("CommandLine").and_then(|v| v.as_str()).unwrap_or("");
-        let parent_pid = event.data.get("ParentProcessId")
-            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok())))
+        let parent_image = event
+            .data
+            .get("ParentImage")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let image = event
+            .data
+            .get("Image")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let cmd_line = event
+            .data
+            .get("CommandLine")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
+        let parent_pid = event
+            .data
+            .get("ParentProcessId")
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+            })
             .unwrap_or(0) as u32;
-        let target_filename = event.data.get("TargetFilename").and_then(|v| v.as_str()).unwrap_or("");
+        let target_filename = event
+            .data
+            .get("TargetFilename")
+            .and_then(|v| v.as_str())
+            .unwrap_or("");
 
         // Build candidate search strings: raw, normalized, and decoded base64 payloads
         let mut candidates = Vec::new();
@@ -362,20 +405,28 @@ impl AgenticPolicyVoter {
             let tracked_pid = if parent_pid != 0 {
                 parent_pid
             } else {
-                event.data.get("ProcessId")
-                    .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok())))
+                event
+                    .data
+                    .get("ProcessId")
+                    .and_then(|v| {
+                        v.as_u64()
+                            .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+                    })
                     .unwrap_or(0) as u32
             };
 
             let defense_action = if tracked_pid != 0 {
-                let mut entry = self.trajectories
-                    .entry(tracked_pid)
-                    .or_insert_with(|| AgentTrajectory::new(tracked_pid, "UnknownRuntime".to_string()));
+                let mut entry = self.trajectories.entry(tracked_pid).or_insert_with(|| {
+                    AgentTrajectory::new(tracked_pid, "UnknownRuntime".to_string())
+                });
                 entry.tracker.trigger_canary_breach(&matched_canary)
             } else {
                 DefenseAction::IsolateProcess {
                     pid: 0,
-                    reason: format!("Deterministic canary tripwire triggered: {}", matched_canary),
+                    reason: format!(
+                        "Deterministic canary tripwire triggered: {}",
+                        matched_canary
+                    ),
                 }
             };
 
@@ -390,8 +441,13 @@ impl AgenticPolicyVoter {
         }
 
         // 2. Identify if Parent or Current process is an AI Agent Runtime via Bayesian Scoring
-        let current_pid = event.data.get("ProcessId")
-            .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok())))
+        let current_pid = event
+            .data
+            .get("ProcessId")
+            .and_then(|v| {
+                v.as_u64()
+                    .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+            })
             .unwrap_or(0) as u32;
 
         let parent_agent_score = if parent_pid != 0 {
@@ -417,8 +473,13 @@ impl AgenticPolicyVoter {
         let tracked_pid = if parent_pid != 0 {
             parent_pid
         } else {
-            event.data.get("ProcessId")
-                .and_then(|v| v.as_u64().or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok())))
+            event
+                .data
+                .get("ProcessId")
+                .and_then(|v| {
+                    v.as_u64()
+                        .or_else(|| v.as_str().and_then(|s| s.trim().parse::<u64>().ok()))
+                })
                 .unwrap_or(0) as u32
         };
 
@@ -433,7 +494,9 @@ impl AgenticPolicyVoter {
         // 3. Inspect Process Characteristics & Stage Transitions
         let is_interpreter = self.is_command_interpreter(image);
         let is_lolbin = self.is_recon_lolbin(image);
-        let has_injection = candidates.iter().any(|c| self.shell_injection_regex.is_match(c));
+        let has_injection = candidates
+            .iter()
+            .any(|c| self.shell_injection_regex.is_match(c));
 
         let (stage, step_risk, anomaly) = if has_injection {
             (
@@ -470,7 +533,11 @@ impl AgenticPolicyVoter {
             )
         } else {
             // Benign child process of AI runtime (e.g. compiler, safe tool)
-            (TrajectoryStage::Baseline, 0.0, "BenignExecution".to_string())
+            (
+                TrajectoryStage::Baseline,
+                0.0,
+                "BenignExecution".to_string(),
+            )
         };
 
         // If completely benign and no existing trajectory, return None
@@ -479,7 +546,8 @@ impl AgenticPolicyVoter {
         }
 
         // 4. Update Agent Trajectory in DashMap
-        let mut entry = self.trajectories
+        let mut entry = self
+            .trajectories
             .entry(tracked_pid)
             .or_insert_with(|| AgentTrajectory::new(tracked_pid, runtime_name.to_string()));
 
@@ -564,7 +632,12 @@ mod tests {
     use osoosi_types::HostEventSource;
     use serde_json::json;
 
-    fn create_test_event(parent_image: &str, image: &str, cmd_line: &str, parent_pid: u32) -> HostSecurityEvent {
+    fn create_test_event(
+        parent_image: &str,
+        image: &str,
+        cmd_line: &str,
+        parent_pid: u32,
+    ) -> HostSecurityEvent {
         HostSecurityEvent {
             source: HostEventSource::WindowsEventLog,
             event_id: 1,
@@ -794,7 +867,10 @@ mod tests {
         assert!(vote_injection.is_some());
         let v_injection = vote_injection.unwrap();
         assert!(v_injection.confidence >= 0.90);
-        assert!(v_injection.reason.contains("DangerousShellOrLolbin") || v_injection.reason.contains("Execution"));
+        assert!(
+            v_injection.reason.contains("DangerousShellOrLolbin")
+                || v_injection.reason.contains("Execution")
+        );
     }
 
     #[test]

@@ -13,7 +13,7 @@ use tracing::{info, warn};
 
 /// Opt-in: download MalConv / SmolLM2 from `oyesanyf/OshoosiClaw-Weights` during provisioning. Default **off** — that bundle often 404s unless you publish it.
 fn use_bundled_hf_weights() -> bool {
-    std::env::var("OSOOSI_USE_BUNDLED_HF_WEIGHTS").map_or(false, |v| {
+    std::env::var("OSOOSI_USE_BUNDLED_HF_WEIGHTS").is_ok_and(|v| {
         v != "0" && !v.eq_ignore_ascii_case("false") && !v.eq_ignore_ascii_case("no")
     })
 }
@@ -130,7 +130,9 @@ impl AgentProvisioner {
             return Ok(());
         }
 
-        info!("Sysmon service is not installed. Initiating dynamic acquisition and installation...");
+        info!(
+            "Sysmon service is not installed. Initiating dynamic acquisition and installation..."
+        );
 
         // b. If Sysmon is NOT installed:
         // Determine target directory: prefer tools/sysmon in the workspace / working directory.
@@ -151,17 +153,26 @@ impl AgentProvisioner {
                 if std::fs::create_dir_all(&workspace_dir).is_ok() {
                     workspace_dir
                 } else {
-                    let local_app_data = std::env::var("LOCALAPPDATA")
-                        .ok()
-                        .map(|lad| PathBuf::from(&lad).join("OshoosiClaw").join("tools").join("sysmon"));
+                    let local_app_data = std::env::var("LOCALAPPDATA").ok().map(|lad| {
+                        PathBuf::from(&lad)
+                            .join("OshoosiClaw")
+                            .join("tools")
+                            .join("sysmon")
+                    });
                     if let Some(lad_dir) = local_app_data {
                         if std::fs::create_dir_all(&lad_dir).is_ok() {
                             lad_dir
                         } else {
-                            std::env::temp_dir().join("OshoosiClaw").join("tools").join("sysmon")
+                            std::env::temp_dir()
+                                .join("OshoosiClaw")
+                                .join("tools")
+                                .join("sysmon")
                         }
                     } else {
-                        std::env::temp_dir().join("OshoosiClaw").join("tools").join("sysmon")
+                        std::env::temp_dir()
+                            .join("OshoosiClaw")
+                            .join("tools")
+                            .join("sysmon")
                     }
                 }
             }
@@ -170,11 +181,17 @@ impl AgentProvisioner {
 
         // Choose executable: detect architecture. On 64-bit Windows, use target_dir.join("Sysmon64.exe"), else Sysmon.exe.
         let is_64bit = cfg!(target_arch = "x86_64") || cfg!(target_arch = "aarch64");
-        let sysmon_exe_name = if is_64bit { "Sysmon64.exe" } else { "Sysmon.exe" };
+        let sysmon_exe_name = if is_64bit {
+            "Sysmon64.exe"
+        } else {
+            "Sysmon.exe"
+        };
         let sysmon_exe = target_dir.join(sysmon_exe_name);
 
         let has_binary = sysmon_exe.exists()
-            && std::fs::metadata(&sysmon_exe).map(|m| m.len() > 100 * 1024).unwrap_or(false);
+            && std::fs::metadata(&sysmon_exe)
+                .map(|m| m.len() > 100 * 1024)
+                .unwrap_or(false);
 
         if !has_binary {
             info!(
@@ -208,7 +225,10 @@ impl AgentProvisioner {
         // If not found, write a built-in default XML to <target_dir>/sysmon-dns.xml containing Event ID 22 and Event ID 3.
         let config_candidates = [
             PathBuf::from("config").join("sysmon-dns.xml"),
-            PathBuf::from("..").join("..").join("config").join("sysmon-dns.xml"),
+            PathBuf::from("..")
+                .join("..")
+                .join("config")
+                .join("sysmon-dns.xml"),
             PathBuf::from("..").join("config").join("sysmon-dns.xml"),
         ];
         let default_config = config_candidates.into_iter().find(|p| p.is_file());
@@ -245,7 +265,10 @@ impl AgentProvisioner {
 </Sysmon>
 "#;
                 std::fs::write(&fallback_config, DEFAULT_SYSMON_DNS_XML)?;
-                info!("Wrote default Sysmon DNS XML configuration to {}", fallback_config.display());
+                info!(
+                    "Wrote default Sysmon DNS XML configuration to {}",
+                    fallback_config.display()
+                );
             }
             fallback_config
         };
@@ -266,20 +289,31 @@ impl AgentProvisioner {
                     "Orphaned Microsoft-Windows-Sysmon manifest detected without corresponding service. \
                     Unregistering manifest to prevent installation collision..."
                 );
-                let mut unreg_cmd = Command::new(osoosi_types::resolve_system_binary("wevtutil.exe"));
+                let mut unreg_cmd =
+                    Command::new(osoosi_types::resolve_system_binary("wevtutil.exe"));
                 unreg_cmd.args(["um", "Microsoft-Windows-Sysmon"]);
                 match self.executor.execute(unreg_cmd).await {
                     Ok(unreg_out) if unreg_out.status.success() => {
-                        info!("Successfully unregistered orphaned Microsoft-Windows-Sysmon manifest.");
+                        info!(
+                            "Successfully unregistered orphaned Microsoft-Windows-Sysmon manifest."
+                        );
                     }
                     Ok(unreg_out) => {
                         let out_msg = String::from_utf8_lossy(&unreg_out.stdout);
                         let err_msg = String::from_utf8_lossy(&unreg_out.stderr);
-                        let combined_msg = format!("{} {}", out_msg.trim(), err_msg.trim()).trim().to_string();
-                        warn!("Attempted to unregister orphaned manifest, wevtutil reported: {}", combined_msg);
+                        let combined_msg = format!("{} {}", out_msg.trim(), err_msg.trim())
+                            .trim()
+                            .to_string();
+                        warn!(
+                            "Attempted to unregister orphaned manifest, wevtutil reported: {}",
+                            combined_msg
+                        );
                     }
                     Err(e) => {
-                        warn!("Failed to execute 'wevtutil.exe um Microsoft-Windows-Sysmon': {}", e);
+                        warn!(
+                            "Failed to execute 'wevtutil.exe um Microsoft-Windows-Sysmon': {}",
+                            e
+                        );
                     }
                 }
             }
@@ -287,7 +321,10 @@ impl AgentProvisioner {
                 info!("No orphaned Microsoft-Windows-Sysmon manifest detected.");
             }
             Err(e) => {
-                warn!("Failed to query Microsoft-Windows-Sysmon manifest via wevtutil: {}", e);
+                warn!(
+                    "Failed to query Microsoft-Windows-Sysmon manifest via wevtutil: {}",
+                    e
+                );
             }
         }
 
@@ -338,7 +375,10 @@ impl AgentProvisioner {
             let mut unreg_cmd = Command::new(osoosi_types::resolve_system_binary("wevtutil.exe"));
             unreg_cmd.args(["um", "Microsoft-Windows-Sysmon"]);
             if let Err(e) = self.executor.execute(unreg_cmd).await {
-                warn!("Remediation: 'wevtutil.exe um Microsoft-Windows-Sysmon' execution failed: {}", e);
+                warn!(
+                    "Remediation: 'wevtutil.exe um Microsoft-Windows-Sysmon' execution failed: {}",
+                    e
+                );
             } else {
                 info!("Remediation: unregister manifest command executed.");
             }
@@ -346,7 +386,11 @@ impl AgentProvisioner {
             let mut force_uninstall = Command::new(&sysmon_exe);
             force_uninstall.args(["-u", "force"]);
             if let Err(e) = self.executor.execute(force_uninstall).await {
-                warn!("Remediation: '{} -u force' execution failed: {}", sysmon_exe.display(), e);
+                warn!(
+                    "Remediation: '{} -u force' execution failed: {}",
+                    sysmon_exe.display(),
+                    e
+                );
             } else {
                 info!("Remediation: force uninstall command executed.");
             }
@@ -466,14 +510,20 @@ impl AgentProvisioner {
         let siquery_conf_path = config_dir.join("siquery.conf");
         if !siquery_conf_path.exists() {
             let _ = std::fs::write(&siquery_conf_path, DEFAULT_SIQUERY_CONF);
-            info!("Created default Siquery configuration at '{}'.", siquery_conf_path.display());
+            info!(
+                "Created default Siquery configuration at '{}'.",
+                siquery_conf_path.display()
+            );
         }
 
         // Write config/osquery.conf for backward compatibility
         let osquery_conf_path = config_dir.join("osquery.conf");
         if !osquery_conf_path.exists() {
             let _ = std::fs::write(&osquery_conf_path, DEFAULT_SIQUERY_CONF);
-            info!("Created default Osquery-compatible configuration at '{}'.", osquery_conf_path.display());
+            info!(
+                "Created default Osquery-compatible configuration at '{}'.",
+                osquery_conf_path.display()
+            );
         }
 
         // Clean up any legacy external tools/osquery directory if present
@@ -540,12 +590,22 @@ impl AgentProvisioner {
             } else if self.command_exists("firewall-cmd").await {
                 for port in tcp_ports {
                     let mut cmd = Command::new("sudo");
-                    cmd.args(["firewall-cmd", "--permanent", "--add-port", &format!("{}/tcp", port)]);
+                    cmd.args([
+                        "firewall-cmd",
+                        "--permanent",
+                        "--add-port",
+                        &format!("{}/tcp", port),
+                    ]);
                     let _ = self.executor.execute(cmd).await;
                 }
                 for port in udp_ports {
                     let mut cmd = Command::new("sudo");
-                    cmd.args(["firewall-cmd", "--permanent", "--add-port", &format!("{}/udp", port)]);
+                    cmd.args([
+                        "firewall-cmd",
+                        "--permanent",
+                        "--add-port",
+                        &format!("{}/udp", port),
+                    ]);
                     let _ = self.executor.execute(cmd).await;
                 }
                 let mut cmd = Command::new("sudo");
@@ -554,12 +614,16 @@ impl AgentProvisioner {
             } else if self.command_exists("iptables").await {
                 for port in tcp_ports {
                     let mut cmd = Command::new("sudo");
-                    cmd.args(["iptables", "-I", "INPUT", "-p", "tcp", "--dport", port, "-j", "ACCEPT"]);
+                    cmd.args([
+                        "iptables", "-I", "INPUT", "-p", "tcp", "--dport", port, "-j", "ACCEPT",
+                    ]);
                     let _ = self.executor.execute(cmd).await;
                 }
                 for port in udp_ports {
                     let mut cmd = Command::new("sudo");
-                    cmd.args(["iptables", "-I", "INPUT", "-p", "udp", "--dport", port, "-j", "ACCEPT"]);
+                    cmd.args([
+                        "iptables", "-I", "INPUT", "-p", "udp", "--dport", port, "-j", "ACCEPT",
+                    ]);
                     let _ = self.executor.execute(cmd).await;
                 }
             }
@@ -571,7 +635,12 @@ impl AgentProvisioner {
     }
 
     #[cfg(target_os = "windows")]
-    async fn ensure_windows_rule(&self, name: &str, port: &str, protocol: &str) -> anyhow::Result<()> {
+    async fn ensure_windows_rule(
+        &self,
+        name: &str,
+        port: &str,
+        protocol: &str,
+    ) -> anyhow::Result<()> {
         #[allow(unused_imports)]
         use std::os::windows::process::CommandExt;
         let mut check = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
@@ -586,7 +655,10 @@ impl AgentProvisioner {
         ]);
 
         if !self.executor.execute(check).await?.status.success() {
-            info!("Adding firewall rule: {} (Port {}/{})...", name, port, protocol);
+            info!(
+                "Adding firewall rule: {} (Port {}/{})...",
+                name, port, protocol
+            );
             let mut add = Command::new(osoosi_types::resolve_system_binary("netsh.exe"));
             #[cfg(windows)]
             add.creation_flags(0x08000000);
@@ -607,7 +679,6 @@ impl AgentProvisioner {
         }
         Ok(())
     }
-
 
     /// Helper to execute a command with a specified number of retries.
     #[allow(dead_code)]
@@ -679,17 +750,12 @@ impl AgentProvisioner {
         }
     }
 
-
-
-
     #[cfg(target_os = "windows")]
     async fn _provision_windows(&self) -> anyhow::Result<()> {
         info!("Provisioning Windows telemetry (Native Zero-Process ETW)...");
         // Native engine is self-contained, no external binary needed
         Ok(())
     }
-
-
 
     /// Linux: Install Auditd
     /// Linux: Native eBPF / auditd
@@ -698,8 +764,6 @@ impl AgentProvisioner {
         info!("Provisioning Linux telemetry (Native eBPF)...");
         Ok(())
     }
-
-
 
     /// macOS: Check for Endpoint Security
     #[cfg(target_os = "macos")]
@@ -710,21 +774,25 @@ impl AgentProvisioner {
         Ok(())
     }
 
-
-
-
-
-
     #[cfg(target_os = "windows")]
-    pub async fn apply_blocking_rules(&self, rules: &[osoosi_types::BlockingRule]) -> anyhow::Result<()> {
-        info!("Provisioner: Applying {} persistent blocking rules to Windows Registry...", rules.len());
-        
+    pub async fn apply_blocking_rules(
+        &self,
+        rules: &[osoosi_types::BlockingRule],
+    ) -> anyhow::Result<()> {
+        info!(
+            "Provisioner: Applying {} persistent blocking rules to Windows Registry...",
+            rules.len()
+        );
+
         for rule in rules {
             if rule.kind == osoosi_types::BlockingKind::Executable {
                 let path = std::path::Path::new(&rule.path);
                 if let Some(exe_name) = path.file_name().and_then(|n| n.to_str()) {
-                    info!("Enforcing Hard-Block for {}: IFEO Debugger -> blocked.exe", exe_name);
-                    
+                    info!(
+                        "Enforcing Hard-Block for {}: IFEO Debugger -> blocked.exe",
+                        exe_name
+                    );
+
                     let mut cmd = Command::new(osoosi_types::resolve_system_binary("reg.exe"));
                     cmd.args([
                         "add",
@@ -734,7 +802,7 @@ impl AgentProvisioner {
                         "/d", "systray.exe", // Using systray.exe as a safe "noop" debugger
                         "/f"
                     ]);
-                    
+
                     if let Err(e) = self.executor.execute(cmd).await {
                         warn!("Failed to apply IFEO block for {}: {}", exe_name, e);
                     }
@@ -753,7 +821,7 @@ impl AgentProvisioner {
     pub async fn provision_yara_rules_with_sandbox(&self, sandboxed: bool) -> anyhow::Result<()> {
         let yara_base_dir = std::path::Path::new("yara");
         if !yara_base_dir.exists() {
-            std::fs::create_dir_all(&yara_base_dir)?;
+            std::fs::create_dir_all(yara_base_dir)?;
         }
 
         if sandboxed {
@@ -811,7 +879,7 @@ impl AgentProvisioner {
             {
                 let _ = std::fs::remove_dir_all(&tmp_extract);
                 extract_zip(&zip_path, &tmp_extract)?;
-                
+
                 // RESILIENCE: If extracted into a single subfolder, move content up
                 if let Ok(entries) = std::fs::read_dir(&tmp_extract) {
                     let subdirs: Vec<_> = entries.filter_map(|e| e.ok()).collect();
@@ -838,7 +906,12 @@ impl AgentProvisioner {
             #[cfg(not(target_os = "windows"))]
             {
                 let mut cmd = Command::new("unzip");
-                cmd.args(["-o", zip_path.to_str().unwrap_or(""), "-d", tmp_extract.to_str().unwrap_or("")]);
+                cmd.args([
+                    "-o",
+                    zip_path.to_str().unwrap_or(""),
+                    "-d",
+                    tmp_extract.to_str().unwrap_or(""),
+                ]);
                 let _ = self.executor.execute(cmd).await;
 
                 if let Ok(entries) = std::fs::read_dir(&tmp_extract) {
@@ -921,10 +994,7 @@ impl AgentProvisioner {
             let path = entry.path();
             if path.is_dir() {
                 let _ = self.sanitize_yara_rules_internal(&path, seen_rules);
-            } else if path
-                .extension()
-                .map_or(false, |e| e == "yar" || e == "yara")
-            {
+            } else if path.extension().is_some_and(|e| e == "yar" || e == "yara") {
                 // Use lossy reading to handle potential encoding issues in malware rules
                 if let Ok(bytes) = std::fs::read(&path) {
                     let raw_content = String::from_utf8_lossy(&bytes);
@@ -1202,7 +1272,10 @@ impl AgentProvisioner {
                     info!("MalConv weights already available.");
                     return Ok(());
                 } else {
-                    warn!("Existing MalConv weights file is too small ({} bytes). Re-downloading...", m.len());
+                    warn!(
+                        "Existing MalConv weights file is too small ({} bytes). Re-downloading...",
+                        m.len()
+                    );
                 }
             }
         }
@@ -1219,7 +1292,7 @@ impl AgentProvisioner {
             "https://huggingface.co/oyesanyf/OshoosiClaw-Weights/resolve/main/malconv.safetensors?download=true".to_string(),
             "https://huggingface.co/oyesanyf/OshoosiClaw/resolve/main/models/malware/malconv.safetensors?download=true".to_string(),
         ];
-        
+
         if let Ok(u) = std::env::var("OSOOSI_MALCONV_WEIGHTS_URL") {
             if !u.trim().is_empty() {
                 urls.insert(0, u.trim().to_string());
@@ -1241,7 +1314,9 @@ impl AgentProvisioner {
         }
 
         if !success {
-            return Err(anyhow::anyhow!("All MalConv weight mirrors failed. ML detection will be degraded."));
+            return Err(anyhow::anyhow!(
+                "All MalConv weight mirrors failed. ML detection will be degraded."
+            ));
         }
 
         if let Ok(m) = std::fs::metadata(&weight_path) {
@@ -1249,10 +1324,13 @@ impl AgentProvisioner {
                 warn!("Downloaded MalConv weights are suspiciously small ({} bytes). Check HF_TOKEN or repository existence.", m.len());
                 let _ = std::fs::remove_file(&weight_path);
             } else {
-                info!("MalConv weights provisioned successfully ({} bytes).", m.len());
+                info!(
+                    "MalConv weights provisioned successfully ({} bytes).",
+                    m.len()
+                );
             }
         }
-        
+
         Ok(())
     }
 
@@ -1388,7 +1466,10 @@ mod tests {
             }
 
             if full_cmd.contains("-i") && full_cmd.contains("-accepteula") {
-                let mut attempts = self.install_attempts.lock().unwrap_or_else(|e| e.into_inner());
+                let mut attempts = self
+                    .install_attempts
+                    .lock()
+                    .unwrap_or_else(|e| e.into_inner());
                 *attempts += 1;
                 if *attempts > 1 {
                     if let Some((code, stdout)) = self.retry_install_response {
@@ -1440,7 +1521,10 @@ mod tests {
         let res = provisioner.provision_sysmon_if_missing().await;
         assert!(res.is_ok());
 
-        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
+        let cmds = executor
+            .executed_commands
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         assert_eq!(cmds.len(), 1);
         assert!(cmds[0].contains("sc.exe query Sysmon64"));
     }
@@ -1457,7 +1541,10 @@ mod tests {
         let res = provisioner.provision_sysmon_if_missing().await;
         assert!(res.is_ok());
 
-        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
+        let cmds = executor
+            .executed_commands
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         assert_eq!(cmds.len(), 2);
         assert!(cmds[0].contains("sc.exe query Sysmon64"));
         assert!(cmds[1].contains("sc.exe start Sysmon64"));
@@ -1475,7 +1562,10 @@ mod tests {
         let res = provisioner.provision_sysmon_if_missing().await;
         assert!(res.is_ok());
 
-        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
+        let cmds = executor
+            .executed_commands
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         assert_eq!(cmds.len(), 2);
         assert!(cmds[0].contains("sc.exe query Sysmon64"));
         assert!(cmds[1].contains("sc.exe query Sysmon"));
@@ -1492,10 +1582,19 @@ mod tests {
         let provisioner = AgentProvisioner::new(executor.clone());
         let res = provisioner.provision_sysmon_if_missing().await;
         // Graceful handling requirement: do NOT fail startup!
-        assert!(res.is_ok(), "provision_sysmon_if_missing failed with error: {:?}", res.as_ref().err());
+        assert!(
+            res.is_ok(),
+            "provision_sysmon_if_missing failed with error: {:?}",
+            res.as_ref().err()
+        );
 
-        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
-        assert!(cmds.iter().any(|c| c.contains("-i") && c.contains("-accepteula")));
+        let cmds = executor
+            .executed_commands
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
+        assert!(cmds
+            .iter()
+            .any(|c| c.contains("-i") && c.contains("-accepteula")));
     }
 
     #[tokio::test]
@@ -1508,13 +1607,22 @@ mod tests {
         let res = provisioner.provision_sysmon_if_missing().await;
         assert!(res.is_ok());
 
-        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
+        let cmds = executor
+            .executed_commands
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Check that wevtutil gp was executed
-        assert!(cmds.iter().any(|c| c.contains("wevtutil.exe gp Microsoft-Windows-Sysmon")));
+        assert!(cmds
+            .iter()
+            .any(|c| c.contains("wevtutil.exe gp Microsoft-Windows-Sysmon")));
         // Check that wevtutil um was executed to unregister orphaned manifest
-        assert!(cmds.iter().any(|c| c.contains("wevtutil.exe um Microsoft-Windows-Sysmon")));
+        assert!(cmds
+            .iter()
+            .any(|c| c.contains("wevtutil.exe um Microsoft-Windows-Sysmon")));
         // Check that -i was executed
-        assert!(cmds.iter().any(|c| c.contains("-i") && c.contains("-accepteula")));
+        assert!(cmds
+            .iter()
+            .any(|c| c.contains("-i") && c.contains("-accepteula")));
         // Check post-check query
         assert!(cmds.iter().any(|c| c.contains("sc.exe query Sysmon64")));
 
@@ -1538,7 +1646,10 @@ mod tests {
         let mut mock = MockSysmonExecutor::new(
             None,
             None,
-            (1, "Sysmon install error: wevtutil.exe returned failure (-2147024809)"),
+            (
+                1,
+                "Sysmon install error: wevtutil.exe returned failure (-2147024809)",
+            ),
         );
         mock.retry_install_response = Some((0, "Sysmon installed successfully"));
         let executor = Arc::new(mock);
@@ -1547,16 +1658,25 @@ mod tests {
         let res = provisioner.provision_sysmon_if_missing().await;
         assert!(res.is_ok());
 
-        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
+        let cmds = executor
+            .executed_commands
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Should have run initial install and retry install
         let install_cmds: Vec<_> = cmds
             .iter()
             .filter(|c| c.contains("-i") && c.contains("-accepteula"))
             .collect();
-        assert_eq!(install_cmds.len(), 2, "Expected initial install and retry install");
+        assert_eq!(
+            install_cmds.len(),
+            2,
+            "Expected initial install and retry install"
+        );
 
         // Should have executed remediation: wevtutil um and sysmon -u force
-        assert!(cmds.iter().any(|c| c.contains("wevtutil.exe um Microsoft-Windows-Sysmon")));
+        assert!(cmds
+            .iter()
+            .any(|c| c.contains("wevtutil.exe um Microsoft-Windows-Sysmon")));
         assert!(cmds.iter().any(|c| c.contains("-u force")));
 
         // Verify order: initial -i, then wevtutil um, then -u force, then retry -i
@@ -1589,7 +1709,10 @@ mod tests {
         let res = provisioner.provision_sysmon_if_missing().await;
         assert!(res.is_ok());
 
-        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
+        let cmds = executor
+            .executed_commands
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         let install_cmd = cmds
             .iter()
             .find(|c| c.contains("-i") && c.contains("-accepteula"))
@@ -1616,11 +1739,8 @@ mod tests {
 
     #[tokio::test]
     async fn test_sysmon_manifest_collision_by_exit_code_183() {
-        let mut mock = MockSysmonExecutor::new(
-            None,
-            None,
-            (183, "Installation failed with code 183"),
-        );
+        let mut mock =
+            MockSysmonExecutor::new(None, None, (183, "Installation failed with code 183"));
         mock.retry_install_response = Some((0, "Sysmon installed successfully"));
         let executor = Arc::new(mock);
 
@@ -1628,10 +1748,14 @@ mod tests {
         let res = provisioner.provision_sysmon_if_missing().await;
         assert!(res.is_ok());
 
-        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
+        let cmds = executor
+            .executed_commands
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         // Should have executed remediation: wevtutil um and sysmon -u force
         assert!(
-            cmds.iter().any(|c| c.contains("wevtutil.exe um Microsoft-Windows-Sysmon")),
+            cmds.iter()
+                .any(|c| c.contains("wevtutil.exe um Microsoft-Windows-Sysmon")),
             "Expected wevtutil um on exit code 183, but commands were: {:?}",
             cmds
         );
@@ -1657,9 +1781,13 @@ mod tests {
         let res = provisioner.provision_sysmon_if_missing().await;
         assert!(res.is_ok());
 
-        let cmds = executor.executed_commands.lock().unwrap_or_else(|e| e.into_inner());
+        let cmds = executor
+            .executed_commands
+            .lock()
+            .unwrap_or_else(|e| e.into_inner());
         assert!(
-            cmds.iter().any(|c| c.contains("wevtutil.exe um Microsoft-Windows-Sysmon")),
+            cmds.iter()
+                .any(|c| c.contains("wevtutil.exe um Microsoft-Windows-Sysmon")),
             "Expected wevtutil um on HRESULT error code, but commands were: {:?}",
             cmds
         );
@@ -1709,4 +1837,3 @@ mod tests {
         );
     }
 }
-

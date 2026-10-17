@@ -33,6 +33,12 @@ impl EbpfMonitor {
 pub struct EbpfMonitor;
 
 #[cfg(not(target_os = "linux"))]
+impl Default for EbpfMonitor {
+    fn default() -> Self {
+        Self::new()
+    }
+}
+
 impl EbpfMonitor {
     pub fn new() -> Self {
         Self

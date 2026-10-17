@@ -73,12 +73,21 @@ pub struct HostActuationPore {
 }
 
 impl HostActuationPore {
-    pub fn new(id: &str, class: ActuationPoreClass, name: &str, target_identifier: &str, radius: f64) -> Self {
+    pub fn new(
+        id: &str,
+        class: ActuationPoreClass,
+        name: &str,
+        target_identifier: &str,
+        radius: f64,
+    ) -> Self {
         let r = radius.clamp(0.05, 1.0);
         // Washburn Capillary Entry Pressure: Delta P = (2 * gamma * |cos theta|) / r_p
         // with gamma = 486.5 mN/m and theta = 135 deg: |cos 135| = sqrt(2)/2 ~= 0.70710678
         // 2 * 486.5 * 0.70710678 ~= 688.0148
-        let entry_pressure_threshold = (2.0 * MERCURY_SURFACE_TENSION_GAMMA * (NOMINAL_NON_WETTING_ANGLE_DEG.to_radians().cos().abs())) / r;
+        let entry_pressure_threshold = (2.0
+            * MERCURY_SURFACE_TENSION_GAMMA
+            * (NOMINAL_NON_WETTING_ANGLE_DEG.to_radians().cos().abs()))
+            / r;
         Self {
             id: id.to_string(),
             class,
@@ -100,6 +109,7 @@ pub struct HostPoreInventory {
 }
 
 impl HostPoreInventory {
+    #[allow(clippy::vec_init_then_push)]
     pub fn discover_host_pores() -> Self {
         let mut pores = Vec::new();
 
@@ -364,8 +374,10 @@ impl MercuryContainmentEngine {
         let now = Utc::now();
         let mass = mass_taint.max(0.05);
 
-        let mut lineage = self.lineages.entry(lineage_id.to_string()).or_insert_with(|| {
-            MercuryLineageState {
+        let mut lineage = self
+            .lineages
+            .entry(lineage_id.to_string())
+            .or_insert_with(|| MercuryLineageState {
                 lineage_id: lineage_id.to_string(),
                 total_droplets: 0,
                 contact_angle_deg: NOMINAL_NON_WETTING_ANGLE_DEG,
@@ -378,8 +390,7 @@ impl MercuryContainmentEngine {
                 rejection_fission_window_start: None,
                 droplets: Vec::new(),
                 last_updated: now,
-            }
-        });
+            });
 
         // If already sulfur-passivated (HgS), absorb completely with MHD decoy response
         if lineage.passivation_state == PassivationState::SulfurPassivatedHgS {
@@ -404,7 +415,8 @@ impl MercuryContainmentEngine {
 
         // Calculate velocity v_micro (droplets per second over recent window)
         let recent_window_secs: f64 = 15.0;
-        let recent_cutoff = now - chrono::Duration::milliseconds((recent_window_secs * 1000.0) as i64);
+        let recent_cutoff =
+            now - chrono::Duration::milliseconds((recent_window_secs * 1000.0) as i64);
         let recent_droplet_count = lineage
             .droplets
             .iter()
@@ -448,7 +460,8 @@ impl MercuryContainmentEngine {
             lineage.taint_density += 0.25 * mass;
         } else {
             // Self-cohesive relaxation back toward 135 deg
-            lineage.contact_angle_deg = (lineage.contact_angle_deg + 2.0).min(NOMINAL_NON_WETTING_ANGLE_DEG);
+            lineage.contact_angle_deg =
+                (lineage.contact_angle_deg + 2.0).min(NOMINAL_NON_WETTING_ANGLE_DEG);
         }
 
         lineage.internal_pressure = lineage.taint_density * (100.0 + (v_micro * v_micro * 50.0));
@@ -464,7 +477,10 @@ impl MercuryContainmentEngine {
             ActuationPoreClass::FilesystemStaging => 0.65,
             ActuationPoreClass::OsShellInterpreter => 0.80,
         };
-        let delta_p_capillary = (2.0 * MERCURY_SURFACE_TENSION_GAMMA * (lineage.contact_angle_deg.to_radians().cos().abs())) / pore_radius;
+        let delta_p_capillary = (2.0
+            * MERCURY_SURFACE_TENSION_GAMMA
+            * (lineage.contact_angle_deg.to_radians().cos().abs()))
+            / pore_radius;
 
         // ---------------------------------------------------------------------
         // Phase B: Rayleigh-Plateau Impact Shattering (Weber Number We_agent)
@@ -504,9 +520,16 @@ impl MercuryContainmentEngine {
             false
         };
 
-        let velocity_factor = if in_fission_window { v_micro * 3.5 } else { v_micro };
+        let velocity_factor = if in_fission_window {
+            v_micro * 3.5
+        } else {
+            v_micro
+        };
         let payload_diameter = 1.0 + (0.05 * (lineage.droplets.len() as f64).min(30.0));
-        let weber_number = (lineage.taint_density * (velocity_factor * velocity_factor) * payload_diameter * (1.0 + entropy))
+        let weber_number = (lineage.taint_density
+            * (velocity_factor * velocity_factor)
+            * payload_diameter
+            * (1.0 + entropy))
             / (MERCURY_SURFACE_TENSION_GAMMA * 0.1); // Scaled for host micro-operations
         lineage.weber_number = weber_number;
 
@@ -522,7 +545,12 @@ impl MercuryContainmentEngine {
             for d2 in recent_items.iter().skip(i + 1) {
                 // Cosine similarity between intention vectors
                 let cos_sim = cosine_similarity(&d1.intention_vector, &d2.intention_vector);
-                let time_delta = (d1.timestamp.signed_duration_since(d2.timestamp).num_milliseconds().abs() as f64) / 1000.0;
+                let time_delta = (d1
+                    .timestamp
+                    .signed_duration_since(d2.timestamp)
+                    .num_milliseconds()
+                    .abs() as f64)
+                    / 1000.0;
                 let kernel_k = cos_sim.max(0.0) * (-0.1 * time_delta).exp();
                 coalesced_mass += kernel_k * (d1.mass_taint * d2.mass_taint).sqrt();
             }
@@ -592,9 +620,18 @@ impl MercuryContainmentEngine {
     }
 
     /// Registers and tracks an amalgamation link where an AI agent spawns or attaches to a trusted process.
-    pub fn track_amalgamation(&self, parent_pid: Option<u32>, child_pid: u32, process_name: &str) -> AmalgamRecord {
+    pub fn track_amalgamation(
+        &self,
+        parent_pid: Option<u32>,
+        child_pid: u32,
+        process_name: &str,
+    ) -> AmalgamRecord {
         let parent_ratio = parent_pid
-            .and_then(|ppid| self.amalgamated_pids.get(&ppid).map(|r| (r.amalgam_ratio, r.hops)))
+            .and_then(|ppid| {
+                self.amalgamated_pids
+                    .get(&ppid)
+                    .map(|r| (r.amalgam_ratio, r.hops))
+            })
             .unwrap_or((1.0, 0));
 
         let hops = parent_ratio.1 + 1;
@@ -627,8 +664,13 @@ impl MercuryContainmentEngine {
     /// Returns current inventory and active lineages snapshot for REST and Siquery.
     pub fn get_status_summary(&self) -> serde_json::Value {
         let pores = self.inventory.pores.clone();
-        let lineage_summaries: Vec<MercuryLineageState> = self.lineages.iter().map(|kv| kv.value().clone()).collect();
-        let amalgams: Vec<AmalgamRecord> = self.amalgamated_pids.iter().map(|kv| kv.value().clone()).collect();
+        let lineage_summaries: Vec<MercuryLineageState> =
+            self.lineages.iter().map(|kv| kv.value().clone()).collect();
+        let amalgams: Vec<AmalgamRecord> = self
+            .amalgamated_pids
+            .iter()
+            .map(|kv| kv.value().clone())
+            .collect();
 
         serde_json::json!({
             "status": "active",
@@ -716,7 +758,10 @@ mod tests {
             );
         }
 
-        assert_eq!(final_v.passivation_state, PassivationState::SulfurPassivatedHgS);
+        assert_eq!(
+            final_v.passivation_state,
+            PassivationState::SulfurPassivatedHgS
+        );
         assert!(!final_v.allowed);
         assert!(final_v.decoy_absorbed);
         assert!(final_v.threat_score >= 0.90);
@@ -758,7 +803,7 @@ mod tests {
         let engine = MercuryContainmentEngine::new();
 
         // Agent PID 1000 spawns or attaches to powershell.exe (PID 2000)
-        let rec1 = engine.track_amalgamation(None, 1000, "ai_agent.exe");
+        let _rec1 = engine.track_amalgamation(None, 1000, "ai_agent.exe");
         let rec2 = engine.track_amalgamation(Some(1000), 2000, "powershell.exe");
 
         assert!(rec2.amalgam_ratio >= AMALGAMATION_EXEMPTION_STRIP_THRESHOLD);

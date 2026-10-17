@@ -92,7 +92,11 @@ impl LogRetentionManager {
         let dir_entries = match fs::read_dir(log_dir) {
             Ok(entries) => entries,
             Err(e) => {
-                warn!("LogRetentionManager: cannot read directory {}: {}", log_dir.display(), e);
+                warn!(
+                    "LogRetentionManager: cannot read directory {}: {}",
+                    log_dir.display(),
+                    e
+                );
                 return Ok(LogMaintenanceSummary::default());
             }
         };
@@ -355,7 +359,9 @@ impl LogRetentionManager {
             || filename.contains("..")
             || filename.contains('\0')
         {
-            return Err(anyhow::anyhow!("Invalid log filename: path traversal characters detected"));
+            return Err(anyhow::anyhow!(
+                "Invalid log filename: path traversal characters detected"
+            ));
         }
 
         let target_path = log_dir.join(filename);
@@ -366,7 +372,9 @@ impl LogRetentionManager {
         // Verify canonical path boundary if canonicalization succeeds
         if let (Ok(can_file), Ok(can_dir)) = (target_path.canonicalize(), log_dir.canonicalize()) {
             if !can_file.starts_with(&can_dir) {
-                return Err(anyhow::anyhow!("Forbidden log access: path escapes log directory"));
+                return Err(anyhow::anyhow!(
+                    "Forbidden log access: path escapes log directory"
+                ));
             }
         }
 
@@ -436,7 +444,9 @@ mod tests {
         let temp = TestDir::new();
         let log_dir = temp.path();
 
-        assert!(LogRetentionManager::read_log_tail(log_dir, "../windows/win.ini", 50, None).is_err());
+        assert!(
+            LogRetentionManager::read_log_tail(log_dir, "../windows/win.ini", 50, None).is_err()
+        );
         assert!(LogRetentionManager::read_log_tail(log_dir, "foo/bar.log", 50, None).is_err());
         assert!(LogRetentionManager::read_log_tail(log_dir, "foo\\bar.log", 50, None).is_err());
         assert!(LogRetentionManager::read_log_tail(log_dir, "..\\secret.log", 50, None).is_err());
@@ -458,7 +468,8 @@ mod tests {
         let all = LogRetentionManager::read_log_tail(log_dir, "test.log", 10, None).unwrap();
         assert_eq!(all.len(), 4);
 
-        let errors = LogRetentionManager::read_log_tail(log_dir, "test.log", 10, Some("ERROR")).unwrap();
+        let errors =
+            LogRetentionManager::read_log_tail(log_dir, "test.log", 10, Some("ERROR")).unwrap();
         assert_eq!(errors.len(), 1);
         assert!(errors[0].contains("Connection refused"));
 
@@ -499,7 +510,9 @@ mod tests {
         // Now test list_log_files
         let list = LogRetentionManager::list_log_files(log_dir);
         assert_eq!(list.len(), 2);
-        let has_active = list.iter().any(|v| v["is_active"] == true && v["filename"] == "osoosi.log");
+        let has_active = list
+            .iter()
+            .any(|v| v["is_active"] == true && v["filename"] == "osoosi.log");
         assert!(has_active);
     }
 
@@ -565,4 +578,3 @@ mod tests {
         assert!(active_path.exists());
     }
 }
-

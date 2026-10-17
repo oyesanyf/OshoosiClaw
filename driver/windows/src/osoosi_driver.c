@@ -7,6 +7,7 @@
  */
 
 #include <ntddk.h>
+#include <ntstrsafe.h>
 #include "../include/osoosi_driver_ioctl.h"
 
 #define OSOOSI_POOL_TAG 'sOso'
@@ -239,7 +240,6 @@ NTSTATUS OsoosiDeviceControl(
 
         POSOOSI_ADD_PATH_REQUEST pReq = (POSOOSI_ADD_PATH_REQUEST)buffer;
         pReq->image_path[OSOOSI_MAX_PATH - 1] = L'\0';
-        ULONG copyLen = OsoosiBoundedWcsLen(pReq->image_path, OSOOSI_MAX_PATH - 1);
 
         POSOOSI_PATH_RULE rule = (POSOOSI_PATH_RULE)ExAllocatePoolWithTag(
             NonPagedPoolNx,
@@ -253,11 +253,25 @@ NTSTATUS OsoosiDeviceControl(
         }
 
         RtlZeroMemory(rule, sizeof(OSOOSI_PATH_RULE));
-        for (ULONG k = 0; k < copyLen; ++k) {
-            rule->Path[k] = (pReq->image_path[k] == L'/') ? L'\\' : pReq->image_path[k];
+        status = RtlStringCchCopyW(rule->Path, OSOOSI_MAX_PATH, pReq->image_path);
+        if (!NT_SUCCESS(status)) {
+            ExFreePoolWithTag(rule, OSOOSI_POOL_TAG);
+            break;
         }
-        rule->Path[copyLen] = L'\0';
-        rule->Length = copyLen;
+        rule->Path[OSOOSI_MAX_PATH - 1] = L'\0';
+
+        size_t cchLen = 0;
+        status = RtlStringCchLengthW(rule->Path, OSOOSI_MAX_PATH, &cchLen);
+        if (!NT_SUCCESS(status)) {
+            ExFreePoolWithTag(rule, OSOOSI_POOL_TAG);
+            break;
+        }
+        rule->Length = (ULONG)cchLen;
+        for (ULONG k = 0; k < rule->Length; ++k) {
+            if (rule->Path[k] == L'/') {
+                rule->Path[k] = L'\\';
+            }
+        }
 
         KeAcquireInStackQueuedSpinLock(&g_State.Lock, &lockHandle);
         InsertTailList(&g_State.PathRuleList, &rule->ListEntry);

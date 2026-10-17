@@ -1,6 +1,6 @@
 use crate::statistical_filter::{StatisticalFilter, StatisticalFilterConfig};
-use serde::{Deserialize, Serialize};
 use anyhow::Result;
+use serde::{Deserialize, Serialize};
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
 pub enum OutputFormat {
@@ -43,16 +43,26 @@ impl Compressor {
         Self { config, filter }
     }
 
-    pub fn compress(&self, input: &str, tokenizer: &tokenizers::Tokenizer) -> Result<CompressionResult> {
-        let encoding = tokenizer.encode(input, false).map_err(|e| anyhow::anyhow!("{}", e))?;
+    pub fn compress(
+        &self,
+        input: &str,
+        tokenizer: &tokenizers::Tokenizer,
+    ) -> Result<CompressionResult> {
+        let encoding = tokenizer
+            .encode(input, false)
+            .map_err(|e| anyhow::anyhow!("{}", e))?;
         let tokens = encoding.get_tokens().to_vec();
         let original_tokens = tokens.len();
 
         let filtered_tokens = self.filter.filter(tokens);
         let compressed_tokens = filtered_tokens.len();
-        
-        let compressed_text = filtered_tokens.join("").replace(" ", " ").trim().to_string();
-        
+
+        let compressed_text = filtered_tokens
+            .join("")
+            .replace('\u{2581}', " ")
+            .trim()
+            .to_string();
+
         let compression_ratio = if original_tokens > 0 {
             compressed_tokens as f32 / original_tokens as f32
         } else {

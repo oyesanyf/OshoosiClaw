@@ -38,7 +38,7 @@ fn nsrl_local_zip_valid(path: &std::path::Path) -> bool {
     std::fs::File::open(path)
         .ok()
         .and_then(|f| zip::ZipArchive::new(f).ok())
-        .map(|a| a.len() > 0)
+        .map(|a| !a.is_empty())
         .unwrap_or(false)
 }
 
@@ -105,7 +105,8 @@ fn offline_mode() -> bool {
         .unwrap_or(false)
 }
 
-static LAST_KEV_NETWORK_FAILURE: std::sync::atomic::AtomicU64 = std::sync::atomic::AtomicU64::new(0);
+static LAST_KEV_NETWORK_FAILURE: std::sync::atomic::AtomicU64 =
+    std::sync::atomic::AtomicU64::new(0);
 
 #[derive(Debug, Clone)]
 pub struct ThreatFeedFetcher {
@@ -198,7 +199,10 @@ impl ThreatFeedFetcher {
                 out.push(record?);
             }
         } else {
-            anyhow::bail!("NSRL sqlite file has neither FILE nor METADATA table: {:?}", path);
+            anyhow::bail!(
+                "NSRL sqlite file has neither FILE nor METADATA table: {:?}",
+                path
+            );
         }
 
         Ok(out)
@@ -245,10 +249,18 @@ impl ThreatFeedFetcher {
         // CISA/Cloudflare may block requests without a proper User-Agent
         request = request.header("User-Agent", "OpenOsoosi-Agent/1.0");
 
-        let response = match tokio::time::timeout(std::time::Duration::from_secs(10), request.send()).await {
+        let response = match tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            request.send(),
+        )
+        .await
+        {
             Ok(Ok(r)) => r,
             Ok(Err(e)) => {
-                info!("[KEV] Network fetch failed: {}. Falling back to cache with 300s backoff.", e);
+                info!(
+                    "[KEV] Network fetch failed: {}. Falling back to cache with 300s backoff.",
+                    e
+                );
                 LAST_KEV_NETWORK_FAILURE.store(now_secs, std::sync::atomic::Ordering::Relaxed);
                 return self.load_kev_from_cache().await;
             }
@@ -269,7 +281,9 @@ impl ThreatFeedFetcher {
         }
 
         // Fetch as bytes to handle potential decoding issues manually if needed
-        let bytes = match tokio::time::timeout(std::time::Duration::from_secs(10), response.bytes()).await {
+        let bytes = match tokio::time::timeout(std::time::Duration::from_secs(10), response.bytes())
+            .await
+        {
             Ok(Ok(b)) => b,
             Ok(Err(e)) => {
                 info!(
@@ -449,7 +463,7 @@ impl ThreatFeedFetcher {
                             attempts + 1,
                             status
                         );
-                    } else if matches!(code, 502 | 503 | 504) {
+                    } else if matches!(code, 502..=504) {
                         warn!(
                             "[OTX] Attempt {} HTTP {} — gateway/upstream error (often transient). Retrying...",
                             attempts + 1,
@@ -680,7 +694,9 @@ impl ThreatFeedFetcher {
             }
         };
 
-        let bytes = match tokio::time::timeout(std::time::Duration::from_secs(10), response.bytes()).await {
+        let bytes = match tokio::time::timeout(std::time::Duration::from_secs(10), response.bytes())
+            .await
+        {
             Ok(Ok(b)) => b,
             Ok(Err(e)) => {
                 info!("[NVD] Network response body incomplete or decoding failed: {}. Returning empty list.", e);
@@ -757,7 +773,7 @@ impl ThreatFeedFetcher {
                                 }
                             }
                             if product != "NVD" {
-                                        break;
+                                break;
                             }
                         }
                     }
@@ -996,7 +1012,10 @@ impl ThreatFeedFetcher {
 
         let mut target_dir = dest_dir.to_path_buf();
         if !Self::is_dir_writable(&target_dir) {
-            info!("[NSRL Background] Cannot write to requested dest_dir {:?}. Checking fallbacks...", target_dir);
+            info!(
+                "[NSRL Background] Cannot write to requested dest_dir {:?}. Checking fallbacks...",
+                target_dir
+            );
             let fallback_candidates = [
                 osoosi_types::resolve_database_dir().join("nsrl-cache"),
                 std::env::temp_dir().join("osoosi-nsrl-shared-cache"),
@@ -1007,23 +1026,34 @@ impl ThreatFeedFetcher {
                 if Self::is_dir_writable(candidate) {
                     target_dir = candidate.clone();
                     resolved = true;
-                    info!("[NSRL Background] Using writable fallback directory {:?}", target_dir);
+                    info!(
+                        "[NSRL Background] Using writable fallback directory {:?}",
+                        target_dir
+                    );
                     break;
                 }
             }
             if !resolved {
-                return Err(anyhow::anyhow!("No writable directory found for NSRL download"));
+                return Err(anyhow::anyhow!(
+                    "No writable directory found for NSRL download"
+                ));
             }
         }
 
         if let Err(e) = self.check_disk_space(&target_dir, 3) {
-            info!("[NSRL Background] Disk space check for {:?}: {}. Checking fallback locations...", target_dir, e);
+            info!(
+                "[NSRL Background] Disk space check for {:?}: {}. Checking fallback locations...",
+                target_dir, e
+            );
             let fallback_candidates = [
                 osoosi_types::resolve_database_dir().join("nsrl-cache"),
                 std::env::temp_dir().join("osoosi-nsrl-shared-cache"),
             ];
             for candidate in &fallback_candidates {
-                if candidate != &target_dir && Self::is_dir_writable(candidate) && self.check_disk_space(candidate, 3).is_ok() {
+                if candidate != &target_dir
+                    && Self::is_dir_writable(candidate)
+                    && self.check_disk_space(candidate, 3).is_ok()
+                {
                     target_dir = candidate.clone();
                     info!("[NSRL Background] Switched to fallback directory with sufficient space: {:?}", target_dir);
                     break;
@@ -1051,7 +1081,8 @@ impl ThreatFeedFetcher {
 
             while !download_finished && retry_count < 5 {
                 if retry_count > 0 {
-                    let backoff = (30u64 * 2u64.saturating_pow(retry_count.saturating_sub(1))).min(1800);
+                    let backoff =
+                        (30u64 * 2u64.saturating_pow(retry_count.saturating_sub(1))).min(1800);
                     info!(
                         "[NSRL Background] Retrying download in {}s (Attempt {})...",
                         backoff, retry_count
@@ -1153,7 +1184,10 @@ impl ThreatFeedFetcher {
                         retry_count += 1;
                         continue;
                     }
-                    info!("[NSRL Background] HTTP {} for {}. Retrying in background...", status, url);
+                    info!(
+                        "[NSRL Background] HTTP {} for {}. Retrying in background...",
+                        status, url
+                    );
                     last_error = Some(anyhow::anyhow!("HTTP error {}", status));
                     retry_count += 1;
                     continue;
@@ -1200,7 +1234,10 @@ impl ThreatFeedFetcher {
                         f
                     }
                     Err(e) => {
-                        info!("[NSRL Background] File error opening {:?}: {}. Retrying...", zip_path, e);
+                        info!(
+                            "[NSRL Background] File error opening {:?}: {}. Retrying...",
+                            zip_path, e
+                        );
                         last_error = Some(e.into());
                         if retry_count >= 1 {
                             let fallbacks = [
@@ -1213,7 +1250,10 @@ impl ThreatFeedFetcher {
                                     target_dir = cand.clone();
                                     zip_path = target_dir.join("nsrl_modern_stream.zip");
                                     state_path = target_dir.join("nsrl_modern_stream.state.json");
-                                    info!("[NSRL Background] Switched to fallback target_dir {:?}", target_dir);
+                                    info!(
+                                        "[NSRL Background] Switched to fallback target_dir {:?}",
+                                        target_dir
+                                    );
                                     break;
                                 }
                             }
@@ -1228,7 +1268,10 @@ impl ThreatFeedFetcher {
 
                 if let Some(ref chunk) = first_chunk {
                     if let Err(e) = file.write_all(chunk).await {
-                        info!("[NSRL Background] Write error on initial chunk: {}. Retrying...", e);
+                        info!(
+                            "[NSRL Background] Write error on initial chunk: {}. Retrying...",
+                            e
+                        );
                         stream_error = true;
                         last_error = Some(e.into());
                     }
@@ -1264,7 +1307,10 @@ impl ThreatFeedFetcher {
                                 last_error = Some(e.into());
                                 break;
                             }
-                            info!("[NSRL Background] Write error: {}. Retrying write chunk...", e);
+                            info!(
+                                "[NSRL Background] Write error: {}. Retrying write chunk...",
+                                e
+                            );
                             tokio::time::sleep(std::time::Duration::from_millis(300)).await;
                             if let Err(e2) = file.write_all(&chunk).await {
                                 let err_str2 = e2.to_string();
@@ -1291,8 +1337,7 @@ impl ThreatFeedFetcher {
                             );
                         }
 
-                        if total_size > 0 {
-                            let pct = (downloaded * 100) / total_size;
+                        if let Some(pct) = (downloaded * 100).checked_div(total_size) {
                             if pct >= last_log_pct + 10 {
                                 last_log_pct = pct;
                                 info!(
@@ -1312,9 +1357,15 @@ impl ThreatFeedFetcher {
                         || err_str.contains("task was cancelled")
                         || e.kind() == std::io::ErrorKind::Interrupted;
                     if is_cancelled {
-                        debug!("[NSRL Background] Flush cancelled or runtime shutting down: {}", e);
+                        debug!(
+                            "[NSRL Background] Flush cancelled or runtime shutting down: {}",
+                            e
+                        );
                     } else {
-                        info!("[NSRL Background] Flush error: {}. Will resume from offset.", e);
+                        info!(
+                            "[NSRL Background] Flush error: {}. Will resume from offset.",
+                            e
+                        );
                     }
                     stream_error = true;
                     last_error = Some(e.into());
@@ -1397,7 +1448,6 @@ impl ThreatFeedFetcher {
         }
 
         Err(last_error.unwrap_or_else(|| anyhow::anyhow!("All URLs and retries exhausted")))
-
     }
 
     /// Check NIST S3 bucket for newer NSRL RDS versions and deltas.
@@ -1564,18 +1614,34 @@ impl ThreatFeedFetcher {
         );
         Ok(out)
     }
-    pub async fn query_cve_by_product(&self, product: &str, version: &str, api_key: Option<&str>) -> anyhow::Result<Vec<CveDetail>> {
+    pub async fn query_cve_by_product(
+        &self,
+        product: &str,
+        version: &str,
+        api_key: Option<&str>,
+    ) -> anyhow::Result<Vec<CveDetail>> {
         if offline_mode() {
             return Ok(Vec::new());
         }
 
         // NVD 2.0 API: Prefer cpeName for precise matching if possible, otherwise fallback to keywordSearch
-        let cpe_search = format!("cpe:2.3:a:{}:{}:{}:*:*:*:*:*:*:*", product.to_lowercase(), product.to_lowercase(), version);
-        let url = format!("{}?cpeName={}", NVD_CVE_API_URL, urlencoding::encode(&cpe_search));
-        let mut req = self.client.get(&url)
+        let cpe_search = format!(
+            "cpe:2.3:a:{}:{}:{}:*:*:*:*:*:*:*",
+            product.to_lowercase(),
+            product.to_lowercase(),
+            version
+        );
+        let url = format!(
+            "{}?cpeName={}",
+            NVD_CVE_API_URL,
+            urlencoding::encode(&cpe_search)
+        );
+        let mut req = self
+            .client
+            .get(&url)
             .timeout(std::time::Duration::from_secs(10))
             .header("User-Agent", "Oshoosi-Hybrid-Agent/1.0");
-            
+
         if let Some(key) = api_key {
             req = req.header("apiKey", key);
         }
@@ -1592,9 +1658,16 @@ impl ThreatFeedFetcher {
         };
 
         // Fallback to keywordSearch if CPE match failed
-        if json.get("vulnerabilities").and_then(|v| v.as_array()).map(|a| a.is_empty()).unwrap_or(true) {
+        if json
+            .get("vulnerabilities")
+            .and_then(|v| v.as_array())
+            .map(|a| a.is_empty())
+            .unwrap_or(true)
+        {
             let fallback_url = format!("{}?keywordSearch={} {}", NVD_CVE_API_URL, product, version);
-            let mut fallback_req = self.client.get(&fallback_url)
+            let mut fallback_req = self
+                .client
+                .get(&fallback_url)
                 .timeout(std::time::Duration::from_secs(10))
                 .header("User-Agent", "Oshoosi-Hybrid-Agent/1.0");
             if let Some(key) = api_key {
@@ -1613,15 +1686,20 @@ impl ThreatFeedFetcher {
         if let Some(vulnerabilities) = json.get("vulnerabilities").and_then(|v| v.as_array()) {
             for v in vulnerabilities {
                 if let Some(cve) = v.get("cve") {
-                    let id = cve.get("id").and_then(|i| i.as_str()).unwrap_or_default().to_string();
-                    let summary = cve.get("descriptions")
+                    let id = cve
+                        .get("id")
+                        .and_then(|i| i.as_str())
+                        .unwrap_or_default()
+                        .to_string();
+                    let summary = cve
+                        .get("descriptions")
                         .and_then(|d| d.as_array())
                         .and_then(|a| a.first())
                         .and_then(|f| f.get("value"))
                         .and_then(|v| v.as_str())
                         .unwrap_or("No description available")
                         .to_string();
-                    
+
                     details.push(CveDetail { id, summary });
                 }
             }

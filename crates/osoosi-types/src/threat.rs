@@ -99,9 +99,9 @@ pub struct ZeroDayDefense {
     pub cve_id: String,
     pub title: String,
     pub description: String,
-    pub severity: f32,           // 0.0 - 1.0
-    pub learned_rule: String,    // YARA or Sigma rule content
-    pub software_target: String, // e.g. "nginx", "openssl"
+    pub severity: f32,                    // 0.0 - 1.0
+    pub learned_rule: String,             // YARA or Sigma rule content
+    pub software_target: String,          // e.g. "nginx", "openssl"
     pub software_version: Option<String>, // e.g. "3.14"
     pub date_learned: DateTime<Utc>,
 }
@@ -386,26 +386,31 @@ impl GossipFeedItem {
             _ => format!("{:?}", sig.recommended_action),
         };
 
-        let severity = if sig.recommended_action == ResponseAction::Isolate || sig.confidence >= 0.85 {
-            "CRITICAL".to_string()
-        } else if sig.recommended_action == ResponseAction::Tarpit
-            || sig.recommended_action == ResponseAction::GhostTarpit
-            || sig.confidence >= 0.65
-        {
-            "HIGH".to_string()
-        } else if sig.confidence >= 0.40 {
-            "MEDIUM".to_string()
-        } else {
-            "LOW".to_string()
-        };
+        let severity =
+            if sig.recommended_action == ResponseAction::Isolate || sig.confidence >= 0.85 {
+                "CRITICAL".to_string()
+            } else if sig.recommended_action == ResponseAction::Tarpit
+                || sig.recommended_action == ResponseAction::GhostTarpit
+                || sig.confidence >= 0.65
+            {
+                "HIGH".to_string()
+            } else if sig.confidence >= 0.40 {
+                "MEDIUM".to_string()
+            } else {
+                "LOW".to_string()
+            };
 
-        let proc_opt = sig
-            .process_name
-            .as_deref()
-            .map(str::trim)
-            .filter(|s| !s.is_empty() && !s.eq_ignore_ascii_case("unknown") && !s.eq_ignore_ascii_case("unknown process") && !s.eq_ignore_ascii_case("system process"));
+        let proc_opt = sig.process_name.as_deref().map(str::trim).filter(|s| {
+            !s.is_empty()
+                && !s.eq_ignore_ascii_case("unknown")
+                && !s.eq_ignore_ascii_case("unknown process")
+                && !s.eq_ignore_ascii_case("system process")
+        });
 
-        let tech_label = match (sig.mitre_technique.as_deref(), sig.mitre_technique_name.as_deref()) {
+        let tech_label = match (
+            sig.mitre_technique.as_deref(),
+            sig.mitre_technique_name.as_deref(),
+        ) {
             (Some(id), Some(name)) if !name.is_empty() => format!("[{} · {}] ", id, name),
             (Some(id), _) => format!("[{}] ", id),
             _ => String::new(),
@@ -418,19 +423,29 @@ impl GossipFeedItem {
                 let after_bracket = open + close + 1;
                 let colon_space = if issue_description[after_bracket..].starts_with(": ") {
                     2
-                } else if issue_description[after_bracket..].starts_with(':') {
-                    1
-                } else if issue_description[after_bracket..].starts_with(' ') {
+                } else if issue_description[after_bracket..].starts_with(':')
+                    || issue_description[after_bracket..].starts_with(' ')
+                {
                     1
                 } else {
                     0
                 };
-                issue_description = format!("{}{}", &issue_description[..open], &issue_description[after_bracket + colon_space..]).trim().to_string();
+                issue_description = format!(
+                    "{}{}",
+                    &issue_description[..open],
+                    &issue_description[after_bracket + colon_space..]
+                )
+                .trim()
+                .to_string();
             } else {
                 break;
             }
         }
-        let first_desc = issue_description.split(';').next().unwrap_or(&issue_description).trim();
+        let first_desc = issue_description
+            .split(';')
+            .next()
+            .unwrap_or(&issue_description)
+            .trim();
         let issue_str = if first_desc.is_empty() {
             "Threat Activity Detected"
         } else if first_desc.len() > 120 {
@@ -442,22 +457,40 @@ impl GossipFeedItem {
         let summary = if let Some(proc) = proc_opt {
             match event_type {
                 "MESH_THREAT_RECEIVED" => {
-                    format!("Peer Threat: {}{}: {} — Action: {}", tech_label, proc, issue_str, action_str)
+                    format!(
+                        "Peer Threat: {}{}: {} — Action: {}",
+                        tech_label, proc, issue_str, action_str
+                    )
                 }
                 "MESH_THREAT_BROADCAST" => {
-                    format!("Broadcast to Mesh: {}{}: {} — Action: {}", tech_label, proc, issue_str, action_str)
+                    format!(
+                        "Broadcast to Mesh: {}{}: {} — Action: {}",
+                        tech_label, proc, issue_str, action_str
+                    )
                 }
-                _ => format!("Threat Event: {}{}: {} — Action: {}", tech_label, proc, issue_str, action_str),
+                _ => format!(
+                    "Threat Event: {}{}: {} — Action: {}",
+                    tech_label, proc, issue_str, action_str
+                ),
             }
         } else {
             match event_type {
                 "MESH_THREAT_RECEIVED" => {
-                    format!("Peer Threat: {}{} — Action: {}", tech_label, issue_str, action_str)
+                    format!(
+                        "Peer Threat: {}{} — Action: {}",
+                        tech_label, issue_str, action_str
+                    )
                 }
                 "MESH_THREAT_BROADCAST" => {
-                    format!("Broadcast to Mesh: {}{} — Action: {}", tech_label, issue_str, action_str)
+                    format!(
+                        "Broadcast to Mesh: {}{} — Action: {}",
+                        tech_label, issue_str, action_str
+                    )
                 }
-                _ => format!("Threat Event: {}{} — Action: {}", tech_label, issue_str, action_str),
+                _ => format!(
+                    "Threat Event: {}{} — Action: {}",
+                    tech_label, issue_str, action_str
+                ),
             }
         };
 
@@ -474,7 +507,9 @@ impl GossipFeedItem {
             confidence: sig.confidence,
             severity,
             action: Some(action_str),
-            status: if sig.action_state == ActionState::Executed || sig.recommended_action == ResponseAction::Isolate {
+            status: if sig.action_state == ActionState::Executed
+                || sig.recommended_action == ResponseAction::Isolate
+            {
                 "REMEDIATED".to_string()
             } else if sig.action_state == ActionState::Rejected {
                 "FALSE_POSITIVE".to_string()
@@ -526,13 +561,20 @@ mod tests {
         assert!(!sig.verify());
 
         sig.sign(&signing_key).expect("signing must succeed");
-        assert!(sig.verify(), "verify must succeed before JSON serialization");
+        assert!(
+            sig.verify(),
+            "verify must succeed before JSON serialization"
+        );
 
         // Simulate wire transit: serialize to JSON bytes, then deserialize on peer
         let wire_bytes = serde_json::to_vec(&sig).expect("serialize to JSON");
-        let peer_sig: ThreatSignature = serde_json::from_slice(&wire_bytes).expect("deserialize from JSON");
+        let peer_sig: ThreatSignature =
+            serde_json::from_slice(&wire_bytes).expect("deserialize from JSON");
 
-        assert!(peer_sig.verify(), "verify must succeed after JSON wire roundtrip");
+        assert!(
+            peer_sig.verify(),
+            "verify must succeed after JSON wire roundtrip"
+        );
         assert_eq!(peer_sig.id, sig.id);
         assert_eq!(peer_sig.source_node, sig.source_node);
         assert_eq!(peer_sig.process_name, sig.process_name);

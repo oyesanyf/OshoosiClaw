@@ -3,13 +3,13 @@
 //! Provides closed-loop verification of host telemetry health across
 //! Process Creation, DNS Resolution, and Image Load channels.
 
+use osoosi_types::HostSecurityEvent;
+use serde::{Deserialize, Serialize};
 use std::collections::HashMap;
 use std::sync::Arc;
 use std::time::{Duration, Instant};
-use serde::{Deserialize, Serialize};
 use tokio::sync::mpsc;
 use uuid::Uuid;
-use osoosi_types::HostSecurityEvent;
 
 /// Monitored telemetry channels for anti-blinding heartbeat verification.
 #[derive(Debug, Clone, Copy, PartialEq, Eq, Hash, Serialize, Deserialize)]
@@ -126,7 +126,8 @@ impl CanaryToken {
         let slot = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs() / 30;
+            .as_secs()
+            / 30;
         let payload = format!("{}.{}", probe_id.simple(), slot);
         let hash = blake3::keyed_hash(secret, payload.as_bytes());
         let mut sig = [0u8; 8];
@@ -149,7 +150,8 @@ impl CanaryToken {
         let current_slot = std::time::SystemTime::now()
             .duration_since(std::time::UNIX_EPOCH)
             .unwrap_or_default()
-            .as_secs() / 30;
+            .as_secs()
+            / 30;
         if slot.abs_diff(current_slot) > max_skew_slots {
             return None;
         }
@@ -200,7 +202,16 @@ pub fn is_canary_payload(payload: &str) -> bool {
     // Check for canary token structure (e.g. v1.<uuid_simple>.<slot>.<hex_sig> or raw UUID)
     if lower.contains("v1.") {
         for word in payload.split(|c: char| {
-            c.is_whitespace() || c == '"' || c == '\'' || c == '\\' || c == '/' || c == '&' || c == '|' || c == ';' || c == '`' || c == '='
+            c.is_whitespace()
+                || c == '"'
+                || c == '\''
+                || c == '\\'
+                || c == '/'
+                || c == '&'
+                || c == '|'
+                || c == ';'
+                || c == '`'
+                || c == '='
         }) {
             let trimmed = word.trim_matches(|c: char| !c.is_alphanumeric() && c != '.' && c != '-');
             if trimmed.starts_with("v1.") && CanaryToken::is_canary_token(trimmed) {
@@ -327,7 +338,8 @@ impl CanaryDispatcher {
         let host = format!("{}:53", domain);
         // Dispatch resolution to the OS DNS stack. .invalid is reserved to never resolve (RFC 2606),
         // so NXDOMAIN/lookup errors are expected and ignored.
-        let _ = tokio::time::timeout(Duration::from_millis(2000), tokio::net::lookup_host(&host)).await;
+        let _ =
+            tokio::time::timeout(Duration::from_millis(2000), tokio::net::lookup_host(&host)).await;
         Ok(())
     }
 
@@ -347,19 +359,21 @@ impl CanaryDispatcher {
             let temp_dir = std::env::temp_dir();
             let probe_dll = temp_dir.join(format!("osoosi_canary_{}.dll", probe_id.simple()));
             let sys_dll = std::path::Path::new("C:\\Windows\\System32\\version.dll");
-            if sys_dll.exists() {
-                if let Ok(_) = std::fs::copy(sys_dll, &probe_dll) {
-                    let wide: Vec<u16> = probe_dll.as_os_str().encode_wide().chain(std::iter::once(0)).collect();
-                    unsafe {
-                        // LOAD_LIBRARY_AS_DATAFILE (0x00000002) maps the PE image without executing DllMain,
-                        // triggering PsSetLoadImageNotifyRoutine / Sysmon Event 7.
-                        let handle = LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), 0x00000002);
-                        if !handle.is_null() {
-                            FreeLibrary(handle);
-                        }
+            if sys_dll.exists() && std::fs::copy(sys_dll, &probe_dll).is_ok() {
+                let wide: Vec<u16> = probe_dll
+                    .as_os_str()
+                    .encode_wide()
+                    .chain(std::iter::once(0))
+                    .collect();
+                unsafe {
+                    // LOAD_LIBRARY_AS_DATAFILE (0x00000002) maps the PE image without executing DllMain,
+                    // triggering PsSetLoadImageNotifyRoutine / Sysmon Event 7.
+                    let handle = LoadLibraryExW(wide.as_ptr(), std::ptr::null_mut(), 0x00000002);
+                    if !handle.is_null() {
+                        FreeLibrary(handle);
                     }
-                    let _ = std::fs::remove_file(&probe_dll);
                 }
+                let _ = std::fs::remove_file(&probe_dll);
             }
         }
         #[cfg(not(windows))]
@@ -370,7 +384,11 @@ impl CanaryDispatcher {
     }
 
     /// Dispatches a probe for the specified channel.
-    pub async fn dispatch_probe(&self, channel: CanaryChannel, probe_id: Uuid) -> std::io::Result<()> {
+    pub async fn dispatch_probe(
+        &self,
+        channel: CanaryChannel,
+        probe_id: Uuid,
+    ) -> std::io::Result<()> {
         match channel {
             CanaryChannel::ProcessCreation => self.dispatch_process_probe(probe_id).await,
             CanaryChannel::DnsResolution => self.dispatch_dns_probe(probe_id).await,
@@ -378,7 +396,6 @@ impl CanaryDispatcher {
         }
     }
 }
-
 
 /// Correlates incoming telemetry events against pending synthetic expectations.
 pub struct CanaryCorrelator {
@@ -544,9 +561,19 @@ impl CanaryCorrelator {
     pub fn inspect_host_security_event(&mut self, event: &HostSecurityEvent) -> Option<Uuid> {
         let payload = event.data.to_string();
         let channel = match (event.source, event.event_id) {
-            (osoosi_types::HostEventSource::WindowsEventLog, 1 | 4688) => CanaryChannel::ProcessCreation,
-            (osoosi_types::HostEventSource::LinuxAudit | osoosi_types::HostEventSource::Ebpf | osoosi_types::HostEventSource::MacAudit | osoosi_types::HostEventSource::MacUnifiedLog, 1 | 59 | 221) => CanaryChannel::ProcessCreation,
-            (osoosi_types::HostEventSource::WindowsEventLog, 22 | 3008) => CanaryChannel::DnsResolution,
+            (osoosi_types::HostEventSource::WindowsEventLog, 1 | 4688) => {
+                CanaryChannel::ProcessCreation
+            }
+            (
+                osoosi_types::HostEventSource::LinuxAudit
+                | osoosi_types::HostEventSource::Ebpf
+                | osoosi_types::HostEventSource::MacAudit
+                | osoosi_types::HostEventSource::MacUnifiedLog,
+                1 | 59 | 221,
+            ) => CanaryChannel::ProcessCreation,
+            (osoosi_types::HostEventSource::WindowsEventLog, 22 | 3008) => {
+                CanaryChannel::DnsResolution
+            }
             (osoosi_types::HostEventSource::WindowsEventLog, 7) => CanaryChannel::ImageLoad,
             _ => {
                 if is_canary_payload(&payload) {
@@ -614,7 +641,10 @@ impl SyntheticCanaryEngine {
     }
 
     pub async fn inspect_host_security_event(&self, event: &HostSecurityEvent) -> Option<Uuid> {
-        self.correlator.lock().await.inspect_host_security_event(event)
+        self.correlator
+            .lock()
+            .await
+            .inspect_host_security_event(event)
     }
 
     pub async fn dispatch_probe(&self, channel: CanaryChannel) -> std::io::Result<Uuid> {
@@ -683,7 +713,9 @@ mod tests {
         let mut correlator = CanaryCorrelator::new(alert_tx, 3);
 
         // Pre-seed some failures
-        correlator.consecutive_failures.insert(CanaryChannel::ProcessCreation, 2);
+        correlator
+            .consecutive_failures
+            .insert(CanaryChannel::ProcessCreation, 2);
 
         let probe_id = Uuid::new_v4();
         let exp = CanaryExpectation::new(
@@ -701,10 +733,14 @@ mod tests {
         assert_eq!(matched, Some(probe_id));
         assert!(correlator.pending.is_empty());
         assert_eq!(
-            correlator.consecutive_failures.get(&CanaryChannel::ProcessCreation),
+            correlator
+                .consecutive_failures
+                .get(&CanaryChannel::ProcessCreation),
             Some(&0)
         );
-        assert!(correlator.last_seen.get(&CanaryChannel::ProcessCreation).is_some());
+        assert!(correlator
+            .last_seen
+            .contains_key(&CanaryChannel::ProcessCreation));
         // Latency was < 1500ms, so no alert should be sent
         assert!(alert_rx.try_recv().is_err());
     }
@@ -730,9 +766,14 @@ mod tests {
         assert_eq!(matched, Some(probe_id));
         assert!(correlator.pending.is_empty());
 
-        let alert = alert_rx.try_recv().expect("Expected TelemetryLagging alert");
+        let alert = alert_rx
+            .try_recv()
+            .expect("Expected TelemetryLagging alert");
         match alert {
-            BlindingAlert::TelemetryLagging { channel, latency_ms } => {
+            BlindingAlert::TelemetryLagging {
+                channel,
+                latency_ms,
+            } => {
                 assert_eq!(channel, CanaryChannel::DnsResolution);
                 assert!(latency_ms >= 1500, "Latency was {}ms", latency_ms);
             }
@@ -747,19 +788,32 @@ mod tests {
 
         // 1st expired probe
         let probe1 = Uuid::new_v4();
-        let exp1 = CanaryExpectation::new(probe1, CanaryChannel::ProcessCreation, Duration::from_millis(0));
+        let exp1 = CanaryExpectation::new(
+            probe1,
+            CanaryChannel::ProcessCreation,
+            Duration::from_millis(0),
+        );
         correlator.register_expectation(exp1);
 
         let alerts1 = correlator.sweep_expired();
-        assert!(alerts1.is_empty(), "Threshold is 2, drops=1 should not alert yet");
+        assert!(
+            alerts1.is_empty(),
+            "Threshold is 2, drops=1 should not alert yet"
+        );
         assert_eq!(
-            correlator.consecutive_failures.get(&CanaryChannel::ProcessCreation),
+            correlator
+                .consecutive_failures
+                .get(&CanaryChannel::ProcessCreation),
             Some(&1)
         );
 
         // 2nd expired probe -> reaches threshold of 2
         let probe2 = Uuid::new_v4();
-        let exp2 = CanaryExpectation::new(probe2, CanaryChannel::ProcessCreation, Duration::from_millis(0));
+        let exp2 = CanaryExpectation::new(
+            probe2,
+            CanaryChannel::ProcessCreation,
+            Duration::from_millis(0),
+        );
         correlator.register_expectation(exp2);
 
         let alerts2 = correlator.sweep_expired();
@@ -791,9 +845,21 @@ mod tests {
         let id2 = Uuid::new_v4();
         let id3 = Uuid::new_v4();
 
-        correlator.register_expectation(CanaryExpectation::new(id1, CanaryChannel::ProcessCreation, Duration::from_millis(0)));
-        correlator.register_expectation(CanaryExpectation::new(id2, CanaryChannel::DnsResolution, Duration::from_millis(0)));
-        correlator.register_expectation(CanaryExpectation::new(id3, CanaryChannel::ImageLoad, Duration::from_millis(0)));
+        correlator.register_expectation(CanaryExpectation::new(
+            id1,
+            CanaryChannel::ProcessCreation,
+            Duration::from_millis(0),
+        ));
+        correlator.register_expectation(CanaryExpectation::new(
+            id2,
+            CanaryChannel::DnsResolution,
+            Duration::from_millis(0),
+        ));
+        correlator.register_expectation(CanaryExpectation::new(
+            id3,
+            CanaryChannel::ImageLoad,
+            Duration::from_millis(0),
+        ));
 
         let alerts = correlator.sweep_expired();
         assert_eq!(alerts.len(), 3);
@@ -813,7 +879,7 @@ mod tests {
 
         // Drain channel receiver
         let mut count = 0;
-        while let Ok(_) = alert_rx.try_recv() {
+        while alert_rx.try_recv().is_ok() {
             count += 1;
         }
         assert_eq!(count, 3);
@@ -895,7 +961,11 @@ mod tests {
             let token = CanaryToken::generate(&secret, probe_id);
 
             let cmdline = format!("osoosi.exe {} {}", flag, token);
-            assert!(is_canary_payload(&cmdline), "Flag {} should be recognized as canary payload", flag);
+            assert!(
+                is_canary_payload(&cmdline),
+                "Flag {} should be recognized as canary payload",
+                flag
+            );
 
             let event = HostSecurityEvent {
                 source: osoosi_types::HostEventSource::WindowsEventLog,
@@ -909,7 +979,11 @@ mod tests {
                 causal_parent: None,
             };
 
-            assert!(is_canary_event(&event), "Event with flag {} should be recognized as canary event", flag);
+            assert!(
+                is_canary_event(&event),
+                "Event with flag {} should be recognized as canary event",
+                flag
+            );
 
             // Test correlator detection
             let (alert_tx, _alert_rx) = mpsc::channel(10);
@@ -921,7 +995,12 @@ mod tests {
             ));
 
             let matched = correlator.inspect_host_security_event(&event);
-            assert_eq!(matched, Some(probe_id), "Correlator should match polymorphic probe with flag {}", flag);
+            assert_eq!(
+                matched,
+                Some(probe_id),
+                "Correlator should match polymorphic probe with flag {}",
+                flag
+            );
         }
 
         // Test DNS probe invalid detection
@@ -960,10 +1039,16 @@ mod tests {
         };
 
         // Canary event MUST be identified for filtering/suppression
-        assert!(is_canary_event(&canary_event), "Canary heartbeat must be identified for suppression");
+        assert!(
+            is_canary_event(&canary_event),
+            "Canary heartbeat must be identified for suppression"
+        );
 
         // Normal legitimate event MUST NOT be suppressed
-        assert!(!is_canary_event(&normal_event), "Normal event must not be filtered as canary");
+        assert!(
+            !is_canary_event(&normal_event),
+            "Normal event must not be filtered as canary"
+        );
 
         // Legitimate event with v1. in path or URL MUST NOT be falsely identified as canary
         let normal_v1_event = HostSecurityEvent {
@@ -977,7 +1062,10 @@ mod tests {
             }),
             causal_parent: None,
         };
-        assert!(!is_canary_event(&normal_v1_event), "Event with /v1.0/ URL must not be falsely treated as canary");
+        assert!(
+            !is_canary_event(&normal_v1_event),
+            "Event with /v1.0/ URL must not be falsely treated as canary"
+        );
 
         let app_v1_event = HostSecurityEvent {
             source: osoosi_types::HostEventSource::WindowsEventLog,
@@ -990,7 +1078,10 @@ mod tests {
             }),
             causal_parent: None,
         };
-        assert!(!is_canary_event(&app_v1_event), "Event with v1.2 directory must not be falsely treated as canary");
+        assert!(
+            !is_canary_event(&app_v1_event),
+            "Event with v1.2 directory must not be falsely treated as canary"
+        );
     }
 
     #[tokio::test]
@@ -1001,7 +1092,11 @@ mod tests {
 
         // Verify dispatch_process_probe runs without error
         let res = dispatcher.dispatch_process_probe(probe_id).await;
-        assert!(res.is_ok(), "dispatch_process_probe must succeed: {:?}", res);
+        assert!(
+            res.is_ok(),
+            "dispatch_process_probe must succeed: {:?}",
+            res
+        );
 
         // Verify that CanaryToken verification works for dispatcher's secret
         let token = CanaryToken::generate(&secret, probe_id);
@@ -1024,9 +1119,14 @@ mod tests {
 
         // Sweep it: probe moves to recently_expired and consecutive_failures becomes 1
         let alerts = correlator.sweep_expired();
-        assert!(alerts.is_empty(), "Threshold is 3, 1 drop should not alert yet");
+        assert!(
+            alerts.is_empty(),
+            "Threshold is 3, 1 drop should not alert yet"
+        );
         assert_eq!(
-            correlator.consecutive_failures.get(&CanaryChannel::ProcessCreation),
+            correlator
+                .consecutive_failures
+                .get(&CanaryChannel::ProcessCreation),
             Some(&1)
         );
         assert!(correlator.pending.is_empty());
@@ -1040,14 +1140,21 @@ mod tests {
         assert!(correlator.recently_expired.is_empty());
         // Failures should be decremented back to 0
         assert_eq!(
-            correlator.consecutive_failures.get(&CanaryChannel::ProcessCreation),
+            correlator
+                .consecutive_failures
+                .get(&CanaryChannel::ProcessCreation),
             Some(&0)
         );
 
         // A TelemetryLagging alert must have been emitted for the delayed arrival
-        let alert = alert_rx.try_recv().expect("Expected TelemetryLagging alert for delayed probe");
+        let alert = alert_rx
+            .try_recv()
+            .expect("Expected TelemetryLagging alert for delayed probe");
         match alert {
-            BlindingAlert::TelemetryLagging { channel, latency_ms } => {
+            BlindingAlert::TelemetryLagging {
+                channel,
+                latency_ms,
+            } => {
                 assert_eq!(channel, CanaryChannel::ProcessCreation);
                 assert!(latency_ms < 100_000);
             }
@@ -1074,7 +1181,11 @@ mod tests {
         // When a probe is dispatched and succeeds or fails, if failure occurs, no orphan expectation is left.
         // We verify dispatch_probe registers and cleans up properly.
         let probe_id = Uuid::new_v4();
-        let exp = CanaryExpectation::new(probe_id, CanaryChannel::ProcessCreation, Duration::from_millis(0));
+        let exp = CanaryExpectation::new(
+            probe_id,
+            CanaryChannel::ProcessCreation,
+            Duration::from_millis(0),
+        );
         {
             let mut corr = engine.correlator.lock().await;
             corr.register_expectation(exp);
@@ -1116,4 +1227,3 @@ mod tests {
         assert!(correlator.pending.is_empty());
     }
 }
-
